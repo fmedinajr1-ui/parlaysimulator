@@ -98,8 +98,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'table_tennis_signals',
-    query: "Today's international table tennis matches and betting signals. Include ITTF events, WTT events, and major league matches. Any sharp line movements on match winners or total games? Which players are in strong form or dealing with fatigue from back-to-back tournaments? Flag players on 3+ match days.",
-    systemPrompt: 'You are a table tennis betting analyst. Focus on player form, recent results, head-to-head records, and any sharp money signals. Table tennis has high volume and fast turnover — flag players on 3+ match days as fatigued. Provide specific player names, event names, and directional bias (favorite/underdog, over/under on games).',
+    query: "Today's international table tennis matches and betting signals. Include ITTF events, WTT events, and major league matches. For each player in upcoming matches provide: 1) Recent match totals (total points scored in last 5-10 best-of-5 matches, typical range 70-95 points), 2) Average points per set, 3) How often matches go 3, 4, or 5 sets (set distribution), 4) Recent over/under track record against posted totals, 5) Sharp line movements on totals, 6) Players in strong form or dealing with fatigue from back-to-back tournaments. Flag players on 3+ match days as fatigued.",
+    systemPrompt: 'You are a table tennis betting and statistics analyst. Focus on quantitative stats needed for over/under total points modeling: average match totals, per-set averages, set distribution percentages (3/4/5 sets), and recent over rates. Also track player form, head-to-head records, and sharp money signals. Provide specific player names, their recent match total points, and directional bias for over/under totals.',
   },
   {
     category: 'whale_money_steam_moves',

@@ -419,3 +419,6 @@ verify_jwt = false
 
 [functions.verify-analysis-payment]
 verify_jwt = false
+
+[functions.tt-stats-collector]
+verify_jwt = false
