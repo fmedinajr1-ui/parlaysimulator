@@ -3917,6 +3917,43 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[DefenseMatchup] ⚠️ Failed to apply defense adjustments: ${defErr.message}`);
   }
 
+  // === RETURNING HITTER BOOST ===
+  try {
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(yesterdayDate);
+
+    const { data: yesterdayHits } = await supabase
+      .from('bot_parlay_legs')
+      .select('player_name')
+      .eq('outcome', 'hit')
+      .gte('created_at', `${yesterdayStr}T00:00:00`)
+      .lt('created_at', `${targetDate}T00:00:00`);
+
+    if (yesterdayHits && yesterdayHits.length > 0) {
+      const hittersSet = new Set(
+        yesterdayHits.map(h => (h.player_name || '').toLowerCase().trim())
+      );
+      hittersSet.delete('');
+      let boosted = 0;
+      for (const pick of enrichedSweetSpots) {
+        if (hittersSet.has(pick.player_name.toLowerCase().trim())) {
+          pick.confidence_score = Math.min(1.0, pick.confidence_score + 0.05);
+          pick.l10_hit_rate = Math.min(1.0, pick.l10_hit_rate + 0.05);
+          pick.compositeScore = Math.min(99, pick.compositeScore + 3);
+          boosted++;
+        }
+      }
+      console.log(`[ReturningHitter] Boosted ${boosted} picks from ${hittersSet.size} players who hit yesterday (${yesterdayStr})`);
+    } else {
+      console.log(`[ReturningHitter] No yesterday hit data found, skipping boost`);
+    }
+  } catch (rhErr) {
+    console.log(`[ReturningHitter] ⚠️ Failed to apply boost: ${rhErr.message}`);
+  }
+
   console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks`);
 
   return {
