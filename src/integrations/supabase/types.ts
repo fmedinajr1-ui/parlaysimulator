@@ -10895,6 +10895,54 @@ export type Database = {
         }
         Relationships: []
       }
+      tt_match_stats: {
+        Row: {
+          avg_match_total: number | null
+          avg_period_total: number | null
+          created_at: string
+          id: string
+          last_updated: string
+          league: string | null
+          pct_3_sets: number | null
+          pct_4_sets: number | null
+          pct_5_sets: number | null
+          player_name: string
+          recent_over_rate: number | null
+          sample_size: number | null
+          std_dev_total: number | null
+        }
+        Insert: {
+          avg_match_total?: number | null
+          avg_period_total?: number | null
+          created_at?: string
+          id?: string
+          last_updated?: string
+          league?: string | null
+          pct_3_sets?: number | null
+          pct_4_sets?: number | null
+          pct_5_sets?: number | null
+          player_name: string
+          recent_over_rate?: number | null
+          sample_size?: number | null
+          std_dev_total?: number | null
+        }
+        Update: {
+          avg_match_total?: number | null
+          avg_period_total?: number | null
+          created_at?: string
+          id?: string
+          last_updated?: string
+          league?: string | null
+          pct_3_sets?: number | null
+          pct_4_sets?: number | null
+          pct_5_sets?: number | null
+          player_name?: string
+          recent_over_rate?: number | null
+          sample_size?: number | null
+          std_dev_total?: number | null
+        }
+        Relationships: []
+      }
       unified_props: {
         Row: {
           away_team_record: string | null

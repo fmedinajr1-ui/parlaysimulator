@@ -126,6 +126,9 @@ serve(async (req) => {
 
     // ============ PHASE 3: PARLAY GENERATION ============
     if (mode === 'full' || mode === 'generate') {
+      // Collect table tennis player stats before generation
+      await runFunction('tt-stats-collector', {});
+      
       // Pre-generation health check
       const preflightOk = await runFunction('bot-pipeline-preflight', {});
       if (!preflightOk) {

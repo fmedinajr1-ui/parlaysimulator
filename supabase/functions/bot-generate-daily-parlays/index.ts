@@ -116,9 +116,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
-      // Table tennis exploration
-      { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'] },
-      { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'] },
+      // Table tennis exploration — OVER TOTALS ONLY
+      { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'], betTypes: ['total'], side: 'over' },
+      { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'], betTypes: ['total'], side: 'over' },
       // Nighttime mixed
       { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
       { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
@@ -793,8 +793,13 @@ function calculateTeamCompositeScore(
     return calculateGolfCompositeScore(game, betType, side);
   }
 
+  // Route Table Tennis to dedicated Over-only scoring engine
+  if (sport.includes('pingpong')) {
+    return calculateTableTennisOverScore(game, betType, side);
+  }
+
   // Route Tennis to dedicated scoring
-  if (sport.includes('tennis') || sport.includes('pingpong')) {
+  if (sport.includes('tennis')) {
     return calculateTennisCompositeScore(game, betType, side);
   }
 
@@ -1279,6 +1284,166 @@ function calculateBaseballTeamCompositeScore(
   }
 
   return { score: clampScore(30, 95, score), breakdown };
+}
+
+// ============= TABLE TENNIS OVER TOTAL POINTS ENGINE =============
+// Uses Tier 1 weighted expected total + Tier 2 normal approximation for P(Over)
+// Only scores Over picks — Under/ML/Spread get score 0 (blocked)
+
+// Normal CDF approximation (Abramowitz & Stegun)
+function normalCDF(x: number): number {
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+  const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  const t = 1.0 / (1.0 + p * Math.abs(x));
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x / 2);
+  return 0.5 * (1.0 + sign * y);
+}
+
+// Global cache for TT stats (populated once per generation run)
+let ttStatsCache: Map<string, any> | null = null;
+
+async function getTTStatsCache(supabase: any): Promise<Map<string, any>> {
+  if (ttStatsCache) return ttStatsCache;
+  const { data } = await supabase
+    .from('tt_match_stats')
+    .select('*')
+    .gte('last_updated', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  
+  ttStatsCache = new Map();
+  if (data) {
+    for (const row of data) {
+      ttStatsCache.set(row.player_name.toLowerCase(), row);
+    }
+  }
+  return ttStatsCache;
+}
+
+function calculateTableTennisOverScore(
+  game: TeamProp,
+  betType: string,
+  side: string
+): { score: number; breakdown: Record<string, number> } {
+  const breakdown: Record<string, number> = { base: 50 };
+
+  // === OVER-ONLY FILTER ===
+  // Block all non-Over picks for table tennis
+  if (betType !== 'total' || side !== 'over') {
+    breakdown.tt_over_only_block = -50;
+    return { score: 0, breakdown };
+  }
+
+  // Get the book line
+  const line = game.line || 0;
+  if (line <= 0) {
+    breakdown.no_line = -20;
+    return { score: 30, breakdown };
+  }
+
+  // Try to use cached stats (sync fallback — stats loaded earlier in generation)
+  // If no stats available, use odds-implied fallback with penalty
+  const p1Name = (game.home_team || '').toLowerCase();
+  const p2Name = (game.away_team || '').toLowerCase();
+  
+  const p1Stats = ttStatsCache?.get(p1Name);
+  const p2Stats = ttStatsCache?.get(p2Name);
+
+  // Default stats for unknown players
+  const defaults = {
+    avg_match_total: 80, avg_period_total: 20,
+    pct_3_sets: 0.40, pct_4_sets: 0.35, pct_5_sets: 0.25,
+    recent_over_rate: 0.50, std_dev_total: 8, sample_size: 0,
+  };
+
+  const s1 = p1Stats || defaults;
+  const s2 = p2Stats || defaults;
+  const hasRealData = (p1Stats?.sample_size > 0) || (p2Stats?.sample_size > 0);
+
+  // === STEP B: Expected Sets ===
+  const avgP3 = (s1.pct_3_sets + s2.pct_3_sets) / 2;
+  const avgP4 = (s1.pct_4_sets + s2.pct_4_sets) / 2;
+  const avgP5 = (s1.pct_5_sets + s2.pct_5_sets) / 2;
+  const S_hat = 3 * avgP3 + 4 * avgP4 + 5 * avgP5;
+  breakdown.expected_sets = Math.round(S_hat * 100) / 100;
+
+  // === STEP A: Expected Total ===
+  const AMT1 = s1.avg_match_total;
+  const AMT2 = s2.avg_match_total;
+  const APT1 = s1.avg_period_total;
+  const APT2 = s2.avg_period_total;
+  const ET = 0.45 * AMT1 + 0.45 * AMT2 + 0.10 * (APT1 + APT2) * S_hat;
+  breakdown.expected_total = Math.round(ET * 10) / 10;
+
+  // === STEP C: Recent Over Adjustment ===
+  const avgRO = (s1.recent_over_rate + s2.recent_over_rate) / 2;
+  const k = 0.25;
+  const sigma_default = 8;
+  const sigma_set = 3;
+  const Adj = k * (avgRO - 0.50) * sigma_default;
+  const ET_final = ET + Adj;
+  breakdown.recent_over_adj = Math.round(Adj * 10) / 10;
+  breakdown.adjusted_total = Math.round(ET_final * 10) / 10;
+
+  // === STEP D: P(Over) via Normal Approximation ===
+  const APT_avg = (APT1 + APT2) / 2;
+  const VarS = (9 * avgP3 + 16 * avgP4 + 25 * avgP5) - S_hat * S_hat;
+  const sigma2 = (sigma_set * sigma_set) * S_hat + VarS * (APT_avg * APT_avg);
+  const sigma = Math.sqrt(Math.max(sigma2, 1));
+  const z = (line - ET_final) / sigma;
+  const probOver = 1 - normalCDF(z);
+  breakdown.prob_over = Math.round(probOver * 1000) / 1000;
+  breakdown.sigma = Math.round(sigma * 10) / 10;
+  breakdown.margin = Math.round((ET_final - line) * 10) / 10;
+
+  // === DECISION LOGIC ===
+  let score = 50;
+
+  if (probOver >= 0.65) {
+    // Strong Over signal
+    score = 80 + Math.round((probOver - 0.65) * 100);
+    breakdown.strong_over = score - 50;
+  } else if (probOver >= 0.60) {
+    // Lean Over
+    score = 68 + Math.round((probOver - 0.60) * 200);
+    breakdown.lean_over = score - 50;
+  } else if (probOver >= 0.55) {
+    // Marginal — reduced confidence
+    score = 55 + Math.round((probOver - 0.55) * 200);
+    breakdown.marginal_over = score - 50;
+  } else if (probOver < 0.45) {
+    // Block — probability too low
+    score = 0;
+    breakdown.prob_too_low = -50;
+    return { score: 0, breakdown };
+  } else {
+    // Neutral zone (0.45 - 0.55) — low confidence
+    score = 45;
+    breakdown.neutral_zone = -5;
+  }
+
+  // === DATA CONFIDENCE PENALTY ===
+  if (!hasRealData) {
+    score = Math.round(score * 0.75); // 25% penalty for no real data
+    breakdown.no_data_penalty = -Math.round(score * 0.25);
+  } else {
+    const combinedSample = (s1.sample_size || 0) + (s2.sample_size || 0);
+    if (combinedSample < 10) {
+      score = Math.round(score * 0.85); // 15% penalty for small sample
+      breakdown.small_sample_penalty = -Math.round(score * 0.15);
+    }
+  }
+
+  // === MARGIN CHECK (secondary) ===
+  const margin = ET_final - line;
+  if (margin >= 4.0) {
+    score += 5;
+    breakdown.strong_margin_bonus = 5;
+  } else if (margin < 0 && probOver < 0.58) {
+    score -= 5;
+    breakdown.negative_margin = -5;
+  }
+
+  return { score: Math.max(0, Math.min(95, score)), breakdown };
 }
 
 // ============= TENNIS SCORING ENGINE =============
@@ -5196,6 +5361,11 @@ Deno.serve(async (req) => {
     if (winningPatterns) {
       console.log(`[Bot v2] Pattern replay active: ${winningPatterns.hot_patterns?.length || 0} hot, ${winningPatterns.cold_patterns?.length || 0} cold patterns`);
     }
+
+    // 0. Pre-load TT stats cache for table tennis scoring engine
+    ttStatsCache = null; // Reset for fresh run
+    await getTTStatsCache(supabase);
+    console.log(`[Bot v2] TT stats cache: ${ttStatsCache?.size || 0} players loaded`);
 
     // 1. Load category weights (all sports, including blocked for sport-specific overrides)
     const { data: allWeights, error: weightsError } = await supabase
