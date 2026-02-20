@@ -1,75 +1,74 @@
 
 
-## Add MLB Cross-Reference to Mispriced Line Detector
+## Mispriced Lines Dashboard Card + Daily Telegram Report
 
-### Overview
-Extend the existing `detect-mispriced-lines` function to also analyze MLB player props using the 24,000+ game logs already backfilled from last year. Since the MLB season just started, all historical data comes from the 2024 season (July-November in the database). The function will use this full-season data to calculate player averages and compare against current book lines.
+### Part 1: Dashboard UI Component
 
-Instead of NBA shooting context (FG%, 3P%, FT%), MLB will use baseball-specific context: **AVG, OBP, SLG, OPS** -- matching the stats shown in the screenshot.
+**New file: `src/components/market/MispricedLinesCard.tsx`**
 
----
+A card component following the same pattern as `SweetSpotPicksCard` that displays today's mispriced lines with filtering:
 
-### Database Change
+- **Data fetch**: Query `mispriced_lines` table for today's date (Eastern Time), ordered by `ABS(edge_pct)` descending
+- **Filter controls** at the top:
+  - **Sport tabs**: ALL | NBA | MLB (filters by `sport` column)
+  - **Signal chips**: ALL | OVER | UNDER (filters by `signal` column)
+  - **Confidence chips**: ALL | ELITE | HIGH | MEDIUM (filters by `confidence_tier`)
+- **Each row displays**:
+  - Player name
+  - Prop type (formatted)
+  - Book line vs Player avg (L10/season)
+  - Edge % with color coding (green for OVER, red for UNDER, intensity by magnitude)
+  - Signal badge (OVER/UNDER)
+  - Confidence tier badge (ELITE = gold, HIGH = green, MEDIUM = blue)
+  - Sport icon (basketball/baseball)
+- **Shooting/Baseball context** expandable per row showing FG%/3P%/FT% for NBA or AVG/OBP/SLG/OPS for MLB
+- **Summary header**: Shows counts (e.g., "157 NBA | 0 MLB | 55 OVER | 102 UNDER")
+- **Refresh button**: Invokes `detect-mispriced-lines` edge function
 
-**Add `sport` column to `mispriced_lines` table** so we can distinguish NBA vs MLB results:
-- Column: `sport` (text, default `'basketball_nba'`)
-- Backfill existing rows to `'basketball_nba'`
-- Update the unique constraint to include sport: `(player_name, prop_type, analysis_date, sport)`
+### Part 2: Add to Homepage
 
----
+**Modified file: `src/pages/Index.tsx`**
 
-### Code Changes (1 file)
+Add the `MispricedLinesCard` component between the Elite 3PT section and the Daily Parlay Hub section on the homepage.
 
-**File: `supabase/functions/detect-mispriced-lines/index.ts`**
+### Part 3: Telegram Daily Report
 
-Add MLB support alongside the existing NBA logic:
+**Modified file: `supabase/functions/bot-send-telegram/index.ts`**
 
-1. **New MLB prop-to-stat mapping:**
-   - `batter_hits` -> `hits`
-   - `batter_rbis` -> `rbis`
-   - `batter_runs_scored` -> `runs`
-   - `batter_total_bases` -> `total_bases`
-   - `batter_home_runs` -> `home_runs`
-   - `batter_stolen_bases` -> `stolen_bases`
-   - `pitcher_strikeouts` -> `pitcher_strikeouts`
-   - `pitcher_outs` -> (skip for now, not in game logs)
+1. Add `'mispriced_lines_report'` to the `NotificationType` union
+2. Add a `formatMispricedLinesReport(data, dateStr)` function that formats the report:
 
-2. **New `calcBaseballContext(logs)` function** computing from raw game log data:
+```
+Format:
+🔍 MISPRICED LINES REPORT — Feb 20
 
-| Stat | Formula |
-|------|---------|
-| AVG  | total hits / total at_bats |
-| OBP  | (hits + walks) / (at_bats + walks) |
-| SLG  | total_bases / at_bats |
-| OPS  | OBP + SLG |
-| Avg Hits | avg hits per game |
-| Avg RBIs | avg rbis per game |
-| Avg Total Bases | avg total_bases per game |
+📊 NBA: 157 lines | ⚾ MLB: 0 lines
+🟢 55 OVER | 🔴 102 UNDER
 
-3. **MLB analysis block** (runs after NBA block):
-   - Pulls all `baseball_mlb` props from `unified_props`
-   - Fetches player logs from `mlb_player_game_logs` (using ALL available data from last year, not just L20 -- since we're cross-referencing a full season)
-   - For MLB, use L20 and full-season averages (we have 50-100+ games per player from 2024)
-   - Calculates edge the same way: `edge = ((player_avg - line) / line) * 100`
-   - Tags results with `sport: 'baseball_mlb'`
+🏆 ELITE EDGES:
+📈 Dean Wade — Assists O 1.5 | Avg: 4.2 | Edge: +180%
+📈 Jarrett Allen — Blocks O 0.5 | Avg: 1.0 | Edge: +100%
+...
 
-4. **Update delete/upsert logic** to include `sport` in the conflict key and delete filter.
+🔥 HIGH CONFIDENCE:
+📉 Kobe Brown — Points U 8.5 | Avg: 3.1 | Edge: -64%
+...
+```
 
-5. **Update cron history result** to include MLB counts alongside NBA counts.
+3. Groups by confidence tier (ELITE first, then HIGH, then MEDIUM)
+4. Shows top 10-15 per tier to keep message manageable
+5. Uses existing `sendToTelegram` long-message splitting
 
----
+**Modified file: `supabase/functions/detect-mispriced-lines/index.ts`**
 
-### Key Design Decision: Full Season Data
-
-Since the MLB season just started and all our data is from last year, the function will use the entire backfill (~50-150 games per player) for calculating averages rather than just L10/L20. This gives us:
-- **L20 avg**: Most recent 20 games from last season
-- **Season avg**: Full 2024 season average (much more reliable for baseball)
-- The edge calculation will use the **season average** as the primary comparison since baseball stats stabilize over larger samples
-
----
+After persisting results, automatically call `bot-send-telegram` with `type: 'mispriced_lines_report'` and pass the summary data (counts + top picks by tier). This fires every time the detector runs in the pipeline, giving a daily Telegram delivery.
 
 ### Files Summary
 
-- **1 migration**: Add `sport` column to `mispriced_lines`, update unique constraint
-- **1 file modified**: `supabase/functions/detect-mispriced-lines/index.ts` -- add MLB prop mapping, baseball context calculator, and MLB analysis block
+| Action | File |
+|--------|------|
+| Create | `src/components/market/MispricedLinesCard.tsx` |
+| Modify | `src/pages/Index.tsx` (add card to homepage) |
+| Modify | `supabase/functions/bot-send-telegram/index.ts` (add report type + formatter) |
+| Modify | `supabase/functions/detect-mispriced-lines/index.ts` (trigger Telegram after analysis) |
 
