@@ -1,31 +1,78 @@
 
-## Add Live Game Indicator on Scout Admin Page
+
+## Replace Stream Panel with Live Game Command Center
 
 ### What Changes
-Show a banner on the admin Scout page indicating which game is currently set live for customers. This gives admins instant visibility without needing to check the database.
+Replace the "Stream coming soon" video placeholder in the customer Scout view with a rich, animated live game dashboard featuring a scoreboard, live box scores, a half-court shot chart, and a play-by-play feed -- all powered by existing data sources (`useLiveScores`, `useUnifiedLiveFeed`, and the shot chart system).
+
+### What Customers Will See
+
+Instead of a blank video panel, customers get a dynamic "game HQ" with four sections stacked inside the existing card:
+
+1. **Live Scoreboard** -- Animated score with period/clock, pulsing LIVE indicator, and score-change flash effects (reuses `motion` animations from `LiveScoreCard`)
+2. **Mini Shot Chart** -- The existing half-court SVG (`ShotChartMatchup`) showing zone advantages/disadvantages for the active game's key players, rendered in compact mode
+3. **Live Box Score Table** -- Top 6 players per team with PTS/REB/AST/3PM in a compact scrollable table, auto-updating via polling
+4. **Play-by-Play Feed** -- Last 8 plays with play-type icons (dunk, three-pointer, block, steal) and smooth entry animations as new plays arrive
 
 ### Implementation
 
-**File: `src/pages/Scout.tsx`**
+**New Component: `src/components/scout/CustomerLiveGamePanel.tsx`**
 
-1. **Fetch the active game for admins too** -- The existing `useQuery` for `scout-active-game` is currently only enabled for customers (`enabled: isCustomer`). Change it to also run for admins so we know what game is currently live.
+A single new component that replaces the static placeholder. It will:
+- Accept `homeTeam`, `awayTeam`, and `eventId` from `gameContext`
+- Use `useLiveScores({ eventId })` for score, period, clock, quarter scores, and player stats
+- Use `useUnifiedLiveFeed({ eventIds: [eventId] })` for projections and recent plays
+- Render four sub-sections with framer-motion animations
 
-2. **Add a "Currently Live" indicator** below the game selector (near the "Set Live for Customers" button). It will:
-   - Show a green pulsing dot + the game description (e.g., "Atlanta Hawks @ Philadelphia 76ers") when a game is live
-   - Show "No game currently live" in muted text when there's no active game
-   - Include a subtle badge/banner style using existing emerald color scheme to match the "Set Live" button aesthetic
-   - Auto-update when the admin sets a new game live by invalidating the query after `handleSetLive` succeeds
+**File: `src/components/scout/CustomerScoutView.tsx`**
+
+- Import `CustomerLiveGamePanel` 
+- Replace the static Stream Panel card (lines 67-82) with `<CustomerLiveGamePanel>`, passing `homeTeam`, `awayTeam`, and `eventId` from `gameContext`
+- Keep the fallback "Waiting for game data..." state when no live data exists yet
 
 ### Technical Details
 
-- Update the `useQuery` `enabled` condition from `isCustomer` to `isCustomer || isAdmin` (or just `hasAccess`)
-- After a successful `handleSetLive`, call `queryClient.invalidateQueries({ queryKey: ['scout-active-game'] })` to refresh the indicator
-- Add a small UI block between the game selector and the mode tabs showing the live status, something like:
+**Scoreboard Section:**
+- Reuse the score flash animation pattern from `LiveScoreCard` (scale pulse on score change via `motion.p`)
+- Show quarter-by-quarter scoring breakdown when available
+- Pulsing red dot + "LIVE" badge when `status === 'in_progress'`
+- "SCHEDULED" / "FINAL" states handled gracefully
 
-```text
-+---------------------------------------------+
-| [pulsing dot] LIVE: Hawks @ 76ers           |
-+---------------------------------------------+
-```
+**Shot Chart Section:**
+- Import existing `ShotChartMatchup` component in `compact` mode
+- Use `useBatchShotChartAnalysis` to get zone matchup data for top scorers
+- Show 1-2 key player matchups side by side (space-efficient compact badges)
 
-- Uses existing Badge and styling patterns -- no new components or dependencies needed
+**Box Score Table:**
+- Source from `live_game_scores.player_stats` via `useLiveScores`
+- Compact table: Name | PTS | REB | AST | 3PM | MIN
+- Separated by team with team name headers
+- Top performers highlighted with accent color
+- ScrollArea for overflow on mobile
+
+**Play-by-Play Feed:**
+- Source from `useUnifiedLiveFeed` `recentPlays` data
+- Each play shows: timestamp, play-type icon, description text
+- Play-type icon mapping from the existing `RecentPlay.playType` enum (dunk, three_pointer, block, steal, etc.)
+- `AnimatePresence` with slide-in animation for new plays
+- Auto-scrolls to latest play
+- High-momentum plays (dunks, blocks) get a subtle glow effect
+
+**Animations:**
+- Score changes: `motion` scale pulse (existing pattern)
+- New plays: `fade-in` + `translateY` entrance
+- Section transitions: `animate-fade-in` on mount
+- High-momentum plays: Brief border glow using `ring-primary/50`
+
+**Data Flow:**
+- Both hooks already poll on intervals (30s for live scores, 15s for unified feed)
+- Realtime subscription on `live_game_scores` already exists in `useLiveScores`
+- No new database tables or edge functions needed
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/components/scout/CustomerLiveGamePanel.tsx` | New component with scoreboard, shot chart, box score, and play feed |
+| `src/components/scout/CustomerScoutView.tsx` | Replace Stream Panel placeholder with `CustomerLiveGamePanel` |
+
