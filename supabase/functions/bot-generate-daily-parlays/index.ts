@@ -1764,6 +1764,19 @@ function selectOptimalLine(
   return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
 }
 
+// Normalize prop type to a canonical category for concentration tracking
+function normalizePropTypeCategory(propType: string): string {
+  const lower = (propType || '').toLowerCase();
+  if (lower.includes('rebound')) return 'rebounds';
+  if (lower.includes('assist')) return 'assists';
+  if (lower.includes('three') || lower.includes('3pt')) return 'threes';
+  if (lower.includes('block')) return 'blocks';
+  if (lower.includes('steal')) return 'steals';
+  if (lower.includes('point') && !lower.includes('rebound') && !lower.includes('assist')) return 'points';
+  if (lower.includes('total') || lower.includes('spread') || lower.includes('moneyline')) return 'team_' + lower.split('_')[0];
+  return 'other';
+}
+
 function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig): boolean {
   let key: string;
   
@@ -1789,7 +1802,9 @@ function canUsePickInParlay(
   parlayTeamCount: Map<string, number>,
   parlayCategoryCount: Map<string, number>,
   tierConfig: TierConfig,
-  existingLegs?: any[]
+  existingLegs?: any[],
+  parlayPropTypeCount?: Map<string, number>,
+  totalLegs?: number
 ): boolean {
   if ('team_name' in pick && pick.team_name) {
     const teamCount = parlayTeamCount.get(pick.team_name) || 0;
@@ -1805,6 +1820,18 @@ function canUsePickInParlay(
   const category = pick.category;
   const categoryCount = parlayCategoryCount.get(category) || 0;
   if (categoryCount >= tierConfig.maxCategoryUsage) return false;
+  
+  // === PROP TYPE CONCENTRATION CAP (40% max per parlay) ===
+  if (parlayPropTypeCount && totalLegs) {
+    const propType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) : 
+                     'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
+    const currentCount = parlayPropTypeCount.get(propType) || 0;
+    const maxPropTypeLegs = Math.max(1, Math.floor(totalLegs * 0.4));
+    if (currentCount >= maxPropTypeLegs) {
+      console.log(`[PropTypeCap] Blocked ${('player_name' in pick ? pick.player_name : pick.home_team)} - ${propType} already at ${currentCount}/${maxPropTypeLegs} max for ${totalLegs}-leg parlay`);
+      return false;
+    }
+  }
   
   // Team conflict detection: no contradictory or duplicate same-game legs
   if ('type' in pick && pick.type === 'team' && existingLegs) {
@@ -3792,6 +3819,7 @@ async function generateTierParlays(
     const legs: any[] = [];
     const parlayTeamCount = new Map<string, number>();
     const parlayCategoryCount = new Map<string, number>();
+    const parlayPropTypeCount = new Map<string, number>();
 
     // Determine which picks to use based on profile
     const isTeamProfile = profile.betTypes && profile.betTypes.length > 0;
@@ -3908,7 +3936,7 @@ async function generateTierParlays(
       if (legs.length >= effectiveMaxLegs) break;
       
       if (!canUsePickGlobally(pick, tracker, config)) continue;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs)) continue;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs)) continue;
       
       // Pattern replay: anti-stacking (e.g., max 2 OVER totals per parlay)
       const pickBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
@@ -4090,9 +4118,18 @@ async function generateTierParlays(
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
         };
 
-        // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
+        // MINIMUM PROJECTION BUFFER GATE (0.3 floor)
         const projBuffer = legData.projection_buffer || 0;
         const projValue = legData.projected_value || 0;
+        if (projValue > 0 && Math.abs(projBuffer) < 0.3) {
+          const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
+          if (!loggedNegEdgeKeys.has(bufKey)) {
+            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < 0.3 min)`);
+            loggedNegEdgeKeys.add(bufKey);
+          }
+          continue;
+        }
+        // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
         if (projValue > 0 && projBuffer < 0) {
           const negKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
           if (!loggedNegEdgeKeys.has(negKey)) {
@@ -4117,6 +4154,10 @@ async function generateTierParlays(
 
       legs.push(legData);
       parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
+      // Track prop type count for concentration cap
+      const legPropType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) :
+                          'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
+      parlayPropTypeCount.set(legPropType, (parlayPropTypeCount.get(legPropType) || 0) + 1);
       // Track side count for anti-stacking
       const legBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
       const legSide = pick.recommended_side || '';
@@ -4681,6 +4722,7 @@ function generateMonsterParlays(
     const selected: any[] = [];
     const usedTeams = new Set<string>();
     const sportCount: Record<string, number> = {};
+    const monsterPropTypeCount = new Map<string, number>();
 
     for (const pick of candidates) {
       if (selected.length >= maxLegs) break;
@@ -4694,9 +4736,29 @@ function generateMonsterParlays(
       if (isMirrorPick(selected, pick)) continue;
       if (hasCorrelation(selected, pick)) continue;
 
+      // PROP TYPE CONCENTRATION CAP (40% max)
+      const pickPropType = normalizePropTypeCategory(pick.prop_type || pick.bet_type || '');
+      const currentPropCount = monsterPropTypeCount.get(pickPropType) || 0;
+      const maxPropLegs = Math.max(1, Math.floor(maxLegs * 0.4));
+      if (currentPropCount >= maxPropLegs) {
+        console.log(`[Monster PropTypeCap] Blocked ${pick.player_name || pick.home_team} - ${pickPropType} at ${currentPropCount}/${maxPropLegs}`);
+        continue;
+      }
+
+      // MINIMUM PROJECTION BUFFER (0.3)
+      if (pick.projected_value && pick.line) {
+        const side = pick.recommended_side || pick.side || 'over';
+        const buffer = side === 'over' ? pick.projected_value - pick.line : pick.line - pick.projected_value;
+        if (Math.abs(buffer) < 0.3 && pick.projected_value > 0) {
+          console.log(`[Monster BufferGate] Blocked ${pick.player_name} ${pick.prop_type} (buffer: ${buffer.toFixed(2)} < 0.3)`);
+          continue;
+        }
+      }
+
       selected.push(pick);
       if (teamKey) usedTeams.add(teamKey);
       sportCount[sport] = (sportCount[sport] || 0) + 1;
+      monsterPropTypeCount.set(pickPropType, currentPropCount + 1);
 
       // Check if we've hit the odds target with 6+ legs
       if (selected.length >= 6) {

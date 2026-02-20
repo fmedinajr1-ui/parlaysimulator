@@ -1071,15 +1071,25 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   const usedPlayers = new Set<string>();
   const usedTeams = new Set<string>(); // NEW: Track used teams for diversity
   const usedCategories = new Set<string>();
+  const propTypeCount = new Map<string, number>(); // PROP TYPE CONCENTRATION CAP
   let volatileCount = 0;
   let starCount = 0;
 
-  // DREAM TEAM: Filter candidates through strict validation
+  // DREAM TEAM: Filter candidates through strict validation + BUFFER GATE
   const dreamTeamCandidates = candidates.filter((c) => {
     const dtCheck = isDreamTeamLeg(c, parlayType);
     if (!dtCheck.passes) {
       console.log(`[Sharp Builder] Dream Team reject: ${c.player_name} ${c.prop_type} - ${dtCheck.reason}`);
       return false;
+    }
+    // MINIMUM PROJECTION BUFFER GATE (0.3)
+    if (c.projected_value && c.line) {
+      const side = (c.side || 'over').toLowerCase();
+      const buffer = side === 'over' ? c.projected_value - c.line : c.line - c.projected_value;
+      if (Math.abs(buffer) < 0.3 && c.projected_value > 0) {
+        console.log(`[Sharp BufferGate] Blocked ${c.player_name} ${c.prop_type} (buffer: ${buffer.toFixed(2)} < 0.3)`);
+        return false;
+      }
     }
     return c.confidence_score >= config.confidenceThreshold;
   });
@@ -1144,6 +1154,15 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     // DIVERSITY: Skip if we already have this category (first pass only)
     if (usedCategories.has(category) && legs.length < config.maxLegs - 1) continue;
 
+    // PROP TYPE CONCENTRATION CAP (40% max per parlay)
+    const propCat = getPropCategory(candidate.prop_type);
+    const currentPropCount = propTypeCount.get(propCat) || 0;
+    const maxPropLegs = Math.max(1, Math.floor(config.maxLegs * 0.4));
+    if (currentPropCount >= maxPropLegs) {
+      console.log(`[Sharp PropTypeCap] Blocked ${candidate.player_name} - ${propCat} at ${currentPropCount}/${maxPropLegs}`);
+      continue;
+    }
+
     if (candidate.is_volatile) {
       if (volatileCount >= config.maxVolatilityLegs) continue;
       volatileCount++;
@@ -1153,6 +1172,7 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     usedPlayers.add(normalizePlayerName(candidate.player_name));
     usedTeams.add(team); // Track team
     usedCategories.add(category);
+    propTypeCount.set(propCat, currentPropCount + 1);
     if (isStar) starCount++;
 
     if (legs.length >= config.maxLegs) break;
@@ -1180,9 +1200,19 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
         volatileCount++;
       }
 
+      // PROP TYPE CONCENTRATION CAP (40% max) - also in second pass
+      const propCat2 = getPropCategory(candidate.prop_type);
+      const currentPropCount2 = propTypeCount.get(propCat2) || 0;
+      const maxPropLegs2 = Math.max(1, Math.floor(config.maxLegs * 0.4));
+      if (currentPropCount2 >= maxPropLegs2) {
+        console.log(`[Sharp PropTypeCap 2nd] Blocked ${candidate.player_name} - ${propCat2} at ${currentPropCount2}/${maxPropLegs2}`);
+        continue;
+      }
+
       legs.push(candidate);
       usedPlayers.add(normalizePlayerName(candidate.player_name));
       usedTeams.add(team);
+      propTypeCount.set(propCat2, currentPropCount2 + 1);
       if (isStar) starCount++;
 
       if (legs.length >= config.maxLegs) break;
