@@ -57,7 +57,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   exploration: {
     count: 50,
     iterations: 2000,
-    maxPlayerUsage: 5,
+    maxPlayerUsage: 2,
     maxTeamUsage: 3,
     maxCategoryUsage: 6,
     minHitRate: 45,
@@ -142,7 +142,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   validation: {
     count: 15,
     iterations: 10000,
-    maxPlayerUsage: 4,
+    maxPlayerUsage: 2,
     maxTeamUsage: 2,
     maxCategoryUsage: 3,
     minHitRate: 52,
@@ -182,7 +182,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   execution: {
     count: 10,
     iterations: 25000,
-    maxPlayerUsage: 3,
+    maxPlayerUsage: 2,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 60,
@@ -234,6 +234,14 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 
 // ============= BLOCKED SPORTS (paused until more data collected) =============
 const BLOCKED_SPORTS = ['baseball_ncaa', 'golf_pga'];
+
+// ============= BLOCKED CATEGORIES (catastrophic hit rates) =============
+const BLOCKED_CATEGORIES = new Set([
+  'OVER_TOTAL',      // 10.2% hit rate
+  'UNDER_TOTAL',     // 18.2% hit rate
+  'ML_FAVORITE',     // 20% hit rate
+  'BIG_ASSIST_OVER', // 10.3% hit rate
+]);
 
 // ============= STALE ODDS DETECTION =============
 const STALE_ODDS_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours (NBA/NHL props)
@@ -1988,6 +1996,11 @@ function normalizePropTypeCategory(propType: string): string {
 }
 
 function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig): boolean {
+  // === BLOCKED CATEGORIES GATE ===
+  if (BLOCKED_CATEGORIES.has(pick.category)) {
+    return false;
+  }
+  
   let key: string;
   
   if ('type' in pick && pick.type === 'team') {
@@ -2003,6 +2016,11 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     const playerCount = tracker.playerUsageCount.get(pick.player_name) || 0;
     if (playerCount >= tierConfig.maxPlayerUsage) return false;
   }
+  
+  // === HIT RATE SCORE GATE (minimum 70%) ===
+  const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
+  const hitRatePercent = pickConfidence * 100;
+  if (hitRatePercent < 70) return false;
   
   return true;
 }
@@ -4216,8 +4234,14 @@ async function generateTierParlays(
         continue;
       }
       
-      // Pattern replay: anti-stacking (e.g., max 2 OVER totals per parlay)
+      // === SPREAD CAP: max 1 spread leg per parlay ===
       const pickBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
+      if (pickBetType === 'spread') {
+        const currentSpreads = legs.filter(l => l.bet_type === 'spread').length;
+        if (currentSpreads >= 1) continue;
+      }
+
+      // Pattern replay: anti-stacking (e.g., max 2 OVER totals per parlay)
       const pickSide = pick.recommended_side || '';
       const sideKey = `${pickBetType}_${pickSide}`.toLowerCase();
       if ((parlaySideCount.get(sideKey) || 0) >= maxSameSidePerParlay) {
@@ -4396,13 +4420,13 @@ async function generateTierParlays(
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
         };
 
-        // MINIMUM PROJECTION BUFFER GATE (0.3 floor)
+        // MINIMUM PROJECTION BUFFER GATE (1.0 floor — raised from 0.3)
         const projBuffer = legData.projection_buffer || 0;
         const projValue = legData.projected_value || 0;
-        if (projValue > 0 && Math.abs(projBuffer) < 0.3) {
+        if (projValue > 0 && Math.abs(projBuffer) < 1.0) {
           const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
           if (!loggedNegEdgeKeys.has(bufKey)) {
-            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < 0.3 min)`);
+            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < 1.0 min)`);
             loggedNegEdgeKeys.add(bufKey);
           }
           continue;
