@@ -561,8 +561,27 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { type, data }: NotificationData = await req.json();
-    
+    const { type, data: rawData }: NotificationData = await req.json();
+
+    let data = rawData;
+
+    // Self-fetch daily winners data if not provided
+    if (type === 'daily_winners' && (!data || Object.keys(data).length === 0)) {
+      console.log('[Telegram] No data provided for daily_winners, self-fetching...');
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const resp = await fetch(`${supabaseUrl}/functions/v1/bot-daily-winners`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      data = await resp.json();
+      console.log(`[Telegram] Fetched daily winners: ${data?.totalHits}/${data?.totalPicks}`);
+    }
+
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
