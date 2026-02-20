@@ -669,6 +669,14 @@ Deno.serve(async (req) => {
     const categoryUpdates = new Map<string, { hits: number; misses: number }>();
     // Track P&L per parlay_date for correct date attribution
     const pnlByDate = new Map<string, { won: number; lost: number; profitLoss: number }>();
+    // Collect per-parlay leg details for Telegram breakdown (cap at 15)
+    const settledParlayDetails: Array<{
+      strategy: string;
+      tier: string;
+      outcome: string;
+      odds: number;
+      legs: Array<{ player_name: string; prop_type: string; line: number; side: string; outcome: string; actual_value: number | null }>;
+    }> = [];
 
     for (const parlay of pendingParlays) {
       const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
@@ -749,6 +757,26 @@ Deno.serve(async (req) => {
         else existing.lost++;
         existing.profitLoss += profitLoss;
         pnlByDate.set(dateKey, existing);
+      }
+
+      // Collect leg details for Telegram breakdown
+      if (outcome === 'won' || outcome === 'lost') {
+        if (settledParlayDetails.length < 15) {
+          settledParlayDetails.push({
+            strategy: parlay.strategy_name || 'Unknown',
+            tier: parlay.tier || 'exploration',
+            outcome,
+            odds: parlay.expected_odds || 0,
+            legs: updatedLegs.map(l => ({
+              player_name: l.player_name,
+              prop_type: l.prop_type,
+              line: l.line,
+              side: l.side,
+              outcome: l.outcome || 'pending',
+              actual_value: l.actual_value ?? null,
+            })),
+          });
+        }
       }
 
       await supabase
@@ -1177,6 +1205,7 @@ Deno.serve(async (req) => {
             strategyName: activeStrategyName,
             strategyWinRate: activeStrategyWinRate,
             blockedCategories,
+            parlayDetails: settledParlayDetails,
           },
         }),
       });
