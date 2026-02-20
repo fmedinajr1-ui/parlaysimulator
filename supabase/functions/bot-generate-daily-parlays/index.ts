@@ -3994,13 +3994,36 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[ReturningHitter] ⚠️ Failed to apply boost: ${rhErr.message}`);
   }
 
+  // === CROSS-ENGINE CONVICTION BOOST ===
+  // Fetch risk engine picks for today and build a lookup for side agreement
+  const { data: riskEnginePicks } = await supabase
+    .from('nba_risk_engine_picks')
+    .select('player_name, prop_type, side, confidence_score')
+    .eq('game_date', targetDate);
+
+  const riskEngineMap = new Map<string, { side: string; confidence: number }>();
+  for (const rp of (riskEnginePicks || [])) {
+    const normProp = (rp.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const key = `${(rp.player_name || '').toLowerCase().trim()}|${normProp}`;
+    riskEngineMap.set(key, { side: rp.side, confidence: rp.confidence_score });
+  }
+  console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk engine picks loaded`);
+
   // === ENRICH MISPRICED LINES INTO PICK FORMAT ===
   const enrichedMispricedPicks: EnrichedPick[] = (rawMispricedLines || []).map((ml: any) => {
     const side = (ml.signal || 'OVER').toLowerCase();
     const category = mapPropTypeToCategory(ml.prop_type);
     const absEdge = Math.abs(ml.edge_pct || 0);
     const tierBonus = ml.confidence_tier === 'ELITE' ? 15 : ml.confidence_tier === 'HIGH' ? 10 : 5;
-    const compositeScore = Math.min(95, 50 + (absEdge * 0.3) + tierBonus);
+    
+    // Cross-engine conviction multiplier: if risk engine agrees on side, boost score
+    const normProp = (ml.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const riskKey = `${(ml.player_name || '').toLowerCase().trim()}|${normProp}`;
+    const riskMatch = riskEngineMap.get(riskKey);
+    const riskConfirmed = riskMatch && riskMatch.side.toLowerCase() === side;
+    const convictionBoost = riskConfirmed ? 12 : (riskMatch ? 3 : 0); // +12 if side agrees, +3 if exists but disagrees
+    
+    const compositeScore = Math.min(95, 50 + (absEdge * 0.3) + tierBonus + convictionBoost);
     const hitRate = absEdge >= 30 ? 0.70 : absEdge >= 20 ? 0.62 : 0.55;
 
     // Look up real odds from the odds map

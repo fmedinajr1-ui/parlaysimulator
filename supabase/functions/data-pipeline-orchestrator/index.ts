@@ -123,6 +123,7 @@ serve(async (req) => {
       await runFunction('team-bets-scoring-engine', {});
       await runFunction('bot-game-context-analyzer', {});
       await runFunction('detect-mispriced-lines', {});
+      await runFunction('high-conviction-analyzer', {});
     }
 
     // ============ PHASE 3: PARLAY GENERATION ============
