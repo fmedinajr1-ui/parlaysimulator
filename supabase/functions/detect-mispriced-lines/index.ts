@@ -6,8 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Map unified_props market keys to game log columns
-const PROP_TO_STAT: Record<string, string> = {
+// NBA prop-to-stat mapping
+const NBA_PROP_TO_STAT: Record<string, string> = {
   'player_points': 'points',
   'player_rebounds': 'rebounds',
   'player_assists': 'assists',
@@ -21,8 +21,20 @@ const PROP_TO_STAT: Record<string, string> = {
   'player_rebounds_assists': 'ra',
 };
 
-// Combo stat calculators
-function getStatValue(log: any, statKey: string): number | null {
+// MLB prop-to-stat mapping
+const MLB_PROP_TO_STAT: Record<string, string> = {
+  'batter_hits': 'hits',
+  'batter_rbis': 'rbis',
+  'batter_runs_scored': 'runs',
+  'batter_total_bases': 'total_bases',
+  'batter_home_runs': 'home_runs',
+  'batter_stolen_bases': 'stolen_bases',
+  'pitcher_strikeouts': 'pitcher_strikeouts',
+  'pitcher_outs': 'pitcher_outs',
+};
+
+// NBA combo stat calculators
+function getNbaStatValue(log: any, statKey: string): number | null {
   switch (statKey) {
     case 'pra': return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
     case 'pr': return (log.points || 0) + (log.rebounds || 0);
@@ -30,6 +42,10 @@ function getStatValue(log: any, statKey: string): number | null {
     case 'ra': return (log.rebounds || 0) + (log.assists || 0);
     default: return log[statKey] ?? null;
   }
+}
+
+function getMlbStatValue(log: any, statKey: string): number | null {
+  return log[statKey] ?? null;
 }
 
 function calcAvg(values: number[]): number {
@@ -62,6 +78,38 @@ function calcShootingContext(logs: any[]): Record<string, number | null> {
   };
 }
 
+function calcBaseballContext(logs: any[]): Record<string, number | null> {
+  let totalHits = 0, totalAB = 0, totalWalks = 0, totalTB = 0;
+  let totalRBIs = 0, totalRuns = 0, totalHR = 0, totalSB = 0;
+  for (const log of logs) {
+    totalHits += log.hits || 0;
+    totalAB += log.at_bats || 0;
+    totalWalks += log.walks || 0;
+    totalTB += log.total_bases || 0;
+    totalRBIs += log.rbis || 0;
+    totalRuns += log.runs || 0;
+    totalHR += log.home_runs || 0;
+    totalSB += log.stolen_bases || 0;
+  }
+  const avg = totalAB > 0 ? totalHits / totalAB : null;
+  const obp = (totalAB + totalWalks) > 0 ? (totalHits + totalWalks) / (totalAB + totalWalks) : null;
+  const slg = totalAB > 0 ? totalTB / totalAB : null;
+  const ops = (obp !== null && slg !== null) ? obp + slg : null;
+  const n = logs.length || 1;
+  return {
+    avg: avg !== null ? Math.round(avg * 1000) / 1000 : null,
+    obp: obp !== null ? Math.round(obp * 1000) / 1000 : null,
+    slg: slg !== null ? Math.round(slg * 1000) / 1000 : null,
+    ops: ops !== null ? Math.round(ops * 1000) / 1000 : null,
+    avg_hits: Math.round((totalHits / n) * 10) / 10,
+    avg_rbis: Math.round((totalRBIs / n) * 10) / 10,
+    avg_total_bases: Math.round((totalTB / n) * 10) / 10,
+    avg_runs: Math.round((totalRuns / n) * 10) / 10,
+    avg_hr: Math.round((totalHR / n) * 10) / 10,
+    avg_sb: Math.round((totalSB / n) * 10) / 10,
+  };
+}
+
 function getConfidenceTier(edgePct: number, gamesPlayed: number): string {
   const absEdge = Math.abs(edgePct);
   if (gamesPlayed < 5) return 'LOW';
@@ -82,7 +130,6 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    // Get today's date in Eastern
     const now = new Date();
     const formatter = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -91,8 +138,11 @@ serve(async (req) => {
 
     console.log(`[Mispriced] Starting analysis for ${today}`);
 
-    // Step 1: Pull all active NBA props for today
-    const { data: props, error: propsError } = await supabase
+    const mispricedResults: any[] = [];
+    const processedKeys = new Set<string>();
+
+    // ==================== NBA ANALYSIS ====================
+    const { data: nbaProps, error: nbaPropsError } = await supabase
       .from('unified_props')
       .select('player_name, prop_type, current_line, bookmaker, commence_time')
       .eq('sport', 'basketball_nba')
@@ -100,128 +150,197 @@ serve(async (req) => {
       .not('player_name', 'is', null)
       .not('current_line', 'is', null);
 
-    if (propsError) throw new Error(`Props fetch error: ${propsError.message}`);
-    if (!props || props.length === 0) {
-      return new Response(JSON.stringify({ success: true, message: 'No active NBA props found', mispriced: 0 }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    if (nbaPropsError) throw new Error(`NBA props fetch error: ${nbaPropsError.message}`);
 
-    console.log(`[Mispriced] Found ${props.length} active NBA props`);
+    console.log(`[Mispriced] Found ${nbaProps?.length || 0} active NBA props`);
 
-    // Step 2: Get unique player names
-    const uniquePlayers = [...new Set(props.map(p => p.player_name).filter(Boolean))];
-    console.log(`[Mispriced] ${uniquePlayers.length} unique players`);
+    if (nbaProps && nbaProps.length > 0) {
+      const uniqueNbaPlayers = [...new Set(nbaProps.map(p => p.player_name).filter(Boolean))];
+      const nbaPlayerLogs: Record<string, any[]> = {};
 
-    // Step 3: Fetch game logs for all players (last 20 games)
-    const playerLogs: Record<string, any[]> = {};
-    
-    // Batch fetch in chunks of 20 players
-    for (let i = 0; i < uniquePlayers.length; i += 20) {
-      const batch = uniquePlayers.slice(i, i + 20);
-      const { data: logs } = await supabase
-        .from('nba_player_game_logs')
-        .select('*')
-        .in('player_name', batch)
-        .order('game_date', { ascending: false })
-        .limit(400); // ~20 games per player
+      for (let i = 0; i < uniqueNbaPlayers.length; i += 20) {
+        const batch = uniqueNbaPlayers.slice(i, i + 20);
+        const { data: logs } = await supabase
+          .from('nba_player_game_logs')
+          .select('*')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false })
+          .limit(400);
 
-      for (const log of logs || []) {
-        if (!playerLogs[log.player_name]) playerLogs[log.player_name] = [];
-        if (playerLogs[log.player_name].length < 20) {
-          playerLogs[log.player_name].push(log);
+        for (const log of logs || []) {
+          if (!nbaPlayerLogs[log.player_name]) nbaPlayerLogs[log.player_name] = [];
+          if (nbaPlayerLogs[log.player_name].length < 20) {
+            nbaPlayerLogs[log.player_name].push(log);
+          }
         }
+      }
+
+      for (const prop of nbaProps) {
+        if (!prop.player_name || !prop.current_line || !prop.prop_type) continue;
+        const statKey = NBA_PROP_TO_STAT[prop.prop_type];
+        if (!statKey) continue;
+
+        const dedupKey = `nba_${prop.player_name}_${prop.prop_type}`;
+        if (processedKeys.has(dedupKey)) continue;
+        processedKeys.add(dedupKey);
+
+        const logs = nbaPlayerLogs[prop.player_name];
+        if (!logs || logs.length < 3) continue;
+
+        const l10Logs = logs.slice(0, Math.min(10, logs.length));
+        const l20Logs = logs.slice(0, Math.min(20, logs.length));
+        const l5Logs = logs.slice(0, Math.min(5, logs.length));
+
+        const l10Values = l10Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
+        const l20Values = l20Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
+        const l5Values = l5Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
+
+        if (l10Values.length < 3) continue;
+
+        const avgL10 = calcAvg(l10Values);
+        const avgL20 = calcAvg(l20Values);
+        const avgL5 = calcAvg(l5Values);
+        const line = Number(prop.current_line);
+        if (line === 0) continue;
+
+        const edgePct = ((avgL10 - line) / line) * 100;
+        const trendEdge = ((avgL5 - avgL20) / (avgL20 || 1)) * 100;
+        if (Math.abs(edgePct) < 15) continue;
+
+        const signal = edgePct > 0 ? 'OVER' : 'UNDER';
+        const shootingContext = calcShootingContext(l20Logs);
+        const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
+
+        mispricedResults.push({
+          player_name: prop.player_name,
+          prop_type: prop.prop_type,
+          book_line: line,
+          player_avg_l10: Math.round(avgL10 * 100) / 100,
+          player_avg_l20: Math.round(avgL20 * 100) / 100,
+          edge_pct: Math.round(edgePct * 100) / 100,
+          signal,
+          shooting_context: {
+            ...shootingContext,
+            l5_avg: Math.round(avgL5 * 10) / 10,
+            l10_avg: Math.round(avgL10 * 10) / 10,
+            l20_avg: Math.round(avgL20 * 10) / 10,
+            trend_pct: Math.round(trendEdge * 10) / 10,
+            games_analyzed: l20Values.length,
+          },
+          confidence_tier: confidenceTier,
+          analysis_date: today,
+          sport: 'basketball_nba',
+        });
       }
     }
 
-    // Step 4: Analyze each prop
-    const mispricedResults: any[] = [];
-    const processedKeys = new Set<string>();
+    console.log(`[Mispriced] NBA: ${mispricedResults.filter(r => r.sport === 'basketball_nba').length} mispriced`);
 
-    for (const prop of props) {
-      if (!prop.player_name || !prop.current_line || !prop.prop_type) continue;
+    // ==================== MLB ANALYSIS ====================
+    const { data: mlbProps, error: mlbPropsError } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, current_line, bookmaker, commence_time')
+      .eq('sport', 'baseball_mlb')
+      .gt('commence_time', now.toISOString())
+      .not('player_name', 'is', null)
+      .not('current_line', 'is', null);
 
-      const statKey = PROP_TO_STAT[prop.prop_type];
-      if (!statKey) continue;
+    if (mlbPropsError) throw new Error(`MLB props fetch error: ${mlbPropsError.message}`);
 
-      // Dedup by player+prop_type per day
-      const dedupKey = `${prop.player_name}_${prop.prop_type}`;
-      if (processedKeys.has(dedupKey)) continue;
-      processedKeys.add(dedupKey);
+    console.log(`[Mispriced] Found ${mlbProps?.length || 0} active MLB props`);
 
-      const logs = playerLogs[prop.player_name];
-      if (!logs || logs.length < 3) continue;
+    if (mlbProps && mlbProps.length > 0) {
+      const uniqueMlbPlayers = [...new Set(mlbProps.map(p => p.player_name).filter(Boolean))];
+      const mlbPlayerLogs: Record<string, any[]> = {};
 
-      // Calculate L10 and L20 averages
-      const l10Logs = logs.slice(0, Math.min(10, logs.length));
-      const l20Logs = logs.slice(0, Math.min(20, logs.length));
-      const l5Logs = logs.slice(0, Math.min(5, logs.length));
+      // Fetch ALL available logs (full 2024 season) — no L20 cap for MLB
+      for (let i = 0; i < uniqueMlbPlayers.length; i += 20) {
+        const batch = uniqueMlbPlayers.slice(i, i + 20);
+        const { data: logs } = await supabase
+          .from('mlb_player_game_logs')
+          .select('*')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false })
+          .limit(1000); // full season ~150 games max per player
 
-      const l10Values = l10Logs.map(l => getStatValue(l, statKey)).filter((v): v is number => v !== null);
-      const l20Values = l20Logs.map(l => getStatValue(l, statKey)).filter((v): v is number => v !== null);
-      const l5Values = l5Logs.map(l => getStatValue(l, statKey)).filter((v): v is number => v !== null);
+        for (const log of logs || []) {
+          if (!mlbPlayerLogs[log.player_name]) mlbPlayerLogs[log.player_name] = [];
+          mlbPlayerLogs[log.player_name].push(log);
+        }
+      }
 
-      if (l10Values.length < 3) continue;
+      for (const prop of mlbProps) {
+        if (!prop.player_name || !prop.current_line || !prop.prop_type) continue;
+        const statKey = MLB_PROP_TO_STAT[prop.prop_type];
+        if (!statKey) continue;
 
-      const avgL10 = calcAvg(l10Values);
-      const avgL20 = calcAvg(l20Values);
-      const avgL5 = calcAvg(l5Values);
-      const line = Number(prop.current_line);
+        const dedupKey = `mlb_${prop.player_name}_${prop.prop_type}`;
+        if (processedKeys.has(dedupKey)) continue;
+        processedKeys.add(dedupKey);
 
-      if (line === 0) continue;
+        const allLogs = mlbPlayerLogs[prop.player_name];
+        if (!allLogs || allLogs.length < 10) continue; // need decent sample for baseball
 
-      // Edge calculation
-      const edgePct = ((avgL10 - line) / line) * 100;
-      const trendEdge = ((avgL5 - avgL20) / (avgL20 || 1)) * 100;
+        const l20Logs = allLogs.slice(0, Math.min(20, allLogs.length));
+        const seasonLogs = allLogs; // full 2024 season
 
-      // Only flag significant edges (±15%)
-      if (Math.abs(edgePct) < 15) continue;
+        const seasonValues = seasonLogs.map(l => getMlbStatValue(l, statKey)).filter((v): v is number => v !== null);
+        const l20Values = l20Logs.map(l => getMlbStatValue(l, statKey)).filter((v): v is number => v !== null);
 
-      const signal = edgePct > 0 ? 'OVER' : 'UNDER';
-      const shootingContext = calcShootingContext(l20Logs);
-      const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
+        if (seasonValues.length < 10) continue;
 
-      // Add trend data to shooting context
-      const fullContext = {
-        ...shootingContext,
-        l5_avg: Math.round(avgL5 * 10) / 10,
-        l10_avg: Math.round(avgL10 * 10) / 10,
-        l20_avg: Math.round(avgL20 * 10) / 10,
-        trend_pct: Math.round(trendEdge * 10) / 10,
-        games_analyzed: l20Values.length,
-      };
+        const avgSeason = calcAvg(seasonValues);
+        const avgL20 = calcAvg(l20Values);
+        const line = Number(prop.current_line);
+        if (line === 0) continue;
 
-      mispricedResults.push({
-        player_name: prop.player_name,
-        prop_type: prop.prop_type,
-        book_line: line,
-        player_avg_l10: Math.round(avgL10 * 100) / 100,
-        player_avg_l20: Math.round(avgL20 * 100) / 100,
-        edge_pct: Math.round(edgePct * 100) / 100,
-        signal,
-        shooting_context: fullContext,
-        confidence_tier: confidenceTier,
-        analysis_date: today,
-      });
+        // Use season avg as primary edge for MLB (larger sample = more stable)
+        const edgePct = ((avgSeason - line) / line) * 100;
+        const trendEdge = ((avgL20 - avgSeason) / (avgSeason || 1)) * 100;
+        if (Math.abs(edgePct) < 15) continue;
+
+        const signal = edgePct > 0 ? 'OVER' : 'UNDER';
+        const baseballContext = calcBaseballContext(seasonLogs);
+        const confidenceTier = getConfidenceTier(edgePct, seasonValues.length);
+
+        mispricedResults.push({
+          player_name: prop.player_name,
+          prop_type: prop.prop_type,
+          book_line: line,
+          player_avg_l10: Math.round(avgL20 * 100) / 100, // L20 for MLB (most recent from last year)
+          player_avg_l20: Math.round(avgSeason * 100) / 100, // season avg stored in l20 field
+          edge_pct: Math.round(edgePct * 100) / 100,
+          signal,
+          shooting_context: {
+            ...baseballContext,
+            l20_avg: Math.round(avgL20 * 10) / 10,
+            season_avg: Math.round(avgSeason * 10) / 10,
+            trend_pct: Math.round(trendEdge * 10) / 10,
+            games_analyzed: seasonValues.length,
+          },
+          confidence_tier: confidenceTier,
+          analysis_date: today,
+          sport: 'baseball_mlb',
+        });
+      }
     }
 
-    console.log(`[Mispriced] Found ${mispricedResults.length} mispriced lines`);
+    const nbaCount = mispricedResults.filter(r => r.sport === 'basketball_nba').length;
+    const mlbCount = mispricedResults.filter(r => r.sport === 'baseball_mlb').length;
+    console.log(`[Mispriced] MLB: ${mlbCount} mispriced | Total: ${mispricedResults.length}`);
 
-    // Step 5: Clear today's old results and insert new ones
+    // ==================== PERSIST RESULTS ====================
     if (mispricedResults.length > 0) {
-      await supabase
-        .from('mispriced_lines')
-        .delete()
-        .eq('analysis_date', today);
+      // Delete today's results for both sports
+      await supabase.from('mispriced_lines').delete().eq('analysis_date', today);
 
-      // Batch insert
       const chunkSize = 50;
       let inserted = 0;
       for (let i = 0; i < mispricedResults.length; i += chunkSize) {
         const chunk = mispricedResults.slice(i, i + chunkSize);
         const { error } = await supabase
           .from('mispriced_lines')
-          .upsert(chunk, { onConflict: 'player_name,prop_type,analysis_date' });
+          .upsert(chunk, { onConflict: 'player_name,prop_type,analysis_date,sport' });
 
         if (error) {
           console.error(`[Mispriced] Insert error:`, error.message);
@@ -234,7 +353,6 @@ serve(async (req) => {
 
     const duration = Date.now() - startTime;
 
-    // Log to cron history
     await supabase.from('cron_job_history').insert({
       job_name: 'detect-mispriced-lines',
       status: 'completed',
@@ -244,10 +362,21 @@ serve(async (req) => {
       result: {
         props_analyzed: processedKeys.size,
         mispriced_found: mispricedResults.length,
-        by_tier: {
-          ELITE: mispricedResults.filter(r => r.confidence_tier === 'ELITE').length,
-          HIGH: mispricedResults.filter(r => r.confidence_tier === 'HIGH').length,
-          MEDIUM: mispricedResults.filter(r => r.confidence_tier === 'MEDIUM').length,
+        nba: {
+          count: nbaCount,
+          by_tier: {
+            ELITE: mispricedResults.filter(r => r.sport === 'basketball_nba' && r.confidence_tier === 'ELITE').length,
+            HIGH: mispricedResults.filter(r => r.sport === 'basketball_nba' && r.confidence_tier === 'HIGH').length,
+            MEDIUM: mispricedResults.filter(r => r.sport === 'basketball_nba' && r.confidence_tier === 'MEDIUM').length,
+          },
+        },
+        mlb: {
+          count: mlbCount,
+          by_tier: {
+            ELITE: mispricedResults.filter(r => r.sport === 'baseball_mlb' && r.confidence_tier === 'ELITE').length,
+            HIGH: mispricedResults.filter(r => r.sport === 'baseball_mlb' && r.confidence_tier === 'HIGH').length,
+            MEDIUM: mispricedResults.filter(r => r.sport === 'baseball_mlb' && r.confidence_tier === 'MEDIUM').length,
+          },
         },
         by_signal: {
           OVER: mispricedResults.filter(r => r.signal === 'OVER').length,
@@ -261,6 +390,8 @@ serve(async (req) => {
       duration_ms: duration,
       props_analyzed: processedKeys.size,
       mispriced_found: mispricedResults.length,
+      nba_count: nbaCount,
+      mlb_count: mlbCount,
       results: mispricedResults,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
