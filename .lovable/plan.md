@@ -1,83 +1,63 @@
 
 
-## Add SportDevs as Alternative Table Tennis Data Source
+## Add Individual Leg Breakdown to Settlement Report
 
-### Why
-The Odds API returns 0 table tennis events most of the time because it only covers major ITTF/WTT tournaments. Daily leagues (Setka Cup, TT Cup, Moscow Liga Pro, TT Elite Series) — which run almost 24/7 — are not listed. SportDevs has a dedicated Table Tennis API that covers these daily leagues with matches, over/under odds, and real-time updates.
+### What This Does
+When parlays are settled, the system already determines which individual legs hit vs missed. This change will include that per-leg detail in the Telegram settlement report so you can see exactly what hit and what busted.
 
-### What Changes
+### Changes
 
-**1. Add SportDevs API Key**
+**1. Collect per-parlay leg results during settlement (bot-settle-and-learn)**
 
-You will need to sign up at sportdevs.com and get an API key for their Table Tennis subscription. The key will be stored securely as a backend secret (`SPORTDEVS_API_KEY`).
+After settling each parlay, build a summary array of settled parlays with their leg-level outcomes. This data gets passed to the Telegram notification alongside the existing aggregate stats.
 
-**2. New Edge Function: `sportdevs-tt-scraper`**
+Data structure sent to Telegram:
+- Each settled parlay includes: strategy name, tier, outcome (won/lost), odds, and a list of legs with player name, prop type, line, side, outcome (hit/miss), and actual value.
 
-A dedicated scraper that pulls table tennis matches and over/under odds from SportDevs and inserts them into the existing `game_bets` table (same format the scoring engine already reads).
+**2. Update the Telegram settlement message (bot-send-telegram)**
 
-Flow:
-- Fetch upcoming matches from `table-tennis.sportdevs.com/matches` (next 24 hours)
-- For each match, fetch over/under odds from `table-tennis.sportdevs.com/odds/over-under`
-- Also fetch full-time-results (moneyline) for context, though the scoring engine will only use the Over totals
-- Normalize and insert into `game_bets` with `sport = 'tennis_pingpong'` so the existing TT scoring model picks them up seamlessly
-- Also trigger `tt-stats-collector` to populate player stats for any new players found
+Enhance the `formatSettlement` function to include a leg-by-leg breakdown section at the bottom of the report. Format:
 
-**3. Wire Into Pipeline**
+```
+DAILY SETTLEMENT REPORT
+========================
+Date: Feb 19
+Result: 2/10 parlays hit (20%)
+P/L: -$450 (simulation)
+Bankroll: $1200 -> $750
 
-Add `sportdevs-tt-scraper` to the data pipeline orchestrator in the data collection phase (Phase 1). It runs alongside the existing `whale-odds-scraper` -- they complement each other (The Odds API covers major tournaments when active; SportDevs covers daily leagues).
+--- LEG BREAKDOWN ---
 
-**4. Update `whale-odds-scraper` (minor)**
+Parlay #1 (Execution) - LOST
+  [miss] Trae Young O25.5 PTS (actual: 22)
+  [hit]  Onyeka Okongwu O8.5 REB (actual: 11)
+  [miss] Risacher O3.5 REB (actual: 2)
 
-Add a log noting when SportDevs is the primary TT source, so the pipeline logs show which API provided TT data.
+Parlay #2 (Validation) - WON
+  [hit]  LeBron James O7.5 AST (actual: 9)
+  [hit]  Anthony Davis O10.5 REB (actual: 14)
+  [hit]  Austin Reaves O2.5 3PT (actual: 4)
 
-### How It Fits Together
-
-```text
-Pipeline Phase 1 (Data Collection)
-  |
-  +-- whale-odds-scraper (NBA, NHL, NCAAB, etc. + TT when available)
-  |
-  +-- sportdevs-tt-scraper (NEW -- daily TT leagues from SportDevs)
-  |       |
-  |       +-- Fetches matches -> inserts into game_bets as 'tennis_pingpong'
-  |       +-- Fetches over/under odds -> inserts total lines
-  |
-  +-- tt-stats-collector (populates tt_match_stats for scoring model)
-  |
-Pipeline Phase 3 (Generation)
-  |
-  +-- bot-generate-daily-parlays
-        |
-        +-- calculateTableTennisOverScore() reads game_bets + tt_match_stats
-        +-- Applies the formula: P(Over) >= 0.60 -> play Over
+--- TOP BUSTERS ---
+Risacher O3.5 REB: 0/3 parlays (actual: 2)
+Trae Young O25.5 PTS: 0/2 parlays (actual: 22)
 ```
 
-### Technical Details
+**3. Add "Top Busters" summary**
+
+Aggregate which individual legs appeared in the most losing parlays. This highlights the picks that caused the most damage across the slate — directly answering "what went wrong."
+
+### Files to Change
 
 | File | Change |
 |------|--------|
-| `supabase/functions/sportdevs-tt-scraper/index.ts` | New edge function: fetch TT matches + over/under odds from SportDevs API |
-| `supabase/functions/data-pipeline-orchestrator/index.ts` | Add `sportdevs-tt-scraper` call in Phase 1 |
-| `supabase/config.toml` | Add config entry for the new function |
+| `supabase/functions/bot-settle-and-learn/index.ts` | Build per-parlay leg result summaries and pass to Telegram notification data |
+| `supabase/functions/bot-send-telegram/index.ts` | Enhance `formatSettlement` to render leg-by-leg breakdown and "Top Busters" section |
 
-**SportDevs API Details:**
-- Base URL: `https://table-tennis.sportdevs.com`
-- Auth: `Authorization: Bearer {SPORTDEVS_API_KEY}`
-- Key endpoints:
-  - `GET /matches?start_time=gte.{today}&start_time=lt.{tomorrow}` -- upcoming matches
-  - `GET /odds/over-under?match_id=eq.{id}` -- over/under lines per match
-  - `GET /odds/full-time-results?match_id=eq.{id}` -- moneyline odds
-- Pagination: offset/limit (max 50 per request)
-- Update frequency: live matches every minute, pre-match every hour
+### Technical Details
 
-**Data Mapping (SportDevs to game_bets):**
-- `match.home_team.name` -> `home_team`
-- `match.away_team.name` -> `away_team`
-- `match.id` -> `game_id` (prefixed with `sd_` to avoid collisions)
-- `match.start_time` -> `commence_time`
-- Over/under odds -> `over_odds`, `under_odds`, `line`
-- `sport` = `'tennis_pingpong'`
-- `bookmaker` = bookmaker name from SportDevs odds response
-
-**Before implementation:** You will be asked to add your SportDevs API key as a secure backend secret.
+- In `bot-settle-and-learn`, after the parlay settlement loop (around line 766), collect an array of `settledParlayDetails` containing each parlay's legs with their outcomes. Cap at 15 parlays to avoid hitting Telegram's 4096-char message limit.
+- In `bot-send-telegram`, the `formatSettlement` function receives the new `parlayDetails` array in `data` and appends the breakdown. Uses `sendLongMessage` if the message exceeds 4096 chars.
+- "Top Busters" aggregates legs with `outcome === 'miss'` across all settled parlays, sorted by frequency, showing the top 5.
+- Legs show actual values when available (e.g., "actual: 22") so you can see how close or far off each pick was.
 
