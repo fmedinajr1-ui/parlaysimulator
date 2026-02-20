@@ -1,87 +1,105 @@
 
 
-## Fix Mispriced Lines & High Conviction Reports -- Add Expansion + Pagination Like /parlays
+## Pitcher Strikeout Props from PrizePicks + Historical Cross-Reference
 
-### Problem
+### Current Gaps
 
-The `/mispriced` and `/highconv` Telegram commands currently just trigger the edge function and dump a raw JSON summary. The detailed reports sent by `bot-send-telegram` are flat text walls with no interactive expansion -- unlike `/parlays` which has paginated display with full leg breakdowns.
+1. **PrizePicks scraper excludes MLB** -- the default sports array is `['NBA', 'NHL', 'WNBA', 'ATP', 'WTA']`, so no MLB props (including pitcher Ks) are ever scraped
+2. **Stat type mapping is wrong** -- PrizePicks "Strikeouts" maps to `player_strikeouts` (batter stat), not `pitcher_strikeouts` (the prop market key used everywhere else)
+3. **No pitcher game log data** -- the `mlb_player_game_logs` table has 24K rows but zero pitcher strikeout data (backfill only pulled batters)
+4. **No cross-reference logic** -- nothing compares PrizePicks pitcher K lines against historical L10/L20 averages
 
-### Solution
+### What We'll Build
 
-Create dedicated `handleMispriced` and `handleHighConv` command handlers in `telegram-webhook/index.ts` that query the database directly (like `handleParlays` does) and display results with:
-- Paginated lists (10 per page) with Prev/Next inline buttons
-- Grouped by tier (ELITE / HIGH / MEDIUM)
-- Each entry shows player, prop, edge, and engine agreement
-- Inline "Detail" buttons to expand individual plays with full breakdown
+**Phase 1: Add MLB to PrizePicks Scraper**
+- Add `'MLB'` to the default sports array in `pp-props-scraper`
+- Add pitcher-specific stat mappings: `'Pitcher Strikeouts' -> 'pitcher_strikeouts'`, `'Strikeouts (Pitching)' -> 'pitcher_strikeouts'`, `'Ks' -> 'pitcher_strikeouts'`
+- Context-aware mapping: when league is MLB and stat is "Strikeouts", check if player position contains "P" or "SP" to route to `pitcher_strikeouts` vs `batter_strikeouts`
 
-Also update `bot-send-telegram` report formatters to use tier-grouped sections with `+N more` cutoffs instead of dumping everything.
+**Phase 2: Backfill Pitcher Strikeout Data**
+- Update `mlb-data-ingestion` to accept a `pitchers_only` mode that specifically targets the pitching box score section
+- Run a 2024/2025 season backfill to populate `pitcher_strikeouts` for starting pitchers (~30 teams x 5 starters x 30 starts = ~4,500 pitcher game logs)
 
-### Changes
+**Phase 3: Cross-Reference Engine**
+- Create a new edge function `mlb-pitcher-k-analyzer` that:
+  1. Fetches today's pitcher K props from `pp_snapshot` (where `stat_type = 'pitcher_strikeouts'` and `sport = 'baseball_mlb'`)
+  2. Looks up each pitcher's L10 and L20 strikeout averages from `mlb_player_game_logs`
+  3. Computes edge percentage: `(l10_avg - pp_line) / pp_line * 100`
+  4. Writes results to `mispriced_lines` table with `confidence_tier` based on edge magnitude
+  5. Sends a formatted report via Telegram
+
+**Phase 4: Telegram Command**
+- Add `/pitcherk` command to `telegram-webhook` that triggers the analyzer and shows paginated results like the other commands
+
+### Technical Details
+
+**File: `supabase/functions/pp-props-scraper/index.ts`**
+
+- Line 186: Change default sports from `['NBA', 'NHL', 'WNBA', 'ATP', 'WTA']` to `['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB']`
+- Lines 98-124: Add to `STAT_TYPE_MAP`:
+```
+'Pitcher Strikeouts': 'pitcher_strikeouts',
+'Strikeouts (Pitching)': 'pitcher_strikeouts', 
+'Ks': 'pitcher_strikeouts',
+'Pitching Strikeouts': 'pitcher_strikeouts',
+'Earned Runs Allowed': 'pitcher_earned_runs',
+'Hits Allowed': 'pitcher_hits_allowed',
+'Outs': 'pitcher_outs',
+'Total Bases': 'batter_total_bases',
+'Home Runs': 'batter_home_runs',
+'Stolen Bases': 'batter_stolen_bases',
+```
+- In `processExtractedProjections`, add logic: if league is `'MLB'` and stat is `'Strikeouts'` (unmapped generic), default to `'pitcher_strikeouts'` since PrizePicks pitcher K props are the dominant strikeout market
+
+**File: `supabase/functions/mlb-data-ingestion/index.ts`**
+
+- Add `pitchers_only` flag to request body parsing
+- When `pitchers_only` is true, only parse the pitching section of ESPN box scores and skip batting lines
+- This allows targeted backfill without re-processing all 24K batter rows
+
+**New File: `supabase/functions/mlb-pitcher-k-analyzer/index.ts`**
+
+Core logic:
+1. Query `pp_snapshot` for today's `pitcher_strikeouts` props
+2. For each pitcher, query `mlb_player_game_logs` for their last 10 and 20 games where `pitcher_strikeouts IS NOT NULL`
+3. Calculate L10 avg, L20 avg, median, max, min, hit rate (games over the line)
+4. Compute edge: `((l10_avg - pp_line) / pp_line) * 100`
+5. Assign confidence tier:
+   - ELITE: abs(edge) >= 25% AND hit rate >= 70% (or <= 30% for unders)
+   - HIGH: abs(edge) >= 15% AND hit rate >= 60%
+   - MEDIUM: abs(edge) >= 8%
+6. Upsert into `mispriced_lines` with `sport = 'baseball_mlb'` and `prop_type = 'pitcher_strikeouts'`
+7. Send Telegram report with top plays grouped by tier
 
 **File: `supabase/functions/telegram-webhook/index.ts`**
 
-1. **New `handleMispriced(chatId, page)` function** (~60 lines)
-   - Queries `mispriced_lines` table for today's date
-   - Groups by confidence tier (ELITE, HIGH, MEDIUM)
-   - Shows 10 per page with formatted rows: `icon player -- prop side line | L10: avg | Edge: X%`
-   - Pagination buttons: `mispriced_page:N` callback data
-   - Summary header: total count, sport breakdown, over/under split
+- Add `/pitcherk` command that calls `handlePitcherK(chatId, page)` 
+- The handler queries `mispriced_lines` for today's `pitcher_strikeouts` entries
+- Paginated display (5 per page) showing: pitcher name, team, line, L10 avg, edge%, hit rate, tier
+- Prev/Next inline buttons with `pitcherk_page:N` callback data
 
-2. **New `handleHighConv(chatId, page)` function** (~60 lines)
-   - Queries `mispriced_lines` (ELITE/HIGH) cross-referenced with `nba_risk_engine_picks` (same approach as `useHighConvictionPlays` hook)
-   - Shows 5 per page with detailed rows: player, prop, edge, engines, conviction score
-   - Each play shows engine dots and side agreement status
-   - Pagination buttons: `highconv_page:N` callback data
+**File: `supabase/functions/data-pipeline-orchestrator/index.ts`**
 
-3. **Callback handler updates** in `handleCallbackQuery`
-   - Add `mispriced_page:N` handler to call `handleMispriced(chatId, page)`
-   - Add `highconv_page:N` handler to call `handleHighConv(chatId, page)`
+- Add `mlb-pitcher-k-analyzer` to Phase 2 (Analysis) after `high-conviction-analyzer`
+- Only runs during MLB season (April-October)
 
-4. **Update command routing**
-   - `/mispriced` calls `handleMispriced(chatId, 1)` instead of `handleTriggerFunction`
-   - `/highconv` calls `handleHighConv(chatId, 1)` instead of `handleTriggerFunction`
-   - Add `/runmispriced` as a new command that triggers the actual edge function (the old behavior)
+### Execution Order
 
-### Display Format (Mispriced Example)
+1. Modify `pp-props-scraper` (add MLB + pitcher stat mappings)
+2. Modify `mlb-data-ingestion` (add pitchers_only backfill mode)
+3. Create `mlb-pitcher-k-analyzer` (cross-reference engine)
+4. Modify `telegram-webhook` (add /pitcherk command)
+5. Modify `data-pipeline-orchestrator` (add to Phase 2)
+6. Deploy all functions
+7. Run pitcher backfill: invoke `mlb-data-ingestion` with `{ "pitchers_only": true, "days_back": 365 }`
 
-```text
-MISPRICED LINES -- Feb 20
-Showing 1-10 of 157 lines
-NBA: 120 | MLB: 37 | OVER: 45 | UNDER: 112
-
-ELITE EDGES:
-
-1. Isaiah Collier -- 3PT U 0.5
-   L10: 0.4 | Edge: -20%
-2. Ryan Kalkbrenner -- PA U 9.5
-   L10: 7.0 | Edge: -26%
-...
-
-[< Prev 10] [Next 10 >]
-```
-
-### Display Format (High Conviction Example)
-
-```text
-HIGH CONVICTION PLAYS -- Feb 20
-Showing 1-5 of 17 overlaps
-All Agree: 17 | Engines: risk, propv2
-
-1. Ryan Kalkbrenner -- PA U 9.5
-   Edge: -26% (HIGH)
-   risk agree UNDER | Score: 11.7/30
-
-2. Jaylen Wells -- PA U 18.5
-   Edge: -26% (HIGH)
-   risk agree UNDER | Score: 11.7/30
-...
-
-[< Prev 5] [Next 5 >]
-```
-
-### Files
+### Files Changed
 
 | Action | File |
 |--------|------|
-| Modify | `supabase/functions/telegram-webhook/index.ts` (add 2 handlers + callback routing + update commands) |
+| Modify | `supabase/functions/pp-props-scraper/index.ts` |
+| Modify | `supabase/functions/mlb-data-ingestion/index.ts` |
+| Create | `supabase/functions/mlb-pitcher-k-analyzer/index.ts` |
+| Modify | `supabase/functions/telegram-webhook/index.ts` |
+| Modify | `supabase/functions/data-pipeline-orchestrator/index.ts` |
 
