@@ -476,6 +476,216 @@ interface DefenseData { overall_rank: number; }
 interface GameEnvData { vegas_total: number; vegas_spread: number; shootout_factor: number; grind_factor: number; blowout_probability: number; }
 interface HomeCourtData { home_win_rate: number; home_cover_rate: number; home_over_rate: number; }
 
+// ============= GAME CONTEXT FOR INTELLIGENT STACKING =============
+
+interface PickGameContext {
+  pace: 'fast' | 'neutral' | 'slow';
+  defenseStrength: 'soft' | 'neutral' | 'tough';
+  vegasTotal: number | null;
+  blowoutRisk: boolean;
+  gameKey: string; // "team1__team2" for same-game detection
+  opponentAbbrev: string | null;
+}
+
+function classifyPace(paceRating: number, sport: string): 'fast' | 'neutral' | 'slow' {
+  if (sport.includes('nba') || sport.includes('wnba')) {
+    if (paceRating >= 101) return 'fast';
+    if (paceRating <= 97) return 'slow';
+  }
+  return 'neutral';
+}
+
+function classifyDefense(rank: number): 'soft' | 'neutral' | 'tough' {
+  if (rank <= 10) return 'tough';
+  if (rank >= 20) return 'soft';
+  return 'neutral';
+}
+
+// Build a map: teamAbbrev → { opponentAbbrev, gameKey, vegasTotal, blowoutProb }
+function buildTeamGameContextMap(
+  envMap: Map<string, GameEnvData>,
+  paceMap: Map<string, PaceData>,
+  defenseMap: Map<string, number>,
+  nameToAbbrev: Map<string, string>
+): Map<string, PickGameContext> {
+  const contextMap = new Map<string, PickGameContext>();
+
+  for (const [key, env] of envMap.entries()) {
+    const [homeAbbrev, awayAbbrev] = key.split('_');
+    if (!homeAbbrev || !awayAbbrev) continue;
+
+    const homePace = paceMap.get(homeAbbrev);
+    const awayPace = paceMap.get(awayAbbrev);
+    const avgPace = (homePace && awayPace) ? (homePace.pace_rating + awayPace.pace_rating) / 2 : 99;
+
+    const gameKey = [homeAbbrev, awayAbbrev].sort().join('__').toLowerCase();
+
+    // Home team context: opponent defense = away team's defense rank
+    const awayDefRank = defenseMap.get(awayAbbrev) ?? 15;
+    contextMap.set(homeAbbrev, {
+      pace: classifyPace(avgPace, 'basketball_nba'),
+      defenseStrength: classifyDefense(awayDefRank),
+      vegasTotal: env.vegas_total,
+      blowoutRisk: env.blowout_probability > 0.3,
+      gameKey,
+      opponentAbbrev: awayAbbrev,
+    });
+
+    // Away team context: opponent defense = home team's defense rank
+    const homeDefRank = defenseMap.get(homeAbbrev) ?? 15;
+    contextMap.set(awayAbbrev, {
+      pace: classifyPace(avgPace, 'basketball_nba'),
+      defenseStrength: classifyDefense(homeDefRank),
+      vegasTotal: env.vegas_total,
+      blowoutRisk: env.blowout_probability > 0.3,
+      gameKey,
+      opponentAbbrev: homeAbbrev,
+    });
+  }
+
+  return contextMap;
+}
+
+// Anti-correlation: detect contradictory legs within a parlay
+function hasAntiCorrelation(newPick: any, existingLegs: any[]): { blocked: boolean; reason: string } {
+  const newTeam = (newPick.team_name || '').toLowerCase();
+  const newSide = (newPick.recommended_side || newPick.side || '').toLowerCase();
+  const newPropType = newPick.prop_type || newPick.bet_type || '';
+  const isNewPlayerProp = !!newPick.player_name;
+
+  for (const leg of existingLegs) {
+    const legTeam = (leg.team_name || '').toLowerCase();
+    const legSide = (leg.side || leg.recommended_side || '').toLowerCase();
+    const legBetType = leg.bet_type || leg.prop_type || '';
+    const isLegTeamBet = leg.type === 'team';
+    const isLegPlayerProp = !!leg.player_name;
+
+    // Rule 1: Player OVER + same team UNDER total = contradiction
+    if (newTeam && legTeam && newTeam === legTeam) {
+      if (isNewPlayerProp && newSide === 'over' && isLegTeamBet && legBetType === 'total' && legSide === 'under') {
+        return { blocked: true, reason: `${newPick.player_name} OVER conflicts with ${legTeam} UNDER total` };
+      }
+      if (isLegPlayerProp && legSide === 'over' && !isNewPlayerProp && newPropType === 'total' && newSide === 'under') {
+        return { blocked: true, reason: `UNDER total conflicts with ${leg.player_name} OVER on same team` };
+      }
+    }
+
+    // Rule 2: Two player props on SAME player, SAME stat, OPPOSITE sides
+    if (newPick.player_name && leg.player_name &&
+        newPick.player_name.toLowerCase() === leg.player_name.toLowerCase() &&
+        normalizePropTypeCategory(newPropType) === normalizePropTypeCategory(legBetType) &&
+        newSide !== legSide) {
+      return { blocked: true, reason: `Mirror: ${newPick.player_name} ${newSide} vs ${legSide} ${newPropType}` };
+    }
+
+    // Rule 3: Opponent player OVER + team UNDER total
+    // If we have a team UNDER total for Game X, and we're adding a player OVER from the OTHER team in Game X
+    if (isLegTeamBet && legBetType === 'total' && legSide === 'under' && isNewPlayerProp && newSide === 'over') {
+      const legHomeTeam = (leg.home_team || '').toLowerCase();
+      const legAwayTeam = (leg.away_team || '').toLowerCase();
+      if (newTeam === legHomeTeam || newTeam === legAwayTeam) {
+        return { blocked: true, reason: `${newPick.player_name} OVER conflicts with game UNDER total` };
+      }
+    }
+    // Reverse: adding team UNDER total when player OVER from same game exists
+    if (!isNewPlayerProp && newPropType === 'total' && newSide === 'under' && isLegPlayerProp && legSide === 'over') {
+      const newHomeTeam = (newPick.home_team || '').toLowerCase();
+      const newAwayTeam = (newPick.away_team || '').toLowerCase();
+      if (legTeam === newHomeTeam || legTeam === newAwayTeam) {
+        return { blocked: true, reason: `Game UNDER total conflicts with ${leg.player_name} OVER` };
+      }
+    }
+  }
+  return { blocked: false, reason: '' };
+}
+
+// Coherence scoring: how well do the legs fit together based on game environment?
+function calculateParlayCoherence(legs: any[]): number {
+  if (legs.length < 2) return 100;
+
+  let coherenceScore = 100;
+  const overLegs = legs.filter(l => (l.side || l.recommended_side) === 'over' && l.player_name);
+  const underLegs = legs.filter(l => (l.side || l.recommended_side) === 'under' && l.player_name);
+
+  // Game environment alignment bonuses/penalties
+  for (const leg of overLegs) {
+    const ctx = leg._gameContext as PickGameContext | undefined;
+    if (!ctx) continue;
+    if (ctx.pace === 'fast') coherenceScore += 3;
+    if (ctx.pace === 'slow') coherenceScore -= 5;
+    if (ctx.defenseStrength === 'soft') coherenceScore += 3;
+    if (ctx.defenseStrength === 'tough') coherenceScore -= 5;
+  }
+  for (const leg of underLegs) {
+    const ctx = leg._gameContext as PickGameContext | undefined;
+    if (!ctx) continue;
+    if (ctx.pace === 'slow') coherenceScore += 3;
+    if (ctx.pace === 'fast') coherenceScore -= 4;
+    if (ctx.defenseStrength === 'tough') coherenceScore += 3;
+    if (ctx.defenseStrength === 'soft') coherenceScore -= 3;
+  }
+
+  // Positive correlation bonus: player OVER + same team ML/spread = correlated upside
+  for (let i = 0; i < legs.length; i++) {
+    for (let j = i + 1; j < legs.length; j++) {
+      const a = legs[i];
+      const b = legs[j];
+      const aTeam = (a.team_name || a.home_team || '').toLowerCase();
+      const bTeam = (b.team_name || b.home_team || '').toLowerCase();
+      if (!aTeam || !bTeam || aTeam !== bTeam) continue;
+
+      const aIsPlayer = !!a.player_name;
+      const bIsPlayer = !!b.player_name;
+      const aIsTeamML = a.type === 'team' && a.bet_type === 'moneyline';
+      const bIsTeamML = b.type === 'team' && b.bet_type === 'moneyline';
+      const aSide = (a.side || a.recommended_side || '').toLowerCase();
+      const bSide = (b.side || b.recommended_side || '').toLowerCase();
+
+      // Player OVER points/assists + same team ML = positive correlation (+5)
+      if ((aIsPlayer && aSide === 'over' && bIsTeamML) ||
+          (bIsPlayer && bSide === 'over' && aIsTeamML)) {
+        coherenceScore += 5;
+      }
+    }
+  }
+
+  return Math.max(0, Math.min(130, coherenceScore));
+}
+
+// Calculate coherence bonus for a candidate pick relative to already-selected legs
+function pickCoherenceBonus(pick: any, existingLegs: any[]): number {
+  if (existingLegs.length === 0) return 0;
+
+  let bonus = 0;
+  const pickSide = (pick.recommended_side || pick.side || '').toLowerCase();
+  const pickCtx = pick._gameContext as PickGameContext | undefined;
+  const isPlayerPick = !!pick.player_name;
+
+  if (!pickCtx || !isPlayerPick) return 0;
+
+  // Check alignment with existing legs' game environments
+  for (const leg of existingLegs) {
+    const legCtx = leg._gameContext as PickGameContext | undefined;
+    if (!legCtx) continue;
+    const legSide = (leg.side || leg.recommended_side || '').toLowerCase();
+
+    // Both overs in fast-pace games = synergy
+    if (pickSide === 'over' && legSide === 'over' && pickCtx.pace === 'fast' && legCtx.pace === 'fast') {
+      bonus += 2;
+    }
+    // Both unders in slow-pace / tough-defense games = synergy
+    if (pickSide === 'under' && legSide === 'under' && pickCtx.pace === 'slow' && legCtx.pace === 'slow') {
+      bonus += 2;
+    }
+    // Over in slow-pace game mixed with under in fast-pace game = incoherent
+    if (pickSide === 'over' && pickCtx.pace === 'slow' && legSide === 'under' && legCtx.pace === 'fast') {
+      bonus -= 2;
+    }
+  }
+
+  return bonus;
+}
+
 // NCAAB team intelligence data
 interface NcaabTeamStats {
   team_name: string;
@@ -2762,6 +2972,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${nhlStatsMap.size} NHL teams, ${baseballStatsMap.size} baseball teams`);
 
+  // === BUILD TEAM GAME CONTEXT MAP FOR INTELLIGENT STACKING ===
+  const teamGameContextMap = buildTeamGameContextMap(envMap, paceMap, defenseMap, nameToAbbrev);
+  console.log(`[Bot] Built game context map for ${teamGameContextMap.size} teams (stacking intelligence)`);
+
   console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${baseballTeamsSet.size} baseball teams`);
 
   // Deduplicate game_bets by home_team + away_team + bet_type (prefer FanDuel > DraftKings > others)
@@ -2867,6 +3081,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const resolvedTeamName = (pick as any).team_name || 
       playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
 
+    // Attach game context for stacking intelligence
+    const teamAbbrev = nameToAbbrev.get(resolvedTeamName) || nameToAbbrev.get(resolvedTeamName.toLowerCase()) || '';
+    const gameCtx = teamAbbrev ? teamGameContextMap.get(teamAbbrev) : undefined;
+
     return {
       ...pick,
       line,
@@ -2878,6 +3096,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       line_source: hasRealLine ? 'verified' : 'projected',
       sport: pick.sport || 'basketball_nba',
       team_name: resolvedTeamName,
+      _gameContext: gameCtx || null,
     };
   }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category) && p.has_real_line);
 
@@ -3932,11 +4151,33 @@ async function generateTierParlays(
       ? Math.min(profile.legs, 3) 
       : profile.legs;
 
-    for (const pick of candidatePicks) {
-      if (legs.length >= effectiveMaxLegs) break;
+    // === COHERENCE-AWARE SELECTION: re-rank candidates after each leg ===
+    let remainingCandidates = [...candidatePicks];
+    
+    while (legs.length < effectiveMaxLegs && remainingCandidates.length > 0) {
+      // After the first leg, re-sort remaining candidates by coherence bonus
+      if (legs.length > 0) {
+        remainingCandidates.sort((a, b) => {
+          const aBonus = pickCoherenceBonus(a, legs);
+          const bBonus = pickCoherenceBonus(b, legs);
+          // Primary: coherence-adjusted composite score
+          return ((b.compositeScore || 0) + bBonus * 3) - ((a.compositeScore || 0) + aBonus * 3);
+        });
+      }
+      
+      let pickedOne = false;
+      for (let ci = 0; ci < remainingCandidates.length; ci++) {
+        const pick = remainingCandidates[ci];
       
       if (!canUsePickGlobally(pick, tracker, config)) continue;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs)) continue;
+      
+      // === ANTI-CORRELATION BLOCKING: prevent contradictory legs ===
+      const antiCorr = hasAntiCorrelation(pick, legs);
+      if (antiCorr.blocked) {
+        console.log(`[AntiCorr] Blocked: ${antiCorr.reason}`);
+        continue;
+      }
       
       // Pattern replay: anti-stacking (e.g., max 2 OVER totals per parlay)
       const pickBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
@@ -4163,6 +4404,14 @@ async function generateTierParlays(
       const legSide = pick.recommended_side || '';
       const legSideKey = `${legBetType}_${legSide}`.toLowerCase();
       parlaySideCount.set(legSideKey, (parlaySideCount.get(legSideKey) || 0) + 1);
+      
+      // Remove picked candidate and break inner loop to re-sort remaining
+      remainingCandidates.splice(ci, 1);
+      pickedOne = true;
+      break;
+      }
+      // If no candidate was picked in this pass, stop (all remaining are blocked)
+      if (!pickedOne) break;
     }
 
     // Only create parlay if we have enough legs
@@ -4344,6 +4593,17 @@ async function generateTierParlays(
       const scoreFloor = parlayScoreFloor(tier);
       if (adjustedAvgScore < scoreFloor) {
         if (tier === 'execution') console.log(`[ParlayFloor] Rejected ${tier}/${profile.strategy} parlay (avg score ${adjustedAvgScore.toFixed(1)} < ${scoreFloor} floor)`);
+        continue;
+      }
+
+      // === COHERENCE GATE: reject incoherent leg combinations ===
+      const coherence = calculateParlayCoherence(legs);
+      if (coherence < 85 && tier === 'execution') {
+        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 85)`);
+        continue;
+      }
+      if (coherence < 75) {
+        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 75)`);
         continue;
       }
 
@@ -4735,6 +4995,13 @@ function generateMonsterParlays(
 
       if (isMirrorPick(selected, pick)) continue;
       if (hasCorrelation(selected, pick)) continue;
+
+      // ANTI-CORRELATION BLOCKING (monster parlays)
+      const monsterAntiCorr = hasAntiCorrelation(pick, selected);
+      if (monsterAntiCorr.blocked) {
+        console.log(`[Monster AntiCorr] ${monsterAntiCorr.reason}`);
+        continue;
+      }
 
       // PROP TYPE CONCENTRATION CAP (40% max)
       const pickPropType = normalizePropTypeCategory(pick.prop_type || pick.bet_type || '');
