@@ -396,6 +396,21 @@ serve(async (req) => {
       } catch (teleErr) {
         console.error(`[Mispriced] Telegram trigger failed:`, teleErr);
       }
+
+      // Trigger high conviction analyzer for cross-engine overlaps
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/high-conviction-analyzer`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        });
+        console.log(`[Mispriced] High conviction analyzer triggered`);
+      } catch (hcErr) {
+        console.error(`[Mispriced] High conviction analyzer failed:`, hcErr);
+      }
     }
 
     const duration = Date.now() - startTime;
