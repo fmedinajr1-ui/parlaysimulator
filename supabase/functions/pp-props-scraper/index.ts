@@ -87,6 +87,7 @@ const LEAGUE_TO_SPORT: Record<string, string> = {
   'NHL': 'hockey_nhl',
   'NFL': 'americanfootball_nfl',
   'MLB': 'baseball_mlb',
+  'MLBST': 'baseball_mlb',   // MLB Spring Training
   'ATP': 'tennis_atp',
   'WTA': 'tennis_wta',
   'PGA': 'golf_pga',
@@ -148,8 +149,11 @@ function processExtractedProjections(
     const league = proj.league?.toUpperCase() || 'NBA';
     const sport = LEAGUE_TO_SPORT[league] || 'basketball_nba';
     
-    // Filter by target sports
-    if (!targetSports.some(s => league.includes(s))) continue;
+    console.log(`[PP Scraper] Projection: ${proj.player_name} | league="${proj.league}" → "${league}" | sport="${sport}" | stat="${proj.stat_type}" | line=${proj.line}`);
+    
+    // Filter by target sports - match on league code OR resolved sport key
+    const targetSportKeys = targetSports.map(s => LEAGUE_TO_SPORT[s] || s);
+    if (!targetSports.some(s => league.includes(s)) && !targetSportKeys.includes(sport)) continue;
     
     // Normalize stat type — context-aware for MLB
     let normalizedStat = STAT_TYPE_MAP[proj.stat_type] || 
@@ -157,7 +161,7 @@ function processExtractedProjections(
     
     // MLB context: generic "Strikeouts" defaults to pitcher_strikeouts
     // since pitcher K props are the dominant strikeout market on PrizePicks
-    if (league === 'MLB' && proj.stat_type === 'Strikeouts') {
+    if ((league === 'MLB' || league === 'MLBST') && proj.stat_type === 'Strikeouts') {
       normalizedStat = 'pitcher_strikeouts';
     }
     
@@ -201,7 +205,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB'] } = await req.json().catch(() => ({}));
+    const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB', 'MLBST'] } = await req.json().catch(() => ({}));
     
     console.log('[PP Scraper] Starting PrizePicks scrape for sports:', sports);
     
@@ -213,10 +217,13 @@ serve(async (req) => {
       );
     }
 
-// PrizePicks board URL
-    const ppBoardUrl = 'https://app.prizepicks.com';
+// PrizePicks board URL - use league-specific URL if targeting a single sport
+    const mlbRequested = sports.includes('MLBST') || sports.includes('MLB');
+    const ppBoardUrl = mlbRequested 
+      ? 'https://app.prizepicks.com/board?sport=MLBST'
+      : 'https://app.prizepicks.com';
     
-    console.log('[PP Scraper] Fetching PrizePicks board via Firecrawl with scroll actions...');
+    console.log('[PP Scraper] Using URL:', ppBoardUrl);
     
     // Scroll actions to load more content in the SPA
     const SCROLL_ACTIONS = [
