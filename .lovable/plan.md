@@ -1,67 +1,80 @@
 
 
-## Returning-Hitter Confidence Boost (+0.05)
+## Problem: Wemby Data Bug + Daily Winners Showcase
 
-### What it does
-After the pick pool is fully built (filtered, penalized, defense-adjusted), query yesterday's settled parlay legs to identify players who **hit** their prop. Any pick in today's pool whose player hit yesterday gets a +0.05 boost to `confidence_score` and `l10_hit_rate`, capped at 1.0.
+### 1. Bug Found: NULL Line Settlement
 
-### Where it appears in the pipeline
-Right before the pool is returned (line ~3920 in `bot-generate-daily-parlays/index.ts`), after defense matchup adjustments and before parlay assembly. This ensures the boost stacks on top of all other adjustments.
+Victor Wembanyama's points pick was marked "hit" with actual_value=17 but `actual_line` is NULL. Many picks across the system have NULL `actual_line` values, meaning the verification function (`verify-sweet-spot-outcomes` or `bot-check-live-props`) settled them without a valid line comparison. 
 
-### Logic
+**Fix:** Add a NULL-line guard in both `verify-sweet-spot-outcomes` and `bot-check-live-props` so picks with no `actual_line` are skipped (left as `pending`) rather than incorrectly settled.
 
-1. Compute yesterday's date string (Eastern time, same helper already used in the file)
-2. Query `bot_parlay_legs` for yesterday's date where `outcome = 'hit'`
-3. Build a Set of normalized player names who hit
-4. Loop through `enrichedSweetSpots` -- if the player is in the returning-hitter set, add +0.05 to `confidence_score` and `l10_hit_rate` (capped at 1.0), and add +3 to `compositeScore` (capped at 99)
-5. Log how many picks received the boost
+### 2. New Feature: "Today's Winners" Showcase on Landing Page
+
+A new component on the `/bot` landing page that displays yesterday's verified winning picks in an animated data box, showing real proof of the system's accuracy.
+
+**What it shows:**
+- Player name, prop type, line, side, and actual value for each hit
+- Hit rate summary (e.g., "47/72 picks hit -- 65%")
+- Prop type breakdown with icons
+- Animated entrance with staggered card reveals
+
+**Data flow:**
+- New edge function `bot-daily-winners` queries `category_sweet_spots` for yesterday's settled hits with valid `actual_line` values
+- Landing page calls this function and renders the results in a scrollable animated section
+
+### 3. Telegram Daily Winners Report
+
+Add a new notification type `daily_winners` to `bot-send-telegram` that sends the same data as a formatted Telegram message after settlement completes.
+
+**Format:**
+```text
+DAILY WINNERS REPORT -- Feb 19
+================================
+
+47/72 Picks Hit (65%)
+
+Top Hits:
+  [hit] Carlton Carrington O1.5 3PT (actual: 3)
+  [hit] Tidjane Salaun O3.5 REB (actual: 4)
+  [hit] Danny Wolf O5.5 REB (actual: 6)
+  ...
+
+Prop Breakdown:
+  3PT: 12/18 (67%)
+  REB: 15/22 (68%)
+  PTS: 10/20 (50%)
+  AST: 10/12 (83%)
+```
 
 ### Technical Details
 
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+**Files to modify:**
 
-**Insertion point:** After line 3918 (after defense matchup adjustments), before the pool summary log on line 3920.
+1. **`supabase/functions/verify-sweet-spot-outcomes/index.ts`**
+   - Add guard: skip picks where `actual_line` is NULL (don't settle them, leave as pending)
+   
+2. **`supabase/functions/bot-check-live-props/index.ts`**
+   - Same NULL-line guard before settlement
 
-**New code block (~25 lines):**
+3. **New file: `supabase/functions/bot-daily-winners/index.ts`**
+   - Query `category_sweet_spots` for yesterday's `outcome = 'hit'` with non-null `actual_line`
+   - Return structured JSON: winners array, hit rate, prop breakdown
+   
+4. **New file: `src/components/bot-landing/DailyWinnersShowcase.tsx`**
+   - Animated card grid with staggered fade-in
+   - Each winner shows: player name, prop icon, "O/U [line]", actual value, checkmark
+   - Summary bar at top with hit rate percentage and prop breakdown
+   - Scrollable/collapsible for mobile
 
-```typescript
-// === RETURNING HITTER BOOST ===
-try {
-  const yesterdayDate = new Date();
-  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-  const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(yesterdayDate);
+5. **`src/pages/BotLanding.tsx`**
+   - Add `DailyWinnersShowcase` component between PerformanceCalendar and WhyMultipleParlays sections
 
-  const { data: yesterdayHits } = await supabase
-    .from('bot_parlay_legs')
-    .select('player_name')
-    .eq('outcome', 'hit')
-    .gte('created_at', `${yesterdayStr}T00:00:00`)
-    .lt('created_at', `${targetDate}T00:00:00`);
+6. **`supabase/functions/bot-send-telegram/index.ts`**
+   - Add `daily_winners` notification type
+   - Format with icons: checkmark for hits, prop type icons, alert icons for streaks
+   
+7. **`supabase/functions/bot-settle-and-learn/index.ts`**
+   - After settlement completes, trigger `bot-send-telegram` with type `daily_winners` containing the day's hit data
 
-  if (yesterdayHits && yesterdayHits.length > 0) {
-    const hittersSet = new Set(
-      yesterdayHits.map(h => (h.player_name || '').toLowerCase().trim())
-    );
-    hittersSet.delete('');
-    let boosted = 0;
-    for (const pick of enrichedSweetSpots) {
-      if (hittersSet.has(pick.player_name.toLowerCase().trim())) {
-        pick.confidence_score = Math.min(1.0, pick.confidence_score + 0.05);
-        pick.l10_hit_rate = Math.min(1.0, pick.l10_hit_rate + 0.05);
-        pick.compositeScore = Math.min(99, pick.compositeScore + 3);
-        boosted++;
-      }
-    }
-    console.log(`[ReturningHitter] Boosted ${boosted} picks from ${hittersSet.size} players who hit yesterday (${yesterdayStr})`);
-  } else {
-    console.log(`[ReturningHitter] No yesterday hit data found, skipping boost`);
-  }
-} catch (rhErr) {
-  console.log(`[ReturningHitter] ⚠️ Failed to apply boost: ${rhErr.message}`);
-}
-```
-
-**No other files or schema changes needed.** The `bot_parlay_legs` table already stores `player_name`, `outcome`, and `created_at`.
+**No schema changes needed** -- all data comes from existing `category_sweet_spots` table.
 
