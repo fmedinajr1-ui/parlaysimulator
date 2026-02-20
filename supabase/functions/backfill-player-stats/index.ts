@@ -17,10 +17,18 @@ interface PlayerStats {
   rebounds: number;
   assists: number;
   threes_made: number;
+  threes_attempted: number;
   blocks: number;
   steals: number;
   turnovers: number;
   is_home: boolean;
+  field_goals_made: number;
+  field_goals_attempted: number;
+  free_throws_made: number;
+  free_throws_attempted: number;
+  offensive_rebounds: number;
+  defensive_rebounds: number;
+  min: string;
 }
 
 // ESPN Player Stats Fetcher - uses dynamic label mapping
@@ -96,13 +104,33 @@ async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> 
                 return isNaN(parsed) ? 0 : parsed;
               };
               
+              // Helper to get raw string value by label
+              const getRawByLabel = (label: string): string => {
+                const idx = labelIndex[label.toUpperCase()];
+                if (idx === undefined) return '';
+                return statValues[idx] || '';
+              };
+
+              // Helper to split "made-attempted" format (e.g. "5-10")
+              const getSplitStat = (label: string): { made: number; attempted: number } => {
+                const raw = getRawByLabel(label);
+                if (!raw || !raw.includes('-')) return { made: 0, attempted: 0 };
+                const parts = raw.split('-');
+                return { made: parseInt(parts[0]) || 0, attempted: parseInt(parts[1]) || 0 };
+              };
+
               const points = getStatByLabel('PTS');
               const rebounds = getStatByLabel('REB');
               const assists = getStatByLabel('AST');
               const blocks = getStatByLabel('BLK');
               const steals = getStatByLabel('STL');
               const turnovers = getStatByLabel('TO');
-              const threesMade = getStatByLabel('3PT');
+              const threesSplit = getSplitStat('3PT');
+              const fgSplit = getSplitStat('FG');
+              const ftSplit = getSplitStat('FT');
+              const oreb = getStatByLabel('OREB');
+              const dreb = getStatByLabel('DREB');
+              const minRaw = getRawByLabel('MIN');
               
               // Validate - skip players with clearly invalid stats
               if (points < 0 || rebounds < 0 || assists < 0) {
@@ -123,11 +151,19 @@ async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> 
                 points,
                 rebounds,
                 assists,
-                threes_made: threesMade,
+                threes_made: threesSplit.made,
+                threes_attempted: threesSplit.attempted,
                 blocks,
                 steals,
                 turnovers,
                 is_home: isHome,
+                field_goals_made: fgSplit.made,
+                field_goals_attempted: fgSplit.attempted,
+                free_throws_made: ftSplit.made,
+                free_throws_attempted: ftSplit.attempted,
+                offensive_rebounds: oreb,
+                defensive_rebounds: dreb,
+                min: minRaw,
               });
             }
           }
@@ -417,10 +453,18 @@ serve(async (req) => {
             rebounds: s.rebounds,
             assists: s.assists,
             threes_made: s.threes_made,
+            threes_attempted: s.threes_attempted,
             blocks: s.blocks,
             steals: s.steals,
-            turnovers: (s as any).turnovers || 0,
+            turnovers: s.turnovers || 0,
             is_home: s.is_home,
+            field_goals_made: s.field_goals_made,
+            field_goals_attempted: s.field_goals_attempted,
+            free_throws_made: s.free_throws_made,
+            free_throws_attempted: s.free_throws_attempted,
+            offensive_rebounds: s.offensive_rebounds,
+            defensive_rebounds: s.defensive_rebounds,
+            min: s.min,
           })), {
             onConflict: 'player_name,game_date',
             ignoreDuplicates: false 

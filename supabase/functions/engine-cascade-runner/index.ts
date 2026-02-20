@@ -55,6 +55,8 @@ const CASCADE_STEPS: CascadeStep[] = [
   // ========== PHASE 2: PROP REFRESH & ANALYSIS ==========
   // Step 8: Category L10 analyzer (sweet spots, hit rates)
   { name: 'category-props-analyzer', body: { forceRefresh: true } },
+  // Step 8.5: Detect mispriced lines via shooting % cross-reference
+  { name: 'detect-mispriced-lines', body: {} },
   // Step 9: Sync archetypes from player_archetypes to category_sweet_spots
   { name: 'sync-archetypes', body: {} },
   // Step 10: Refresh today's props from odds API
