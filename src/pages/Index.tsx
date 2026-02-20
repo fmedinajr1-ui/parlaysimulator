@@ -9,6 +9,7 @@ import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { Elite3PTFixedParlay } from "@/components/market/Elite3PTFixedParlay";
 import { MispricedLinesCard } from "@/components/market/MispricedLinesCard";
+import { HighConvictionCard } from "@/components/market/HighConvictionCard";
 import { WhenWeWinBig } from "@/components/WhenWeWinBig";
 import { PricingSection } from "@/components/bot-landing/PricingSection";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -186,6 +187,11 @@ const Index = () => {
         {/* 🔍 MISPRICED LINES — Edge Detection */}
         <div className="mb-4">
           <MispricedLinesCard />
+        </div>
+
+        {/* 🎯 HIGH CONVICTION — Cross-Engine Overlaps */}
+        <div className="mb-4">
+          <HighConvictionCard />
         </div>
 
         {/* 🔥 WHEN WE WIN, WE WIN BIG — Payout Preview */}
