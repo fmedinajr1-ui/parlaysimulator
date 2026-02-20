@@ -121,6 +121,18 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'Receiving Yards': 'player_reception_yds',
   'Passing TDs': 'player_pass_tds',
   'Receptions': 'player_receptions',
+  // MLB pitcher-specific mappings
+  'Pitcher Strikeouts': 'pitcher_strikeouts',
+  'Strikeouts (Pitching)': 'pitcher_strikeouts',
+  'Ks': 'pitcher_strikeouts',
+  'Pitching Strikeouts': 'pitcher_strikeouts',
+  'Earned Runs Allowed': 'pitcher_earned_runs',
+  'Hits Allowed': 'pitcher_hits_allowed',
+  'Outs': 'pitcher_outs',
+  // MLB batter-specific mappings
+  'Total Bases': 'batter_total_bases',
+  'Home Runs': 'batter_home_runs',
+  'Stolen Bases': 'batter_stolen_bases',
 };
 
 // Process extracted projections from Firecrawl JSON extraction
@@ -139,9 +151,15 @@ function processExtractedProjections(
     // Filter by target sports
     if (!targetSports.some(s => league.includes(s))) continue;
     
-    // Normalize stat type
-    const normalizedStat = STAT_TYPE_MAP[proj.stat_type] || 
+    // Normalize stat type — context-aware for MLB
+    let normalizedStat = STAT_TYPE_MAP[proj.stat_type] || 
       `player_${proj.stat_type.toLowerCase().replace(/\s+/g, '_')}`;
+    
+    // MLB context: generic "Strikeouts" defaults to pitcher_strikeouts
+    // since pitcher K props are the dominant strikeout market on PrizePicks
+    if (league === 'MLB' && proj.stat_type === 'Strikeouts') {
+      normalizedStat = 'pitcher_strikeouts';
+    }
     
     // Build matchup string
     const matchup = proj.team && proj.opponent 
@@ -183,7 +201,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] } = await req.json().catch(() => ({}));
+    const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB'] } = await req.json().catch(() => ({}));
     
     console.log('[PP Scraper] Starting PrizePicks scrape for sports:', sports);
     

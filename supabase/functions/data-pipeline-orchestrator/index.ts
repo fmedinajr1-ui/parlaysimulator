@@ -124,6 +124,12 @@ serve(async (req) => {
       await runFunction('bot-game-context-analyzer', {});
       await runFunction('detect-mispriced-lines', {});
       await runFunction('high-conviction-analyzer', {});
+      
+      // MLB Pitcher K analysis (April-October = MLB season)
+      const currentMonth = new Date().getMonth() + 1; // 1-12
+      if (currentMonth >= 4 && currentMonth <= 10) {
+        await runFunction('mlb-pitcher-k-analyzer', {});
+      }
     }
 
     // ============ PHASE 3: PARLAY GENERATION ============
