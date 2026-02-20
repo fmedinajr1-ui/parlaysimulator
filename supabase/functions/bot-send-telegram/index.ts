@@ -29,6 +29,7 @@ type NotificationType =
   | 'integrity_alert'
   | 'preflight_alert'
   | 'daily_winners'
+  | 'mispriced_lines_report'
   | 'test';
 
 interface NotificationData {
@@ -63,6 +64,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatPreflightAlert(data, dateStr);
     case 'daily_winners':
       return formatDailyWinnersReport(data, dateStr);
+    case 'mispriced_lines_report':
+      return formatMispricedLinesReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -539,6 +542,56 @@ function formatDailyWinnersReport(data: Record<string, any>, dateStr: string): s
   return msg;
 }
 
+function formatMispricedLinesReport(data: Record<string, any>, dateStr: string): string {
+  const { nbaCount, mlbCount, overCount, underCount, totalCount, topByTier } = data;
+
+  let msg = `🔍 MISPRICED LINES REPORT — ${dateStr}\n`;
+  msg += `================================\n\n`;
+  msg += `🏀 NBA: ${nbaCount || 0} lines | ⚾ MLB: ${mlbCount || 0} lines\n`;
+  msg += `🟢 ${overCount || 0} OVER | 🔴 ${underCount || 0} UNDER\n`;
+  msg += `Total: ${totalCount || 0} mispriced lines detected\n`;
+
+  const tiers = [
+    { key: 'ELITE', label: '🏆 ELITE EDGES', max: 10 },
+    { key: 'HIGH', label: '🔥 HIGH CONFIDENCE', max: 15 },
+    { key: 'MEDIUM', label: '📊 MEDIUM CONFIDENCE', max: 10 },
+  ];
+
+  for (const tier of tiers) {
+    const picks = topByTier?.[tier.key];
+    if (!picks || picks.length === 0) continue;
+
+    msg += `\n${tier.label}:\n`;
+    for (const p of picks.slice(0, tier.max)) {
+      const icon = p.signal === 'OVER' ? '📈' : '📉';
+      const side = p.signal === 'OVER' ? 'O' : 'U';
+      const sportIcon = p.sport === 'baseball_mlb' ? '⚾' : '🏀';
+      const edgeSign = p.edge_pct > 0 ? '+' : '';
+      const avgLabel = p.sport === 'baseball_mlb' ? 'Szn' : 'L10';
+      msg += `  ${icon} ${sportIcon} ${p.player_name} — ${formatPropLabel(p.prop_type)} ${side} ${p.book_line} | ${avgLabel}: ${p.player_avg?.toFixed(1) ?? '?'} | Edge: ${edgeSign}${Math.round(p.edge_pct)}%\n`;
+    }
+    if (picks.length > tier.max) {
+      msg += `  ... +${picks.length - tier.max} more\n`;
+    }
+  }
+
+  return msg;
+}
+
+function formatPropLabel(pt: string): string {
+  const labels: Record<string, string> = {
+    player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+    player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+    player_turnovers: 'TO', player_points_rebounds_assists: 'PRA',
+    player_points_rebounds: 'PR', player_points_assists: 'PA',
+    player_rebounds_assists: 'RA',
+    batter_hits: 'Hits', batter_rbis: 'RBI', batter_runs_scored: 'Runs',
+    batter_total_bases: 'TB', batter_home_runs: 'HR', batter_stolen_bases: 'SB',
+    pitcher_strikeouts: 'K', pitcher_outs: 'Outs',
+  };
+  return labels[pt] || pt.replace(/^(player_|batter_|pitcher_)/, '').replace(/_/g, ' ').toUpperCase();
+}
+
 function formatOdds(odds?: number): string {
   if (!odds) return '-110';
   return odds > 0 ? `+${odds}` : `${odds}`;
@@ -585,7 +638,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);

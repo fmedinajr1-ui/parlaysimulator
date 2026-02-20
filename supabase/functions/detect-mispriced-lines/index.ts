@@ -349,6 +349,53 @@ serve(async (req) => {
         }
       }
       console.log(`[Mispriced] Inserted ${inserted} mispriced lines`);
+
+      // Trigger Telegram report
+      try {
+        const topByTier: Record<string, any[]> = { ELITE: [], HIGH: [], MEDIUM: [] };
+        for (const r of mispricedResults) {
+          if (topByTier[r.confidence_tier]) {
+            topByTier[r.confidence_tier].push({
+              player_name: r.player_name,
+              prop_type: r.prop_type,
+              book_line: r.book_line,
+              player_avg: r.player_avg_l10,
+              edge_pct: r.edge_pct,
+              signal: r.signal,
+              sport: r.sport,
+            });
+          }
+        }
+        // Sort each tier by abs edge desc
+        for (const tier of Object.keys(topByTier)) {
+          topByTier[tier].sort((a: any, b: any) => Math.abs(b.edge_pct) - Math.abs(a.edge_pct));
+        }
+
+        const overCount = mispricedResults.filter(r => r.signal === 'OVER').length;
+        const underCount = mispricedResults.filter(r => r.signal === 'UNDER').length;
+
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            type: 'mispriced_lines_report',
+            data: {
+              nbaCount,
+              mlbCount,
+              overCount,
+              underCount,
+              totalCount: mispricedResults.length,
+              topByTier,
+            },
+          }),
+        });
+        console.log(`[Mispriced] Telegram report triggered`);
+      } catch (teleErr) {
+        console.error(`[Mispriced] Telegram trigger failed:`, teleErr);
+      }
     }
 
     const duration = Date.now() - startTime;

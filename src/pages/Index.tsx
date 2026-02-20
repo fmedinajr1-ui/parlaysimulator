@@ -8,6 +8,7 @@ import { DailyParlayHub } from "@/components/parlays/DailyParlayHub";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { Elite3PTFixedParlay } from "@/components/market/Elite3PTFixedParlay";
+import { MispricedLinesCard } from "@/components/market/MispricedLinesCard";
 import { WhenWeWinBig } from "@/components/WhenWeWinBig";
 import { PricingSection } from "@/components/bot-landing/PricingSection";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -180,6 +181,11 @@ const Index = () => {
         {/* ★ ELITE 3PT FIXED PARLAY - Today's 100% L10 Picks ★ */}
         <div className="mb-4">
           <Elite3PTFixedParlay />
+        </div>
+
+        {/* 🔍 MISPRICED LINES — Edge Detection */}
+        <div className="mb-4">
+          <MispricedLinesCard />
         </div>
 
         {/* 🔥 WHEN WE WIN, WE WIN BIG — Payout Preview */}
