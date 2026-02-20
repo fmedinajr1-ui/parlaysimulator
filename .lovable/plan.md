@@ -1,77 +1,71 @@
 
 
-## Fresh High-Conviction Parlay Blast
+## Fix Telegram Bot: Show All Parlays with Pagination
 
-### The Problem
+### Problems Identified
 
-The bot is on a **7-day losing streak** (Feb 14-20). Today has 44 pending parlays but none use the new `mispriced_edge` strategy because player reuse caps blocked generation. The risk engine only returned 4 picks today (full_slate mode), limiting cross-engine overlap. We need to force-generate fresh, high-conviction parlays focused purely on the strongest statistical edges.
+1. **Latest Batch Filter**: The `/parlays` handler only shows parlays created within 5 minutes of the most recent one. Parlays from earlier runs (like the force-generated ones) are completely invisible.
 
-### What We'll Build
+2. **Missing Strategy Classification**: `force_mispriced_conviction` and `mispriced_edge` strategies don't match any tier keywords, so they silently fall into "Exploration" instead of being shown as "Execution" tier.
 
-A **"Force Generate"** mode that:
-1. Clears today's pending parlays (they haven't settled yet)
-2. Generates fresh parlays using ONLY the highest-conviction picks (mispriced ELITE/HIGH + risk engine confirmed)
-3. Caps at 3-leg parlays exclusively (your best-performing format at 37.1% win rate)
-4. Sends the new slate to Telegram immediately
+3. **No Pagination**: With 44+ parlays, the full list is too long for a single viewing. There's no way to page through or expand.
 
-### Implementation
+4. **Notification Shows 0/0/0**: The `tiered_parlays_generated` notification passes `exploration: 0, validation: 0, execution: 0` from the force-fresh function, so the summary looks empty even though parlays were created.
 
-**1. New edge function: `supabase/functions/bot-force-fresh-parlays/index.ts`**
+---
 
-A focused generator that bypasses the main engine's complexity:
+### Fix 1: Remove "Latest Batch" Filter from `/parlays`
 
-- Queries `mispriced_lines` for today's ELITE + HIGH confidence picks (edge >= 50%)
-- Queries `nba_risk_engine_picks` for today's picks
-- Cross-references for overlaps (same player + same direction = highest conviction)
-- Builds 3-leg parlays using a simple greedy algorithm:
-  - Rule 1: Max 1 player per team
-  - Rule 2: No duplicate prop types in a parlay
-  - Rule 3: Prioritize UNDER plays (historically higher hit rate per your winning formula)
-  - Rule 4: Only picks with book_line > 0 (real lines)
-- Generates 5-8 parlays max (quality over quantity)
-- Inserts into `bot_daily_parlays` with strategy_name `force_mispriced_conviction`
-- Sends to Telegram via `bot-send-telegram` with a special "FRESH CONVICTION SLATE" format
+**File: `supabase/functions/telegram-webhook/index.ts`**
 
-**2. Modify `supabase/functions/bot-send-telegram/index.ts`**
+Replace the 5-minute batch window with showing ALL of today's pending (unsettled) parlays. This ensures force-generated and multi-run parlays are always visible.
 
-Add a `fresh_slate_report` notification type that formats:
+### Fix 2: Add New Strategy Names to Tier Classification
 
+**File: `supabase/functions/telegram-webhook/index.ts`**
+
+Update the tier grouping logic to recognize:
+- `force_mispriced_conviction` -> Execution tier
+- `mispriced_edge` -> Execution tier
+- Any strategy containing `mispriced` or `conviction` -> Execution tier
+
+### Fix 3: Add Pagination with Inline Keyboard
+
+**File: `supabase/functions/telegram-webhook/index.ts`**
+
+- Show max 5 parlays per message
+- Add "Show More" inline button that reveals the next batch
+- Add a callback handler for `parlays_page:N` to send the next page
+- Include a summary header: "Showing 1-5 of 44 parlays"
+
+### Fix 4: Improve the Notification Summary
+
+**File: `supabase/functions/bot-send-telegram/index.ts`**
+
+Update `formatTieredParlaysGenerated` to count parlays from the DB when all tier counts are 0, breaking them down by actual strategy names so the notification accurately reflects what was generated.
+
+---
+
+### Technical Details
+
+**Pagination callback flow:**
+- `/parlays` sends first page (5 parlays) with "Next 5 >" button
+- User taps button, triggers callback `parlays_page:2`
+- Bot sends next 5 parlays with "< Prev 5 | Next 5 >" buttons
+- Last page only shows "< Prev 5"
+
+**Strategy-to-tier mapping update:**
 ```
-FRESH CONVICTION SLATE -- Feb 20
-==================================
-5 high-conviction 3-leg parlays
-
-PARLAY 1 (Score: 92/100)
-  Kobe Brown REB U 7.5 (Edge: -64%, HIGH)
-  Ben Sheppard BLK U 0.5 (Edge: -100%, HIGH)  
-  Isaiah Collier BLK U 0.5 (Edge: -80%, HIGH)
-
-PARLAY 2 (Score: 88/100)
-  ...
+execution keywords: execution, elite, cash_lock, boosted_cash, golden_lock,
+                    hybrid_exec, team_exec, mispriced, conviction, force_
+validation keywords: validation, validated, proving
+everything else: exploration
 ```
 
-**3. Optional cleanup: Clear underperforming pending parlays**
-
-Before generating, the function can optionally mark today's existing pending `max_boost_*` parlays as `void` to declutter the calendar, keeping only the new conviction-based ones active.
-
-### Why This Should Win
-
-- **3-leg only**: Your data shows 37.1% win rate on 3-leggers vs 11.8% on 2-leggers
-- **Mispriced edge focus**: Statistical edges of 60-180% on today's lines
-- **UNDER bias**: Aligns with the winning formula's defensive filtering
-- **No bloat**: 5-8 parlays instead of 44 spreads the risk thin
-
-### Files
+### Files Changed
 
 | Action | File |
 |--------|------|
-| Create | `supabase/functions/bot-force-fresh-parlays/index.ts` |
-| Modify | `supabase/functions/bot-send-telegram/index.ts` (add fresh_slate_report type) |
-
-### Post-Deploy
-
-1. Deploy both functions
-2. Invoke `bot-force-fresh-parlays` immediately
-3. Verify Telegram receives the fresh slate
-4. Monitor outcomes tonight
+| Modify | `supabase/functions/telegram-webhook/index.ts` (remove batch filter, add pagination, fix tier mapping) |
+| Modify | `supabase/functions/bot-send-telegram/index.ts` (fix 0/0/0 notification) |
 
