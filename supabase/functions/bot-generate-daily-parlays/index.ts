@@ -136,6 +136,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'props_mixed', sports: ['all'] },
       // Whale signal exploration (3-leg only — 2-leg permanently removed)
       { legs: 3, strategy: 'whale_signal', sports: ['all'] },
+      // Mispriced edge parlays — high statistical edge picks from mispriced_lines
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'] },
+      { legs: 4, strategy: 'mispriced_edge', sports: ['all'] },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'] },
       // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
     ],
   },
@@ -168,6 +172,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 55 },
+      // Mispriced edge — validated tier
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55 },
+      { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52 },
       { legs: 3, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
       { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
       { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
@@ -219,6 +226,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       // Whale signal execution (3-leg only — 2-leg permanently removed)
       { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // Mispriced edge execution — highest conviction plays
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
+      { legs: 5, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
       // MASTER PARLAY: 6-leg bankroll doubler with defense-filtered matchups
       // Targets +500 to +2000 odds range. ALL legs pass defensive matchup validation.
       { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
@@ -1773,6 +1784,7 @@ interface PropPool {
   teamPicks: EnrichedTeamPick[];
   sweetSpots: EnrichedPick[];
   whalePicks: EnrichedPick[];
+  mispricedPicks: EnrichedPick[];
   totalPool: number;
   goldenCategories: Set<string>;
 }
@@ -2924,7 +2936,17 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Fetched ${(rawWhalePicks || []).length} whale picks (sharp_score >= 45)`);
 
-  // 4. Fetch team intelligence data in parallel (including NCAAB stats)
+  // 5. Mispriced lines — statistical edge picks
+  const { data: rawMispricedLines } = await supabase
+    .from('mispriced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport')
+    .eq('analysis_date', targetDate)
+    .gte('edge_pct', -999) // get all, sort by abs edge
+    .order('edge_pct', { ascending: false })
+    .limit(100);
+
+  console.log(`[Bot] Fetched ${(rawMispricedLines || []).length} mispriced lines for ${targetDate}`);
+
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult, nhlStatsResult, baseballStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
     supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank').eq('is_current', true),
@@ -3972,14 +3994,59 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[ReturningHitter] ⚠️ Failed to apply boost: ${rhErr.message}`);
   }
 
-  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks`);
+  // === ENRICH MISPRICED LINES INTO PICK FORMAT ===
+  const enrichedMispricedPicks: EnrichedPick[] = (rawMispricedLines || []).map((ml: any) => {
+    const side = (ml.signal || 'OVER').toLowerCase();
+    const category = mapPropTypeToCategory(ml.prop_type);
+    const absEdge = Math.abs(ml.edge_pct || 0);
+    const tierBonus = ml.confidence_tier === 'ELITE' ? 15 : ml.confidence_tier === 'HIGH' ? 10 : 5;
+    const compositeScore = Math.min(95, 50 + (absEdge * 0.3) + tierBonus);
+    const hitRate = absEdge >= 30 ? 0.70 : absEdge >= 20 ? 0.62 : 0.55;
+
+    // Look up real odds from the odds map
+    const oddsKey = `${ml.player_name}_${ml.prop_type}`.toLowerCase();
+    const oddsEntry = oddsMap.get(oddsKey);
+    const americanOdds = side === 'over' 
+      ? (oddsEntry?.overOdds || -110) 
+      : (oddsEntry?.underOdds || -110);
+
+    return {
+      id: `mispriced_${ml.player_name}_${ml.prop_type}`,
+      player_name: ml.player_name,
+      prop_type: ml.prop_type,
+      line: ml.book_line || 0,
+      recommended_side: side,
+      category,
+      confidence_score: hitRate,
+      l10_hit_rate: hitRate,
+      projected_value: ml.player_avg_l10 || 0,
+      sport: ml.sport || 'basketball_nba',
+      americanOdds,
+      oddsValueScore: calculateOddsValueScore(americanOdds, hitRate),
+      compositeScore,
+      has_real_line: true,
+      line_source: 'mispriced_edge',
+    } as EnrichedPick;
+  }).filter((p: EnrichedPick) => Math.abs(p.line) > 0 && p.player_name);
+
+  // Apply availability gate to mispriced picks
+  const filteredMispricedPicks = enrichedMispricedPicks.filter(pick => {
+    if (activePlayersToday.size > 0) {
+      const normalizedName = pick.player_name.toLowerCase().trim();
+      return activePlayersToday.has(normalizedName) && !blocklist.has(normalizedName);
+    }
+    return !blocklist.has(pick.player_name.toLowerCase().trim());
+  });
+
+  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks`);
 
   return {
     playerPicks: enrichedSweetSpots,
     teamPicks: enrichedTeamPicks,
     sweetSpots: enrichedSweetSpots,
     whalePicks: enrichedWhalePicks,
-    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length,
+    mispricedPicks: filteredMispricedPicks,
+    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length,
     goldenCategories,
   };
 }
@@ -4105,8 +4172,23 @@ async function generateTierParlays(
     
     // WHALE SIGNAL: draw exclusively from whale picks pool
     const isWhaleProfile = profile.strategy.startsWith('whale_signal');
+    // MISPRICED EDGE: draw exclusively from mispriced lines pool
+    const isMispricedProfile = profile.strategy.startsWith('mispriced_edge');
     
-    if (isWhaleProfile) {
+    if (isMispricedProfile) {
+      candidatePicks = [...pool.mispricedPicks]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          return true;
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/mispriced_edge: only ${candidatePicks.length} mispriced picks available, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/mispriced_edge: using ${candidatePicks.length} mispriced picks for ${profile.legs}-leg parlay`);
+    } else if (isWhaleProfile) {
       candidatePicks = [...pool.whalePicks].filter(p => !BLOCKED_SPORTS.includes(p.sport)).sort((a, b) => b.compositeScore - a.compositeScore);
       if (candidatePicks.length < profile.legs) {
         console.log(`[Bot] ${tier}/whale_signal: only ${candidatePicks.length} whale picks available, need ${profile.legs}`);
