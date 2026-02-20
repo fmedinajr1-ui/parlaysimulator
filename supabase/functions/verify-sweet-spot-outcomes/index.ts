@@ -314,7 +314,18 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const line = pick.actual_line || pick.recommended_line || 0;
+      const line = pick.actual_line ?? pick.recommended_line;
+      if (line === null || line === undefined) {
+        // Cannot settle without a valid line — leave as pending
+        results.pending++;
+        results.details.push({
+          player: pick.player_name,
+          propType: pick.prop_type,
+          status: 'pending',
+          reason: 'No actual_line or recommended_line — skipping settlement'
+        });
+        continue;
+      }
       const side = pick.recommended_side || 'over';
       const outcome = determineOutcome(actualValue, line, side);
 

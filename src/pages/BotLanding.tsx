@@ -11,6 +11,7 @@ import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
 import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
+import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowcase";
 
 interface PublicStats {
   days: Array<{
@@ -149,6 +150,8 @@ export default function BotLanding() {
       <div ref={whyRef}>
         <WhyMultipleParlays />
       </div>
+
+      <DailyWinnersShowcase />
 
       <HomepageAnalyzer />
 
