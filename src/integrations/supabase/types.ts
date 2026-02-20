@@ -5474,6 +5474,7 @@ export type Database = {
           prop_type: string
           shooting_context: Json | null
           signal: string | null
+          sport: string
         }
         Insert: {
           analysis_date?: string
@@ -5490,6 +5491,7 @@ export type Database = {
           prop_type: string
           shooting_context?: Json | null
           signal?: string | null
+          sport?: string
         }
         Update: {
           analysis_date?: string
@@ -5506,6 +5508,7 @@ export type Database = {
           prop_type?: string
           shooting_context?: Json | null
           signal?: string | null
+          sport?: string
         }
         Relationships: []
       }
