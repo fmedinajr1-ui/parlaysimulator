@@ -5458,6 +5458,57 @@ export type Database = {
           },
         ]
       }
+      mispriced_lines: {
+        Row: {
+          analysis_date: string
+          book_line: number
+          confidence_tier: string | null
+          created_at: string
+          edge_pct: number | null
+          game_date: string | null
+          id: string
+          opponent: string | null
+          player_avg_l10: number | null
+          player_avg_l20: number | null
+          player_name: string
+          prop_type: string
+          shooting_context: Json | null
+          signal: string | null
+        }
+        Insert: {
+          analysis_date?: string
+          book_line: number
+          confidence_tier?: string | null
+          created_at?: string
+          edge_pct?: number | null
+          game_date?: string | null
+          id?: string
+          opponent?: string | null
+          player_avg_l10?: number | null
+          player_avg_l20?: number | null
+          player_name: string
+          prop_type: string
+          shooting_context?: Json | null
+          signal?: string | null
+        }
+        Update: {
+          analysis_date?: string
+          book_line?: number
+          confidence_tier?: string | null
+          created_at?: string
+          edge_pct?: number | null
+          game_date?: string | null
+          id?: string
+          opponent?: string | null
+          player_avg_l10?: number | null
+          player_avg_l20?: number | null
+          player_name?: string
+          prop_type?: string
+          shooting_context?: Json | null
+          signal?: string | null
+        }
+        Relationships: []
+      }
       mlb_player_game_logs: {
         Row: {
           at_bats: number | null
@@ -5807,12 +5858,18 @@ export type Database = {
           assists: number | null
           blocks: number | null
           created_at: string
+          defensive_rebounds: number | null
           field_goals_attempted: number | null
+          field_goals_made: number | null
+          free_throws_attempted: number | null
+          free_throws_made: number | null
           game_date: string
           id: string
           is_home: boolean | null
           is_starter: boolean | null
+          min: string | null
           minutes_played: number | null
+          offensive_rebounds: number | null
           opponent: string
           player_name: string
           points: number | null
@@ -5828,12 +5885,18 @@ export type Database = {
           assists?: number | null
           blocks?: number | null
           created_at?: string
+          defensive_rebounds?: number | null
           field_goals_attempted?: number | null
+          field_goals_made?: number | null
+          free_throws_attempted?: number | null
+          free_throws_made?: number | null
           game_date: string
           id?: string
           is_home?: boolean | null
           is_starter?: boolean | null
+          min?: string | null
           minutes_played?: number | null
+          offensive_rebounds?: number | null
           opponent: string
           player_name: string
           points?: number | null
@@ -5849,12 +5912,18 @@ export type Database = {
           assists?: number | null
           blocks?: number | null
           created_at?: string
+          defensive_rebounds?: number | null
           field_goals_attempted?: number | null
+          field_goals_made?: number | null
+          free_throws_attempted?: number | null
+          free_throws_made?: number | null
           game_date?: string
           id?: string
           is_home?: boolean | null
           is_starter?: boolean | null
+          min?: string | null
           minutes_played?: number | null
+          offensive_rebounds?: number | null
           opponent?: string
           player_name?: string
           points?: number | null

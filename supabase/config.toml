@@ -425,3 +425,6 @@ verify_jwt = false
 
 [functions.mlb-data-ingestion]
 verify_jwt = false
+
+[functions.detect-mispriced-lines]
+verify_jwt = false
