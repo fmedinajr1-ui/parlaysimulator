@@ -51,7 +51,7 @@ export function useHighConvictionPlays() {
     queryKey: ['high-conviction-plays', today],
     queryFn: async (): Promise<{ plays: HighConvictionPlay[]; stats: { total: number; allAgree: number; engineCounts: Record<string, number> } }> => {
       // Fetch mispriced lines + all engine picks in parallel
-      const [mispricedResult, riskResult, propV2Result, sharpResult, heatResult] = await Promise.all([
+      const [mispricedResult, riskResult, propV2Result, sharpResult, heatResult, mlbCrossRefResult] = await Promise.all([
         supabase
           .from('mispriced_lines')
           .select('player_name, prop_type, signal, edge_pct, confidence_tier, current_line, player_avg, sport')
@@ -72,6 +72,10 @@ export function useHighConvictionPlays() {
           .from('heat_parlays')
           .select('legs, parlay_type')
           .eq('parlay_date', today) as any,
+        supabase
+          .from('mlb_engine_picks')
+          .select('player_name, prop_type, line, side, confidence_score')
+          .eq('game_date', today) as any,
       ]);
 
       const mispricedLines: MispricedLine[] = mispricedResult.data || [];
@@ -114,6 +118,11 @@ export function useHighConvictionPlays() {
             }
           }
         }
+      }
+
+      // MLB Cross-Reference engine
+      for (const p of mlbCrossRefResult.data || []) {
+        addPick({ player_name: p.player_name, prop_type: p.prop_type, side: p.side || 'over', confidence: p.confidence_score, engine: 'mlb_cross_ref' });
       }
 
       // Cross-reference
