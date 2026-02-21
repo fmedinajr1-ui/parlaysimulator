@@ -1,71 +1,97 @@
 
 
-## Defense-Adjusted Line Projections
+## Apply Both Fixes: Defense-Driven Icons + Defense-Adjusted Line Display
 
-### What Changes
+### Overview
 
-Right now, the engine calculates edge like this:
+Two changes to `supabase/functions/telegram-webhook/index.ts`, both in the `formatLegDisplay` function (lines 865-893).
 
-```
-edge = (player_avg_L10 - book_line) / book_line
-```
+---
 
-It ignores who the player is facing tonight. The defense rank only affects pick **priority** (composite score), not the actual **projected line**. This means a player facing the #1 defense gets the same edge calculation as one facing the #30 defense.
+### Fix 1: Defense-Rank-Driven Status Emoji
 
-### The Fix
+**Current logic** (lines 866-870): Icons based only on composite score and hit rate.
 
-Introduce a **defense-adjusted projection** in two places:
+**New logic**: Defense rank takes priority when available:
 
-**1. Mispriced Line Detection (`detect-mispriced-lines/index.ts`)**
-
-After calculating the raw L10 average, apply a defense multiplier before computing edge:
-
-| Opponent Defense Rank | Adjustment (OVER props) | Adjustment (UNDER props) |
+| Defense Rank | Icon | Meaning |
 |---|---|---|
-| 1-5 (elite) | -6% to projection | +4% to projection |
-| 6-10 (strong) | -3% to projection | +2% to projection |
-| 11-20 (average) | No change | No change |
-| 21-25 (soft) | +2% to projection | -2% to projection |
-| 26-30 (weak) | +4% to projection | -4% to projection |
+| 1-10 | ⚠️ | Elite defense, tough matchup |
+| 11-24 or null | Falls through to score/hitRate thresholds | Mid-range or unknown |
+| 25-30 | 🔥 | Weak defense, easy matchup |
 
-Example: Wembanyama averages 25.0 L10, facing #3 defense. Adjusted projection = 25.0 x 0.94 = 23.5. Against a book line of 23.5, the edge drops to ~0% (no longer mispriced). Against #28 defense: 25.0 x 1.04 = 26.0, edge grows to +10.6%.
+Whale override (🐋) still takes final priority.
 
-This requires loading today's opponent matchups from `game_bets` and defense ranks from `nba_opponent_defense_stats` during the mispriced detection run.
+### Fix 2: Show Defense-Adjusted Projection
 
-**2. Parlay Generation (`bot-generate-daily-parlays/index.ts`)**
+Add the `defense_adjusted_avg` (stored as `projected_value` on each leg) to the compact reasoning line. When a defense adjustment exists and differs from the raw line, display it as:
 
-The existing `getDefenseMatchupAdjustment` function already adjusts composite scores (+8/-10). We enhance it to also store a `defense_adjusted_line` on each leg so Telegram reports show the realistic projection, not just the raw average.
+```
+🎯85 | 💎75% | 📊Proj 23.5 | vs LAL (#3 DEF) ⚠️
+```
 
-### Data Flow
-
-1. `detect-mispriced-lines` loads today's NBA schedule from `game_bets` to map each player's team to their opponent
-2. Looks up opponent defense rank from `nba_opponent_defense_stats` for the relevant stat category
-3. Applies multiplier to L10 average before calculating edge
-4. Only flags as mispriced if the **defense-adjusted** edge still exceeds the 15% threshold
-5. Stores `defense_adjusted_avg` and `opponent_defense_rank` in the `mispriced_lines` record
+The `📊Proj X.X` part only appears when `leg.projected_value` exists and differs meaningfully from the book line, giving users immediate visibility into the defense-adjusted expectation.
 
 ### Technical Details
 
-**File 1: `supabase/functions/detect-mispriced-lines/index.ts`**
-- Add queries for `game_bets` (today's NBA games) and `nba_opponent_defense_stats`
-- Build team-to-opponent map and defense rank lookup
-- Add `getDefenseMultiplier(rank, signal)` function
-- Apply multiplier: `adjustedAvg = avgL10 * multiplier`
-- Use `adjustedAvg` instead of `avgL10` for edge calculation
-- Store `defense_adjusted_avg` and `opponent_defense_rank` in output
+**File**: `supabase/functions/telegram-webhook/index.ts`
 
-**File 2: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- When building leg metadata, include `defense_adjusted_line` if available from mispriced data
-- No change to composite scoring logic (that already works correctly)
+**Lines 865-882** replaced with:
 
-**Database**: Add two nullable columns to `mispriced_lines`:
-- `defense_adjusted_avg` (numeric) -- the projection after defense context
-- `opponent_defense_rank` (integer) -- rank 1-30
+```typescript
+// Extract defense-adjusted projection
+const projValue = leg.projected_value || null;
+
+// Status emoji — defense rank takes priority
+let statusEmoji = '';
+if (defRank !== null && defRank <= 10) {
+  statusEmoji = '⚠️'; // Elite defense
+} else if (defRank !== null && defRank >= 25) {
+  statusEmoji = '🔥'; // Weak defense
+} else if (score >= 80) {
+  statusEmoji = '🔥';
+} else if (score >= 60 && hitRate >= 70) {
+  statusEmoji = '✨';
+} else if (hitRate < 50 || score < 40) {
+  statusEmoji = '⚠️';
+}
+if (source.includes('whale')) statusEmoji = '🐋';
+
+// Compact icon line
+const compactParts: string[] = [];
+if (score) compactParts.push(`🎯${score}`);
+if (hitRate) compactParts.push(`💎${hitRate}%`);
+if (projValue && line && Math.abs(projValue - Number(line)) >= 0.3) {
+  compactParts.push(`📊Proj ${projValue}`);
+}
+if (opponent) {
+  const defStr = defRank ? ` (#${defRank} DEF)` : '';
+  compactParts.push(`vs ${opponent}${defStr}`);
+} else if (defRank) {
+  compactParts.push(`#${defRank} DEF`);
+}
+if (statusEmoji) compactParts.push(statusEmoji);
+```
+
+### Example Output
+
+Before:
+```
+🏀 Take Wembanyama OVER 24.5 PTS (-110)
+  🎯45 | 💎75% | vs LAL (#3 DEF) | ⚠️
+```
+
+After:
+```
+🏀 Take Wembanyama OVER 24.5 PTS (-110)
+  🎯45 | 💎75% | 📊Proj 23.1 | vs LAL (#3 DEF) | ⚠️
+```
+
+The ⚠️ is now driven by the #3 DEF rank (not the low composite score), and the projected value of 23.1 shows the defense-adjusted expectation is below the 24.5 book line.
 
 ### Impact
 
-- Picks against elite defenses need a **larger** raw edge to qualify as mispriced (the bar is higher)
-- Picks against weak defenses qualify more easily (the matchup confirms the edge)
-- Eliminates false-positive OVER signals against top defenses
-- Telegram caution icons will now align with whether the pick actually survived defense adjustment
-
+- Single file changed, ~15 lines modified
+- Defense rank drives the icon when available; falls back to existing score logic otherwise
+- Defense-adjusted projection shown only when meaningfully different from book line
+- No database or other function changes needed
