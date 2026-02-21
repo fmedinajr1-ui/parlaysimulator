@@ -485,6 +485,12 @@ async function handleStart(chatId: string) {
 *Control:*
 /pause /resume /bankroll [amt] /subscribe /export [date]
 
+*Management:*
+/deleteparlay [id] /voidtoday /fixleg
+/deletesweep /deletebystrat [name]
+/fixpipeline /regenparlay /fixprops
+/healthcheck /errorlog
+
 Or *ask me anything* naturally!`;
 }
 
@@ -1748,6 +1754,234 @@ async function handleMLB(chatId: string) {
   await sendLongMessage(chatId, msg, "Markdown");
 }
 
+// ==================== ADMIN MANAGEMENT COMMANDS ====================
+
+async function handleDeleteParlay(chatId: string, args: string) {
+  const id = args.trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return "❌ Invalid UUID format.\n\nUsage: `/deleteparlay [uuid]`";
+  }
+  const { data: parlay, error } = await supabase
+    .from('bot_daily_parlays')
+    .select('id, strategy_name, leg_count, outcome')
+    .eq('id', id)
+    .maybeSingle();
+  if (error || !parlay) return `❌ Parlay \`${id.slice(0, 8)}...\` not found.`;
+  
+  await supabase.from('bot_daily_parlays').update({
+    outcome: 'void',
+    lesson_learned: 'Voided by admin via Telegram',
+  }).eq('id', id);
+  
+  await logActivity('admin_delete_parlay', `Admin voided parlay ${id}`, { parlay_id: id, strategy: parlay.strategy_name });
+  return `✅ *Parlay Voided*\n\nID: \`${id.slice(0, 8)}...\`\nStrategy: ${parlay.strategy_name}\nLegs: ${parlay.leg_count}\nPrevious outcome: ${parlay.outcome || 'pending'}`;
+}
+
+async function handleVoidToday(chatId: string) {
+  const today = getEasternDate();
+  const { count } = await supabase
+    .from('bot_daily_parlays')
+    .select('*', { count: 'exact', head: true })
+    .eq('parlay_date', today)
+    .or('outcome.eq.pending,outcome.is.null');
+  
+  if (!count || count === 0) return "📭 No pending parlays today to void.";
+  
+  await sendMessage(chatId, `⚠️ This will void *${count} pending parlays* for today (${today}).\n\nAre you sure?`, "Markdown", {
+    inline_keyboard: [[
+      { text: `✅ Void ${count} parlays`, callback_data: 'fix:void_today_confirm' },
+      { text: '❌ Cancel', callback_data: 'fix:cancel' },
+    ]],
+  });
+  return null;
+}
+
+async function handleFixLeg(chatId: string, args: string) {
+  const parts = args.trim().split(/\s+/);
+  if (parts.length < 4) return "❌ Usage: `/fixleg [parlay_id] [leg_index] [field] [value]`\n\nFields: `line`, `side`, `player_name`, `prop_type`";
+  
+  const [parlayId, legIdxStr, field, ...valueParts] = parts;
+  const value = valueParts.join(' ');
+  const legIdx = parseInt(legIdxStr, 10);
+  const validFields = ['line', 'side', 'player_name', 'prop_type'];
+  
+  if (!validFields.includes(field)) return `❌ Invalid field \`${field}\`.\n\nValid fields: ${validFields.join(', ')}`;
+  
+  const { data: parlay } = await supabase
+    .from('bot_daily_parlays')
+    .select('id, legs')
+    .eq('id', parlayId)
+    .maybeSingle();
+  if (!parlay) return `❌ Parlay \`${parlayId.slice(0, 8)}...\` not found.`;
+  
+  const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
+  if (legIdx < 0 || legIdx >= legs.length) return `❌ Leg index ${legIdx} out of range (0-${legs.length - 1}).`;
+  
+  const oldValue = legs[legIdx][field];
+  legs[legIdx][field] = field === 'line' ? parseFloat(value) : value;
+  
+  await supabase.from('bot_daily_parlays').update({ legs }).eq('id', parlayId);
+  await logActivity('admin_fix_leg', `Admin fixed leg ${legIdx} of parlay ${parlayId}`, { parlay_id: parlayId, leg_index: legIdx, field, old_value: oldValue, new_value: value });
+  
+  return `✅ *Leg Fixed*\n\nParlay: \`${parlayId.slice(0, 8)}...\`\nLeg #${legIdx}: \`${field}\`\nOld: ${oldValue}\nNew: ${value}`;
+}
+
+async function handleDeleteSweep(chatId: string) {
+  const today = getEasternDate();
+  const { data: sweeps } = await supabase
+    .from('bot_daily_parlays')
+    .select('id')
+    .eq('parlay_date', today)
+    .eq('strategy_name', 'leftover_sweep');
+  
+  if (!sweeps || sweeps.length === 0) return "📭 No sweep parlays found today.";
+  
+  await supabase.from('bot_daily_parlays').update({
+    outcome: 'void',
+    lesson_learned: 'Sweep parlays voided by admin',
+  }).eq('parlay_date', today).eq('strategy_name', 'leftover_sweep');
+  
+  await logActivity('admin_delete_sweep', `Admin voided ${sweeps.length} sweep parlays`, { count: sweeps.length });
+  return `✅ Voided *${sweeps.length}* sweep parlays for today.`;
+}
+
+async function handleDeleteByStrat(chatId: string, args: string) {
+  const stratName = args.trim();
+  if (!stratName) return "❌ Usage: `/deletebystrat [strategy_name]`";
+  
+  const today = getEasternDate();
+  const { data: matches } = await supabase
+    .from('bot_daily_parlays')
+    .select('id')
+    .eq('parlay_date', today)
+    .eq('strategy_name', stratName)
+    .or('outcome.eq.pending,outcome.is.null');
+  
+  if (!matches || matches.length === 0) return `📭 No pending parlays found for strategy \`${stratName}\` today.`;
+  
+  await supabase.from('bot_daily_parlays').update({
+    outcome: 'void',
+    lesson_learned: `Voided by admin (strategy: ${stratName})`,
+  }).eq('parlay_date', today).eq('strategy_name', stratName).or('outcome.eq.pending,outcome.is.null');
+  
+  await logActivity('admin_delete_by_strat', `Admin voided ${matches.length} parlays for strategy ${stratName}`, { strategy: stratName, count: matches.length });
+  return `✅ Voided *${matches.length}* parlays for strategy \`${stratName}\`.`;
+}
+
+async function handleFixPipeline(chatId: string) {
+  await sendMessage(chatId, "⏳ Running *full data pipeline*...", "Markdown");
+  try {
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/data-pipeline-orchestrator`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'full' }),
+    });
+    if (!resp.ok) return `❌ Pipeline failed (${resp.status}): ${(await resp.text()).slice(0, 200)}`;
+    const data = await resp.json();
+    await logActivity('admin_fix_pipeline', 'Admin triggered full pipeline', { result: data });
+    return `✅ *Pipeline Complete*\n\n\`${JSON.stringify(data).slice(0, 300)}\``;
+  } catch (err) {
+    return `❌ Pipeline error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleRegenParlay(chatId: string) {
+  await sendMessage(chatId, "⏳ Voiding today's parlays and regenerating...", "Markdown");
+  try {
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/bot-force-fresh-parlays`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!resp.ok) return `❌ Regen failed (${resp.status})`;
+    const data = await resp.json();
+    await logActivity('admin_regen_parlay', 'Admin triggered parlay regeneration', { result: data });
+    return `✅ *Parlays Regenerated*\n\n\`${JSON.stringify(data).slice(0, 300)}\``;
+  } catch (err) {
+    return `❌ Regen error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleFixProps(chatId: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  
+  await sendMessage(chatId, "⏳ Step 1/2: Refreshing props...", "Markdown");
+  try {
+    const r1 = await fetch(`${supabaseUrl}/functions/v1/refresh-todays-props`, {
+      method: 'POST', headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!r1.ok) return `❌ Props refresh failed (${r1.status})`;
+    await sendMessage(chatId, "✅ Props refreshed. Step 2/2: Generating parlays...", "Markdown");
+    
+    const r2 = await fetch(`${supabaseUrl}/functions/v1/bot-generate-daily-parlays`, {
+      method: 'POST', headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!r2.ok) return `❌ Generation failed (${r2.status})`;
+    const data = await r2.json();
+    await logActivity('admin_fix_props', 'Admin triggered props refresh + generation', {});
+    return `✅ *Props Fixed & Parlays Generated*\n\n\`${JSON.stringify(data).slice(0, 300)}\``;
+  } catch (err) {
+    return `❌ Fix props error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleHealthcheck(chatId: string) {
+  await sendMessage(chatId, "⏳ Running healthcheck...", "Markdown");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  
+  try {
+    const [preflightResp, integrityResp] = await Promise.all([
+      fetch(`${supabaseUrl}/functions/v1/bot-pipeline-preflight`, {
+        method: 'POST', headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' }, body: '{}',
+      }),
+      fetch(`${supabaseUrl}/functions/v1/bot-parlay-integrity-check`, {
+        method: 'POST', headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' }, body: '{}',
+      }),
+    ]);
+    
+    const preflight = preflightResp.ok ? await preflightResp.json() : { error: `HTTP ${preflightResp.status}` };
+    const integrity = integrityResp.ok ? await integrityResp.json() : { error: `HTTP ${integrityResp.status}` };
+    
+    let msg = `🏥 *Healthcheck Results*\n\n`;
+    msg += `*Preflight:* ${preflight.ready ? '✅ Ready' : '❌ Not Ready'}\n`;
+    if (preflight.checks) {
+      for (const c of preflight.checks) {
+        msg += `  ${c.passed ? '✅' : '❌'} ${c.name}: ${c.detail}\n`;
+      }
+    }
+    if (preflight.blockers?.length > 0) {
+      msg += `\n*Blockers:*\n${preflight.blockers.map((b: string) => `⚠️ ${b}`).join('\n')}\n`;
+    }
+    msg += `\n*Integrity:* ${integrity.clean ? '✅ Clean' : `❌ ${integrity.violations || 0} violations`}\n`;
+    if (integrity.strategy_counts) {
+      msg += `Strategy breakdown: ${JSON.stringify(integrity.strategy_counts)}\n`;
+    }
+    return msg;
+  } catch (err) {
+    return `❌ Healthcheck error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleErrorLog(chatId: string) {
+  const { data: errors } = await supabase
+    .from('bot_activity_log')
+    .select('created_at, event_type, message')
+    .eq('severity', 'error')
+    .order('created_at', { ascending: false })
+    .limit(10);
+  
+  if (!errors || errors.length === 0) return "✅ No recent errors in the log.";
+  
+  let msg = `🚨 *Last ${errors.length} Errors*\n\n`;
+  errors.forEach((e, i) => {
+    const time = new Date(e.created_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    msg += `${i + 1}. *${e.event_type}*\n   ${time}\n   ${(e.message || '').slice(0, 100)}\n\n`;
+  });
+  return msg;
+}
+
 // ==================== CALLBACK QUERY HANDLER ====================
 
 async function handleCallbackQuery(callbackQueryId: string, data: string, chatId: string) {
@@ -1798,6 +2032,23 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     const page = parseInt(data.split(':')[1], 10) || 1;
     await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
     await handlePitcherK(chatId, page);
+  } else if (data === 'fix:void_today_confirm') {
+    await answerCallbackQuery(callbackQueryId, 'Voiding all pending parlays...');
+    const today = getEasternDate();
+    const { data: voided } = await supabase
+      .from('bot_daily_parlays')
+      .select('id')
+      .eq('parlay_date', today)
+      .or('outcome.eq.pending,outcome.is.null');
+    await supabase.from('bot_daily_parlays').update({
+      outcome: 'void',
+      lesson_learned: 'Voided by admin via /voidtoday',
+    }).eq('parlay_date', today).or('outcome.eq.pending,outcome.is.null');
+    await logActivity('admin_void_today', `Admin voided ${voided?.length || 0} parlays`, { count: voided?.length || 0 });
+    await sendMessage(chatId, `✅ Voided *${voided?.length || 0}* pending parlays for today.`);
+  } else if (data === 'fix:cancel') {
+    await answerCallbackQuery(callbackQueryId, 'Cancelled');
+    await sendMessage(chatId, '❌ Action cancelled.');
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {
@@ -2285,6 +2536,18 @@ async function handleMessage(chatId: string, text: string) {
 /export — Export data
 /digest — Weekly summary
 
+*Management:*
+/deleteparlay [id] — Void a parlay
+/voidtoday — Void all pending today
+/fixleg [id] [idx] [field] [val] — Fix leg
+/deletesweep — Void sweep parlays
+/deletebystrat [name] — Void by strategy
+/fixpipeline — Run full pipeline
+/regenparlay — Void & regenerate
+/fixprops — Refresh props + regen
+/healthcheck — Preflight + integrity
+/errorlog — Last 10 errors
+
 💬 Or just ask me anything in plain English!`;
     }
     return `📋 *Parlay Farm — Help*
@@ -2343,6 +2606,17 @@ Just type a question in plain English\\! Examples:
   if (cmd === "/mlb") { await handleMLB(chatId); return null; }
   if (cmd === "/runmlbbatter") return await handleTriggerFunction(chatId, 'mlb-batter-analyzer', 'MLB Batter Analyzer');
   if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
+  // Admin management commands
+  if (cmd === "/deleteparlay") return await handleDeleteParlay(chatId, args);
+  if (cmd === "/voidtoday") { await handleVoidToday(chatId); return null; }
+  if (cmd === "/fixleg") return await handleFixLeg(chatId, args);
+  if (cmd === "/deletesweep") return await handleDeleteSweep(chatId);
+  if (cmd === "/deletebystrat") return await handleDeleteByStrat(chatId, args);
+  if (cmd === "/fixpipeline") { const r = await handleFixPipeline(chatId); return r; }
+  if (cmd === "/regenparlay") { const r = await handleRegenParlay(chatId); return r; }
+  if (cmd === "/fixprops") { const r = await handleFixProps(chatId); return r; }
+  if (cmd === "/healthcheck") { const r = await handleHealthcheck(chatId); return r; }
+  if (cmd === "/errorlog") return await handleErrorLog(chatId);
 
   // Generic edge function trigger handler
   async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
