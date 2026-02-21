@@ -5464,10 +5464,12 @@ export type Database = {
           book_line: number
           confidence_tier: string | null
           created_at: string
+          defense_adjusted_avg: number | null
           edge_pct: number | null
           game_date: string | null
           id: string
           opponent: string | null
+          opponent_defense_rank: number | null
           player_avg_l10: number | null
           player_avg_l20: number | null
           player_name: string
@@ -5481,10 +5483,12 @@ export type Database = {
           book_line: number
           confidence_tier?: string | null
           created_at?: string
+          defense_adjusted_avg?: number | null
           edge_pct?: number | null
           game_date?: string | null
           id?: string
           opponent?: string | null
+          opponent_defense_rank?: number | null
           player_avg_l10?: number | null
           player_avg_l20?: number | null
           player_name: string
@@ -5498,10 +5502,12 @@ export type Database = {
           book_line?: number
           confidence_tier?: string | null
           created_at?: string
+          defense_adjusted_avg?: number | null
           edge_pct?: number | null
           game_date?: string | null
           id?: string
           opponent?: string | null
+          opponent_defense_rank?: number | null
           player_avg_l10?: number | null
           player_avg_l20?: number | null
           player_name?: string
