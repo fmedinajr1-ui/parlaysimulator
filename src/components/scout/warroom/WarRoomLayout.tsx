@@ -16,17 +16,20 @@ import { WarRoomPropCard, type WarRoomPropData } from './WarRoomPropCard';
 import { HedgeModeTable } from './HedgeModeTable';
 import { HedgeSlideIn, type HedgeOpportunity } from './HedgeSlideIn';
 import { AdvancedMetricsPanel } from './AdvancedMetricsPanel';
+import { WarRoomGameStrip } from './WarRoomGameStrip';
 import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
 import type { ScoutGameContext } from '@/pages/Scout';
 
 interface WarRoomLayoutProps {
   gameContext: ScoutGameContext;
   isDemo?: boolean;
+  adminEventId?: string;
+  onGameChange?: (game: { eventId: string; homeTeam: string; awayTeam: string; gameDescription: string }) => void;
 }
 
 type ViewMode = 'game' | 'hedge';
 
-export function WarRoomLayout({ gameContext, isDemo = false }: WarRoomLayoutProps) {
+export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGameChange }: WarRoomLayoutProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('game');
   const { homeTeam, awayTeam } = gameContext;
 
@@ -128,6 +131,15 @@ export function WarRoomLayout({ gameContext, isDemo = false }: WarRoomLayoutProp
             Preview Mode — Live data appears when a game starts
           </span>
         </div>
+      )}
+
+      {/* Game Strip */}
+      {onGameChange && (
+        <WarRoomGameStrip
+          activeEventId={gameContext.eventId}
+          adminEventId={adminEventId}
+          onSelectGame={onGameChange}
+        />
       )}
 
       {/* Mode Toggle */}

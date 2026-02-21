@@ -226,27 +226,36 @@ const Scout = () => {
   // Auto-set selected game from active game for customers (resolve ESPN ID too)
   useEffect(() => {
     if (isCustomer && activeGame && !selectedGame) {
-      const game: ScoutGameContext = {
-        eventId: activeGame.event_id,
-        homeTeam: activeGame.home_team,
-        awayTeam: activeGame.away_team,
-        commenceTime: activeGame.commence_time ?? '',
-        gameDescription: activeGame.game_description ?? `${activeGame.away_team} @ ${activeGame.home_team}`,
-        homeRoster: [],
-        awayRoster: [],
-      };
-      setSelectedGame(game);
-
-      // Resolve ESPN event ID for live score lookups
-      supabase.functions.invoke('get-espn-event-id', {
-        body: { homeTeam: activeGame.home_team, awayTeam: activeGame.away_team },
-      }).then(({ data }) => {
-        if (data?.espnEventId) {
-          setSelectedGame(prev => prev ? { ...prev, espnEventId: data.espnEventId } : prev);
-        }
-      }).catch(err => console.error('ESPN ID resolve failed:', err));
+      resolveAndSetGame(activeGame.event_id, activeGame.home_team, activeGame.away_team, activeGame.commence_time ?? '', activeGame.game_description ?? `${activeGame.away_team} @ ${activeGame.home_team}`);
     }
   }, [isCustomer, activeGame, selectedGame]);
+
+  // Resolve ESPN ID and set game context
+  const resolveAndSetGame = useCallback((eventId: string, homeTeam: string, awayTeam: string, commenceTime: string, gameDescription: string) => {
+    const game: ScoutGameContext = {
+      eventId,
+      homeTeam,
+      awayTeam,
+      commenceTime,
+      gameDescription,
+      homeRoster: [],
+      awayRoster: [],
+    };
+    setSelectedGame(game);
+
+    supabase.functions.invoke('get-espn-event-id', {
+      body: { homeTeam, awayTeam },
+    }).then(({ data }) => {
+      if (data?.espnEventId) {
+        setSelectedGame(prev => prev?.eventId === eventId ? { ...prev, espnEventId: data.espnEventId } : prev);
+      }
+    }).catch(err => console.error('ESPN ID resolve failed:', err));
+  }, []);
+
+  // Customer game change handler
+  const handleCustomerGameChange = useCallback((game: { eventId: string; homeTeam: string; awayTeam: string; gameDescription: string }) => {
+    resolveAndSetGame(game.eventId, game.homeTeam, game.awayTeam, '', game.gameDescription);
+  }, [resolveAndSetGame]);
 
   const queryClient = useQueryClient();
 
@@ -385,7 +394,7 @@ const Scout = () => {
         {/* Customer: demo mode when no game is live */}
         {isCustomer && !selectedGame && !activeGame && (
           <RiskModeProvider>
-            <CustomerScoutView gameContext={demoGameContext} isDemo />
+            <CustomerScoutView gameContext={demoGameContext} isDemo adminEventId={activeGame?.event_id} />
           </RiskModeProvider>
         )}
 
@@ -515,7 +524,11 @@ const Scout = () => {
             {/* Customer view: Stream + Props + Hedges */}
             {isCustomer && (
               <RiskModeProvider>
-                <CustomerScoutView gameContext={selectedGame} />
+                <CustomerScoutView
+                  gameContext={selectedGame}
+                  adminEventId={activeGame?.event_id}
+                  onGameChange={handleCustomerGameChange}
+                />
               </RiskModeProvider>
             )}
 
