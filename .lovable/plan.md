@@ -1,59 +1,106 @@
 
 
-## Fix: Increase Parlay Volume and Remove Single Picks
+## Fix: Zero-Parlay Problem on Subsequent Runs
 
-### Problem 1: Fingerprint Saturation
+### Root Cause Analysis
 
-The generator runs ~12 times daily. After the first run creates parlays from a 49-pick pool, all subsequent runs pre-load those fingerprints and fail to find new unique combinations. This is the **primary reason** today only produced 13 parlays vs 50 yesterday.
+After investigating the generation logs, here's why the run produced 0 parlays despite 49 picks in the pool:
 
-**Fix**: Reset the deduplication scope so each generation run can create parlays independently, while still preventing exact duplicates within a single run.
+1. **4-leg profiles can only build 3 legs** - With only NBA picks available tonight (no NHL, tennis, or NCAAB player props), the BufferGate (projection buffer < 1.0), team-per-parlay limits, and category caps prevent building a 4th unique leg. This causes 20+ profiles to fail immediately.
 
-Specifically in `bot-generate-daily-parlays/index.ts`:
-- Change the pre-loaded fingerprint logic (lines 6342-6374) to only block **exact duplicates** (same players, same props, same sides), not near-matches
-- Add a "generation batch" concept: each cron run gets its own batch ID, and fingerprints only block within the same batch
-- Increase the `maxPlayerUsage` for exploration tier from 2 to 4, and `maxCategoryUsage` from 6 to 10 -- the small pool (49 picks) gets exhausted too quickly with tight usage caps
+2. **3-leg profiles hit existing fingerprints** - The 13 existing parlays from earlier runs already cover the viable 3-leg combos. Since the combinator always sorts and picks the highest-weighted candidates first, it deterministically generates the same combinations.
 
-### Problem 2: Single Picks Still Being Created
+3. **Mirror fingerprint too aggressive** - Even parlays with the same players but different lines or strategies are blocked.
 
-The single-pick code path is explicitly built into the exploration tier generator. It creates 1-leg entries for high-composite picks.
+4. **No fallback** - A 4-leg profile that builds 3 good legs is thrown away entirely instead of being kept as a valid 3-leg parlay.
 
-**Fix**: Remove the single-pick generation block entirely (lines ~6830-6912). These provide no parlay value and inflate the count misleadingly. If standalone pick tracking is needed, it should go to a separate `bot_single_picks` table, not `bot_daily_parlays`.
+### Fixes (all in `bot-generate-daily-parlays/index.ts`)
 
-### Problem 3: Pool Too Small for 50 Parlays
+**Fix 1: Allow 4-Leg Profiles to Fall Back to 3 Legs**
 
-With only 49 player picks and 14 team picks, the math doesn't support 50+ unique 3-leg parlays without some overlap. Yesterday's 52 parlays included 8 from `force_mispriced_conviction` (which voids and regenerates) and more diverse strategy coverage.
+At line 4814, where it checks `if (legs.length < profile.legs)`, add a fallback:
+- If a profile wants 4 legs but only got 3, accept it as a valid 3-leg parlay instead of discarding
+- Only allow this fallback when the pool is small (< 60 player picks) to maintain quality on big slates
+- Tag these as `strategy_name + '_fallback3'` for tracking
 
-**Fix**: 
-- Allow the same player to appear in up to 3 different parlays (currently capped at 2 for exploration)
-- Allow 2 players from the same team across different parlays (currently 1)
-- On days with fewer than 30 player picks, automatically trigger a relaxed "volume mode" that:
-  - Lowers the minimum hit rate from 45% to 40%
-  - Allows prop type reuse across parlays (e.g., two different parlays can both have a "points" leg)
-  - Increases unique matchup cap from 2 to 4
+**Fix 2: Strategy-Aware Fingerprints**
 
-### Technical Changes
+The fingerprint currently only uses player/prop/side/line. Two different strategies generating the same combination get blocked. Change the fingerprint to include the strategy name so `explore_safe` and `explore_balanced` can each have the same leg combo:
+- Modify `createParlayFingerprint` to optionally include strategy
+- Keep cross-strategy exact-duplicate blocking for the same tier (execution) but allow it for exploration tier
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+**Fix 3: Add Randomization to Candidate Selection**
 
-1. **Batch-scoped deduplication** (lines 6342-6374): Only load existing fingerprints for blocking exact duplicates, not for usage tracking. Reset `globalGameUsage`, `globalMatchupUsage`, and `globalTeamUsage` maps per generation batch instead of accumulating across all runs.
+The combinator always picks the highest-weighted candidate first, producing deterministic output. Add a controlled shuffle:
+- For exploration tier, shuffle the top 70% of candidates before selection (preserving quality floor while introducing variety)
+- This ensures each run produces different combinations even from the same pool
 
-2. **Remove single-pick generation** (lines ~6830-6912): Delete the entire block that creates 1-leg entries. This removes the `single_pick_accuracy` and `single_pick_value` strategies from output.
+**Fix 4: Remove Mirror Fingerprint Blocking for Cross-Run Dedup**
 
-3. **Volume mode for small pools** (near line 6264): When `playerPropCount < 30`, activate a `volumeMode` flag that:
-   - Sets `exploration.maxPlayerUsage = 4`
-   - Sets `exploration.maxTeamUsage = 5`
-   - Sets `exploration.maxCategoryUsage = 10`
-   - Lowers `exploration.minHitRate` from 45 to 40
+Mirror fingerprints are useful within a single run to prevent "same game, flipped sides" pairs. But blocking them across runs is too aggressive:
+- Only populate `globalMirrorPrints` from parlays generated in the current run, not from pre-loaded existing parlays
+- Pre-loaded parlays only block exact fingerprints
 
-4. **Loosen per-run usage tracking**: The `createUsageTracker` currently enforces strict per-parlay limits. In volume mode, relax these so the combinator can find more valid combinations from the same pick pool.
+### Technical Details
+
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Change 1 - Fallback to 3 legs** (around line 4813-4815):
+```typescript
+// Current: discard if legs < profile.legs
+// New: accept 3-leg fallback when pool is small
+if (legs.length < profile.legs) {
+  if (legs.length >= 3 && pool.playerPicks.length < 60) {
+    // Accept as 3-leg fallback
+    console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool too small for ${profile.legs})`);
+  } else {
+    console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built`);
+    continue; // skip as before
+  }
+}
+```
+
+**Change 2 - Strategy-aware fingerprints** (line 4845):
+```typescript
+// Include strategy in fingerprint for exploration tier to allow same combo under different strategies
+const fpStrategy = tier === 'exploration' ? profile.strategy : '';
+const fingerprint = createParlayFingerprint(legs) + (fpStrategy ? `||S:${fpStrategy}` : '');
+```
+
+**Change 3 - Candidate shuffle** (before the candidate selection loop, around line 4500):
+```typescript
+// Shuffle top candidates for exploration tier to avoid deterministic output
+if (tier === 'exploration') {
+  const shuffleCount = Math.floor(remainingCandidates.length * 0.7);
+  const topSlice = remainingCandidates.slice(0, shuffleCount);
+  for (let i = topSlice.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [topSlice[i], topSlice[j]] = [topSlice[j], topSlice[i]];
+  }
+  remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
+}
+```
+
+**Change 4 - Mirror prints only for current run** (line 6342-6357):
+```typescript
+// Only pre-load exact fingerprints from existing parlays (not mirrors)
+// Mirrors are populated during THIS run only
+const globalFingerprints = new Set<string>();
+const globalMirrorPrints = new Set<string>(); // starts empty, filled during this run
+
+if (existingParlays?.length) {
+  for (const p of existingParlays) {
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
+    globalFingerprints.add(createParlayFingerprint(legs));
+    // DO NOT add mirror prints from existing parlays
+  }
+}
+```
 
 ### Expected Impact
 
-- With relaxed dedup and usage caps, each cron run should generate 8-15 parlays instead of 0-2
-- Across 12 daily runs, this should produce 40-60 parlays consistently
-- No single picks cluttering the parlay table
-- Quality is maintained because composite score, hit rate, and defense adjustment filters still apply -- only the diversity/uniqueness constraints are relaxed
-
-### No Database Changes Required
-
-All changes are within the edge function logic. No new columns or tables needed.
+- 4-leg profiles that build 3 legs will now produce parlays instead of being discarded (recovers ~15 parlays per run)
+- Candidate shuffling ensures each run generates different combinations (avoids deterministic fingerprint collisions)
+- Strategy-aware fingerprints allow the same good combo to appear under different strategy tags
+- Mirror dedup is scoped to within-run only, preventing cross-run over-blocking
+- Combined effect: each run should produce 8-15 new parlays, scaling to 40-60+ across daily cron runs
