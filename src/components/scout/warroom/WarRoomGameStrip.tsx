@@ -89,7 +89,7 @@ function GamePill({
 }
 
 export function WarRoomGameStrip({ activeEventId, adminEventId, onSelectGame }: WarRoomGameStripProps) {
-  const { games, isLoading } = useLiveScores({});
+  const { games, isLoading } = useLiveScores({ sport: 'NBA' });
 
   if (isLoading || games.length === 0) return null;
 
