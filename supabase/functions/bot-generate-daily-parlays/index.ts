@@ -514,6 +514,9 @@ interface PickGameContext {
   blowoutRisk: boolean;
   gameKey: string; // "team1__team2" for same-game detection
   opponentAbbrev: string | null;
+  teamTotalSignal?: 'OVER' | 'UNDER' | null;
+  teamTotalComposite?: number | null;
+  teamTotalSport?: string | null;
 }
 
 function classifyPace(paceRating: number, sport: string): 'fast' | 'neutral' | 'slow' {
@@ -530,12 +533,13 @@ function classifyDefense(rank: number): 'soft' | 'neutral' | 'tough' {
   return 'neutral';
 }
 
-// Build a map: teamAbbrev → { opponentAbbrev, gameKey, vegasTotal, blowoutProb }
+// Build a map: teamAbbrev → { opponentAbbrev, gameKey, vegasTotal, blowoutProb, teamTotalSignal }
 function buildTeamGameContextMap(
   envMap: Map<string, GameEnvData>,
   paceMap: Map<string, PaceData>,
   defenseMap: Map<string, number>,
-  nameToAbbrev: Map<string, string>
+  nameToAbbrev: Map<string, string>,
+  teamTotalMap?: Map<string, { side: string; compositeScore: number; sport: string }>
 ): Map<string, PickGameContext> {
   const contextMap = new Map<string, PickGameContext>();
 
@@ -549,6 +553,11 @@ function buildTeamGameContextMap(
 
     const gameKey = [homeAbbrev, awayAbbrev].sort().join('__').toLowerCase();
 
+    // Look up team total signal for this game (try both teams)
+    const totalSignalHome = teamTotalMap?.get(homeAbbrev);
+    const totalSignalAway = teamTotalMap?.get(awayAbbrev);
+    const totalSignal = totalSignalHome || totalSignalAway;
+
     // Home team context: opponent defense = away team's defense rank
     const awayDefRank = defenseMap.get(awayAbbrev) ?? 15;
     contextMap.set(homeAbbrev, {
@@ -558,6 +567,9 @@ function buildTeamGameContextMap(
       blowoutRisk: env.blowout_probability > 0.3,
       gameKey,
       opponentAbbrev: awayAbbrev,
+      teamTotalSignal: totalSignal ? totalSignal.side as 'OVER' | 'UNDER' : null,
+      teamTotalComposite: totalSignal ? totalSignal.compositeScore : null,
+      teamTotalSport: totalSignal ? totalSignal.sport : null,
     });
 
     // Away team context: opponent defense = home team's defense rank
@@ -569,6 +581,9 @@ function buildTeamGameContextMap(
       blowoutRisk: env.blowout_probability > 0.3,
       gameKey,
       opponentAbbrev: homeAbbrev,
+      teamTotalSignal: totalSignal ? totalSignal.side as 'OVER' | 'UNDER' : null,
+      teamTotalComposite: totalSignal ? totalSignal.compositeScore : null,
+      teamTotalSport: totalSignal ? totalSignal.sport : null,
     });
   }
 
@@ -644,6 +659,15 @@ function calculateParlayCoherence(legs: any[]): number {
     if (ctx.pace === 'slow') coherenceScore -= 5;
     if (ctx.defenseStrength === 'soft') coherenceScore += 3;
     if (ctx.defenseStrength === 'tough') coherenceScore -= 5;
+
+    // TEAM TOTAL ALIGNMENT: Player OVER vs game total signal
+    if (ctx.teamTotalSignal && ctx.teamTotalComposite) {
+      if (ctx.teamTotalSignal === 'OVER' && ctx.teamTotalComposite >= 70) {
+        coherenceScore += 8; // Aligned: player OVER in OVER game
+      } else if (ctx.teamTotalSignal === 'UNDER' && ctx.teamTotalComposite >= 70) {
+        coherenceScore -= 15; // Conflict: player OVER in strong UNDER game
+      }
+    }
   }
   for (const leg of underLegs) {
     const ctx = leg._gameContext as PickGameContext | undefined;
@@ -652,6 +676,15 @@ function calculateParlayCoherence(legs: any[]): number {
     if (ctx.pace === 'fast') coherenceScore -= 4;
     if (ctx.defenseStrength === 'tough') coherenceScore += 3;
     if (ctx.defenseStrength === 'soft') coherenceScore -= 3;
+
+    // TEAM TOTAL ALIGNMENT: Player UNDER vs game total signal
+    if (ctx.teamTotalSignal && ctx.teamTotalComposite) {
+      if (ctx.teamTotalSignal === 'UNDER' && ctx.teamTotalComposite >= 70) {
+        coherenceScore += 8; // Aligned: player UNDER in UNDER game
+      } else if (ctx.teamTotalSignal === 'OVER' && ctx.teamTotalComposite >= 70) {
+        coherenceScore -= 10; // Conflict: player UNDER in strong OVER game
+      }
+    }
   }
 
   // Positive correlation bonus: player OVER + same team ML/spread = correlated upside
@@ -3051,9 +3084,34 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${nhlStatsMap.size} NHL teams, ${baseballStatsMap.size} baseball teams`);
 
+  // === LOAD TEAM TOTAL SIGNALS FOR CROSS-REFERENCE ===
+  const { data: teamTotalBets } = await supabase
+    .from('game_bets')
+    .select('home_team, away_team, recommended_side, composite_score, sport')
+    .eq('bet_type', 'total')
+    .eq('is_active', true)
+    .in('sport', ['basketball_nba', 'basketball_ncaab']);
+
+  const teamTotalSignalMap = new Map<string, { side: string; compositeScore: number; sport: string }>();
+  for (const tb of teamTotalBets || []) {
+    if (!tb.recommended_side || !tb.composite_score) continue;
+    const entry = {
+      side: tb.recommended_side.toUpperCase(),
+      compositeScore: Number(tb.composite_score),
+      sport: tb.sport || '',
+    };
+    // Map by team abbreviation (try nameToAbbrev lookup)
+    for (const teamName of [tb.home_team, tb.away_team]) {
+      if (!teamName) continue;
+      const abbrev = nameToAbbrev.get(teamName.toLowerCase()) || teamName.toLowerCase();
+      teamTotalSignalMap.set(abbrev, entry);
+    }
+  }
+  console.log(`[Bot] Loaded ${teamTotalSignalMap.size} team total signals for cross-reference`);
+
   // === BUILD TEAM GAME CONTEXT MAP FOR INTELLIGENT STACKING ===
-  const teamGameContextMap = buildTeamGameContextMap(envMap, paceMap, defenseMap, nameToAbbrev);
-  console.log(`[Bot] Built game context map for ${teamGameContextMap.size} teams (stacking intelligence)`);
+  const teamGameContextMap = buildTeamGameContextMap(envMap, paceMap, defenseMap, nameToAbbrev, teamTotalSignalMap);
+  console.log(`[Bot] Built game context map for ${teamGameContextMap.size} teams (stacking intelligence + team totals)`);
 
   console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${baseballTeamsSet.size} baseball teams`);
 
@@ -3200,9 +3258,44 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       pick.compositeScore = Math.max(0, pick.compositeScore + (blowoutGames.get(teamName) || -8));
       contextAdjustments++;
     }
+    
+    // TEAM TOTAL ALIGNMENT: Adjust composite scores based on game total signal
+    const ctx = pick._gameContext as PickGameContext | undefined;
+    if (ctx?.teamTotalSignal && ctx?.teamTotalComposite && ctx.teamTotalComposite >= 70) {
+      const pickSide = (pick.recommended_side || pick.side || '').toLowerCase();
+      const isAligned = (pickSide === 'over' && ctx.teamTotalSignal === 'OVER') ||
+                        (pickSide === 'under' && ctx.teamTotalSignal === 'UNDER');
+      const isConflict = (pickSide === 'over' && ctx.teamTotalSignal === 'UNDER') ||
+                         (pickSide === 'under' && ctx.teamTotalSignal === 'OVER');
+
+      if (isAligned) {
+        pick.compositeScore += 8;
+        contextAdjustments++;
+      } else if (isConflict) {
+        const penalty = pickSide === 'over' ? -12 : -10;
+        pick.compositeScore = Math.max(0, pick.compositeScore + penalty);
+        contextAdjustments++;
+      }
+
+      // NCAAB HARD-BLOCK: Player OVERs in strong UNDER games
+      if (ctx.teamTotalSport === 'basketball_ncaab' && 
+          ctx.teamTotalSignal === 'UNDER' && ctx.teamTotalComposite >= 75 &&
+          pickSide === 'over' && pick.player_name) {
+        pick.compositeScore = 0; // Effectively blocks from selection
+        contextAdjustments++;
+      }
+
+      // NCAAB UNDER BOOST: Player UNDERs in strong UNDER games
+      if (ctx.teamTotalSport === 'basketball_ncaab' &&
+          ctx.teamTotalSignal === 'UNDER' && ctx.teamTotalComposite >= 75 &&
+          pickSide === 'under') {
+        pick.compositeScore += 10;
+        contextAdjustments++;
+      }
+    }
   }
   if (contextAdjustments > 0) {
-    console.log(`[Bot] Applied ${contextAdjustments} game context adjustments to player picks`);
+    console.log(`[Bot] Applied ${contextAdjustments} game context adjustments (incl. team total alignment)`);
   }
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
