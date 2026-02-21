@@ -1,89 +1,79 @@
 
 
-## Cross-Reference MLB Mispriced Lines
+## Use Remaining Legs: Force-Build Parlays from Leftover Mispriced Lines
 
-### Current State
-- MLB mispriced line detection **already exists** in `detect-mispriced-lines` (pulls from `unified_props` for `baseball_mlb` and compares against 44K+ historical game logs)
-- Two additional MLB analyzers (`mlb-batter-analyzer`, `mlb-pitcher-k-analyzer`) also write to `mispriced_lines`
-- The `high-conviction-analyzer` already cross-references `mispriced_lines` (sport-agnostic) against engine picks
-- **Problem**: The engines it checks (`nba_risk_engine_picks`, `prop_engine_v2_picks`, sharp/heat parlays) are NBA-only. MLB mispriced lines have **nothing to cross-reference against**, so they never appear as high-conviction plays
+### Current Situation
 
-### What Needs to Happen
+Today there are 101 mispriced lines but only 18 parlays were built. Many high-edge legs (like Jalen Suggs blocks +172%, Desmond Bane threes +99%) are sitting unused. The cross-reference system is active but only 1 risk engine pick exists today, so almost no overlaps are found.
 
-**Create an MLB cross-reference engine** that validates MLB mispriced lines using MLB-specific signals, similar to how NBA uses the risk engine and prop engine.
+### What This Plan Does
 
-#### Data Sources Available for MLB Cross-Reference
-1. **`mlb_player_game_logs`** (44,541 logs) -- L10/L20/season trends, hit rates, consistency metrics
-2. **`pp_snapshot`** (PrizePicks lines) -- batter_home_runs, pitcher_strikeouts, player_1st_inning_runs_allowed, player_hitter_fantasy_score
-3. **`mlb-batter-analyzer` output** -- already computes L10/L20 averages, hit rates, edge percentages
-4. **`mlb-pitcher-k-analyzer` output** -- same for pitcher strikeouts
+Add a "sweep" pass to the parlay generator that takes unused mispriced lines and forces them into additional parlays, prioritizing the highest-edge plays.
 
-#### Implementation: New Edge Function `mlb-prop-cross-reference`
+### Changes
 
-This function will act as an MLB-specific engine that produces picks stored in a new `mlb_engine_picks` table, which the `high-conviction-analyzer` can then cross-reference.
+**1. Add a Sweep Strategy to `bot-generate-daily-parlays`**
 
-**Step 1 -- Create `mlb_engine_picks` table**
-```
-- player_name (text)
-- prop_type (text) 
-- line (numeric)
-- side (text: OVER/UNDER)
-- confidence_score (numeric)
-- signal_sources (jsonb) -- which signals contributed
-- game_date (date)
-- created_at (timestamptz)
-- unique constraint on (player_name, prop_type, game_date)
-```
+After the normal generation tiers (execution, validation, exploration) complete, run a final "sweep" pass:
 
-**Step 2 -- New edge function: `mlb-prop-cross-reference`**
+- Collect all mispriced line player/prop combos that were NOT used in any generated parlay
+- Sort by absolute edge percentage (highest first)
+- Group into 3-leg parlays using relaxed rules:
+  - Max 1 player per parlay (no same-player stacking)
+  - Prefer mixing OVER and UNDER for hedge protection
+  - Skip the PropTypeCap entirely for sweep parlays (these are leftovers)
+  - Skip fingerprint dedup against existing parlays (sweep is meant to cover gaps)
+- Tag these as `tier: 'sweep'` and `strategy_name: 'leftover_sweep'`
+- Cap at 10 sweep parlays per run to avoid noise
 
-This function generates MLB engine picks by combining multiple validation signals:
+**2. Update the HighConvictionCard UI**
 
-1. **Trend Signal**: Compare L10 avg vs L20/season avg. If a player is trending significantly above their season baseline, that confirms an OVER mispriced signal (and vice versa)
-2. **Hit Rate Signal**: Calculate how often the player has gone over/under the current line in their last 10-20 games. A 70%+ hit rate strongly confirms the direction
-3. **Consistency Signal**: Low standard deviation + strong edge = higher confidence (the player consistently performs at this level)
-4. **PrizePicks Line Comparison**: If PrizePicks sets a line and the odds API has a different line, the discrepancy itself is a signal
-5. **Pitcher K Analyzer Cross-Check**: For pitcher strikeouts, check if the `mlb-pitcher-k-analyzer` independently found the same signal
+Add `mlb_cross_ref` to the engine colors/labels map so when MLB picks do start flowing, they render properly:
+- Color: purple (`bg-purple-500`)
+- Label: "MLB XRef"
 
-Confidence score formula:
-- Base: edge_pct weight (0-40 points)
-- Hit rate bonus: (hit_rate - 50) * 0.5 (0-25 points)  
-- Trend alignment bonus: if L10 trend matches signal direction (+15 points)
-- Consistency bonus: low std dev relative to mean (+10 points)
-- Multi-source bonus: if both batter-analyzer and detect-mispriced found same signal (+10 points)
+**3. Improve Cross-Reference Coverage**
 
-**Step 3 -- Update `high-conviction-analyzer`**
-
-Add a 6th parallel query to fetch from `mlb_engine_picks`:
-```typescript
-supabase.from('mlb_engine_picks')
-  .select('player_name, prop_type, line, side, confidence_score')
-  .eq('game_date', today)
-```
-
-Add picks to the engine map with `engine: 'mlb_cross_ref'`.
-
-**Step 4 -- Update `useHighConvictionPlays` hook**
-
-Same change -- add the `mlb_engine_picks` query to the parallel fetch and feed results into the engine map.
-
-**Step 5 -- Wire into pipeline**
-
-Add `mlb-prop-cross-reference` to the `data-pipeline-orchestrator` Phase 2, after `mlb-batter-analyzer` and `mlb-pitcher-k-analyzer` but before `high-conviction-analyzer`.
+The core issue is that only 1 engine (risk) produced picks today. To get more cross-referencing working now (not just when MLB starts):
+- In the high-conviction-analyzer, also query `bot_daily_parlays` legs as an engine source. If a mispriced line's player+prop appears in an existing parlay leg, that counts as a "bot" engine match
+- This creates a feedback loop: the parlay generator already validated these picks, so their presence confirms the mispriced signal
 
 ### Technical Details
 
-**New files:**
-- `supabase/functions/mlb-prop-cross-reference/index.ts`
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-**Modified files:**
-- `supabase/functions/high-conviction-analyzer/index.ts` -- add `mlb_engine_picks` query
-- `src/hooks/useHighConvictionPlays.ts` -- add `mlb_engine_picks` query  
-- `supabase/functions/data-pipeline-orchestrator/index.ts` -- add to Phase 2
+Add sweep pass after line ~6420 (after all tier generation):
 
-**New database table:**
-- `mlb_engine_picks` with RLS disabled (backend-only writes via service role)
+```text
+// Sweep pass: collect unused mispriced lines
+1. Get all player+prop combos from generated parlays (this run + existing)
+2. Filter mispriced lines to those NOT in the used set
+3. Sort remaining by |edge_pct| descending
+4. Greedily build 3-leg combos:
+   - No two legs from same player
+   - Alternate OVER/UNDER when possible
+5. Insert as tier='sweep', strategy_name='leftover_sweep'
+6. Cap at 10 parlays
+```
 
-### Note on Timing
-MLB regular season starts late March. Currently only 4 spring training prop types exist in PrizePicks. The infrastructure will be ready and will start producing cross-referenced picks as soon as MLB props appear in `unified_props` (from the odds scraper) and game logs accumulate.
+**File: `supabase/functions/high-conviction-analyzer/index.ts`**
+
+Add bot_daily_parlays as a 7th engine source:
+- Query today's `bot_daily_parlays`, extract each leg's player_name + prop_type
+- Add to engineMap with `engine: 'bot_parlay'`
+
+**File: `src/components/market/HighConvictionCard.tsx`**
+
+Add to ENGINE_COLORS and ENGINE_LABELS:
+```text
+mlb_cross_ref: { color: 'bg-purple-500', label: 'MLB XRef' }
+bot_parlay:    { color: 'bg-cyan-500',   label: 'Bot' }
+```
+
+### Expected Impact
+
+- Leftover high-edge mispriced lines get used in sweep parlays instead of sitting idle
+- Cross-reference coverage improves immediately by treating existing parlay legs as confirmation signals
+- MLB cross-ref labels ready for when season data flows in
+- Each run should produce 18 (current) + up to 10 sweep = ~28 parlays
 
