@@ -9,6 +9,8 @@ const ENGINE_COLORS: Record<string, string> = {
   propv2: 'bg-blue-500',
   sharp: 'bg-emerald-500',
   heat: 'bg-red-500',
+  mlb_cross_ref: 'bg-purple-500',
+  bot_parlay: 'bg-cyan-500',
 };
 
 const ENGINE_LABELS: Record<string, string> = {
@@ -16,6 +18,8 @@ const ENGINE_LABELS: Record<string, string> = {
   propv2: 'PropV2',
   sharp: 'Sharp',
   heat: 'Heat',
+  mlb_cross_ref: 'MLB XRef',
+  bot_parlay: 'Bot',
 };
 
 const TIER_CLASSES: Record<string, string> = {

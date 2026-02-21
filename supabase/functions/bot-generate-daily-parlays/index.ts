@@ -6727,6 +6727,138 @@ Deno.serve(async (req) => {
 
     // Single-pick generation removed — only multi-leg parlays belong in bot_daily_parlays
 
+    // === SWEEP PASS: Force-build parlays from leftover mispriced lines ===
+    try {
+      // Collect all player+prop combos already used in any parlay (this run + existing)
+      const usedPlayerProps = new Set<string>();
+      const allExistingLegs = [...allParlays];
+      if (existingParlays) {
+        for (const p of existingParlays) {
+          allExistingLegs.push(p);
+        }
+      }
+      for (const p of allExistingLegs) {
+        const legs = Array.isArray(p.legs) ? p.legs : (typeof p.legs === 'string' ? JSON.parse(p.legs) : []);
+        for (const leg of legs) {
+          if (leg.player_name && leg.prop_type) {
+            usedPlayerProps.add(`${leg.player_name.toLowerCase().trim()}|${(leg.prop_type || '').toLowerCase().trim()}`);
+          }
+        }
+      }
+
+      // Filter mispriced lines to unused ones
+      const unusedMispriced = (rawMispricedLines || []).filter((ml: any) => {
+        const key = `${(ml.player_name || '').toLowerCase().trim()}|${(ml.prop_type || '').toLowerCase().trim()}`;
+        return !usedPlayerProps.has(key);
+      });
+
+      // Sort by absolute edge percentage descending
+      unusedMispriced.sort((a: any, b: any) => Math.abs(b.edge_pct || 0) - Math.abs(a.edge_pct || 0));
+
+      console.log(`[Bot v2] 🧹 SWEEP: ${unusedMispriced.length} unused mispriced lines (of ${(rawMispricedLines || []).length} total)`);
+
+      if (unusedMispriced.length >= 3) {
+        const MAX_SWEEP_PARLAYS = 10;
+        let sweepCount = 0;
+        const usedInSweep = new Set<number>(); // track indices used
+
+        for (let start = 0; start < unusedMispriced.length && sweepCount < MAX_SWEEP_PARLAYS; start++) {
+          if (usedInSweep.has(start)) continue;
+          const leg1 = unusedMispriced[start];
+          const leg1Name = (leg1.player_name || '').toLowerCase().trim();
+          const sweepLegs = [leg1];
+          const sweepPlayers = new Set([leg1Name]);
+          const sweepIndices = [start];
+          let overCount = (leg1.signal || '').toUpperCase() === 'OVER' ? 1 : 0;
+          let underCount = (leg1.signal || '').toUpperCase() === 'UNDER' ? 1 : 0;
+
+          // Find 2 more legs
+          for (let j = start + 1; j < unusedMispriced.length && sweepLegs.length < 3; j++) {
+            if (usedInSweep.has(j)) continue;
+            const candidate = unusedMispriced[j];
+            const candName = (candidate.player_name || '').toLowerCase().trim();
+
+            // No same player
+            if (sweepPlayers.has(candName)) continue;
+
+            // Prefer mixing OVER/UNDER for hedge protection
+            const candSide = (candidate.signal || '').toUpperCase();
+            const wouldBeOver = overCount + (candSide === 'OVER' ? 1 : 0);
+            const wouldBeUnder = underCount + (candSide === 'UNDER' ? 1 : 0);
+            // Skip if all 3 would be same direction AND we have other candidates
+            if (sweepLegs.length === 2 && (wouldBeOver === 3 || wouldBeUnder === 3)) {
+              // Only skip if this isn't the last chance
+              const remaining = unusedMispriced.slice(j + 1).filter((_: any, idx: number) => !usedInSweep.has(j + 1 + idx));
+              if (remaining.length > 0) continue;
+            }
+
+            sweepLegs.push(candidate);
+            sweepPlayers.add(candName);
+            sweepIndices.push(j);
+            if (candSide === 'OVER') overCount++;
+            else underCount++;
+          }
+
+          if (sweepLegs.length < 3) continue;
+
+          // Mark indices as used
+          for (const idx of sweepIndices) usedInSweep.add(idx);
+
+          // Build parlay legs
+          const parlayLegs = sweepLegs.map((ml: any) => ({
+            player_name: ml.player_name,
+            prop_type: ml.prop_type,
+            line: ml.book_line,
+            side: (ml.signal || 'OVER').toLowerCase(),
+            category: ml.prop_type,
+            weight: 1,
+            hit_rate: 0,
+            american_odds: -110,
+            composite_score: Math.abs(ml.edge_pct || 0),
+            outcome: 'pending',
+            original_line: ml.book_line,
+            selected_line: ml.book_line,
+            line_selection_reason: 'sweep_mispriced',
+            projection_buffer: (ml.player_avg_l10 || 0) - (ml.book_line || 0),
+            projected_value: ml.player_avg_l10 || 0,
+            line_source: 'mispriced_sweep',
+            has_real_line: true,
+            sport: ml.sport || 'basketball_nba',
+            edge_pct: ml.edge_pct,
+            confidence_tier: ml.confidence_tier,
+          }));
+
+          // Combined probability estimate (conservative: 45% per leg for sweep)
+          const combinedProb = Math.pow(0.45, 3);
+          const combinedOdds = Math.round(100 * (1 - combinedProb) / combinedProb);
+          const avgEdge = sweepLegs.reduce((s: number, ml: any) => s + Math.abs(ml.edge_pct || 0), 0) / sweepLegs.length;
+
+          allParlays.push({
+            parlay_date: targetDate,
+            legs: parlayLegs,
+            leg_count: 3,
+            combined_probability: combinedProb,
+            expected_odds: combinedOdds,
+            simulated_win_rate: combinedProb,
+            simulated_edge: avgEdge / 100,
+            simulated_sharpe: 0,
+            strategy_name: 'leftover_sweep',
+            selection_rationale: `Sweep: ${sweepLegs.map((ml: any) => `${ml.player_name} ${ml.prop_type} ${ml.signal} ${ml.edge_pct > 0 ? '+' : ''}${ml.edge_pct?.toFixed(0)}%`).join(' | ')}`,
+            outcome: 'pending',
+            is_simulated: true,
+            simulated_stake: 50,
+            tier: 'sweep',
+          });
+
+          sweepCount++;
+        }
+
+        console.log(`[Bot v2] 🧹 SWEEP: Created ${sweepCount} sweep parlays from leftover mispriced lines`);
+      }
+    } catch (sweepErr) {
+      console.error(`[Bot v2] Sweep pass error:`, sweepErr);
+    }
+
     console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
 
     // === DRY-RUN: Skip all DB writes and return detailed gate analysis ===
