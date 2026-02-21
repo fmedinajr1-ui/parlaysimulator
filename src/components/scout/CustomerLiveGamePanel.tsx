@@ -1,9 +1,10 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useLiveScores } from '@/hooks/useLiveScores';
 import { useUnifiedLiveFeed } from '@/hooks/useUnifiedLiveFeed';
+import { supabase } from '@/integrations/supabase/client';
 import {
   Activity,
   Zap,
@@ -16,6 +17,82 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MomentumIndicator } from './warroom/MomentumIndicator';
+
+/* ------------------------------------------------------------------ */
+/*  useLivePBP – polls fetch-live-pbp for real-time box score + plays  */
+/* ------------------------------------------------------------------ */
+interface PBPPlayer {
+  playerId: string;
+  playerName: string;
+  team: string;
+  position: string;
+  minutes: number;
+  points: number;
+  rebounds: number;
+  assists: number;
+  steals: number;
+  blocks: number;
+  fouls: number;
+  plusMinus: number;
+}
+
+interface PBPPlay {
+  time: string;
+  text: string;
+  playType: string;
+  team?: string;
+  playerName?: string;
+  isHighMomentum?: boolean;
+}
+
+interface PBPData {
+  players: PBPPlayer[];
+  recentPlays: PBPPlay[];
+  period?: number;
+  clock?: string;
+  homeScore?: number;
+  awayScore?: number;
+  pace?: number;
+  notAvailable?: boolean;
+}
+
+function useLivePBP(espnEventId: string | undefined, gameStatus: string | undefined) {
+  const [data, setData] = useState<PBPData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const shouldPoll = espnEventId && (gameStatus === 'in_progress' || gameStatus === 'halftime');
+
+  const fetchPBP = useCallback(async () => {
+    if (!espnEventId) return;
+    setIsLoading(true);
+    try {
+      const { data: result, error } = await supabase.functions.invoke('fetch-live-pbp', {
+        body: { eventId: espnEventId },
+      });
+      if (error) {
+        console.error('[useLivePBP] Error:', error);
+        return;
+      }
+      if (result && !result.notAvailable) {
+        setData(result as PBPData);
+      }
+    } catch (err) {
+      console.error('[useLivePBP] Fetch failed:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [espnEventId]);
+
+  useEffect(() => {
+    if (!shouldPoll) return;
+    // Fetch immediately, then every 15s
+    fetchPBP();
+    const interval = setInterval(fetchPBP, 15000);
+    return () => clearInterval(interval);
+  }, [shouldPoll, fetchPBP]);
+
+  return { data, isLoading };
+}
 
 interface CustomerLiveGamePanelProps {
   homeTeam: string;
@@ -364,13 +441,42 @@ export function CustomerLiveGamePanel({
   });
   const feedGame = feedGames[0];
 
-  // Extract recent plays from feed game players or top-level
+  // Poll fetch-live-pbp for real-time play-by-play + box score from ESPN
+  const { data: pbpData } = useLivePBP(espnEventId, game?.status);
+
+  // Map PBP plays to component's RecentPlay interface
   const recentPlays: RecentPlay[] = useMemo(() => {
-    // The unified feed doesn't have a direct recentPlays array,
-    // but we can synthesise from player current stats as activity indicators
-    // For now return empty — will populate when feed data structure supports it
-    return [];
-  }, [feedGame]);
+    if (!pbpData?.recentPlays?.length) return [];
+    return pbpData.recentPlays.map((play, idx) => {
+      // Parse time string like "Q2 8:45" into period + clock
+      const timeMatch = play.time?.match(/^(?:Q|OT)(\d+)\s+(.+)$/);
+      const period = timeMatch ? parseInt(timeMatch[1]) : undefined;
+      const clock = timeMatch ? timeMatch[2] : play.time;
+      return {
+        id: `pbp-${idx}`,
+        playType: play.playType,
+        description: play.text,
+        clock,
+        period,
+        team: play.team,
+      };
+    });
+  }, [pbpData?.recentPlays]);
+
+  // Box score: prefer fresh PBP player stats over stale DB data
+  const boxScoreStats = useMemo(() => {
+    if (pbpData?.players?.length) {
+      return pbpData.players.map(p => ({
+        playerName: p.playerName,
+        team: p.team,
+        points: p.points,
+        rebounds: p.rebounds,
+        assists: p.assists,
+        minutes: String(Math.round(p.minutes)),
+      }));
+    }
+    return game?.playerStats ?? [];
+  }, [pbpData?.players, game?.playerStats]);
 
   // Waiting state
   if (scoresLoading && !game) {
@@ -426,7 +532,7 @@ export function CustomerLiveGamePanel({
           clock={game.clock}
           status={game.status}
           quarterScores={game.quarterScores}
-          pace={feedGame?.pace}
+          pace={pbpData?.pace ?? feedGame?.pace}
         />
 
         {/* Box Score */}
@@ -438,7 +544,7 @@ export function CustomerLiveGamePanel({
             </span>
           </div>
           <BoxScoreTable
-            playerStats={game.playerStats}
+            playerStats={boxScoreStats}
             homeTeam={game.homeTeam}
             awayTeam={game.awayTeam}
           />
