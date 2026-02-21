@@ -1,115 +1,76 @@
 
+## Fix Hitter Fantasy Score + Wire MLB into Parlay Bot + Pull Props
 
-## Fix MLBST Props Pipeline: Scraping, Cross-Reference, and Edge Detection
+### 4 Changes in One Shot
 
-### Root Cause Analysis
+**1. Fix `mlb-batter-analyzer` -- Add `player_hitter_fantasy_score`**
 
-The pipeline has 3 breakpoints preventing MLBST props from working:
+File: `supabase/functions/mlb-batter-analyzer/index.ts`
 
-1. **PP Scraper crashes (CPU timeout)** before reaching MLB data. It tries to process ALL PrizePicks leagues (COD esports, CBB, MMA, etc.) and hits the Deno edge function CPU limit. Unknown leagues like "COD" and "CBB" fall through to `basketball_nba` as a default, adding noise and wasting time.
+- Add `player_hitter_fantasy_score: null` to `STAT_MAP` (line 26, after `player_fantasy_score`)
+- Add `player_hitter_fantasy_score: 'Hitter Fantasy Score'` to `PROP_LABELS` (line 42)
+- Update `isFantasy` check on line 140 to: `prop.stat_type === 'player_fantasy_score' || prop.stat_type === 'player_hitter_fantasy_score'`
 
-2. **MLB props never reach `unified_props`**. The PP scraper only writes to `pp_snapshot`. The `whale-odds-scraper` (which feeds `unified_props`) hasn't fetched baseball odds. Without `unified_props` data, the War Room and Sweet Spots dashboards can't display MLB props.
+This unlocks 117 hitter fantasy score props for mispriced line detection.
 
-3. **MLB analyzers never run**. The `mlb-batter-analyzer`, `mlb-prop-cross-reference`, and `detect-mispriced-lines` (for MLB) all depend on `pp_snapshot` having fresh MLB data AND being triggered. The orchestrator calls them, but they find no data to work with because of issue #1.
+---
 
-### Fix Plan
-
-**Step 1: Fix PP Scraper efficiency and mapping**
-
-File: `supabase/functions/pp-props-scraper/index.ts`
-
-- Add missing leagues to `LEAGUE_TO_SPORT` map (CBB, COD, MMA, etc.) so they don't fall through to `basketball_nba`
-- Add an early filter to skip unsupported leagues BEFORE the expensive logging/processing loop
-- This prevents CPU timeout by reducing the number of projections processed
-- Add `batter_hits`, `batter_rbis`, `batter_runs`, `batter_stolen_bases` stat type mappings for MLB-specific stat names from PrizePicks (e.g., "Hits" for MLB should map to `batter_hits`, not `player_hits`)
-
-**Step 2: Bridge MLB props from `pp_snapshot` to `unified_props`**
+**2. Fix `mlb-prop-cross-reference` -- Add Fantasy Score calculation**
 
 File: `supabase/functions/mlb-prop-cross-reference/index.ts`
 
-- After generating engine picks, also upsert MLB props from `pp_snapshot` into `unified_props` so the War Room and Sweet Spots dashboards can display them
-- Map `pp_snapshot` fields to `unified_props` columns (player_name, prop_type, current_line, sport, game_description from matchup, etc.)
-- This fills the gap since `whale-odds-scraper` doesn't always fetch MLB odds
+- Add `'player_hitter_fantasy_score': '__fantasy__'` and `'player_fantasy_score': '__fantasy__'` to `PROP_TO_STAT` map
+- Add `walks` to the game log select query (needed for fantasy calc)
+- When `statCol === '__fantasy__'`, use custom calculation per game: `hits + walks + runs + rbis + total_bases + stolen_bases`
+- Replace `avg()` and `stdDev()` calls with custom value arrays for fantasy props
 
-**Step 3: Add dedicated MLB prop sync function**
+---
 
-File: `supabase/functions/mlb-props-sync/index.ts` (new)
+**3. Wire MLB Engine Picks into Parlay Bot**
 
-- A lightweight function that reads today's MLB props from `pp_snapshot` and syncs them into `unified_props`
-- Fetches corresponding odds from `whale-odds-scraper` data if available, otherwise uses PrizePicks lines as the baseline
-- Runs as part of the orchestrator pipeline before the analyzers
+File: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**Step 4: Wire into orchestrator**
+- After line 3021 (mispriced lines fetch), add a parallel fetch for `mlb_engine_picks` where `game_date = targetDate`
+- Build an `mlbEngineMap` keyed by `playerName|propType`
+- In the mispriced enrichment loop (around line 4155), when a pick matches an `mlb_engine_picks` entry with matching side:
+  - Add composite score boost: `+((confidence_score - 40) * 0.5)` (yields +5 to +17.5 points)
+  - Flag as `mlb_cross_confirmed: true` for tracking
+- Add MLB-specific parlay profiles:
+  - Exploration: `{ legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] }` (x2)
+  - Validation: `{ legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55 }`
+  - Execution: `{ legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' }`
+
+---
+
+**4. Trigger Parlay Bot after MLB Analysis**
 
 File: `supabase/functions/data-pipeline-orchestrator/index.ts`
 
-- Add `mlb-props-sync` call before `detect-mispriced-lines` and `mlb-prop-cross-reference`
-- Ensure `mlb-batter-analyzer` is also called in the pipeline (currently missing from orchestrator)
+- After `mlb-prop-cross-reference` (line 130), add: `await runFunction('bot-generate-daily-parlays', { source: 'mlb_pipeline' });`
+- This ensures fresh MLB picks immediately flow into parlay generation without waiting for Phase 3
 
-### Technical Details
+---
 
-**PP Scraper fix -- league mapping additions:**
-```typescript
-const LEAGUE_TO_SPORT: Record<string, string> = {
-  // ... existing mappings ...
-  'CBB': 'basketball_ncaab',
-  'COD': 'esports_cod',
-  'MMA': 'mma_ufc',
-  'SOCCER': 'soccer',
-  'CSGO': 'esports_csgo',
-  'LOL': 'esports_lol',
-  'DOTA2': 'esports_dota2',
-  'VAL': 'esports_val',
-};
-```
+**5. After Deploy: Pull Props**
 
-**PP Scraper fix -- MLB-specific stat mapping:**
-```typescript
-// In processExtractedProjections, after league detection:
-if (league === 'MLB' || league === 'MLBST') {
-  // Override generic mappings for baseball
-  if (proj.stat_type === 'Hits') normalizedStat = 'batter_hits';
-  if (proj.stat_type === 'RBIs') normalizedStat = 'batter_rbis';
-  if (proj.stat_type === 'Runs') normalizedStat = 'batter_runs';
-  if (proj.stat_type === 'Stolen Bases') normalizedStat = 'batter_stolen_bases';
-}
-```
+Once deployed, invoke the MLB pipeline sequence:
+1. `mlb-batter-analyzer` -- now processes hitter fantasy score props
+2. `mlb-prop-cross-reference` -- cross-references ALL MLB props including fantasy
+3. Verify results in `mispriced_lines` and `mlb_engine_picks`
 
-**MLB Props Sync function -- core logic:**
-```text
-1. Read today's MLB props from pp_snapshot (sport = 'baseball_mlb')
-2. For each prop, build a unified_props row:
-   - event_id from pp_snapshot.event_id
-   - sport = 'baseball_mlb'
-   - game_description from matchup or constructed from team data
-   - player_name, prop_type (stat_type), current_line (pp_line)
-   - bookmaker = 'prizepicks'
-3. Upsert into unified_props with conflict on (event_id, player_name, prop_type, bookmaker)
-4. Trigger mlb-batter-analyzer and mlb-prop-cross-reference
-```
-
-**Orchestrator update:**
-```text
-Phase 2 (Analysis):
-  1. detect-mispriced-lines (existing)
-  2. mlb-props-sync (NEW - bridges pp_snapshot to unified_props)  
-  3. mlb-batter-analyzer (existing - now gets data)
-  4. mlb-prop-cross-reference (existing - now gets data)
-  5. high-conviction-analyzer (existing)
-```
+---
 
 ### Files Modified
-- `supabase/functions/pp-props-scraper/index.ts` -- Fix league mapping, add MLB stat overrides, prevent CPU timeout
-- `supabase/functions/mlb-props-sync/index.ts` -- New function to bridge pp_snapshot to unified_props for MLB
-- `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add mlb-props-sync and mlb-batter-analyzer to pipeline
-- `supabase/functions/mlb-prop-cross-reference/index.ts` -- Minor: also sync results to unified_props
+
+1. `supabase/functions/mlb-batter-analyzer/index.ts` -- Add `player_hitter_fantasy_score` to STAT_MAP, PROP_LABELS, isFantasy check
+2. `supabase/functions/mlb-prop-cross-reference/index.ts` -- Add `__fantasy__` sentinel handling with calculated field
+3. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Fetch `mlb_engine_picks`, boost cross-confirmed MLB picks, add MLB parlay profiles
+4. `supabase/functions/data-pipeline-orchestrator/index.ts` -- Trigger parlay bot after MLB analysis
 
 ### Expected Outcome
-After these changes:
-- PP scraper runs without CPU timeout
-- MLB/MLBST props appear in `pp_snapshot` with correct stat types
-- MLB props flow into `unified_props` for dashboard visibility
-- `mlb-batter-analyzer` cross-references props against `mlb_player_game_logs` (44k+ logs available)
-- `mlb-prop-cross-reference` generates picks into `mlb_engine_picks`
-- War Room and Sweet Spots dashboards can display MLB prop cards
 
+- 117 hitter fantasy score props get analyzed and cross-referenced
+- All MLB engine picks (K's, HR's, fantasy, etc.) boost mispriced line scoring in parlay bot
+- Dedicated MLB parlay profiles generate baseball-specific parlays
+- Pipeline auto-triggers parlay generation after MLB cross-reference completes
+- Props pulled and verified immediately after deploy
