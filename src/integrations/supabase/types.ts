@@ -5477,6 +5477,8 @@ export type Database = {
           shooting_context: Json | null
           signal: string | null
           sport: string
+          team_total_alignment: string | null
+          team_total_signal: string | null
         }
         Insert: {
           analysis_date?: string
@@ -5496,6 +5498,8 @@ export type Database = {
           shooting_context?: Json | null
           signal?: string | null
           sport?: string
+          team_total_alignment?: string | null
+          team_total_signal?: string | null
         }
         Update: {
           analysis_date?: string
@@ -5515,6 +5519,8 @@ export type Database = {
           shooting_context?: Json | null
           signal?: string | null
           sport?: string
+          team_total_alignment?: string | null
+          team_total_signal?: string | null
         }
         Relationships: []
       }

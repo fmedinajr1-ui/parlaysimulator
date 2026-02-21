@@ -56,6 +56,7 @@ interface ValidationResult {
     role: boolean;
     game_script: boolean;
     prop_type: boolean;
+    team_total_directional: boolean;
   };
   confidenceAdjustment: number;
   details: {
@@ -426,7 +427,8 @@ function validateProp(
   opponentPace: number,
   defenseRank: number,
   statAllowed: number,
-  avgMinutes: number
+  avgMinutes: number,
+  teamTotalSignal?: { side: string; compositeScore: number } | null
 ): ValidationResult {
   const checks = {
     implied_total: true,
@@ -434,7 +436,8 @@ function validateProp(
     defense: true,
     role: true,
     game_script: true,
-    prop_type: true
+    prop_type: true,
+    team_total_directional: true,
   };
   
   const reasons: string[] = [];
@@ -512,7 +515,20 @@ function validateProp(
     if (status === 'APPROVED') status = 'CONDITIONAL';
   }
   
-  // Build justification
+  // STEP 7: Team Total Directional Check
+  if (teamTotalSignal && teamTotalSignal.compositeScore >= 70) {
+    const propSide = prop.side?.toLowerCase();
+    const gameSide = teamTotalSignal.side?.toUpperCase();
+    const isConflict = (propSide === 'over' && gameSide === 'UNDER') ||
+                       (propSide === 'under' && gameSide === 'OVER');
+    if (isConflict) {
+      checks.team_total_directional = false;
+      confidenceAdjustment -= 0.08;
+      reasons.push(`Team total ${gameSide} (score ${teamTotalSignal.compositeScore}) conflicts with player ${propSide.toUpperCase()}`);
+      if (status === 'APPROVED') status = 'CONDITIONAL';
+    }
+  }
+
   const justification = reasons.length > 0 
     ? reasons[0] // Use first/most important reason
     : `All checks passed: ${paceClass} pace (${expectedPace.toFixed(1)}), team implied ${teamImplied.toFixed(1)}, ${playerRole} player`;
@@ -558,7 +574,8 @@ serve(async (req) => {
       paceResult,
       defenseResult,
       seasonStatsResult,
-      playerCacheResult  // NEW: bdl_player_cache for team lookups
+      playerCacheResult,
+      teamTotalResult
     ] = await Promise.all([
       // Today's props that need validation (from risk engine + category sweet spots)
       supabase
@@ -588,11 +605,19 @@ serve(async (req) => {
         .from('player_season_stats')
         .select('player_name, avg_minutes, team_name'),
       
-      // NEW: bdl_player_cache - Primary source for player→team mapping
+      // bdl_player_cache - Primary source for player→team mapping
       supabase
         .from('bdl_player_cache')
         .select('player_name, team_name')
+        .eq('is_active', true),
+      
+      // Team total signals for directional cross-reference
+      supabase
+        .from('game_bets')
+        .select('home_team, away_team, recommended_side, composite_score, sport')
+        .eq('bet_type', 'total')
         .eq('is_active', true)
+        .in('sport', ['basketball_nba', 'basketball_ncaab'])
     ]);
 
     // Also fetch category sweet spots
@@ -609,6 +634,16 @@ serve(async (req) => {
       }
     });
     console.log(`[GameEnvValidator] Loaded ${playerTeamMap.size} player→team mappings from bdl_player_cache`);
+
+    // Build team total signal map: team_lower → { side, compositeScore }
+    const teamTotalMap = new Map<string, { side: string; compositeScore: number }>();
+    for (const tb of teamTotalResult.data || []) {
+      if (!tb.recommended_side || !tb.composite_score) continue;
+      const entry = { side: tb.recommended_side.toUpperCase(), compositeScore: Number(tb.composite_score) };
+      if (tb.home_team) teamTotalMap.set(tb.home_team.toLowerCase(), entry);
+      if (tb.away_team) teamTotalMap.set(tb.away_team.toLowerCase(), entry);
+    }
+    console.log(`[GameEnvValidator] Loaded ${teamTotalMap.size} team total signals for directional cross-reference`);
 
     // Build lookup maps
     const gameEnvMap = new Map<string, GameEnvironment>();
@@ -799,6 +834,9 @@ serve(async (req) => {
       }
       defenseData = defenseData || { rank: 15, allowed: 0 };
       
+      // Look up team total signal for this player's team
+      const teamTotalSignal = teamTotalMap.get(teamLower) || null;
+
       // Run validation
       const result = validateProp(
         prop,
@@ -807,7 +845,8 @@ serve(async (req) => {
         oppPaceData.pace,
         defenseData.rank,
         defenseData.allowed,
-        avgMinutes
+        avgMinutes,
+        teamTotalSignal
       );
       
       // Track counts

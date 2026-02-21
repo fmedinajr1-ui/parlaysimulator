@@ -167,6 +167,30 @@ serve(async (req) => {
     const mispricedResults: any[] = [];
     const processedKeys = new Set<string>();
 
+    // ==================== LOAD TEAM TOTAL SIGNALS ====================
+    const { data: teamTotalBets } = await supabase
+      .from('game_bets')
+      .select('home_team, away_team, recommended_side, composite_score, line, sport')
+      .eq('bet_type', 'total')
+      .eq('is_active', true)
+      .in('sport', ['basketball_nba', 'basketball_ncaab'])
+      .gt('commence_time', now.toISOString());
+
+    // Build map: "team_lower" → { side: OVER|UNDER, compositeScore, line }
+    const teamTotalMap = new Map<string, { side: string; compositeScore: number; line: number; sport: string }>();
+    for (const tb of teamTotalBets || []) {
+      if (!tb.recommended_side || !tb.composite_score) continue;
+      const entry = {
+        side: tb.recommended_side.toUpperCase(),
+        compositeScore: Number(tb.composite_score),
+        line: Number(tb.line || 0),
+        sport: tb.sport || '',
+      };
+      if (tb.home_team) teamTotalMap.set(tb.home_team.toLowerCase(), entry);
+      if (tb.away_team) teamTotalMap.set(tb.away_team.toLowerCase(), entry);
+    }
+    console.log(`[Mispriced] Loaded ${teamTotalMap.size} team total signals`);
+
     // ==================== NBA ANALYSIS ====================
     const { data: nbaProps, error: nbaPropsError } = await supabase
       .from('unified_props')
@@ -297,13 +321,52 @@ serve(async (req) => {
           console.log(`[Mispriced] ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${opponentDefRank} DEF, x${defMultiplier})`);
         }
 
+        // ===== TEAM TOTAL ALIGNMENT CHECK =====
+        let teamTotalSignal: string | null = null;
+        let teamTotalAlignment: string | null = null;
+        let alignedEdgePct = edgePct;
+        let alignedTier = confidenceTier;
+
+        const playerTeamLower = playerTeam?.toLowerCase() || '';
+        const totalEntry = teamTotalMap.get(playerTeamLower);
+        if (totalEntry) {
+          teamTotalSignal = totalEntry.side;
+          const isAligned = (signal === 'OVER' && totalEntry.side === 'OVER') ||
+                            (signal === 'UNDER' && totalEntry.side === 'UNDER');
+          const isConflict = (signal === 'OVER' && totalEntry.side === 'UNDER') ||
+                             (signal === 'UNDER' && totalEntry.side === 'OVER');
+
+          if (isAligned && totalEntry.compositeScore >= 75) {
+            teamTotalAlignment = 'aligned';
+            alignedEdgePct += 8;
+          } else if (isConflict) {
+            teamTotalAlignment = 'conflict';
+            if (signal === 'OVER' && totalEntry.compositeScore >= 80) {
+              alignedEdgePct -= 12;
+              // Downgrade tier on strong conflict
+              if (alignedTier === 'ELITE') alignedTier = 'HIGH';
+              else if (alignedTier === 'HIGH') alignedTier = 'MEDIUM';
+            } else if (signal === 'UNDER' && totalEntry.compositeScore >= 80) {
+              alignedEdgePct -= 10;
+            } else {
+              alignedEdgePct -= 8;
+            }
+          } else {
+            teamTotalAlignment = 'neutral';
+          }
+
+          if (teamTotalAlignment !== 'neutral') {
+            console.log(`[Mispriced] ${prop.player_name} ${signal} ${prop.prop_type}: team total=${totalEntry.side} (${totalEntry.compositeScore}) → ${teamTotalAlignment}, edge ${Math.round(edgePct)}→${Math.round(alignedEdgePct)}`);
+          }
+        }
+
         mispricedResults.push({
           player_name: prop.player_name,
           prop_type: prop.prop_type,
           book_line: line,
           player_avg_l10: Math.round(avgL10 * 100) / 100,
           player_avg_l20: Math.round(avgL20 * 100) / 100,
-          edge_pct: Math.round(edgePct * 100) / 100,
+          edge_pct: Math.round(alignedEdgePct * 100) / 100,
           signal,
           shooting_context: {
             ...shootingContext,
@@ -314,11 +377,13 @@ serve(async (req) => {
             games_analyzed: l20Values.length,
             defense_multiplier: defMultiplier !== 1.0 ? defMultiplier : undefined,
           },
-          confidence_tier: confidenceTier,
+          confidence_tier: alignedTier,
           analysis_date: today,
           sport: 'basketball_nba',
           defense_adjusted_avg: defMultiplier !== 1.0 ? Math.round(adjustedAvg * 100) / 100 : null,
           opponent_defense_rank: opponentDefRank,
+          team_total_signal: teamTotalSignal,
+          team_total_alignment: teamTotalAlignment,
         });
       }
     }
