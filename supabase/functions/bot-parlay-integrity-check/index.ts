@@ -46,30 +46,41 @@ Deno.serve(async (req) => {
       throw error;
     }
 
-    const oneLeg = violations?.filter(p => p.leg_count === 1) || [];
-    const twoLeg = violations?.filter(p => p.leg_count === 2) || [];
+    // Exclude intentional single-pick exploration strategies
+    const EXCLUDED_STRATEGIES = [
+      'max_boost_exploration_single_pick_accuracy',
+      'max_boost_exploration_single_pick_value',
+    ];
+
+    const realViolations = (violations || []).filter(
+      p => !EXCLUDED_STRATEGIES.includes(p.strategy_name)
+    );
+    const excludedCount = (violations?.length || 0) - realViolations.length;
+
+    const oneLeg = realViolations.filter(p => p.leg_count === 1);
+    const twoLeg = realViolations.filter(p => p.leg_count === 2);
     const total = oneLeg.length + twoLeg.length;
 
     if (total === 0) {
       // Silent pass — log to activity log only, no Telegram
       await supabase.from('bot_activity_log').insert({
         event_type: 'integrity_check_pass',
-        message: `Integrity check passed for ${targetDate}: 0 violations`,
+        message: `Integrity check passed for ${targetDate}: 0 violations (${excludedCount} excluded exploration strategies)`,
         severity: 'info',
-        metadata: { date: targetDate, violations: 0 },
+        metadata: { date: targetDate, violations: 0, excluded_exploration: excludedCount },
       });
 
-      console.log(`[Integrity] ✅ All clear for ${targetDate}`);
+      console.log(`[Integrity] ✅ All clear for ${targetDate} (${excludedCount} exploration strategies excluded)`);
 
       return new Response(
-        JSON.stringify({ clean: true, violations: 0, date: targetDate }),
+        JSON.stringify({ clean: true, violations: 0, excluded_exploration: excludedCount, date: targetDate }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     // Violations found — build strategy breakdown
     const strategyCounts: Record<string, number> = {};
-    for (const p of violations || []) {
+    for (const p of realViolations) {
       const name = p.strategy_name || 'unknown';
       strategyCounts[name] = (strategyCounts[name] || 0) + 1;
     }
@@ -109,8 +120,9 @@ Deno.serve(async (req) => {
         one_leg_count: oneLeg.length,
         two_leg_count: twoLeg.length,
         total,
+        excluded_exploration: excludedCount,
         strategy_counts: strategyCounts,
-        violation_ids: violations?.map(v => v.id) || [],
+        violation_ids: realViolations.map(v => v.id),
       },
     });
 
@@ -120,6 +132,7 @@ Deno.serve(async (req) => {
         violations: total,
         one_leg: oneLeg.length,
         two_leg: twoLeg.length,
+        excluded_exploration: excludedCount,
         strategy_counts: strategyCounts,
         date: targetDate,
       }),
