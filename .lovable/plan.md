@@ -1,79 +1,78 @@
 
 
-## Use Remaining Legs: Force-Build Parlays from Leftover Mispriced Lines
+## Admin Parlay Management Commands via Telegram
 
-### Current Situation
+### What You're Getting
 
-Today there are 101 mispriced lines but only 18 parlays were built. Many high-edge legs (like Jalen Suggs blocks +172%, Desmond Bane threes +99%) are sitting unused. The cross-reference system is active but only 1 risk engine pick exists today, so almost no overlaps are found.
+New admin-only Telegram commands to directly manage parlays and trigger fixes when issues arise:
 
-### What This Plan Does
+### New Commands
 
-Add a "sweep" pass to the parlay generator that takes unused mispriced lines and forces them into additional parlays, prioritizing the highest-edge plays.
+**Parlay Management:**
+- `/deleteparlay [id]` -- Delete a specific parlay by its UUID (marks it as voided with reason)
+- `/voidtoday` -- Void all of today's pending parlays (with confirmation button)
+- `/fixleg [parlay_id] [leg_index] [field] [value]` -- Edit a specific leg in a parlay (e.g., fix a wrong line or side)
+- `/deletesweep` -- Delete all sweep-tier parlays from today
+- `/deletebystrat [strategy_name]` -- Delete all today's parlays matching a strategy name
 
-### Changes
+**Error Recovery / Quick Fixes:**
+- `/fixpipeline` -- Run the full data pipeline orchestrator (stats sync + analysis + generation)
+- `/regenparlay` -- Void today's parlays and force-regenerate fresh ones (calls `bot-force-fresh-parlays`)
+- `/fixprops` -- Re-scrape props + refresh sweet spots + regenerate
+- `/healthcheck` -- Run preflight + integrity check and report results
+- `/errorlog` -- Show the last 10 error-severity entries from `bot_activity_log`
 
-**1. Add a Sweep Strategy to `bot-generate-daily-parlays`**
+### Technical Implementation
 
-After the normal generation tiers (execution, validation, exploration) complete, run a final "sweep" pass:
+**File modified:** `supabase/functions/telegram-webhook/index.ts`
 
-- Collect all mispriced line player/prop combos that were NOT used in any generated parlay
-- Sort by absolute edge percentage (highest first)
-- Group into 3-leg parlays using relaxed rules:
-  - Max 1 player per parlay (no same-player stacking)
-  - Prefer mixing OVER and UNDER for hedge protection
-  - Skip the PropTypeCap entirely for sweep parlays (these are leftovers)
-  - Skip fingerprint dedup against existing parlays (sweep is meant to cover gaps)
-- Tag these as `tier: 'sweep'` and `strategy_name: 'leftover_sweep'`
-- Cap at 10 sweep parlays per run to avoid noise
+**1. `/deleteparlay [id]`**
+- Validates UUID format
+- Updates the parlay: sets `outcome = 'void'`, `lesson_learned = 'Voided by admin via Telegram'`
+- Confirms with parlay details (strategy, leg count)
 
-**2. Update the HighConvictionCard UI**
+**2. `/voidtoday`**
+- Sends an inline confirmation button (`fix:void_today_confirm`)
+- On confirm: updates all today's pending parlays to `outcome = 'void'`
+- Reports count voided
 
-Add `mlb_cross_ref` to the engine colors/labels map so when MLB picks do start flowing, they render properly:
-- Color: purple (`bg-purple-500`)
-- Label: "MLB XRef"
+**3. `/fixleg [parlay_id] [leg_index] [field] [value]`**
+- Fetches the parlay, parses legs JSON
+- Validates leg_index is in range
+- Supports fields: `line`, `side`, `player_name`, `prop_type`
+- Updates the leg in the JSON array and writes back
+- Confirms with before/after values
 
-**3. Improve Cross-Reference Coverage**
+**4. `/deletesweep`**
+- Deletes (voids) all today's parlays where `strategy_name = 'leftover_sweep'`
 
-The core issue is that only 1 engine (risk) produced picks today. To get more cross-referencing working now (not just when MLB starts):
-- In the high-conviction-analyzer, also query `bot_daily_parlays` legs as an engine source. If a mispriced line's player+prop appears in an existing parlay leg, that counts as a "bot" engine match
-- This creates a feedback loop: the parlay generator already validated these picks, so their presence confirms the mispriced signal
+**5. `/deletebystrat [name]`**
+- Voids all today's pending parlays matching the given strategy name
 
-### Technical Details
+**6. `/fixpipeline`**
+- Calls `data-pipeline-orchestrator` with `{ mode: 'full' }`
+- Reports success/failure
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+**7. `/regenparlay`**
+- Calls `bot-force-fresh-parlays` (already voids + regenerates)
 
-Add sweep pass after line ~6420 (after all tier generation):
+**8. `/fixprops`**
+- Sequentially calls: `refresh-todays-props`, then `bot-generate-daily-parlays`
+- Reports each step
 
-```text
-// Sweep pass: collect unused mispriced lines
-1. Get all player+prop combos from generated parlays (this run + existing)
-2. Filter mispriced lines to those NOT in the used set
-3. Sort remaining by |edge_pct| descending
-4. Greedily build 3-leg combos:
-   - No two legs from same player
-   - Alternate OVER/UNDER when possible
-5. Insert as tier='sweep', strategy_name='leftover_sweep'
-6. Cap at 10 parlays
-```
+**9. `/healthcheck`**
+- Calls `bot-pipeline-preflight` and `bot-parlay-integrity-check` in parallel
+- Returns combined results
 
-**File: `supabase/functions/high-conviction-analyzer/index.ts`**
+**10. `/errorlog`**
+- Queries `bot_activity_log` for last 10 `severity = 'error'` entries
+- Displays timestamp, event type, and message
 
-Add bot_daily_parlays as a 7th engine source:
-- Query today's `bot_daily_parlays`, extract each leg's player_name + prop_type
-- Add to engineMap with `engine: 'bot_parlay'`
+**Callback handler additions:**
+- `fix:void_today_confirm` -- executes the void-all action after button press
 
-**File: `src/components/market/HighConvictionCard.tsx`**
+**Updated `/start` and `/help`:**
+- Add a "Management" section listing the new commands
 
-Add to ENGINE_COLORS and ENGINE_LABELS:
-```text
-mlb_cross_ref: { color: 'bg-purple-500', label: 'MLB XRef' }
-bot_parlay:    { color: 'bg-cyan-500',   label: 'Bot' }
-```
-
-### Expected Impact
-
-- Leftover high-edge mispriced lines get used in sweep parlays instead of sitting idle
-- Cross-reference coverage improves immediately by treating existing parlay legs as confirmation signals
-- MLB cross-ref labels ready for when season data flows in
-- Each run should produce 18 (current) + up to 10 sweep = ~28 parlays
+All commands are admin-only (gated by existing `isAdmin()` check).
 
