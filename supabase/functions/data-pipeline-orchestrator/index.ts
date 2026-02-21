@@ -122,13 +122,17 @@ serve(async (req) => {
       await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'] });
       await runFunction('team-bets-scoring-engine', {});
       await runFunction('bot-game-context-analyzer', {});
+      
+      // MLB pipeline: sync PP props → analyze → cross-reference
+      await runFunction('mlb-props-sync', {});
       await runFunction('detect-mispriced-lines', {});
+      await runFunction('mlb-batter-analyzer', {});
       await runFunction('mlb-prop-cross-reference', {});
       await runFunction('high-conviction-analyzer', {});
       
-      // MLB Pitcher K analysis (April-October = MLB season)
+      // MLB Pitcher K analysis (Feb-October = spring training + season)
       const currentMonth = new Date().getMonth() + 1; // 1-12
-      if (currentMonth >= 4 && currentMonth <= 10) {
+      if (currentMonth >= 2 && currentMonth <= 10) {
         await runFunction('mlb-pitcher-k-analyzer', {});
       }
     }

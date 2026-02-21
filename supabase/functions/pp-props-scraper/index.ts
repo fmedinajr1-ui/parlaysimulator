@@ -80,8 +80,32 @@ const LEAGUE_TO_SPORT: Record<string, string> = {
   'WTA': 'tennis_wta',
   'PGA': 'golf_pga',
   'UFC': 'mma_ufc',
+  'MMA': 'mma_ufc',
   'ESPORTS': 'esports',
+  'CBB': 'basketball_ncaab',
+  'NCAAB': 'basketball_ncaab',
+  'CFB': 'americanfootball_ncaaf',
+  'NCAAF': 'americanfootball_ncaaf',
+  'COD': 'esports_cod',
+  'CSGO': 'esports_csgo',
+  'CS2': 'esports_csgo',
+  'LOL': 'esports_lol',
+  'DOTA2': 'esports_dota2',
+  'VAL': 'esports_val',
+  'SOCCER': 'soccer',
+  'EPL': 'soccer_epl',
+  'KBO': 'baseball_kbo',
+  'NPB': 'baseball_npb',
+  'CFL': 'americanfootball_cfl',
+  'LPGA': 'golf_lpga',
+  'TT': 'table_tennis',
 };
+
+// Leagues we actually want to process (skip esports, etc. to save CPU)
+const SUPPORTED_LEAGUES = new Set([
+  'NBA', 'WNBA', 'NHL', 'NFL', 'MLB', 'MLBST', 'ATP', 'WTA',
+  'PGA', 'UFC', 'MMA', 'CBB', 'NCAAB', 'CFB', 'NCAAF', 'TT',
+]);
 
 // Normalize stat types to match our unified_props format
 const STAT_TYPE_MAP: Record<string, string> = {
@@ -132,9 +156,13 @@ function processExtractedProjections(
   
   for (const proj of projections) {
     const league = proj.league?.toUpperCase() || 'NBA';
-    const sport = LEAGUE_TO_SPORT[league] || 'basketball_nba';
     
-    console.log(`[PP Scraper] Projection: ${proj.player_name} | league="${proj.league}" → "${league}" | sport="${sport}" | stat="${proj.stat_type}" | line=${proj.line}`);
+    // Skip unsupported leagues early to save CPU
+    if (!SUPPORTED_LEAGUES.has(league) && !LEAGUE_TO_SPORT[league]) {
+      continue;
+    }
+    
+    const sport = LEAGUE_TO_SPORT[league] || 'basketball_nba';
     
     const targetSportKeys = targetSports.map(s => LEAGUE_TO_SPORT[s] || s);
     if (!targetSports.some(s => league.includes(s)) && !targetSportKeys.includes(sport)) continue;
@@ -142,8 +170,14 @@ function processExtractedProjections(
     let normalizedStat = STAT_TYPE_MAP[proj.stat_type] || 
       `player_${proj.stat_type.toLowerCase().replace(/\s+/g, '_')}`;
     
-    if ((league === 'MLB' || league === 'MLBST') && proj.stat_type === 'Strikeouts') {
-      normalizedStat = 'pitcher_strikeouts';
+    // MLB-specific stat overrides
+    if (league === 'MLB' || league === 'MLBST') {
+      if (proj.stat_type === 'Strikeouts') normalizedStat = 'pitcher_strikeouts';
+      if (proj.stat_type === 'Hits') normalizedStat = 'batter_hits';
+      if (proj.stat_type === 'RBIs') normalizedStat = 'batter_rbis';
+      if (proj.stat_type === 'Runs') normalizedStat = 'batter_runs';
+      if (proj.stat_type === 'Stolen Bases') normalizedStat = 'batter_stolen_bases';
+      if (proj.stat_type === 'Fantasy Score') normalizedStat = 'player_hitter_fantasy_score';
     }
     
     const matchup = proj.team && proj.opponent 
