@@ -1,115 +1,89 @@
 
 
-## Switch PrizePicks Scraper from Firecrawl to Direct API
+## MLB Batter Analyzer + Combined /mlb Telegram Command
 
-### Problem
+### Overview
 
-Firecrawl is returning placeholder/hallucinated data from the PrizePicks SPA because the page content is dynamically rendered and protected. Meanwhile, PrizePicks has a public-facing API at `https://api.prizepicks.com/projections` that returns structured JSON directly -- no scraping needed.
+Build a new `mlb-batter-analyzer` edge function that cross-references MLBST batter props (Home Runs, Hitter Fantasy Score, Total Bases, Hits, RBIs, Stolen Bases) against `mlb_player_game_logs`, then create a `/mlb` Telegram command that shows the full MLBST slate across all prop types.
 
-### Solution
+### 1. New Edge Function: `mlb-batter-analyzer`
 
-Replace the Firecrawl-based scraping approach with direct HTTP calls to the PrizePicks API. This API returns projections as structured JSON with player names, stat types, lines, league codes, and more -- exactly what we need.
+**File:** `supabase/functions/mlb-batter-analyzer/index.ts`
 
-### How the PrizePicks API Works
+Follows the exact pattern of `mlb-pitcher-k-analyzer`:
 
-The projections endpoint returns a JSON:API formatted response with two key sections:
-- `data[]` -- array of projection objects with `stat_type`, `line_score`, `board_time`, etc.
-- `included[]` -- array of related objects (players, leagues, games) referenced by ID
+- Query `pp_snapshot` for active batter props: `batter_home_runs`, `batter_total_bases`, `player_hits`, `player_rbis`, `player_runs`, `batter_stolen_bases`, `player_fantasy_score`
+- Deduplicate by player + stat_type (take latest)
+- For each prop, look up L10/L20 from `mlb_player_game_logs` using the stat mapping:
+  - `batter_home_runs` -> `home_runs`
+  - `batter_total_bases` -> `total_bases`
+  - `player_hits` / `batter_hits` -> `hits`
+  - `player_rbis` / `batter_rbis` -> `rbis`
+  - `player_runs` / `batter_runs` -> `runs`
+  - `batter_stolen_bases` -> `stolen_bases`
+  - `player_fantasy_score` -> calculated: `hits + walks + runs + rbis + total_bases + stolen_bases`
+- Calculate L10 avg, L20 avg, median, hit rate over line, edge %, signal (OVER/UNDER), confidence tier
+- Upsert results into `mispriced_lines` with the appropriate `prop_type`
+- Send Telegram report grouped by tier
+- Log to `cron_job_history`
 
-Each projection in `data` has a relationship to a player in `included`, which contains the player name, team, position, and league.
+### 2. Add `/mlb` Command to Telegram Webhook
 
-### Changes
+**File:** `supabase/functions/telegram-webhook/index.ts`
 
-**File: `supabase/functions/pp-props-scraper/index.ts`**
+Add a `handleMLB` function and wire it up:
 
-1. **Remove Firecrawl dependency entirely** -- no more `FIRECRAWL_API_KEY` check, no scroll actions, no JSON extraction schema
-2. **Add direct API fetch** to `https://api.prizepicks.com/projections` with appropriate headers:
-   - `Accept: application/json`
-   - Standard browser `User-Agent` header
-   - Query params: `?league_id=X` or `?single_stat=true` to filter by sport
-3. **Parse the JSON:API response**:
-   - Build a lookup map from `included[]` for players (type: "new_player") and leagues
-   - For each projection in `data[]`, resolve the player name, team, position, league from the included map
-   - Map to `ExtractedProjection` format and feed into the existing `processExtractedProjections` pipeline
-4. **Add league ID mapping** for the API query parameter:
-   - MLB/MLBST, NBA, NHL, etc. each have numeric league IDs on PrizePicks
-   - If we don't know the IDs, fetch all projections and filter client-side by league name
-5. **Keep the existing `processExtractedProjections` function** unchanged -- it already handles MLBST mapping, stat normalization, and sport filtering
-6. **Remove the synthetic/fallback data path** that creates fake props from `unified_props`
+- Query `mispriced_lines` for today where `sport = 'baseball_mlb'`
+- Group results by prop type: Pitcher Ks, HRs, Total Bases, Fantasy Score, etc.
+- Format a combined report showing the strongest edges across all MLB prop types
+- Add `/mlb` to the command router and `/start` help menu
+- Also add `/runmlbbatter` to trigger the analyzer on demand
+
+### 3. Add `/runmlbbatter` Trigger
+
+Wire `/runmlbbatter` to invoke the new `mlb-batter-analyzer` function, following the same `handleTriggerFunction` pattern used by `/runpitcherk`.
 
 ### Technical Details
 
+**Stat-to-column mapping for game logs:**
+
 ```text
-Current flow:
-  Firecrawl scrape -> LLM JSON extraction -> placeholder data -> failure
-
-New flow:
-  fetch("https://api.prizepicks.com/projections") -> parse JSON:API -> real data -> success
+pp_snapshot stat_type    -> mlb_player_game_logs column
+─────────────────────────────────────────────────────
+batter_home_runs         -> home_runs
+batter_total_bases       -> total_bases
+batter_hits / player_hits -> hits
+batter_rbis / player_rbis -> rbis
+player_runs / batter_runs -> runs
+batter_stolen_bases      -> stolen_bases
+player_fantasy_score     -> SUM(hits + walks + runs + rbis + total_bases + stolen_bases)
 ```
 
-The core parsing logic will look like:
+**Confidence tiers** (same as pitcher K analyzer):
+- ELITE: abs(edge) >= 25% AND hit rate >= 70% (over) or <= 30% (under)
+- HIGH: abs(edge) >= 15% AND hit rate >= 60% (over) or <= 40% (under)
+- MEDIUM: abs(edge) >= 8%
+- Below 8% edge: skipped
 
-```typescript
-// Fetch projections from PrizePicks API
-const response = await fetch('https://api.prizepicks.com/projections?single_stat=true&per_page=250', {
-  headers: {
-    'Accept': 'application/json',
-    'User-Agent': 'Mozilla/5.0 ...',
-    'X-Device-ID': crypto.randomUUID(),
-  },
-});
-const apiData = await response.json();
+**`/mlb` Telegram output format:**
 
-// Build lookup maps from included resources
-const playerMap = new Map();  // id -> { name, team, position }
-const leagueMap = new Map();  // id -> { name }
-for (const item of apiData.included || []) {
-  if (item.type === 'new_player') {
-    playerMap.set(item.id, {
-      name: item.attributes.display_name || item.attributes.name,
-      team: item.attributes.team,
-      position: item.attributes.position,
-    });
-  }
-  if (item.type === 'league') {
-    leagueMap.set(item.id, item.attributes.name);
-  }
-}
+```text
+-- MLB FULL SLATE -- [date]
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Convert each projection to our format
-const projections = [];
-for (const proj of apiData.data || []) {
-  const attrs = proj.attributes;
-  const playerId = proj.relationships?.new_player?.data?.id;
-  const player = playerMap.get(playerId);
-  if (!player) continue;
-  
-  const leagueId = proj.relationships?.league?.data?.id;
-  const league = leagueMap.get(leagueId) || '';
-  
-  projections.push({
-    player_name: player.name,
-    team: player.team,
-    stat_type: attrs.stat_type,     // e.g., "Strikeouts", "Points"
-    line: parseFloat(attrs.line_score),
-    league: league,                  // e.g., "MLBST", "NBA"
-    game_time: attrs.start_time,
-  });
-}
+Pitcher Ks: 5 plays | HRs: 3 plays | TB: 4 plays | Fantasy: 6 plays
+
+[Pitcher Strikeouts section]
+[Home Runs section]
+[Total Bases section]
+[Hitter Fantasy Score section]
+...
 ```
-
-Then feed `projections` into the existing `processExtractedProjections(projections, sports)` which handles all the stat mapping, MLBST detection, and database insertion.
-
-### Cloudflare Considerations
-
-Some sources mention PrizePicks added Cloudflare protection. If the direct API call is blocked:
-- Add retry logic with exponential backoff
-- Rotate User-Agent strings
-- Fall back to Firecrawl as a secondary approach if the API returns 403
 
 ### Files Changed
 
 | Action | File |
 |--------|------|
-| Modify | `supabase/functions/pp-props-scraper/index.ts` |
+| Create | `supabase/functions/mlb-batter-analyzer/index.ts` |
+| Modify | `supabase/functions/telegram-webhook/index.ts` (add `/mlb`, `/runmlbbatter`, `handleMLB`) |
 
