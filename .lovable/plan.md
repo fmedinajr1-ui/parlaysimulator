@@ -1,93 +1,115 @@
 
-## Fix PrizePicks Scraper for MLB Spring Training (MLBST)
 
-### Root Cause
+## Switch PrizePicks Scraper from Firecrawl to Direct API
 
-PrizePicks uses the league code `MLBST` (MLB Spring Training) instead of `MLB` during the pre-season. The scraper has three failures stemming from this:
+### Problem
 
-1. `LEAGUE_TO_SPORT['MLBST']` is undefined → sport falls back to `'basketball_nba'` (wrong)
-2. The context-aware `pitcher_strikeouts` mapping checks `league === 'MLB'` exactly → `'MLBST'` never matches, so `'Strikeouts'` / `'Ks'` stay as `player_strikeouts`
-3. The `mlb-pitcher-k-analyzer` queries `pp_snapshot` where `sport = 'baseball_mlb'` → but these props land as `basketball_nba`, so zero results
+Firecrawl is returning placeholder/hallucinated data from the PrizePicks SPA because the page content is dynamically rendered and protected. Meanwhile, PrizePicks has a public-facing API at `https://api.prizepicks.com/projections` that returns structured JSON directly -- no scraping needed.
 
-The fix is three targeted changes in `pp-props-scraper/index.ts` and one cleanup in `mlb-pitcher-k-analyzer/index.ts`.
+### Solution
+
+Replace the Firecrawl-based scraping approach with direct HTTP calls to the PrizePicks API. This API returns projections as structured JSON with player names, stat types, lines, league codes, and more -- exactly what we need.
+
+### How the PrizePicks API Works
+
+The projections endpoint returns a JSON:API formatted response with two key sections:
+- `data[]` -- array of projection objects with `stat_type`, `line_score`, `board_time`, etc.
+- `included[]` -- array of related objects (players, leagues, games) referenced by ID
+
+Each projection in `data` has a relationship to a player in `included`, which contains the player name, team, position, and league.
 
 ### Changes
 
 **File: `supabase/functions/pp-props-scraper/index.ts`**
 
-**1. Add `MLBST` (and other Spring Training / minor variants) to the league map** (line ~89)
+1. **Remove Firecrawl dependency entirely** -- no more `FIRECRAWL_API_KEY` check, no scroll actions, no JSON extraction schema
+2. **Add direct API fetch** to `https://api.prizepicks.com/projections` with appropriate headers:
+   - `Accept: application/json`
+   - Standard browser `User-Agent` header
+   - Query params: `?league_id=X` or `?single_stat=true` to filter by sport
+3. **Parse the JSON:API response**:
+   - Build a lookup map from `included[]` for players (type: "new_player") and leagues
+   - For each projection in `data[]`, resolve the player name, team, position, league from the included map
+   - Map to `ExtractedProjection` format and feed into the existing `processExtractedProjections` pipeline
+4. **Add league ID mapping** for the API query parameter:
+   - MLB/MLBST, NBA, NHL, etc. each have numeric league IDs on PrizePicks
+   - If we don't know the IDs, fetch all projections and filter client-side by league name
+5. **Keep the existing `processExtractedProjections` function** unchanged -- it already handles MLBST mapping, stat normalization, and sport filtering
+6. **Remove the synthetic/fallback data path** that creates fake props from `unified_props`
 
-```typescript
-const LEAGUE_TO_SPORT: Record<string, string> = {
-  'NBA': 'basketball_nba',
-  'WNBA': 'basketball_wnba',
-  'NHL': 'hockey_nhl',
-  'NFL': 'americanfootball_nfl',
-  'MLB': 'baseball_mlb',
-  'MLBST': 'baseball_mlb',   // MLB Spring Training
-  'ATP': 'tennis_atp',
-  'WTA': 'tennis_wta',
-  'PGA': 'golf_pga',
-  'UFC': 'mma_ufc',
-  'ESPORTS': 'esports',
-};
+### Technical Details
+
+```text
+Current flow:
+  Firecrawl scrape -> LLM JSON extraction -> placeholder data -> failure
+
+New flow:
+  fetch("https://api.prizepicks.com/projections") -> parse JSON:API -> real data -> success
 ```
 
-**2. Broaden the context-aware MLB strikeout check** (line ~160)
+The core parsing logic will look like:
 
-Change:
 ```typescript
-if (league === 'MLB' && proj.stat_type === 'Strikeouts') {
+// Fetch projections from PrizePicks API
+const response = await fetch('https://api.prizepicks.com/projections?single_stat=true&per_page=250', {
+  headers: {
+    'Accept': 'application/json',
+    'User-Agent': 'Mozilla/5.0 ...',
+    'X-Device-ID': crypto.randomUUID(),
+  },
+});
+const apiData = await response.json();
+
+// Build lookup maps from included resources
+const playerMap = new Map();  // id -> { name, team, position }
+const leagueMap = new Map();  // id -> { name }
+for (const item of apiData.included || []) {
+  if (item.type === 'new_player') {
+    playerMap.set(item.id, {
+      name: item.attributes.display_name || item.attributes.name,
+      team: item.attributes.team,
+      position: item.attributes.position,
+    });
+  }
+  if (item.type === 'league') {
+    leagueMap.set(item.id, item.attributes.name);
+  }
+}
+
+// Convert each projection to our format
+const projections = [];
+for (const proj of apiData.data || []) {
+  const attrs = proj.attributes;
+  const playerId = proj.relationships?.new_player?.data?.id;
+  const player = playerMap.get(playerId);
+  if (!player) continue;
+  
+  const leagueId = proj.relationships?.league?.data?.id;
+  const league = leagueMap.get(leagueId) || '';
+  
+  projections.push({
+    player_name: player.name,
+    team: player.team,
+    stat_type: attrs.stat_type,     // e.g., "Strikeouts", "Points"
+    line: parseFloat(attrs.line_score),
+    league: league,                  // e.g., "MLBST", "NBA"
+    game_time: attrs.start_time,
+  });
+}
 ```
-To:
-```typescript
-if ((league === 'MLB' || league === 'MLBST') && proj.stat_type === 'Strikeouts') {
-```
 
-**3. Add `MLBST` to the default sports array** (line ~204)
+Then feed `projections` into the existing `processExtractedProjections(projections, sports)` which handles all the stat mapping, MLBST detection, and database insertion.
 
-Change:
-```typescript
-const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB'] } = ...
-```
-To:
-```typescript
-const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB', 'MLBST'] } = ...
-```
+### Cloudflare Considerations
 
-**File: `supabase/functions/mlb-pitcher-k-analyzer/index.ts`**
-
-**4. Query `pp_snapshot` by `stat_type` only (not restricted to sport)** to catch both `baseball_mlb` and any mislabeled rows while the fix propagates:
-
-Instead of:
-```typescript
-.eq('stat_type', 'pitcher_strikeouts')
-.eq('is_active', true)
-```
-Add a sport filter that accepts both:
-```typescript
-.eq('stat_type', 'pitcher_strikeouts')
-.eq('is_active', true)
-.in('sport', ['baseball_mlb', 'basketball_nba'])  // temporary catch-all during transition
-```
-
-Actually, the cleaner fix is just to not filter by sport in the analyzer — since `stat_type = 'pitcher_strikeouts'` is unambiguous:
-```typescript
-.eq('stat_type', 'pitcher_strikeouts')
-.eq('is_active', true)
-// sport filter removed — pitcher_strikeouts is MLB-only by definition
-```
-
-### Execution After Deploy
-
-1. Deploy `pp-props-scraper` and `mlb-pitcher-k-analyzer`
-2. Run scraper with: `{ "sports": ["MLB", "MLBST"] }` to pull today's Spring Training props
-3. Run analyzer: invoke `mlb-pitcher-k-analyzer` to cross-reference against historical logs
-4. Check Telegram for the pitcher K report or use `/pitcherk` in the bot
+Some sources mention PrizePicks added Cloudflare protection. If the direct API call is blocked:
+- Add retry logic with exponential backoff
+- Rotate User-Agent strings
+- Fall back to Firecrawl as a secondary approach if the API returns 403
 
 ### Files Changed
 
-| Action | File | Change |
-|--------|------|--------|
-| Modify | `supabase/functions/pp-props-scraper/index.ts` | Add `MLBST` to league map, fix context check, add to default sports |
-| Modify | `supabase/functions/mlb-pitcher-k-analyzer/index.ts` | Remove sport filter from `pp_snapshot` query |
+| Action | File |
+|--------|------|
+| Modify | `supabase/functions/pp-props-scraper/index.ts` |
+
