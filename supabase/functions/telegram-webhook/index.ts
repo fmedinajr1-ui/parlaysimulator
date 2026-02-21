@@ -477,6 +477,7 @@ async function handleStart(chatId: string) {
 
 *Multi-Sport:*
 /nhl /tennis /spreads /totals
+/mlb /pitcherk /runmlbbatter
 
 *Intelligence:*
 /research /watch [player]
@@ -1669,6 +1670,84 @@ async function handlePitcherK(chatId: string, page = 1) {
   }
 }
 
+// ==================== MLB FULL SLATE HANDLER ====================
+
+async function handleMLB(chatId: string) {
+  const today = getEasternDate();
+
+  const { data: lines } = await supabase
+    .from('mispriced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, metadata')
+    .eq('analysis_date', today)
+    .eq('sport', 'baseball_mlb')
+    .order('confidence_tier', { ascending: true });
+
+  if (!lines || lines.length === 0) {
+    await sendMessage(chatId, "⚾ No MLB analysis found today.\n\nUse /runpitcherk and /runmlbbatter to trigger analyzers.");
+    return;
+  }
+
+  // Group by prop_type
+  const byProp = new Map<string, typeof lines>();
+  lines.forEach(l => {
+    if (!byProp.has(l.prop_type)) byProp.set(l.prop_type, []);
+    byProp.get(l.prop_type)!.push(l);
+  });
+
+  const propLabels: Record<string, string> = {
+    pitcher_strikeouts: 'Pitcher Ks',
+    batter_home_runs: 'Home Runs',
+    batter_total_bases: 'Total Bases',
+    player_hits: 'Hits',
+    batter_hits: 'Hits',
+    player_rbis: 'RBIs',
+    batter_rbis: 'RBIs',
+    player_runs: 'Runs',
+    batter_runs: 'Runs',
+    batter_stolen_bases: 'Stolen Bases',
+    player_fantasy_score: 'Fantasy Score',
+  };
+
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+  let msg = `⚾ *MLB FULL SLATE — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  // Summary line
+  const summaryParts: string[] = [];
+  for (const [prop, plays] of byProp) {
+    summaryParts.push(`${propLabels[prop] || prop}: ${plays.length}`);
+  }
+  msg += summaryParts.join(' | ') + `\n\n`;
+
+  const tierOrder = ['ELITE', 'HIGH', 'MEDIUM'];
+  for (const [prop, plays] of byProp) {
+    const label = propLabels[prop] || prop;
+    msg += `📌 *${label}*\n`;
+
+    for (const tier of tierOrder) {
+      const tierPlays = plays.filter(p => p.confidence_tier === tier);
+      if (tierPlays.length === 0) continue;
+      const emoji = tier === 'ELITE' ? '💎' : tier === 'HIGH' ? '🔥' : '📊';
+      msg += `${emoji} *${tier}:*\n`;
+      tierPlays.slice(0, 5).forEach(p => {
+        const side = (p.signal || 'UNDER').toUpperCase();
+        const edgeStr = p.edge_pct >= 0 ? `+${p.edge_pct.toFixed(0)}%` : `${p.edge_pct.toFixed(0)}%`;
+        const meta = (p.metadata as any) || {};
+        const hitStr = meta.hit_rate_over != null
+          ? (side === 'OVER' ? `${meta.hit_rate_over.toFixed(0)}% over` : `${(100 - meta.hit_rate_over).toFixed(0)}% under`)
+          : '';
+        msg += `• ${p.player_name} ${side} ${p.book_line}\n`;
+        msg += `  L10: ${p.player_avg_l10?.toFixed(1) || '?'} | Edge: ${edgeStr}`;
+        if (hitStr) msg += ` | ${hitStr}`;
+        msg += `\n`;
+      });
+      if (tierPlays.length > 5) msg += `  +${tierPlays.length - 5} more\n`;
+    }
+    msg += `\n`;
+  }
+
+  await sendLongMessage(chatId, msg, "Markdown");
+}
+
 // ==================== CALLBACK QUERY HANDLER ====================
 
 async function handleCallbackQuery(callbackQueryId: string, data: string, chatId: string) {
@@ -2261,6 +2340,8 @@ Just type a question in plain English\\! Examples:
   if (cmd === "/runhighconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
   if (cmd === "/pitcherk") { await handlePitcherK(chatId, 1); return null; }
   if (cmd === "/runpitcherk") return await handleTriggerFunction(chatId, 'mlb-pitcher-k-analyzer', 'Pitcher K Analyzer');
+  if (cmd === "/mlb") { await handleMLB(chatId); return null; }
+  if (cmd === "/runmlbbatter") return await handleTriggerFunction(chatId, 'mlb-batter-analyzer', 'MLB Batter Analyzer');
   if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
 
   // Generic edge function trigger handler
