@@ -1,53 +1,41 @@
 
 
-## Add Direction-Conflict Filter to Double-Confirmed Engine
+## Regenerate Today's Parlays with Double-Confirmed Engine
 
-### The Problem
+### What Needs to Happen
 
-The double-confirmed logic currently matches picks by **player name + prop type only** -- it never checks whether the sweet spot and mispriced signal agree on direction (OVER vs UNDER). This means a pick like Josh Giddey where the sweet spot says "OVER" but the mispriced signal says "UNDER" still gets the +20 bonus and enters the double-confirmed pool.
+The 11 existing parlays for Feb 21 were generated before the cross-referencing logic was deployed. To see the new double-confirmed picks (Gillespie, Bane, Allen, etc.), we need to:
 
-### The Fix
+1. **Clear today's existing parlays** from `bot_daily_parlays` so the engine generates fresh ones
+2. **Invoke the generation engine** (`bot-generate-daily-parlays`) which now includes the direction-conflict filter and double-confirmed cross-referencing
+3. **Invalidate frontend caches** so the UI shows the new parlays immediately
 
-Two targeted changes in `supabase/functions/bot-generate-daily-parlays/index.ts`:
+### Steps
 
-**Change 1: Mispriced enrichment side check (around line 4078)**
+**Step 1: Delete today's stale parlays**
 
-Before granting double-confirmed status, compare the mispriced signal direction (`side` variable, derived from `ml.signal`) against `sweetSpotMatch.recommended_side`. Three outcomes:
+Run a SQL delete on `bot_daily_parlays` where `parlay_date = '2025-02-21'` to remove the 11 old parlays that lack cross-referencing.
 
-- **Sides agree** -- full double-confirmed: +20 bonus, real hit rate, tagged `isDoubleConfirmed: true`
-- **Sides disagree** -- direction conflict: no bonus, keep fake hit rate, tagged `isDoubleConfirmed: false`, log a warning with `[DIRECTION CONFLICT]`
-- **No sweet spot match** -- unchanged behavior (fake hit rate, no bonus)
+**Step 2: Invoke the generation edge function**
 
-**Change 2: Sweet spot boost side check is already correct (line 4158)**
+Call `bot-generate-daily-parlays` directly using the edge function curl tool. This will:
+- Build the sweet spot lookup map with normalized prop types
+- Cross-reference every mispriced line against sweet spots
+- Apply the direction-conflict filter (blocking picks like Josh Giddey where sides disagree)
+- Grant +20 bonus to true double-confirmed picks (sides agree, 70%+ hit rate, 15%+ edge)
+- Build parlays using the new `double_confirmed_conviction` strategy alongside existing strategies
 
-The Step 4 boost logic already checks `sideMatch` before boosting sweet spot picks. No change needed there.
+**Step 3: Verify results**
 
-### What This Prevents
+Query the database to confirm new parlays were generated with `has_double_confirmed = true` and that the `double_confirmed_conviction` strategy appears in the results.
 
-Picks like Josh Giddey (sweet spot says Points OVER, mispriced says Points UNDER) will no longer receive:
-- The +20 composite score bonus
-- Real hit rate replacement
-- Entry into the `double_confirmed_conviction` parlay pool
+### Expected Output
 
-They will be logged as direction conflicts so you can monitor how many occur daily.
+New parlays featuring double-confirmed picks like:
+- Collin Gillespie Threes OVER (100% L10, +36% edge)
+- Desmond Bane Threes OVER (100% L10, +24% edge)
+- Grayson Allen Points OVER (80% L10, +33% edge)
+- Ty Jerome Points OVER (80% L10, +27% edge)
 
-### Code Changes
+Direction conflicts like Josh Giddey will be logged but excluded from the double-confirmed pool.
 
-One block in `index.ts` around lines 4078-4098 -- add a side comparison before the double-confirmed grant:
-
-```
-Current: if (sweetSpotMatch && sweetSpotMatch.l10_hit_rate > 0) {
-           // Grant real hit rate + bonus unconditionally
-         }
-
-New:     if (sweetSpotMatch && sweetSpotMatch.l10_hit_rate > 0) {
-           const sidesAgree = sweetSpotMatch.recommended_side.toLowerCase() === side;
-           if (sidesAgree) {
-             // Grant real hit rate + double-confirmed bonus
-           } else {
-             // Log direction conflict, skip bonus, keep fake hit rate
-           }
-         }
-```
-
-This is a surgical 10-line change with no impact on any other strategy or pool.
