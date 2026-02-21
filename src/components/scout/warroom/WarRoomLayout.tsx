@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Gamepad2, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -9,6 +9,7 @@ import { useRegressionDetection } from '@/hooks/useRegressionDetection';
 import { useUnifiedLiveFeed } from '@/hooks/useUnifiedLiveFeed';
 import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
+import { supabase } from '@/integrations/supabase/client';
 
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
@@ -16,7 +17,7 @@ import { WarRoomPropCard, type WarRoomPropData } from './WarRoomPropCard';
 import { HedgeModeTable } from './HedgeModeTable';
 import { HedgeSlideIn, type HedgeOpportunity } from './HedgeSlideIn';
 import { AdvancedMetricsPanel } from './AdvancedMetricsPanel';
-import { WarRoomGameStrip } from './WarRoomGameStrip';
+import { WarRoomGameStrip, type PropsGame } from './WarRoomGameStrip';
 import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
 import type { ScoutGameContext } from '@/pages/Scout';
 
@@ -38,6 +39,35 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const rawSpots = sweetSpotData?.spots ?? [];
   const { spots: allEnrichedSpots } = useSweetSpotLiveData(rawSpots);
 
+  // Trigger sync-live-scores once on mount
+  useEffect(() => {
+    supabase.functions.invoke('sync-live-scores', { body: { sport: 'NBA' } })
+      .catch(err => console.error('sync-live-scores error:', err));
+  }, []);
+
+  // Build available games list from props data
+  const availableGames: PropsGame[] = useMemo(() => {
+    const gameMap = new Map<string, PropsGame>();
+    for (const s of allEnrichedSpots) {
+      const desc = s.gameDescription;
+      if (!desc) continue;
+      if (gameMap.has(desc)) {
+        gameMap.get(desc)!.propCount++;
+        continue;
+      }
+      const parts = desc.split(/\s+@\s+/);
+      if (parts.length < 2) continue;
+      gameMap.set(desc, {
+        awayTeam: parts[0].trim(),
+        homeTeam: parts[1].trim(),
+        gameDescription: desc,
+        commenceTime: s.gameTime || '',
+        propCount: 1,
+      });
+    }
+    return Array.from(gameMap.values()).filter(g => g.homeTeam && g.awayTeam);
+  }, [allEnrichedSpots]);
+
   // Filter spots to only the selected game's teams
   const enrichedSpots = useMemo(() => {
     if (!homeTeam || !awayTeam) return allEnrichedSpots;
@@ -46,19 +76,19 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
       return desc.includes(homeTeam) && desc.includes(awayTeam);
     });
   }, [allEnrichedSpots, homeTeam, awayTeam]);
+
   const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
   const { games } = useUnifiedLiveFeed({ enabled: true });
   const { data: whaleSignals } = useCustomerWhaleSignals();
 
-  // Build confidence picks for dashboard (already filtered via enrichedSpots)
+  // Build confidence picks for dashboard (from filtered enrichedSpots)
   const liveConfidencePicks = enrichedSpots
-    .filter((s) => s.liveData?.currentValue != null)
     .map((s) => ({
       playerName: s.playerName,
       propType: s.propType,
       line: s.line,
-      currentValue: s.liveData?.currentValue ?? 0,
+      currentValue: s.liveData?.currentValue ?? s.l10Stats.avg,
       side: s.side,
     }));
 
@@ -71,10 +101,9 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const whisperPicks = isDemo ? demoWhisperPicks : liveWhisperPicks;
   const effectiveSignals = isDemo ? demoWhaleSignals : whaleSignals;
 
-  // Build WarRoomPropData from enriched spots
+  // Build WarRoomPropData from enriched spots — NO liveData gate
   const propCards: WarRoomPropData[] = useMemo(() => {
     return enrichedSpots
-      .filter((s) => s.liveData || isDemo)
       .map((s) => {
         const teamFatigue = getFatigueByTeam(fatigueData, homeTeam);
         const baseFatigue = teamFatigue?.fatigue_score ?? 30;
@@ -87,7 +116,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           propType: s.propType,
           line: s.line,
           side: (s.side || 'OVER').toUpperCase(),
-          currentValue: s.liveData?.currentValue ?? 0,
+          currentValue: s.liveData?.currentValue ?? s.l10Stats.avg,
           projectedFinal: s.liveData?.projectedFinal ?? (s.edge + s.line),
           confidence: s.liveData?.confidence ?? s.sweetSpotScore ?? 50,
           paceRating: s.liveData?.paceRating ?? 100,
@@ -97,7 +126,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           hitRateL10: s.hitRateL10 ?? 0,
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, isDemo]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression]);
 
   // Build hedge opportunities for slide-in
   const hedgeOpportunities: HedgeOpportunity[] = useMemo(() => {
@@ -142,11 +171,12 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
         </div>
       )}
 
-      {/* Game Strip */}
+      {/* Game Strip — derived from props data */}
       {onGameChange && (
         <WarRoomGameStrip
           activeEventId={gameContext.eventId}
           adminEventId={adminEventId}
+          propsGames={availableGames}
           onSelectGame={onGameChange}
         />
       )}
@@ -187,7 +217,6 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
         espnEventId={gameContext.espnEventId}
       />
 
-
       {/* Props Section */}
       <AnimatePresence mode="wait">
         {viewMode === 'game' ? (
@@ -202,7 +231,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
               propCards.map((p) => <WarRoomPropCard key={p.id} data={p} />)
             ) : (
               <div className="warroom-card p-6 text-center text-sm text-muted-foreground col-span-full">
-                Smart prop cards appear once live data is available.
+                No props found for this game. Select a game with available player props.
               </div>
             )}
           </motion.div>

@@ -394,7 +394,7 @@ const Scout = () => {
         {/* Customer: demo mode when no game is live */}
         {isCustomer && !selectedGame && !activeGame && (
           <RiskModeProvider>
-            <CustomerScoutView gameContext={demoGameContext} isDemo adminEventId={activeGame?.event_id} />
+            <CustomerScoutView gameContext={demoGameContext} isDemo adminEventId={activeGame?.event_id} onGameChange={handleCustomerGameChange} />
           </RiskModeProvider>
         )}
 
