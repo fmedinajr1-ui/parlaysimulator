@@ -12,8 +12,10 @@ import {
   Clock,
   TrendingUp,
   Flame,
+  Gauge,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MomentumIndicator } from './warroom/MomentumIndicator';
 
 interface CustomerLiveGamePanelProps {
   homeTeam: string;
@@ -48,6 +50,7 @@ function LiveScoreboard({
   clock,
   status,
   quarterScores,
+  pace,
 }: {
   homeTeam: string;
   awayTeam: string;
@@ -57,6 +60,7 @@ function LiveScoreboard({
   clock: string | null;
   status: string;
   quarterScores: Record<string, { period: number; score: number }[]>;
+  pace?: number;
 }) {
   const isLive = status === 'in_progress';
   const isHalf = status === 'halftime';
@@ -101,7 +105,10 @@ function LiveScoreboard({
             initial={{ scale: 1.3, color: 'hsl(var(--primary))' }}
             animate={{ scale: 1, color: 'hsl(var(--foreground))' }}
             transition={{ duration: 0.4 }}
-            className="text-3xl font-black tabular-nums"
+            className={cn(
+              'text-3xl font-black tabular-nums',
+              awayScore > homeScore && 'drop-shadow-[0_0_12px_hsl(var(--warroom-green)/0.4)]'
+            )}
           >
             {awayScore}
           </motion.p>
@@ -118,12 +125,28 @@ function LiveScoreboard({
             initial={{ scale: 1.3, color: 'hsl(var(--primary))' }}
             animate={{ scale: 1, color: 'hsl(var(--foreground))' }}
             transition={{ duration: 0.4 }}
-            className="text-3xl font-black tabular-nums"
+            className={cn(
+              'text-3xl font-black tabular-nums',
+              homeScore > awayScore && 'drop-shadow-[0_0_12px_hsl(var(--warroom-green)/0.4)]'
+            )}
           >
             {homeScore}
           </motion.p>
         </div>
       </div>
+
+      {/* Momentum + Pace */}
+      {isLive && (
+        <div className="flex items-center justify-center gap-4">
+          <MomentumIndicator homeScore={homeScore} awayScore={awayScore} />
+          {pace && (
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Gauge className="w-3 h-3" />
+              <span>Pace: <span className="text-foreground font-medium">{Math.round(pace)}</span></span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quarter scores */}
       {Object.keys(quarterScores).length > 0 && (
@@ -391,8 +414,8 @@ export function CustomerLiveGamePanel({
   }
 
   return (
-    <Card className="border-border/50 overflow-hidden animate-fade-in">
-      <CardContent className="p-0 divide-y divide-border/30">
+    <Card className="warroom-card overflow-hidden animate-fade-in border-0">
+      <CardContent className="p-0 divide-y divide-[hsl(var(--warroom-card-border)/0.5)]">
         {/* Scoreboard */}
         <LiveScoreboard
           homeTeam={game.homeTeam}
@@ -403,6 +426,7 @@ export function CustomerLiveGamePanel({
           clock={game.clock}
           status={game.status}
           quarterScores={game.quarterScores}
+          pace={feedGame?.pace}
         />
 
         {/* Box Score */}

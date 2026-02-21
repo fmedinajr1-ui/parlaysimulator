@@ -1,16 +1,5 @@
 import React from 'react';
-import { ScoutSweetSpotProps } from './ScoutSweetSpotProps';
-import { CustomerHedgePanel } from './CustomerHedgePanel';
-import { CustomerSlipScanner } from './CustomerSlipScanner';
-import { CustomerConfidenceDashboard } from './CustomerConfidenceDashboard';
-import { CustomerRiskToggle } from './CustomerRiskToggle';
-import { CustomerAIWhisper } from './CustomerAIWhisper';
-import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
-import { useDeepSweetSpots } from '@/hooks/useDeepSweetSpots';
-import { useSweetSpotLiveData } from '@/hooks/useSweetSpotLiveData';
-import { Card, CardContent } from '@/components/ui/card';
-import { CustomerLiveGamePanel } from './CustomerLiveGamePanel';
-import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
+import { WarRoomLayout } from './warroom/WarRoomLayout';
 import type { ScoutGameContext } from '@/pages/Scout';
 
 interface CustomerScoutViewProps {
@@ -19,76 +8,5 @@ interface CustomerScoutViewProps {
 }
 
 export function CustomerScoutView({ gameContext, isDemo = false }: CustomerScoutViewProps) {
-  const { homeTeam, awayTeam } = gameContext;
-  const { data: whaleSignals } = useCustomerWhaleSignals();
-
-  // Get enriched spots for confidence dashboard + whisper
-  const { data } = useDeepSweetSpots();
-  const rawSpots = data?.spots ?? [];
-  const { spots: enrichedSpots } = useSweetSpotLiveData(rawSpots);
-
-  // Build confidence picks from enriched spots that have live data
-  const liveConfidencePicks = enrichedSpots
-    .filter((s) => s.liveData?.currentValue != null)
-    .map((s) => ({
-      playerName: s.playerName,
-      propType: s.propType,
-      line: s.line,
-      currentValue: s.liveData?.currentValue ?? 0,
-      side: s.side,
-    }));
-
-  // Build whisper picks with game progress
-  const liveWhisperPicks = liveConfidencePicks.map((p) => ({
-    ...p,
-    gameProgress: 0.5,
-  }));
-
-  // Use demo data when in demo mode, live data otherwise
-  const confidencePicks = isDemo ? demoConfidencePicks : liveConfidencePicks;
-  const whisperPicks = isDemo ? demoWhisperPicks : liveWhisperPicks;
-  const effectiveSignals = isDemo ? demoWhaleSignals : whaleSignals;
-
-  return (
-    <div className="space-y-4">
-      {/* Demo Banner */}
-      {isDemo && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-          </span>
-          <span className="text-xs text-primary font-medium">
-            Preview Mode — Live data appears when a game starts
-          </span>
-        </div>
-      )}
-
-      {/* Live Game Command Center */}
-      <CustomerLiveGamePanel
-        homeTeam={homeTeam}
-        awayTeam={awayTeam}
-        eventId={gameContext.eventId}
-        espnEventId={gameContext.espnEventId}
-      />
-
-      {/* Slip Scanner */}
-      <CustomerSlipScanner />
-
-      {/* Props + Hedge side by side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ScoutSweetSpotProps homeTeam={homeTeam} awayTeam={awayTeam} />
-        <CustomerHedgePanel homeTeam={homeTeam} awayTeam={awayTeam} />
-      </div>
-
-      {/* Confidence Dashboard */}
-      <CustomerConfidenceDashboard picks={confidencePicks} />
-
-      {/* Risk Mode Toggle */}
-      <CustomerRiskToggle />
-
-      {/* AI Commentary Whisper */}
-      <CustomerAIWhisper picks={whisperPicks} signals={effectiveSignals} />
-    </div>
-  );
+  return <WarRoomLayout gameContext={gameContext} isDemo={isDemo} />;
 }
