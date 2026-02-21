@@ -1,71 +1,94 @@
 
 
-## Fix Parlay Settlement for Feb 19 and Feb 20
+## Cross-Reference Sweet Spot + Mispriced Lines into "Double-Confirmed" Parlay Engine
 
-### Root Cause
+### The Problem
 
-The `bot-settle-and-learn` function settles player prop legs by looking up the leg's `id` in the `category_sweet_spots` table. However, the parlay generation engine (`bot-generate-daily-parlays`) assigns leg IDs that **do not match** the `category_sweet_spots` IDs in several cases:
+Yesterday (Feb 20), the bot had **67 sweet spot hits** with real historical hit rates (many at 90-100%), and **157 mispriced lines** with statistical edges. But they were never combined. The generation engine treats them as **completely separate pools**:
 
-1. **Master parlays** (`master_parlay_*` strategies) -- the builder at line 5695 creates legs **without an `id` field** at all
-2. **Some execution strategies** generate new UUIDs instead of preserving the original sweet spot ID
+- `pool.playerPicks` = sweet spot picks (real hit rates, no edge data)
+- `pool.mispricedPicks` = mispriced lines (fake hardcoded hit rates, real edge data)
 
-For example, a parlay leg for "Devin Booker Over 1.5 Threes" has ID `78d2e1ed...`, but the actual `category_sweet_spots` row is `3058f61e...`. The ID lookup returns nothing, so every player leg stays `pending` forever.
+Two bugs make this worse:
+1. **Prop type mismatch**: Mispriced lines use `player_points`, sweet spots use `points` -- they literally cannot join
+2. **Fake hit rates**: Mispriced picks get hardcoded `0.55-0.70` hit rates instead of looking up the real L10 data
 
-**Current state:**
-- Feb 19: 17 pending parlays (10 already settled as lost)
-- Feb 20: 52 pending parlays
-- `category_sweet_spots` for both dates are fully verified (112 hit / 74 miss for Feb 19, 67 hit / 32 miss for Feb 20)
+Yesterday, 7 picks existed in BOTH systems and all 7 won. That is the signal we need to exploit.
 
-### Fix: Add Fallback Lookup by Player Name + Prop Type + Line
+### What We Will Build
 
-When the ID-based lookup fails (returns no match from `sweetSpotMap`), the settlement function should fall back to querying `category_sweet_spots` by:
-- `player_name` (normalized)
-- `prop_type`
-- `recommended_line` = leg's `line`
-- `analysis_date` = parlay's `parlay_date`
-- `outcome` is not `pending`
+A new "Double-Confirmed" enrichment step in `bot-generate-daily-parlays` that:
 
-This guarantees legs get settled even when IDs don't match.
+1. **Normalizes prop types** so mispriced lines can match sweet spots (`player_points` becomes `points`)
+2. **Cross-references** every mispriced line against sweet spots to find double-confirmed picks
+3. **Replaces fake hit rates** with real L10 hit rates when a sweet spot match exists
+4. **Creates a priority tier** -- double-confirmed picks (sweet spot hit rate 70%+ AND mispriced edge 15%+) get a massive score boost
+5. **Adds a new parlay strategy** `double_confirmed_conviction` that builds parlays exclusively from these elite cross-referenced picks
 
-### Changes
+### Yesterday's Winners That Would Have Been Prioritized
 
-**File: `supabase/functions/bot-settle-and-learn/index.ts`**
+| Player | Prop | Archetype | Category | Hit Rate | Edge | Result |
+|---|---|---|---|---|---|---|
+| Jarrett Allen | Points O 14.5 | ELITE_REBOUNDER | VOLUME_SCORER | 70% | +24% | 26 pts (WIN) |
+| Kon Knueppel | Threes O 0.5 | PURE_SHOOTER | THREE_POINT_SHOOTER | 100% | +23% | 7 threes (WIN) |
+| Jarrett Allen | Rebounds O 6.5 | ELITE_REBOUNDER | BIG_REBOUNDER | 90% | +16% | 14 reb (WIN) |
+| James Harden | Threes O 0.5 | PLAYMAKER | THREE_POINT_SHOOTER | 100% | +16% | 2 threes (WIN) |
+| Jarace Walker | Points U 19.5 | ROLE_PLAYER | MID_SCORER_UNDER | 70% | +17% | 12 pts (WIN) |
+| Jarace Walker | Threes U 0.5 | ROLE_PLAYER | THREE_POINT_SHOOTER | 100% | +36% | 3 threes (WIN) |
 
-1. After the batch `sweetSpotMap` lookup (line 630-648), add a **fallback query function** that searches `category_sweet_spots` by player name + prop type + line + date when the ID lookup misses.
+All 7 double-confirmed picks won -- a 100% hit rate.
 
-2. In the per-leg settlement loop (lines 696-709), when `sweetSpotMap.get(leg.id)` returns nothing, call the fallback:
-   - Query `category_sweet_spots` WHERE `player_name ILIKE` normalized name AND `prop_type = leg.prop_type` AND `recommended_line = leg.line` AND `analysis_date = parlay.parlay_date` AND `outcome != 'pending'`
-   - If a match is found, use its `outcome` and `actual_value`
-   - Log the fallback match for debugging
+### Technical Changes
 
-3. As a second fallback when even the name+prop lookup fails, **directly query `nba_player_game_logs`** for the player on the game date and resolve the leg using the same `extractStatValue` logic from `verify-sweet-spot-outcomes`.
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-### Technical Details
+**Step 1: Build a sweet spot lookup map** (after sweet spots are fetched at line ~2900)
 
-**Fallback priority order:**
+Create a normalized map keyed by `playerName|normalizedProp` that stores the real `l10_hit_rate`, `archetype`, `category`, `confidence_score`, and `l10_avg` from `category_sweet_spots`.
+
+**Step 2: Cross-reference in mispriced enrichment** (at line ~4012)
+
+When enriching mispriced picks, normalize the prop type (`player_points` to `points`) and look up the sweet spot map. If a match is found:
+- Replace the fake `hitRate` with the real `l10_hit_rate`
+- Add `archetype` and `category` from the sweet spot
+- Apply a "double-confirmed" bonus (+20) to the composite score
+- Tag the pick with `isDoubleConfirmed: true`
+
+**Step 3: Add a new strategy profile** in the execution tier
+
 ```text
-1. sweetSpotMap.get(leg.id)          -- exact ID match (current behavior)
-2. category_sweet_spots query        -- name + prop_type + line + date
-3. nba_player_game_logs direct query -- raw stat lookup as last resort
+Strategy: double_confirmed_conviction
+Legs: 3
+Min composite: 70
+Priority: above mispriced_edge
+Pool: double-confirmed picks only (sweet spot 70%+ hit rate AND mispriced edge 15%+)
 ```
 
-**Prop type to column mapping for direct game log lookup:**
+**Step 4: Ensure double-confirmed picks also boost regular pool picks**
+
+When a sweet spot pick has a matching mispriced entry, boost its composite score in the regular `playerPicks` pool too, so it gets prioritized across ALL strategies -- not just the dedicated double-confirmed strategy.
+
+### Prop Type Normalization Map
+
+The following normalization will be applied to align mispriced line prop types with sweet spot prop types:
+
 ```text
-threes     -> threes_made
-points     -> points
-rebounds   -> rebounds
-assists    -> assists
-blocks     -> blocks
-steals     -> steals
-pra        -> points + rebounds + assists
-pr         -> points + rebounds
-pa         -> points + assists
-ra         -> rebounds + assists
+player_points           -> points
+player_rebounds          -> rebounds
+player_assists           -> assists
+player_threes            -> threes
+player_blocks            -> blocks
+player_steals            -> steals
+player_points_rebounds   -> pr (or match both separately)
+player_points_assists    -> pa
+player_rebounds_assists  -> ra
+player_points_rebounds_assists -> pra
 ```
 
-**After the code fix, trigger settlement:**
-- Call `bot-settle-and-learn` with `{ "date": "2026-02-19", "force": true }`
-- Call `bot-settle-and-learn` with `{ "date": "2026-02-20", "force": true }`
+### Expected Impact
 
-This will re-process all 69 pending parlays and settle them using the fallback lookups.
+- Yesterday: 7/7 double-confirmed picks won (100%)
+- These picks would form the backbone of 2-3 additional high-conviction parlays per day
+- Real hit rates (70-100%) replace fake ones (55-70%), giving the scoring engine accurate data to rank picks
+- The bot stops leaving money on the table by ignoring its own best data
 
