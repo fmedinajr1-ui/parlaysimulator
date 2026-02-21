@@ -140,6 +140,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 4, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'] },
+      // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'] },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
       // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
     ],
   },
@@ -175,6 +178,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Mispriced edge — validated tier
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55 },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52 },
+      // Double-confirmed — validated tier
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65 },
       { legs: 3, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
       { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
       { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
@@ -226,6 +232,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       // Whale signal execution (3-leg only — 2-leg permanently removed)
       { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // Double-confirmed execution — HIGHEST PRIORITY: sweet spot + mispriced edge agreement
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       // Mispriced edge execution — highest conviction plays
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
@@ -1785,6 +1795,7 @@ interface PropPool {
   sweetSpots: EnrichedPick[];
   whalePicks: EnrichedPick[];
   mispricedPicks: EnrichedPick[];
+  doubleConfirmedPicks: EnrichedPick[];
   totalPool: number;
   goldenCategories: Set<string>;
 }
@@ -2906,6 +2917,34 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .order('confidence_score', { ascending: false })
     .limit(200);
 
+  // === STEP 1: BUILD SWEET SPOT LOOKUP MAP FOR CROSS-REFERENCING ===
+  const PROP_TYPE_NORMALIZE: Record<string, string> = {
+    'player_points': 'points', 'player_rebounds': 'rebounds', 'player_assists': 'assists',
+    'player_threes': 'threes', 'player_blocks': 'blocks', 'player_steals': 'steals',
+    'player_points_rebounds': 'pr', 'player_points_assists': 'pa',
+    'player_rebounds_assists': 'ra', 'player_points_rebounds_assists': 'pra',
+    'batter_hits': 'hits', 'batter_total_bases': 'total_bases', 'batter_rbis': 'rbis',
+    'batter_runs': 'runs', 'batter_walks': 'walks',
+    'pitcher_strikeouts': 'strikeouts', 'pitcher_earned_runs': 'earned_runs', 'pitcher_outs': 'outs',
+  };
+
+  const sweetSpotLookup = new Map<string, {
+    l10_hit_rate: number; archetype: string; category: string;
+    confidence_score: number; l10_avg: number; recommended_side: string;
+  }>();
+  for (const ss of (sweetSpots || [])) {
+    const key = `${(ss.player_name || '').toLowerCase().trim()}|${(ss.prop_type || '').toLowerCase().trim()}`;
+    sweetSpotLookup.set(key, {
+      l10_hit_rate: ss.l10_hit_rate || 0,
+      archetype: ss.archetype || 'UNKNOWN',
+      category: ss.category || '',
+      confidence_score: ss.confidence_score || 0,
+      l10_avg: ss.l10_avg || 0,
+      recommended_side: ss.recommended_side || 'over',
+    });
+  }
+  console.log(`[Bot] Sweet spot lookup map built: ${sweetSpotLookup.size} entries for cross-referencing`);
+
   // 2. Live odds from unified_props - bounded to today's ET window
   const { data: playerProps } = await supabase
     .from('unified_props')
@@ -4009,7 +4048,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   }
   console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk engine picks loaded`);
 
-  // === ENRICH MISPRICED LINES INTO PICK FORMAT ===
+  // === STEP 2: ENRICH MISPRICED LINES + CROSS-REFERENCE WITH SWEET SPOTS ===
+  let doubleConfirmedCount = 0;
   const enrichedMispricedPicks: EnrichedPick[] = (rawMispricedLines || []).map((ml: any) => {
     const side = (ml.signal || 'OVER').toLowerCase();
     const category = mapPropTypeToCategory(ml.prop_type);
@@ -4021,10 +4061,45 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const riskKey = `${(ml.player_name || '').toLowerCase().trim()}|${normProp}`;
     const riskMatch = riskEngineMap.get(riskKey);
     const riskConfirmed = riskMatch && riskMatch.side.toLowerCase() === side;
-    const convictionBoost = riskConfirmed ? 12 : (riskMatch ? 3 : 0); // +12 if side agrees, +3 if exists but disagrees
+    const convictionBoost = riskConfirmed ? 12 : (riskMatch ? 3 : 0);
     
-    const compositeScore = Math.min(95, 50 + (absEdge * 0.3) + tierBonus + convictionBoost);
-    const hitRate = absEdge >= 30 ? 0.70 : absEdge >= 20 ? 0.62 : 0.55;
+    // === DOUBLE-CONFIRMED CROSS-REFERENCE ===
+    // Normalize mispriced prop_type to sweet spot prop_type format
+    const normalizedPropType = PROP_TYPE_NORMALIZE[ml.prop_type?.toLowerCase()] || normProp;
+    const sweetSpotKey = `${(ml.player_name || '').toLowerCase().trim()}|${normalizedPropType}`;
+    const sweetSpotMatch = sweetSpotLookup.get(sweetSpotKey);
+    
+    let isDoubleConfirmed = false;
+    let doubleConfirmedBonus = 0;
+    let realHitRate = absEdge >= 30 ? 0.70 : absEdge >= 20 ? 0.62 : 0.55; // default fake rate
+    let matchedArchetype = '';
+    let matchedCategory = category;
+    
+    if (sweetSpotMatch && sweetSpotMatch.l10_hit_rate > 0) {
+      // Replace fake hit rate with REAL L10 hit rate from sweet spots
+      realHitRate = sweetSpotMatch.l10_hit_rate / 100; // stored as percentage (e.g., 70 = 70%)
+      // Ensure it's in 0-1 range (if already stored as decimal, cap at 1)
+      if (realHitRate > 1) realHitRate = sweetSpotMatch.l10_hit_rate / 100;
+      if (realHitRate <= 0.01) realHitRate = sweetSpotMatch.l10_hit_rate; // stored as 0.70 already
+      
+      matchedArchetype = sweetSpotMatch.archetype;
+      matchedCategory = sweetSpotMatch.category || category;
+      
+      // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
+      if (realHitRate >= 0.70 && absEdge >= 15) {
+        isDoubleConfirmed = true;
+        doubleConfirmedBonus = 20;
+        doubleConfirmedCount++;
+        console.log(`[Bot] 🔥 DOUBLE-CONFIRMED: ${ml.player_name} ${ml.prop_type} ${side} | hitRate=${(realHitRate * 100).toFixed(0)}% edge=${absEdge.toFixed(1)}% arch=${matchedArchetype}`);
+      } else {
+        // Partial match: still use real hit rate but smaller bonus
+        doubleConfirmedBonus = 8;
+        console.log(`[Bot] ✅ Sweet spot matched: ${ml.player_name} ${ml.prop_type} | hitRate=${(realHitRate * 100).toFixed(0)}% (partial, edge=${absEdge.toFixed(1)}%)`);
+      }
+    }
+    
+    const compositeScore = Math.min(98, 50 + (absEdge * 0.3) + tierBonus + convictionBoost + doubleConfirmedBonus);
+    const hitRate = realHitRate;
 
     // Look up real odds from the odds map
     const oddsKey = `${ml.player_name}_${ml.prop_type}`.toLowerCase();
@@ -4039,7 +4114,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       prop_type: ml.prop_type,
       line: ml.book_line || 0,
       recommended_side: side,
-      category,
+      category: matchedCategory,
       confidence_score: hitRate,
       l10_hit_rate: hitRate,
       projected_value: ml.player_avg_l10 || 0,
@@ -4048,9 +4123,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       oddsValueScore: calculateOddsValueScore(americanOdds, hitRate),
       compositeScore,
       has_real_line: true,
-      line_source: 'mispriced_edge',
+      line_source: isDoubleConfirmed ? 'double_confirmed' : 'mispriced_edge',
+      isDoubleConfirmed,
+      archetype: matchedArchetype,
     } as EnrichedPick;
   }).filter((p: EnrichedPick) => Math.abs(p.line) > 0 && p.player_name);
+
+  console.log(`[Bot] 🔥 Double-confirmed picks: ${doubleConfirmedCount} out of ${enrichedMispricedPicks.length} mispriced lines`);
 
   // Apply availability gate to mispriced picks
   const filteredMispricedPicks = enrichedMispricedPicks.filter(pick => {
@@ -4061,7 +4140,37 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     return !blocklist.has(pick.player_name.toLowerCase().trim());
   });
 
-  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks`);
+  // === STEP 4: BOOST SWEET SPOT PICKS THAT HAVE MISPRICED MATCHES ===
+  // Build a reverse lookup: mispriced lines keyed by normalized player|prop
+  const mispricedLookup = new Map<string, { edge_pct: number; signal: string }>();
+  for (const ml of (rawMispricedLines || [])) {
+    const normProp = PROP_TYPE_NORMALIZE[ml.prop_type?.toLowerCase()] || (ml.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const key = `${(ml.player_name || '').toLowerCase().trim()}|${normProp}`;
+    mispricedLookup.set(key, { edge_pct: Math.abs(ml.edge_pct || 0), signal: (ml.signal || '').toLowerCase() });
+  }
+
+  // Boost enrichedSweetSpots that also appear in mispriced lines
+  let sweetSpotBoostedCount = 0;
+  for (const ss of enrichedSweetSpots) {
+    const ssKey = `${(ss.player_name || '').toLowerCase().trim()}|${(ss.prop_type || '').toLowerCase().trim()}`;
+    const mispricedMatch = mispricedLookup.get(ssKey);
+    if (mispricedMatch && mispricedMatch.edge_pct >= 15) {
+      const sideMatch = mispricedMatch.signal === (ss.recommended_side || '').toLowerCase();
+      if (sideMatch) {
+        ss.compositeScore = Math.min(98, ss.compositeScore + 15);
+        (ss as any).isDoubleConfirmed = true;
+        (ss as any).mispricedEdge = mispricedMatch.edge_pct;
+        sweetSpotBoostedCount++;
+      }
+    }
+  }
+  if (sweetSpotBoostedCount > 0) {
+    console.log(`[Bot] 🔥 Boosted ${sweetSpotBoostedCount} sweet spot picks with mispriced edge confirmation`);
+  }
+
+  // Build double-confirmed pool: filtered mispriced picks with double confirmation
+  const doubleConfirmedPicks = filteredMispricedPicks.filter((p: any) => p.isDoubleConfirmed === true);
+  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks, ${doubleConfirmedPicks.length} double-confirmed`);
 
   return {
     playerPicks: enrichedSweetSpots,
@@ -4069,6 +4178,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     sweetSpots: enrichedSweetSpots,
     whalePicks: enrichedWhalePicks,
     mispricedPicks: filteredMispricedPicks,
+    doubleConfirmedPicks,
     totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length,
     goldenCategories,
   };
@@ -4197,8 +4307,23 @@ async function generateTierParlays(
     const isWhaleProfile = profile.strategy.startsWith('whale_signal');
     // MISPRICED EDGE: draw exclusively from mispriced lines pool
     const isMispricedProfile = profile.strategy.startsWith('mispriced_edge');
+    // DOUBLE-CONFIRMED: draw exclusively from double-confirmed picks (sweet spot + mispriced)
+    const isDoubleConfirmedProfile = profile.strategy.startsWith('double_confirmed');
     
-    if (isMispricedProfile) {
+    if (isDoubleConfirmedProfile) {
+      candidatePicks = [...(pool.doubleConfirmedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          return true;
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/double_confirmed: only ${candidatePicks.length} double-confirmed picks available, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/double_confirmed: using ${candidatePicks.length} double-confirmed picks for ${profile.legs}-leg parlay`);
+    } else if (isMispricedProfile) {
       candidatePicks = [...pool.mispricedPicks]
         .filter(p => {
           if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
