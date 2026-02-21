@@ -4544,6 +4544,17 @@ async function generateTierParlays(
     // === COHERENCE-AWARE SELECTION: re-rank candidates after each leg ===
     let remainingCandidates = [...candidatePicks];
     
+    // Shuffle top candidates for exploration tier to avoid deterministic output across runs
+    if (tier === 'exploration') {
+      const shuffleCount = Math.floor(remainingCandidates.length * 0.7);
+      const topSlice = remainingCandidates.slice(0, shuffleCount);
+      for (let i = topSlice.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [topSlice[i], topSlice[j]] = [topSlice[j], topSlice[i]];
+      }
+      remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
+    }
+    
     while (legs.length < effectiveMaxLegs && remainingCandidates.length > 0) {
       // After the first leg, re-sort remaining candidates by coherence bonus
       if (legs.length > 0) {
@@ -4810,10 +4821,17 @@ async function generateTierParlays(
       if (!pickedOne) break;
     }
 
-    // Only create parlay if we have enough legs
+    // Only create parlay if we have enough legs (with 3-leg fallback for small pools)
     if (legs.length < profile.legs) {
-      console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
-    } else {
+      if (legs.length >= 3 && pool.playerPicks.length < 60) {
+        // Accept as 3-leg fallback when pool is too small for requested leg count
+        console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool too small for ${profile.legs})`);
+      } else {
+        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
+        continue;
+      }
+    }
+    {
       // Cross-sport gate: require at least one leg from each specified sport
       if ((profile.strategy === 'team_hybrid_cross' || profile.strategy === 'team_ml_cross') && profile.sports && profile.sports.length > 1) {
         const legSports = new Set(legs.map(l => l.sport));
@@ -4842,7 +4860,9 @@ async function generateTierParlays(
       }
 
       // Deduplication: skip if identical leg combination already exists
-      const fingerprint = createParlayFingerprint(legs);
+      // Strategy-aware fingerprints for exploration tier allow same combo under different strategies
+      const fpStrategy = tier === 'exploration' ? profile.strategy : '';
+      const fingerprint = createParlayFingerprint(legs) + (fpStrategy ? `||S:${fpStrategy}` : '');
       if (globalFingerprints.has(fingerprint)) {
         console.log(`[Bot] Skipping duplicate ${tier}/${profile.strategy} parlay (fingerprint match)`);
         continue;
@@ -6351,11 +6371,11 @@ Deno.serve(async (req) => {
     if (existingParlays) {
       for (const p of existingParlays) {
         const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
-        // Only block exact fingerprint duplicates — do NOT accumulate usage tracking across runs
+        // Only block exact fingerprint duplicates — do NOT add mirror prints from existing parlays
+        // Mirror blocking is scoped to within THIS run only to prevent cross-run over-blocking
         globalFingerprints.add(createParlayFingerprint(legs));
-        globalMirrorPrints.add(createMirrorFingerprint(legs));
       }
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} exact fingerprints + ${globalMirrorPrints.size} mirror prints for ${targetDate} (usage maps reset for this batch)`);
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} exact fingerprints for ${targetDate} (mirrors scoped to current run only, usage maps reset)`);
     }
 
     // Light-slate: increase usage limits for exploration tier
