@@ -1,32 +1,56 @@
 
 
-## Remove Slip Scanner and Sidebar
+## Add Customer Game Selector to War Room
 
-Two removals:
+Currently, customers only see the single game an admin sets live via `scout_active_game`. This change adds a game picker so customers can browse and switch between all available live games.
 
-### 1. Remove Slip Scanner
+### How It Works
 
-**File:** `src/components/scout/warroom/WarRoomLayout.tsx`
-- Remove the `import { CustomerSlipScanner }` line
-- Remove the `<CustomerSlipScanner />` component from the JSX
+- A horizontal game strip appears at the top of the War Room, showing all today's games from `live_game_scores`
+- Each game shows as a compact pill with team abbreviations, score, and live status
+- The admin-set game is pre-selected and marked with a star indicator
+- Clicking a different game switches the entire War Room context to that game
+- Live games (in_progress) are highlighted with a pulsing dot; scheduled games show tip-off time
 
-**File:** `src/components/scout/CustomerSlipScanner.tsx`
-- Delete the entire file (no longer needed)
+### What Changes
 
-### 2. Remove Desktop Sidebar
+**1. New Component: `WarRoomGameStrip.tsx`**
+- Horizontal scrollable strip of game pills
+- Fetches all today's games from `live_game_scores` via `useLiveScores`
+- Each pill: `AWY score @ HME score` with status indicator
+- Active game highlighted with green border
+- Admin-set game gets a small star badge
+- Clicking a pill calls `onSelectGame` with the game's team info and event ID
 
-The sidebar is rendered via `AppShell` -> `DesktopLayout` -> `DesktopSidebar`. The simplest approach is to make `DesktopLayout` render children directly without the sidebar, keeping `AppShell` intact for the mobile/desktop detection logic.
+**2. Modified: `Scout.tsx` (Customer Flow)**
+- Instead of locking to only `activeGame`, allow `selectedGame` to be changed by customers too
+- Pass an `onGameChange` callback to `CustomerScoutView` -> `WarRoomLayout`
+- Resolve ESPN event ID when customer switches games
 
-**File:** `src/components/layout/DesktopLayout.tsx`
-- Remove the `DesktopSidebar` import and all sidebar toggle state/logic
-- Render just the `<main>` content directly (full width, no sidebar)
+**3. Modified: `WarRoomLayout.tsx`**
+- Add the `WarRoomGameStrip` above the mode toggle
+- Accept optional `onGameChange` and `allGames` props
+- When a game is selected from the strip, propagate up to `Scout.tsx` to update `selectedGame`
 
-**File:** `src/components/layout/DesktopSidebar.tsx`
-- Delete the entire file (no longer used)
+**4. Modified: `CustomerScoutView.tsx`**
+- Pass through `onGameChange` prop to `WarRoomLayout`
 
 ### Technical Details
 
-- `DesktopLayout` will simplify to a wrapper that renders `children` in a full-width `<main>` with optional padding
-- No other files import `DesktopSidebar` or `CustomerSlipScanner` directly, so no cascading changes needed
-- The keyboard shortcut (Cmd+B) and localStorage sidebar state will be removed along with the sidebar
+**Data source:** `useLiveScores()` (no filters) gives all games across sports. We filter to NBA or show all sports with section headers.
 
+**Game switching flow:**
+1. User taps a game pill in the strip
+2. `WarRoomLayout` calls `onGameChange({ eventId, homeTeam, awayTeam, ... })`
+3. `Scout.tsx` updates `selectedGame` state and resolves the ESPN event ID
+4. `CustomerLiveGamePanel` and all prop/hedge data re-render for the new game
+
+**ESPN ID resolution:** When switching games, we call `get-espn-event-id` to resolve the new game's ESPN ID for live score matching (same pattern already used on initial load).
+
+**Files created:**
+- `src/components/scout/warroom/WarRoomGameStrip.tsx`
+
+**Files modified:**
+- `src/pages/Scout.tsx` -- allow customers to change `selectedGame`, pass `onGameChange` callback
+- `src/components/scout/CustomerScoutView.tsx` -- pass `onGameChange` through
+- `src/components/scout/warroom/WarRoomLayout.tsx` -- render `WarRoomGameStrip`, wire up game change
