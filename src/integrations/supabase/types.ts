@@ -5524,6 +5524,42 @@ export type Database = {
         }
         Relationships: []
       }
+      mlb_engine_picks: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          game_date: string
+          id: string
+          line: number | null
+          player_name: string
+          prop_type: string
+          side: string
+          signal_sources: Json | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          game_date: string
+          id?: string
+          line?: number | null
+          player_name: string
+          prop_type: string
+          side: string
+          signal_sources?: Json | null
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          game_date?: string
+          id?: string
+          line?: number | null
+          player_name?: string
+          prop_type?: string
+          side?: string
+          signal_sources?: Json | null
+        }
+        Relationships: []
+      }
       mlb_player_game_logs: {
         Row: {
           at_bats: number | null

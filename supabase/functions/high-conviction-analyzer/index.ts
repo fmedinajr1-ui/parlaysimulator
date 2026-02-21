@@ -39,7 +39,7 @@ serve(async (req) => {
     console.log(`[HighConviction] Starting analysis for ${today}`);
 
     // Fetch all data in parallel
-    const [mispricedResult, riskResult, propV2Result, sharpResult, heatResult] = await Promise.all([
+    const [mispricedResult, riskResult, propV2Result, sharpResult, heatResult, mlbCrossRefResult] = await Promise.all([
       supabase.from('mispriced_lines')
         .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport')
         .eq('analysis_date', today),
@@ -55,12 +55,15 @@ serve(async (req) => {
       supabase.from('heat_parlays')
         .select('legs, parlay_type')
         .eq('parlay_date', today),
+      supabase.from('mlb_engine_picks')
+        .select('player_name, prop_type, line, side, confidence_score')
+        .eq('game_date', today),
     ]);
 
     const mispricedLines = mispricedResult.data || [];
     if (riskResult.error) console.error(`[HighConviction] Risk query error:`, riskResult.error);
     if (mispricedResult.error) console.error(`[HighConviction] Mispriced query error:`, mispricedResult.error);
-    console.log(`[HighConviction] Date: ${today}, Mispriced: ${mispricedLines.length}, Risk: ${riskResult.data?.length || 0}, PropV2: ${propV2Result.data?.length || 0}, Sharp: ${sharpResult.data?.length || 0}, Heat: ${heatResult.data?.length || 0}`);
+    console.log(`[HighConviction] Date: ${today}, Mispriced: ${mispricedLines.length}, Risk: ${riskResult.data?.length || 0}, PropV2: ${propV2Result.data?.length || 0}, Sharp: ${sharpResult.data?.length || 0}, Heat: ${heatResult.data?.length || 0}, MLB-CrossRef: ${mlbCrossRefResult.data?.length || 0}`);
 
     // Build engine picks map
     const engineMap = new Map<string, EnginePick[]>();
@@ -93,6 +96,10 @@ serve(async (req) => {
           }
         }
       }
+    }
+    // MLB Cross-Reference engine
+    for (const p of mlbCrossRefResult.data || []) {
+      addPick({ player_name: p.player_name, prop_type: p.prop_type, side: p.side || 'over', confidence: p.confidence_score, engine: 'mlb_cross_ref' });
     }
 
     // Cross-reference
