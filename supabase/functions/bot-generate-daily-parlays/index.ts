@@ -4076,25 +4076,37 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     let matchedCategory = category;
     
     if (sweetSpotMatch && sweetSpotMatch.l10_hit_rate > 0) {
-      // Replace fake hit rate with REAL L10 hit rate from sweet spots
-      realHitRate = sweetSpotMatch.l10_hit_rate / 100; // stored as percentage (e.g., 70 = 70%)
-      // Ensure it's in 0-1 range (if already stored as decimal, cap at 1)
-      if (realHitRate > 1) realHitRate = sweetSpotMatch.l10_hit_rate / 100;
-      if (realHitRate <= 0.01) realHitRate = sweetSpotMatch.l10_hit_rate; // stored as 0.70 already
+      // === DIRECTION-CONFLICT FILTER ===
+      // Check if mispriced signal direction agrees with sweet spot recommendation
+      const sweetSpotSide = (sweetSpotMatch.recommended_side || '').toLowerCase().trim();
+      const sidesAgree = sweetSpotSide === side;
       
-      matchedArchetype = sweetSpotMatch.archetype;
-      matchedCategory = sweetSpotMatch.category || category;
-      
-      // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
-      if (realHitRate >= 0.70 && absEdge >= 15) {
-        isDoubleConfirmed = true;
-        doubleConfirmedBonus = 20;
-        doubleConfirmedCount++;
-        console.log(`[Bot] 🔥 DOUBLE-CONFIRMED: ${ml.player_name} ${ml.prop_type} ${side} | hitRate=${(realHitRate * 100).toFixed(0)}% edge=${absEdge.toFixed(1)}% arch=${matchedArchetype}`);
+      if (!sidesAgree) {
+        // Direction conflict: sweet spot and mispriced signal disagree on OVER/UNDER
+        console.warn(`[DIRECTION CONFLICT] ${ml.player_name} ${ml.prop_type} | sweetSpot=${sweetSpotSide.toUpperCase()} mispriced=${side.toUpperCase()} | Skipping double-confirmed bonus, keeping fake hit rate`);
+        // Keep default fake hit rate, no bonus, not double-confirmed
+        isDoubleConfirmed = false;
+        doubleConfirmedBonus = 0;
       } else {
-        // Partial match: still use real hit rate but smaller bonus
-        doubleConfirmedBonus = 8;
-        console.log(`[Bot] ✅ Sweet spot matched: ${ml.player_name} ${ml.prop_type} | hitRate=${(realHitRate * 100).toFixed(0)}% (partial, edge=${absEdge.toFixed(1)}%)`);
+        // Sides agree — proceed with real hit rate enrichment
+        realHitRate = sweetSpotMatch.l10_hit_rate / 100; // stored as percentage (e.g., 70 = 70%)
+        if (realHitRate > 1) realHitRate = sweetSpotMatch.l10_hit_rate / 100;
+        if (realHitRate <= 0.01) realHitRate = sweetSpotMatch.l10_hit_rate; // stored as 0.70 already
+        
+        matchedArchetype = sweetSpotMatch.archetype;
+        matchedCategory = sweetSpotMatch.category || category;
+        
+        // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
+        if (realHitRate >= 0.70 && absEdge >= 15) {
+          isDoubleConfirmed = true;
+          doubleConfirmedBonus = 20;
+          doubleConfirmedCount++;
+          console.log(`[Bot] 🔥 DOUBLE-CONFIRMED: ${ml.player_name} ${ml.prop_type} ${side} | hitRate=${(realHitRate * 100).toFixed(0)}% edge=${absEdge.toFixed(1)}% arch=${matchedArchetype}`);
+        } else {
+          // Partial match: still use real hit rate but smaller bonus
+          doubleConfirmedBonus = 8;
+          console.log(`[Bot] ✅ Sweet spot matched: ${ml.player_name} ${ml.prop_type} | hitRate=${(realHitRate * 100).toFixed(0)}% (partial, edge=${absEdge.toFixed(1)}%)`);
+        }
       }
     }
     
