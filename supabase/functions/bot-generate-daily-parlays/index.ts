@@ -2978,7 +2978,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // 5. Mispriced lines — statistical edge picks
   const { data: rawMispricedLines } = await supabase
     .from('mispriced_lines')
-    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, defense_adjusted_avg, opponent_defense_rank')
     .eq('analysis_date', targetDate)
     .gte('edge_pct', -999) // get all, sort by abs edge
     .order('edge_pct', { ascending: false })
@@ -4129,7 +4129,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       category: matchedCategory,
       confidence_score: hitRate,
       l10_hit_rate: hitRate,
-      projected_value: ml.player_avg_l10 || 0,
+      projected_value: ml.defense_adjusted_avg || ml.player_avg_l10 || 0,
       sport: ml.sport || 'basketball_nba',
       americanOdds,
       oddsValueScore: calculateOddsValueScore(americanOdds, hitRate),
@@ -4154,11 +4154,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   // === STEP 4: BOOST SWEET SPOT PICKS THAT HAVE MISPRICED MATCHES ===
   // Build a reverse lookup: mispriced lines keyed by normalized player|prop
-  const mispricedLookup = new Map<string, { edge_pct: number; signal: string }>();
+  const mispricedLookup = new Map<string, { edge_pct: number; signal: string; defense_adjusted_avg: number | null; opponent_defense_rank: number | null }>();
   for (const ml of (rawMispricedLines || [])) {
     const normProp = PROP_TYPE_NORMALIZE[ml.prop_type?.toLowerCase()] || (ml.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
     const key = `${(ml.player_name || '').toLowerCase().trim()}|${normProp}`;
-    mispricedLookup.set(key, { edge_pct: Math.abs(ml.edge_pct || 0), signal: (ml.signal || '').toLowerCase() });
+    mispricedLookup.set(key, { edge_pct: Math.abs(ml.edge_pct || 0), signal: (ml.signal || '').toLowerCase(), defense_adjusted_avg: ml.defense_adjusted_avg, opponent_defense_rank: ml.opponent_defense_rank });
   }
 
   // Boost enrichedSweetSpots that also appear in mispriced lines

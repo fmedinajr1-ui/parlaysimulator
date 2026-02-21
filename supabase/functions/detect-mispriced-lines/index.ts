@@ -119,6 +119,32 @@ function getConfidenceTier(edgePct: number, gamesPlayed: number): string {
   return 'LOW';
 }
 
+// Prop type → defense stat category mapping
+const PROP_TO_DEFENSE_CATEGORY: Record<string, string> = {
+  'player_points': 'points',
+  'player_rebounds': 'rebounds',
+  'player_assists': 'assists',
+  'player_threes': 'threes',
+  'player_blocks': 'overall',
+  'player_steals': 'overall',
+  'player_turnovers': 'overall',
+  'player_points_rebounds_assists': 'overall',
+  'player_points_rebounds': 'overall',
+  'player_points_assists': 'overall',
+  'player_rebounds_assists': 'overall',
+};
+
+// Defense-adjusted multiplier based on opponent rank and signal direction
+function getDefenseMultiplier(rank: number | null, signal: string): number {
+  if (rank === null) return 1.0;
+  const isOver = signal === 'OVER';
+  if (rank <= 5)  return isOver ? 0.94 : 1.04;  // elite defense
+  if (rank <= 10) return isOver ? 0.97 : 1.02;  // strong defense
+  if (rank <= 20) return 1.0;                     // average
+  if (rank <= 25) return isOver ? 1.02 : 0.98;  // soft defense
+  return isOver ? 1.04 : 0.96;                    // weak defense (26-30)
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -153,6 +179,45 @@ serve(async (req) => {
     if (nbaPropsError) throw new Error(`NBA props fetch error: ${nbaPropsError.message}`);
 
     console.log(`[Mispriced] Found ${nbaProps?.length || 0} active NBA props`);
+
+    // ==================== LOAD DEFENSE DATA ====================
+    // 1. Today's NBA schedule → team-to-opponent map
+    const { data: todayGames } = await supabase
+      .from('game_bets')
+      .select('home_team, away_team')
+      .eq('sport', 'basketball_nba')
+      .gt('commence_time', now.toISOString());
+
+    const teamToOpponent: Record<string, string> = {};
+    for (const g of todayGames || []) {
+      if (g.home_team && g.away_team) {
+        teamToOpponent[g.home_team.toLowerCase()] = g.away_team;
+        teamToOpponent[g.away_team.toLowerCase()] = g.home_team;
+      }
+    }
+
+    // 2. Defense ranks by team + stat category
+    const { data: defenseStats } = await supabase
+      .from('nba_opponent_defense_stats')
+      .select('team_name, stat_category, defense_rank');
+
+    const defenseRankMap: Record<string, number> = {};
+    for (const d of defenseStats || []) {
+      defenseRankMap[`${d.team_name.toLowerCase()}_${d.stat_category}`] = d.defense_rank;
+    }
+
+    // 3. Player → team mapping from bdl_player_cache
+    const { data: playerTeams } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, team_name')
+      .not('team_name', 'is', null);
+
+    const playerTeamMap: Record<string, string> = {};
+    for (const p of playerTeams || []) {
+      if (p.team_name) playerTeamMap[p.player_name] = p.team_name;
+    }
+
+    console.log(`[Mispriced] Defense data loaded: ${Object.keys(teamToOpponent).length / 2} games, ${defenseStats?.length || 0} defense entries, ${playerTeams?.length || 0} player-team mappings`);
 
     if (nbaProps && nbaProps.length > 0) {
       const uniqueNbaPlayers = [...new Set(nbaProps.map(p => p.player_name).filter(Boolean))];
@@ -203,13 +268,34 @@ serve(async (req) => {
         const line = Number(prop.current_line);
         if (line === 0) continue;
 
-        const edgePct = ((avgL10 - line) / line) * 100;
+        // Determine raw signal direction first (needed for defense multiplier)
+        const rawEdgePct = ((avgL10 - line) / line) * 100;
+        const rawSignal = rawEdgePct > 0 ? 'OVER' : 'UNDER';
+
+        // Look up opponent defense rank for this player + prop type
+        const playerTeam = playerTeamMap[prop.player_name];
+        const opponentTeam = playerTeam ? teamToOpponent[playerTeam.toLowerCase()] : null;
+        const defCategory = PROP_TO_DEFENSE_CATEGORY[prop.prop_type] || 'overall';
+        const opponentDefRank = opponentTeam
+          ? (defenseRankMap[`${opponentTeam.toLowerCase()}_${defCategory}`] ?? null)
+          : null;
+
+        // Apply defense multiplier to projection
+        const defMultiplier = getDefenseMultiplier(opponentDefRank, rawSignal);
+        const adjustedAvg = avgL10 * defMultiplier;
+
+        // Use defense-adjusted avg for edge calculation
+        const edgePct = ((adjustedAvg - line) / line) * 100;
         const trendEdge = ((avgL5 - avgL20) / (avgL20 || 1)) * 100;
         if (Math.abs(edgePct) < 15) continue;
 
         const signal = edgePct > 0 ? 'OVER' : 'UNDER';
         const shootingContext = calcShootingContext(l20Logs);
         const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
+
+        if (opponentDefRank !== null) {
+          console.log(`[Mispriced] ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${opponentDefRank} DEF, x${defMultiplier})`);
+        }
 
         mispricedResults.push({
           player_name: prop.player_name,
@@ -226,10 +312,13 @@ serve(async (req) => {
             l20_avg: Math.round(avgL20 * 10) / 10,
             trend_pct: Math.round(trendEdge * 10) / 10,
             games_analyzed: l20Values.length,
+            defense_multiplier: defMultiplier !== 1.0 ? defMultiplier : undefined,
           },
           confidence_tier: confidenceTier,
           analysis_date: today,
           sport: 'basketball_nba',
+          defense_adjusted_avg: defMultiplier !== 1.0 ? Math.round(adjustedAvg * 100) / 100 : null,
+          opponent_defense_rank: opponentDefRank,
         });
       }
     }
