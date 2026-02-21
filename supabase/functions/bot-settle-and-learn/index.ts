@@ -695,17 +695,96 @@ Deno.serve(async (req) => {
           actualValue = teamResult.actual_value;
         } else {
           const sweetSpot = sweetSpotMap.get(leg.id);
-          if (sweetSpot) {
+          if (sweetSpot && sweetSpot.outcome && sweetSpot.outcome !== 'pending') {
             if (sweetSpot.outcome === 'hit') {
               legOutcome = 'hit';
             } else if (sweetSpot.outcome === 'miss') {
               legOutcome = 'miss';
             } else if (sweetSpot.outcome === 'no_data') {
               legOutcome = 'void';
-            } else {
-              legOutcome = 'pending';
             }
             actualValue = sweetSpot.actual_value;
+          } else {
+            // Normalize prop type: player_points_rebounds_assists -> pra, player_assists -> assists, etc.
+            const rawProp = (leg.prop_type || '').toLowerCase().replace(/^player_/, '');
+            let normalizedProp = rawProp;
+            if (rawProp === 'points_rebounds_assists') normalizedProp = 'pra';
+            else if (rawProp === 'points_rebounds') normalizedProp = 'pr';
+            else if (rawProp === 'points_assists') normalizedProp = 'pa';
+            else if (rawProp === 'rebounds_assists') normalizedProp = 'ra';
+            else if (rawProp === 'three_pointers' || rawProp === 'threes_made') normalizedProp = 'threes';
+
+            // FALLBACK 1: Query category_sweet_spots by player name + prop type + line + date
+            const normalizedName = (leg.player_name || '').toLowerCase().replace(/\./g, '').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/[^a-z\s-]/g, '').replace(/\s+/g, ' ').trim();
+            
+            // Try both raw and normalized prop types
+            const propVariants = [leg.prop_type, normalizedProp, rawProp].filter((v, i, a) => a.indexOf(v) === i);
+            let fallbackFound = false;
+            
+            for (const propVariant of propVariants) {
+              if (fallbackFound) break;
+              const { data: fallbackSS } = await supabase
+                .from('category_sweet_spots')
+                .select('outcome, actual_value')
+                .ilike('player_name', `%${normalizedName}%`)
+                .eq('prop_type', propVariant)
+                .eq('recommended_line', leg.line)
+                .eq('analysis_date', parlay.parlay_date)
+                .neq('outcome', 'pending')
+                .limit(1);
+
+              if (fallbackSS && fallbackSS.length > 0) {
+                const fb = fallbackSS[0];
+                console.log(`[Bot Settle] FALLBACK 1 match: ${leg.player_name} ${leg.prop_type}->${propVariant} ${leg.line} -> ${fb.outcome}`);
+                if (fb.outcome === 'hit') legOutcome = 'hit';
+                else if (fb.outcome === 'miss') legOutcome = 'miss';
+                else if (fb.outcome === 'no_data') legOutcome = 'void';
+                actualValue = fb.actual_value;
+                fallbackFound = true;
+              }
+            }
+
+            if (!fallbackFound) {
+              // FALLBACK 2: Direct game log lookup
+              const { data: gameLogs } = await supabase
+                .from('nba_player_game_logs')
+                .select('player_name, points, rebounds, assists, threes_made, steals, blocks')
+                .eq('game_date', parlay.parlay_date)
+                .ilike('player_name', `%${normalizedName}%`)
+                .limit(1);
+
+              if (gameLogs && gameLogs.length > 0) {
+                const gl = gameLogs[0];
+                let statVal: number | null = null;
+                if (normalizedProp === 'points') statVal = Number(gl.points) || 0;
+                else if (normalizedProp === 'rebounds') statVal = Number(gl.rebounds) || 0;
+                else if (normalizedProp === 'assists') statVal = Number(gl.assists) || 0;
+                else if (normalizedProp === 'threes') statVal = Number(gl.threes_made) || 0;
+                else if (normalizedProp === 'steals') statVal = Number(gl.steals) || 0;
+                else if (normalizedProp === 'blocks') statVal = Number(gl.blocks) || 0;
+                else if (normalizedProp === 'pra') statVal = (Number(gl.points) || 0) + (Number(gl.rebounds) || 0) + (Number(gl.assists) || 0);
+                else if (normalizedProp === 'pr') statVal = (Number(gl.points) || 0) + (Number(gl.rebounds) || 0);
+                else if (normalizedProp === 'pa') statVal = (Number(gl.points) || 0) + (Number(gl.assists) || 0);
+                else if (normalizedProp === 'ra') statVal = (Number(gl.rebounds) || 0) + (Number(gl.assists) || 0);
+
+                if (statVal !== null) {
+                  actualValue = statVal;
+                  const side = (leg.side || 'OVER').toUpperCase();
+                  if (statVal === leg.line) {
+                    legOutcome = 'push';
+                  } else if (side === 'OVER') {
+                    legOutcome = statVal > leg.line ? 'hit' : 'miss';
+                  } else {
+                    legOutcome = statVal < leg.line ? 'hit' : 'miss';
+                  }
+                  console.log(`[Bot Settle] FALLBACK 2 game log: ${leg.player_name} ${normalizedProp} ${leg.line} ${side} -> actual=${statVal} -> ${legOutcome}`);
+                }
+              } else {
+                // No game log found — player didn't play, void the leg
+                legOutcome = 'void';
+                console.log(`[Bot Settle] FALLBACK 2 no game log: ${leg.player_name} on ${parlay.parlay_date} -> void`);
+              }
+            }
           }
         }
 
