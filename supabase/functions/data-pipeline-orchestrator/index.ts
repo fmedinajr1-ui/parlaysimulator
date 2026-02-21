@@ -128,6 +128,7 @@ serve(async (req) => {
       await runFunction('detect-mispriced-lines', {});
       await runFunction('mlb-batter-analyzer', {});
       await runFunction('mlb-prop-cross-reference', {});
+      await runFunction('bot-generate-daily-parlays', { source: 'mlb_pipeline' });
       await runFunction('high-conviction-analyzer', {});
       
       // MLB Pitcher K analysis (Feb-October = spring training + season)

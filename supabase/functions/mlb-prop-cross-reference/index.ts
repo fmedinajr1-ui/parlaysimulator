@@ -38,6 +38,8 @@ const PROP_TO_STAT: Record<string, string> = {
   'strikeouts': 'strikeouts',
   'pitcher_outs': 'pitcher_strikeouts',
   'player_pitcher_outs': 'pitcher_strikeouts',
+  'player_fantasy_score': '__fantasy__',
+  'player_hitter_fantasy_score': '__fantasy__',
 };
 
 interface GameLog {
@@ -65,7 +67,7 @@ serve(async (req) => {
         .in('sport', ['baseball_mlb', 'MLB']),
       supabase.from('pp_snapshot')
         .select('player_name, stat_type, line_score')
-        .in('stat_type', ['batter_home_runs', 'pitcher_strikeouts', 'batter_hits', 'batter_total_bases', 'batter_rbis', 'batter_runs', 'batter_stolen_bases', 'player_hitter_fantasy_score']),
+        .in('stat_type', ['batter_home_runs', 'pitcher_strikeouts', 'batter_hits', 'batter_total_bases', 'batter_rbis', 'batter_runs', 'batter_stolen_bases', 'player_hitter_fantasy_score', 'player_fantasy_score']),
     ]);
 
     const mispricedLines = mispricedResult.data || [];
@@ -91,7 +93,7 @@ serve(async (req) => {
     console.log(`[MLB-CrossRef] Fetching game logs for ${playerNames.length} players:`, playerNames.slice(0, 5));
     const logResults = await supabase
       .from('mlb_player_game_logs')
-      .select('player_name, game_date, hits, total_bases, home_runs, rbis, runs, stolen_bases, strikeouts, pitcher_strikeouts')
+      .select('player_name, game_date, hits, walks, total_bases, home_runs, rbis, runs, stolen_bases, strikeouts, pitcher_strikeouts')
       .in('player_name', playerNames)
       .order('game_date', { ascending: false })
       .limit(1000);
@@ -139,13 +141,18 @@ serve(async (req) => {
       const l20 = logs.slice(0, Math.min(20, logs.length));
       const allLogs = logs;
 
+      const isFantasy = statCol === '__fantasy__';
+      const calcFantasy = (g: GameLog) =>
+        (Number(g.hits) || 0) + (Number(g.walks) || 0) + (Number(g.runs) || 0) +
+        (Number(g.rbis) || 0) + (Number(g.total_bases) || 0) + (Number(g.stolen_bases) || 0);
+
       const avg = (arr: GameLog[], col: string) => {
-        const vals = arr.map(g => Number(g[col]) || 0);
+        const vals = isFantasy ? arr.map(calcFantasy) : arr.map(g => Number(g[col]) || 0);
         return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
       };
 
       const stdDev = (arr: GameLog[], col: string) => {
-        const vals = arr.map(g => Number(g[col]) || 0);
+        const vals = isFantasy ? arr.map(calcFantasy) : arr.map(g => Number(g[col]) || 0);
         if (vals.length < 2) return 0;
         const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
         const variance = vals.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (vals.length - 1);
@@ -159,7 +166,7 @@ serve(async (req) => {
 
       // Hit rate: how often player went over/under this line in L10
       const hitRate = (() => {
-        const relevant = l10.map(g => Number(g[statCol]) || 0);
+        const relevant = isFantasy ? l10.map(calcFantasy) : l10.map(g => Number(g[statCol]) || 0);
         if (relevant.length === 0) return 50;
         const hits = signal === 'OVER'
           ? relevant.filter(v => v > line).length
@@ -169,7 +176,7 @@ serve(async (req) => {
 
       // L20 hit rate for additional context
       const l20HitRate = (() => {
-        const relevant = l20.map(g => Number(g[statCol]) || 0);
+        const relevant = isFantasy ? l20.map(calcFantasy) : l20.map(g => Number(g[statCol]) || 0);
         if (relevant.length === 0) return 50;
         const hits = signal === 'OVER'
           ? relevant.filter(v => v > line).length

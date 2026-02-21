@@ -140,6 +140,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 4, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'] },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
       // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'] },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
@@ -178,6 +180,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Mispriced edge — validated tier
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55 },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52 },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55 },
       // Double-confirmed — validated tier
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65 },
@@ -239,6 +242,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Mispriced edge execution — highest conviction plays
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       { legs: 5, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
       // MASTER PARLAY: 6-leg bankroll doubler with defense-filtered matchups
       // Targets +500 to +2000 odds range. ALL legs pass defensive matchup validation.
@@ -4131,10 +4135,16 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   // === CROSS-ENGINE CONVICTION BOOST ===
   // Fetch risk engine picks for today and build a lookup for side agreement
-  const { data: riskEnginePicks } = await supabase
-    .from('nba_risk_engine_picks')
-    .select('player_name, prop_type, side, confidence_score')
-    .eq('game_date', targetDate);
+  const [{ data: riskEnginePicks }, { data: mlbEnginePicks }] = await Promise.all([
+    supabase
+      .from('nba_risk_engine_picks')
+      .select('player_name, prop_type, side, confidence_score')
+      .eq('game_date', targetDate),
+    supabase
+      .from('mlb_engine_picks')
+      .select('player_name, prop_type, side, confidence_score')
+      .eq('game_date', targetDate),
+  ]);
 
   const riskEngineMap = new Map<string, { side: string; confidence: number }>();
   for (const rp of (riskEnginePicks || [])) {
@@ -4143,6 +4153,15 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     riskEngineMap.set(key, { side: rp.side, confidence: rp.confidence_score });
   }
   console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk engine picks loaded`);
+
+  // MLB engine picks cross-reference map
+  const mlbEngineMap = new Map<string, { side: string; confidence: number }>();
+  for (const mp of (mlbEnginePicks || [])) {
+    const normProp = (mp.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const key = `${(mp.player_name || '').toLowerCase().trim()}|${normProp}`;
+    mlbEngineMap.set(key, { side: mp.side, confidence: mp.confidence_score });
+  }
+  console.log(`[Bot] MLB cross-engine: ${mlbEngineMap.size} MLB engine picks loaded`);
 
   // === STEP 2: ENRICH MISPRICED LINES + CROSS-REFERENCE WITH SWEET SPOTS ===
   let doubleConfirmedCount = 0;
@@ -4158,6 +4177,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const riskMatch = riskEngineMap.get(riskKey);
     const riskConfirmed = riskMatch && riskMatch.side.toLowerCase() === side;
     const convictionBoost = riskConfirmed ? 12 : (riskMatch ? 3 : 0);
+
+    // MLB engine cross-reference boost
+    const mlbMatch = mlbEngineMap.get(riskKey);
+    const mlbConfirmed = mlbMatch && mlbMatch.side.toLowerCase() === side;
+    const mlbBoost = mlbConfirmed ? Math.max(0, (mlbMatch.confidence - 40) * 0.5) : 0;
     
     // === DOUBLE-CONFIRMED CROSS-REFERENCE ===
     // Normalize mispriced prop_type to sweet spot prop_type format
@@ -4206,7 +4230,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
     }
     
-    const compositeScore = Math.min(98, 50 + (absEdge * 0.3) + tierBonus + convictionBoost + doubleConfirmedBonus);
+    const compositeScore = Math.min(98, 50 + (absEdge * 0.3) + tierBonus + convictionBoost + doubleConfirmedBonus + mlbBoost);
     const hitRate = realHitRate;
 
     // Look up real odds from the odds map

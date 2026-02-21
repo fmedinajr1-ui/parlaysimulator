@@ -24,6 +24,7 @@ const STAT_MAP: Record<string, string | null> = {
   batter_runs: 'runs',
   batter_stolen_bases: 'stolen_bases',
   player_fantasy_score: null, // calculated field
+  player_hitter_fantasy_score: null, // calculated field (PP scraper key)
 };
 
 const BATTER_STAT_TYPES = Object.keys(STAT_MAP);
@@ -40,6 +41,7 @@ const PROP_LABELS: Record<string, string> = {
   batter_runs: 'Runs',
   batter_stolen_bases: 'Stolen Bases',
   player_fantasy_score: 'Fantasy Score',
+  player_hitter_fantasy_score: 'Hitter Fantasy Score',
 };
 
 interface BatterAnalysis {
@@ -137,7 +139,7 @@ Deno.serve(async (req) => {
 
       for (const prop of props) {
         const statCol = STAT_MAP[prop.stat_type];
-        const isFantasy = prop.stat_type === 'player_fantasy_score';
+        const isFantasy = prop.stat_type === 'player_fantasy_score' || prop.stat_type === 'player_hitter_fantasy_score';
 
         // Extract values for the relevant stat
         let allVals: number[];
