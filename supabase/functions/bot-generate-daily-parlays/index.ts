@@ -6262,9 +6262,13 @@ Deno.serve(async (req) => {
     }
 
     const isLightSlateMode = (playerPropCount || 0) === 0 || (sportCount || 0) <= 2;
+    const isVolumeMode = (playerPropCount || 0) > 0 && (playerPropCount || 0) < 30;
     const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
     if (isLightSlateMode) {
       console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports. Lowering ML Sniper floor to 55, relaxing constraints.`);
+    }
+    if (isVolumeMode) {
+      console.log(`[Bot v2] 📈 VOLUME MODE: Only ${playerPropCount} player props — relaxing usage caps for more parlays.`);
     }
 
     // Build prop pool (passes light-slate flag for adaptive ML Sniper floor)
@@ -6333,7 +6337,8 @@ Deno.serve(async (req) => {
     const results: Record<string, { count: number; parlays: any[] }> = {};
     let allParlays: any[] = [];
 
-    // Pre-load existing fingerprints from DB to prevent cross-run duplicates
+    // Pre-load existing fingerprints ONLY for exact-duplicate blocking (not usage tracking)
+    // Each generation batch starts fresh for usage maps to avoid fingerprint saturation
     const globalFingerprints = new Set<string>();
     const globalMirrorPrints = new Set<string>();
     globalGameUsage = new Map();
@@ -6343,35 +6348,14 @@ Deno.serve(async (req) => {
       .from('bot_daily_parlays')
       .select('legs, leg_count')
       .eq('parlay_date', targetDate);
-    const existingSingleKeys = new Set<string>();
     if (existingParlays) {
       for (const p of existingParlays) {
         const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
+        // Only block exact fingerprint duplicates — do NOT accumulate usage tracking across runs
         globalFingerprints.add(createParlayFingerprint(legs));
         globalMirrorPrints.add(createMirrorFingerprint(legs));
-        // Pre-load single-pick dedup keys
-        if (p.leg_count === 1 && legs[0]) {
-          const leg = legs[0];
-          const key = leg.type === 'team'
-            ? `${leg.home_team}_${leg.away_team}_${leg.bet_type}_${leg.side}`.toLowerCase()
-            : `${leg.player_name}_${leg.prop_type}_${leg.side}`.toLowerCase();
-          existingSingleKeys.add(key);
-        }
-        // Pre-load globalTeamUsage from existing parlays so team cap persists across runs
-        for (const leg of legs) {
-          if (leg.type === 'team') {
-            if (leg.home_team) {
-              const ht = leg.home_team.toLowerCase().trim();
-              globalTeamUsage!.set(ht, (globalTeamUsage!.get(ht) || 0) + 1);
-            }
-            if (leg.away_team) {
-              const at = leg.away_team.toLowerCase().trim();
-              globalTeamUsage!.set(at, (globalTeamUsage!.get(at) || 0) + 1);
-            }
-          }
-        }
       }
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalMirrorPrints.size} mirror prints + ${existingSingleKeys.size} single-pick keys for ${targetDate}`);
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} exact fingerprints + ${globalMirrorPrints.size} mirror prints for ${targetDate} (usage maps reset for this batch)`);
     }
 
     // Light-slate: increase usage limits for exploration tier
@@ -6379,6 +6363,15 @@ Deno.serve(async (req) => {
       TIER_CONFIG.exploration.maxTeamUsage = 5;
       TIER_CONFIG.exploration.maxCategoryUsage = 8;
       console.log(`[Bot v2] Light-slate: exploration maxTeamUsage=5, maxCategoryUsage=8`);
+    }
+
+    // Volume mode: relax constraints for small pools to produce more parlays
+    if (isVolumeMode) {
+      TIER_CONFIG.exploration.maxPlayerUsage = 4;
+      TIER_CONFIG.exploration.maxTeamUsage = 5;
+      TIER_CONFIG.exploration.maxCategoryUsage = 10;
+      TIER_CONFIG.exploration.minHitRate = 40;
+      console.log(`[Bot v2] Volume mode: exploration maxPlayerUsage=4, maxTeamUsage=5, maxCategoryUsage=10, minHitRate=40`);
     }
 
     for (const tier of tiersToGenerate) {
@@ -6704,215 +6697,9 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] 🔗 Mini-parlays created: ${totalMiniCreated} (exec=${miniTierCounts.execution}, valid=${miniTierCounts.validation}, explore=${miniTierCounts.exploration})`);
     }
 
-    // === SINGLE PICK FALLBACK ===
-    // Only create single picks if ZERO multi-leg parlays were generated (true emergency)
-    // AND fewer than 6 parlays already exist in the DB (prevents flooding on second run)
-    const existingParlaysCount = existingParlays?.length || 0;
-    if (allParlays.length < 1 && existingParlaysCount < 6) {
-      console.log(`[Bot v2] 🎯 SINGLE PICK FALLBACK: Only ${allParlays.length} parlays generated. Creating single picks.`);
-      
-      // Merge all picks, sort by composite score
-      const allPicksForSingles: any[] = [
-        ...[
-          ...pool.teamPicks.map(p => ({ ...p, pickType: 'team' })),
-          ...pool.playerPicks.map(p => ({ ...p, pickType: 'player' })),
-          ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
-          ...pool.sweetSpots.map(p => ({ ...p, pickType: 'player' })),
-        ]
-          .filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'))
-          .reduce((acc, pick) => {
-            const key = pick.pickType === 'team'
-              ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
-              : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side || pick.side}`.toLowerCase();
-            const existing = acc.get(key);
-            if (!existing || (pick.compositeScore || 0) > (existing.compositeScore || 0)) {
-              acc.set(key, pick);
-            }
-            return acc;
-          }, new Map<string, any>())
-          .values()
-      ]
-        .sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+    // Single-pick generation removed — only multi-leg parlays belong in bot_daily_parlays
 
-      console.log(`[Bot v2] Single pick pool: ${allPicksForSingles.length} candidates (team=${pool.teamPicks.length}, player=${pool.playerPicks.length}, whale=${pool.whalePicks.length}, sweetSpots=${pool.sweetSpots.length})`);
-
-      const singlePickTiers: { tier: TierName; minComposite: number; minHitRate: number; maxCount: number }[] = [
-        { tier: 'exploration', minComposite: 55, minHitRate: 45, maxCount: 15 },
-        { tier: 'validation', minComposite: 60, minHitRate: 50, maxCount: 5 },
-        { tier: 'execution', minComposite: 70, minHitRate: 58, maxCount: 3 },
-      ];
-
-      const usedSingleKeys = new Set<string>(existingSingleKeys);
-
-      for (const spTier of singlePickTiers) {
-        let singlesCreated = 0;
-        for (const pick of allPicksForSingles) {
-          if (singlesCreated >= spTier.maxCount) break;
-
-          const composite = pick.compositeScore || 0;
-          const hitRate = (pick.confidence_score || pick.l10_hit_rate || 0.5) * 100;
-          if (composite < spTier.minComposite || hitRate < spTier.minHitRate) continue;
-
-          // === WEIGHT CHECK + TOTAL SIDE FLIP ===
-          // Respect bot_category_weights blocking for single picks too
-          const pickSide = pick.side || pick.recommended_side || 'over';
-          const pickSport = pick.sport || 'basketball_nba';
-          
-          // Normalize generic "TOTAL"/"TEAM_TOTAL" to side-specific variant for weight lookup
-          let pickCategory = pick.category || '';
-          if (pickCategory === 'TOTAL' || pickCategory === 'TEAM_TOTAL') {
-            const prefix = pickSide === 'over' ? 'OVER' : 'UNDER';
-            pickCategory = pickCategory === 'TOTAL' 
-              ? `${prefix}_TOTAL` 
-              : `${prefix}_TEAM_TOTAL`;
-          }
-          
-          const sportKey = `${pickCategory}__${pickSide}__${pickSport}`;
-          const sideKey = `${pickCategory}__${pickSide}`;
-          const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
-
-          if (catWeight === 0) {
-            // Blocked category — try flipping totals
-            if (pick.bet_type === 'total' || pick.bet_type === 'team_total') {
-              const flippedSide = pickSide === 'over' ? 'under' : 'over';
-              const flippedCategory = pickSide === 'over'
-                ? pickCategory.replace('OVER', 'UNDER')
-                : pickCategory.replace('UNDER', 'OVER');
-              const flippedSportKey = `${flippedCategory}__${flippedSide}__${pickSport}`;
-              const flippedSideKey = `${flippedCategory}__${flippedSide}`;
-              const flippedWeight = weightMap.get(flippedSportKey) ?? weightMap.get(flippedSideKey) ?? weightMap.get(flippedCategory) ?? 1.0;
-
-              if (flippedWeight > 0) {
-                console.log(`[Bot v2] 🔄 SINGLE FLIP: ${pickCategory}/${pickSide} blocked → flipped to ${flippedCategory}/${flippedSide} (weight ${flippedWeight})`);
-                pick.side = flippedSide;
-                pick.category = flippedCategory;
-                if (pick.recommended_side) pick.recommended_side = flippedSide;
-              } else {
-                console.log(`[Bot v2] 🚫 SINGLE SKIP: ${pickCategory}/${pickSide} blocked, flip also blocked`);
-                continue;
-              }
-            } else {
-              console.log(`[Bot v2] 🚫 SINGLE SKIP: ${pickCategory}/${pickSide} blocked (weight=0)`);
-              continue;
-            }
-          } else if (catWeight < 0.5) {
-            console.log(`[Bot v2] 🚫 SINGLE SKIP: ${pickCategory}/${pickSide} too weak for singles (weight=${catWeight})`);
-            continue;
-          }
-
-          // SPREAD CAP for singles: block spreads above effectiveSpreadCap (light-slate: 25)
-          if (
-            (pick.bet_type === 'spread' || pick.prop_type === 'spread') &&
-            Math.abs(pick.line || 0) >= effectiveSpreadCap
-          ) {
-            console.log(`[Bot v2] 🚫 SINGLE SKIP (SpreadCap): ${pick.player_name || pick.home_team} spread ${pick.line} exceeds max ${effectiveSpreadCap}`);
-            continue;
-          }
-
-          // Dedup key
-          const singleKey = pick.pickType === 'team'
-            ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
-            : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side}`.toLowerCase();
-          if (usedSingleKeys.has(singleKey)) continue;
-          usedSingleKeys.add(singleKey);
-
-          // === TEAM CONCENTRATION CAP (single-pick path) ===
-          if (pick.pickType === 'team' || pick.type === 'team') {
-            const MAX_TEAM_CAP_SINGLE = isLightSlateMode ? 6 : 4;
-            const singleTeamKeys: string[] = [];
-            if (pick.home_team) singleTeamKeys.push(pick.home_team.toLowerCase().trim());
-            if (pick.away_team) singleTeamKeys.push(pick.away_team.toLowerCase().trim());
-            let singleTeamOverused = false;
-            for (const tk of singleTeamKeys) {
-              if (!globalTeamUsage) globalTeamUsage = new Map();
-              if ((globalTeamUsage.get(tk) || 0) >= MAX_TEAM_CAP_SINGLE) {
-                singleTeamOverused = true;
-                break;
-              }
-            }
-            if (singleTeamOverused) continue;
-            // Track after accepting
-            for (const tk of singleTeamKeys) {
-              globalTeamUsage!.set(tk, (globalTeamUsage!.get(tk) || 0) + 1);
-            }
-          }
-
-          // Build the single leg
-          let legData: any;
-          if (pick.pickType === 'team' || pick.type === 'team') {
-            legData = {
-              id: pick.id,
-              type: 'team',
-              home_team: pick.home_team,
-              away_team: pick.away_team,
-              bet_type: pick.bet_type,
-              side: pick.side,
-              line: snapLine(pick.line, pick.bet_type),
-              category: pick.category,
-              american_odds: pick.odds || -110,
-              sharp_score: pick.sharp_score,
-              composite_score: composite,
-              outcome: 'pending',
-              sport: pick.sport,
-            };
-          } else {
-            legData = {
-              id: pick.id,
-              player_name: pick.player_name,
-              team_name: pick.team_name,
-              prop_type: pick.prop_type,
-              line: snapLine(pick.line, pick.prop_type),
-              side: pick.recommended_side || 'over',
-              category: pick.category,
-              weight: 1,
-              hit_rate: hitRate,
-              american_odds: pick.americanOdds || -110,
-              odds_value_score: pick.oddsValueScore,
-              composite_score: composite,
-              outcome: 'pending',
-              original_line: snapLine(pick.line, pick.prop_type),
-              selected_line: snapLine(pick.line, pick.prop_type),
-              line_selection_reason: 'single_pick',
-              projection_buffer: (pick.projected_value || pick.l10_avg || 0) - pick.line,
-              projected_value: pick.projected_value || pick.l10_avg || 0,
-              line_source: pick.line_source || 'projected',
-              has_real_line: pick.has_real_line || false,
-              sport: pick.sport || 'basketball_nba',
-            };
-          }
-
-          const odds = legData.american_odds || -110;
-          const impliedProb = odds < 0
-            ? Math.abs(odds) / (Math.abs(odds) + 100)
-            : 100 / (odds + 100);
-          const edge = (hitRate / 100) - impliedProb;
-
-          const strategyType = composite >= 70 ? 'single_pick_accuracy' : 'single_pick_value';
-
-          allParlays.push({
-            parlay_date: targetDate,
-            legs: [legData],
-            leg_count: 1,
-            combined_probability: hitRate / 100,
-            expected_odds: odds,
-            simulated_win_rate: hitRate / 100,
-            simulated_edge: Math.max(edge, 0.005),
-            simulated_sharpe: edge / 0.5,
-            strategy_name: `${strategyName}_${spTier.tier}_${strategyType}`,
-            selection_rationale: `${spTier.tier} tier: ${strategyType} (1-leg single pick, composite ${composite.toFixed(0)})`,
-            outcome: 'pending',
-            is_simulated: spTier.tier !== 'execution',
-            simulated_stake: getDynamicStake(spTier.tier, isLightSlateMode, 100),
-            tier: spTier.tier,
-          });
-
-          singlesCreated++;
-        }
-        console.log(`[Bot v2] Single picks created for ${spTier.tier}: ${singlesCreated}`);
-      }
-    }
-
-    console.log(`[Bot v2] Total parlays + singles created: ${allParlays.length}`);
+    console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
 
     // === DRY-RUN: Skip all DB writes and return detailed gate analysis ===
     if (isDryRun) {
