@@ -1251,3 +1251,68 @@ button, [role="button"], a {
     gap: 20px;
   }
 }
+
+/* ===== WAR ROOM DESIGN TOKENS ===== */
+:root {
+  --warroom-bg: 225 40% 5%;
+  --warroom-card: 225 20% 8%;
+  --warroom-card-border: 225 15% 14%;
+  --warroom-green: 155 100% 50%;
+  --warroom-gold: 45 100% 50%;
+  --warroom-ice: 195 100% 65%;
+  --warroom-danger: 0 80% 55%;
+}
+
+/* War Room wrapper */
+.warroom {
+  background: hsl(var(--warroom-bg));
+  position: relative;
+}
+
+.warroom::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+.warroom > * {
+  position: relative;
+  z-index: 1;
+}
+
+.warroom-card {
+  background: hsl(var(--warroom-card));
+  border: 1px solid hsl(var(--warroom-card-border));
+  border-radius: 0.75rem;
+  backdrop-filter: blur(12px);
+}
+
+/* War Room glow effects */
+@keyframes warroom-gold-glow {
+  0%, 100% { box-shadow: 0 0 8px hsl(var(--warroom-gold) / 0.2), inset 0 0 4px hsl(var(--warroom-gold) / 0.05); }
+  50% { box-shadow: 0 0 20px hsl(var(--warroom-gold) / 0.4), inset 0 0 8px hsl(var(--warroom-gold) / 0.1); }
+}
+
+@keyframes warroom-ice-shimmer {
+  0%, 100% { box-shadow: 0 0 8px hsl(var(--warroom-ice) / 0.15); }
+  50% { box-shadow: 0 0 16px hsl(var(--warroom-ice) / 0.35); }
+}
+
+@keyframes warroom-danger-pulse {
+  0%, 100% { box-shadow: 0 0 6px hsl(var(--warroom-danger) / 0.15); }
+  50% { box-shadow: 0 0 14px hsl(var(--warroom-danger) / 0.3); }
+}
+
+@keyframes warroom-fatigue-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.warroom-glow-gold { animation: warroom-gold-glow 2s ease-in-out infinite; }
+.warroom-glow-ice { animation: warroom-ice-shimmer 2.5s ease-in-out infinite; }
+.warroom-glow-danger { animation: warroom-danger-pulse 1.5s ease-in-out infinite; }
+.warroom-fatigue-pulse { animation: warroom-fatigue-pulse 1.2s ease-in-out infinite; }
