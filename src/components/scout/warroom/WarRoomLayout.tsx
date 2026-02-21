@@ -36,13 +36,22 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   // Data hooks
   const { data: sweetSpotData } = useDeepSweetSpots();
   const rawSpots = sweetSpotData?.spots ?? [];
-  const { spots: enrichedSpots } = useSweetSpotLiveData(rawSpots);
+  const { spots: allEnrichedSpots } = useSweetSpotLiveData(rawSpots);
+
+  // Filter spots to only the selected game's teams
+  const enrichedSpots = useMemo(() => {
+    if (!homeTeam || !awayTeam) return allEnrichedSpots;
+    return allEnrichedSpots.filter((s) => {
+      const desc = s.gameDescription ?? '';
+      return desc.includes(homeTeam) && desc.includes(awayTeam);
+    });
+  }, [allEnrichedSpots, homeTeam, awayTeam]);
   const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
   const { games } = useUnifiedLiveFeed({ enabled: true });
   const { data: whaleSignals } = useCustomerWhaleSignals();
 
-  // Build confidence picks for dashboard
+  // Build confidence picks for dashboard (already filtered via enrichedSpots)
   const liveConfidencePicks = enrichedSpots
     .filter((s) => s.liveData?.currentValue != null)
     .map((s) => ({
