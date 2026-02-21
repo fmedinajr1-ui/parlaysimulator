@@ -9,7 +9,7 @@ import { useRegressionDetection } from '@/hooks/useRegressionDetection';
 import { useUnifiedLiveFeed } from '@/hooks/useUnifiedLiveFeed';
 import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
-import { CustomerSlipScanner } from '../CustomerSlipScanner';
+
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
 import { WarRoomPropCard, type WarRoomPropData } from './WarRoomPropCard';
@@ -166,8 +166,6 @@ export function WarRoomLayout({ gameContext, isDemo = false }: WarRoomLayoutProp
         espnEventId={gameContext.espnEventId}
       />
 
-      {/* Slip Scanner */}
-      <CustomerSlipScanner />
 
       {/* Props Section */}
       <AnimatePresence mode="wait">
