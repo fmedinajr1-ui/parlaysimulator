@@ -36,8 +36,8 @@ const PROP_TO_STAT: Record<string, string> = {
   'pitcher_strikeouts': 'strikeouts',
   'player_strikeouts': 'strikeouts',
   'strikeouts': 'strikeouts',
-  'pitcher_outs': 'outs_recorded',
-  'player_pitcher_outs': 'outs_recorded',
+  'pitcher_outs': 'pitcher_strikeouts',
+  'player_pitcher_outs': 'pitcher_strikeouts',
 };
 
 interface GameLog {
@@ -88,12 +88,18 @@ serve(async (req) => {
     const playerNames = [...new Set(mispricedLines.map(ml => ml.player_name))];
 
     // Fetch game logs for these players (last 20 games each)
+    console.log(`[MLB-CrossRef] Fetching game logs for ${playerNames.length} players:`, playerNames.slice(0, 5));
     const logResults = await supabase
       .from('mlb_player_game_logs')
-      .select('player_name, game_date, hits, total_bases, home_runs, rbis, runs, stolen_bases, strikeouts, outs_recorded')
+      .select('player_name, game_date, hits, total_bases, home_runs, rbis, runs, stolen_bases, strikeouts, pitcher_strikeouts')
       .in('player_name', playerNames)
       .order('game_date', { ascending: false })
       .limit(1000);
+
+    if (logResults.error) {
+      console.error(`[MLB-CrossRef] Game logs query error:`, logResults.error);
+    }
+    console.log(`[MLB-CrossRef] Game logs returned: ${logResults.data?.length ?? 'null'} rows`);
 
     // Group logs by player
     const playerLogs = new Map<string, GameLog[]>();
