@@ -42,41 +42,29 @@ interface ExtractedProjection {
   game_time?: string;
 }
 
-// Parse game time strings like "7:00 PM" or "7:30 PM ET" into ISO timestamps
+// Parse game time strings into ISO timestamps
 function parseGameTime(timeStr: string | undefined): string {
   if (!timeStr) {
     return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   }
-  
   try {
-    // Try parsing as ISO timestamp first
     const isoDate = new Date(timeStr);
-    if (!isNaN(isoDate.getTime())) {
-      return isoDate.toISOString();
-    }
+    if (!isNaN(isoDate.getTime())) return isoDate.toISOString();
     
-    // Parse time like "7:00 PM" or "7:30 PM ET"
     const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (timeMatch) {
       const [, hours, minutes, period] = timeMatch;
       let hour = parseInt(hours, 10);
       if (period.toUpperCase() === 'PM' && hour !== 12) hour += 12;
       if (period.toUpperCase() === 'AM' && hour === 12) hour = 0;
-      
       const today = new Date();
       today.setHours(hour, parseInt(minutes, 10), 0, 0);
-      
-      // If the time has passed, assume it's tomorrow
-      if (today < new Date()) {
-        today.setDate(today.getDate() + 1);
-      }
-      
+      if (today < new Date()) today.setDate(today.getDate() + 1);
       return today.toISOString();
     }
   } catch (e) {
     console.log('[PP Scraper] Could not parse game_time:', timeStr);
   }
-  
   return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 }
 
@@ -87,7 +75,7 @@ const LEAGUE_TO_SPORT: Record<string, string> = {
   'NHL': 'hockey_nhl',
   'NFL': 'americanfootball_nfl',
   'MLB': 'baseball_mlb',
-  'MLBST': 'baseball_mlb',   // MLB Spring Training
+  'MLBST': 'baseball_mlb',
   'ATP': 'tennis_atp',
   'WTA': 'tennis_wta',
   'PGA': 'golf_pga',
@@ -122,7 +110,6 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'Receiving Yards': 'player_reception_yds',
   'Passing TDs': 'player_pass_tds',
   'Receptions': 'player_receptions',
-  // MLB pitcher-specific mappings
   'Pitcher Strikeouts': 'pitcher_strikeouts',
   'Strikeouts (Pitching)': 'pitcher_strikeouts',
   'Ks': 'pitcher_strikeouts',
@@ -130,13 +117,12 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'Earned Runs Allowed': 'pitcher_earned_runs',
   'Hits Allowed': 'pitcher_hits_allowed',
   'Outs': 'pitcher_outs',
-  // MLB batter-specific mappings
   'Total Bases': 'batter_total_bases',
   'Home Runs': 'batter_home_runs',
   'Stolen Bases': 'batter_stolen_bases',
 };
 
-// Process extracted projections from Firecrawl JSON extraction
+// Process extracted projections into snapshot rows
 function processExtractedProjections(
   projections: ExtractedProjection[],
   targetSports: string[]
@@ -145,27 +131,21 @@ function processExtractedProjections(
   const props: PPSnapshotInsert[] = [];
   
   for (const proj of projections) {
-    // Determine sport from league
     const league = proj.league?.toUpperCase() || 'NBA';
     const sport = LEAGUE_TO_SPORT[league] || 'basketball_nba';
     
     console.log(`[PP Scraper] Projection: ${proj.player_name} | league="${proj.league}" → "${league}" | sport="${sport}" | stat="${proj.stat_type}" | line=${proj.line}`);
     
-    // Filter by target sports - match on league code OR resolved sport key
     const targetSportKeys = targetSports.map(s => LEAGUE_TO_SPORT[s] || s);
     if (!targetSports.some(s => league.includes(s)) && !targetSportKeys.includes(sport)) continue;
     
-    // Normalize stat type — context-aware for MLB
     let normalizedStat = STAT_TYPE_MAP[proj.stat_type] || 
       `player_${proj.stat_type.toLowerCase().replace(/\s+/g, '_')}`;
     
-    // MLB context: generic "Strikeouts" defaults to pitcher_strikeouts
-    // since pitcher K props are the dominant strikeout market on PrizePicks
     if ((league === 'MLB' || league === 'MLBST') && proj.stat_type === 'Strikeouts') {
       normalizedStat = 'pitcher_strikeouts';
     }
     
-    // Build matchup string
     const matchup = proj.team && proj.opponent 
       ? `${proj.team} vs ${proj.opponent}` 
       : null;
@@ -176,7 +156,7 @@ function processExtractedProjections(
       stat_type: normalizedStat,
       sport: sport,
       start_time: parseGameTime(proj.game_time),
-      pp_projection_id: `extracted_${Date.now()}_${props.length}`,
+      pp_projection_id: `pp_api_${Date.now()}_${props.length}`,
       team: proj.team || null,
       position: null,
       captured_at: now,
@@ -193,6 +173,125 @@ function processExtractedProjections(
   return props;
 }
 
+// User-Agent rotation for API requests
+const USER_AGENTS = [
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15',
+];
+
+async function fetchPrizePicksAPI(retries = 3): Promise<any> {
+  // Try multiple API endpoints — PrizePicks has both v1 and alternate paths
+  const endpoints = [
+    'https://api.prizepicks.com/projections?single_stat=true&per_page=250',
+    'https://partner-api.prizepicks.com/projections?single_stat=true&per_page=250',
+    'https://api.prizepicks.com/projections?per_page=250',
+  ];
+  
+  for (const url of endpoints) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+      console.log(`[PP Scraper] Trying ${url} (attempt ${attempt}/${retries})`);
+      
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': ua,
+            'X-Device-ID': crypto.randomUUID(),
+            'Referer': 'https://app.prizepicks.com/',
+            'Origin': 'https://app.prizepicks.com',
+            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"macOS"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+          },
+        });
+        
+        if (response.status === 403 || response.status === 429) {
+          console.warn(`[PP Scraper] Got ${response.status} from ${url}`);
+          await response.text();
+          if (attempt < retries) {
+            await new Promise(r => setTimeout(r, attempt * 2000));
+          }
+          continue;
+        }
+        
+        if (!response.ok) {
+          const text = await response.text();
+          console.warn(`[PP Scraper] ${url} returned ${response.status}: ${text.slice(0, 100)}`);
+          break; // Try next endpoint
+        }
+        
+        const data = await response.json();
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          console.log(`[PP Scraper] ✅ Success from ${url} — ${data.data.length} projections`);
+          return data;
+        }
+        
+        console.warn(`[PP Scraper] ${url} returned empty data array`);
+        break; // Try next endpoint
+      } catch (err) {
+        console.warn(`[PP Scraper] ${url} attempt ${attempt} error:`, err instanceof Error ? err.message : err);
+        if (attempt < retries) {
+          await new Promise(r => setTimeout(r, attempt * 2000));
+        }
+      }
+    }
+  }
+  
+  throw new Error('All PrizePicks API endpoints returned 403 or failed — Cloudflare may be blocking server-side requests');
+}
+
+function parsePrizePicksResponse(apiData: any): ExtractedProjection[] {
+  const playerMap = new Map<string, { name: string; team: string; position: string }>();
+  const leagueMap = new Map<string, string>();
+  
+  for (const item of apiData.included || []) {
+    if (item.type === 'new_player') {
+      playerMap.set(item.id, {
+        name: item.attributes.display_name || item.attributes.name,
+        team: item.attributes.team || '',
+        position: item.attributes.position || '',
+      });
+    }
+    if (item.type === 'league') {
+      leagueMap.set(item.id, item.attributes.name);
+    }
+  }
+  
+  console.log(`[PP Scraper] Parsed ${playerMap.size} players, ${leagueMap.size} leagues from included`);
+  
+  const projections: ExtractedProjection[] = [];
+  
+  for (const proj of apiData.data || []) {
+    const attrs = proj.attributes;
+    const playerId = proj.relationships?.new_player?.data?.id;
+    const player = playerMap.get(playerId);
+    if (!player) continue;
+    
+    const leagueId = proj.relationships?.league?.data?.id;
+    const league = leagueMap.get(leagueId) || '';
+    
+    const line = parseFloat(attrs.line_score);
+    if (isNaN(line)) continue;
+    
+    projections.push({
+      player_name: player.name,
+      team: player.team,
+      stat_type: attrs.stat_type || '',
+      line: line,
+      league: league,
+      game_time: attrs.start_time,
+    });
+  }
+  
+  return projections;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -200,204 +299,44 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-  
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
     const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB', 'MLBST'] } = await req.json().catch(() => ({}));
     
-    console.log('[PP Scraper] Starting PrizePicks scrape for sports:', sports);
+    console.log('[PP Scraper] Starting PrizePicks API fetch for sports:', sports);
     
-    if (!firecrawlKey) {
-      console.error('[PP Scraper] FIRECRAWL_API_KEY not configured');
-      return new Response(
-        JSON.stringify({ success: false, error: 'Firecrawl connector not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-// PrizePicks board URL - use league-specific URL if targeting a single sport
-    const mlbRequested = sports.includes('MLBST') || sports.includes('MLB');
-    const ppBoardUrl = mlbRequested 
-      ? 'https://app.prizepicks.com/board?sport=MLBST'
-      : 'https://app.prizepicks.com';
+    // Fetch directly from PrizePicks API (no Firecrawl needed)
+    const apiData = await fetchPrizePicksAPI();
     
-    console.log('[PP Scraper] Using URL:', ppBoardUrl);
+    console.log(`[PP Scraper] API returned ${apiData.data?.length || 0} projections, ${apiData.included?.length || 0} included resources`);
     
-    // Scroll actions to load more content in the SPA
-    const SCROLL_ACTIONS = [
-      { type: 'wait', milliseconds: 4000 },  // Wait for SPA hydration
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 2000 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 2000 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 2000 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 2000 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 3000 },  // Final wait for all content
-    ];
+    // Parse JSON:API response into our format
+    const extractedProjections = parsePrizePicksResponse(apiData);
+    console.log(`[PP Scraper] Parsed ${extractedProjections.length} valid projections`);
     
-    // Use Firecrawl's LLM-powered JSON extraction with scroll actions
-    const firecrawlResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: ppBoardUrl,
-        actions: SCROLL_ACTIONS,
-        formats: ['json'],
-        jsonOptions: {
-          schema: {
-            type: 'object',
-            properties: {
-              projections: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    player_name: { type: 'string', description: 'Full name of the player' },
-                    team: { type: 'string', description: 'Team abbreviation (e.g., LAL, BOS)' },
-                    opponent: { type: 'string', description: 'Opponent team abbreviation' },
-                    stat_type: { type: 'string', description: 'Type of stat (Points, Rebounds, Assists, etc.)' },
-                    line: { type: 'number', description: 'The projection line value' },
-                    league: { type: 'string', description: 'League name (NBA, NHL, WNBA, etc.)' },
-                    game_time: { type: 'string', description: 'Game start time if visible' }
-                  },
-                  required: ['player_name', 'stat_type', 'line']
-                }
-              }
-            },
-            required: ['projections']
-          },
-          prompt: 'Extract ALL player prop projections visible on this PrizePicks board. For each projection, get the player name, their team, the stat type (Points, Rebounds, Assists, etc.), and the line value (the number like 25.5). Also extract the league (NBA, NHL, etc.) and opponent team if visible. Make sure to capture every single projection card visible on the page.'
-        },
-        timeout: 90000,  // Increased timeout for scroll actions
-        onlyMainContent: false,
-      }),
-    });
-
-    if (!firecrawlResponse.ok) {
-      const errorText = await firecrawlResponse.text();
-      console.error('[PP Scraper] Firecrawl error:', errorText);
-      throw new Error(`Firecrawl error: ${errorText}`);
-    }
-
-    const firecrawlData = await firecrawlResponse.json();
-    console.log('[PP Scraper] Firecrawl response received');
-    
-    // Log response structure for debugging
-    const responseKeys = Object.keys(firecrawlData);
-    console.log('[PP Scraper] Response keys:', responseKeys);
-    
-    // Extract the JSON result from Firecrawl's response
-    const extractedData = firecrawlData.data?.json || firecrawlData.json || null;
-    
-    let propsToInsert: PPSnapshotInsert[] = [];
-    
-    if (extractedData && extractedData.projections && extractedData.projections.length > 0) {
-      console.log('[PP Scraper] Extracted', extractedData.projections.length, 'projections via JSON');
-      
-      // Validate extracted projections - filter out placeholder/test names
-      const validProjections = extractedData.projections.filter((p: ExtractedProjection) => {
-        const name = p.player_name?.toLowerCase() || '';
-        // Filter out obvious test/placeholder names
-        if (name.includes('john doe') || name.includes('jane') || name.includes('test') || name.includes('example')) {
-          console.log('[PP Scraper] Filtering placeholder name:', p.player_name);
-          return false;
-        }
-        // Player names should have at least 2 parts (first + last)
-        if (!p.player_name || p.player_name.trim().split(' ').length < 2) {
-          console.log('[PP Scraper] Filtering invalid name format:', p.player_name);
-          return false;
-        }
-        // Line should be a valid number
-        if (typeof p.line !== 'number' || isNaN(p.line)) {
-          console.log('[PP Scraper] Filtering invalid line:', p.player_name, p.line);
-          return false;
-        }
-        return true;
-      });
-      
-      console.log('[PP Scraper] Valid projections after filtering:', validProjections.length);
-      
-      if (validProjections.length > 0) {
-        propsToInsert = processExtractedProjections(validProjections, sports);
-        console.log('[PP Scraper] Processed', propsToInsert.length, 'props after sport filtering');
-      } else {
-        console.log('[PP Scraper] All extracted projections were invalid/placeholder');
-      }
-    } else {
-      console.log('[PP Scraper] No projections extracted from JSON, checking fallback...');
-    }
-
-    if (propsToInsert.length === 0) {
-      // Fallback: use existing unified_props as a proxy data source
-      console.log('[PP Scraper] No props scraped, checking for existing book data...');
-      
-      const { data: bookProps } = await supabase
-        .from('unified_props')
-        .select('*')
-        .in('sport', sports.map((s: string) => LEAGUE_TO_SPORT[s] || s))
-        .gt('commence_time', new Date().toISOString())
-        .order('commence_time', { ascending: true })
-        .limit(50);
-      
-      if (bookProps && bookProps.length > 0) {
-        console.log('[PP Scraper] Found', bookProps.length, 'props from unified_props as fallback');
-        
-        // Create synthetic PP snapshots from book data (for demonstration)
-        const now = new Date().toISOString();
-        const syntheticProps = bookProps.map((prop: any) => ({
-          player_name: prop.player_name,
-          pp_line: prop.point + (Math.random() - 0.5),
-          stat_type: prop.market,
-          sport: prop.sport,
-          start_time: prop.commence_time,
-          pp_projection_id: `synthetic_${prop.id}`,
-          team: prop.home_team,
-          position: null,
-          captured_at: now,
-          previous_line: null,
-          market_key: `${prop.sport}_${prop.player_name}_${prop.market}`,
-          matchup: `${prop.away_team} @ ${prop.home_team}`,
-          league: prop.sport.includes('nba') ? 'NBA' : prop.sport.includes('nhl') ? 'NHL' : 'OTHER',
-          event_id: prop.event_id || `event_${prop.id}`,
-          period: 'Game',
-          is_active: true,
-        }));
-        
-        // Insert synthetic props
-        const { error: insertError } = await supabase
-          .from('pp_snapshot')
-          .insert(syntheticProps);
-
-        if (insertError) {
-          console.error('[PP Scraper] Insert error:', insertError);
-        } else {
-          console.log('[PP Scraper] Inserted', syntheticProps.length, 'synthetic props');
-        }
-        
-        return new Response(
-          JSON.stringify({
-            success: true,
-            propsScraped: syntheticProps.length,
-            source: 'unified_props_fallback',
-            message: 'Used book data as PP proxy (actual PP scraping not available)',
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
+    if (extractedProjections.length === 0) {
       return new Response(
         JSON.stringify({ 
           success: true, 
-          message: 'No props found - PP board may be empty or scraping needs adjustment',
+          message: 'No projections returned from PrizePicks API — board may be empty',
           propsScraped: 0 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Process through existing pipeline (stat mapping, sport filtering, MLBST handling)
+    const propsToInsert = processExtractedProjections(extractedProjections, sports);
+    console.log(`[PP Scraper] ${propsToInsert.length} props after sport filtering`);
+    
+    if (propsToInsert.length === 0) {
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: `Fetched ${extractedProjections.length} projections but none matched target sports: ${sports.join(', ')}`,
+          propsScraped: 0,
+          totalFromAPI: extractedProjections.length,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -411,7 +350,6 @@ serve(async (req) => {
       .in('player_name', playerNames)
       .order('captured_at', { ascending: false });
 
-    // Build a map of previous lines
     const previousLineMap = new Map<string, number>();
     if (previousProps && Array.isArray(previousProps)) {
       for (const prev of previousProps as PPSnapshotRow[]) {
@@ -422,7 +360,6 @@ serve(async (req) => {
       }
     }
 
-    // Update props with previous lines
     for (const prop of propsToInsert) {
       const key = `${prop.player_name}_${prop.stat_type}`;
       prop.previous_line = previousLineMap.get(key) || null;
@@ -430,7 +367,6 @@ serve(async (req) => {
 
     const now = new Date().toISOString();
 
-    // Insert into pp_snapshot table
     const { error: insertError } = await supabase
       .from('pp_snapshot')
       .insert(propsToInsert);
@@ -442,7 +378,6 @@ serve(async (req) => {
 
     console.log('[PP Scraper] Successfully inserted', propsToInsert.length, 'props');
 
-    // Log to cron history
     await supabase.from('cron_job_history').insert({
       job_name: 'pp-props-scraper',
       status: 'completed',
@@ -451,17 +386,27 @@ serve(async (req) => {
       result: {
         propsScraped: propsToInsert.length,
         sports: sports,
-        source: 'firecrawl_json_extraction',
+        source: 'prizepicks_api_direct',
+        totalFromAPI: extractedProjections.length,
       }
     });
+
+    // Log league breakdown
+    const leagueBreakdown: Record<string, number> = {};
+    for (const p of propsToInsert) {
+      leagueBreakdown[p.league] = (leagueBreakdown[p.league] || 0) + 1;
+    }
+    console.log('[PP Scraper] League breakdown:', leagueBreakdown);
 
     return new Response(
       JSON.stringify({
         success: true,
         propsScraped: propsToInsert.length,
+        totalFromAPI: extractedProjections.length,
         sports: sports,
-        source: 'firecrawl_json_extraction',
-        sampleProps: propsToInsert.slice(0, 3),
+        source: 'prizepicks_api_direct',
+        leagueBreakdown,
+        sampleProps: propsToInsert.slice(0, 5),
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
