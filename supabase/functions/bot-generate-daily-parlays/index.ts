@@ -2088,7 +2088,8 @@ function canUsePickInParlay(
   tierConfig: TierConfig,
   existingLegs?: any[],
   parlayPropTypeCount?: Map<string, number>,
-  totalLegs?: number
+  totalLegs?: number,
+  volumeMode: boolean = false
 ): boolean {
   if ('team_name' in pick && pick.team_name) {
     const teamCount = parlayTeamCount.get(pick.team_name) || 0;
@@ -2110,7 +2111,9 @@ function canUsePickInParlay(
     const propType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) : 
                      'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
     const currentCount = parlayPropTypeCount.get(propType) || 0;
-    const maxPropTypeLegs = Math.max(1, Math.floor(totalLegs * 0.4));
+    const maxPropTypeLegs = volumeMode 
+      ? Math.max(2, Math.floor(totalLegs * 0.67))  // Volume mode: allow 2 of same type in 3-leg
+      : Math.max(1, Math.floor(totalLegs * 0.4));   // Normal: keep existing 40% cap
     if (currentCount >= maxPropTypeLegs) {
       console.log(`[PropTypeCap] Blocked ${('player_name' in pick ? pick.player_name : pick.home_team)} - ${propType} already at ${currentCount}/${maxPropTypeLegs} max for ${totalLegs}-leg parlay`);
       return false;
@@ -4350,7 +4353,8 @@ async function generateTierParlays(
   goldenCategories: Set<string> = new Set(),
   isThinSlate: boolean = false,
   winningPatterns: any = null,
-  isLightSlateMode: boolean = false
+  isLightSlateMode: boolean = false,
+  volumeMode: boolean = false
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
@@ -4571,7 +4575,7 @@ async function generateTierParlays(
         const pick = remainingCandidates[ci];
       
       if (!canUsePickGlobally(pick, tracker, config)) continue;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs)) continue;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, volumeMode)) continue;
       
       // === ANTI-CORRELATION BLOCKING: prevent contradictory legs ===
       const antiCorr = hasAntiCorrelation(pick, legs);
@@ -5422,7 +5426,10 @@ function generateMonsterParlays(
       // PROP TYPE CONCENTRATION CAP (40% max)
       const pickPropType = normalizePropTypeCategory(pick.prop_type || pick.bet_type || '');
       const currentPropCount = monsterPropTypeCount.get(pickPropType) || 0;
-      const maxPropLegs = Math.max(1, Math.floor(maxLegs * 0.4));
+      const monsterVolumeMode = pool.playerPicks.length < 60;
+      const maxPropLegs = monsterVolumeMode
+        ? Math.max(3, Math.floor(maxLegs * 0.5))
+        : Math.max(1, Math.floor(maxLegs * 0.4));
       if (currentPropCount >= maxPropLegs) {
         console.log(`[Monster PropTypeCap] Blocked ${pick.player_name || pick.home_team} - ${pickPropType} at ${currentPropCount}/${maxPropLegs}`);
         continue;
@@ -6408,7 +6415,8 @@ Deno.serve(async (req) => {
         pool.goldenCategories,
         isThinSlate,
         winningPatterns,
-        isLightSlateMode
+        isLightSlateMode,
+        isVolumeMode
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
