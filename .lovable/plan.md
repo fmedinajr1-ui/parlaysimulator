@@ -1,41 +1,38 @@
 
 
-## Regenerate Today's Parlays with Double-Confirmed Engine
+## Exclude Single-Pick Exploration Strategies from Integrity Check
 
-### What Needs to Happen
+### The Problem
 
-The 11 existing parlays for Feb 21 were generated before the cross-referencing logic was deployed. To see the new double-confirmed picks (Gillespie, Bane, Allen, etc.), we need to:
+The integrity check flags ALL 1-leg and 2-leg parlays as violations, including the `max_boost_exploration_single_pick_accuracy` and `max_boost_exploration_single_pick_value` strategies. These are intentionally single-leg entries used for tracking individual pick performance -- not real parlays. They trigger false alerts via Telegram every run.
 
-1. **Clear today's existing parlays** from `bot_daily_parlays` so the engine generates fresh ones
-2. **Invoke the generation engine** (`bot-generate-daily-parlays`) which now includes the direction-conflict filter and double-confirmed cross-referencing
-3. **Invalidate frontend caches** so the UI shows the new parlays immediately
+### The Fix
 
-### Steps
+One surgical change in `supabase/functions/bot-parlay-integrity-check/index.ts`: after querying for 1-leg and 2-leg parlays (line 38-42), filter out the two exploration strategies before counting violations.
 
-**Step 1: Delete today's stale parlays**
+### Code Change
 
-Run a SQL delete on `bot_daily_parlays` where `parlay_date = '2025-02-21'` to remove the 11 old parlays that lack cross-referencing.
+After the query on line 42, add a filter to exclude the known single-pick exploration strategies:
 
-**Step 2: Invoke the generation edge function**
+```
+// Exclude intentional single-pick exploration strategies
+const EXCLUDED_STRATEGIES = [
+  'max_boost_exploration_single_pick_accuracy',
+  'max_boost_exploration_single_pick_value',
+];
 
-Call `bot-generate-daily-parlays` directly using the edge function curl tool. This will:
-- Build the sweet spot lookup map with normalized prop types
-- Cross-reference every mispriced line against sweet spots
-- Apply the direction-conflict filter (blocking picks like Josh Giddey where sides disagree)
-- Grant +20 bonus to true double-confirmed picks (sides agree, 70%+ hit rate, 15%+ edge)
-- Build parlays using the new `double_confirmed_conviction` strategy alongside existing strategies
+const realViolations = (violations || []).filter(
+  p => !EXCLUDED_STRATEGIES.includes(p.strategy_name)
+);
+```
 
-**Step 3: Verify results**
+Then use `realViolations` instead of `violations` for all downstream logic (counting one-leg/two-leg, building strategy breakdowns, deciding whether to fire the Telegram alert).
 
-Query the database to confirm new parlays were generated with `has_double_confirmed = true` and that the `double_confirmed_conviction` strategy appears in the results.
+The excluded strategies will still be logged in the metadata for transparency but won't trigger alerts.
 
-### Expected Output
+### Impact
 
-New parlays featuring double-confirmed picks like:
-- Collin Gillespie Threes OVER (100% L10, +36% edge)
-- Desmond Bane Threes OVER (100% L10, +24% edge)
-- Grayson Allen Points OVER (80% L10, +33% edge)
-- Ty Jerome Points OVER (80% L10, +27% edge)
-
-Direction conflicts like Josh Giddey will be logged but excluded from the double-confirmed pool.
+- No more false Telegram integrity alerts from exploration strategies
+- Real violations (unexpected 1-leg or 2-leg parlays from other strategies) still trigger alerts as before
+- Zero impact on parlay generation or any other function
 
