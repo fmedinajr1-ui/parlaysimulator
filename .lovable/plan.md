@@ -1,78 +1,125 @@
 
 
-## Admin Parlay Management Commands via Telegram
+## Scout Live: War Room Edition -- Phase 1
 
-### What You're Getting
+This is a large transformation of the Customer Scout View from a basic data dashboard into an immersive, Bloomberg-terminal-style war room. Given the scope, I'm breaking this into a focused Phase 1 that delivers the highest-impact visual and functional upgrades.
 
-New admin-only Telegram commands to directly manage parlays and trigger fixes when issues arise:
+### What Already Exists (Reusable)
 
-### New Commands
+- Half-court SVG Shot Chart (`ShotChartMatchup.tsx`) -- zone-based matchup visualization
+- Fatigue system (`FatigueMeter.tsx`, `useFatigueData.ts`) -- team-level fatigue scores
+- Live scoreboard with animated score changes (Framer Motion)
+- Box score table with player stats
+- Hedge panel with ON TRACK / CAUTION / ACTION NEEDED tiers
+- Confidence dashboard with progress bars
+- Risk mode toggle (Conservative / Balanced / Aggressive)
+- AI Whisper commentary rotation
+- Unified live feed hook (`useUnifiedLiveFeed`) with player projections
+- Slip scanner with CHESS EV scoring
 
-**Parlay Management:**
-- `/deleteparlay [id]` -- Delete a specific parlay by its UUID (marks it as voided with reason)
-- `/voidtoday` -- Void all of today's pending parlays (with confirmation button)
-- `/fixleg [parlay_id] [leg_index] [field] [value]` -- Edit a specific leg in a parlay (e.g., fix a wrong line or side)
-- `/deletesweep` -- Delete all sweep-tier parlays from today
-- `/deletebystrat [strategy_name]` -- Delete all today's parlays matching a strategy name
+### What Phase 1 Builds
 
-**Error Recovery / Quick Fixes:**
-- `/fixpipeline` -- Run the full data pipeline orchestrator (stats sync + analysis + generation)
-- `/regenparlay` -- Void today's parlays and force-regenerate fresh ones (calls `bot-force-fresh-parlays`)
-- `/fixprops` -- Re-scrape props + refresh sweet spots + regenerate
-- `/healthcheck` -- Run preflight + integrity check and report results
-- `/errorlog` -- Show the last 10 error-severity entries from `bot_activity_log`
+**1. War Room Layout Overhaul (`CustomerScoutView.tsx`)**
+- Replace the current vertical card stack with a dark, premium War Room layout
+- Deep black background (#0B0F1A) with glass-effect cards (rgba(255,255,255,0.04))
+- Subtle grain texture overlay via CSS
+- Neon accent color system: Green = +EV, Gold = Hedge, Blue = Regression, Red = Risk
+- Game Mode / Hedge Mode toggle at the top (replaces Risk Toggle position)
 
-### Technical Implementation
+**2. Enhanced Hero Section (`CustomerLiveGamePanel.tsx`)**
+- Add pace differential display (pull from `useUnifiedLiveFeed` game pace)
+- Add momentum indicator: animated arrow that flashes and changes direction when lead changes
+- Subtle glow behind leading team's score
+- Integrate mini shot chart into the hero section (reuse existing `ShotChartMatchup` in compact mode)
 
-**File modified:** `supabase/functions/telegram-webhook/index.ts`
+**3. Smart Prop Cards (`WarRoomPropCard.tsx` -- NEW)**
+- Replace the flat Sweet Spot Props list with rich interactive cards
+- Each card includes:
+  - Live progress bar (current value vs line)
+  - Pace adjustment percentage
+  - AI confidence percentage (from projection data)
+  - Circular fatigue ring indicator (Green 0-40%, Yellow 40-70%, Red 70-100%)
+  - Regression status badge (snowflake icon for cold, fire for hot streak)
+  - Hedge alert icon with gold border glow when opportunity detected
+- Animation rules: gold border glow for hedge opportunity, red shimmer for high fatigue, blue ice shimmer for cold regression
 
-**1. `/deleteparlay [id]`**
-- Validates UUID format
-- Updates the parlay: sets `outcome = 'void'`, `lesson_learned = 'Voided by admin via Telegram'`
-- Confirms with parlay details (strategy, leg count)
+**4. AI Fatigue Ring Component (`FatigueRing.tsx` -- NEW)**
+- Circular SVG ring meter (not a bar) for per-player fatigue
+- Color transitions: Green -> Yellow -> Red based on fatigue percentage
+- Fatigue calculation using: `(minutes_played x pace_factor x usage_rate) / conditioning_index`
+- Sources data from `useUnifiedLiveFeed` (minutes played, pace) combined with `useFatigueData` (team-level fatigue)
+- Pulse animation when fatigue exceeds 75%
+- Tooltip: "Projected efficiency drop: -X%"
 
-**2. `/voidtoday`**
-- Sends an inline confirmation button (`fix:void_today_confirm`)
-- On confirm: updates all today's pending parlays to `outcome = 'void'`
-- Reports count voided
+**5. Cold Regression Detection (`useRegressionDetection.ts` -- NEW hook)**
+- Detect when a player's current output is significantly below or above their expected rate
+- Formula: `regression_score = (expected - actual) / shot_quality_factor x variance_adjustment`
+- Uses projection data from `useUnifiedLiveFeed` to compare current vs projected
+- Triggers visual badges on prop cards:
+  - Blue ice glow + snowflake for cold regression (positive regression likely = suggest Over)
+  - Red fire glow for hot regression (negative regression likely = suggest Under)
+- Threshold: regression probability > 65% triggers alert
 
-**3. `/fixleg [parlay_id] [leg_index] [field] [value]`**
-- Fetches the parlay, parses legs JSON
-- Validates leg_index is in range
-- Supports fields: `line`, `side`, `player_name`, `prop_type`
-- Updates the leg in the JSON array and writes back
-- Confirms with before/after values
+**6. Live Hedge Slide-In Alerts (`HedgeSlideIn.tsx` -- NEW)**
+- Animated slide-in panel from the right side (Framer Motion)
+- Triggers when: `|live_projection - live_line| > edge_threshold AND volatility < max_volatility`
+- Shows: player name, prop, live projection, live line, edge size, Kelly suggestion
+- Buttons: "Hedge Now" (opens sportsbook deep link if available) and "Dismiss"
+- Auto-calculates: suggested hedge stake %, risk reduction %, EV %
+- Gold neon accent styling
 
-**4. `/deletesweep`**
-- Deletes (voids) all today's parlays where `strategy_name = 'leftover_sweep'`
+**7. Hedge Mode View (`HedgeModeTable.tsx` -- NEW)**
+- When toggled to Hedge Mode, replace prop cards with a dense table view:
+  - Columns: Prop | Current | Live Line | Projection | Edge | Suggested Hedge
+  - Row animations: green flicker on positive changes, red on negative
+- Reuses data from `useUnifiedLiveFeed` and existing hedge utilities
 
-**5. `/deletebystrat [name]`**
-- Voids all today's pending parlays matching the given strategy name
+**8. Advanced Metrics Panel (Collapsible)**
+- Expandable panel at the bottom with:
+  - Monte Carlo simulation win % (reuse existing `monte-carlo.ts`)
+  - Blowout risk % (from unified feed game score differential)
+  - Fatigue impact %
+  - Regression probability %
+- Uses `Collapsible` component (already exists)
 
-**6. `/fixpipeline`**
-- Calls `data-pipeline-orchestrator` with `{ mode: 'full' }`
-- Reports success/failure
+### Technical Details
 
-**7. `/regenparlay`**
-- Calls `bot-force-fresh-parlays` (already voids + regenerates)
+**Files created:**
+- `src/components/scout/warroom/WarRoomLayout.tsx` -- main War Room container with dark theme
+- `src/components/scout/warroom/WarRoomPropCard.tsx` -- smart prop card with all indicators
+- `src/components/scout/warroom/FatigueRing.tsx` -- circular SVG fatigue indicator
+- `src/components/scout/warroom/HedgeSlideIn.tsx` -- animated slide-in hedge alert
+- `src/components/scout/warroom/HedgeModeTable.tsx` -- dense hedge comparison table
+- `src/components/scout/warroom/MomentumIndicator.tsx` -- animated momentum arrow
+- `src/components/scout/warroom/AdvancedMetricsPanel.tsx` -- collapsible Monte Carlo panel
+- `src/hooks/useRegressionDetection.ts` -- cold/hot regression detection hook
 
-**8. `/fixprops`**
-- Sequentially calls: `refresh-todays-props`, then `bot-generate-daily-parlays`
-- Reports each step
+**Files modified:**
+- `src/components/scout/CustomerScoutView.tsx` -- replace with War Room layout
+- `src/components/scout/CustomerLiveGamePanel.tsx` -- add momentum indicator, pace diff, mini shot chart
+- `src/index.css` -- add War Room CSS variables and grain texture overlay
 
-**9. `/healthcheck`**
-- Calls `bot-pipeline-preflight` and `bot-parlay-integrity-check` in parallel
-- Returns combined results
+**Data flow:**
+- `useUnifiedLiveFeed` provides: player minutes, stats, projections, pace, game progress
+- `useFatigueData` provides: team-level fatigue scores
+- `useSweetSpotLiveData` provides: live hedge status, projected final, pace rating
+- `useRegressionDetection` (new) computes: regression scores from projection vs actual
+- No new edge functions needed -- all data sources already exist
 
-**10. `/errorlog`**
-- Queries `bot_activity_log` for last 10 `severity = 'error'` entries
-- Displays timestamp, event type, and message
+**Design tokens added to CSS:**
+```text
+--warroom-bg: #0B0F1A
+--warroom-card: rgba(255, 255, 255, 0.04)
+--warroom-green: #00ff8c (EV positive)
+--warroom-gold: #ffd700 (hedge opportunity)
+--warroom-ice: #00d4ff (regression)
+--warroom-danger: #ff4444 (risk)
+```
 
-**Callback handler additions:**
-- `fix:void_today_confirm` -- executes the void-all action after button press
+### Not in Phase 1 (Future)
 
-**Updated `/start` and `/help`:**
-- Add a "Management" section listing the new commands
-
-All commands are admin-only (gated by existing `isAdmin()` check).
+- AI Voice Alerts (ElevenLabs TTS) -- Phase 2
+- Individual shot tracking with made/missed animations -- Phase 2 (needs play-by-play data source)
+- Hot Streak Mode (3 consecutive shots detection) -- Phase 2 (needs shot-level events)
+- Defender distance / shot quality tooltips -- Phase 2 (needs tracking data)
 
