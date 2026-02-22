@@ -32,6 +32,7 @@ type NotificationType =
   | 'mispriced_lines_report'
   | 'high_conviction_report'
   | 'fresh_slate_report'
+  | 'double_confirmed_report'
   | 'test';
 
 interface NotificationData {
@@ -72,6 +73,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatHighConvictionReport(data, dateStr);
     case 'fresh_slate_report':
       return formatFreshSlateReport(data, dateStr);
+    case 'double_confirmed_report':
+      return formatDoubleConfirmedReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -699,6 +702,57 @@ function formatFreshSlateReport(data: Record<string, any>, dateStr: string): str
   return msg;
 }
 
+function formatDoubleConfirmedReport(data: Record<string, any>, dateStr: string): string {
+  const { picks, totalSweetSpots, totalMispriced, date } = data;
+  const displayDate = date || dateStr;
+  const count = picks?.length || 0;
+
+  let msg = `✅ ${count} Double-Confirmed Picks Found:\n`;
+  msg += `================================\n\n`;
+
+  if (!picks || picks.length === 0) {
+    msg += `No picks qualified today (need 70%+ L10 AND 15%+ edge with direction agreement).\n`;
+  } else {
+    const propLabels: Record<string, string> = {
+      player_points: 'Points', player_rebounds: 'Rebounds', player_assists: 'Assists',
+      player_threes: 'Threes', player_blocks: 'Blocks', player_steals: 'Steals',
+      player_turnovers: 'Turnovers', player_points_rebounds_assists: 'PRA',
+      player_points_rebounds: 'Pts+Reb', player_points_assists: 'Pts+Ast',
+      player_rebounds_assists: 'Reb+Ast',
+      batter_hits: 'Hits', batter_rbis: 'RBI', batter_runs_scored: 'Runs',
+      batter_total_bases: 'Total Bases', batter_home_runs: 'Home Runs',
+      batter_stolen_bases: 'Stolen Bases',
+      pitcher_strikeouts: 'Strikeouts', pitcher_outs: 'Outs',
+      player_fantasy_score: 'Fantasy Score', player_hitter_fantasy_score: 'Hitter Fantasy',
+    };
+
+    for (const p of picks) {
+      const propLabel = propLabels[p.prop_type] || p.prop_type.replace(/^(player_|batter_|pitcher_)/, '').replace(/_/g, ' ');
+      const side = (p.side || 'OVER').toUpperCase();
+      const hitRate = Math.round(p.l10_hit_rate || 0);
+      const edgeSign = p.edge_pct > 0 ? '+' : '';
+      const edge = Math.round(p.edge_pct || 0);
+      msg += `🎯 ${p.player_name}  ${propLabel} ${side} -- ${hitRate}% L10, ${edgeSign}${edge}% edge\n`;
+    }
+  }
+
+  // Footer
+  msg += `\n${displayDate}`;
+  
+  // Sport breakdown
+  const sportCounts: Record<string, number> = {};
+  for (const p of (picks || [])) {
+    const sport = p.sport === 'basketball_nba' ? 'NBA' : p.sport === 'icehockey_nhl' ? 'NHL' : p.sport === 'baseball_mlb' ? 'MLB' : p.sport || '?';
+    sportCounts[sport] = (sportCounts[sport] || 0) + 1;
+  }
+  const sportStr = Object.entries(sportCounts).map(([s, c]) => `${s}: ${c}`).join(' | ');
+  if (sportStr) msg += ` | ${sportStr}`;
+  
+  msg += ` | Sweet spots: ${totalSweetSpots || 0} | Mispriced: ${totalMispriced || 0}`;
+
+  return msg;
+}
+
   return msg;
 }
 
@@ -762,7 +816,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
