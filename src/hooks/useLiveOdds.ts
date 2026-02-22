@@ -66,7 +66,7 @@ export function useLiveOdds({
           sport: 'basketball_nba',
           player_name: playerName,
           prop_type: propType,
-          preferred_bookmakers: ['fanduel', 'draftkings'],
+          preferred_bookmakers: ['hardrockbet', 'fanduel', 'draftkings'],
           search_all_books: true,
         },
       });
@@ -131,7 +131,7 @@ export function useRefreshPropMarketOdds() {
           action: 'analyze_slate', 
           mode: 'full_slate', 
           use_live_odds: true,
-          preferred_bookmakers: ['fanduel', 'draftkings']
+          preferred_bookmakers: ['hardrockbet', 'fanduel', 'draftkings']
         },
       });
 

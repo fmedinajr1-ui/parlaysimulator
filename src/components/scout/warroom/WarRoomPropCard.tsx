@@ -22,6 +22,7 @@ export interface WarRoomPropData {
   hasHedgeOpportunity: boolean;
   hitRateL10: number;
   liveBookLine: number;
+  allBookLines?: { line: number; bookmaker: string; overPrice?: number; underPrice?: number }[];
   // v6: Intelligence fields
   pOver?: number;
   pUnder?: number;

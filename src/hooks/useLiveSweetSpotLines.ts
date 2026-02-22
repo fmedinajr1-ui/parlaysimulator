@@ -10,6 +10,13 @@ const PROP_TO_MARKET: Record<PropType, string> = {
   blocks: 'player_blocks',
 };
 
+export interface BookLine {
+  line: number;
+  bookmaker: string;
+  overPrice?: number;
+  underPrice?: number;
+}
+
 export interface LiveLineData {
   liveBookLine: number;
   lineMovement: number;       // liveBookLine - originalLine
@@ -17,6 +24,7 @@ export interface LiveLineData {
   lastUpdate: string;
   overPrice?: number;
   underPrice?: number;
+  allBookLines?: BookLine[];
 }
 
 interface UseLiveSweetSpotLinesOptions {
@@ -74,10 +82,9 @@ export function useLiveSweetSpotLines(
           sport: 'basketball_nba',
           player_name: spot.playerName,
           prop_type: marketKey,
-          preferred_bookmakers: ['fanduel', 'draftkings'],
-          search_all_books: false,
-          // Note: We need event_id for the API - this is a limitation
-          // For now, the function may need to search by player name
+          preferred_bookmakers: ['hardrockbet', 'fanduel', 'draftkings'],
+          search_all_books: true,
+          return_all_books: true,
         }
       });
       
@@ -93,6 +100,23 @@ export function useLiveSweetSpotLines(
       const liveBookLine = data.odds.line;
       const lineMovement = liveBookLine - spot.line;
       
+      // Build allBookLines from response
+      const allBookLines: BookLine[] = (data.all_odds || []).map((o: any) => ({
+        line: o.line,
+        bookmaker: o.bookmaker || 'unknown',
+        overPrice: o.over_price,
+        underPrice: o.under_price,
+      }));
+      // If no all_odds, at least include the primary
+      if (allBookLines.length === 0) {
+        allBookLines.push({
+          line: liveBookLine,
+          bookmaker: data.odds.bookmaker || 'unknown',
+          overPrice: data.odds.over_price,
+          underPrice: data.odds.under_price,
+        });
+      }
+
       const liveData: LiveLineData = {
         liveBookLine,
         lineMovement,
@@ -100,6 +124,7 @@ export function useLiveSweetSpotLines(
         lastUpdate: new Date().toISOString(),
         overPrice: data.odds.over_price,
         underPrice: data.odds.under_price,
+        allBookLines,
       };
       
       // Update cache
