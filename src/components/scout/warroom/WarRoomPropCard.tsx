@@ -21,6 +21,7 @@ export interface WarRoomPropData {
   regression: RegressionAlert | null;
   hasHedgeOpportunity: boolean;
   hitRateL10: number;
+  liveBookLine: number;
   // v6: Intelligence fields
   pOver?: number;
   pUnder?: number;
