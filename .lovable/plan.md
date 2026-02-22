@@ -1,75 +1,73 @@
 
 
-## Fix Hedge Lines: Match Your Sportsbook + Smart Line Filter
+## Add Help Tooltips to Every War Room Metric
 
-### Problem
-1. **Wrong book lines** -- The system fetches lines from FanDuel/DraftKings only. You're on Hard Rock, so the hedge alert shows a line that doesn't match what you see.
-2. **No smart line selection** -- The system grabs the first book's line it finds. It should compare across multiple books and pick the **best line for the recommended side** (lowest line for OVER, highest line for UNDER).
+### Overview
+Wrap each metric label and badge across all War Room components with the existing `Tooltip` component so users can tap/hover to see a plain-English explanation of what it means -- without leaving the page.
 
-### Solution
+### Metrics to Annotate
 
-#### Part A: Add Hard Rock + Fetch ALL Books
-Update the edge function and hooks to fetch from Hard Rock, FanDuel, and DraftKings simultaneously, returning **all available lines** instead of just the first match.
+**WarRoomPropCard.tsx** (7 tooltips)
+- **Fatigue Ring** -- already has a tooltip (no change needed)
+- **Edge Score badge** (e.g., +3.2%) -- "Your estimated advantage over the book's implied odds. Positive = value bet."
+- **Regression badge** (snowflake/flame) -- "Probability this player reverts to their average. Cold = due for a dip, Hot = due to cool off."
+- **Hedge lightning bolt** -- "A hedge opportunity is available for this prop. Check the alerts panel."
+- **Win prob** -- "Model's estimated chance this pick wins based on live game flow and projections."
+- **Proj (projected final)** -- "AI projection of the player's final stat line based on current pace and game context."
+- **Pace %** -- "How fast this game is being played compared to league average. Positive = more possessions = more stats."
+- **AI confidence %** -- "Overall confidence score combining pace, matchup, fatigue, and regression factors."
+- **L10 hit rate** -- "How often this player has cleared this line in their last 10 games."
 
-#### Part B: Smart Line Filter
-On the client side, when building hedge alerts, pick the **smartest line** from the returned set:
-- If recommending **OVER**: use the **lowest available line** (easiest to clear)
-- If recommending **UNDER**: use the **highest available line** (most room underneath)
+**HedgeModeTable.tsx** (6 tooltips on column headers)
+- **Now** -- "Player's current stat total in this game."
+- **Need** -- "The line the player needs to hit for the bet to cash."
+- **Progress** -- "Visual tracker: how close the player is to clearing the line."
+- **Projected** -- "AI estimate of the player's final stat line."
+- **Gap** -- "Difference between projected final and the line. Positive = on track, negative = behind."
+- **Action** -- "Suggested action: LOCK (strong hold), HOLD (on pace), MONITOR (close), EXIT (consider hedging)."
+- **Survival %** -- "Estimated chance your entire parlay survives based on current progress across all legs."
 
-This way even if Hard Rock has 19.5 but FanDuel has 17.5, and the system recommends OVER, it'll show "BET OVER 17.5 (FanDuel)" -- the best deal across books.
+**AdvancedMetricsPanel.tsx** (4 tooltips on metric labels)
+- **Monte Carlo Win %** -- "Win probability from 10,000 simulated game outcomes. More reliable than single-point estimates."
+- **Blowout Risk** -- "Chance the game becomes a blowout, which reduces playing time for starters and hurts props."
+- **Fatigue Impact** -- "Average fatigue across your prop players. Higher fatigue = lower efficiency and stat output."
+- **Regression Probability** -- "Average likelihood that players in your picks revert to their mean performance."
 
-### File Changes
+**HedgeSlideIn.tsx** (3 tooltips)
+- **Kelly %** -- "Kelly Criterion bet sizing: the mathematically optimal percentage of your bankroll to wager."
+- **Projection** -- "AI's projected final stat for this player based on current pace."
+- **Smart bookmaker tag** -- "The sportsbook offering the best line for this recommendation."
 
-**1. `supabase/functions/fetch-current-odds/index.ts`**
-- Add `'hardrockbet'` to `PRIORITY_BOOKMAKERS`
-- New function `findAllPlayerOdds()` that returns lines from ALL matching bookmakers (not just the first hit)
-- New request param `return_all_books: true` triggers multi-book response
-- Response shape adds `all_odds: [{ line, over_price, under_price, bookmaker, bookmaker_title }]` alongside the existing single `odds` field for backward compatibility
+### Technical Approach
 
-**2. `src/hooks/useLiveSweetSpotLines.ts`**
-- Update `preferred_bookmakers` to `['hardrockbet', 'fanduel', 'draftkings']`
-- Pass `return_all_books: true` and `search_all_books: true`
-- Store all book lines in `LiveLineData` as new field `allBookLines`
+All tooltips use the existing `Tooltip`, `TooltipTrigger`, `TooltipContent`, and `TooltipProvider` from `@/components/ui/tooltip` (already used in `FatigueRing.tsx`).
 
-**3. `src/hooks/useLiveSweetSpotLines.ts` -- `LiveLineData` interface**
-- Add `allBookLines?: { line: number; bookmaker: string; overPrice?: number; underPrice?: number }[]`
+Each metric label/badge gets wrapped like:
+```tsx
+<TooltipProvider>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <span className="...existing classes... cursor-help border-b border-dotted border-muted-foreground/30">
+        Pace:
+      </span>
+    </TooltipTrigger>
+    <TooltipContent side="top" className="max-w-[200px] text-xs">
+      How fast this game is being played vs league average.
+    </TooltipContent>
+  </Tooltip>
+</TooltipProvider>
+```
 
-**4. `src/hooks/useLiveOdds.ts`**
-- Update `preferred_bookmakers` to include `'hardrockbet'`
+A subtle `border-dotted` underline on labels signals they're tappable/hoverable for help.
 
-**5. `src/components/scout/warroom/WarRoomLayout.tsx`**
-- Smart line picker logic in the hedge opportunity builder:
-  - Get `allBookLines` from the spot's live data
-  - If side is OVER: pick the line with the **lowest value** (easiest to clear)
-  - If side is UNDER: pick the line with the **highest value** (most room)
-  - Display which book the line comes from in the `suggestedAction` (e.g., "BET OVER 17.5 @ FanDuel")
+### Files Modified
 
-**6. `src/components/scout/warroom/HedgeSlideIn.tsx`**
-- Add `bookmaker` field to `HedgeOpportunity` interface
-- Display the book source below the action (e.g., "via FanDuel") so you know which app to open
+| File | Changes |
+|------|---------|
+| `WarRoomPropCard.tsx` | Wrap 7 metric elements with Tooltip |
+| `HedgeModeTable.tsx` | Wrap 7 column headers + survival badge with Tooltip |
+| `AdvancedMetricsPanel.tsx` | Wrap 4 metric labels with Tooltip |
+| `HedgeSlideIn.tsx` | Wrap 3 data labels with Tooltip |
 
-### Smart Line Example
-
-Player projection: 18.0
-
-| Book | Line |
-|------|------|
-| Hard Rock | 19.5 |
-| FanDuel | 17.5 |
-| DraftKings | 18.5 |
-
-- Projection (18.0) < all 3 lines, so system recommends UNDER
-- For UNDER, pick **highest line** = Hard Rock 19.5 (most room)
-- Alert shows: **BET UNDER 19.5 @ Hard Rock**
-
-If projection were 20.0 (recommending OVER):
-- For OVER, pick **lowest line** = FanDuel 17.5 (easiest to clear)
-- Alert shows: **BET OVER 17.5 @ FanDuel**
-
-### Result
-- Hedge alerts will show lines from the book that gives you the best edge
-- You'll know exactly which app to open to place the bet
-- Hard Rock is now a supported and prioritized source
-
-### 6 files modified. Edge function redeployed. No database changes.
+**4 files modified. No database changes. No new dependencies.**
 
