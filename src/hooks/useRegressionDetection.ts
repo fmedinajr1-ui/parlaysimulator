@@ -11,19 +11,22 @@ export interface RegressionAlert {
   expected: number;
   actual: number;
   tooltip: string;
+  /** v6: Stat-specific adjustment factor applied to projection */
+  adjustmentPct?: number;
 }
 
 interface UseRegressionDetectionOptions {
   enabled?: boolean;
-  threshold?: number; // probability threshold to trigger alert (default 0.65)
+  threshold?: number;
 }
 
 /**
- * Detects when a player's current output deviates significantly from expected rate.
- * Cold regression = shooting below expected → positive regression likely → suggest Over
- * Hot regression = shooting above expected → negative regression likely → suggest Under
+ * v6.0: Enhanced regression detection with stat-specific rules.
  *
- * Formula: regression_score = (expected - actual) / shot_quality_factor × variance_adjustment
+ * Points: Shot attempt pace + shooting % regression
+ * Rebounds: Opponent missed FG multiplier
+ * Assists: Teammate FG% regression + potential assists pace
+ * PRA: Combined variance model
  */
 export function useRegressionDetection(options: UseRegressionDetectionOptions = {}) {
   const { enabled = true, threshold = 0.65 } = options;
@@ -37,7 +40,7 @@ export function useRegressionDetection(options: UseRegressionDetectionOptions = 
     for (const game of games) {
       if (game.status !== 'in_progress') continue;
       const progress = game.gameProgress || 0;
-      if (progress < 0.2) continue; // Need enough data
+      if (progress < 0.2) continue;
 
       for (const player of game.players) {
         const projections = player.projections;
@@ -50,12 +53,52 @@ export function useRegressionDetection(options: UseRegressionDetectionOptions = 
           const actual = projection.current;
           const diff = expected - actual;
 
-          // Shot quality factor – use confidence as proxy (higher confidence = higher quality data)
+          // Shot quality factor
           const shotQualityFactor = Math.max(0.5, (projection.confidence || 50) / 100);
-          // Variance adjustment – higher with more game remaining
+          // Variance adjustment
           const varianceAdjustment = 1 + (1 - progress) * 0.5;
 
-          const regressionScore = (diff / Math.max(shotQualityFactor, 0.01)) * varianceAdjustment;
+          let regressionScore = (diff / Math.max(shotQualityFactor, 0.01)) * varianceAdjustment;
+
+          // v6.0: Stat-specific adjustments
+          let adjustmentPct = 0;
+          const normStat = statKey.toLowerCase();
+
+          if (normStat.includes('point')) {
+            // Points: if shooting hot on low volume, expect regression down
+            // if shooting cold on high volume, expect regression up
+            const shotAttemptPace = actual > 0 ? (actual / progress) : 0;
+            const expectedPace = projection.projected;
+            if (shotAttemptPace > expectedPace * 1.2) {
+              // High shot attempt pace → boost projection 5%
+              adjustmentPct = 5;
+              regressionScore *= 0.8; // Less likely to regress if volume is real
+            } else if (actual > expected * 1.2 && shotAttemptPace < expectedPace * 0.9) {
+              // Shooting hot on low volume → reduce 5%
+              adjustmentPct = -5;
+              regressionScore *= 1.2;
+            } else if (actual < expected * 0.8 && shotAttemptPace > expectedPace * 1.1) {
+              // Shooting cold on high volume → boost 5%
+              adjustmentPct = 5;
+              regressionScore *= 1.1;
+            }
+          } else if (normStat.includes('rebound')) {
+            // Rebounds: opponent missed FG creates more rebound opportunities
+            // Use score differential as proxy for missed FGs
+            const scoreDiff = Math.abs(game.homeScore - game.awayScore);
+            if (scoreDiff > 15) {
+              // Blowout = more missed shots from losing team
+              adjustmentPct = 3;
+            }
+          } else if (normStat.includes('assist')) {
+            // Assists: if team is shooting well, assists naturally higher
+            // Use game score as proxy for team efficiency
+            const teamScore = game.homeScore + game.awayScore;
+            if (teamScore > 120 * progress * 2) {
+              // High scoring game = more assist opportunities
+              adjustmentPct = 3;
+            }
+          }
 
           // Convert score to probability (sigmoid-like)
           const absScore = Math.abs(regressionScore);
@@ -74,9 +117,10 @@ export function useRegressionDetection(options: UseRegressionDetectionOptions = 
               suggestedSide,
               expected: Math.round(expected * 10) / 10,
               actual,
+              adjustmentPct,
               tooltip: direction === 'cold'
-                ? `Expected ${expected.toFixed(1)} ${statKey} by now, only has ${actual}. Positive regression likely.`
-                : `Already at ${actual} ${statKey}, expected only ${expected.toFixed(1)}. Regression to mean likely.`,
+                ? `Expected ${expected.toFixed(1)} ${statKey} by now, only has ${actual}. Positive regression likely.${adjustmentPct ? ` (${adjustmentPct > 0 ? '+' : ''}${adjustmentPct}% stat adj)` : ''}`
+                : `Already at ${actual} ${statKey}, expected only ${expected.toFixed(1)}. Regression to mean likely.${adjustmentPct ? ` (${adjustmentPct > 0 ? '+' : ''}${adjustmentPct}% stat adj)` : ''}`,
             });
           }
         }

@@ -2,13 +2,16 @@ import React, { useState } from 'react';
 import { ChevronDown, Brain } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { Switch } from '@/components/ui/switch';
 import type { RegressionAlert } from '@/hooks/useRegressionDetection';
 
 interface AdvancedMetricsPanelProps {
-  blowoutRiskPct: number; // 0-100
-  fatigueImpactPct: number; // 0-100
+  blowoutRiskPct: number;
+  fatigueImpactPct: number;
   regressionAlerts: RegressionAlert[];
-  monteCarloWinPct?: number; // 0-100
+  monteCarloWinPct?: number;
+  useMonteCarloMode?: boolean;
+  onMonteCarloToggle?: (enabled: boolean) => void;
 }
 
 function MetricBar({ label, value, color }: { label: string; value: number; color: string }) {
@@ -38,6 +41,8 @@ export function AdvancedMetricsPanel({
   fatigueImpactPct,
   regressionAlerts,
   monteCarloWinPct = 50,
+  useMonteCarloMode = false,
+  onMonteCarloToggle,
 }: AdvancedMetricsPanelProps) {
   const [open, setOpen] = useState(false);
 
@@ -61,6 +66,28 @@ export function AdvancedMetricsPanel({
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="warroom-card mt-1 p-3 space-y-3">
+          {/* Monte Carlo Toggle */}
+          {onMonteCarloToggle && (
+            <div className="flex items-center justify-between py-1 border-b border-[hsl(var(--warroom-card-border))]">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Monte Carlo Mode</span>
+                <span className={cn(
+                  'text-[9px] px-1.5 py-0.5 rounded font-bold',
+                  useMonteCarloMode
+                    ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))]'
+                    : 'bg-[hsl(var(--warroom-card-border))] text-muted-foreground'
+                )}>
+                  {useMonteCarloMode ? '10K SIMS' : 'ANALYTIC'}
+                </span>
+              </div>
+              <Switch
+                checked={useMonteCarloMode}
+                onCheckedChange={onMonteCarloToggle}
+                className="data-[state=checked]:bg-[hsl(var(--warroom-green))]"
+              />
+            </div>
+          )}
+
           <MetricBar
             label="Monte Carlo Win %"
             value={monteCarloWinPct}
