@@ -210,12 +210,22 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
       </div>
 
       {/* Hero — Live Game Panel */}
-      <CustomerLiveGamePanel
-        homeTeam={homeTeam}
-        awayTeam={awayTeam}
-        eventId={gameContext.eventId}
-        espnEventId={gameContext.espnEventId}
-      />
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={gameContext.eventId}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <CustomerLiveGamePanel
+            homeTeam={homeTeam}
+            awayTeam={awayTeam}
+            eventId={gameContext.eventId}
+            espnEventId={gameContext.espnEventId}
+          />
+        </motion.div>
+      </AnimatePresence>
 
       {/* Props Section */}
       <AnimatePresence mode="wait">

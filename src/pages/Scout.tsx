@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
@@ -230,8 +230,13 @@ const Scout = () => {
     }
   }, [isCustomer, activeGame, selectedGame]);
 
+  // Ref to track latest resolving eventId — prevents stale ESPN resolve from overwriting
+  const latestResolveRef = useRef<string>('');
+
   // Resolve ESPN ID and set game context
   const resolveAndSetGame = useCallback((eventId: string, homeTeam: string, awayTeam: string, commenceTime: string, gameDescription: string) => {
+    latestResolveRef.current = eventId;
+
     const game: ScoutGameContext = {
       eventId,
       homeTeam,
@@ -246,7 +251,7 @@ const Scout = () => {
     supabase.functions.invoke('get-espn-event-id', {
       body: { homeTeam, awayTeam },
     }).then(({ data }) => {
-      if (data?.espnEventId) {
+      if (data?.espnEventId && latestResolveRef.current === eventId) {
         setSelectedGame(prev => prev?.eventId === eventId ? { ...prev, espnEventId: data.espnEventId } : prev);
       }
     }).catch(err => console.error('ESPN ID resolve failed:', err));

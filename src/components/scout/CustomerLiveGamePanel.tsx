@@ -60,6 +60,11 @@ function useLivePBP(espnEventId: string | undefined, gameStatus: string | undefi
   const [data, setData] = useState<PBPData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Clear stale data immediately when espnEventId changes
+  useEffect(() => {
+    setData(null);
+  }, [espnEventId]);
+
   const shouldPoll = espnEventId && (gameStatus === 'in_progress' || gameStatus === 'halftime');
 
   const fetchPBP = useCallback(async () => {
@@ -85,7 +90,6 @@ function useLivePBP(espnEventId: string | undefined, gameStatus: string | undefi
 
   useEffect(() => {
     if (!shouldPoll) return;
-    // Fetch immediately, then every 15s
     fetchPBP();
     const interval = setInterval(fetchPBP, 8000);
     return () => clearInterval(interval);
@@ -501,17 +505,21 @@ export function CustomerLiveGamePanel({
 
   if (!game) {
     return (
-      <Card className="border-border/50 overflow-hidden">
+      <Card className="warroom-card overflow-hidden border-0">
         <CardContent className="p-0">
-          <div className="aspect-video bg-muted/30 flex items-center justify-center">
-            <div className="text-center space-y-2">
-              <Activity className="w-8 h-8 mx-auto text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">
-                {awayTeam} @ {homeTeam}
-              </p>
-              <p className="text-xs text-muted-foreground/60">
-                Game data not available yet
-              </p>
+          <div className="p-6 flex items-center justify-center min-h-[140px]">
+            <div className="text-center space-y-3">
+              <div className="flex items-center justify-center gap-4">
+                <span className="text-sm font-medium text-muted-foreground">{awayTeam}</span>
+                <span className="text-muted-foreground/40 text-xs">@</span>
+                <span className="text-sm font-medium text-muted-foreground">{homeTeam}</span>
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <span className="w-4 h-4 border-2 border-t-primary border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin" />
+                <p className="text-xs text-muted-foreground/60">
+                  Loading game data…
+                </p>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -520,7 +528,7 @@ export function CustomerLiveGamePanel({
   }
 
   return (
-    <Card className="warroom-card overflow-hidden animate-fade-in border-0">
+    <Card key={primaryEventId} className="warroom-card overflow-hidden animate-fade-in border-0">
       <CardContent className="p-0 divide-y divide-[hsl(var(--warroom-card-border)/0.5)]">
         {/* Scoreboard */}
         <LiveScoreboard
