@@ -98,35 +98,36 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       const { player, game } = result;
       const projection = getPlayerProjection(spot.playerName, spot.propType);
       
-      // Only add full live data if game is in progress or halftime
+      // Game found but not actively in progress — preserve pre-game projections
       if (game.status !== 'in_progress' && game.status !== 'halftime') {
-        if (shotChartMatchup || liveLineData) {
-          return {
-            ...spot,
-            liveData: {
-              isLive: false,
-              currentValue: 0,
-              projectedFinal: 0,
-              gameProgress: 0,
-              period: '',
-              clock: '',
-              confidence: 50,
-              riskFlags: [],
-              trend: 'stable' as const,
-              minutesPlayed: 0,
-              ratePerMinute: 0,
-              paceRating: 100,
-              shotChartMatchup,
-              currentQuarter: 0,
-              quarterHistory: [],
-              liveBookLine: liveLineData?.liveBookLine,
-              lineMovement: liveLineData?.lineMovement,
-              lastLineUpdate: liveLineData?.lastUpdate,
-              bookmaker: liveLineData?.bookmaker,
-            },
-          };
-        }
-        return spot;
+        const preGameProjection = projection?.projected ?? (spot.edge + spot.line);
+        const preGameCurrent = projection?.current ?? 0;
+        
+        return {
+          ...spot,
+          liveData: {
+            isLive: false,
+            gameStatus: game.status as any,
+            currentValue: preGameCurrent,
+            projectedFinal: preGameProjection,
+            gameProgress: 0,
+            period: '',
+            clock: '',
+            confidence: projection?.confidence ?? spot.sweetSpotScore ?? 50,
+            riskFlags: [],
+            trend: 'stable' as const,
+            minutesPlayed: 0,
+            ratePerMinute: 0,
+            paceRating: game.pace ?? 100,
+            shotChartMatchup,
+            currentQuarter: 0,
+            quarterHistory: [],
+            liveBookLine: liveLineData?.liveBookLine,
+            lineMovement: liveLineData?.lineMovement,
+            lastLineUpdate: liveLineData?.lastUpdate,
+            bookmaker: liveLineData?.bookmaker,
+          },
+        };
       }
       
       const currentQuarter = parseInt(String(game.period)) || 0;

@@ -24,10 +24,10 @@ export function getBufferThresholds(gameProgress: number): BufferThresholds {
 export function calculateHedgeStatus(spot: DeepSweetSpot): HedgeStatus | null {
   const liveData = spot.liveData;
   
-  // No live data or game not in progress
-  if (!liveData || (!liveData.isLive && liveData.gameStatus !== 'halftime')) {
-    return null;
-  }
+  // Only block when there's truly no useful data or game is done
+  if (!liveData) return null;
+  if (liveData.gameStatus === 'final') return null;
+  if (!liveData.projectedFinal && !liveData.currentValue) return null;
   
   const isOver = (spot.side ?? 'over').toLowerCase() === 'over';
   const currentValue = liveData.currentValue ?? 0;
