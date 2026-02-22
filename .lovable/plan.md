@@ -1,28 +1,42 @@
 
-## Fix: Hedge Status Accuracy Card showing "No accuracy data yet"
+## Auto-Schedule Daily Hedge Snapshot Settlement
 
-### Root Cause
-The `get_hedge_side_performance` RPC function references `s.created_at`, but the `sweet_spot_hedge_snapshots` table uses `captured_at` as the timestamp column. This causes the RPC to throw an error, so the card falls back to the "No accuracy data yet" state.
+### What This Does
+Adds a daily cron job that automatically runs `settle-hedge-snapshots` every morning at **6:00 UTC (1:00 AM ET)** to settle yesterday's hedge snapshots. This runs after the existing verification/backfill jobs (which complete by ~11 PM ET), ensuring game results are available for matching.
 
-Meanwhile, the database **does** have 59 settled snapshots with real OVER/UNDER performance data ready to display.
-
-### Fix (1 database migration)
-
-Replace `s.created_at` with `s.captured_at` in the `get_hedge_side_performance` function:
+### Implementation
+One SQL insert to create the cron job — follows the exact same pattern as the 15+ existing cron jobs already configured.
 
 ```sql
-CREATE OR REPLACE FUNCTION get_hedge_side_performance(days_back INTEGER DEFAULT 30)
-...
-  WHERE s.outcome IS NOT NULL
-    AND s.captured_at >= NOW() - (days_back || ' days')::INTERVAL
-...
+SELECT cron.schedule(
+  'daily-settle-hedge-snapshots',
+  '0 6 * * *',  -- 6:00 UTC = 1:00 AM ET
+  $$
+  SELECT net.http_post(
+    url:='https://pajakaqphlxoqjtrxzmi.supabase.co/functions/v1/settle-hedge-snapshots',
+    headers:='{"Content-Type": "application/json", "Authorization": "Bearer <anon_key>"}'::jsonb,
+    body:='{"scheduled": true}'::jsonb
+  ) as request_id;
+  $$
+);
 ```
 
-### Expected Result After Fix
-The Hedge Status Accuracy card will populate with:
-- **OVER side**: 41 settled snapshots showing urgent status at Q3/Q4 hitting 0%, profit_lock hitting 100%
-- **UNDER side**: 18 settled snapshots showing on_track hitting 100%, monitor mixed
-- **Side Intelligence insights** comparing OVER vs UNDER accuracy
-- **ALL/OVER/UNDER toggle** filtering the data by side
+### Scheduling Logic
 
-No UI changes needed -- the component code is correct, it's just receiving an empty dataset due to the RPC error.
+```text
+Timeline (Eastern Time):
+  8:00 AM  - Daily pipeline collects data + generates sweet spots
+  7:00 PM+ - NBA games play out
+ 11:00 PM  - verify-sharp-outcomes settles game results
+ 12:00 AM  - auto-settle-parlays runs
+  1:00 AM  - settle-hedge-snapshots (NEW) settles hedge performance data
+  ~~~next morning~~~
+  8:00 AM  - Pipeline runs again with updated hedge accuracy feeding insights
+```
+
+### Technical Details
+
+- **No new files** — just a SQL insert to register the cron job
+- **No code changes** — the `settle-hedge-snapshots` edge function already works correctly
+- Results will appear in the `cron_job_history` table and the CronJobHistoryPanel in the admin dashboard
+- The Hedge Status Accuracy card will automatically reflect newly settled data on each refresh
