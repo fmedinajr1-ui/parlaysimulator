@@ -1,83 +1,148 @@
 
 
-## Add MLB Sweet Spots to Category Props Analyzer
+## Prop Intelligence Engine v1 — Upgrade Plan
 
-### Goal
-Extend the `category-props-analyzer` to analyze MLB player game logs and generate sweet spots for MLB props. This enables MLB double-confirmed picks by cross-referencing sweet spots with existing mispriced lines.
+### What Already Exists
 
-### What Changes
+Your War Room already has significant infrastructure in place:
 
-**1. Add MLB Game Log Fetching (alongside NBA/NCAAB)**
+| Feature | Status | Current Location |
+|---------|--------|-----------------|
+| Live prop cards with player/line/projected | Built | `WarRoomPropCard.tsx` |
+| Regression detection (hot/cold) | Built | `useRegressionDetection.ts` |
+| Fatigue ring + fatigue scores | Built | `FatigueRing.tsx`, `useFatigueData.ts` |
+| Live projections with role-based rates | Built | `useLiveProjections.ts` |
+| Hedge slide-in alerts | Built | `HedgeSlideIn.tsx` |
+| Hedge mode table (LOCK/HOLD/MONITOR/EXIT) | Built | `HedgeModeTable.tsx` |
+| Advanced metrics panel (blowout, fatigue, regression, Monte Carlo bars) | Built | `AdvancedMetricsPanel.tsx` |
+| Dark theme with neon accents | Built | War Room CSS variables |
+| Game strip selector | Built | `WarRoomGameStrip.tsx` |
+| Live score polling (8s via ESPN) | Built | `fetch-live-pbp` edge function |
 
-After the existing NBA and NCAAB log fetching blocks (~lines 1000-1043), add a new block that fetches from `mlb_player_game_logs` with pagination. MLB logs use different columns (hits, runs, rbis, total_bases, stolen_bases, walks, strikeouts, pitcher_strikeouts, home_runs) so they'll be stored in a separate `mlbPlayerLogs` map with their own stat extraction.
+### What Needs to Be Built or Upgraded
 
-**2. Add MLB-Specific Categories**
+The prompt specifies several calculation improvements and new UI elements that go beyond the current implementation.
 
-New categories added to the `CATEGORIES` config:
+---
 
-| Category | Prop Type | Side | Logic |
-|----------|-----------|------|-------|
-| MLB_PITCHER_K_OVER | pitcher_strikeouts | over | Pitchers averaging 5-12 Ks, lines 4.5-8.5 |
-| MLB_PITCHER_K_UNDER | pitcher_strikeouts | under | Same range, catches overhyped Ks |
-| MLB_HITTER_FANTASY_OVER | hitter_fantasy_score | over | Calculated field (hits+walks+runs+rbis+TB+SB), lines 5.5-15.5 |
-| MLB_HITTER_FANTASY_UNDER | hitter_fantasy_score | under | Same calc, catches inflated lines |
-| MLB_HITS_OVER | hits | over | Batters averaging 0.8-2.5 hits, lines 0.5-2.5 |
-| MLB_TOTAL_BASES_OVER | total_bases | over | Batters averaging 1.5-4.0 TB, lines 1.5-3.5 |
-| MLB_RUNS_OVER | runs | over | Batters averaging 0.5-1.5 runs, lines 0.5-1.5 |
+### Phase 1: Enhanced Calculation Engine (Hook Upgrades)
 
-Note: `batter_home_runs UNDER` is **removed/not included** per your request -- replaced by fantasy score props.
+**File: `src/hooks/useLiveProjections.ts`**
 
-**3. MLB Stat Value Extraction**
+Upgrade the projection math to match the prompt's formulas:
 
-New `getMLBStatValue()` function that maps prop types to `mlb_player_game_logs` columns:
-- `pitcher_strikeouts` -> `pitcher_strikeouts` column
-- `hits` -> `hits` column
-- `total_bases` -> `total_bases` column
-- `runs` -> `runs` column
-- `hitter_fantasy_score` -> calculated: `hits + walks + runs + rbis + total_bases + stolen_bases`
+- **Live Blend Rate**: Replace current fixed blending weights with the prompt's formula: `w = minutes / (minutes + 12)`, then `r_blend = (1-w)*baseline + w*live_rate`. Currently uses a `0.35 + progress*0.5` weight that doesn't match.
+- **Pace Multiplier**: Add `pace_mult = team_possessions_1H / avg_pace_L10` scaling to the blended rate. Currently pace is not factored into projection math.
+- **Volatility Model (Z-Score)**: Add standard deviation tracking and Normal CDF calculation: `sigma_rem = std_per_min * sqrt(min_remaining)`, `Z = (line - projected) / sigma_rem`, `P_over = 1 - NormalCDF(Z)`. Currently no probability calculation exists in projections.
+- **Edge Score**: Add `EdgeScore = (P_over - ImpliedProb) * 100` using odds from `unified_props`. Currently no edge score on live cards.
 
-**4. MLB Analysis Loop**
+**New file: `src/lib/normalCdf.ts`** — Small utility for the standard normal CDF approximation.
 
-After the existing NBA category analysis loop, add a parallel MLB loop that:
-- Iterates through MLB categories
-- Uses `mlbPlayerLogs` (from `mlb_player_game_logs`)
-- Calculates L10 averages, hit rates, medians using the same math
-- Generates sweet spots with `prop_type` matching mispriced_lines format
-- Skips archetype validation (NBA-only concept)
-- Uses simplified projection (L10 median, no matchup/pace adjustment for now)
+**New file: `src/hooks/useMinutesStability.ts`** — Track minutes variance across L10 games from `nba_player_game_logs` to produce a `minutes_stability_index` (0-100). Query L10 minutes, calculate coefficient of variation, convert to 0-100 scale.
 
-**5. Prop Type Normalization for Double-Confirmed Matching**
+---
 
-The double-confirmed scanner normalizes prop types by stripping `player_` prefix and underscores. Ensure MLB sweet spots store `prop_type` values that normalize the same way as mispriced_lines `prop_type`:
-- Sweet spot: `pitcher_strikeouts` -> normalizes to `pitcherstrikeouts`
-- Mispriced line: `pitcher_strikeouts` -> normalizes to `pitcherstrikeouts`
-- Match confirmed
+### Phase 2: Regression Engine Upgrade
 
-**6. Unified Props Lookup for MLB**
+**File: `src/hooks/useRegressionDetection.ts`**
 
-The existing `unified_props` validation step already fetches all props by `commence_time`. MLB props from `pp_snapshot` are synced to `unified_props` via `mlb-props-sync`. The existing validation logic will work for MLB spots too -- just need to ensure the prop_type key matching works for MLB stat names.
+Add the prompt's stat-specific regression rules:
 
-### Technical Details
+- **Points**: If shot attempts exceed 120% of L10 pace, boost projection 5%. If shooting percentage is above L10 on low volume, reduce 5%.
+- **Rebounds**: Use opponent missed FG multiplier (opponent FG misses in 1H vs average).
+- **Assists**: Use teammate FG% regression and potential assists pace.
+- **PRA Combo**: Sum means, combine variance as `sigma_PRA = sqrt(sigma_P^2 + sigma_R^2 + sigma_A^2)`.
 
-**File modified: `supabase/functions/category-props-analyzer/index.ts`**
+This requires pulling L10 shooting data from `nba_player_game_logs` (already cached in React Query) and opponent FG data from live box scores.
 
-1. **New interface** `MLBGameLog` with MLB-specific fields (hits, walks, runs, rbis, total_bases, stolen_bases, home_runs, strikeouts, pitcher_strikeouts)
+---
 
-2. **New MLB categories** added to `CATEGORIES` object (after line 474) -- 7 new category configs
+### Phase 3: Upgraded Prop Card UI
 
-3. **New function** `getMLBStatValue(log, propType)` -- extracts stat from MLB log, including fantasy score calculation
+**File: `src/components/scout/warroom/WarRoomPropCard.tsx`**
 
-4. **New MLB log fetching block** (~after line 1043) -- paginated fetch from `mlb_player_game_logs` for last 30 days, grouped into `mlbPlayerLogs` map
+Add new visual elements to each card:
 
-5. **New MLB analysis section** (~after line 1290) -- iterates MLB categories against `mlbPlayerLogs`, generates sweet spots with same schema as NBA spots
+- **Edge Score Badge** — colored badge showing `+X.X%` edge, green/amber/red.
+- **P_over / P_under** — two small probability percentages displayed side by side.
+- **Pace Meter** — small animated horizontal bar showing pace_mult relative to 1.0 (green if above, red if below).
+- **Minutes Stability Bar** — thin progress bar (0-100) showing consistency.
+- **Foul Risk Indicator** — small text label (Low/Med/High) based on current fouls.
 
-6. **Sweet spots from MLB** get the same validation against `unified_props` actual lines, hit rate recalculation, and database upsert as NBA spots
+Update `WarRoomPropData` interface to include: `pOver`, `pUnder`, `edgeScore`, `minutesStabilityIndex`, `foulRisk`.
 
-### Expected Outcome
+---
 
-After this change:
-- Running `category-props-analyzer` generates both NBA and MLB sweet spots
-- MLB sweet spots for `pitcher_strikeouts` and `hitter_fantasy_score` (plus hits, TB, runs) land in `category_sweet_spots`
-- Running `double-confirmed-scanner` can now match MLB mispriced lines against MLB sweet spots
-- Fantasy score props replace the removed homer UNDER section
+### Phase 4: Monte Carlo Toggle
+
+**File: `src/components/scout/warroom/AdvancedMetricsPanel.tsx`**
+
+Add a toggle switch in the Advanced Metrics panel:
+
+- **OFF (default)**: Use analytic Normal CDF approximation for P_over (fast).
+- **ON**: Run 10,000 simulations per prop using `projected_stat` and `sigma_rem` as the normal distribution parameters. Return empirical P_over.
+
+**New file: `src/lib/monteCarlo.ts`** — Function that takes `(mean, stdDev, line, simCount=10000)` and returns empirical probability. Runs in a `useMemo` or web worker to avoid UI freezing.
+
+The toggle state flows down to `WarRoomLayout` which passes it to the projection hook.
+
+---
+
+### Phase 5: Live Alert System Upgrade
+
+**File: `src/components/scout/warroom/HedgeSlideIn.tsx`**
+
+Add new trigger conditions beyond current hedge-only alerts:
+
+- EdgeScore flips sides (was positive, now negative or vice versa) — tracked via history in `useLiveProjections`.
+- Spread changes greater than 5 points live (compare initial spread to current from live data).
+- Player role change detected (minutes share drops significantly mid-game).
+
+Each alert type gets a distinct color/icon: gold for hedge, blue for edge flip, red for role change.
+
+---
+
+### Phase 6: Intelligence Flags on Every Prop
+
+**File: `src/hooks/useLiveProjections.ts`** (return object)
+
+Add these computed flags to every `LiveProjection`:
+
+- `pace_rating`: "green" / "yellow" / "red" based on pace_mult thresholds.
+- `regression_signal`: "hot" / "cold" / "neutral" from regression engine.
+- `minutes_stability_index`: 0-100 from the new hook.
+- `fatigue_flag`: boolean from fatigue data.
+- `foul_risk`: "low" / "medium" / "high" based on current fouls.
+- `hedge_signal`: boolean when edge flips or margin is thin.
+
+---
+
+### Technical Summary
+
+| Change | File(s) | Complexity |
+|--------|---------|------------|
+| Blend rate + pace multiplier formula | `useLiveProjections.ts` | Medium |
+| Volatility model + P_over/P_under | `useLiveProjections.ts` + new `normalCdf.ts` | Medium |
+| Edge score calculation | `useLiveProjections.ts` | Low |
+| Minutes stability hook | New `useMinutesStability.ts` | Low |
+| Regression engine stat-specific rules | `useRegressionDetection.ts` | Medium |
+| Prop card UI additions (edge badge, pace meter, probabilities) | `WarRoomPropCard.tsx` | Medium |
+| Monte Carlo toggle + simulation | New `monteCarlo.ts` + `AdvancedMetricsPanel.tsx` | Medium |
+| Alert system upgrade (edge flip, spread change, role change) | `HedgeSlideIn.tsx` + `WarRoomLayout.tsx` | Medium |
+| Intelligence flags on projection output | `useLiveProjections.ts` | Low |
+
+### Build Order
+
+1. `normalCdf.ts` utility (no dependencies)
+2. `monteCarlo.ts` utility (depends on #1)
+3. `useMinutesStability.ts` hook (independent)
+4. `useLiveProjections.ts` upgrades (depends on #1, #3)
+5. `useRegressionDetection.ts` upgrades (independent)
+6. `WarRoomPropCard.tsx` UI additions (depends on #4, #5)
+7. `AdvancedMetricsPanel.tsx` Monte Carlo toggle (depends on #2)
+8. `HedgeSlideIn.tsx` + `WarRoomLayout.tsx` alert upgrades (depends on #4)
+
+### No Database Changes Required
+
+All new calculations are client-side using existing data from `nba_player_game_logs`, `unified_props`, and live ESPN feed. No new tables or edge functions needed.
 
