@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { FatigueRing } from './FatigueRing';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import type { RegressionAlert } from '@/hooks/useRegressionDetection';
 
 export interface WarRoomPropData {
@@ -37,7 +38,16 @@ const PROP_SHORT: Record<string, string> = {
   rebounds: 'REB', blocks: 'BLK', steals: 'STL',
 };
 
-
+function HelpTip({ children, tip, side = 'top' }: { children: React.ReactNode; tip: string; side?: 'top' | 'bottom' | 'left' | 'right' }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side={side} className="max-w-[200px] text-xs">{tip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
   const {
@@ -92,46 +102,52 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
         {/* Edge Score Badge + Regression */}
         <div className="flex items-center gap-1 shrink-0">
           {hasEdge && (
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className={cn(
-                'px-1.5 py-0.5 rounded text-[9px] font-bold tabular-nums',
-                edgeScore! > 5 ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))]'
-                  : edgeScore! > 0 ? 'bg-[hsl(var(--warroom-gold)/0.15)] text-[hsl(var(--warroom-gold))]'
-                  : 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))]'
-              )}
-            >
-              {edgeScore! > 0 ? '+' : ''}{edgeScore!.toFixed(1)}%
-            </motion.div>
+            <HelpTip tip="Your estimated advantage over the book's implied odds. Positive = value bet.">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[9px] font-bold tabular-nums cursor-help',
+                  edgeScore! > 5 ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))]'
+                    : edgeScore! > 0 ? 'bg-[hsl(var(--warroom-gold)/0.15)] text-[hsl(var(--warroom-gold))]'
+                    : 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))]'
+                )}
+              >
+                {edgeScore! > 0 ? '+' : ''}{edgeScore!.toFixed(1)}%
+              </motion.div>
+            </HelpTip>
           )}
           {regression && (
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className={cn(
-                'flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold',
-                regression.direction === 'cold'
-                  ? 'bg-[hsl(var(--warroom-ice)/0.15)] text-[hsl(var(--warroom-ice))]'
-                  : 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))]'
-              )}
-              title={regression.tooltip}
-            >
-              {regression.direction === 'cold' ? (
-                <Snowflake className="w-3 h-3" />
-              ) : (
-                <Flame className="w-3 h-3" />
-              )}
-              {Math.round(regression.probability * 100)}%
-            </motion.div>
+            <HelpTip tip="Probability this player reverts to their average. Cold = due for a dip, Hot = due to cool off.">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                className={cn(
+                  'flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold cursor-help',
+                  regression.direction === 'cold'
+                    ? 'bg-[hsl(var(--warroom-ice)/0.15)] text-[hsl(var(--warroom-ice))]'
+                    : 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))]'
+                )}
+              >
+                {regression.direction === 'cold' ? (
+                  <Snowflake className="w-3 h-3" />
+                ) : (
+                  <Flame className="w-3 h-3" />
+                )}
+                {Math.round(regression.probability * 100)}%
+              </motion.div>
+            </HelpTip>
           )}
           {hasHedgeOpportunity && (
-            <motion.div
-              animate={{ scale: [1, 1.15, 1] }}
-              transition={{ repeat: Infinity, duration: 2 }}
-            >
-              <Zap className="w-4 h-4 text-[hsl(var(--warroom-gold))]" />
-            </motion.div>
+            <HelpTip tip="A hedge opportunity is available for this prop. Check the alerts panel.">
+              <motion.div
+                animate={{ scale: [1, 1.15, 1] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                className="cursor-help"
+              >
+                <Zap className="w-4 h-4 text-[hsl(var(--warroom-gold))]" />
+              </motion.div>
+            </HelpTip>
           )}
         </div>
       </div>
@@ -142,7 +158,9 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
         const winPct = Math.round(winProb * 100);
         return (
           <div className="flex items-center gap-1 text-[10px]">
-            <span className="text-muted-foreground">Win prob:</span>
+            <HelpTip tip="Model's estimated chance this pick wins based on live game flow and projections.">
+              <span className="text-muted-foreground cursor-help border-b border-dotted border-muted-foreground/30">Win prob:</span>
+            </HelpTip>
             <span className={cn(
               'font-bold tabular-nums',
               winPct >= 60 ? 'text-[hsl(var(--warroom-green))]' : winPct >= 50 ? 'text-[hsl(var(--warroom-gold))]' : 'text-[hsl(var(--warroom-danger))]'
@@ -159,12 +177,14 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
           <span className="text-muted-foreground">
             {currentValue} / {line}
           </span>
-          <span className={cn(
-            'font-bold',
-            isOnTrack ? 'text-[hsl(var(--warroom-green))]' : 'text-muted-foreground'
-          )}>
-            Proj: {projectedFinal.toFixed(1)}
-          </span>
+          <HelpTip tip="AI projection of the player's final stat line based on current pace and game context.">
+            <span className={cn(
+              'font-bold cursor-help border-b border-dotted border-muted-foreground/30',
+              isOnTrack ? 'text-[hsl(var(--warroom-green))]' : 'text-muted-foreground'
+            )}>
+              Proj: {projectedFinal.toFixed(1)}
+            </span>
+          </HelpTip>
         </div>
         <Progress
           value={Math.min(progressPct, 100)}
@@ -175,23 +195,29 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
 
       {/* Bottom metrics row */}
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-        <span>
-          Pace: <span className={paceAdj > 0 ? 'text-[hsl(var(--warroom-green))]' : paceAdj < -3 ? 'text-[hsl(var(--warroom-danger))]' : ''}>
-            {paceAdj >= 0 ? '+' : ''}{paceAdj}%
+        <HelpTip tip="How fast this game is being played compared to league average. Positive = more possessions = more stats.">
+          <span className="cursor-help border-b border-dotted border-muted-foreground/30">
+            Pace: <span className={paceAdj > 0 ? 'text-[hsl(var(--warroom-green))]' : paceAdj < -3 ? 'text-[hsl(var(--warroom-danger))]' : ''}>
+              {paceAdj >= 0 ? '+' : ''}{paceAdj}%
+            </span>
           </span>
-        </span>
-        <span className="flex items-center gap-0.5">
-          <TrendingUp className="w-3 h-3" />
-          AI: <span className="font-bold text-foreground">{confidence}%</span>
-        </span>
-        <span>
-          L10: <span className={cn(
-            'font-bold',
-            hitRateL10 >= 0.8 ? 'text-[hsl(var(--warroom-green))]' : hitRateL10 >= 0.6 ? 'text-[hsl(var(--warroom-gold))]' : 'text-[hsl(var(--warroom-danger))]'
-          )}>
-            {Math.round(hitRateL10 * 100)}%
+        </HelpTip>
+        <HelpTip tip="Overall confidence score combining pace, matchup, fatigue, and regression factors.">
+          <span className="flex items-center gap-0.5 cursor-help border-b border-dotted border-muted-foreground/30">
+            <TrendingUp className="w-3 h-3" />
+            AI: <span className="font-bold text-foreground">{confidence}%</span>
           </span>
-        </span>
+        </HelpTip>
+        <HelpTip tip="How often this player has cleared this line in their last 10 games.">
+          <span className="cursor-help border-b border-dotted border-muted-foreground/30">
+            L10: <span className={cn(
+              'font-bold',
+              hitRateL10 >= 0.8 ? 'text-[hsl(var(--warroom-green))]' : hitRateL10 >= 0.6 ? 'text-[hsl(var(--warroom-gold))]' : 'text-[hsl(var(--warroom-danger))]'
+            )}>
+              {Math.round(hitRateL10 * 100)}%
+            </span>
+          </span>
+        </HelpTip>
       </div>
     </motion.div>
   );

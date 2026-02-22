@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import type { WarRoomPropData } from './WarRoomPropCard';
 
 interface HedgeModeTableProps {
@@ -12,6 +13,17 @@ const PROP_SHORT: Record<string, string> = {
   points: 'PTS', assists: 'AST', threes: '3PT',
   rebounds: 'REB', blocks: 'BLK', steals: 'STL',
 };
+
+function HelpTip({ children, tip, side = 'top' }: { children: React.ReactNode; tip: string; side?: 'top' | 'bottom' | 'left' | 'right' }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side={side} className="max-w-[200px] text-xs">{tip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 function progressColor(pct: number): string {
   if (pct >= 70) return 'bg-[hsl(var(--warroom-green))]';
@@ -58,12 +70,14 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
       {/* Header with survival badge */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[hsl(var(--warroom-card-border))]">
         <span className="text-xs font-semibold text-foreground">Hedge Monitor</span>
-        <div className="flex items-center gap-1.5">
-          <Activity className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className={cn('text-sm font-bold', survivalColor)}>
-            {survivalPct}% survival
-          </span>
-        </div>
+        <HelpTip tip="Estimated chance your entire parlay survives based on current progress across all legs.">
+          <div className="flex items-center gap-1.5 cursor-help">
+            <Activity className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className={cn('text-sm font-bold border-b border-dotted border-muted-foreground/30', survivalColor)}>
+              {survivalPct}% survival
+            </span>
+          </div>
+        </HelpTip>
       </div>
 
       <div className="overflow-x-auto">
@@ -71,12 +85,36 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
           <thead>
             <tr className="border-b border-[hsl(var(--warroom-card-border))] text-muted-foreground text-[10px] uppercase tracking-wider">
               <th className="text-left font-medium p-2">Prop</th>
-              <th className="text-right font-medium p-2">Now</th>
-              <th className="text-right font-medium p-2">Need</th>
-              <th className="text-left font-medium p-2 pl-4 w-24">Progress</th>
-              <th className="text-right font-medium p-2">Projected</th>
-              <th className="text-right font-medium p-2">Gap</th>
-              <th className="text-right font-medium p-2">Action</th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="Player's current stat total in this game.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Now</span>
+                </HelpTip>
+              </th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="The line the player needs to hit for the bet to cash.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Need</span>
+                </HelpTip>
+              </th>
+              <th className="text-left font-medium p-2 pl-4 w-24">
+                <HelpTip tip="Visual tracker: how close the player is to clearing the line.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Progress</span>
+                </HelpTip>
+              </th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="AI estimate of the player's final stat line.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Projected</span>
+                </HelpTip>
+              </th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="Difference between projected final and the line. Positive = on track, negative = behind.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Gap</span>
+                </HelpTip>
+              </th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="Suggested action: LOCK (strong hold), HOLD (on pace), MONITOR (close), EXIT (consider hedging).">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Action</span>
+                </HelpTip>
+              </th>
             </tr>
           </thead>
           <tbody>

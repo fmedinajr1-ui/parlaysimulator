@@ -4,6 +4,7 @@ import { Zap, X, ArrowLeftRight, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRiskMode } from '@/contexts/RiskModeContext';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 
 export type AlertType = 'hedge' | 'edge_flip' | 'role_change' | 'spread_shift';
 
@@ -29,6 +30,17 @@ const ALERT_CONFIG: Record<AlertType, { label: string; color: string; Icon: Reac
   role_change: { label: 'ROLE CHANGE', color: '--warroom-danger', Icon: AlertTriangle },
   spread_shift: { label: 'SPREAD SHIFT', color: '--warroom-gold', Icon: AlertTriangle },
 };
+
+function HelpTip({ children, tip, side = 'top' }: { children: React.ReactNode; tip: string; side?: 'top' | 'bottom' | 'left' | 'right' }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side={side} className="max-w-[200px] text-xs">{tip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 interface HedgeSlideInProps {
   opportunities: HedgeOpportunity[];
@@ -93,18 +105,24 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   <p className="text-muted-foreground text-[10px]">{opp.alertMessage}</p>
                 )}
                 {opp.smartBookmaker && (
-                  <p className="text-[10px] text-[hsl(var(--warroom-ice))] font-medium">
-                    via {opp.smartBookmaker}
-                  </p>
+                  <HelpTip tip="The sportsbook offering the best line for this recommendation." side="left">
+                    <p className="text-[10px] text-[hsl(var(--warroom-ice))] font-medium cursor-help border-b border-dotted border-muted-foreground/30 w-fit">
+                      via {opp.smartBookmaker}
+                    </p>
+                  </HelpTip>
                 )}
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-muted-foreground">
                   <span>Prop:</span>
                   <span className="text-foreground">{opp.propType}</span>
-                  <span>Projection:</span>
+                  <HelpTip tip="AI's projected final stat for this player based on current pace." side="left">
+                    <span className="cursor-help border-b border-dotted border-muted-foreground/30">Projection:</span>
+                  </HelpTip>
                   <span className="text-foreground font-medium">{opp.liveProjection.toFixed(1)}</span>
                   {alertType === 'hedge' && (
                     <>
-                      <span>Kelly:</span>
+                      <HelpTip tip="Kelly Criterion bet sizing: the mathematically optimal percentage of your bankroll to wager." side="left">
+                        <span className="cursor-help border-b border-dotted border-muted-foreground/30">Kelly:</span>
+                      </HelpTip>
                       <span className="text-[hsl(var(--warroom-gold))] font-bold">{adjKelly}%</span>
                     </>
                   )}

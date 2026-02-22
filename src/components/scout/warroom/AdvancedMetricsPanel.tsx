@@ -3,6 +3,7 @@ import { ChevronDown, Brain } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import type { RegressionAlert } from '@/hooks/useRegressionDetection';
 
 interface AdvancedMetricsPanelProps {
@@ -14,11 +15,30 @@ interface AdvancedMetricsPanelProps {
   onMonteCarloToggle?: (enabled: boolean) => void;
 }
 
+const METRIC_TIPS: Record<string, string> = {
+  'Monte Carlo Win %': 'Win probability from 10,000 simulated game outcomes. More reliable than single-point estimates.',
+  'Blowout Risk': 'Chance the game becomes a blowout, which reduces playing time for starters and hurts props.',
+  'Fatigue Impact': 'Average fatigue across your prop players. Higher fatigue = lower efficiency and stat output.',
+  'Regression Probability': 'Average likelihood that players in your picks revert to their mean performance.',
+};
+
 function MetricBar({ label, value, color }: { label: string; value: number; color: string }) {
+  const tip = METRIC_TIPS[label];
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
+        {tip ? (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-muted-foreground cursor-help border-b border-dotted border-muted-foreground/30">{label}</span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[200px] text-xs">{tip}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <span className="text-muted-foreground">{label}</span>
+        )}
         <span className={cn('font-bold tabular-nums', color)}>
           {value.toFixed(1)}%
         </span>
