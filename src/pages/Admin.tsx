@@ -56,6 +56,7 @@ import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
 import { FeatureAccessManager } from '@/components/admin/FeatureAccessManager';
 import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
 import { SiteAnalyticsDashboard } from '@/components/admin/SiteAnalyticsDashboard';
+import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 
 interface ParlayData {
   id: string;
@@ -85,7 +86,8 @@ type AdminSection =
   | 'god-mode'
   | 'tracker'
   | 'research'
-  | 'site-analytics';
+  | 'site-analytics'
+  | 'scout-warroom';
 
 const sectionConfig = [
   {
@@ -164,6 +166,13 @@ const sectionConfig = [
     description: 'Visitor stats, page views, and conversions',
     icon: Eye,
     color: 'text-indigo-500'
+  },
+  {
+    id: 'scout-warroom' as AdminSection,
+    title: 'Scout War Room',
+    description: 'Live customer War Room dashboard view',
+    icon: Eye,
+    color: 'text-emerald-500'
   },
 ];
 
@@ -738,6 +747,9 @@ export default function Admin() {
 
       case 'site-analytics':
         return <SiteAnalyticsDashboard />;
+
+      case 'scout-warroom':
+        return <AdminWarRoomView />;
 
       default:
         return null;
