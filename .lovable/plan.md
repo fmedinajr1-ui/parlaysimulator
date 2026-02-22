@@ -1,58 +1,77 @@
 
 
-## Admin War Room Page
+## Wire Live Pace, Real-Time Odds, and Web Worker Monte Carlo
 
-### Goal
-Add a new "Scout War Room" section to the Admin panel that renders the full customer Scout/War Room dashboard directly, so you can view it without navigating to `/scout` or needing a link.
+### What This Does
 
-### What Changes
+Three upgrades to the Prop Intelligence Engine:
 
-**1. Add "Scout War Room" to Admin section config**
+1. **Live Pace from ESPN** -- The `fetch-live-pbp` edge function already returns a `pace` value (estimated possessions per 48 min). Currently it sits unused. Wire it through `WarRoomLayout` into each prop card's `paceMult` calculation so the Pace Meter and projection formulas use real game data instead of the hardcoded `1.0`.
 
-In `src/pages/Admin.tsx`, add a new section entry to `sectionConfig` and the `AdminSection` type:
-- ID: `'scout-warroom'`
-- Title: "Scout War Room"  
-- Description: "Live customer War Room dashboard view"
-- Icon: `Eye` (already imported)
-- Color: `text-emerald-500`
+2. **Real-Time Odds for Edge Scores** -- `unified_props` already stores `over_price` and `under_price` (American odds). Build an odds lookup map in `WarRoomLayout` and pass it into the projection engine so every prop card displays a real Edge Score instead of `0`.
 
-**2. Add the section render case**
+3. **Web Worker for Monte Carlo** -- Move the 10,000-iteration MC simulation off the main thread into a dedicated Web Worker. On lower-end devices the current synchronous loop blocks the UI; the worker runs it in the background and posts results back.
 
-In the `renderSectionContent()` switch statement, add a `case 'scout-warroom'` that:
-- Imports and renders `CustomerScoutView` wrapped in `RiskModeProvider`
-- Uses the same game resolution logic from `Scout.tsx` (fetch `scout_active_game`, resolve ESPN ID, build `ScoutGameContext`)
-- Falls back to `demoGameContext` when no game is live
-- Includes the game strip so you can switch between games just like customers see it
+---
 
-**3. New wrapper component: `src/components/admin/AdminWarRoomView.tsx`**
+### Changes
 
-A self-contained component that:
-- Fetches `scout_active_game` from the database
-- Resolves the ESPN event ID via the `get-espn-event-id` edge function
-- Builds a `ScoutGameContext` and passes it to `CustomerScoutView`
-- Shows demo mode if no game is live
-- Wraps everything in `RiskModeProvider`
+**1. Wire Live Pace (`WarRoomLayout.tsx`)**
 
-This keeps the Admin page clean (just renders `<AdminWarRoomView />`) and encapsulates all the game resolution logic.
+The `CustomerLiveGamePanel` already polls `fetch-live-pbp` every 8 seconds and gets back `pace`. Currently that pace data stays inside the panel. Changes:
+
+- Extract the `useLivePBP` hook from `CustomerLiveGamePanel.tsx` into a shared file `src/hooks/useLivePBP.ts` so both the panel and `WarRoomLayout` can use it.
+- In `WarRoomLayout`, call `useLivePBP(espnEventId, gameStatus)` to get `pbpData.pace`.
+- Compute `paceMult = (pbpData?.pace ?? 100) / 100` (NBA average pace ~ 100 possessions/48min).
+- Pass `paceMult` into each `WarRoomPropData` entry instead of the hardcoded `1.0`.
+- The projection engine (`useLiveProjections.ts`) already uses `paceMult` in its blend formula -- this just feeds it real data.
+
+**2. Wire Odds for Edge Scores (`WarRoomLayout.tsx`)**
+
+- `useDeepSweetSpots` already fetches `over_price` and `under_price` from `unified_props` for every prop.
+- In `WarRoomLayout`, build an `oddsMap: Map<string, { oddsOver, oddsUnder }>` keyed by `playerName-propType` from `enrichedSpots`.
+- Compute `edgeScore` per prop card: `impliedProb = americanToImplied(overPrice)`, `edgeScore = (pOver - impliedProb) * 100`.
+- Since `pOver` defaults to `0.5` pre-game, use the sweet spot's own hit rate and edge data to produce a meaningful pre-game edge.
+- Pass `edgeScore`, `pOver`, `pUnder` into each `WarRoomPropData`.
+
+**3. Web Worker for Monte Carlo**
+
+New file: `src/workers/monteCarlo.worker.ts`
+- Self-contained worker that receives `{ projected, sigmaRem, line, currentValue, simCount }` via `postMessage`.
+- Runs the Box-Muller MC loop (same logic as `propMonteCarlo.ts`).
+- Posts back `{ pOver }`.
+
+New file: `src/hooks/useMonteCarloWorker.ts`
+- Creates the worker once via `useRef`.
+- Exposes `runSimulation(params): Promise<number>` that wraps the postMessage/onMessage round-trip.
+- Falls back to synchronous `runPropMonteCarlo` if `Worker` is not available.
+
+Update: `src/components/scout/warroom/WarRoomLayout.tsx`
+- When `useMonteCarloMode` is ON, use the worker hook to compute `pOver` for each prop asynchronously.
+- Store results in local state keyed by prop ID.
+- Merge worker results into `propCards` before render.
+
+---
 
 ### Technical Details
 
-**Files modified:**
-- `src/pages/Admin.tsx` -- add `'scout-warroom'` to `AdminSection` type, add config entry, add render case
-
 **Files created:**
-- `src/components/admin/AdminWarRoomView.tsx` -- standalone component that handles game fetching + renders `CustomerScoutView`
+- `src/hooks/useLivePBP.ts` -- extracted shared hook (move from `CustomerLiveGamePanel.tsx`)
+- `src/workers/monteCarlo.worker.ts` -- Web Worker for MC simulation
+- `src/hooks/useMonteCarloWorker.ts` -- React hook wrapping the worker
 
-**Imports needed in AdminWarRoomView:**
-- `CustomerScoutView` from `@/components/scout/CustomerScoutView`
-- `RiskModeProvider` from `@/contexts/RiskModeContext`
-- `demoGameContext` from `@/data/demoScoutData`
-- `supabase` from `@/integrations/supabase/client`
-- `useQuery` from `@tanstack/react-query`
-- `ScoutGameContext` type from `@/pages/Scout`
+**Files modified:**
+- `src/components/scout/CustomerLiveGamePanel.tsx` -- import `useLivePBP` from shared hook instead of inline
+- `src/components/scout/warroom/WarRoomLayout.tsx` -- wire pace, odds, and MC worker into prop cards
+- `src/hooks/useDeepSweetSpots.ts` -- ensure `over_price` and `under_price` are exposed on `DeepSweetSpot` (they're already fetched, just need to confirm they're passed through)
 
-**No database changes required.** The admin already has access to `scout_active_game` and all War Room data sources.
+**No database changes required.** All data sources (`fetch-live-pbp` pace, `unified_props` odds) already exist.
 
-### Result
-You'll see "Scout War Room" as a card in the Admin Panel overview. Clicking it loads the full customer War Room dashboard inline -- same prop cards, hedge alerts, game strip, and all intelligence engine features -- without leaving the admin interface.
+### Build Order
+
+1. Extract `useLivePBP` to shared hook
+2. Create `monteCarlo.worker.ts`
+3. Create `useMonteCarloWorker.ts`
+4. Update `WarRoomLayout.tsx` to wire pace + odds + MC worker
+5. Update `CustomerLiveGamePanel.tsx` to use shared hook
 
