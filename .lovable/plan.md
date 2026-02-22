@@ -1,73 +1,89 @@
 
 
-## Add Help Tooltips to Every War Room Metric
+## Upgrade Hedge Recommendations: Clearer Actions + Alt Line Suggestions
 
-### Overview
-Wrap each metric label and badge across all War Room components with the existing `Tooltip` component so users can tap/hover to see a plain-English explanation of what it means -- without leaving the page.
+### Problem 1: "EXIT" is confusing
+The Hedge Mode table shows "EXIT" as an action label but doesn't explain what to do. EXIT means the prop is going badly and you should **bet the opposite side** to lock in a smaller loss (or break even). The current label gives no direction.
 
-### Metrics to Annotate
+### Problem 2: Hedge alerts aren't helpful enough
+The slide-in alerts just say "BET OVER 17.5" with a Kelly %. They don't explain **why**, don't show alt lines from other books, and don't give you options.
 
-**WarRoomPropCard.tsx** (7 tooltips)
-- **Fatigue Ring** -- already has a tooltip (no change needed)
-- **Edge Score badge** (e.g., +3.2%) -- "Your estimated advantage over the book's implied odds. Positive = value bet."
-- **Regression badge** (snowflake/flame) -- "Probability this player reverts to their average. Cold = due for a dip, Hot = due to cool off."
-- **Hedge lightning bolt** -- "A hedge opportunity is available for this prop. Check the alerts panel."
-- **Win prob** -- "Model's estimated chance this pick wins based on live game flow and projections."
-- **Proj (projected final)** -- "AI projection of the player's final stat line based on current pace and game context."
-- **Pace %** -- "How fast this game is being played compared to league average. Positive = more possessions = more stats."
-- **AI confidence %** -- "Overall confidence score combining pace, matchup, fatigue, and regression factors."
-- **L10 hit rate** -- "How often this player has cleared this line in their last 10 games."
+### Changes
 
-**HedgeModeTable.tsx** (6 tooltips on column headers)
-- **Now** -- "Player's current stat total in this game."
-- **Need** -- "The line the player needs to hit for the bet to cash."
-- **Progress** -- "Visual tracker: how close the player is to clearing the line."
-- **Projected** -- "AI estimate of the player's final stat line."
-- **Gap** -- "Difference between projected final and the line. Positive = on track, negative = behind."
-- **Action** -- "Suggested action: LOCK (strong hold), HOLD (on pace), MONITOR (close), EXIT (consider hedging)."
-- **Survival %** -- "Estimated chance your entire parlay survives based on current progress across all legs."
+**File: `src/components/scout/warroom/HedgeModeTable.tsx`**
 
-**AdvancedMetricsPanel.tsx** (4 tooltips on metric labels)
-- **Monte Carlo Win %** -- "Win probability from 10,000 simulated game outcomes. More reliable than single-point estimates."
-- **Blowout Risk** -- "Chance the game becomes a blowout, which reduces playing time for starters and hurts props."
-- **Fatigue Impact** -- "Average fatigue across your prop players. Higher fatigue = lower efficiency and stat output."
-- **Regression Probability** -- "Average likelihood that players in your picks revert to their mean performance."
+1. Replace "EXIT" with "HEDGE" as the action label (red pill stays)
+2. Add a new column **"Hedge"** that only appears when a row's action is HEDGE -- shows a mini recommendation like "Bet UNDER 19.5" with the smartest book line
+3. Use `allBookLines` from the prop data to find the best alt line for the opposite side
+4. Update the tooltip for Action column to explain HEDGE instead of EXIT
 
-**HedgeSlideIn.tsx** (3 tooltips)
-- **Kelly %** -- "Kelly Criterion bet sizing: the mathematically optimal percentage of your bankroll to wager."
-- **Projection** -- "AI's projected final stat for this player based on current pace."
-- **Smart bookmaker tag** -- "The sportsbook offering the best line for this recommendation."
+**File: `src/components/scout/warroom/HedgeSlideIn.tsx`**
 
-### Technical Approach
+5. Add a new **"Alt Lines"** section inside each hedge alert card showing all available book lines so users can compare (e.g., "HR: 19.5 | FD: 17.5 | DK: 18.5")
+6. Add a **"Why"** explanation line that says something like "Projection (15.2) is 4.3 below the line (19.5)" so users understand the reasoning
+7. Show the **original bet side** vs the **hedge side** clearly (e.g., "Your bet: OVER 17.5 -- Hedge: UNDER 19.5 @ Hard Rock")
+8. Update the primary action button to say the specific hedge action (e.g., "Hedge UNDER 19.5")
 
-All tooltips use the existing `Tooltip`, `TooltipTrigger`, `TooltipContent`, and `TooltipProvider` from `@/components/ui/tooltip` (already used in `FatigueRing.tsx`).
+**File: `src/components/scout/warroom/WarRoomLayout.tsx`**
 
-Each metric label/badge gets wrapped like:
-```tsx
-<TooltipProvider>
-  <Tooltip>
-    <TooltipTrigger asChild>
-      <span className="...existing classes... cursor-help border-b border-dotted border-muted-foreground/30">
-        Pace:
-      </span>
-    </TooltipTrigger>
-    <TooltipContent side="top" className="max-w-[200px] text-xs">
-      How fast this game is being played vs league average.
-    </TooltipContent>
-  </Tooltip>
-</TooltipProvider>
+9. Pass `allBookLines` and the original pre-game `side` into the `HedgeOpportunity` object so the slide-in has everything it needs
+10. Add `originalSide` and `originalLine` fields to the opportunity
+11. Generate a plain-English `alertMessage` explaining the gap (e.g., "Proj 15.2 is 4.3 below line. Consider hedging UNDER.")
+
+**File: `src/components/scout/warroom/HedgeSlideIn.tsx` (interface)**
+
+12. Add to `HedgeOpportunity`: `originalSide`, `originalLine`, `allBookLines`
+
+### What This Fixes
+- **EXIT becomes HEDGE** with a clear instruction on what to bet
+- Each hedge alert shows **all available alt lines** across books so you can pick the best one
+- A **"Why"** line explains the math in plain English
+- The **original bet vs hedge** is shown side by side so you know exactly what you're protecting
+
+### Example Card (After)
+
+```
+HEDGE OPPORTUNITY
+LeBron James
+
+Your bet: OVER 17.5
+Hedge: BET UNDER 19.5
+
+Why: Projection (15.2) is 2.3 below line. Hedging locks in protection.
+
+Alt Lines:
+  Hard Rock: 19.5  |  FanDuel: 17.5  |  DraftKings: 18.5
+  Best for UNDER: Hard Rock 19.5 (most room)
+
+via Hard Rock
+Kelly: 3.2%
+
+[Hedge UNDER 19.5]  [Dismiss]
 ```
 
-A subtle `border-dotted` underline on labels signals they're tappable/hoverable for help.
+### Technical Details
 
-### Files Modified
+**HedgeOpportunity interface additions:**
+```typescript
+originalSide: string;    // The side from your original bet
+originalLine: number;    // The pre-game line
+allBookLines?: { line: number; bookmaker: string }[];
+```
 
-| File | Changes |
-|------|---------|
-| `WarRoomPropCard.tsx` | Wrap 7 metric elements with Tooltip |
-| `HedgeModeTable.tsx` | Wrap 7 column headers + survival badge with Tooltip |
-| `AdvancedMetricsPanel.tsx` | Wrap 4 metric labels with Tooltip |
-| `HedgeSlideIn.tsx` | Wrap 3 data labels with Tooltip |
+**HedgeModeTable action logic update (line 123):**
+```typescript
+// Old: edge > -2 ? 'MONITOR' : 'EXIT'
+// New: edge > -2 ? 'MONITOR' : 'HEDGE'
+```
 
-**4 files modified. No database changes. No new dependencies.**
+**Alert message generation (WarRoomLayout.tsx):**
+```typescript
+const gap = Math.abs(p.projectedFinal - smartLine).toFixed(1);
+const direction = side === 'OVER' ? 'above' : 'below';
+const alertMessage = `Proj ${p.projectedFinal.toFixed(1)} is ${gap} ${direction} line. ${
+  side !== p.side ? 'Hedging locks in protection.' : ''
+}`;
+```
+
+**3 files modified. No database changes.**
 
