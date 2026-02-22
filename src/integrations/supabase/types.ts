@@ -12154,6 +12154,20 @@ export type Database = {
           total_picks: number
         }[]
       }
+      get_hedge_side_performance: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_gap_to_line: number
+          avg_projected_final: number
+          hedge_status: string
+          hit_rate: number
+          hits: number
+          misses: number
+          quarter: number
+          side: string
+          total_picks: number
+        }[]
+      }
       get_hedge_status_accuracy: {
         Args: { days_back?: number }
         Returns: {
