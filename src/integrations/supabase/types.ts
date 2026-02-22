@@ -9188,6 +9188,54 @@ export type Database = {
         }
         Relationships: []
       }
+      recurring_winners: {
+        Row: {
+          analysis_date: string
+          composite_score: number
+          created_at: string
+          id: string
+          player_name: string
+          prop_type: string
+          recommended_side: string
+          streak_days: number
+          today_l10_avg: number | null
+          today_l10_hit_rate: number | null
+          today_line: number | null
+          yesterday_actual: number | null
+          yesterday_line: number | null
+        }
+        Insert: {
+          analysis_date: string
+          composite_score?: number
+          created_at?: string
+          id?: string
+          player_name: string
+          prop_type: string
+          recommended_side: string
+          streak_days?: number
+          today_l10_avg?: number | null
+          today_l10_hit_rate?: number | null
+          today_line?: number | null
+          yesterday_actual?: number | null
+          yesterday_line?: number | null
+        }
+        Update: {
+          analysis_date?: string
+          composite_score?: number
+          created_at?: string
+          id?: string
+          player_name?: string
+          prop_type?: string
+          recommended_side?: string
+          streak_days?: number
+          today_l10_avg?: number | null
+          today_l10_hit_rate?: number | null
+          today_line?: number | null
+          yesterday_actual?: number | null
+          yesterday_line?: number | null
+        }
+        Relationships: []
+      }
       scan_usage: {
         Row: {
           created_at: string | null

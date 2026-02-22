@@ -134,6 +134,9 @@ serve(async (req) => {
       // Double-confirmed scanner: cross-references sweet spots + mispriced lines
       await runFunction('double-confirmed-scanner', {});
       
+      // Recurring winners: flags players who hit yesterday and appear again today with 80%+ L10
+      await runFunction('recurring-winners-detector', {});
+      
       // MLB Pitcher K analysis (Feb-October = spring training + season)
       const currentMonth = new Date().getMonth() + 1; // 1-12
       if (currentMonth >= 2 && currentMonth <= 10) {
