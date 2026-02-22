@@ -207,28 +207,33 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     return propCards
       .filter((p) => p.hasHedgeOpportunity)
       .map((p) => {
-        // Determine side from projection vs live line
-        const side = p.projectedFinal >= p.liveBookLine ? 'OVER' : 'UNDER';
+        // The hedge side is OPPOSITE to the original bet
+        const originalSide = (p.side || 'OVER').toUpperCase();
+        const hedgeSide = originalSide === 'OVER' ? 'UNDER' : 'OVER';
 
-        // Smart line picker: find the best line across all books for the recommended side
+        // Smart line picker: find the best line across all books for the HEDGE side
         let smartLine = p.liveBookLine;
         let smartBookmaker: string | undefined;
 
         if (p.allBookLines && p.allBookLines.length > 0) {
-          if (side === 'OVER') {
-            // For OVER: pick the LOWEST line (easiest to clear)
-            const best = p.allBookLines.reduce((a, b) => a.line < b.line ? a : b);
+          if (hedgeSide === 'UNDER') {
+            // For hedging UNDER: pick the HIGHEST line (most room underneath)
+            const best = p.allBookLines.reduce((a: any, b: any) => a.line > b.line ? a : b);
             smartLine = best.line;
             smartBookmaker = best.bookmaker;
           } else {
-            // For UNDER: pick the HIGHEST line (most room underneath)
-            const best = p.allBookLines.reduce((a, b) => a.line > b.line ? a : b);
+            // For hedging OVER: pick the LOWEST line (easiest to clear)
+            const best = p.allBookLines.reduce((a: any, b: any) => a.line < b.line ? a : b);
             smartLine = best.line;
             smartBookmaker = best.bookmaker;
           }
         }
 
-        const suggestedAction = `BET ${side} ${smartLine}`;
+        const gap = Math.abs(p.projectedFinal - smartLine).toFixed(1);
+        const direction = p.projectedFinal >= smartLine ? 'above' : 'below';
+        const alertMessage = `Proj ${p.projectedFinal.toFixed(1)} is ${gap} ${direction} line. Consider hedging ${hedgeSide}.`;
+
+        const suggestedAction = `BET ${hedgeSide} ${smartLine}`;
         return {
           id: p.id,
           playerName: p.playerName,
@@ -238,9 +243,13 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           edge: p.projectedFinal - smartLine,
           kellySuggestion: Math.min(15, Math.max(1, Math.abs(p.projectedFinal - smartLine) / smartLine * 50)),
           evPercent: ((p.projectedFinal - smartLine) / smartLine) * 100,
-          side,
+          side: hedgeSide,
           suggestedAction,
           smartBookmaker,
+          alertMessage,
+          originalSide,
+          originalLine: p.line,
+          allBookLines: p.allBookLines?.map((bl: any) => ({ line: bl.line, bookmaker: bl.bookmaker })),
         };
       });
   }, [propCards]);

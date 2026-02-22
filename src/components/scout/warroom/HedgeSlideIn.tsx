@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, X, ArrowLeftRight, AlertTriangle } from 'lucide-react';
+import { Zap, X, ArrowLeftRight, AlertTriangle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRiskMode } from '@/contexts/RiskModeContext';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 
 export type AlertType = 'hedge' | 'edge_flip' | 'role_change' | 'spread_shift';
+
+export interface HedgeBookLine {
+  line: number;
+  bookmaker: string;
+}
 
 export interface HedgeOpportunity {
   id: string;
@@ -22,6 +27,9 @@ export interface HedgeOpportunity {
   alertType?: AlertType;
   alertMessage?: string;
   smartBookmaker?: string;
+  originalSide?: string;
+  originalLine?: number;
+  allBookLines?: HedgeBookLine[];
 }
 
 const ALERT_CONFIG: Record<AlertType, { label: string; color: string; Icon: React.ElementType }> = {
@@ -42,6 +50,11 @@ function HelpTip({ children, tip, side = 'top' }: { children: React.ReactNode; t
   );
 }
 
+const BOOK_SHORT: Record<string, string> = {
+  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
+  betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
+};
+
 interface HedgeSlideInProps {
   opportunities: HedgeOpportunity[];
 }
@@ -60,6 +73,18 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
           const alertType = opp.alertType ?? 'hedge';
           const config = ALERT_CONFIG[alertType];
           const AlertIcon = config.Icon;
+
+          // Derive hedge vs original sides
+          const origSide = opp.originalSide || (opp.side === 'OVER' ? 'UNDER' : 'OVER');
+          const origLine = opp.originalLine ?? opp.liveLine;
+          const hedgeSide = opp.side;
+
+          // "Why" explanation
+          const gap = Math.abs(opp.liveProjection - opp.liveLine).toFixed(1);
+          const direction = opp.liveProjection >= opp.liveLine ? 'above' : 'below';
+          const whyText = `Proj ${opp.liveProjection.toFixed(1)} is ${gap} ${direction} line (${opp.liveLine}). ${
+            alertType === 'hedge' ? 'Hedging locks in protection.' : ''
+          }`;
 
           return (
             <motion.div
@@ -91,29 +116,80 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                 </button>
               </div>
 
-              <div className="space-y-1 text-xs">
-                <p className="font-semibold text-foreground">{opp.playerName}</p>
-                <p className={cn(
-                  'text-sm font-black tracking-wide',
-                  opp.side === 'OVER'
-                    ? 'text-[hsl(var(--warroom-green))]'
-                    : 'text-[hsl(var(--warroom-danger))]'
-                )}>
-                  {opp.suggestedAction}
-                </p>
-                {opp.alertMessage && (
-                  <p className="text-muted-foreground text-[10px]">{opp.alertMessage}</p>
+              <div className="space-y-1.5 text-xs">
+                <p className="font-semibold text-foreground">{opp.playerName} — {opp.propType}</p>
+
+                {/* Original bet vs hedge side */}
+                {alertType === 'hedge' && (
+                  <div className="flex items-center gap-2 text-[10px]">
+                    <span className="text-muted-foreground">Your bet:</span>
+                    <span className="font-bold text-foreground">{origSide} {origLine}</span>
+                    <span className="text-muted-foreground">→</span>
+                    <span className={cn(
+                      'font-black',
+                      hedgeSide === 'OVER'
+                        ? 'text-[hsl(var(--warroom-green))]'
+                        : 'text-[hsl(var(--warroom-danger))]'
+                    )}>
+                      Hedge: {hedgeSide} {opp.liveLine}
+                    </span>
+                  </div>
                 )}
+
+                {/* Non-hedge alert: just show the action */}
+                {alertType !== 'hedge' && (
+                  <p className={cn(
+                    'text-sm font-black tracking-wide',
+                    opp.side === 'OVER'
+                      ? 'text-[hsl(var(--warroom-green))]'
+                      : 'text-[hsl(var(--warroom-danger))]'
+                  )}>
+                    {opp.suggestedAction}
+                  </p>
+                )}
+
+                {/* Why explanation */}
+                <div className="flex items-start gap-1 text-[10px] text-muted-foreground bg-[hsl(var(--warroom-card-border)/0.2)] rounded px-1.5 py-1">
+                  <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                  <span>{opp.alertMessage || whyText}</span>
+                </div>
+
+                {/* Alt Lines across books */}
+                {opp.allBookLines && opp.allBookLines.length > 1 && (
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] text-muted-foreground font-medium">Alt Lines:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {opp.allBookLines.map((bl, idx) => {
+                        const short = BOOK_SHORT[bl.bookmaker] || bl.bookmaker;
+                        const isBest = bl.line === opp.liveLine;
+                        return (
+                          <span
+                            key={idx}
+                            className={cn(
+                              'text-[10px] px-1.5 py-0.5 rounded border',
+                              isBest
+                                ? 'border-[hsl(var(--warroom-gold)/0.5)] bg-[hsl(var(--warroom-gold)/0.1)] text-[hsl(var(--warroom-gold))] font-bold'
+                                : 'border-[hsl(var(--warroom-card-border))] text-muted-foreground'
+                            )}
+                          >
+                            {short}: {bl.line}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {opp.smartBookmaker && (
                   <HelpTip tip="The sportsbook offering the best line for this recommendation." side="left">
                     <p className="text-[10px] text-[hsl(var(--warroom-ice))] font-medium cursor-help border-b border-dotted border-muted-foreground/30 w-fit">
-                      via {opp.smartBookmaker}
+                      Best via {BOOK_SHORT[opp.smartBookmaker] || opp.smartBookmaker}
                     </p>
                   </HelpTip>
                 )}
+
+                {/* Metrics grid */}
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-muted-foreground">
-                  <span>Prop:</span>
-                  <span className="text-foreground">{opp.propType}</span>
                   <HelpTip tip="AI's projected final stat for this player based on current pace." side="left">
                     <span className="cursor-help border-b border-dotted border-muted-foreground/30">Projection:</span>
                   </HelpTip>
@@ -138,7 +214,7 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   )}
                   onClick={() => setDismissed((s) => new Set(s).add(opp.id))}
                 >
-                  {alertType === 'hedge' ? `Take ${opp.side} ${opp.liveLine}` : 'Acknowledge'}
+                  {alertType === 'hedge' ? `Hedge ${hedgeSide} ${opp.liveLine}` : 'Acknowledge'}
                 </Button>
                 <Button
                   size="sm"
