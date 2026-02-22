@@ -1,35 +1,36 @@
 
 
-## Simplify War Room Prop Cards
+## Add Clear Action Instructions to Hedge Alerts
 
 ### Problem
-Each prop card currently shows **6 sections** of data with redundant information:
-- Pace appears TWICE (a full meter bar AND a percentage in the bottom row)
-- P(O) and P(U) always add up to ~100%, so showing both is unnecessary
-- Foul Risk showing "LOW" on every card is just noise
-- Minutes Stability bar is secondary information that clutters the card
-- The Fatigue Ring, Pace meter, and Min Stability are all variations of "is this player getting enough playing time"
+The Hedge Opportunity pop-ups show raw numbers (Projection: 18.0, Live Line: 17.5, Edge: +0.5) but never say **what to do**. You have to do the math yourself to figure out "projection is above the line, so... bet OVER?" That defeats the purpose.
 
-### What Gets Removed
-1. **Pace meter bar** -- redundant with the Pace % in the bottom row
-2. **Minutes Stability bar** -- secondary metric, not actionable
-3. **Foul Risk indicator** -- only useful when medium/high, "LOW" adds nothing
-4. **Duplicate P(O)/P(U)** -- show only the one matching the pick side (OVER shows P(O), UNDER shows P(U))
+### Solution
+Add a bold, color-coded **action instruction** to each alert card that says exactly what to do, like:
 
-### What Stays (simplified)
-1. **Header**: Player name, prop type, side + line, edge badge, regression badge, hedge bolt
-2. **Win probability**: Single number -- "72% chance" instead of "P(O): 72.0% P(U): 28.0%"
-3. **Progress bar**: Current / Line + Projected final
-4. **Bottom row**: Pace % | AI confidence | L10 hit rate
+- **"BET OVER 17.5"** (green) when projection is above the line
+- **"BET UNDER 17.5"** (red) when projection is below the line
+
+Also replace the vague "Hedge Now" button text with the actual action (e.g., "Take OVER 17.5").
+
+### What Changes
+
+**File: `src/components/scout/warroom/WarRoomLayout.tsx`**
+- Pass the prop's `side` through to the `HedgeOpportunity` object so the alert knows the original bet direction
+- Compute a `suggestedAction` string (e.g., "BET OVER 17.5") based on projection vs line
+
+**File: `src/components/scout/warroom/HedgeSlideIn.tsx`**
+- Add `side` and `suggestedAction` fields to the `HedgeOpportunity` interface
+- Display the action instruction prominently at the top of each alert card, below the player name, in a large bold colored line (green for OVER, red for UNDER)
+- Change the "Hedge Now" button label to show the action (e.g., "Take OVER 17.5")
+- Remove "Edge" row (redundant with the action instruction) to keep cards clean
 
 ### Result
-Cards go from 6 sections down to 4. Each card is roughly 40% shorter, letting you see more props on screen at once without scrolling.
+Instead of seeing just numbers, each alert will clearly say:
 
-### Technical Details
+**Chet Holmgren**
+**BET OVER 17.5** (in bold green)
+Projection: 18.0 | Kelly: 0.71%
+[Take OVER 17.5] [Dismiss]
 
-**1 file modified: `src/components/scout/warroom/WarRoomPropCard.tsx`**
-
-- Remove the entire Pace Meter section (lines 186-214)
-- Remove the entire Minutes Stability section (lines 216-240)
-- Replace the P(O)/P(U)/Foul Risk row with a single "Win prob" line showing only the relevant probability for the pick side
-- Keep header, progress bar, and bottom metrics row unchanged
+No more guessing what the numbers mean.
