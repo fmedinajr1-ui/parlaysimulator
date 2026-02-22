@@ -20,6 +20,7 @@ export interface HedgeOpportunity {
   suggestedAction: string;
   alertType?: AlertType;
   alertMessage?: string;
+  smartBookmaker?: string;
 }
 
 const ALERT_CONFIG: Record<AlertType, { label: string; color: string; Icon: React.ElementType }> = {
@@ -90,6 +91,11 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                 </p>
                 {opp.alertMessage && (
                   <p className="text-muted-foreground text-[10px]">{opp.alertMessage}</p>
+                )}
+                {opp.smartBookmaker && (
+                  <p className="text-[10px] text-[hsl(var(--warroom-ice))] font-medium">
+                    via {opp.smartBookmaker}
+                  </p>
                 )}
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-muted-foreground">
                   <span>Prop:</span>

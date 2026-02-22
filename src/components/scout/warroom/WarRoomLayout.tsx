@@ -147,6 +147,10 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           ? (pOver - impliedOver) * 100
           : (pUnder - impliedUnder) * 100;
 
+        // Get allBookLines from live data if available
+        const spotLiveData = s.liveData as any;
+        const allBookLines = spotLiveData?.allBookLines ?? undefined;
+
         return {
           id: s.id,
           playerName: s.playerName,
@@ -162,6 +166,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           hasHedgeOpportunity: s.liveData?.hedgeStatus === 'alert' || s.liveData?.hedgeStatus === 'urgent' || false,
           hitRateL10: s.hitRateL10 ?? 0,
           liveBookLine: s.liveData?.liveBookLine ?? s.line,
+          allBookLines,
           pOver,
           pUnder,
           edgeScore,
@@ -202,20 +207,40 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     return propCards
       .filter((p) => p.hasHedgeOpportunity)
       .map((p) => {
-        const liveLine = p.liveBookLine;
-        const side = p.projectedFinal >= liveLine ? 'OVER' : 'UNDER';
-        const suggestedAction = `BET ${side} ${liveLine}`;
+        // Determine side from projection vs live line
+        const side = p.projectedFinal >= p.liveBookLine ? 'OVER' : 'UNDER';
+
+        // Smart line picker: find the best line across all books for the recommended side
+        let smartLine = p.liveBookLine;
+        let smartBookmaker: string | undefined;
+
+        if (p.allBookLines && p.allBookLines.length > 0) {
+          if (side === 'OVER') {
+            // For OVER: pick the LOWEST line (easiest to clear)
+            const best = p.allBookLines.reduce((a, b) => a.line < b.line ? a : b);
+            smartLine = best.line;
+            smartBookmaker = best.bookmaker;
+          } else {
+            // For UNDER: pick the HIGHEST line (most room underneath)
+            const best = p.allBookLines.reduce((a, b) => a.line > b.line ? a : b);
+            smartLine = best.line;
+            smartBookmaker = best.bookmaker;
+          }
+        }
+
+        const suggestedAction = `BET ${side} ${smartLine}`;
         return {
           id: p.id,
           playerName: p.playerName,
           propType: p.propType,
           liveProjection: p.projectedFinal,
-          liveLine,
-          edge: p.projectedFinal - liveLine,
-          kellySuggestion: Math.min(15, Math.max(1, Math.abs(p.projectedFinal - liveLine) / liveLine * 50)),
-          evPercent: ((p.projectedFinal - liveLine) / liveLine) * 100,
+          liveLine: smartLine,
+          edge: p.projectedFinal - smartLine,
+          kellySuggestion: Math.min(15, Math.max(1, Math.abs(p.projectedFinal - smartLine) / smartLine * 50)),
+          evPercent: ((p.projectedFinal - smartLine) / smartLine) * 100,
           side,
           suggestedAction,
+          smartBookmaker,
         };
       });
   }, [propCards]);
