@@ -67,21 +67,17 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minConfidence: 0.45,
     profiles: [
       // Multi-sport exploration — capped at 4 legs max
-      { legs: 3, strategy: 'explore_safe', sports: ['basketball_nba'] },
-      { legs: 3, strategy: 'explore_safe', sports: ['basketball_nba'] },
-      { legs: 3, strategy: 'explore_safe', sports: ['icehockey_nhl'] },
-      { legs: 3, strategy: 'explore_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
-      { legs: 3, strategy: 'explore_mixed', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_ncaab'] },
-      { legs: 4, strategy: 'explore_balanced', sports: ['basketball_nba'] },
-      { legs: 4, strategy: 'explore_balanced', sports: ['basketball_nba'] },
-      { legs: 4, strategy: 'explore_balanced', sports: ['icehockey_nhl'] },
-      { legs: 4, strategy: 'explore_mixed', sports: ['all'] },
-      { legs: 4, strategy: 'explore_mixed', sports: ['all'] },
-      { legs: 4, strategy: 'explore_aggressive', sports: ['basketball_nba'] },
-      { legs: 4, strategy: 'explore_aggressive', sports: ['all'] },
-      { legs: 4, strategy: 'explore_aggressive', sports: ['all'] },
-      { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
-      { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
+      // VERIFIED-SOURCE EXPLORATION: mispriced_edge + double_confirmed_conviction (replaces generic explore_*)
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       // NCAAB exploration — UNDERS ONLY (70.6% hit rate confirmed, overs/spreads blocked)
       { legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate', maxCategoryUsage: 3 },
       { legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite', maxCategoryUsage: 3 },
@@ -171,9 +167,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_standard', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55, useAltLines: true },
+      // REPLACED: 3 validated_standard with double_confirmed_conviction for verified-source coverage
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
@@ -245,7 +242,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 5, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
+      // REPLACED: 5-leg mispriced (structurally weak) with 2 new 3-leg mispriced profiles
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
       // MASTER PARLAY: DISABLED (0-15 record, -$650 P/L, structurally doomed at 6-legs)
       // { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
       // REPLACEMENT: Additional double_confirmed_conviction profiles
@@ -4538,6 +4537,11 @@ async function generateTierParlays(
       candidatePicks = pool.sweetSpots.filter(p => {
         // Block picks from paused sports
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        // SOURCE VERIFICATION GATE: execution/validation require verified sources
+        if (tier !== 'exploration') {
+          const source = (p as any).line_source || (p as any).verified_source || 'projected';
+          if (source === 'projected' || source === 'synthetic_dry_run') return false;
+        }
         if (sportFilter.includes('all')) return true;
         return sportFilter.includes(p.sport || 'basketball_nba');
       });
