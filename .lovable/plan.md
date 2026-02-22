@@ -1,34 +1,35 @@
 
 
-## Add War Room Tab to the Dashboard
+## Show Game Selector First in War Room Tab
+
+### Problem
+When clicking "War Room", it immediately loads into a game (or demo mode) without letting you choose which game to view first. The game strip is buried below the live panel.
+
+### Solution
+Modify `AdminWarRoomView` to start with NO game selected. Instead of auto-resolving the active game, show a **game picker screen** first. Once you click a game, the full War Room loads for that game.
 
 ### What Changes
 
-The BotDashboard (`/dashboard`) currently has 5 tabs: Overview, Parlays, Analytics, Research, Simulation. This adds a 6th **"War Room"** tab that renders the full Scout War Room inline -- same prop cards, hedge alerts, game strip, and intelligence engine -- without leaving the dashboard.
+**File modified: `src/components/admin/AdminWarRoomView.tsx`**
 
-### Implementation
+1. Remove the `useEffect` that auto-resolves the active game on mount (lines 48-58)
+2. When `gameContext` is `null` (no game selected yet), render a **game selection screen** instead of falling back to `demoGameContext`:
+   - Show a title like "Select a Game"
+   - Render the `WarRoomGameStrip` component (the horizontal pill selector) prominently
+   - The strip already derives its game list from `enrichedSpots` (unified_props data), so all available games with props will appear
+3. Once the user clicks a game pill, `handleGameChange` fires, sets `gameContext`, and the full War Room renders as normal
 
-**File modified: `src/pages/BotDashboard.tsx`**
+### Technical Detail
 
-1. Import `AdminWarRoomView` (the component we already built for the Admin panel -- it handles fetching `scout_active_game`, resolving ESPN IDs, and rendering `CustomerScoutView` inside `RiskModeProvider`).
+The tricky part: `WarRoomGameStrip` gets its `propsGames` list from `WarRoomLayout`, which only renders after a game is selected. To solve this, we need to either:
+- **Option A**: Pull the props-fetching logic (`useDeepSweetSpots`) up into `AdminWarRoomView` and derive the games list there for the picker screen
+- **Option B**: Create a lightweight `GamePickerScreen` component that fetches `useDeepSweetSpots` just to build the game list
 
-2. Add a new tab trigger to the `TabsList`:
-   - Label: "War Room"
-   - Icon: `Eye` (consistent with Scout branding)
-   - Placed after the existing 5 tabs
+We'll go with **Option A** -- fetch sweet spots in `AdminWarRoomView`, derive available games, and pass them to a standalone game strip on the picker screen. Once a game is picked, render `CustomerScoutView` as before.
 
-3. Add a new `TabsContent` for `value="warroom"` that renders `<AdminWarRoomView />`.
-
-4. Update the `TabsList` grid from `grid-cols-5` (implicit) to accommodate 6 tabs -- or switch to a scrollable flex layout since 6 tabs is tight on mobile.
-
-### Technical Details
-
-- **1 file modified**: `src/pages/BotDashboard.tsx`
-- **0 files created**: Reuses `AdminWarRoomView` from `src/components/admin/AdminWarRoomView.tsx`
-- No database changes
-- The `AdminWarRoomView` already handles all game fetching, ESPN ID resolution, demo mode fallback, and game switching via the game strip
-
-### Result
-
-Opening `/dashboard` and clicking the "War Room" tab loads the full live War Room dashboard inline with all prop intelligence cards, pace meters, edge scores, hedge alerts, and Monte Carlo toggle.
-
+Changes to `AdminWarRoomView`:
+- Import `useDeepSweetSpots` and `WarRoomGameStrip`
+- Build `availableGames` list from sweet spot data (same logic as `WarRoomLayout`)
+- When no game selected: render game strip + a prompt message
+- When game selected: render `CustomerScoutView` as today
+- Add a "back to game select" option so you can switch without reloading the tab
