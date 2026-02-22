@@ -51,6 +51,7 @@ interface ParlayProfile {
   boostLegs?: number;
   allowTeamLegs?: number;
   maxMlLegs?: number;
+  preferCategories?: string[];
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
@@ -70,14 +71,14 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // VERIFIED-SOURCE EXPLORATION: mispriced_edge + double_confirmed_conviction (replaces generic explore_*)
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       // NCAAB exploration — UNDERS ONLY (70.6% hit rate confirmed, overs/spreads blocked)
       { legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate', maxCategoryUsage: 3 },
       { legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite', maxCategoryUsage: 3 },
@@ -136,12 +137,20 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 4, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'] },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
       // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'] },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
+      // WINNING ARCHETYPE: 3PT + SCORER combo (proven Feb 20-21 winners)
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      // WINNING ARCHETYPE: REBOUNDER + ASSISTS combo
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
     ],
   },
@@ -170,7 +179,13 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // REPLACED: 3 validated_standard with double_confirmed_conviction for verified-source coverage
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 60, sortBy: 'hit_rate' },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 60, sortBy: 'hit_rate' },
+      // WINNING ARCHETYPE VALIDATION: 3PT + SCORER
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      // WINNING ARCHETYPE VALIDATION: REBOUNDER + ASSISTS
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
@@ -178,7 +193,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Mispriced edge — validated tier
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55 },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52 },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55 },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       // Double-confirmed — validated tier
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65 },
@@ -241,10 +256,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Mispriced edge execution — highest conviction plays
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
+      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       // REPLACED: 5-leg mispriced (structurally weak) with 2 new 3-leg mispriced profiles
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
+      // WINNING ARCHETYPE EXECUTION: 3PT + SCORER (tightest filters)
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      // WINNING ARCHETYPE EXECUTION: REBOUNDER + ASSISTS (tightest filters)
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       // MASTER PARLAY: DISABLED (0-15 record, -$650 P/L, structurally doomed at 6-legs)
       // { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
       // REPLACEMENT: Additional double_confirmed_conviction profiles
@@ -261,7 +282,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 };
 
 // ============= BLOCKED SPORTS (paused until more data collected) =============
-const BLOCKED_SPORTS = ['baseball_ncaa', 'golf_pga'];
+const BLOCKED_SPORTS = ['baseball_ncaa', 'baseball_mlb', 'golf_pga'];
 
 // ============= BLOCKED CATEGORIES (catastrophic hit rates) =============
 const BLOCKED_CATEGORIES = new Set([
@@ -4138,16 +4159,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   // === CROSS-ENGINE CONVICTION BOOST ===
   // Fetch risk engine picks for today and build a lookup for side agreement
-  const [{ data: riskEnginePicks }, { data: mlbEnginePicks }] = await Promise.all([
-    supabase
-      .from('nba_risk_engine_picks')
-      .select('player_name, prop_type, side, confidence_score')
-      .eq('game_date', targetDate),
-    supabase
-      .from('mlb_engine_picks')
-      .select('player_name, prop_type, side, confidence_score')
-      .eq('game_date', targetDate),
-  ]);
+  const { data: riskEnginePicks } = await supabase
+    .from('nba_risk_engine_picks')
+    .select('player_name, prop_type, side, confidence_score')
+    .eq('game_date', targetDate);
 
   const riskEngineMap = new Map<string, { side: string; confidence: number }>();
   for (const rp of (riskEnginePicks || [])) {
@@ -4156,15 +4171,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     riskEngineMap.set(key, { side: rp.side, confidence: rp.confidence_score });
   }
   console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk engine picks loaded`);
-
-  // MLB engine picks cross-reference map
-  const mlbEngineMap = new Map<string, { side: string; confidence: number }>();
-  for (const mp of (mlbEnginePicks || [])) {
-    const normProp = (mp.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
-    const key = `${(mp.player_name || '').toLowerCase().trim()}|${normProp}`;
-    mlbEngineMap.set(key, { side: mp.side, confidence: mp.confidence_score });
-  }
-  console.log(`[Bot] MLB cross-engine: ${mlbEngineMap.size} MLB engine picks loaded`);
+  // MLB engine cross-reference PAUSED — MLB blocked from generation until more data collected
 
   // === STEP 2: ENRICH MISPRICED LINES + CROSS-REFERENCE WITH SWEET SPOTS ===
   let doubleConfirmedCount = 0;
@@ -4181,10 +4188,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const riskConfirmed = riskMatch && riskMatch.side.toLowerCase() === side;
     const convictionBoost = riskConfirmed ? 12 : (riskMatch ? 3 : 0);
 
-    // MLB engine cross-reference boost
-    const mlbMatch = mlbEngineMap.get(riskKey);
-    const mlbConfirmed = mlbMatch && mlbMatch.side.toLowerCase() === side;
-    const mlbBoost = mlbConfirmed ? Math.max(0, (mlbMatch.confidence - 40) * 0.5) : 0;
+    // MLB engine cross-reference boost — PAUSED (MLB blocked from generation)
+    const mlbBoost = 0;
     
     // === DOUBLE-CONFIRMED CROSS-REFERENCE ===
     // Normalize mispriced prop_type to sweet spot prop_type format
@@ -4547,25 +4552,47 @@ async function generateTierParlays(
       });
     }
 
+    // === WINNING ARCHETYPE CATEGORIES ===
+    const WINNING_ARCHETYPE_CATEGORIES = new Set(['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST']);
+    const isArchetypeProfile = profile.strategy.startsWith('winning_archetype');
+    const profilePreferCategories = profile.preferCategories || [];
+
     // === ACCURACY-FIRST SORTING (all tiers) ===
-    // Sort by: category weight (sport-aware) → calibrated hit rate → composite score
+    // Sort by: archetype bonus → category weight (sport-aware) → calibrated hit rate → composite score
     candidatePicks = [...candidatePicks].sort((a, b) => {
+      // Winning archetype bonus: +15 composite for matching categories
+      const aArchetypeBonus = WINNING_ARCHETYPE_CATEGORIES.has(a.category) ? 15 : 0;
+      const bArchetypeBonus = WINNING_ARCHETYPE_CATEGORIES.has(b.category) ? 15 : 0;
+
+      // Profile-specific category preference: if profile has preferCategories, prioritize those
+      const aPreferred = profilePreferCategories.length > 0 && profilePreferCategories.includes(a.category) ? 20 : 0;
+      const bPreferred = profilePreferCategories.length > 0 && profilePreferCategories.includes(b.category) ? 20 : 0;
+
       const aSport = a.sport || 'basketball_nba';
       const bSport = b.sport || 'basketball_nba';
       const aWeight = weightMap.get(`${a.category}__${a.recommended_side}__${aSport}`) ?? weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
       const bWeight = weightMap.get(`${b.category}__${b.recommended_side}__${bSport}`) ?? weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
       
-      // Primary: category weight (blocked=0 sink to bottom, boosted=1.2 rise to top)
+      // Primary: profile preference + archetype bonus
+      const aTotalBonus = aPreferred + aArchetypeBonus;
+      const bTotalBonus = bPreferred + bArchetypeBonus;
+      if (bTotalBonus !== aTotalBonus) return bTotalBonus - aTotalBonus;
+
+      // Secondary: category weight (blocked=0 sink to bottom, boosted=1.2 rise to top)
       if (bWeight !== aWeight) return bWeight - aWeight;
       
-      // Secondary: L10 hit rate (player props) or confidence score (team props)
+      // Tertiary: L10 hit rate (player props) or confidence score (team props)
       const aHitRate = 'l10_hit_rate' in a ? (a as EnrichedPick).l10_hit_rate : (a.confidence_score || 0);
       const bHitRate = 'l10_hit_rate' in b ? (b as EnrichedPick).l10_hit_rate : (b.confidence_score || 0);
       if (bHitRate !== aHitRate) return bHitRate - aHitRate;
       
-      // Tertiary: composite score
+      // Quaternary: composite score
       return (b.compositeScore || 0) - (a.compositeScore || 0);
     });
+    
+    if (isArchetypeProfile) {
+      console.log(`[Bot] ${tier}/winning_archetype: ${profile.strategy} preferring [${profilePreferCategories.join(', ')}] from ${candidatePicks.length} candidates`);
+    }
 
     // Build parlay from candidates
     // Anti-stacking rule from pattern replay: cap same-side totals
