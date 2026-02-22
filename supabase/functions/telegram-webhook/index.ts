@@ -14,6 +14,124 @@ const supabase = createClient(
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+// ==================== AUTHORIZATION HELPERS ====================
+
+async function isAuthorized(chatId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("bot_authorized_users")
+    .select("is_active")
+    .eq("chat_id", chatId)
+    .eq("is_active", true)
+    .maybeSingle();
+  return !!data;
+}
+
+async function tryPasswordAuth(chatId: string, password: string, username?: string): Promise<{ success: boolean; message: string }> {
+  // Check if password matches any active password
+  const { data: pwRecord } = await supabase
+    .from("bot_access_passwords")
+    .select("*")
+    .eq("password", password.trim())
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!pwRecord) {
+    return { success: false, message: "❌ Invalid password. Contact admin for access." };
+  }
+
+  // Check max uses
+  if (pwRecord.max_uses !== null && pwRecord.times_used >= pwRecord.max_uses) {
+    return { success: false, message: "❌ This password has reached its usage limit. Contact admin for a new one." };
+  }
+
+  // Increment usage
+  await supabase
+    .from("bot_access_passwords")
+    .update({ times_used: pwRecord.times_used + 1 })
+    .eq("id", pwRecord.id);
+
+  // Add user to authorized users
+  await supabase.from("bot_authorized_users").upsert({
+    chat_id: chatId,
+    username: username || null,
+    authorized_by: "password",
+    is_active: true,
+  }, { onConflict: "chat_id" });
+
+  await logActivity("user_authorized", `User ${chatId} authorized via password`, { chatId, username });
+
+  return { success: true, message: `✅ *Access Granted!*\n\nWelcome to Parlay Farm! 🌾\n\nUse /start to see your commands.` };
+}
+
+// Admin command handlers for user management
+
+async function handleSetPassword(chatId: string, args: string): Promise<string> {
+  const parts = args.trim().split(/\s+/);
+  if (!parts[0]) return "Usage: /setpassword [password] [max_uses]\nExample: /setpassword farm2024 10";
+
+  const password = parts[0];
+  const maxUses = parts[1] ? parseInt(parts[1]) : null;
+
+  await supabase.from("bot_access_passwords").insert({
+    password,
+    created_by: chatId,
+    max_uses: maxUses,
+  });
+
+  return `✅ Password created!\n\n*Password:* \`${password}\`\n*Max uses:* ${maxUses || 'unlimited'}`;
+}
+
+async function handleGrantAccess(chatId: string, args: string): Promise<string> {
+  const targetChatId = args.trim();
+  if (!targetChatId) return "Usage: /grantaccess [chat_id]";
+
+  await supabase.from("bot_authorized_users").upsert({
+    chat_id: targetChatId,
+    authorized_by: "admin_grant",
+    is_active: true,
+  }, { onConflict: "chat_id" });
+
+  await logActivity("admin_grant_access", `Admin granted access to ${targetChatId}`, { chatId, targetChatId });
+  return `✅ Access granted to chat ID: ${targetChatId}`;
+}
+
+async function handleListUsers(chatId: string): Promise<string> {
+  const { data: users } = await supabase
+    .from("bot_authorized_users")
+    .select("*")
+    .order("authorized_at", { ascending: false })
+    .limit(50);
+
+  if (!users || users.length === 0) return "No authorized users found.";
+
+  const active = users.filter(u => u.is_active);
+  const revoked = users.filter(u => !u.is_active);
+
+  let msg = `👥 *Authorized Users* (${active.length} active)\n\n`;
+  active.slice(0, 20).forEach(u => {
+    const name = u.username ? `@${u.username}` : u.chat_id;
+    const method = u.authorized_by === 'grandfathered' ? '👴' : u.authorized_by === 'password' ? '🔑' : '✋';
+    msg += `${method} ${name} (${u.chat_id})\n`;
+  });
+  if (active.length > 20) msg += `... and ${active.length - 20} more\n`;
+  if (revoked.length > 0) msg += `\n🚫 ${revoked.length} revoked`;
+
+  return msg;
+}
+
+async function handleRevokeAccess(chatId: string, args: string): Promise<string> {
+  const targetChatId = args.trim();
+  if (!targetChatId) return "Usage: /revokeaccess [chat_id]";
+
+  await supabase
+    .from("bot_authorized_users")
+    .update({ is_active: false })
+    .eq("chat_id", targetChatId);
+
+  await logActivity("admin_revoke_access", `Admin revoked access for ${targetChatId}`, { chatId, targetChatId });
+  return `🚫 Access revoked for chat ID: ${targetChatId}`;
+}
+
 // EST-aware date helper to avoid UTC date mismatch after 7 PM EST
 function getEasternDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -898,6 +1016,103 @@ function formatLegDisplay(leg: any): string {
   }
   
   return result;
+}
+
+// ==================== CUSTOMER PERSONAL DATA ====================
+
+async function handleCustomerCalendar(chatId: string) {
+  await logActivity("telegram_customer_calendar", `Customer requested personal calendar`, { chatId });
+
+  const { data: authUser } = await supabase
+    .from("bot_authorized_users")
+    .select("authorized_at")
+    .eq("chat_id", chatId)
+    .maybeSingle();
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const monthStart = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const monthEnd = `${year}-${String(month + 1).padStart(2, '0')}-${lastDay}`;
+
+  const { data: days } = await supabase
+    .from('customer_daily_pnl')
+    .select('pnl_date, daily_profit_loss, parlays_won, parlays_lost, parlays_total')
+    .eq('chat_id', chatId)
+    .gte('pnl_date', monthStart)
+    .lte('pnl_date', monthEnd)
+    .order('pnl_date', { ascending: true });
+
+  const monthName = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now);
+  const joinDate = authUser?.authorized_at ? new Date(authUser.authorized_at) : null;
+  const joinStr = joinDate ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(joinDate) : 'Unknown';
+
+  if (!days || days.length === 0) {
+    return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n\nNo results recorded yet this month. Your data will appear here as parlays settle!`;
+  }
+
+  const totalPnL = days.reduce((s, d) => s + (d.daily_profit_loss || 0), 0);
+  const winDays = days.filter(d => (d.daily_profit_loss || 0) > 0).length;
+  const lossDays = days.filter(d => (d.daily_profit_loss || 0) < 0).length;
+  const totalDays = winDays + lossDays;
+  const winPct = totalDays > 0 ? ((winDays / totalDays) * 100).toFixed(0) : '0';
+
+  let bestDay = days[0];
+  let worstDay = days[0];
+  days.forEach(d => {
+    if ((d.daily_profit_loss || 0) > (bestDay.daily_profit_loss || 0)) bestDay = d;
+    if ((d.daily_profit_loss || 0) < (worstDay.daily_profit_loss || 0)) worstDay = d;
+  });
+
+  const fmtDate = (dateStr: string) => {
+    const d = new Date(dateStr + 'T12:00:00');
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
+  };
+  const fmtPnL = (v: number) => v >= 0 ? `+$${v.toFixed(0)}` : `-$${Math.abs(v).toFixed(0)}`;
+
+  const totalWon = days.reduce((s, d) => s + (d.parlays_won || 0), 0);
+  const totalLost = days.reduce((s, d) => s + (d.parlays_lost || 0), 0);
+
+  return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n\n*Record:* ${winDays}W - ${lossDays}L (${winPct}%)\n*Total P&L:* ${fmtPnL(totalPnL)}\n*Parlays:* ${totalWon}W - ${totalLost}L\n*Best Day:* ${fmtDate(bestDay.pnl_date)} (${fmtPnL(bestDay.daily_profit_loss || 0)})\n*Worst Day:* ${fmtDate(worstDay.pnl_date)} (${fmtPnL(worstDay.daily_profit_loss || 0)})`;
+}
+
+async function handleCustomerRoi(chatId: string) {
+  await logActivity("telegram_customer_roi", "Customer requested personal ROI", { chatId });
+
+  const [d7, d30, dAll] = await Promise.all([
+    supabase.from("customer_daily_pnl").select("*").eq("chat_id", chatId).gte("pnl_date", getEasternDateDaysAgo(7)),
+    supabase.from("customer_daily_pnl").select("*").eq("chat_id", chatId).gte("pnl_date", getEasternDateDaysAgo(30)),
+    supabase.from("customer_daily_pnl").select("*").eq("chat_id", chatId),
+  ]);
+
+  const calcStats = (data: any[]) => {
+    if (!data || data.length === 0) return { pnl: 0, won: 0, lost: 0, total: 0, days: 0 };
+    const pnl = data.reduce((s: number, d: any) => s + (d.daily_profit_loss || 0), 0);
+    const won = data.reduce((s: number, d: any) => s + (d.parlays_won || 0), 0);
+    const lost = data.reduce((s: number, d: any) => s + (d.parlays_lost || 0), 0);
+    const total = data.reduce((s: number, d: any) => s + (d.parlays_total || 0), 0);
+    return { pnl, won, lost, total, days: data.length };
+  };
+
+  const s7 = calcStats(d7.data || []);
+  const s30 = calcStats(d30.data || []);
+  const sAll = calcStats(dAll.data || []);
+
+  const fmtPnL = (v: number) => v >= 0 ? `+$${v.toFixed(0)}` : `-$${Math.abs(v).toFixed(0)}`;
+  const winRate = (won: number, total: number) => total > 0 ? ((won / total) * 100).toFixed(1) : '0.0';
+
+  if (sAll.days === 0) {
+    return `📊 *Your ROI*\n\nNo results recorded yet. Your personal stats will appear here as parlays settle!`;
+  }
+
+  let msg = `📊 *Your ROI*\n\n`;
+  msg += `*7 Day:* ${fmtPnL(s7.pnl)} | ${winRate(s7.won, s7.won + s7.lost)}% WR (${s7.won}W-${s7.lost}L)\n`;
+  msg += `*30 Day:* ${fmtPnL(s30.pnl)} | ${winRate(s30.won, s30.won + s30.lost)}% WR (${s30.won}W-${s30.lost}L)\n`;
+  msg += `*All-Time:* ${fmtPnL(sAll.pnl)} | ${winRate(sAll.won, sAll.won + sAll.lost)}% WR (${sAll.won}W-${sAll.lost}L)\n`;
+  msg += `\n📅 Tracked over ${sAll.days} day(s)`;
+
+  return msg;
 }
 
 // ==================== ANALYTICS COMMANDS ====================
@@ -2421,7 +2636,7 @@ async function handleParlayStatus(chatId: string) {
 const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
 const isAdmin = (chatId: string) => chatId === ADMIN_CHAT_ID;
 
-// Customer-facing /start message
+// Customer-facing /start message (for authorized users)
 async function handleCustomerStart(chatId: string) {
   await logActivity("telegram_start", `Customer started bot chat`, { chatId });
   return `🌾 *Welcome to Parlay Farm!*
@@ -2431,10 +2646,8 @@ async function handleCustomerStart(chatId: string) {
 
 *Commands:*
 /parlays — Today's picks
-/parlay — Pending summary
-/performance — Win rate & ROI
-/calendar — Monthly P&L
-/roi — Detailed ROI breakdown
+/calendar — Your monthly P&L
+/roi — Your ROI breakdown
 /streaks — Hot & cold streaks
 /help — All commands
 
@@ -2494,47 +2707,48 @@ RULES:
 
 // ==================== MAIN ROUTER ====================
 
-async function handleMessage(chatId: string, text: string) {
+async function handleMessage(chatId: string, text: string, username?: string) {
   const parts = text.trim().split(/\s+/);
   const cmd = parts[0].toLowerCase();
   const args = parts.slice(1).join(' ');
 
-  // Customer commands (available to everyone)
-  if (cmd === "/start") {
-    if (isAdmin(chatId)) return await handleStart(chatId);
-    return await handleCustomerStart(chatId);
-  }
-  if (cmd === "/parlays") { await handleParlays(chatId); return null; }
-  if (cmd === "/parlay") return await handleParlayStatus(chatId);
-  if (cmd === "/performance") return await handlePerformance(chatId);
-  if (cmd === "/calendar") return await handleCalendar(chatId);
-  if (cmd === "/roi") return await handleRoi(chatId);
-  if (cmd === "/streaks") return await handleStreaks(chatId);
-  if (cmd === "/help") {
-    if (isAdmin(chatId)) {
+  // Admin always bypasses authorization
+  if (isAdmin(chatId)) {
+    // Admin /start
+    if (cmd === "/start") return await handleStart(chatId);
+    if (cmd === "/parlays") { await handleParlays(chatId); return null; }
+    if (cmd === "/parlay") return await handleParlayStatus(chatId);
+    if (cmd === "/performance") return await handlePerformance(chatId);
+    if (cmd === "/calendar") return await handleCalendar(chatId);
+    if (cmd === "/roi") return await handleRoi(chatId);
+    if (cmd === "/streaks") return await handleStreaks(chatId);
+    if (cmd === "/help") {
       return `📋 *Available Commands*
 
 /parlays — Today's picks
 /parlay — Pending summary
 /performance — Win rate & ROI
-/calendar — Monthly P&L
+/calendar — Monthly P&L (bot)
 /roi — Detailed ROI breakdown
 /streaks — Hot & cold streaks
-/help — This list
 /status — Bot status
 /compare — Compare strategies
 /sharp — Sharp signals
 /avoid — Avoid patterns
 /backtest — Run backtest
 /watch — Watch picks
-/pause — Pause bot
-/resume — Resume bot
+/pause / /resume — Pause/resume bot
 /bankroll — Set bankroll
 /force-settle — Force settle
-/subscribe — Subscribe to alerts
-/unsubscribe — Unsubscribe
+/subscribe / /unsubscribe — Alerts
 /export — Export data
 /digest — Weekly summary
+
+*User Management:*
+/setpassword [pw] [max] — Create password
+/grantaccess [chat\\_id] — Grant access
+/revokeaccess [chat\\_id] — Revoke access
+/listusers — List all users
 
 *Management:*
 /deleteparlay [id] — Void a parlay
@@ -2548,110 +2762,138 @@ async function handleMessage(chatId: string, text: string) {
 /healthcheck — Preflight + integrity
 /errorlog — Last 10 errors
 
-💬 Or just ask me anything in plain English!`;
+💬 Or just ask me anything!`;
     }
-    return `📋 *Parlay Farm — Help*
+    // Admin user management commands
+    if (cmd === "/setpassword") return await handleSetPassword(chatId, args);
+    if (cmd === "/grantaccess") return await handleGrantAccess(chatId, args);
+    if (cmd === "/listusers") return await handleListUsers(chatId);
+    if (cmd === "/revokeaccess") return await handleRevokeAccess(chatId, args);
+    // Admin-only operational commands
+    if (cmd === "/status") return await handleStatus(chatId);
+    if (cmd === "/compare") return await handleCompare(chatId);
+    if (cmd === "/sharp") return await handleSharp(chatId);
+    if (cmd === "/avoid") return await handleAvoid(chatId);
+    if (cmd === "/backtest") return await handleBacktest(chatId, args);
+    if (cmd === "/watch") return await handleWatch(chatId, args);
+    if (cmd === "/pause") return await handlePause(chatId);
+    if (cmd === "/resume") return await handleResume(chatId);
+    if (cmd === "/bankroll") return await handleBankroll(chatId, args);
+    if (cmd === "/force-settle") return await handleForceSettle(chatId, args);
+    if (cmd === "/subscribe") return await handleSubscribe(chatId);
+    if (cmd === "/unsubscribe") return await handleUnsubscribe(chatId, args);
+    if (cmd === "/export") { await handleExport(chatId, args); return null; }
+    if (cmd === "/digest") return await handleWeeklySummary(chatId);
+    if (cmd === "/mispriced") { await handleMispriced(chatId, 1); return null; }
+    if (cmd === "/highconv") { await handleHighConv(chatId, 1); return null; }
+    if (cmd === "/runmispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
+    if (cmd === "/runhighconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
+    if (cmd === "/doubleconfirmed") return await handleTriggerFunction(chatId, 'double-confirmed-scanner', 'Double-Confirmed Scanner');
+    if (cmd === "/rundoubleconfirmed") return await handleTriggerFunction(chatId, 'double-confirmed-scanner', 'Double-Confirmed Scanner');
+    if (cmd === "/pitcherk") { await handlePitcherK(chatId, 1); return null; }
+    if (cmd === "/runpitcherk") return await handleTriggerFunction(chatId, 'mlb-pitcher-k-analyzer', 'Pitcher K Analyzer');
+    if (cmd === "/mlb") { await handleMLB(chatId); return null; }
+    if (cmd === "/runmlbbatter") return await handleTriggerFunction(chatId, 'mlb-batter-analyzer', 'MLB Batter Analyzer');
+    if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
+    if (cmd === "/deleteparlay") return await handleDeleteParlay(chatId, args);
+    if (cmd === "/voidtoday") { await handleVoidToday(chatId); return null; }
+    if (cmd === "/fixleg") return await handleFixLeg(chatId, args);
+    if (cmd === "/deletesweep") return await handleDeleteSweep(chatId);
+    if (cmd === "/deletebystrat") return await handleDeleteByStrat(chatId, args);
+    if (cmd === "/fixpipeline") { const r = await handleFixPipeline(chatId); return r; }
+    if (cmd === "/regenparlay") { const r = await handleRegenParlay(chatId); return r; }
+    if (cmd === "/fixprops") { const r = await handleFixProps(chatId); return r; }
+    if (cmd === "/healthcheck") { const r = await handleHealthcheck(chatId); return r; }
+    if (cmd === "/errorlog") return await handleErrorLog(chatId);
 
-*Commands:*
-/parlays — Today's full pick list
-/parlay — Pending bets summary
-/performance — Win rate & ROI stats
-/calendar — This month's P\&L
-/roi — Detailed ROI by time period
-/streaks — Hot & cold streaks
-
-💬 *Ask me anything:*
-Just type a question in plain English\\! Examples:
-• "How are we doing this week?"
-• "Which picks look the strongest today?"
-• "What's my ROI this month?"
-• "Explain how the bot picks work"
-• "Is today a good day to bet?"`;
-  }
-
-  // All other commands: admin only, but non-admins get AI Q&A
-  if (!isAdmin(chatId)) {
-    // If it looks like a slash command, block it
-    if (cmd.startsWith('/')) {
-      return "🔒 This command is for admins only.\n\nUse /help to see your available commands, or just ask me a question!";
+    // Generic edge function trigger handler
+    async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
+      await logActivity(`telegram_${fnName}`, `Admin triggered ${label}`, { chatId: cid });
+      await sendMessage(cid, `⏳ Running *${label}*...`, "Markdown");
+      try {
+        const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/${fnName}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          return `❌ *${label}* failed (${resp.status}):\n${errText.slice(0, 200)}`;
+        }
+        const data = await resp.json();
+        const summary = JSON.stringify(data).slice(0, 300);
+        return `✅ *${label}* complete!\n\n\`${summary}\``;
+      } catch (err) {
+        return `❌ *${label}* error: ${err instanceof Error ? err.message : String(err)}`;
+      }
     }
-    // Otherwise route to customer-safe AI Q&A
+
+    // Admin natural language fallback
     await saveConversation(chatId, "user", text);
-    const response = await handleCustomerQuestion(text, chatId);
+    await logActivity("telegram_message", `User sent message`, { chatId, messagePreview: text.slice(0, 50) });
+    const response = await handleNaturalLanguage(text, chatId);
     await saveConversation(chatId, "assistant", response);
     return response;
   }
 
-  // Admin commands
-  if (cmd === "/status") return await handleStatus(chatId);
-  if (cmd === "/compare") return await handleCompare(chatId);
-  if (cmd === "/sharp") return await handleSharp(chatId);
-  if (cmd === "/avoid") return await handleAvoid(chatId);
-  if (cmd === "/backtest") return await handleBacktest(chatId, args);
-  if (cmd === "/watch") return await handleWatch(chatId, args);
-  if (cmd === "/pause") return await handlePause(chatId);
-  if (cmd === "/resume") return await handleResume(chatId);
-  if (cmd === "/bankroll") return await handleBankroll(chatId, args);
-  if (cmd === "/force-settle") return await handleForceSettle(chatId, args);
-  if (cmd === "/subscribe") return await handleSubscribe(chatId);
-  if (cmd === "/unsubscribe") return await handleUnsubscribe(chatId, args);
-  if (cmd === "/export") { await handleExport(chatId, args); return null; }
-  if (cmd === "/digest") return await handleWeeklySummary(chatId);
-  if (cmd === "/mispriced") { await handleMispriced(chatId, 1); return null; }
-  if (cmd === "/highconv") { await handleHighConv(chatId, 1); return null; }
-  if (cmd === "/runmispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
-  if (cmd === "/runhighconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
-  if (cmd === "/doubleconfirmed") return await handleTriggerFunction(chatId, 'double-confirmed-scanner', 'Double-Confirmed Scanner');
-  if (cmd === "/rundoubleconfirmed") return await handleTriggerFunction(chatId, 'double-confirmed-scanner', 'Double-Confirmed Scanner');
-  if (cmd === "/pitcherk") { await handlePitcherK(chatId, 1); return null; }
-  if (cmd === "/runpitcherk") return await handleTriggerFunction(chatId, 'mlb-pitcher-k-analyzer', 'Pitcher K Analyzer');
-  if (cmd === "/mlb") { await handleMLB(chatId); return null; }
-  if (cmd === "/runmlbbatter") return await handleTriggerFunction(chatId, 'mlb-batter-analyzer', 'MLB Batter Analyzer');
-  if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
-  // Admin management commands
-  if (cmd === "/deleteparlay") return await handleDeleteParlay(chatId, args);
-  if (cmd === "/voidtoday") { await handleVoidToday(chatId); return null; }
-  if (cmd === "/fixleg") return await handleFixLeg(chatId, args);
-  if (cmd === "/deletesweep") return await handleDeleteSweep(chatId);
-  if (cmd === "/deletebystrat") return await handleDeleteByStrat(chatId, args);
-  if (cmd === "/fixpipeline") { const r = await handleFixPipeline(chatId); return r; }
-  if (cmd === "/regenparlay") { const r = await handleRegenParlay(chatId); return r; }
-  if (cmd === "/fixprops") { const r = await handleFixProps(chatId); return r; }
-  if (cmd === "/healthcheck") { const r = await handleHealthcheck(chatId); return r; }
-  if (cmd === "/errorlog") return await handleErrorLog(chatId);
+  // ===== NON-ADMIN (CUSTOMER) FLOW =====
 
-  // Generic edge function trigger handler
-  async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
-    await logActivity(`telegram_${fnName}`, `Admin triggered ${label}`, { chatId: cid });
-    await sendMessage(cid, `⏳ Running *${label}*...`, "Markdown");
-    try {
-      const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/${fnName}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
-      if (!resp.ok) {
-        const errText = await resp.text();
-        return `❌ *${label}* failed (${resp.status}):\n${errText.slice(0, 200)}`;
-      }
-      const data = await resp.json();
-      const summary = JSON.stringify(data).slice(0, 300);
-      return `✅ *${label}* complete!\n\n\`${summary}\``;
-    } catch (err) {
-      return `❌ *${label}* error: ${err instanceof Error ? err.message : String(err)}`;
+  // /start: check authorization
+  if (cmd === "/start") {
+    const authorized = await isAuthorized(chatId);
+    if (authorized) {
+      return await handleCustomerStart(chatId);
     }
+    // Not authorized — prompt for password
+    await logActivity("telegram_start_unauthorized", `Unauthorized user attempted /start`, { chatId, username });
+    return `🌾 *Welcome to Parlay Farm!*\n\n🔒 This bot requires an access password.\n\nPlease enter your password below:`;
   }
 
-  // Natural language fallback (admin only)
+  // Check if user is authorized for all other interactions
+  const authorized = await isAuthorized(chatId);
+
+  if (!authorized) {
+    // Not authorized — treat any message as a password attempt
+    if (cmd.startsWith('/')) {
+      return "🔒 You need to be authorized first.\n\nSend /start to begin the access process.";
+    }
+    const result = await tryPasswordAuth(chatId, text.trim(), username);
+    return result.message;
+  }
+
+  // ===== AUTHORIZED CUSTOMER COMMANDS =====
+  if (cmd === "/parlays") { await handleParlays(chatId); return null; }
+  if (cmd === "/calendar") return await handleCustomerCalendar(chatId);
+  if (cmd === "/roi") return await handleCustomerRoi(chatId);
+  if (cmd === "/streaks") return await handleStreaks(chatId);
+  if (cmd === "/help") {
+    return `📋 *Parlay Farm — Help*
+
+*Commands:*
+/parlays — Today's full pick list
+/calendar — Your monthly P&L
+/roi — Your personal ROI
+/streaks — Hot & cold streaks
+
+💬 *Ask me anything:*
+Just type a question in plain English! Examples:
+• "How are we doing this week?"
+• "Which picks look the strongest today?"
+• "What's my ROI this month?"
+• "Is today a good day to bet?"`;
+  }
+
+  // Block unknown slash commands
+  if (cmd.startsWith('/')) {
+    return "🔒 This command is not available.\n\nUse /help to see your commands, or just ask me a question!";
+  }
+
+  // Customer AI Q&A fallback
   await saveConversation(chatId, "user", text);
-  await logActivity("telegram_message", `User sent message`, {
-    chatId,
-    messagePreview: text.slice(0, 50),
-  });
-  const response = await handleNaturalLanguage(text, chatId);
+  const response = await handleCustomerQuestion(text, chatId);
   await saveConversation(chatId, "assistant", response);
   return response;
 }
@@ -2690,8 +2932,9 @@ Deno.serve(async (req) => {
     if (update.message?.text) {
       const chatId = update.message.chat.id.toString();
       const text = update.message.text;
+      const username = update.message.from?.username || undefined;
 
-      const response = await handleMessage(chatId, text);
+      const response = await handleMessage(chatId, text, username);
       if (response) await sendMessage(chatId, response);
     }
 
