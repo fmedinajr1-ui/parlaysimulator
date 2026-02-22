@@ -882,6 +882,36 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_access_passwords: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          is_active: boolean
+          max_uses: number | null
+          password: string
+          times_used: number
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          password: string
+          times_used?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          password?: string
+          times_used?: number
+        }
+        Relationships: []
+      }
       bot_activation_status: {
         Row: {
           activated_at: string | null
@@ -996,6 +1026,33 @@ export type Database = {
           regime_confidence?: number | null
           regime_weights?: Json | null
           tier_recommendations?: Json | null
+        }
+        Relationships: []
+      }
+      bot_authorized_users: {
+        Row: {
+          authorized_at: string
+          authorized_by: string
+          chat_id: string
+          id: string
+          is_active: boolean
+          username: string | null
+        }
+        Insert: {
+          authorized_at?: string
+          authorized_by?: string
+          chat_id: string
+          id?: string
+          is_active?: boolean
+          username?: string | null
+        }
+        Update: {
+          authorized_at?: string
+          authorized_by?: string
+          chat_id?: string
+          id?: string
+          is_active?: boolean
+          username?: string | null
         }
         Relationships: []
       }
@@ -1938,6 +1995,39 @@ export type Database = {
           result?: Json | null
           started_at?: string
           status?: string
+        }
+        Relationships: []
+      }
+      customer_daily_pnl: {
+        Row: {
+          chat_id: string
+          created_at: string
+          daily_profit_loss: number
+          id: string
+          parlays_lost: number
+          parlays_total: number
+          parlays_won: number
+          pnl_date: string
+        }
+        Insert: {
+          chat_id: string
+          created_at?: string
+          daily_profit_loss?: number
+          id?: string
+          parlays_lost?: number
+          parlays_total?: number
+          parlays_won?: number
+          pnl_date: string
+        }
+        Update: {
+          chat_id?: string
+          created_at?: string
+          daily_profit_loss?: number
+          id?: string
+          parlays_lost?: number
+          parlays_total?: number
+          parlays_won?: number
+          pnl_date?: string
         }
         Relationships: []
       }
