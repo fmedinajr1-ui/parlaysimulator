@@ -156,11 +156,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         bookmaker: liveLineData?.bookmaker,
       };
       
-      // Create temp spot with liveData to calculate hedge status
-      const enrichedSpot = { ...spot, liveData };
-      liveData.hedgeStatus = calculateHedgeStatus(enrichedSpot) ?? undefined;
-      
-      return enrichedSpot;
+      return { ...spot, liveData };
     });
   }, [spots, games, findPlayer, getPlayerProjection, getMatchup, getLineData]);
   
@@ -170,8 +166,21 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   // Apply halftime recalibration
   const spotsWithRecalibration = useHalftimeRecalibration(spotsWithTransitions);
   
+  // Recalculate hedge status AFTER halftime recalibration so it uses 2H-adjusted projections
+  const finalSpots = useMemo(() => {
+    return spotsWithRecalibration.map(spot => {
+      if (!spot.liveData) return spot;
+      const hedgeStatus = calculateHedgeStatus(spot) ?? undefined;
+      if (hedgeStatus === spot.liveData.hedgeStatus) return spot;
+      return {
+        ...spot,
+        liveData: { ...spot.liveData, hedgeStatus },
+      };
+    });
+  }, [spotsWithRecalibration]);
+  
   // Record hedge status at quarter boundaries
-  const { recordedCount } = useHedgeStatusRecorder(spotsWithRecalibration);
+  const { recordedCount } = useHedgeStatusRecorder(finalSpots);
   
   // Calculate live game count
   const liveGameCount = useMemo(() => {
@@ -180,16 +189,16 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   
   // Get spots with active live data
   const liveSpots = useMemo(() => {
-    return spotsWithRecalibration.filter(s => s.liveData?.isLive);
-  }, [spotsWithRecalibration]);
+    return finalSpots.filter(s => s.liveData?.isLive);
+  }, [finalSpots]);
   
   // Get spots with significant line movement
   const spotsWithLineMovement = useMemo(() => {
-    return spotsWithRecalibration.filter(s => hasSignificantMovement(s.id));
-  }, [spotsWithRecalibration, hasSignificantMovement]);
+    return finalSpots.filter(s => hasSignificantMovement(s.id));
+  }, [finalSpots, hasSignificantMovement]);
   
   return {
-    spots: spotsWithRecalibration,
+    spots: finalSpots,
     liveSpots,
     liveGameCount,
     liveSpotCount,
