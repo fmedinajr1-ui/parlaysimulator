@@ -16,6 +16,8 @@ export interface HedgeOpportunity {
   edge: number;
   kellySuggestion: number;
   evPercent: number;
+  side: string;
+  suggestedAction: string;
   alertType?: AlertType;
   alertMessage?: string;
 }
@@ -78,6 +80,14 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
 
               <div className="space-y-1 text-xs">
                 <p className="font-semibold text-foreground">{opp.playerName}</p>
+                <p className={cn(
+                  'text-sm font-black tracking-wide',
+                  opp.side === 'OVER'
+                    ? 'text-[hsl(var(--warroom-green))]'
+                    : 'text-[hsl(var(--warroom-danger))]'
+                )}>
+                  {opp.suggestedAction}
+                </p>
                 {opp.alertMessage && (
                   <p className="text-muted-foreground text-[10px]">{opp.alertMessage}</p>
                 )}
@@ -86,12 +96,6 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   <span className="text-foreground">{opp.propType}</span>
                   <span>Projection:</span>
                   <span className="text-foreground font-medium">{opp.liveProjection.toFixed(1)}</span>
-                  <span>Live Line:</span>
-                  <span className="text-foreground">{opp.liveLine.toFixed(1)}</span>
-                  <span>Edge:</span>
-                  <span className={`text-[hsl(var(${config.color}))] font-bold`}>
-                    {opp.edge > 0 ? '+' : ''}{opp.edge.toFixed(1)}
-                  </span>
                   {alertType === 'hedge' && (
                     <>
                       <span>Kelly:</span>
@@ -110,7 +114,7 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   )}
                   onClick={() => setDismissed((s) => new Set(s).add(opp.id))}
                 >
-                  {alertType === 'hedge' ? 'Hedge Now' : 'Acknowledge'}
+                  {alertType === 'hedge' ? `Take ${opp.side} ${opp.liveLine}` : 'Acknowledge'}
                 </Button>
                 <Button
                   size="sm"
