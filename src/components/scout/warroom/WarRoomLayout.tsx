@@ -18,6 +18,7 @@ import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
 import { WarRoomPropCard, type WarRoomPropData } from './WarRoomPropCard';
 import { HedgeModeTable } from './HedgeModeTable';
+import { HedgeStatusAccuracyCard } from '@/components/sweetspots/HedgeStatusAccuracyCard';
 import { HedgeSlideIn, type HedgeOpportunity } from './HedgeSlideIn';
 import { AdvancedMetricsPanel } from './AdvancedMetricsPanel';
 import { WarRoomGameStrip, type PropsGame } from './WarRoomGameStrip';
@@ -364,6 +365,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
             exit={{ opacity: 0, y: -8 }}
           >
             <HedgeModeTable props={propCards} />
+            <HedgeStatusAccuracyCard />
           </motion.div>
         )}
       </AnimatePresence>
