@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { normalCdf, calcPOver, calcEdgeScore, americanToImplied } from '@/lib/normalCdf';
+import { runPropMonteCarlo } from '@/lib/propMonteCarlo';
 import { useLiveScores, LiveGame, PlayerStat } from './useLiveScores';
 
 // Role-based baseline production rates per 36 minutes
@@ -73,6 +75,16 @@ export interface LiveProjection {
   isOnPace: boolean;
   pacePercentage: number;
   
+  // v6: Intelligence fields
+  pOver: number;
+  pUnder: number;
+  edgeScore: number;
+  sigmaRem: number;
+  paceMult: number;
+  paceRating: 'green' | 'yellow' | 'red';
+  foulRisk: 'low' | 'medium' | 'high';
+  hedgeSignal: boolean;
+  
   // Game info
   gameInfo: {
     homeTeam: string;
@@ -92,6 +104,8 @@ interface ProjectionHistory {
 interface UseLiveProjectionsOptions {
   refreshInterval?: number;
   autoRefresh?: boolean;
+  useMonteCarloMode?: boolean;
+  oddsMap?: Map<string, { oddsOver: number; oddsUnder: number }>;
 }
 
 // Normalize player name for matching
@@ -180,87 +194,84 @@ const getBaselineRate = (role: string, propType: string): number => {
   return baselines.points / 36; // Default to points rate
 };
 
-// v5.0: TIGHTENED PROJECTION with variance shrinkage and recalibrated confidence
+// Standard deviation per minute estimates by stat type
+const STD_PER_MIN: Record<string, number> = {
+  points: 0.35, rebounds: 0.18, assists: 0.15, threes: 0.12,
+  pra: 0.42, steals: 0.08, blocks: 0.07,
+};
+
+const getStdPerMin = (propType: string): number => {
+  const norm = propType.toLowerCase().replace(/[_\s]/g, '');
+  if (norm.includes('point')) return STD_PER_MIN.points;
+  if (norm.includes('rebound')) return STD_PER_MIN.rebounds;
+  if (norm.includes('assist')) return STD_PER_MIN.assists;
+  if (norm.includes('three') || norm.includes('3pm')) return STD_PER_MIN.threes;
+  if (norm.includes('pra') || norm.includes('ptsrebast')) return STD_PER_MIN.pra;
+  if (norm.includes('steal')) return STD_PER_MIN.steals;
+  if (norm.includes('block')) return STD_PER_MIN.blocks;
+  return STD_PER_MIN.points;
+};
+
+// v6.0: Enhanced projection with blend rate formula, pace mult, volatility
 const calculateProjection = (
   currentValue: number,
   minutesPlayed: number,
   remainingMinutes: number,
   playerRole: string,
   propType: string,
-  riskFlags: string[]
-): { projectedFinal: number; confidence: number } => {
+  riskFlags: string[],
+  paceMult: number = 1.0,
+): { projectedFinal: number; confidence: number; sigmaRem: number } => {
+  const stdPerMin = getStdPerMin(propType);
+
   if (minutesPlayed <= 0) {
-    // No minutes yet, use baseline with lower confidence
     const baselineRate = getBaselineRate(playerRole, propType);
     const totalMinutes = remainingMinutes + minutesPlayed;
+    const sigmaRem = stdPerMin * Math.sqrt(totalMinutes);
     return {
-      projectedFinal: Math.round(baselineRate * totalMinutes * 10) / 10,
-      confidence: 15, // v5.0: Lower pre-game confidence
+      projectedFinal: Math.round(baselineRate * totalMinutes * paceMult * 10) / 10,
+      confidence: 15,
+      sigmaRem,
     };
   }
   
-  // Calculate live rate
+  // v6.0: New blend formula: w = minutes / (minutes + 12)
   const liveRate = currentValue / minutesPlayed;
   const baselineRate = getBaselineRate(playerRole, propType);
+  const w = minutesPlayed / (minutesPlayed + 12);
+  const blendedRate = (1 - w) * baselineRate + w * liveRate;
   
-  // v5.0: Tightened blending - trust live data faster but with variance consideration
-  const gameProgressPct = minutesPlayed / (minutesPlayed + remainingMinutes);
-  const liveWeight = Math.min(0.85, 0.35 + gameProgressPct * 0.5); // 35-85% based on progress
-  const baselineWeight = 1 - liveWeight;
+  // v6.0: Apply pace multiplier
+  const adjustedRate = blendedRate * paceMult;
   
-  const blendedRate = liveRate * liveWeight + baselineRate * baselineWeight;
-  
-  // v5.0: Calculate rate deviation for variance penalty
-  const rateDeviation = Math.abs(liveRate - baselineRate) / (baselineRate || 1);
-  
-  // v5.0: Apply variance shrinkage - high deviation = regress toward baseline
-  const shrinkageFactor = Math.max(0.88, Math.min(1.0, 1 - rateDeviation * 0.15));
-  const adjustedRate = blendedRate * shrinkageFactor + baselineRate * (1 - shrinkageFactor);
-  
-  // Apply risk modifiers with tighter limits
+  // Apply risk modifiers
   let remainingMinsAdjusted = remainingMinutes;
-  
-  if (riskFlags.includes('blowout')) {
-    // v5.0: Tighter - reduce expected minutes by 35% in blowout
-    remainingMinsAdjusted *= 0.65;
-  }
-  
-  if (riskFlags.includes('foul_trouble')) {
-    // v5.0: Tighter - reduce expected minutes by 25% in foul trouble
-    remainingMinsAdjusted *= 0.75;
-  }
-  
-  if (riskFlags.includes('losing_blowout')) {
-    // v5.0: New - extra penalty for losing side of blowout
-    remainingMinsAdjusted *= 0.85;
-  }
+  if (riskFlags.includes('blowout')) remainingMinsAdjusted *= 0.65;
+  if (riskFlags.includes('foul_trouble')) remainingMinsAdjusted *= 0.75;
+  if (riskFlags.includes('losing_blowout')) remainingMinsAdjusted *= 0.85;
   
   const projectedFinal = currentValue + adjustedRate * remainingMinsAdjusted;
   
-  // v5.0: RECALIBRATED CONFIDENCE - variance-aware
-  let confidence = 45; // Lower base
+  // v6.0: Volatility model
+  const sigmaRem = stdPerMin * Math.sqrt(Math.max(0, remainingMinsAdjusted));
   
-  // More minutes = more confidence (capped at +20)
+  // Confidence calculation
+  const rateDeviation = Math.abs(liveRate - baselineRate) / (baselineRate || 1);
+  let confidence = 45;
   confidence += Math.min(20, minutesPlayed * 1.2);
-  
-  // v5.0: Variance penalty - high deviation = lower confidence
   if (rateDeviation > 0.35) confidence -= 12;
   else if (rateDeviation > 0.20) confidence -= 6;
   else if (rateDeviation < 0.15) confidence += 6;
-  
-  // v5.0: Early projection penalty (< 10 minutes)
   if (minutesPlayed < 10) confidence -= 10;
-  
-  // Risk flag penalties
   if (riskFlags.includes('blowout')) confidence -= 12;
   if (riskFlags.includes('foul_trouble')) confidence -= 10;
   if (riskFlags.includes('losing_blowout')) confidence -= 8;
-  
-  confidence = Math.max(1, Math.min(92, Math.round(confidence))); // v5.0: Cap at 92
+  confidence = Math.max(1, Math.min(92, Math.round(confidence)));
   
   return {
     projectedFinal: Math.round(projectedFinal * 10) / 10,
     confidence,
+    sigmaRem,
   };
 };
 
@@ -362,7 +373,7 @@ export function useLiveProjections(
   propsToTrack: PropToTrack[],
   options: UseLiveProjectionsOptions = {}
 ) {
-  const { refreshInterval = 30000, autoRefresh = true } = options;
+  const { refreshInterval = 30000, autoRefresh = true, useMonteCarloMode = false, oddsMap } = options;
   
   const { games, isLoading, isConnected, lastUpdated, refresh } = useLiveScores({
     autoRefresh,
@@ -408,19 +419,27 @@ export function useLiveProjections(
           line,
           side,
           currentValue: 0,
-          projectedFinal: line, // Default to line
+          projectedFinal: line,
           confidence: 10,
           gameProgress: 0,
           period: '',
           clock: '',
           minutesPlayed: 0,
-          remainingMinutes: 36, // Default assumption
+          remainingMinutes: 36,
           gameStatus: 'scheduled' as const,
           riskFlags: [],
           trend: 'stable' as const,
           isHitting: false,
           isOnPace: false,
           pacePercentage: 0,
+          pOver: 0.5,
+          pUnder: 0.5,
+          edgeScore: 0,
+          sigmaRem: 0,
+          paceMult: 1.0,
+          paceRating: 'yellow' as const,
+          foulRisk: 'low' as const,
+          hedgeSignal: false,
           gameInfo: null,
         };
       }
@@ -445,15 +464,39 @@ export function useLiveProjections(
       // Detect risk flags
       const riskFlags = detectRiskFlags(matchedGame, matchedStat);
       
-      // Calculate projection
-      const { projectedFinal, confidence } = calculateProjection(
+      // v6.0: Pace multiplier (default 1.0, would be fed from live data)
+      const paceMult = 1.0; // TODO: team_possessions_1H / avg_pace_L10 when available
+      
+      // Calculate projection with new formula
+      const { projectedFinal, confidence, sigmaRem } = calculateProjection(
         currentValue,
         minutesPlayed,
         remainingMinutes,
         playerRole,
         propType,
-        riskFlags
+        riskFlags,
+        paceMult,
       );
+      
+      // v6.0: Calculate P_over / P_under
+      let pOver: number;
+      if (useMonteCarloMode) {
+        pOver = runPropMonteCarlo(projectedFinal, sigmaRem, line, currentValue, 10000);
+      } else {
+        pOver = calcPOver(projectedFinal, line, sigmaRem);
+      }
+      const pUnder = Math.min(0.99, Math.max(0.01, 1 - pOver));
+      
+      // v6.0: Edge score
+      const oddsKey = `${playerName}-${propType}`.toLowerCase();
+      const odds = oddsMap?.get(oddsKey);
+      const impliedProb = odds ? americanToImplied(odds.oddsOver) : 0.5;
+      const edgeScore = calcEdgeScore(pOver, impliedProb);
+      
+      // v6.0: Intelligence flags
+      const paceRating: 'green' | 'yellow' | 'red' = paceMult >= 1.03 ? 'green' : paceMult <= 0.97 ? 'red' : 'yellow';
+      const fouls = (matchedStat as any).fouls ?? 0;
+      const foulRisk: 'low' | 'medium' | 'high' = fouls >= 4 ? 'high' : fouls >= 3 ? 'medium' : 'low';
       
       // Determine if hitting and on pace
       const isHitting = side === 'over' 
@@ -464,15 +507,17 @@ export function useLiveProjections(
         ? projectedFinal >= line
         : projectedFinal <= line;
       
-      // Calculate pace percentage (how much of needed rate they're producing)
       const neededTotal = line;
       const pacePercentage = neededTotal > 0 
         ? Math.round((projectedFinal / neededTotal) * 100)
         : 100;
       
-      // Determine trend by comparing to history
+      // Determine trend
       const propKey = `${playerName}-${propType}`;
       const history = historyRef.current.get(propKey) || [];
+      
+      // hedgeSignal uses history so must come after
+      const hedgeSignal = Math.abs(edgeScore) > 8 || (history.length >= 2 && edgeScore < 0 && (history[history.length - 1]?.projectedFinal ?? 0) > line);
       
       let trend: 'strengthening' | 'weakening' | 'stable' = 'stable';
       if (history.length >= 2) {
@@ -489,7 +534,6 @@ export function useLiveProjections(
         }
       }
       
-      // Update history (keep last 10 snapshots)
       const newHistory = [...history, { timestamp: Date.now(), projectedFinal, confidence }].slice(-10);
       historyRef.current.set(propKey, newHistory);
       
@@ -512,6 +556,14 @@ export function useLiveProjections(
         isHitting,
         isOnPace,
         pacePercentage,
+        pOver,
+        pUnder,
+        edgeScore,
+        sigmaRem,
+        paceMult,
+        paceRating,
+        foulRisk,
+        hedgeSignal,
         gameInfo: {
           homeTeam: matchedGame.homeTeam,
           awayTeam: matchedGame.awayTeam,

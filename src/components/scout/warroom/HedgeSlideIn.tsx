@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, X } from 'lucide-react';
+import { Zap, X, ArrowLeftRight, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { useRiskMode } from '@/contexts/RiskModeContext';
+
+export type AlertType = 'hedge' | 'edge_flip' | 'role_change' | 'spread_shift';
 
 export interface HedgeOpportunity {
   id: string;
@@ -13,7 +16,16 @@ export interface HedgeOpportunity {
   edge: number;
   kellySuggestion: number;
   evPercent: number;
+  alertType?: AlertType;
+  alertMessage?: string;
 }
+
+const ALERT_CONFIG: Record<AlertType, { label: string; color: string; Icon: React.ElementType }> = {
+  hedge: { label: 'HEDGE OPPORTUNITY', color: '--warroom-gold', Icon: Zap },
+  edge_flip: { label: 'EDGE FLIP', color: '--warroom-ice', Icon: ArrowLeftRight },
+  role_change: { label: 'ROLE CHANGE', color: '--warroom-danger', Icon: AlertTriangle },
+  spread_shift: { label: 'SPREAD SHIFT', color: '--warroom-gold', Icon: AlertTriangle },
+};
 
 interface HedgeSlideInProps {
   opportunities: HedgeOpportunity[];
@@ -30,6 +42,9 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
       <AnimatePresence>
         {visible.slice(0, 3).map((opp) => {
           const adjKelly = Math.round(opp.kellySuggestion * kellyMultiplier * 100) / 100;
+          const alertType = opp.alertType ?? 'hedge';
+          const config = ALERT_CONFIG[alertType];
+          const AlertIcon = config.Icon;
 
           return (
             <motion.div
@@ -38,13 +53,19 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 320, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 200, damping: 25 }}
-              className="warroom-card warroom-glow-gold p-3 space-y-2 pointer-events-auto"
+              className={cn(
+                'warroom-card p-3 space-y-2 pointer-events-auto',
+                alertType === 'hedge' && 'warroom-glow-gold',
+                alertType === 'edge_flip' && 'warroom-glow-ice',
+                alertType === 'role_change' && 'warroom-glow-danger',
+                alertType === 'spread_shift' && 'warroom-glow-gold',
+              )}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <Zap className="w-4 h-4 text-[hsl(var(--warroom-gold))]" />
-                  <span className="text-xs font-bold text-[hsl(var(--warroom-gold))]">
-                    HEDGE OPPORTUNITY
+                  <AlertIcon className={`w-4 h-4 text-[hsl(var(${config.color}))]`} />
+                  <span className={`text-xs font-bold text-[hsl(var(${config.color}))]`}>
+                    {config.label}
                   </span>
                 </div>
                 <button
@@ -57,6 +78,9 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
 
               <div className="space-y-1 text-xs">
                 <p className="font-semibold text-foreground">{opp.playerName}</p>
+                {opp.alertMessage && (
+                  <p className="text-muted-foreground text-[10px]">{opp.alertMessage}</p>
+                )}
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-muted-foreground">
                   <span>Prop:</span>
                   <span className="text-foreground">{opp.propType}</span>
@@ -65,19 +89,28 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   <span>Live Line:</span>
                   <span className="text-foreground">{opp.liveLine.toFixed(1)}</span>
                   <span>Edge:</span>
-                  <span className="text-[hsl(var(--warroom-green))] font-bold">+{opp.edge.toFixed(1)}</span>
-                  <span>Kelly:</span>
-                  <span className="text-[hsl(var(--warroom-gold))] font-bold">{adjKelly}%</span>
+                  <span className={`text-[hsl(var(${config.color}))] font-bold`}>
+                    {opp.edge > 0 ? '+' : ''}{opp.edge.toFixed(1)}
+                  </span>
+                  {alertType === 'hedge' && (
+                    <>
+                      <span>Kelly:</span>
+                      <span className="text-[hsl(var(--warroom-gold))] font-bold">{adjKelly}%</span>
+                    </>
+                  )}
                 </div>
               </div>
 
               <div className="flex gap-2">
                 <Button
                   size="sm"
-                  className="flex-1 h-7 text-[10px] bg-[hsl(var(--warroom-gold))] text-black hover:bg-[hsl(var(--warroom-gold)/0.9)]"
+                  className={cn(
+                    'flex-1 h-7 text-[10px]',
+                    `bg-[hsl(var(${config.color}))] text-black hover:bg-[hsl(var(${config.color})/0.9)]`
+                  )}
                   onClick={() => setDismissed((s) => new Set(s).add(opp.id))}
                 >
-                  Hedge Now
+                  {alertType === 'hedge' ? 'Hedge Now' : 'Acknowledge'}
                 </Button>
                 <Button
                   size="sm"

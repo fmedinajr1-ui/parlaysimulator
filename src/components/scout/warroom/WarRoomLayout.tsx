@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Gamepad2, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -10,6 +10,7 @@ import { useUnifiedLiveFeed } from '@/hooks/useUnifiedLiveFeed';
 import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
 import { supabase } from '@/integrations/supabase/client';
+import { useMinutesStability } from '@/hooks/useMinutesStability';
 
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
@@ -32,6 +33,7 @@ type ViewMode = 'game' | 'hedge';
 
 export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGameChange }: WarRoomLayoutProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('game');
+  const [useMonteCarloMode, setUseMonteCarloMode] = useState(false);
   const { homeTeam, awayTeam } = gameContext;
 
   // Data hooks
@@ -82,6 +84,10 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const { games } = useUnifiedLiveFeed({ enabled: true });
   const { data: whaleSignals } = useCustomerWhaleSignals();
 
+  // Minutes stability for all players in current game
+  const playerNames = useMemo(() => enrichedSpots.map(s => s.playerName), [enrichedSpots]);
+  const { getStability } = useMinutesStability(playerNames);
+
   // Build confidence picks for dashboard (from filtered enrichedSpots)
   const liveConfidencePicks = enrichedSpots
     .map((s) => ({
@@ -124,9 +130,16 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           regression: getPlayerRegression(s.playerName, s.propType),
           hasHedgeOpportunity: s.liveData?.hedgeStatus === 'alert' || s.liveData?.hedgeStatus === 'urgent' || false,
           hitRateL10: s.hitRateL10 ?? 0,
+          // v6: Intelligence fields (defaults until live feed provides them)
+          pOver: 0.5,
+          pUnder: 0.5,
+          edgeScore: 0,
+          minutesStabilityIndex: getStability(s.playerName).stabilityIndex,
+          foulRisk: 'low' as const,
+          paceMult: 1.0,
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability]);
 
   // Build hedge opportunities for slide-in
   const hedgeOpportunities: HedgeOpportunity[] = useMemo(() => {
@@ -268,6 +281,8 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
         blowoutRiskPct={blowoutRisk}
         fatigueImpactPct={avgFatigue}
         regressionAlerts={regressionAlerts}
+        useMonteCarloMode={useMonteCarloMode}
+        onMonteCarloToggle={setUseMonteCarloMode}
       />
 
       {/* Hedge Slide-In Alerts */}
