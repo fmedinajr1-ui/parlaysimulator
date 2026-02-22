@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Snowflake, Flame, Zap, TrendingUp, Shield, Activity } from 'lucide-react';
+import { Snowflake, Flame, Zap, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FatigueRing } from './FatigueRing';
 import { Progress } from '@/components/ui/progress';
@@ -35,11 +35,7 @@ const PROP_SHORT: Record<string, string> = {
   rebounds: 'REB', blocks: 'BLK', steals: 'STL',
 };
 
-const FOUL_COLORS: Record<string, string> = {
-  low: 'text-[hsl(var(--warroom-green))]',
-  medium: 'text-[hsl(var(--warroom-gold))]',
-  high: 'text-[hsl(var(--warroom-danger))]',
-};
+
 
 export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
   const {
@@ -138,31 +134,22 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
         </div>
       </div>
 
-      {/* P_over / P_under row */}
-      {pOver !== undefined && pUnder !== undefined && (
-        <div className="flex items-center gap-3 text-[10px]">
-          <div className="flex items-center gap-1">
-            <span className="text-muted-foreground">P(O):</span>
-            <span className={cn('font-bold tabular-nums', pOver > 0.55 ? 'text-[hsl(var(--warroom-green))]' : 'text-muted-foreground')}>
-              {(pOver * 100).toFixed(1)}%
+      {/* Win probability — show only the relevant side */}
+      {pOver !== undefined && pUnder !== undefined && (() => {
+        const winProb = side === 'OVER' ? pOver : pUnder;
+        const winPct = Math.round(winProb * 100);
+        return (
+          <div className="flex items-center gap-1 text-[10px]">
+            <span className="text-muted-foreground">Win prob:</span>
+            <span className={cn(
+              'font-bold tabular-nums',
+              winPct >= 60 ? 'text-[hsl(var(--warroom-green))]' : winPct >= 50 ? 'text-[hsl(var(--warroom-gold))]' : 'text-[hsl(var(--warroom-danger))]'
+            )}>
+              {winPct}%
             </span>
           </div>
-          <div className="flex items-center gap-1">
-            <span className="text-muted-foreground">P(U):</span>
-            <span className={cn('font-bold tabular-nums', pUnder > 0.55 ? 'text-[hsl(var(--warroom-danger))]' : 'text-muted-foreground')}>
-              {(pUnder * 100).toFixed(1)}%
-            </span>
-          </div>
-          {foulRisk && (
-            <div className="flex items-center gap-0.5 ml-auto">
-              <Shield className="w-3 h-3 text-muted-foreground" />
-              <span className={cn('font-bold uppercase', FOUL_COLORS[foulRisk])}>
-                {foulRisk}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {/* Progress bar */}
       <div className="space-y-1">
@@ -183,61 +170,6 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
         />
       </div>
 
-      {/* Pace Meter — animated bar showing pace_mult relative to 1.0 */}
-      <div className="space-y-0.5">
-        <div className="flex items-center justify-between text-[9px] text-muted-foreground">
-          <span className="flex items-center gap-0.5">
-            <Activity className="w-3 h-3" />
-            Pace
-          </span>
-          <span className={cn(
-            'font-bold tabular-nums',
-            paceMultVal > 1.02 ? 'text-[hsl(var(--warroom-green))]' : paceMultVal < 0.98 ? 'text-[hsl(var(--warroom-danger))]' : 'text-muted-foreground'
-          )}>
-            {paceMultVal.toFixed(2)}x
-          </span>
-        </div>
-        <div className="h-1 rounded-full bg-[hsl(var(--warroom-card-border))] overflow-hidden relative">
-          {/* Center marker at 50% (= 1.0x pace) */}
-          <div className="absolute left-1/2 top-0 w-px h-full bg-muted-foreground/30" />
-          <motion.div
-            className="h-full rounded-full"
-            style={{
-              background: paceMultVal > 1.02 ? 'hsl(var(--warroom-green))' : paceMultVal < 0.98 ? 'hsl(var(--warroom-danger))' : 'hsl(var(--warroom-gold))',
-              width: `${Math.min(100, Math.max(5, paceMultVal * 50))}%`,
-            }}
-            initial={{ width: '50%' }}
-            animate={{ width: `${Math.min(100, Math.max(5, paceMultVal * 50))}%` }}
-            transition={{ duration: 0.6 }}
-          />
-        </div>
-      </div>
-
-      {/* Minutes Stability Bar */}
-      {minutesStabilityIndex !== undefined && (
-        <div className="space-y-0.5">
-          <div className="flex items-center justify-between text-[9px] text-muted-foreground">
-            <span>Min Stability</span>
-            <span className={cn(
-              'font-bold tabular-nums',
-              minutesStabilityIndex >= 75 ? 'text-[hsl(var(--warroom-green))]' : minutesStabilityIndex >= 50 ? 'text-[hsl(var(--warroom-gold))]' : 'text-[hsl(var(--warroom-danger))]'
-            )}>
-              {minutesStabilityIndex}
-            </span>
-          </div>
-          <div className="h-1 rounded-full bg-[hsl(var(--warroom-card-border))] overflow-hidden">
-            <motion.div
-              className="h-full rounded-full"
-              style={{
-                background: minutesStabilityIndex >= 75 ? 'hsl(var(--warroom-green))' : minutesStabilityIndex >= 50 ? 'hsl(var(--warroom-gold))' : 'hsl(var(--warroom-danger))',
-              }}
-              initial={{ width: 0 }}
-              animate={{ width: `${minutesStabilityIndex}%` }}
-              transition={{ duration: 0.8 }}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Bottom metrics row */}
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
