@@ -87,7 +87,7 @@ function useLivePBP(espnEventId: string | undefined, gameStatus: string | undefi
     if (!shouldPoll) return;
     // Fetch immediately, then every 15s
     fetchPBP();
-    const interval = setInterval(fetchPBP, 15000);
+    const interval = setInterval(fetchPBP, 8000);
     return () => clearInterval(interval);
   }, [shouldPoll, fetchPBP]);
 
@@ -526,10 +526,10 @@ export function CustomerLiveGamePanel({
         <LiveScoreboard
           homeTeam={game.homeTeam}
           awayTeam={game.awayTeam}
-          homeScore={game.homeScore}
-          awayScore={game.awayScore}
-          period={game.period}
-          clock={game.clock}
+          homeScore={pbpData?.homeScore ?? game.homeScore}
+          awayScore={pbpData?.awayScore ?? game.awayScore}
+          period={pbpData?.period ? `Q${pbpData.period}` : game.period}
+          clock={pbpData?.clock ?? game.clock}
           status={game.status}
           quarterScores={game.quarterScores}
           pace={pbpData?.pace ?? feedGame?.pace}
