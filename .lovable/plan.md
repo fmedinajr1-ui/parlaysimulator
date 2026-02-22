@@ -1,85 +1,112 @@
 
 
-## Disable Losing Strategies + Boost Double-Confirmed
+## Verified-Source-Only Engine: Kill Untagged Legs, 2x Double-Confirmed, 4x Mispriced
 
 ### The Problem
 
-Two strategy families are burning money:
+Yesterday, 38% of all legs had no verified source tag (drawn from the general `sweetSpots` pool). These untagged legs hit at only 40%, dragging down overall performance. Meanwhile:
+- **Double-confirmed** legs: 9/9 (100%) but only 9 legs total
+- **Mispriced edge** legs: 8/8 (100%) but only 8 legs total
+- The pick pools are deep enough to support much more (200+ sweet spots, 130+ ELITE/HIGH mispriced lines)
 
-- **master_parlay**: 0 wins out of 15 settled (0% win rate), -$650 total P/L. The 6-leg format is structurally doomed -- even with 62% hit rate legs, combined win probability is ~6%.
-- **premium_boost / max_boost**: Legacy strategies no longer in the codebase but still have pending parlays. The `premium_boost` prefix came from old code. Most sub-strategies are 0-win money pits (team_ml 0-7, execution_mini_parlay 0-4, cross_sport 0-4).
+### What Changes
 
-Meanwhile, **double_confirmed_conviction** (sweet spot 70%+ hit rate AND mispriced 15%+ edge) and **mispriced_edge** strategies show the highest conviction signal and have generated the biggest winners.
+**Change 1: Replace untagged exploration profiles with verified-source profiles**
 
-### Plan
+The exploration tier currently has ~15 "generic" profiles (`explore_safe`, `explore_mixed`, `explore_balanced`, `explore_aggressive`, `explore_longshot`) that draw from the unverified `sweetSpots` pool. Replace most of them with `mispriced_edge` and `double_confirmed_conviction` profiles:
 
-**Step 1: Remove `master_parlay` from TIER_CONFIG** (bot-generate-daily-parlays)
-
-- Delete the 6-leg `master_parlay` profile from the execution tier (line 247-249)
-- Remove the `generateMasterParlay()` call in the main handler (~line 6457-6467)
-- Keep the `generateMasterParlay` function code commented out (not deleted) in case you want it back later
-
-**Step 2: Void all pending master_parlay and premium_boost/max_boost parlays**
-
-- Run a SQL update to set `outcome = 'void'` and `profit_loss = 0` for all pending parlays matching these strategy names
-- This prevents them from being settled and counting against your record
-
-**Step 3: Add more double_confirmed_conviction profiles to fill the gaps**
-
-Replace the removed master_parlay slot and redistribute volume toward the winning strategy:
-
-Execution tier additions (replace master_parlay slot):
+Remove these 10 generic profiles (lines 70-84):
 ```text
-{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' }
-{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' }
+explore_safe (3 profiles)
+explore_mixed (2 profiles) 
+explore_balanced (3 profiles)
+explore_aggressive (3 profiles)
+explore_longshot (2 profiles)
 ```
 
-Validation tier addition:
+Replace with 10 verified-source profiles:
 ```text
-{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' }
+mispriced_edge x5: NBA(2), MLB(1), NHL(1), all(1) -- 3-leg
+double_confirmed_conviction x5: all(2), NBA(2), NBA+MLB(1) -- 3-leg
 ```
 
-Exploration tier addition:
+Keep the specialized profiles (NCAAB unders, team totals, cross-sport, tennis, props, whale, nighttime) since those serve specific niches.
+
+**Change 2: Double the double-confirmed profiles in validation tier**
+
+Currently 3 double-confirmed profiles in validation. Add 3 more:
 ```text
-{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 }
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' }
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' }
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 60, sortBy: 'hit_rate' }
 ```
 
-**Step 4: Add master_parlay/premium_boost/max_boost to integrity check exclusions**
+Replace 3 of the weaker `validated_standard` / `validated_balanced` profiles that draw from the unverified pool.
 
-Update `bot-parlay-integrity-check` to exclude these voided strategies from flagging.
+**Change 3: Add more mispriced_edge to execution tier**
+
+Currently 4 mispriced_edge profiles in execution. Add 2 more (replace the 5-leg profile which is structurally weaker):
+```text
+{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' }
+{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' }
+```
+Remove the 5-leg mispriced_edge profile (line 248) -- same structural problem as master_parlay.
+
+**Change 4: Add a source verification gate for remaining sweetSpots profiles**
+
+In the default candidate selection path (the `else` branch at line 4537), add a filter that requires picks to have a `line_source` of `verified`, `unified_props`, `whale_signal`, `double_confirmed`, or `mispriced_edge`. Block picks with `line_source` of `projected` or `synthetic_dry_run` from execution and validation tiers. This ensures even the "generic" profiles only use picks that have been cross-referenced against real market data.
+
+### Expected Impact
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Double-confirmed legs/day | ~9 | ~20-25 |
+| Mispriced edge legs/day | ~8 | ~20-25 |
+| Untagged/unverified legs/day | ~35 (40% hit rate) | ~5-10 (niche profiles only) |
+| Projected daily hits | ~20 | ~30-35 |
 
 ### Technical Details
 
-**File 1: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Line 247-249: Delete the `master_parlay` profile from execution tier
-- Lines ~6457-6467: Comment out the `generateMasterParlay()` call and its surrounding logic (master parlay insert)
-- Add 2 new `double_confirmed_conviction` profiles to execution (replacing master_parlay slot)
-- Add 1 new `double_confirmed_conviction` profile to validation
-- Add 1 new `double_confirmed_conviction` profile to exploration
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-**File 2: `supabase/functions/bot-parlay-integrity-check/index.ts`**
-- Add `master_parlay`, `premium_boost`, `max_boost` patterns to the `EXCLUDED_STRATEGIES` list
+1. **Lines 70-84**: Remove 10 generic explore profiles, replace with 5 `mispriced_edge` + 5 `double_confirmed_conviction` profiles (3-leg each)
 
-**Database: Void pending losers**
-```sql
-UPDATE bot_daily_parlays
-SET outcome = 'void', profit_loss = 0, updated_at = now()
-WHERE outcome = 'pending'
-AND (strategy_name ILIKE '%master_parlay%'
-  OR strategy_name ILIKE '%premium_boost%'
-  OR strategy_name ILIKE '%max_boost%');
+2. **Lines 165-176**: Replace 3 `validated_standard`/`validated_balanced` profiles with 3 additional `double_confirmed_conviction` profiles
+
+3. **Line 248**: Replace 5-leg `mispriced_edge` with 2 new 3-leg mispriced profiles (NBA hit_rate + all composite)
+
+4. **Lines 4537-4543**: Add source verification gate to the default `sweetSpots` candidate path:
+```typescript
+} else {
+  candidatePicks = pool.sweetSpots.filter(p => {
+    if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+    // SOURCE VERIFICATION GATE: execution/validation require verified sources
+    if (tier !== 'exploration') {
+      const source = (p as any).line_source || 'projected';
+      if (source === 'projected' || source === 'synthetic_dry_run') return false;
+    }
+    if (sportFilter.includes('all')) return true;
+    return sportFilter.includes(p.sport || 'basketball_nba');
+  });
+}
 ```
+
+### Profile Count Summary (After Changes)
+
+| Strategy | Exploration | Validation | Execution | Total |
+|----------|------------|------------|-----------|-------|
+| double_confirmed | 8 (+5) | 6 (+3) | 5 (same) | **19** (was 11) |
+| mispriced_edge | 10 (+5) | 3 (same) | 5 (+1) | **18** (was 12) |
+| Generic/untagged | ~35 (-10) | ~12 (-3) | ~15 (same, but source-gated) | **~62** (was ~75) |
 
 ### Files Modified
 
-1. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Remove master_parlay profile, comment out generator call, add double_confirmed profiles
-2. `supabase/functions/bot-parlay-integrity-check/index.ts` -- Exclude voided strategies from integrity checks
-3. Database migration -- Void all pending master_parlay/premium_boost/max_boost parlays
+1. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Profile redistribution + source verification gate
 
-### Expected Outcome
+### Risk Mitigation
 
-- No more 6-leg master parlays burning $500/day
-- No more legacy premium_boost/max_boost parlays
-- 4 additional double_confirmed_conviction profiles across all tiers (the strategy with the highest conviction signal)
-- All pending losing-strategy parlays voided so they don't affect settlement
+- Exploration tier keeps team totals, cross-sport, tennis, NCAAB, and props profiles to maintain diversity
+- Source gate only applies to execution/validation tiers (exploration can still experiment with unverified picks)
+- If double-confirmed pool is thin on a given day, those profiles gracefully skip (existing behavior)
+- No structural changes to the parlay building engine -- only profile redistribution and an input filter
 
