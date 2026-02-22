@@ -18,49 +18,47 @@ const PROP_TO_STAT_KEY: Record<PropType, string> = {
 
 /**
  * Enriches sweet spots with real-time live data from the unified-player-feed
- * Uses 15s refresh interval to keep projections current during games
- * v7.2: Now includes live book line tracking for hedge recommendations
+ * v7.3: Turbo mode for faster hedge detection, adaptive refresh intervals
  */
 export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
+  // Check if any spot has active hedge alerts for turbo mode
+  const hasActiveHedgeAlerts = useMemo(() => {
+    return spots.some(s => {
+      const status = s.liveData?.hedgeStatus;
+      return status === 'alert' || status === 'urgent';
+    });
+  }, [spots]);
+
   const { games, findPlayer, getPlayerProjection, isLoading, error } = useUnifiedLiveFeed({
     enabled: spots.length > 0,
-    refreshInterval: 15000, // 15s refresh
+    refreshInterval: hasActiveHedgeAlerts ? 8000 : 15000, // 8s when hedge alerts active
   });
   
   // Batch shot chart data for all players
   const { getMatchup, isLoading: shotChartLoading } = useBatchShotChartAnalysis(spots.length > 0);
   
-  // v7.2: Live line tracking for hedge recommendations
+  // v7.3: Live line tracking with turbo mode
   const { 
     getLineData, 
     hasSignificantMovement,
     getStaleness,
     isLoading: linesLoading,
+    lastFetchTime,
     refresh: refreshLines,
     liveSpotCount 
   } = useLiveSweetSpotLines(spots, {
     enabled: spots.length > 0,
-    intervalMs: 30000, // 30s refresh for lines
+    turboMode: hasActiveHedgeAlerts, // 6s when alerts, 10s otherwise
   });
   
   const enrichedSpots = useMemo(() => {
     return spots.map(spot => {
       const result = findPlayer(spot.playerName);
       
-      // Get shot chart matchup for scoring props (works even without live game)
+      // Get shot chart matchup for scoring props
       let shotChartMatchup: ShotChartAnalysis | undefined = undefined;
       if ((spot.propType === 'points' || spot.propType === 'threes') && spot.opponentName) {
         shotChartMatchup = getMatchup(spot.playerName, spot.opponentName, spot.propType) ?? undefined;
-        
-        // DEBUG: Log matchup attachment
-        console.log('[SweetSpotLiveData] Matchup lookup:', {
-          player: spot.playerName,
-          opponent: spot.opponentName,
-          propType: spot.propType,
-          hasMatchup: !!shotChartMatchup,
-          matchupScore: shotChartMatchup?.overallMatchupScore ?? null,
-          zoneCount: shotChartMatchup?.zones?.length ?? 0,
-        });
       }
       
       // v7.2: Get live line data for this spot
@@ -87,7 +85,6 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
               shotChartMatchup,
               currentQuarter: 0,
               quarterHistory: [],
-              // v7.2: Live line data
               liveBookLine: liveLineData?.liveBookLine,
               lineMovement: liveLineData?.lineMovement,
               lastLineUpdate: liveLineData?.lastUpdate,
@@ -122,7 +119,6 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
               shotChartMatchup,
               currentQuarter: 0,
               quarterHistory: [],
-              // v7.2: Live line data
               liveBookLine: liveLineData?.liveBookLine,
               lineMovement: liveLineData?.lineMovement,
               lastLineUpdate: liveLineData?.lastUpdate,
@@ -153,7 +149,6 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         shotChartMatchup,
         currentQuarter,
         quarterHistory: [],
-        // v7.2: Live line data
         liveBookLine: liveLineData?.liveBookLine,
         lineMovement: liveLineData?.lineMovement,
         lastLineUpdate: liveLineData?.lastUpdate,
@@ -166,29 +161,15 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       
       return enrichedSpot;
     });
-    
-    // DEBUG: Summary log
-    const spotsWithMatchups = enrichedSpots.filter(s => s.liveData?.shotChartMatchup);
-    const spotsWithLiveLines = enrichedSpots.filter(s => s.liveData?.liveBookLine !== undefined);
-    console.log('[SweetSpotLiveData] Summary:', {
-      totalSpots: spots.length,
-      enrichedCount: enrichedSpots.length,
-      spotsWithMatchups: spotsWithMatchups.length,
-      spotsWithLiveLines: spotsWithLiveLines.length,
-      pointsSpots: spots.filter(s => s.propType === 'points').length,
-      threesSpots: spots.filter(s => s.propType === 'threes').length,
-    });
-    
-    return enrichedSpots;
   }, [spots, games, findPlayer, getPlayerProjection, getMatchup, getLineData]);
   
   // Apply quarter transition detection
   const spotsWithTransitions = useQuarterTransition(enrichedSpots);
   
-  // Apply halftime recalibration (after transitions, updates projectedFinal and confidence)
+  // Apply halftime recalibration
   const spotsWithRecalibration = useHalftimeRecalibration(spotsWithTransitions);
   
-  // Record hedge status at quarter boundaries for accuracy tracking
+  // Record hedge status at quarter boundaries
   const { recordedCount } = useHedgeStatusRecorder(spotsWithRecalibration);
   
   // Calculate live game count
@@ -201,7 +182,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     return spotsWithRecalibration.filter(s => s.liveData?.isLive);
   }, [spotsWithRecalibration]);
   
-  // Get spots with significant line movement (for alerts)
+  // Get spots with significant line movement
   const spotsWithLineMovement = useMemo(() => {
     return spotsWithRecalibration.filter(s => hasSignificantMovement(s.id));
   }, [spotsWithRecalibration, hasSignificantMovement]);
@@ -213,6 +194,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     liveSpotCount,
     spotsWithLineMovement,
     refreshLines,
+    lastFetchTime,
     getStaleness,
     hedgeSnapshotsRecorded: recordedCount,
     isLoading: isLoading || shotChartLoading || linesLoading,
