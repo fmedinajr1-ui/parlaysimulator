@@ -1,89 +1,103 @@
 
 
-## Upgrade Hedge Recommendations: Clearer Actions + Alt Line Suggestions
+## Speed Up Hedge Opportunity Detection
 
-### Problem 1: "EXIT" is confusing
-The Hedge Mode table shows "EXIT" as an action label but doesn't explain what to do. EXIT means the prop is going badly and you should **bet the opposite side** to lock in a smaller loss (or break even). The current label gives no direction.
+### The Problem
+Live sportsbook lines move in seconds. The current pipeline has multiple layers of delay:
 
-### Problem 2: Hedge alerts aren't helpful enough
-The slide-in alerts just say "BET OVER 17.5" with a Kelly %. They don't explain **why**, don't show alt lines from other books, and don't give you options.
+1. **Live odds polling: 30 seconds** -- Lines can shift 2-3 points in that window
+2. **Cache TTL: 25 seconds** -- Even if you refresh, stale data is served
+3. **Sequential batching: 5 at a time** -- With 10 props, that's 2 serial rounds of API calls
+4. **Individual API calls per player** -- Each prop triggers a separate edge function call, which triggers a separate Odds API call
+5. **Unified feed: 15 seconds** -- Projections update every 15s, which is fine, but lines need to be faster
 
-### Changes
+### The Fix
 
-**File: `src/components/scout/warroom/HedgeModeTable.tsx`**
+#### 1. New Batch Edge Function: `fetch-batch-odds`
+Instead of calling `fetch-current-odds` once per player (N calls to edge function, N calls to Odds API), create a single batch endpoint that:
+- Accepts an array of `{ player_name, prop_type }` objects
+- Makes ONE call to the Odds API per event (not per player)
+- Parses all player lines from that single response
+- Returns all odds in one response
 
-1. Replace "EXIT" with "HEDGE" as the action label (red pill stays)
-2. Add a new column **"Hedge"** that only appears when a row's action is HEDGE -- shows a mini recommendation like "Bet UNDER 19.5" with the smartest book line
-3. Use `allBookLines` from the prop data to find the best alt line for the opposite side
-4. Update the tooltip for Action column to explain HEDGE instead of EXIT
+This alone cuts the round-trip from ~N seconds to ~1 second.
 
-**File: `src/components/scout/warroom/HedgeSlideIn.tsx`**
+#### 2. Faster Polling in `useLiveSweetSpotLines`
+- Drop interval from **30s to 10s** during live games
+- Drop cache TTL from **25s to 8s**
+- Increase concurrent batch size from **5 to 10** (as fallback if batch endpoint fails)
+- Add a `turboMode` flag that kicks in when any hedge alert is active (drops to 6s)
 
-5. Add a new **"Alt Lines"** section inside each hedge alert card showing all available book lines so users can compare (e.g., "HR: 19.5 | FD: 17.5 | DK: 18.5")
-6. Add a **"Why"** explanation line that says something like "Projection (15.2) is 4.3 below the line (19.5)" so users understand the reasoning
-7. Show the **original bet side** vs the **hedge side** clearly (e.g., "Your bet: OVER 17.5 -- Hedge: UNDER 19.5 @ Hard Rock")
-8. Update the primary action button to say the specific hedge action (e.g., "Hedge UNDER 19.5")
+#### 3. Faster Unified Feed Refresh
+- When hedge opportunities exist, drop `useUnifiedLiveFeed` refresh from **15s to 8s** so projections keep pace with the faster line updates
 
-**File: `src/components/scout/warroom/WarRoomLayout.tsx`**
+#### 4. Optimistic UI Updates
+- Show a "refreshing..." pulse on hedge cards while fetching
+- Instantly update the timestamp display so you know how fresh the data is
+- Add a manual "Refresh Now" button on the hedge slide-in
 
-9. Pass `allBookLines` and the original pre-game `side` into the `HedgeOpportunity` object so the slide-in has everything it needs
-10. Add `originalSide` and `originalLine` fields to the opportunity
-11. Generate a plain-English `alertMessage` explaining the gap (e.g., "Proj 15.2 is 4.3 below line. Consider hedging UNDER.")
+### File Changes
 
-**File: `src/components/scout/warroom/HedgeSlideIn.tsx` (interface)**
+**New file: `supabase/functions/fetch-batch-odds/index.ts`**
+- Accepts `{ event_id, sport, players: [{ player_name, prop_type }], preferred_bookmakers, return_all_books }`
+- Makes ONE Odds API call per unique market type
+- Returns `{ results: [{ player_name, prop_type, odds, all_odds }] }`
+- Reuses the same name normalization and bookmaker priority logic from `fetch-current-odds`
 
-12. Add to `HedgeOpportunity`: `originalSide`, `originalLine`, `allBookLines`
+**Modified: `src/hooks/useLiveSweetSpotLines.ts`**
+- Replace N individual `fetch-current-odds` calls with a single `fetch-batch-odds` call
+- Reduce `intervalMs` default from 30000 to 10000
+- Reduce `CACHE_TTL` from 25000 to 8000
+- Add `turboMode` option: when true, poll every 6 seconds
+- Remove the batch-of-5 sequential loop (no longer needed with batch endpoint)
 
-### What This Fixes
-- **EXIT becomes HEDGE** with a clear instruction on what to bet
-- Each hedge alert shows **all available alt lines** across books so you can pick the best one
-- A **"Why"** line explains the math in plain English
-- The **original bet vs hedge** is shown side by side so you know exactly what you're protecting
+**Modified: `src/hooks/useSweetSpotLiveData.ts`**
+- Pass `turboMode: true` to `useLiveSweetSpotLines` when any spot has hedge status of `alert` or `urgent`
+- Reduce `useUnifiedLiveFeed` refresh to 8s when hedge alerts are active
 
-### Example Card (After)
+**Modified: `src/components/scout/warroom/HedgeSlideIn.tsx`**
+- Add a "Refresh Now" button that triggers an immediate odds refresh
+- Add a pulsing dot + seconds-ago counter showing data freshness
+- Show "Updating..." state during fetch
+
+**Modified: `src/components/scout/warroom/WarRoomLayout.tsx`**
+- Pass `refreshLines` function down to `HedgeSlideIn` for the manual refresh button
+- Pass `lastFetchTime` for the freshness indicator
+
+### Speed Comparison
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Odds polling interval | 30s | 10s (6s turbo) |
+| Cache TTL | 25s | 8s |
+| API calls per refresh | N (one per player) | 1 (batch) |
+| Edge function calls per refresh | N | 1 |
+| Projection refresh (with hedge) | 15s | 8s |
+| Manual refresh | Not available | One tap |
+
+### Technical: Batch Endpoint Design
 
 ```
-HEDGE OPPORTUNITY
-LeBron James
-
-Your bet: OVER 17.5
-Hedge: BET UNDER 19.5
-
-Why: Projection (15.2) is 2.3 below line. Hedging locks in protection.
-
-Alt Lines:
-  Hard Rock: 19.5  |  FanDuel: 17.5  |  DraftKings: 18.5
-  Best for UNDER: Hard Rock 19.5 (most room)
-
-via Hard Rock
-Kelly: 3.2%
-
-[Hedge UNDER 19.5]  [Dismiss]
+POST /fetch-batch-odds
+{
+  "event_id": "abc123",
+  "sport": "basketball_nba",
+  "players": [
+    { "player_name": "LeBron James", "prop_type": "player_points" },
+    { "player_name": "Anthony Davis", "prop_type": "player_rebounds" }
+  ],
+  "preferred_bookmakers": ["hardrockbet", "fanduel", "draftkings"],
+  "return_all_books": true
+}
 ```
 
-### Technical Details
+The function groups players by `prop_type` (market), makes one Odds API call per unique market, then matches all players from that single response. For a typical slate with 3-4 market types, this means 3-4 API calls total instead of 10-15.
 
-**HedgeOpportunity interface additions:**
-```typescript
-originalSide: string;    // The side from your original bet
-originalLine: number;    // The pre-game line
-allBookLines?: { line: number; bookmaker: string }[];
-```
+### Result
+- Lines update **3-5x faster** during live games
+- Hedge alerts fire within seconds of a line move, not half a minute later
+- One-tap manual refresh for time-critical moments
+- Fewer API calls = less chance of hitting rate limits
 
-**HedgeModeTable action logic update (line 123):**
-```typescript
-// Old: edge > -2 ? 'MONITOR' : 'EXIT'
-// New: edge > -2 ? 'MONITOR' : 'HEDGE'
-```
-
-**Alert message generation (WarRoomLayout.tsx):**
-```typescript
-const gap = Math.abs(p.projectedFinal - smartLine).toFixed(1);
-const direction = side === 'OVER' ? 'above' : 'below';
-const alertMessage = `Proj ${p.projectedFinal.toFixed(1)} is ${gap} ${direction} line. ${
-  side !== p.side ? 'Hedging locks in protection.' : ''
-}`;
-```
-
-**3 files modified. No database changes.**
+**5 files modified (1 new edge function, 4 updated). No database changes.**
 
