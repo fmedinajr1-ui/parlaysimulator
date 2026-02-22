@@ -5,6 +5,11 @@ import { cn } from '@/lib/utils';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import type { WarRoomPropData } from './WarRoomPropCard';
 
+const BOOK_SHORT: Record<string, string> = {
+  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
+  betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
+};
+
 interface HedgeModeTableProps {
   props: WarRoomPropData[];
 }
@@ -36,7 +41,7 @@ function actionPill(suggestion: string) {
     LOCK: 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] border-[hsl(var(--warroom-green)/0.3)]',
     HOLD: 'bg-[hsl(var(--warroom-card-border)/0.3)] text-foreground border-[hsl(var(--warroom-card-border))]',
     MONITOR: 'bg-[hsl(var(--warroom-gold)/0.15)] text-[hsl(var(--warroom-gold))] border-[hsl(var(--warroom-gold)/0.3)]',
-    EXIT: 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))] border-[hsl(var(--warroom-danger)/0.3)]',
+    HEDGE: 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))] border-[hsl(var(--warroom-danger)/0.3)]',
   };
   return (
     <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-bold border', styles[suggestion] ?? styles.HOLD)}>
@@ -111,8 +116,13 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                 </HelpTip>
               </th>
               <th className="text-right font-medium p-2">
-                <HelpTip tip="Suggested action: LOCK (strong hold), HOLD (on pace), MONITOR (close), EXIT (consider hedging).">
+                <HelpTip tip="Suggested action: LOCK (strong hold), HOLD (on pace), MONITOR (close), HEDGE (bet the opposite side to protect).">
                   <span className="cursor-help border-b border-dotted border-muted-foreground/30">Action</span>
+                </HelpTip>
+              </th>
+              <th className="text-left font-medium p-2">
+                <HelpTip tip="When action is HEDGE, this shows the specific counter-bet and best book to place it at.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Hedge</span>
                 </HelpTip>
               </th>
             </tr>
@@ -120,8 +130,24 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
           <tbody>
             {props.map((p, i) => {
               const edge = p.projectedFinal - p.line;
-              const hedgeSuggestion = edge > 2 ? 'LOCK' : edge > 0 ? 'HOLD' : edge > -2 ? 'MONITOR' : 'EXIT';
+              const hedgeSuggestion = edge > 2 ? 'LOCK' : edge > 0 ? 'HOLD' : edge > -2 ? 'MONITOR' : 'HEDGE';
               const pct = heats[i];
+
+              // Build hedge recommendation when action is HEDGE
+              const hedgeSide = p.side?.toUpperCase() === 'OVER' ? 'UNDER' : 'OVER';
+              let hedgeLine = p.line;
+              let hedgeBook = '';
+              if (hedgeSuggestion === 'HEDGE' && p.allBookLines && p.allBookLines.length > 0) {
+                if (hedgeSide === 'UNDER') {
+                  const best = p.allBookLines.reduce((a: any, b: any) => a.line > b.line ? a : b);
+                  hedgeLine = best.line;
+                  hedgeBook = BOOK_SHORT[best.bookmaker] || best.bookmaker;
+                } else {
+                  const best = p.allBookLines.reduce((a: any, b: any) => a.line < b.line ? a : b);
+                  hedgeLine = best.line;
+                  hedgeBook = BOOK_SHORT[best.bookmaker] || best.bookmaker;
+                }
+              }
 
               return (
                 <motion.tr
@@ -160,6 +186,18 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                   </td>
                   <td className="text-right p-2">
                     {actionPill(hedgeSuggestion)}
+                  </td>
+                  <td className="p-2 text-left">
+                    {hedgeSuggestion === 'HEDGE' ? (
+                      <span className="text-[10px] font-bold text-[hsl(var(--warroom-danger))]">
+                        {hedgeSide} {hedgeLine}
+                        {hedgeBook && (
+                          <span className="text-muted-foreground font-normal ml-1">@ {hedgeBook}</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
                   </td>
                 </motion.tr>
               );
