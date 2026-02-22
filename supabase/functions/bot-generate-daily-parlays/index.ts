@@ -16,6 +16,73 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ============= DYNAMIC WINNING ARCHETYPE DETECTION =============
+const FALLBACK_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST'];
+
+async function detectWinningArchetypes(supabase: any): Promise<{ categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[]; usedFallback: boolean }> {
+  try {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    
+    const { data: settledParlays, error } = await supabase
+      .from('bot_daily_parlays')
+      .select('outcome, legs')
+      .gte('parlay_date', fourteenDaysAgo)
+      .in('outcome', ['won', 'lost']);
+
+    if (error || !settledParlays || settledParlays.length === 0) {
+      console.log(`[Bot v2] Dynamic Archetypes: No settled data (${error?.message || 'empty'}), using fallback`);
+      return { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [], usedFallback: true };
+    }
+
+    // Count wins/total per category+side at the parlay level
+    const categoryStats = new Map<string, { wins: number; total: number }>();
+    
+    for (const parlay of settledParlays) {
+      const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+      const isWin = parlay.outcome === 'won';
+      const seenCategories = new Set<string>();
+      
+      for (const leg of legs) {
+        const cat = (leg as any).category || '';
+        if (!cat) continue;
+        // Count each category once per parlay (parlay-level win rate)
+        if (!seenCategories.has(cat)) {
+          seenCategories.add(cat);
+          const stats = categoryStats.get(cat) || { wins: 0, total: 0 };
+          stats.total++;
+          if (isWin) stats.wins++;
+          categoryStats.set(cat, stats);
+        }
+      }
+    }
+
+    // Filter: min 8 appearances, >25% win rate, sort by win rate, cap at 6
+    const ranked = Array.from(categoryStats.entries())
+      .map(([category, stats]) => ({
+        category,
+        winRate: stats.total > 0 ? (stats.wins / stats.total) * 100 : 0,
+        appearances: stats.total,
+      }))
+      .filter(c => c.appearances >= 8 && c.winRate > 25)
+      .sort((a, b) => b.winRate - a.winRate)
+      .slice(0, 6);
+
+    if (ranked.length === 0) {
+      console.log(`[Bot v2] Dynamic Archetypes: No categories met thresholds, using fallback`);
+      return { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [], usedFallback: true };
+    }
+
+    const categories = new Set(ranked.map(r => r.category));
+    const logStr = ranked.map(r => `${r.category} (${r.winRate.toFixed(1)}%, ${r.appearances} apps)`).join(', ');
+    console.log(`[Bot v2] 🎯 Dynamic Archetypes: ${logStr} | Fallback: false`);
+
+    return { categories, ranked, usedFallback: false };
+  } catch (err) {
+    console.log(`[Bot v2] Dynamic Archetypes error: ${err.message}, using fallback`);
+    return { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [], usedFallback: true };
+  }
+}
+
 // ============= SPREAD CAP =============
 const MAX_SPREAD_LINE = 10; // Spreads above this trigger alt line shopping or get blocked
 
@@ -4386,7 +4453,8 @@ async function generateTierParlays(
   isThinSlate: boolean = false,
   winningPatterns: any = null,
   isLightSlateMode: boolean = false,
-  volumeMode: boolean = false
+  volumeMode: boolean = false,
+  dynamicArchetypes: { categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[] } = { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [] }
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
@@ -4552,10 +4620,21 @@ async function generateTierParlays(
       });
     }
 
-    // === WINNING ARCHETYPE CATEGORIES ===
-    const WINNING_ARCHETYPE_CATEGORIES = new Set(['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST']);
+    // === WINNING ARCHETYPE CATEGORIES (dynamic) ===
+    const WINNING_ARCHETYPE_CATEGORIES = dynamicArchetypes.categories;
     const isArchetypeProfile = profile.strategy.startsWith('winning_archetype');
-    const profilePreferCategories = profile.preferCategories || [];
+    // Dynamically assign preferCategories for archetype profiles based on detected winners
+    let profilePreferCategories = profile.preferCategories || [];
+    if (isArchetypeProfile && dynamicArchetypes.ranked.length > 0) {
+      const rankedCats = dynamicArchetypes.ranked.map(r => r.category);
+      if (profile.strategy.includes('3pt_scorer')) {
+        profilePreferCategories = rankedCats.slice(0, 2);
+      } else if (profile.strategy.includes('reb_ast')) {
+        profilePreferCategories = rankedCats.slice(2, 4);
+      } else {
+        profilePreferCategories = rankedCats.slice(0, 3);
+      }
+    }
 
     // === ACCURACY-FIRST SORTING (all tiers) ===
     // Sort by: archetype bonus → category weight (sport-aware) → calibrated hit rate → composite score
@@ -6262,6 +6341,10 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] ⚠️ Adaptive intelligence not available: ${adaptErr.message}`);
     }
 
+    // === DYNAMIC ARCHETYPE DETECTION ===
+    const archetypeResult = await detectWinningArchetypes(supabase);
+    const dynamicArchetypes = { categories: archetypeResult.categories, ranked: archetypeResult.ranked };
+
     // 2. Get active strategy
     const { data: strategy } = await supabase
       .from('bot_strategies')
@@ -6475,7 +6558,8 @@ Deno.serve(async (req) => {
         isThinSlate,
         winningPatterns,
         isLightSlateMode,
-        isVolumeMode
+        isVolumeMode,
+        dynamicArchetypes
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
