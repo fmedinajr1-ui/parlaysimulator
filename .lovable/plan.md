@@ -1,33 +1,58 @@
 
 
-## Prop Intelligence Engine v1 — IMPLEMENTED ✅
+## Admin War Room Page
 
-### Build Status
+### Goal
+Add a new "Scout War Room" section to the Admin panel that renders the full customer Scout/War Room dashboard directly, so you can view it without navigating to `/scout` or needing a link.
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 1 | Enhanced Calculation Engine | ✅ Done |
-| Phase 2 | Regression Engine Upgrade | ✅ Done |
-| Phase 3 | Upgraded Prop Card UI | ✅ Done |
-| Phase 4 | Monte Carlo Toggle | ✅ Done |
-| Phase 5 | Live Alert System Upgrade | ✅ Done |
-| Phase 6 | Intelligence Flags | ✅ Done |
+### What Changes
 
-### Files Created
-- `src/lib/normalCdf.ts` — Standard Normal CDF, P_over, Edge Score, American odds conversion
-- `src/lib/propMonteCarlo.ts` — Box-Muller MC simulation for empirical P_over
-- `src/hooks/useMinutesStability.ts` — L10 minutes variance → stability index (0-100)
+**1. Add "Scout War Room" to Admin section config**
 
-### Files Upgraded
-- `src/hooks/useLiveProjections.ts` — New blend formula (w=min/(min+12)), pace multiplier, volatility model (σ_rem), P_over/P_under, Edge Score, intelligence flags
-- `src/hooks/useRegressionDetection.ts` — Stat-specific rules for Points (shot attempts/%), Rebounds (opponent FG), Assists (team efficiency), adjustmentPct field
-- `src/components/scout/warroom/WarRoomPropCard.tsx` — Edge Score badge, P(O)/P(U) display, Pace Meter (animated), Minutes Stability bar, Foul Risk indicator
-- `src/components/scout/warroom/AdvancedMetricsPanel.tsx` — Monte Carlo toggle (Analytic ↔ 10K Sims)
-- `src/components/scout/warroom/HedgeSlideIn.tsx` — Multi-type alerts (hedge/edge_flip/role_change/spread_shift) with distinct colors/icons
-- `src/components/scout/warroom/WarRoomLayout.tsx` — Minutes stability hook wiring, MC toggle state management
+In `src/pages/Admin.tsx`, add a new section entry to `sectionConfig` and the `AdminSection` type:
+- ID: `'scout-warroom'`
+- Title: "Scout War Room"  
+- Description: "Live customer War Room dashboard view"
+- Icon: `Eye` (already imported)
+- Color: `text-emerald-500`
 
-### Future Enhancements
-- Wire live pace data (team_possessions_1H / avg_pace_L10) into paceMult when available from ESPN feed
-- Connect odds from unified_props to edgeScore calculation via oddsMap
-- Add web worker for Monte Carlo to prevent any UI blocking on lower-end devices
-- PRA combined variance model (σ_PRA = sqrt(σ_P² + σ_R² + σ_A²)) when individual stat projections are tracked simultaneously
+**2. Add the section render case**
+
+In the `renderSectionContent()` switch statement, add a `case 'scout-warroom'` that:
+- Imports and renders `CustomerScoutView` wrapped in `RiskModeProvider`
+- Uses the same game resolution logic from `Scout.tsx` (fetch `scout_active_game`, resolve ESPN ID, build `ScoutGameContext`)
+- Falls back to `demoGameContext` when no game is live
+- Includes the game strip so you can switch between games just like customers see it
+
+**3. New wrapper component: `src/components/admin/AdminWarRoomView.tsx`**
+
+A self-contained component that:
+- Fetches `scout_active_game` from the database
+- Resolves the ESPN event ID via the `get-espn-event-id` edge function
+- Builds a `ScoutGameContext` and passes it to `CustomerScoutView`
+- Shows demo mode if no game is live
+- Wraps everything in `RiskModeProvider`
+
+This keeps the Admin page clean (just renders `<AdminWarRoomView />`) and encapsulates all the game resolution logic.
+
+### Technical Details
+
+**Files modified:**
+- `src/pages/Admin.tsx` -- add `'scout-warroom'` to `AdminSection` type, add config entry, add render case
+
+**Files created:**
+- `src/components/admin/AdminWarRoomView.tsx` -- standalone component that handles game fetching + renders `CustomerScoutView`
+
+**Imports needed in AdminWarRoomView:**
+- `CustomerScoutView` from `@/components/scout/CustomerScoutView`
+- `RiskModeProvider` from `@/contexts/RiskModeContext`
+- `demoGameContext` from `@/data/demoScoutData`
+- `supabase` from `@/integrations/supabase/client`
+- `useQuery` from `@tanstack/react-query`
+- `ScoutGameContext` type from `@/pages/Scout`
+
+**No database changes required.** The admin already has access to `scout_active_game` and all War Room data sources.
+
+### Result
+You'll see "Scout War Room" as a card in the Admin Panel overview. Clicking it loads the full customer War Room dashboard inline -- same prop cards, hedge alerts, game strip, and all intelligence engine features -- without leaving the admin interface.
+
