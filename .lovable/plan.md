@@ -1,47 +1,75 @@
 
 
-## Fix Hedge Recommendations: Use Live Lines + Stop Defaulting to OVER
+## Fix Hedge Lines: Match Your Sportsbook + Smart Line Filter
 
-### Problem 1: Stale Lines
-Hedge alerts currently show the **original pre-game line** (e.g., "BET OVER 17.5") even when the book has moved it to 19.5. The live book line (`liveData.liveBookLine`) already exists in the data but is never passed through to the prop cards or hedge alerts.
+### Problem
+1. **Wrong book lines** -- The system fetches lines from FanDuel/DraftKings only. You're on Hard Rock, so the hedge alert shows a line that doesn't match what you see.
+2. **No smart line selection** -- The system grabs the first book's line it finds. It should compare across multiple books and pick the **best line for the recommended side** (lowest line for OVER, highest line for UNDER).
 
-### Problem 2: Always Defaulting to OVER
-When the sweet spot engine doesn't specify a side, the code defaults to "OVER" (line 155: `s.side || 'OVER'`). The hedge alert then blindly echoes that side. There's no check of whether OVER or UNDER is actually favorable based on projection vs the live line.
+### Solution
 
-### Changes
+#### Part A: Add Hard Rock + Fetch ALL Books
+Update the edge function and hooks to fetch from Hard Rock, FanDuel, and DraftKings simultaneously, returning **all available lines** instead of just the first match.
 
-**File: `src/components/scout/warroom/WarRoomLayout.tsx`**
+#### Part B: Smart Line Filter
+On the client side, when building hedge alerts, pick the **smartest line** from the returned set:
+- If recommending **OVER**: use the **lowest available line** (easiest to clear)
+- If recommending **UNDER**: use the **highest available line** (most room underneath)
 
-1. **Pass live book line through to prop cards** -- add `liveBookLine` field to `WarRoomPropData`, populated from `s.liveData?.liveBookLine ?? s.line` (falls back to original line if no live data)
+This way even if Hard Rock has 19.5 but FanDuel has 17.5, and the system recommends OVER, it'll show "BET OVER 17.5 (FanDuel)" -- the best deal across books.
 
-2. **Use live line in hedge opportunities** -- replace `p.line` with `p.liveBookLine` for `liveLine`, `suggestedAction`, edge calculation, and Kelly sizing
+### File Changes
 
-3. **Fix side logic in hedge alerts** -- instead of echoing the pre-game side, determine the hedge side from the live projection vs live line:
-   - If `projectedFinal > liveBookLine` then recommend OVER
-   - If `projectedFinal < liveBookLine` then recommend UNDER
-   - This means if UNDERS are hitting (projections coming in low), the system will correctly recommend UNDER
+**1. `supabase/functions/fetch-current-odds/index.ts`**
+- Add `'hardrockbet'` to `PRIORITY_BOOKMAKERS`
+- New function `findAllPlayerOdds()` that returns lines from ALL matching bookmakers (not just the first hit)
+- New request param `return_all_books: true` triggers multi-book response
+- Response shape adds `all_odds: [{ line, over_price, under_price, bookmaker, bookmaker_title }]` alongside the existing single `odds` field for backward compatibility
 
-**File: `src/components/scout/warroom/WarRoomPropCard.tsx`**
+**2. `src/hooks/useLiveSweetSpotLines.ts`**
+- Update `preferred_bookmakers` to `['hardrockbet', 'fanduel', 'draftkings']`
+- Pass `return_all_books: true` and `search_all_books: true`
+- Store all book lines in `LiveLineData` as new field `allBookLines`
 
-4. **Add `liveBookLine` to the interface** so it's available if needed for display
+**3. `src/hooks/useLiveSweetSpotLines.ts` -- `LiveLineData` interface**
+- Add `allBookLines?: { line: number; bookmaker: string; overPrice?: number; underPrice?: number }[]`
 
-### What This Fixes
-- Hedge alerts will show the **current book line** (e.g., "BET UNDER 19.5") not the stale pre-game one
-- The recommended side (OVER/UNDER) will be based on **projection vs live line math**, not a hardcoded default
-- If projections are coming in under the line, the system will correctly say "BET UNDER"
+**4. `src/hooks/useLiveOdds.ts`**
+- Update `preferred_bookmakers` to include `'hardrockbet'`
 
-### Technical Details
+**5. `src/components/scout/warroom/WarRoomLayout.tsx`**
+- Smart line picker logic in the hedge opportunity builder:
+  - Get `allBookLines` from the spot's live data
+  - If side is OVER: pick the line with the **lowest value** (easiest to clear)
+  - If side is UNDER: pick the line with the **highest value** (most room)
+  - Display which book the line comes from in the `suggestedAction` (e.g., "BET OVER 17.5 @ FanDuel")
 
-**`WarRoomPropData` interface change:**
-```
-liveBookLine: number;  // Current book line (may differ from original)
-```
+**6. `src/components/scout/warroom/HedgeSlideIn.tsx`**
+- Add `bookmaker` field to `HedgeOpportunity` interface
+- Display the book source below the action (e.g., "via FanDuel") so you know which app to open
 
-**Hedge side logic (replaces `p.side`):**
-```
-const liveLine = p.liveBookLine;
-const side = p.projectedFinal >= liveLine ? 'OVER' : 'UNDER';
-const suggestedAction = `BET ${side} ${liveLine}`;
-```
+### Smart Line Example
 
-**2 files modified. No database changes.**
+Player projection: 18.0
+
+| Book | Line |
+|------|------|
+| Hard Rock | 19.5 |
+| FanDuel | 17.5 |
+| DraftKings | 18.5 |
+
+- Projection (18.0) < all 3 lines, so system recommends UNDER
+- For UNDER, pick **highest line** = Hard Rock 19.5 (most room)
+- Alert shows: **BET UNDER 19.5 @ Hard Rock**
+
+If projection were 20.0 (recommending OVER):
+- For OVER, pick **lowest line** = FanDuel 17.5 (easiest to clear)
+- Alert shows: **BET OVER 17.5 @ FanDuel**
+
+### Result
+- Hedge alerts will show lines from the book that gives you the best edge
+- You'll know exactly which app to open to place the bet
+- Hard Rock is now a supported and prioritized source
+
+### 6 files modified. Edge function redeployed. No database changes.
+
