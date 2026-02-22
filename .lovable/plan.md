@@ -1,78 +1,85 @@
 
 
-## Fix War Room: Smooth Game Switching, Loading States, and Stability
+## Disable Losing Strategies + Boost Double-Confirmed
 
-### Problems Identified
+### The Problem
 
-1. **Game disappearing on switch**: When clicking a new game in the strip, `CustomerLiveGamePanel` immediately renders "Game data not available yet" because the new `eventId`/`espnEventId` hasn't resolved yet -- there's no transition state
-2. **No loading indicator during game switch**: The ESPN event ID resolution is async (`get-espn-event-id`), so there's a window where the panel has no `espnEventId` and the PBP hook returns nothing
-3. **Jarring transitions**: No `AnimatePresence` or fade on the live game panel when switching between games -- it hard-cuts
-4. **PBP data not cleared on game switch**: When switching games, stale PBP data from the previous game can briefly flash before new data arrives
+Two strategy families are burning money:
 
-### Fix Plan
+- **master_parlay**: 0 wins out of 15 settled (0% win rate), -$650 total P/L. The 6-leg format is structurally doomed -- even with 62% hit rate legs, combined win probability is ~6%.
+- **premium_boost / max_boost**: Legacy strategies no longer in the codebase but still have pending parlays. The `premium_boost` prefix came from old code. Most sub-strategies are 0-win money pits (team_ml 0-7, execution_mini_parlay 0-4, cross_sport 0-4).
 
-**File 1: `src/components/scout/CustomerLiveGamePanel.tsx`**
+Meanwhile, **double_confirmed_conviction** (sweet spot 70%+ hit rate AND mispriced 15%+ edge) and **mispriced_edge** strategies show the highest conviction signal and have generated the biggest winners.
 
-- **Add a loading/transition state when `game` is null but we have team names**: Show a proper loading skeleton with team names and a spinner instead of the static "Game data not available yet" message
-- **Clear PBP data on game change**: Reset `pbpData` to `null` when `espnEventId` changes so stale scores from the previous game don't flash
-- **Wrap the entire panel in a keyed container**: Use `key={eventId}` so React cleanly unmounts/remounts the panel on game switch rather than trying to reconcile stale state
+### Plan
 
-**File 2: `src/components/scout/warroom/WarRoomLayout.tsx`**
+**Step 1: Remove `master_parlay` from TIER_CONFIG** (bot-generate-daily-parlays)
 
-- **Add `AnimatePresence` + fade transition around `CustomerLiveGamePanel`**: Wrap the live game panel with `AnimatePresence` and `motion.div` keyed by `gameContext.eventId` so switching games gets a smooth crossfade instead of a hard cut
-- **Show a loading skeleton while game context is resolving**: If `homeTeam`/`awayTeam` are empty (brief window during switch), show a placeholder
+- Delete the 6-leg `master_parlay` profile from the execution tier (line 247-249)
+- Remove the `generateMasterParlay()` call in the main handler (~line 6457-6467)
+- Keep the `generateMasterParlay` function code commented out (not deleted) in case you want it back later
 
-**File 3: `src/pages/Scout.tsx`**
+**Step 2: Void all pending master_parlay and premium_boost/max_boost parlays**
 
-- **Fix the game switch race condition**: In `resolveAndSetGame`, the `espnEventId` is set asynchronously. If a user clicks a second game before the first resolve completes, the stale resolve callback can overwrite the new game. Add a guard using the `eventId` to prevent stale updates (already partially there but needs strengthening)
+- Run a SQL update to set `outcome = 'void'` and `profit_loss = 0` for all pending parlays matching these strategy names
+- This prevents them from being settled and counting against your record
+
+**Step 3: Add more double_confirmed_conviction profiles to fill the gaps**
+
+Replace the removed master_parlay slot and redistribute volume toward the winning strategy:
+
+Execution tier additions (replace master_parlay slot):
+```text
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' }
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' }
+```
+
+Validation tier addition:
+```text
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' }
+```
+
+Exploration tier addition:
+```text
+{ legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 }
+```
+
+**Step 4: Add master_parlay/premium_boost/max_boost to integrity check exclusions**
+
+Update `bot-parlay-integrity-check` to exclude these voided strategies from flagging.
 
 ### Technical Details
 
-**CustomerLiveGamePanel.tsx changes:**
-```text
-1. In useLivePBP hook: reset data to null when espnEventId changes
-   - Add useEffect that calls setData(null) when espnEventId changes
+**File 1: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+- Line 247-249: Delete the `master_parlay` profile from execution tier
+- Lines ~6457-6467: Comment out the `generateMasterParlay()` call and its surrounding logic (master parlay insert)
+- Add 2 new `double_confirmed_conviction` profiles to execution (replacing master_parlay slot)
+- Add 1 new `double_confirmed_conviction` profile to validation
+- Add 1 new `double_confirmed_conviction` profile to exploration
 
-2. Replace the "Game data not available yet" block (lines 502-519) with a loading card:
-   - Show team names (awayTeam @ homeTeam)
-   - Add an animated loading spinner
-   - Text: "Loading game data..."
+**File 2: `supabase/functions/bot-parlay-integrity-check/index.ts`**
+- Add `master_parlay`, `premium_boost`, `max_boost` patterns to the `EXCLUDED_STRATEGIES` list
 
-3. Add key={primaryEventId} to the outermost Card (line 523) to force clean remount
-```
-
-**WarRoomLayout.tsx changes:**
-```text
-1. Wrap CustomerLiveGamePanel (around line 180) in:
-   <AnimatePresence mode="wait">
-     <motion.div
-       key={gameContext.eventId}
-       initial={{ opacity: 0 }}
-       animate={{ opacity: 1 }}
-       exit={{ opacity: 0 }}
-       transition={{ duration: 0.2 }}
-     >
-       <CustomerLiveGamePanel ... />
-     </motion.div>
-   </AnimatePresence>
-```
-
-**Scout.tsx changes:**
-```text
-1. In resolveAndSetGame, use a ref to track the latest eventId being resolved
-2. In the .then() callback, check if the ref still matches before updating state
-   - This prevents a slow ESPN resolve from overwriting a newer game selection
+**Database: Void pending losers**
+```sql
+UPDATE bot_daily_parlays
+SET outcome = 'void', profit_loss = 0, updated_at = now()
+WHERE outcome = 'pending'
+AND (strategy_name ILIKE '%master_parlay%'
+  OR strategy_name ILIKE '%premium_boost%'
+  OR strategy_name ILIKE '%max_boost%');
 ```
 
 ### Files Modified
 
-1. `src/components/scout/CustomerLiveGamePanel.tsx` -- Clear stale PBP data on switch, add loading state, key-based remount
-2. `src/components/scout/warroom/WarRoomLayout.tsx` -- Smooth fade transition on game switch
-3. `src/pages/Scout.tsx` -- Fix ESPN ID resolution race condition
+1. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Remove master_parlay profile, comment out generator call, add double_confirmed profiles
+2. `supabase/functions/bot-parlay-integrity-check/index.ts` -- Exclude voided strategies from integrity checks
+3. Database migration -- Void all pending master_parlay/premium_boost/max_boost parlays
 
 ### Expected Outcome
 
-- Switching games shows a smooth fade with loading indicator
-- No more "game disappeared" -- loading skeleton bridges the gap
-- Previous game's scores never flash on the new game
-- ESPN ID resolution can't clobber a newer game selection
+- No more 6-leg master parlays burning $500/day
+- No more legacy premium_boost/max_boost parlays
+- 4 additional double_confirmed_conviction profiles across all tiers (the strategy with the highest conviction signal)
+- All pending losing-strategy parlays voided so they don't affect settlement
+
