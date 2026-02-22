@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, X, ArrowLeftRight, AlertTriangle, Info } from 'lucide-react';
+import { Zap, X, ArrowLeftRight, AlertTriangle, Info, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRiskMode } from '@/contexts/RiskModeContext';
@@ -55,11 +55,49 @@ const BOOK_SHORT: Record<string, string> = {
   betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
 };
 
-interface HedgeSlideInProps {
-  opportunities: HedgeOpportunity[];
+function FreshnessIndicator({ lastFetchTime, isRefreshing }: { lastFetchTime: Date | null; isRefreshing: boolean }) {
+  const [secondsAgo, setSecondsAgo] = useState(0);
+
+  useEffect(() => {
+    if (!lastFetchTime) return;
+    const tick = () => setSecondsAgo(Math.floor((Date.now() - lastFetchTime.getTime()) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastFetchTime]);
+
+  if (!lastFetchTime) return null;
+
+  const isFresh = secondsAgo < 15;
+
+  return (
+    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+      <span className="relative flex h-1.5 w-1.5">
+        {isFresh && (
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[hsl(var(--warroom-green))] opacity-75" />
+        )}
+        <span className={cn(
+          'relative inline-flex rounded-full h-1.5 w-1.5',
+          isFresh ? 'bg-[hsl(var(--warroom-green))]' : 'bg-[hsl(var(--warroom-gold))]'
+        )} />
+      </span>
+      {isRefreshing ? (
+        <span className="text-[hsl(var(--warroom-ice))]">Updating...</span>
+      ) : (
+        <span>{secondsAgo}s ago</span>
+      )}
+    </div>
+  );
 }
 
-export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
+interface HedgeSlideInProps {
+  opportunities: HedgeOpportunity[];
+  onRefresh?: () => void;
+  lastFetchTime?: Date | null;
+  isRefreshing?: boolean;
+}
+
+export function HedgeSlideIn({ opportunities, onRefresh, lastFetchTime, isRefreshing = false }: HedgeSlideInProps) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const { kellyMultiplier } = useRiskMode();
 
@@ -67,6 +105,28 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
 
   return (
     <div className="fixed right-0 top-1/3 z-50 flex flex-col gap-2 pr-2 max-w-xs pointer-events-none">
+      {/* Refresh button + freshness */}
+      {visible.length > 0 && (
+        <div className="flex items-center justify-end gap-2 pointer-events-auto px-1">
+          <FreshnessIndicator lastFetchTime={lastFetchTime ?? null} isRefreshing={isRefreshing} />
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className={cn(
+                'flex items-center gap-1 text-[10px] px-2 py-1 rounded border',
+                'border-[hsl(var(--warroom-card-border))] text-muted-foreground hover:text-foreground',
+                'hover:bg-[hsl(var(--warroom-card-border)/0.3)] transition-colors',
+                isRefreshing && 'opacity-50 cursor-not-allowed'
+              )}
+            >
+              <RefreshCw className={cn('w-3 h-3', isRefreshing && 'animate-spin')} />
+              Refresh
+            </button>
+          )}
+        </div>
+      )}
+
       <AnimatePresence>
         {visible.slice(0, 3).map((opp) => {
           const adjKelly = Math.round(opp.kellySuggestion * kellyMultiplier * 100) / 100;
@@ -74,12 +134,10 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
           const config = ALERT_CONFIG[alertType];
           const AlertIcon = config.Icon;
 
-          // Derive hedge vs original sides
           const origSide = opp.originalSide || (opp.side === 'OVER' ? 'UNDER' : 'OVER');
           const origLine = opp.originalLine ?? opp.liveLine;
           const hedgeSide = opp.side;
 
-          // "Why" explanation
           const gap = Math.abs(opp.liveProjection - opp.liveLine).toFixed(1);
           const direction = opp.liveProjection >= opp.liveLine ? 'above' : 'below';
           const whyText = `Proj ${opp.liveProjection.toFixed(1)} is ${gap} ${direction} line (${opp.liveLine}). ${
@@ -119,7 +177,6 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
               <div className="space-y-1.5 text-xs">
                 <p className="font-semibold text-foreground">{opp.playerName} — {opp.propType}</p>
 
-                {/* Original bet vs hedge side */}
                 {alertType === 'hedge' && (
                   <div className="flex items-center gap-2 text-[10px]">
                     <span className="text-muted-foreground">Your bet:</span>
@@ -136,7 +193,6 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   </div>
                 )}
 
-                {/* Non-hedge alert: just show the action */}
                 {alertType !== 'hedge' && (
                   <p className={cn(
                     'text-sm font-black tracking-wide',
@@ -148,13 +204,11 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   </p>
                 )}
 
-                {/* Why explanation */}
                 <div className="flex items-start gap-1 text-[10px] text-muted-foreground bg-[hsl(var(--warroom-card-border)/0.2)] rounded px-1.5 py-1">
                   <Info className="w-3 h-3 mt-0.5 shrink-0" />
                   <span>{opp.alertMessage || whyText}</span>
                 </div>
 
-                {/* Alt Lines across books */}
                 {opp.allBookLines && opp.allBookLines.length > 1 && (
                   <div className="space-y-0.5">
                     <span className="text-[10px] text-muted-foreground font-medium">Alt Lines:</span>
@@ -188,7 +242,6 @@ export function HedgeSlideIn({ opportunities }: HedgeSlideInProps) {
                   </HelpTip>
                 )}
 
-                {/* Metrics grid */}
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-muted-foreground">
                   <HelpTip tip="AI's projected final stat for this player based on current pace." side="left">
                     <span className="cursor-help border-b border-dotted border-muted-foreground/30">Projection:</span>

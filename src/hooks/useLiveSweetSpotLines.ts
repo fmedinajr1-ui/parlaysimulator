@@ -19,7 +19,7 @@ export interface BookLine {
 
 export interface LiveLineData {
   liveBookLine: number;
-  lineMovement: number;       // liveBookLine - originalLine
+  lineMovement: number;
   bookmaker: string;
   lastUpdate: string;
   overPrice?: number;
@@ -29,18 +29,24 @@ export interface LiveLineData {
 
 interface UseLiveSweetSpotLinesOptions {
   enabled?: boolean;
-  intervalMs?: number;        // Default 30s
+  intervalMs?: number;
+  turboMode?: boolean;  // 6s polling when hedge alerts active
 }
+
+const TURBO_INTERVAL = 6000;
+const NORMAL_INTERVAL = 10000;
+const CACHE_TTL = 8000;
 
 /**
  * Fetches live book lines for active Sweet Spot picks
- * Uses fetch-current-odds edge function with caching to minimize API calls
+ * v7.3: Uses fetch-batch-odds for single API call, turbo mode for hedge alerts
  */
 export function useLiveSweetSpotLines(
   spots: DeepSweetSpot[],
   options: UseLiveSweetSpotLinesOptions = {}
 ) {
-  const { enabled = true, intervalMs = 30000 } = options;
+  const { enabled = true, turboMode = false } = options;
+  const intervalMs = options.intervalMs ?? (turboMode ? TURBO_INTERVAL : NORMAL_INTERVAL);
   
   const [lineData, setLineData] = useState<Map<string, LiveLineData>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
@@ -52,94 +58,14 @@ export function useLiveSweetSpotLines(
     return spots.filter(s => s.liveData?.isLive || s.liveData?.gameStatus === 'halftime');
   }, [spots]);
   
-  // Cache to avoid refetching same player/prop combo
+  // Cache ref
   const cacheRef = useRef<Map<string, { data: LiveLineData; fetchedAt: number }>>(new Map());
-  const CACHE_TTL = 25000; // 25s cache (slightly less than refresh interval)
   
-  // Generate cache key for a spot
   const getCacheKey = useCallback((spot: DeepSweetSpot): string => {
     return `${spot.playerName.toLowerCase()}_${spot.propType}_${spot.opponentName?.toLowerCase() || ''}`;
   }, []);
   
-  // Fetch live line for a single spot
-  const fetchLineForSpot = useCallback(async (spot: DeepSweetSpot): Promise<{ spotId: string; data: LiveLineData | null }> => {
-    const cacheKey = getCacheKey(spot);
-    const cached = cacheRef.current.get(cacheKey);
-    
-    // Return cached if fresh
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
-      return { spotId: spot.id, data: cached.data };
-    }
-    
-    try {
-      // We need event_id - for now we'll use game description to construct a search
-      // The fetch-current-odds function needs event_id, so we'll need to look it up
-      // For MVP: use the player name and prop type to search
-      const marketKey = PROP_TO_MARKET[spot.propType];
-      
-      const { data, error } = await supabase.functions.invoke('fetch-current-odds', {
-        body: {
-          sport: 'basketball_nba',
-          player_name: spot.playerName,
-          prop_type: marketKey,
-          preferred_bookmakers: ['hardrockbet', 'fanduel', 'draftkings'],
-          search_all_books: true,
-          return_all_books: true,
-        }
-      });
-      
-      if (error) {
-        console.warn(`[LiveLines] Error fetching line for ${spot.playerName}:`, error);
-        return { spotId: spot.id, data: null };
-      }
-      
-      if (!data?.success || !data?.odds) {
-        return { spotId: spot.id, data: null };
-      }
-      
-      const liveBookLine = data.odds.line;
-      const lineMovement = liveBookLine - spot.line;
-      
-      // Build allBookLines from response
-      const allBookLines: BookLine[] = (data.all_odds || []).map((o: any) => ({
-        line: o.line,
-        bookmaker: o.bookmaker || 'unknown',
-        overPrice: o.over_price,
-        underPrice: o.under_price,
-      }));
-      // If no all_odds, at least include the primary
-      if (allBookLines.length === 0) {
-        allBookLines.push({
-          line: liveBookLine,
-          bookmaker: data.odds.bookmaker || 'unknown',
-          overPrice: data.odds.over_price,
-          underPrice: data.odds.under_price,
-        });
-      }
-
-      const liveData: LiveLineData = {
-        liveBookLine,
-        lineMovement,
-        bookmaker: data.odds.bookmaker || 'unknown',
-        lastUpdate: new Date().toISOString(),
-        overPrice: data.odds.over_price,
-        underPrice: data.odds.under_price,
-        allBookLines,
-      };
-      
-      // Update cache
-      cacheRef.current.set(cacheKey, { data: liveData, fetchedAt: Date.now() });
-      
-      console.log(`[LiveLines] ${spot.playerName} ${spot.propType}: Original ${spot.line} → Live ${liveBookLine} (${lineMovement >= 0 ? '+' : ''}${lineMovement.toFixed(1)})`);
-      
-      return { spotId: spot.id, data: liveData };
-    } catch (err) {
-      console.error(`[LiveLines] Exception for ${spot.playerName}:`, err);
-      return { spotId: spot.id, data: null };
-    }
-  }, [getCacheKey]);
-  
-  // Batch fetch all live lines
+  // Batch fetch all live lines in ONE call
   const fetchAllLines = useCallback(async () => {
     if (!enabled || liveSpots.length === 0) return;
     
@@ -147,71 +73,143 @@ export function useLiveSweetSpotLines(
     setError(null);
     
     try {
-      // Fetch in parallel with a limit of 5 concurrent requests
-      const batchSize = 5;
-      const results: { spotId: string; data: LiveLineData | null }[] = [];
+      // Filter out spots with fresh cache
+      const spotsToFetch = liveSpots.filter(s => {
+        const cached = cacheRef.current.get(getCacheKey(s));
+        return !cached || Date.now() - cached.fetchedAt >= CACHE_TTL;
+      });
       
-      for (let i = 0; i < liveSpots.length; i += batchSize) {
-        const batch = liveSpots.slice(i, i + batchSize);
-        const batchResults = await Promise.all(batch.map(fetchLineForSpot));
-        results.push(...batchResults);
+      if (spotsToFetch.length === 0) {
+        // All cached — just refresh from cache
+        setLineData(prev => {
+          const newMap = new Map(prev);
+          for (const spot of liveSpots) {
+            const cached = cacheRef.current.get(getCacheKey(spot));
+            if (cached) newMap.set(spot.id, cached.data);
+          }
+          return newMap;
+        });
+        setLastFetchTime(new Date());
+        setIsLoading(false);
+        return;
       }
       
-      // Update state with new data
+      // Build batch request
+      const players = spotsToFetch.map(s => ({
+        player_name: s.playerName,
+        prop_type: PROP_TO_MARKET[s.propType],
+      }));
+      
+      console.log(`[LiveLines] Batch fetching ${players.length} players (turbo: ${turboMode})`);
+      
+      const { data, error: fnError } = await supabase.functions.invoke('fetch-batch-odds', {
+        body: {
+          sport: 'basketball_nba',
+          players,
+          preferred_bookmakers: ['hardrockbet', 'fanduel', 'draftkings'],
+          return_all_books: true,
+        }
+      });
+      
+      if (fnError) {
+        console.warn('[LiveLines] Batch fetch error, falling back:', fnError);
+        throw new Error('Batch fetch failed');
+      }
+      
+      if (!data?.success || !data?.results) {
+        console.warn('[LiveLines] No results from batch endpoint');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Map results back to spots
       setLineData(prev => {
         const newMap = new Map(prev);
-        for (const result of results) {
-          if (result.data) {
-            newMap.set(result.spotId, result.data);
+        
+        for (const spot of spotsToFetch) {
+          const marketKey = PROP_TO_MARKET[spot.propType];
+          const result = data.results.find((r: any) =>
+            r.player_name.toLowerCase() === spot.playerName.toLowerCase() &&
+            r.prop_type === marketKey
+          );
+          
+          if (!result?.success || !result.odds) continue;
+          
+          const liveBookLine = result.odds.line;
+          const lineMovement = liveBookLine - spot.line;
+          
+          const allBookLines: BookLine[] = (result.all_odds || []).map((o: any) => ({
+            line: o.line,
+            bookmaker: o.bookmaker || 'unknown',
+            overPrice: o.over_price,
+            underPrice: o.under_price,
+          }));
+          
+          if (allBookLines.length === 0) {
+            allBookLines.push({
+              line: liveBookLine,
+              bookmaker: result.odds.bookmaker || 'unknown',
+              overPrice: result.odds.over_price,
+              underPrice: result.odds.under_price,
+            });
           }
+          
+          const liveData: LiveLineData = {
+            liveBookLine,
+            lineMovement,
+            bookmaker: result.odds.bookmaker || 'unknown',
+            lastUpdate: new Date().toISOString(),
+            overPrice: result.odds.over_price,
+            underPrice: result.odds.under_price,
+            allBookLines,
+          };
+          
+          // Update cache
+          cacheRef.current.set(getCacheKey(spot), { data: liveData, fetchedAt: Date.now() });
+          newMap.set(spot.id, liveData);
+          
+          console.log(`[LiveLines] ${spot.playerName} ${spot.propType}: ${spot.line} → ${liveBookLine} (${lineMovement >= 0 ? '+' : ''}${lineMovement.toFixed(1)})`);
         }
+        
         return newMap;
       });
       
       setLastFetchTime(new Date());
+      console.log(`[LiveLines] Batch complete: ${data.results.filter((r: any) => r.success).length}/${spotsToFetch.length} found`);
       
-      console.log(`[LiveLines] Fetched ${results.filter(r => r.data).length}/${liveSpots.length} live lines`);
     } catch (err) {
-      console.error('[LiveLines] Batch fetch error:', err);
+      console.error('[LiveLines] Fetch error:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch live lines');
     } finally {
       setIsLoading(false);
     }
-  }, [enabled, liveSpots, fetchLineForSpot]);
+  }, [enabled, liveSpots, getCacheKey, turboMode]);
   
   // Initial fetch and interval
   useEffect(() => {
     if (!enabled || liveSpots.length === 0) return;
     
-    // Initial fetch
     fetchAllLines();
-    
-    // Set up interval
     const interval = setInterval(fetchAllLines, intervalMs);
-    
     return () => clearInterval(interval);
   }, [enabled, liveSpots.length, intervalMs, fetchAllLines]);
   
-  // Helper to get line data for a specific spot
   const getLineData = useCallback((spotId: string): LiveLineData | undefined => {
     return lineData.get(spotId);
   }, [lineData]);
   
-  // Helper to check if a line has moved significantly (±2 points)
   const hasSignificantMovement = useCallback((spotId: string): boolean => {
     const data = lineData.get(spotId);
     return data ? Math.abs(data.lineMovement) >= 2 : false;
   }, [lineData]);
   
-  // Calculate staleness (time since last update)
   const getStaleness = useCallback((spotId: string): 'fresh' | 'stale' | 'expired' => {
     const data = lineData.get(spotId);
     if (!data) return 'expired';
-    
     const ageMs = Date.now() - new Date(data.lastUpdate).getTime();
-    if (ageMs < 60000) return 'fresh';      // < 1 min
-    if (ageMs < 120000) return 'stale';     // < 2 min
-    return 'expired';                        // > 2 min
+    if (ageMs < 60000) return 'fresh';
+    if (ageMs < 120000) return 'stale';
+    return 'expired';
   }, [lineData]);
   
   return {

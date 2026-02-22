@@ -48,7 +48,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   // Data hooks
   const { data: sweetSpotData } = useDeepSweetSpots();
   const rawSpots = sweetSpotData?.spots ?? [];
-  const { spots: allEnrichedSpots } = useSweetSpotLiveData(rawSpots);
+  const { spots: allEnrichedSpots, refreshLines, lastFetchTime, isLoading: linesLoading } = useSweetSpotLiveData(rawSpots);
 
   // Live PBP for pace data
   const { data: pbpData } = useLivePBP(gameContext.espnEventId, undefined);
@@ -382,8 +382,12 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
         onMonteCarloToggle={setUseMonteCarloMode}
       />
 
-      {/* Hedge Slide-In Alerts */}
-      <HedgeSlideIn opportunities={hedgeOpportunities} />
+      <HedgeSlideIn
+        opportunities={hedgeOpportunities}
+        onRefresh={refreshLines}
+        lastFetchTime={lastFetchTime}
+        isRefreshing={linesLoading}
+      />
     </div>
   );
 }
