@@ -8,6 +8,8 @@ import { useFatigueData, getFatigueByTeam } from '@/hooks/useFatigueData';
 import { useRegressionDetection } from '@/hooks/useRegressionDetection';
 import { useUnifiedLiveFeed } from '@/hooks/useUnifiedLiveFeed';
 import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
+import { useLivePBP } from '@/hooks/useLivePBP';
+import { useMonteCarloWorker } from '@/hooks/useMonteCarloWorker';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useMinutesStability } from '@/hooks/useMinutesStability';
@@ -31,15 +33,29 @@ interface WarRoomLayoutProps {
 
 type ViewMode = 'game' | 'hedge';
 
+// Convert American odds to implied probability
+function americanToImplied(odds: number): number {
+  if (odds >= 100) return 100 / (odds + 100);
+  return Math.abs(odds) / (Math.abs(odds) + 100);
+}
+
 export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGameChange }: WarRoomLayoutProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('game');
   const [useMonteCarloMode, setUseMonteCarloMode] = useState(false);
+  const [mcResults, setMcResults] = useState<Map<string, number>>(new Map());
   const { homeTeam, awayTeam } = gameContext;
 
   // Data hooks
   const { data: sweetSpotData } = useDeepSweetSpots();
   const rawSpots = sweetSpotData?.spots ?? [];
   const { spots: allEnrichedSpots } = useSweetSpotLiveData(rawSpots);
+
+  // Live PBP for pace data
+  const { data: pbpData } = useLivePBP(gameContext.espnEventId, undefined);
+  const paceMult = (pbpData?.pace ?? 100) / 100;
+
+  // MC worker
+  const { runSimulation } = useMonteCarloWorker();
 
   // Trigger sync-live-scores once on mount
   useEffect(() => {
@@ -107,7 +123,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const whisperPicks = isDemo ? demoWhisperPicks : liveWhisperPicks;
   const effectiveSignals = isDemo ? demoWhaleSignals : whaleSignals;
 
-  // Build WarRoomPropData from enriched spots — NO liveData gate
+  // Build WarRoomPropData from enriched spots with live pace + odds
   const propCards: WarRoomPropData[] = useMemo(() => {
     return enrichedSpots
       .map((s) => {
@@ -115,6 +131,21 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
         const baseFatigue = teamFatigue?.fatigue_score ?? 30;
         const minutesFactor = (s.liveData?.minutesPlayed ?? 0) / 36;
         const fatiguePercent = Math.min(100, baseFatigue + minutesFactor * 40);
+
+        // Odds-based edge score
+        const overPrice = s.overPrice ?? -110;
+        const underPrice = s.underPrice ?? -110;
+        const impliedOver = americanToImplied(overPrice);
+        const impliedUnder = americanToImplied(underPrice);
+
+        // Use hit rate as pre-game pOver proxy, MC results when available
+        const mcPOver = mcResults.get(s.id);
+        const hitRate = s.hitRateL10 ?? 0.5;
+        const pOver = mcPOver ?? (s.liveData?.confidence ? s.liveData.confidence / 100 : hitRate);
+        const pUnder = 1 - pOver;
+        const edgeScore = s.side === 'over'
+          ? (pOver - impliedOver) * 100
+          : (pUnder - impliedUnder) * 100;
 
         return {
           id: s.id,
@@ -125,21 +156,45 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           currentValue: s.liveData?.currentValue ?? s.l10Stats.avg,
           projectedFinal: s.liveData?.projectedFinal ?? (s.edge + s.line),
           confidence: s.liveData?.confidence ?? s.sweetSpotScore ?? 50,
-          paceRating: s.liveData?.paceRating ?? 100,
+          paceRating: s.liveData?.paceRating ?? Math.round((pbpData?.pace ?? 100)),
           fatiguePercent,
           regression: getPlayerRegression(s.playerName, s.propType),
           hasHedgeOpportunity: s.liveData?.hedgeStatus === 'alert' || s.liveData?.hedgeStatus === 'urgent' || false,
           hitRateL10: s.hitRateL10 ?? 0,
-          // v6: Intelligence fields (defaults until live feed provides them)
-          pOver: 0.5,
-          pUnder: 0.5,
-          edgeScore: 0,
+          pOver,
+          pUnder,
+          edgeScore,
           minutesStabilityIndex: getStability(s.playerName).stabilityIndex,
           foulRisk: 'low' as const,
-          paceMult: 1.0,
+          paceMult,
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults]);
+
+  // Run MC simulations when mode is ON
+  useEffect(() => {
+    if (!useMonteCarloMode || propCards.length === 0) return;
+
+    const runAll = async () => {
+      const results = new Map<string, number>();
+      await Promise.all(
+        propCards.map(async (p) => {
+          const sigmaRem = Math.max(1, (p.projectedFinal - p.currentValue) * 0.3);
+          const pOver = await runSimulation({
+            id: p.id,
+            projected: p.projectedFinal,
+            sigmaRem,
+            line: p.line,
+            currentValue: p.currentValue,
+          });
+          results.set(p.id, pOver);
+        })
+      );
+      setMcResults(results);
+    };
+
+    runAll();
+  }, [useMonteCarloMode, enrichedSpots, runSimulation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Build hedge opportunities for slide-in
   const hedgeOpportunities: HedgeOpportunity[] = useMemo(() => {

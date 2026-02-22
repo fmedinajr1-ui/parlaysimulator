@@ -1,10 +1,10 @@
-import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useLiveScores } from '@/hooks/useLiveScores';
 import { useUnifiedLiveFeed } from '@/hooks/useUnifiedLiveFeed';
-import { supabase } from '@/integrations/supabase/client';
+import { useLivePBP } from '@/hooks/useLivePBP';
 import {
   Activity,
   Zap,
@@ -17,86 +17,6 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MomentumIndicator } from './warroom/MomentumIndicator';
-
-/* ------------------------------------------------------------------ */
-/*  useLivePBP – polls fetch-live-pbp for real-time box score + plays  */
-/* ------------------------------------------------------------------ */
-interface PBPPlayer {
-  playerId: string;
-  playerName: string;
-  team: string;
-  position: string;
-  minutes: number;
-  points: number;
-  rebounds: number;
-  assists: number;
-  steals: number;
-  blocks: number;
-  fouls: number;
-  plusMinus: number;
-}
-
-interface PBPPlay {
-  time: string;
-  text: string;
-  playType: string;
-  team?: string;
-  playerName?: string;
-  isHighMomentum?: boolean;
-}
-
-interface PBPData {
-  players: PBPPlayer[];
-  recentPlays: PBPPlay[];
-  period?: number;
-  clock?: string;
-  homeScore?: number;
-  awayScore?: number;
-  pace?: number;
-  notAvailable?: boolean;
-}
-
-function useLivePBP(espnEventId: string | undefined, gameStatus: string | undefined) {
-  const [data, setData] = useState<PBPData | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Clear stale data immediately when espnEventId changes
-  useEffect(() => {
-    setData(null);
-  }, [espnEventId]);
-
-  const shouldPoll = espnEventId && (gameStatus === 'in_progress' || gameStatus === 'halftime');
-
-  const fetchPBP = useCallback(async () => {
-    if (!espnEventId) return;
-    setIsLoading(true);
-    try {
-      const { data: result, error } = await supabase.functions.invoke('fetch-live-pbp', {
-        body: { eventId: espnEventId },
-      });
-      if (error) {
-        console.error('[useLivePBP] Error:', error);
-        return;
-      }
-      if (result && !result.notAvailable) {
-        setData(result as PBPData);
-      }
-    } catch (err) {
-      console.error('[useLivePBP] Fetch failed:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [espnEventId]);
-
-  useEffect(() => {
-    if (!shouldPoll) return;
-    fetchPBP();
-    const interval = setInterval(fetchPBP, 8000);
-    return () => clearInterval(interval);
-  }, [shouldPoll, fetchPBP]);
-
-  return { data, isLoading };
-}
 
 interface CustomerLiveGamePanelProps {
   homeTeam: string;
