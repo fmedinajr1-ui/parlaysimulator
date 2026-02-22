@@ -31,6 +31,7 @@ export interface WarRoomPropData {
   minutesStabilityIndex?: number;
   foulRisk?: 'low' | 'medium' | 'high';
   paceMult?: number;
+  l10Avg?: number;
 }
 
 const PROP_SHORT: Record<string, string> = {

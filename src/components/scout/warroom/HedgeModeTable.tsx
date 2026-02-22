@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import type { WarRoomPropData } from './WarRoomPropCard';
+import { calculateLineMispricing, type LineValueClass } from '@/lib/liveMispricedLineScanner';
 
 const BOOK_SHORT: Record<string, string> = {
   hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
@@ -50,7 +51,22 @@ function actionPill(suggestion: string) {
   );
 }
 
+function valuePill(classification: LineValueClass) {
+  const styles: Record<LineValueClass, string> = {
+    SOFT: 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] border-[hsl(var(--warroom-green)/0.3)]',
+    SHARP: 'bg-[hsl(var(--warroom-card-border)/0.3)] text-foreground border-[hsl(var(--warroom-card-border))]',
+    STALE: 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))] border-[hsl(var(--warroom-danger)/0.3)]',
+  };
+  return (
+    <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-bold border cursor-help', styles[classification])}>
+      {classification}
+    </span>
+  );
+}
+
 export function HedgeModeTable({ props }: HedgeModeTableProps) {
+  const mispricingMap = useMemo(() => calculateLineMispricing(props), [props]);
+
   if (props.length === 0) {
     return (
       <div className="warroom-card p-4 text-center text-sm text-muted-foreground">
@@ -116,6 +132,11 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                 </HelpTip>
               </th>
               <th className="text-right font-medium p-2">
+                <HelpTip tip="Line value: SOFT (mispriced in your favor), SHARP (correctly priced), STALE (moved against you). Based on L10 avg, pace, projection, and line drift.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Value</span>
+                </HelpTip>
+              </th>
+              <th className="text-right font-medium p-2">
                 <HelpTip tip="Suggested action: LOCK (strong hold), HOLD (on pace), MONITOR (close), HEDGE (bet the opposite side to protect).">
                   <span className="cursor-help border-b border-dotted border-muted-foreground/30">Action</span>
                 </HelpTip>
@@ -129,6 +150,7 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
           </thead>
           <tbody>
             {props.map((p, i) => {
+              const mispricing = mispricingMap.get(p.id);
               const betSide = (p.side || 'OVER').toUpperCase();
               const isOver = betSide !== 'UNDER';
               const edge = isOver
@@ -187,6 +209,15 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                     edge > 0 ? 'text-[hsl(var(--warroom-green))]' : edge < -1 ? 'text-[hsl(var(--warroom-danger))]' : 'text-muted-foreground'
                   )}>
                     {edge >= 0 ? '+' : ''}{edge.toFixed(1)}
+                   </td>
+                  <td className="text-right p-2">
+                    {mispricing ? (
+                      <HelpTip tip={`L10 edge: ${mispricing.l10Edge >= 0 ? '+' : ''}${mispricing.l10Edge.toFixed(1)} | Pace adj: ${mispricing.paceAdj.toFixed(2)}x | Proj edge: ${mispricing.projEdge >= 0 ? '+' : ''}${mispricing.projEdge.toFixed(1)} | Line drift: ${mispricing.lineDrift >= 0 ? '+' : ''}${mispricing.lineDrift.toFixed(1)}`}>
+                        {valuePill(mispricing.classification)}
+                      </HelpTip>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="text-right p-2">
                     {actionPill(hedgeSuggestion)}

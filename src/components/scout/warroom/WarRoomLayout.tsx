@@ -173,6 +173,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           minutesStabilityIndex: getStability(s.playerName).stabilityIndex,
           foulRisk: 'low' as const,
           paceMult,
+          l10Avg: s.l10Stats?.avg,
         };
       });
   }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults]);
