@@ -467,7 +467,7 @@ async function handleStart(chatId: string) {
 
 *Actions:*
 /generate /settle /force-settle [date]
-/mispriced /highconv /forcegen
+/mispriced /highconv /doubleconfirmed /forcegen
 
 *Analytics:*
 /roi /streaks /compare /sharp /avoid /backtest [strategy]
@@ -2601,6 +2601,8 @@ Just type a question in plain English\\! Examples:
   if (cmd === "/highconv") { await handleHighConv(chatId, 1); return null; }
   if (cmd === "/runmispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
   if (cmd === "/runhighconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
+  if (cmd === "/doubleconfirmed") return await handleTriggerFunction(chatId, 'double-confirmed-scanner', 'Double-Confirmed Scanner');
+  if (cmd === "/rundoubleconfirmed") return await handleTriggerFunction(chatId, 'double-confirmed-scanner', 'Double-Confirmed Scanner');
   if (cmd === "/pitcherk") { await handlePitcherK(chatId, 1); return null; }
   if (cmd === "/runpitcherk") return await handleTriggerFunction(chatId, 'mlb-pitcher-k-analyzer', 'Pitcher K Analyzer');
   if (cmd === "/mlb") { await handleMLB(chatId); return null; }

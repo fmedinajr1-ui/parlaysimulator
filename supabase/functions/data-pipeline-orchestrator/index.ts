@@ -131,6 +131,9 @@ serve(async (req) => {
       await runFunction('bot-generate-daily-parlays', { source: 'mlb_pipeline' });
       await runFunction('high-conviction-analyzer', {});
       
+      // Double-confirmed scanner: cross-references sweet spots + mispriced lines
+      await runFunction('double-confirmed-scanner', {});
+      
       // MLB Pitcher K analysis (Feb-October = spring training + season)
       const currentMonth = new Date().getMonth() + 1; // 1-12
       if (currentMonth >= 2 && currentMonth <= 10) {
