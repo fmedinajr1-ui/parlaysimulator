@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAdminRole } from '@/hooks/useAdminRole';
-import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles, Zap } from 'lucide-react';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles, Zap, Eye } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -16,6 +16,7 @@ import { ProfitAuditCard } from '@/components/bot/ProfitAuditCard';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
 import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
+import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
 import { SimulationAccuracyCard } from '@/components/bot/SimulationAccuracyCard';
 import { ShadowPicksFeed } from '@/components/bot/ShadowPicksFeed';
@@ -172,12 +173,13 @@ export default function BotDashboard() {
 
       {/* Tabbed Content */}
       <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="w-full">
+        <TabsList className="w-full overflow-x-auto flex">
           <TabsTrigger value="overview" className="flex-1">Overview</TabsTrigger>
           <TabsTrigger value="parlays" className="flex-1">Parlays</TabsTrigger>
           <TabsTrigger value="analytics" className="flex-1">Analytics</TabsTrigger>
           <TabsTrigger value="research" className="flex-1">Research</TabsTrigger>
           <TabsTrigger value="simulation" className="flex-1">Simulation</TabsTrigger>
+          <TabsTrigger value="warroom" className="flex-1 gap-1"><Eye className="w-3 h-3" />War Room</TabsTrigger>
         </TabsList>
 
         {/* Overview Tab */}
@@ -288,6 +290,10 @@ export default function BotDashboard() {
         <TabsContent value="simulation" className="space-y-4">
           <SimulationAccuracyCard />
           <ShadowPicksFeed />
+        </TabsContent>
+        {/* War Room Tab */}
+        <TabsContent value="warroom" className="space-y-4">
+          <AdminWarRoomView />
         </TabsContent>
       </Tabs>
 
