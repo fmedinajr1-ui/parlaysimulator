@@ -325,8 +325,8 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
         )}
       </AnimatePresence>
 
-      {/* Confidence Dashboard */}
-      <CustomerConfidenceDashboard picks={confidencePicks} />
+      {/* Confidence Dashboard — hidden in Hedge Mode (table has survival %) */}
+      {viewMode !== 'hedge' && <CustomerConfidenceDashboard picks={confidencePicks} />}
 
       {/* AI Commentary Whisper */}
       <CustomerAIWhisper picks={whisperPicks} signals={effectiveSignals} />
