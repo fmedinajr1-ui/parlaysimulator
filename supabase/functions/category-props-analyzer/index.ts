@@ -471,7 +471,65 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     lines: [3.5, 4.5, 5.5],
     side: 'under',
     minHitRate: 0.7
-  }
+  },
+
+  // ============ MLB CATEGORIES ============
+  MLB_PITCHER_K_OVER: {
+    name: 'MLB Pitcher K OVER',
+    propType: 'pitcher_strikeouts',
+    avgRange: { min: 5, max: 12 },
+    lines: [4.5, 5.5, 6.5, 7.5, 8.5],
+    side: 'over',
+    minHitRate: 0.55
+  },
+  MLB_PITCHER_K_UNDER: {
+    name: 'MLB Pitcher K UNDER',
+    propType: 'pitcher_strikeouts',
+    avgRange: { min: 5, max: 12 },
+    lines: [4.5, 5.5, 6.5, 7.5, 8.5],
+    side: 'under',
+    minHitRate: 0.55
+  },
+  MLB_HITTER_FANTASY_OVER: {
+    name: 'MLB Hitter Fantasy OVER',
+    propType: 'hitter_fantasy_score',
+    avgRange: { min: 3, max: 20 },
+    lines: [5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5],
+    side: 'over',
+    minHitRate: 0.55
+  },
+  MLB_HITTER_FANTASY_UNDER: {
+    name: 'MLB Hitter Fantasy UNDER',
+    propType: 'hitter_fantasy_score',
+    avgRange: { min: 3, max: 20 },
+    lines: [5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5],
+    side: 'under',
+    minHitRate: 0.55
+  },
+  MLB_HITS_OVER: {
+    name: 'MLB Hits OVER',
+    propType: 'hits',
+    avgRange: { min: 0.8, max: 2.5 },
+    lines: [0.5, 1.5, 2.5],
+    side: 'over',
+    minHitRate: 0.55
+  },
+  MLB_TOTAL_BASES_OVER: {
+    name: 'MLB Total Bases OVER',
+    propType: 'total_bases',
+    avgRange: { min: 1.5, max: 4.0 },
+    lines: [1.5, 2.5, 3.5],
+    side: 'over',
+    minHitRate: 0.55
+  },
+  MLB_RUNS_OVER: {
+    name: 'MLB Runs OVER',
+    propType: 'runs',
+    avgRange: { min: 0.5, max: 1.5 },
+    lines: [0.5, 1.5],
+    side: 'over',
+    minHitRate: 0.55
+  },
 };
 
 // Runtime archetype lookup
@@ -546,6 +604,42 @@ function getStatValue(log: GameLog, propType: string): number {
     case 'steals': return log.steals || 0;
     case 'blocks': return log.blocks || 0;
     case 'threes': return log.threes_made || 0;
+    default: return 0;
+  }
+}
+
+// ============ MLB INTERFACES & STAT EXTRACTION ============
+interface MLBGameLog {
+  player_name: string;
+  game_date: string;
+  hits: number;
+  walks: number;
+  runs: number;
+  rbis: number;
+  total_bases: number;
+  stolen_bases: number;
+  home_runs: number;
+  strikeouts: number;
+  pitcher_strikeouts: number | null;
+  innings_pitched: number | null;
+  opponent?: string;
+}
+
+const MLB_CATEGORIES = new Set([
+  'MLB_PITCHER_K_OVER', 'MLB_PITCHER_K_UNDER',
+  'MLB_HITTER_FANTASY_OVER', 'MLB_HITTER_FANTASY_UNDER',
+  'MLB_HITS_OVER', 'MLB_TOTAL_BASES_OVER', 'MLB_RUNS_OVER',
+]);
+
+function getMLBStatValue(log: MLBGameLog, propType: string): number {
+  switch (propType) {
+    case 'pitcher_strikeouts': return log.pitcher_strikeouts || 0;
+    case 'hits': return log.hits || 0;
+    case 'total_bases': return log.total_bases || 0;
+    case 'runs': return log.runs || 0;
+    case 'hitter_fantasy_score':
+      return (log.hits || 0) + (log.walks || 0) + (log.runs || 0) + 
+             (log.rbis || 0) + (log.total_bases || 0) + (log.stolen_bases || 0);
     default: return 0;
   }
 }
@@ -1042,6 +1136,37 @@ serve(async (req) => {
     console.log(`[Category Analyzer] NCAAB game logs fetched: ${ncaabCount}`);
     console.log(`[Category Analyzer] Total game logs fetched: ${allGameLogs.length}`);
 
+    // ============ FETCH MLB GAME LOGS ============
+    // Use full season data (no date filter) — MLB uses historical backfill as baseline
+    let allMLBLogs: MLBGameLog[] = [];
+    let mlbPage = 0;
+    while (true) {
+      const { data: mlbLogs, error: mlbError } = await supabase
+        .from('mlb_player_game_logs')
+        .select('player_name, game_date, hits, walks, runs, rbis, total_bases, stolen_bases, home_runs, strikeouts, pitcher_strikeouts, innings_pitched, opponent')
+        .order('game_date', { ascending: false })
+        .range(mlbPage * pageSize, (mlbPage + 1) * pageSize - 1);
+
+      if (mlbError) {
+        console.warn('[Category Analyzer] MLB game logs warning:', mlbError.message);
+        break;
+      }
+      if (!mlbLogs || mlbLogs.length === 0) break;
+      allMLBLogs = allMLBLogs.concat(mlbLogs as MLBGameLog[]);
+      if (mlbLogs.length < pageSize) break;
+      mlbPage++;
+    }
+    console.log(`[Category Analyzer] MLB game logs fetched: ${allMLBLogs.length}`);
+
+    // Group MLB logs by player
+    const mlbPlayerLogs: Record<string, MLBGameLog[]> = {};
+    for (const log of allMLBLogs) {
+      const name = log.player_name;
+      if (!mlbPlayerLogs[name]) mlbPlayerLogs[name] = [];
+      mlbPlayerLogs[name].push(log);
+    }
+    console.log(`[Category Analyzer] Grouped MLB logs for ${Object.keys(mlbPlayerLogs).length} players`);
+
     if (allGameLogs.length === 0) {
       return new Response(JSON.stringify({
         success: false,
@@ -1060,8 +1185,10 @@ serve(async (req) => {
 
     console.log(`[Category Analyzer] Grouped logs for ${Object.keys(playerLogs).length} players`);
 
-    // Analyze each category
-    const categoriesToAnalyze = category ? [category] : Object.keys(CATEGORIES);
+    // Analyze each category (NBA/NCAAB only — MLB handled separately below)
+    const categoriesToAnalyze = category 
+      ? (MLB_CATEGORIES.has(category) ? [] : [category]) 
+      : Object.keys(CATEGORIES).filter(k => !MLB_CATEGORIES.has(k));
     const sweetSpots: any[] = [];
     let archetypeBlockedCount = 0;
 
@@ -1291,6 +1418,104 @@ serve(async (req) => {
 
     console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots before validation (${archetypeBlockedCount} total blocked by archetype)`);
 
+    // ============ MLB CATEGORY ANALYSIS ============
+    const mlbCategoriesToAnalyze = category 
+      ? (MLB_CATEGORIES.has(category) ? [category] : [])
+      : Array.from(MLB_CATEGORIES);
+    
+    let mlbSweetSpotCount = 0;
+
+    for (const catKey of mlbCategoriesToAnalyze) {
+      const config = CATEGORIES[catKey];
+      if (!config) continue;
+
+      const effectiveSide = sideOverrideMap.get(catKey) || config.side;
+      console.log(`[Category Analyzer] Analyzing MLB category: ${catKey}`);
+      let mlbQualified = 0;
+
+      // For pitcher_strikeouts, only use players who have pitcher data
+      const isPitcherCategory = config.propType === 'pitcher_strikeouts';
+
+      for (const [playerName, logs] of Object.entries(mlbPlayerLogs)) {
+        // Filter: pitcher categories need pitcher_strikeouts != null
+        const relevantLogs = isPitcherCategory
+          ? logs.filter(l => l.pitcher_strikeouts !== null && l.pitcher_strikeouts !== undefined)
+          : logs;
+
+        const l10Logs = relevantLogs.slice(0, 10);
+        if (l10Logs.length < 5) continue;
+
+        const statValues = l10Logs.map(log => getMLBStatValue(log, config.propType));
+        const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
+        const l10StdDev = calculateStdDev(statValues);
+
+        // Check average range eligibility
+        if (l10Avg < config.avgRange.min || l10Avg > config.avgRange.max) continue;
+
+        const l10Min = Math.min(...statValues);
+        const l10Max = Math.max(...statValues);
+        const l10Median = calculateMedian(statValues);
+
+        // Find best line
+        let bestLine: number | null = null;
+        let bestHitRate = 0;
+
+        for (const line of config.lines) {
+          const hitRate = calculateHitRate(statValues, line, effectiveSide);
+          if (hitRate >= config.minHitRate && hitRate > bestHitRate) {
+            bestHitRate = hitRate;
+            bestLine = line;
+          }
+        }
+
+        // v5.0: UNDER criteria for MLB
+        if (effectiveSide === 'under') {
+          const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
+          if (varianceRatio > 0.40) continue; // MLB stats are more variable, slightly relaxed
+
+          const l5Values = statValues.slice(0, 5);
+          const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
+          if (l5Avg > l10Avg * 1.10) continue; // Trending up = skip under
+        }
+
+        if (bestLine !== null && bestHitRate >= config.minHitRate) {
+          mlbQualified++;
+          const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
+          const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
+          const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
+          const sideBonus = effectiveSide === 'over' ? 0.06 : 0;
+          const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
+          const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
+
+          sweetSpots.push({
+            category: catKey,
+            player_name: playerName,
+            prop_type: config.propType,
+            recommended_line: bestLine,
+            recommended_side: effectiveSide,
+            l10_hit_rate: Math.round(bestHitRate * 100) / 100,
+            l10_avg: Math.round(l10Avg * 10) / 10,
+            l10_min: l10Min,
+            l10_max: l10Max,
+            l10_median: Math.round(l10Median * 10) / 10,
+            l10_std_dev: Math.round(l10StdDev * 10) / 10,
+            games_played: l10Logs.length,
+            archetype: null, // MLB doesn't use archetypes
+            confidence_score: Math.round(confidenceScore * 100) / 100,
+            analysis_date: today,
+            is_active: true,
+            eligibility_type: 'MLB_AVG_RANGE',
+            projected_value: Math.round(l10Median * 10) / 10, // Simple projection: L10 median
+            projection_source: 'MLB_L10_MEDIAN',
+          });
+          mlbSweetSpotCount++;
+        }
+      }
+      console.log(`[Category Analyzer] ${catKey}: ${mlbQualified} qualified MLB players`);
+    }
+
+    console.log(`[Category Analyzer] MLB sweet spots generated: ${mlbSweetSpotCount}`);
+    console.log(`[Category Analyzer] Total sweet spots (NBA+MLB): ${sweetSpots.length}`);
 
     // ======= NEW: Validate against actual bookmaker lines from unified_props =======
     console.log(`[CAT-ANALYZER-CRITICAL] Starting unified_props fetch...`);
@@ -1371,6 +1596,7 @@ serve(async (req) => {
     console.log(`[Category Analyzer] Loaded season stats for ${seasonStatsMap.size} players`);
 
     for (const spot of sweetSpots) {
+      const isMLBSpot = MLB_CATEGORIES.has(spot.category);
       const key = `${spot.player_name.toLowerCase().trim()}_${spot.prop_type.toLowerCase()}`;
       const actualData = actualLineMap.get(key);
       
@@ -1386,7 +1612,67 @@ serve(async (req) => {
         continue;
       }
       
-      // Recalculate L10 hit rate against actual bookmaker line
+      // For MLB spots that already have projected_value from analysis, do simplified validation
+      if (isMLBSpot) {
+        const mlbLogs = mlbPlayerLogs[spot.player_name];
+        if (!mlbLogs || mlbLogs.length < 5) {
+          spot.is_active = false;
+          validatedSpots.push(spot);
+          continue;
+        }
+        const isPitcher = spot.prop_type === 'pitcher_strikeouts';
+        const relevantLogs = isPitcher ? mlbLogs.filter(l => l.pitcher_strikeouts != null) : mlbLogs;
+        const l10Logs = relevantLogs.slice(0, 10);
+        const statValues = l10Logs.map(log => getMLBStatValue(log, spot.prop_type));
+        const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
+        
+        spot.actual_line = actualData.line;
+        spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
+        spot.line_difference = spot.recommended_line ? Math.round((actualData.line - spot.recommended_line) * 10) / 10 : null;
+        spot.bookmaker = actualData.bookmaker;
+        
+        // Negative edge blocking for MLB
+        if (spot.recommended_side === 'over' && (spot.projected_value || 0) <= actualData.line) {
+          spot.is_active = false;
+          spot.risk_level = 'BLOCKED';
+          spot.recommendation = `Negative edge: proj ${spot.projected_value} <= line ${actualData.line}`;
+          validatedSpots.push(spot);
+          droppedCount++;
+          continue;
+        }
+        if (spot.recommended_side === 'under' && (spot.projected_value || 0) >= actualData.line) {
+          spot.is_active = false;
+          spot.risk_level = 'BLOCKED';
+          spot.recommendation = `Negative edge: proj ${spot.projected_value} >= line ${actualData.line}`;
+          validatedSpots.push(spot);
+          droppedCount++;
+          continue;
+        }
+        
+        // Activate if hit rate against actual line is sufficient
+        spot.is_active = actualHitRate >= 0.50;
+        if (actualHitRate >= 0.70) {
+          spot.risk_level = 'LOW';
+          spot.recommendation = `Strong MLB play - ${(actualHitRate * 100).toFixed(0)}% L10 hit rate`;
+        } else if (actualHitRate >= 0.55) {
+          spot.risk_level = 'MEDIUM';
+          spot.recommendation = `Decent MLB value - ${(actualHitRate * 100).toFixed(0)}% L10`;
+        } else {
+          spot.risk_level = 'HIGH';
+          spot.recommendation = `Higher risk MLB play - ${(actualHitRate * 100).toFixed(0)}% L10`;
+        }
+        
+        if (spot.is_active) {
+          validatedCount++;
+          console.log(`[Category Analyzer] ✓ MLB ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% L10)`);
+        } else {
+          droppedCount++;
+        }
+        validatedSpots.push(spot);
+        continue;
+      }
+      
+      // Recalculate L10 hit rate against actual bookmaker line (NBA/NCAAB)
       const logs = playerLogs[spot.player_name];
       if (logs && logs.length >= 5) {
         const l10Logs = logs.slice(0, 10);
