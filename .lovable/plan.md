@@ -1,85 +1,103 @@
 
 
-## Problem: Bot Isn't Cloning Your Winning DNA
+## Dynamic Winning Archetype Detection
 
-### The Data Tells the Story
+### What Changes
 
-Your **winning parlays this month** have a very clear pattern:
+Instead of hardcoding `THREE_POINT_SHOOTER`, `VOLUME_SCORER`, `BIG_REBOUNDER`, `HIGH_ASSIST` as the winning categories, the bot will **query the last 14 days of settled parlays** at the start of every run and automatically detect which category+side combos are winning the most.
 
-```text
-WINNING ARCHETYPE (Feb 20-21, 13 winners):
-- 3-leg NBA OVERS: THREE_POINT_SHOOTER + VOLUME_SCORER + BIG_REBOUNDER
-- Categories: 3PT (28 hits), Points (20 hits), Rebounds (12 hits), Assists (8 hits)
-- Side: Almost ALL overs
-- Sport: Almost ALL basketball_nba
-- Strategy: mispriced_edge and explore_safe dominate wins
-```
-
-But the bot is wasting volume on things that DON'T win:
+### How It Works
 
 ```text
-TODAY'S GENERATION (22 parlays):
-- 10 PITCHER_STRIKEOUTS legs (MLB) -- MLB has 0 settled wins
-- 6 master_parlay legs (6-leggers) -- 0-15 lifetime record
-- Only 8 VOLUME_SCORER legs vs 16 THREE_POINT_SHOOTER legs
-- Missing the winning combo pattern entirely
+EVERY DAY AT GENERATION TIME:
+1. Query bot_daily_parlays (last 14 days, outcome = won/lost)
+2. Group by category + side, calculate parlay win rate
+3. Rank categories by win rate (minimum 5 appearances)
+4. Top categories (win rate > 25% AND at least 8 appearances) become the new "winning archetypes"
+5. Inject these into WINNING_ARCHETYPE_CATEGORIES and all archetype profile preferCategories
 ```
 
-### Root Causes
+### Current vs Dynamic
 
-1. **MLB contamination** -- `baseball_mlb` is NOT in `BLOCKED_SPORTS`, so MLB picks (especially PITCHER_STRIKEOUTS) get mixed into multi-leg parlays. Your winning 4-legger from Feb 21 had 2 MLB legs that were voided (not actually won).
+**Today (static):**
+```
+WINNING_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST']
+-- Never changes, even if these categories start losing
+```
 
-2. **No "winning archetype replication"** -- The bot generates from a static list of ~75 profiles but has NO mechanism to detect "this exact category combo has been winning" and generate MORE of that pattern.
+**After (dynamic):**
+```
+Day 1: Data says VOLUME_SCORER (34.7%), BIG_REBOUNDER (34.3%), ASSISTS (100%) are hot
+  -> WINNING_ARCHETYPE_CATEGORIES = ['VOLUME_SCORER', 'BIG_REBOUNDER', 'ASSISTS']
+  -> All archetype profiles target these
 
-3. **Volume spread too thin** -- 50 exploration + 15 validation + 10 execution = 75 profiles, but the winning combo (3PT + SCORER + REBOUNDER in 3-legs) only gets maybe 2-3 profiles by accident.
-
-4. **Master parlays still generating** -- 6-leg `master_parlay_max_boost` is producing parlays today despite being "DISABLED" in comments. The code comment says disabled but the profile was re-enabled under a different boost name.
-
-### Solution: Two Changes
-
-**Change 1: Block MLB from generation** (as discussed)
-- Add `baseball_mlb` to `BLOCKED_SPORTS`
-- Remove/comment MLB-specific profiles (8 profiles across all tiers)
-- Remove `mlbBoost` from composite scoring
-
-**Change 2: Add "Winning Archetype Replication" profiles**
-
-Inject new profiles across all 3 tiers that specifically target the winning combo patterns from this month's data:
-
-**Exploration tier (add 6 profiles):**
-- 3x `winning_archetype_3pt_scorer` -- THREE_POINT_SHOOTER + VOLUME_SCORER combo, NBA only, 3-legs
-- 3x `winning_archetype_reb_ast` -- BIG_REBOUNDER + ASSISTS combo, NBA only, 3-legs
-
-**Validation tier (add 4 profiles):**
-- 2x `winning_archetype_3pt_scorer` -- Same pattern, higher hit rate floor (60%)
-- 2x `winning_archetype_reb_ast` -- Same pattern, higher floor
-
-**Execution tier (add 4 profiles):**
-- 2x `winning_archetype_3pt_scorer` -- Tightest filters (65% hit rate, composite sort)
-- 2x `winning_archetype_reb_ast` -- Tightest filters
-
-Then in the candidate selection logic, add a `winningArchetypeBonus` (+15 composite score) when a candidate's category matches the proven winning categories: `THREE_POINT_SHOOTER`, `VOLUME_SCORER`, `BIG_REBOUNDER`, `HIGH_ASSIST`.
+Day 14: Data shifts, SHARP_SPREAD now winning at 40%, VOLUME_SCORER drops to 15%
+  -> WINNING_ARCHETYPE_CATEGORIES = ['SHARP_SPREAD', 'BIG_REBOUNDER', ...]
+  -> Bot auto-adapts without code changes
+```
 
 ### Technical Details
 
 **File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**Change 1 -- Block MLB** (~30 lines):
-- Line 264: Add `'baseball_mlb'` to `BLOCKED_SPORTS`
-- Lines 73, 80, 139, 140, 144: Comment out MLB exploration profiles
-- Lines 173, 181: Comment out MLB validation profiles  
-- Line 244: Comment out MLB execution profile
-- Lines ~4146-4236: Remove `mlb_engine_picks` fetch and `mlbBoost` from composite score
+**1. Add `detectWinningArchetypes()` function (~40 lines)**
 
-**Change 2 -- Winning Archetype Profiles** (~40 lines):
-- Add new profile entries with `strategy: 'winning_archetype_*'` to each tier
-- Add `preferCategories` field to these profiles: `['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER']`
-- In candidate filtering (~line 3800+), when a profile has `preferCategories`, apply +15 composite bonus to matching candidates and sort them first
-- This ensures the bot concentrates on the exact category combos that have been winning
+A new async function that:
+- Queries `bot_daily_parlays` for the last 14 days (settled only)
+- Extracts each leg's `category` and `side` from the JSONB `legs` column
+- Groups by category+side, calculates parlay-level win rate
+- Returns the top categories meeting thresholds:
+  - Minimum 8 parlay appearances (statistical significance)
+  - Win rate above 25% (above average for a 3-leg parlay)
+  - Cap at 6 categories max (prevents dilution)
+- Falls back to the current hardcoded list if no data or query fails
 
-### Expected Result
-- Zero MLB legs in generated parlays
-- 14 new archetype-specific profiles targeting the proven winning patterns
-- Higher concentration of THREE_POINT_SHOOTER + VOLUME_SCORER + BIG_REBOUNDER combos
-- Winning archetype candidates get priority scoring (+15 composite boost)
+**2. Call it in the main handler (after adaptive intelligence loads, ~line 6264)**
+
+Insert a call to `detectWinningArchetypes(supabase)` right before the pool building phase. Store the result in a variable `dynamicArchetypes`.
+
+**3. Replace the hardcoded `WINNING_ARCHETYPE_CATEGORIES` (line 4556)**
+
+Change from:
+```typescript
+const WINNING_ARCHETYPE_CATEGORIES = new Set(['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST']);
+```
+To:
+```typescript
+const WINNING_ARCHETYPE_CATEGORIES = dynamicArchetypes;
+```
+
+The `dynamicArchetypes` variable (a `Set<string>`) will be passed through the tier generation loop and used in the sorting logic.
+
+**4. Update archetype profile `preferCategories` dynamically**
+
+Before each tier runs, update the `preferCategories` on all `winning_archetype_*` profiles to use the top categories from the dynamic detection instead of the hardcoded ones. Split them into two groups:
+- `winning_archetype_3pt_scorer` profiles get the top 2 categories
+- `winning_archetype_reb_ast` profiles get categories 3-4
+
+**5. Log the detection results**
+
+Add a console log showing what the bot detected:
+```
+[Bot v2] Dynamic Archetypes: VOLUME_SCORER (34.7%, 75 apps), BIG_REBOUNDER (34.3%, 35 apps), MID_SCORER_UNDER (26.7%, 15 apps) | Fallback: false
+```
+
+### Safety Rails
+
+- **Minimum sample size**: Categories need 8+ parlay appearances to qualify (prevents flukes)
+- **Fallback**: If the query fails or returns no qualifying categories, falls back to the current hardcoded list
+- **Cap at 6**: Even if 10 categories qualify, only the top 6 by win rate are used (prevents bonus dilution)
+- **No code deploys needed**: The bot automatically adapts every day based on what's actually winning
+
+### Expected Behavior
+
+Using today's actual data, the dynamic detector would select:
+1. VOLUME_SCORER (34.7% win rate, 75 appearances)
+2. BIG_REBOUNDER (34.3%, 35 appearances)
+3. LOW_LINE_REBOUNDER (28.6%, 14 appearances)
+4. OVER_TOTAL (28.6%, 21 appearances)
+5. MID_SCORER_UNDER (26.7%, 15 appearances)
+6. SHARP_SPREAD (26.2%, 42 appearances)
+
+Notice: THREE_POINT_SHOOTER (25.0%) and HIGH_ASSIST (21.1%) would actually drop off since they're below the 25% threshold -- the static config was giving them undeserved priority. The bot will now correctly focus on what's actually winning.
 
