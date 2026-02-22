@@ -199,17 +199,23 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   // Build hedge opportunities for slide-in
   const hedgeOpportunities: HedgeOpportunity[] = useMemo(() => {
     return propCards
-      .filter((p) => p.hasHedgeOpportunity && p.projectedFinal > p.line)
-      .map((p) => ({
-        id: p.id,
-        playerName: p.playerName,
-        propType: p.propType,
-        liveProjection: p.projectedFinal,
-        liveLine: p.line,
-        edge: p.projectedFinal - p.line,
-        kellySuggestion: Math.min(15, Math.max(1, (p.projectedFinal - p.line) / p.line * 50)),
-        evPercent: ((p.projectedFinal - p.line) / p.line) * 100,
-      }));
+      .filter((p) => p.hasHedgeOpportunity)
+      .map((p) => {
+        const side = p.side === 'OVER' ? 'OVER' : 'UNDER';
+        const suggestedAction = `BET ${side} ${p.line}`;
+        return {
+          id: p.id,
+          playerName: p.playerName,
+          propType: p.propType,
+          liveProjection: p.projectedFinal,
+          liveLine: p.line,
+          edge: p.projectedFinal - p.line,
+          kellySuggestion: Math.min(15, Math.max(1, Math.abs(p.projectedFinal - p.line) / p.line * 50)),
+          evPercent: ((p.projectedFinal - p.line) / p.line) * 100,
+          side,
+          suggestedAction,
+        };
+      });
   }, [propCards]);
 
   // Advanced metrics
