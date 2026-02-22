@@ -46,14 +46,18 @@ Deno.serve(async (req) => {
       throw error;
     }
 
-    // Exclude intentional single-pick exploration strategies
+    // Exclude intentional single-pick exploration strategies and voided legacy strategies
     const EXCLUDED_STRATEGIES = [
       'max_boost_exploration_single_pick_accuracy',
       'max_boost_exploration_single_pick_value',
     ];
 
+    // Also exclude voided/disabled strategy families (pattern match)
+    const EXCLUDED_PATTERNS = ['master_parlay', 'premium_boost', 'max_boost'];
+
     const realViolations = (violations || []).filter(
-      p => !EXCLUDED_STRATEGIES.includes(p.strategy_name)
+      p => !EXCLUDED_STRATEGIES.includes(p.strategy_name) &&
+           !EXCLUDED_PATTERNS.some(pattern => p.strategy_name?.includes(pattern))
     );
     const excludedCount = (violations?.length || 0) - realViolations.length;
 

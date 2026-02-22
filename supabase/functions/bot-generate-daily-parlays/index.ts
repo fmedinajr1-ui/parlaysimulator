@@ -145,6 +145,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'] },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
       // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
     ],
   },
@@ -184,6 +185,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Double-confirmed — validated tier
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' },
       { legs: 3, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
       { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
       { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
@@ -244,9 +246,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       { legs: 5, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
-      // MASTER PARLAY: 6-leg bankroll doubler with defense-filtered matchups
-      // Targets +500 to +2000 odds range. ALL legs pass defensive matchup validation.
-      { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
+      // MASTER PARLAY: DISABLED (0-15 record, -$650 P/L, structurally doomed at 6-legs)
+      // { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
+      // REPLACEMENT: Additional double_confirmed_conviction profiles
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
       // HOT-STREAK LOCKS: Force selection from categories with current_streak >= 3 and 100% hit rate
       // These run FIRST before standard profiles to guarantee hot-streak concentration in 3-leg parlays
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
@@ -6453,17 +6457,17 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
     }
 
-    // === MASTER PARLAY: 6-leg NBA bankroll doubler with defensive matchup filter ===
-    // Runs every day. Defense-validates every leg before inclusion.
-    const masterParlayStake = stakeConfig?.bankroll_doubler_stake ?? 500;
-    console.log(`[Bot v2] 🏆 Calling generateMasterParlay — ${pool.playerPicks.length} player picks in pool, stake $${masterParlayStake}`);
-    const masterParlay = await generateMasterParlay(
-      supabase, pool, targetDate, strategyName, bankroll, globalFingerprints, masterParlayStake
-    );
-    if (masterParlay) {
-      allParlays.push(masterParlay);
-      console.log(`[Bot v2] 🏆 MASTER PARLAY: ${masterParlay.leg_count} legs | +${masterParlay.expected_odds} odds | $${masterParlayStake} stake`);
-    }
+    // === MASTER PARLAY: DISABLED (0-15 record, -$650 P/L) ===
+    // Kept for reference — uncomment to re-enable
+    // const masterParlayStake = stakeConfig?.bankroll_doubler_stake ?? 500;
+    // console.log(`[Bot v2] 🏆 Calling generateMasterParlay — ${pool.playerPicks.length} player picks in pool, stake $${masterParlayStake}`);
+    // const masterParlay = await generateMasterParlay(
+    //   supabase, pool, targetDate, strategyName, bankroll, globalFingerprints, masterParlayStake
+    // );
+    // if (masterParlay) {
+    //   allParlays.push(masterParlay);
+    //   console.log(`[Bot v2] 🏆 MASTER PARLAY: ${masterParlay.leg_count} legs | +${masterParlay.expected_odds} odds | $${masterParlayStake} stake`);
+    // }
 
     // === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
     if (allParlays.length < 6 && !stakeConfig?.block_two_leg_parlays) {
