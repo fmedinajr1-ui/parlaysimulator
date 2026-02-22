@@ -161,6 +161,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           regression: getPlayerRegression(s.playerName, s.propType),
           hasHedgeOpportunity: s.liveData?.hedgeStatus === 'alert' || s.liveData?.hedgeStatus === 'urgent' || false,
           hitRateL10: s.hitRateL10 ?? 0,
+          liveBookLine: s.liveData?.liveBookLine ?? s.line,
           pOver,
           pUnder,
           edgeScore,
@@ -201,17 +202,18 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     return propCards
       .filter((p) => p.hasHedgeOpportunity)
       .map((p) => {
-        const side = p.side === 'OVER' ? 'OVER' : 'UNDER';
-        const suggestedAction = `BET ${side} ${p.line}`;
+        const liveLine = p.liveBookLine;
+        const side = p.projectedFinal >= liveLine ? 'OVER' : 'UNDER';
+        const suggestedAction = `BET ${side} ${liveLine}`;
         return {
           id: p.id,
           playerName: p.playerName,
           propType: p.propType,
           liveProjection: p.projectedFinal,
-          liveLine: p.line,
-          edge: p.projectedFinal - p.line,
-          kellySuggestion: Math.min(15, Math.max(1, Math.abs(p.projectedFinal - p.line) / p.line * 50)),
-          evPercent: ((p.projectedFinal - p.line) / p.line) * 100,
+          liveLine,
+          edge: p.projectedFinal - liveLine,
+          kellySuggestion: Math.min(15, Math.max(1, Math.abs(p.projectedFinal - liveLine) / liveLine * 50)),
+          evPercent: ((p.projectedFinal - liveLine) / liveLine) * 100,
           side,
           suggestedAction,
         };
