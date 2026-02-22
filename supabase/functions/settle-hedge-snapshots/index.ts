@@ -61,17 +61,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Build lookup: player_name_lower + prop_type + date -> actual_value
+    // Build lookup: normalized_player_name + prop_type + date -> actual_value
     const outcomeLookup = new Map<string, number>();
     for (const o of outcomes) {
-      const key = `${o.player_name.toLowerCase()}_${o.prop_type}_${o.analysis_date}`;
+      const key = `${o.player_name.toLowerCase().trim()}_${o.prop_type.toLowerCase().trim()}_${o.analysis_date}`;
       outcomeLookup.set(key, o.actual_value);
     }
 
     let settledCount = 0;
+    const updates: Array<{ id: string; actual_final: number; outcome: string }> = [];
 
     for (const snap of unsettled) {
-      const key = `${snap.player_name.toLowerCase()}_${snap.prop_type}_${snap.analysis_date}`;
+      const key = `${snap.player_name.toLowerCase().trim()}_${snap.prop_type.toLowerCase().trim()}_${snap.analysis_date}`;
       const actualValue = outcomeLookup.get(key);
 
       if (actualValue === undefined) continue;
@@ -87,13 +88,18 @@ Deno.serve(async (req) => {
         outcome = actualValue < snap.line ? 'hit' : 'miss';
       }
 
+      updates.push({ id: snap.id, actual_final: actualValue, outcome });
+    }
+
+    // Batch updates
+    for (const u of updates) {
       const { error: updateError } = await supabase
         .from('sweet_spot_hedge_snapshots')
-        .update({ actual_final: actualValue, outcome })
-        .eq('id', snap.id);
+        .update({ actual_final: u.actual_final, outcome: u.outcome })
+        .eq('id', u.id);
 
       if (updateError) {
-        console.error(`[settle-hedge-snapshots] Update error for ${snap.id}:`, updateError);
+        console.error(`[settle-hedge-snapshots] Update error for ${u.id}:`, updateError);
       } else {
         settledCount++;
       }
