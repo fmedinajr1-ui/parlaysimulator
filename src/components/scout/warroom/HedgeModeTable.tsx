@@ -129,12 +129,16 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
           </thead>
           <tbody>
             {props.map((p, i) => {
-              const edge = p.projectedFinal - p.line;
+              const betSide = (p.side || 'OVER').toUpperCase();
+              const isOver = betSide !== 'UNDER';
+              const edge = isOver
+                ? p.projectedFinal - p.line
+                : p.line - p.projectedFinal;
               const hedgeSuggestion = edge > 2 ? 'LOCK' : edge > 0 ? 'HOLD' : edge > -2 ? 'MONITOR' : 'HEDGE';
               const pct = heats[i];
 
-              // Build hedge recommendation when action is HEDGE
-              const hedgeSide = p.side?.toUpperCase() === 'OVER' ? 'UNDER' : 'OVER';
+              // Hedge is always the OPPOSITE of the bet side
+              const hedgeSide = isOver ? 'UNDER' : 'OVER';
               let hedgeLine = p.line;
               let hedgeBook = '';
               if (hedgeSuggestion === 'HEDGE' && p.allBookLines && p.allBookLines.length > 0) {
@@ -158,7 +162,7 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                   <td className="p-2">
                     <span className="font-medium text-foreground">{p.playerName}</span>
                     <span className="text-muted-foreground ml-1">
-                      {PROP_SHORT[p.propType] || p.propType}
+                      {PROP_SHORT[p.propType] || p.propType} {isOver ? 'O' : 'U'}
                     </span>
                   </td>
                   <td className="text-right p-2 tabular-nums font-medium text-foreground">
