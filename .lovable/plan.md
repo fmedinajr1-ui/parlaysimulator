@@ -1,99 +1,70 @@
 
-## Live Mispriced Line Scanner — Pre-Hedge Intelligence Layer
 
-### What This Does
-Adds a **"Line Value Scanner"** that runs on every live line refresh (before hedge recommendations) and flags props where the current book line is mispriced relative to:
-- **L10 average** (player's recent performance floor)
-- **Game pace** (fast/slow games shift projections)
-- **Original opening line** (line movement direction)
-- **Projected final** (live AI projection vs current book line)
+## Wire Halftime Recalibration Into Hedge Status
 
-Each prop in the Hedge Mode table gets a new **"Line Value"** column showing whether the live line is SHARP (correctly priced), SOFT (mispriced in your favor), or STALE (moved against you).
-
-### How It Works
+### Problem
+On line 161, `calculateHedgeStatus` runs inside the enrichment memo using the raw linear `projectedFinal`. Then on line 171, `useHalftimeRecalibration` overwrites `projectedFinal` with the smarter 2H-adjusted value -- but the hedge status is already stale at that point.
 
 ```text
-For each prop in the war room:
-
-  L10 Avg = player's last 10 game average for this stat
-  Pace Multiplier = game pace rating / 100 (e.g., 1.05 for fast game)
-  Pace-Adjusted L10 = L10 Avg * Pace Multiplier
-
-  Live Book Line = current sportsbook line
-  Original Line = line when bet was placed
-
-  -- Edge vs L10 baseline --
-  If bet is OVER:
-    l10Edge = Pace-Adjusted L10 - Live Book Line
-  If bet is UNDER:
-    l10Edge = Live Book Line - Pace-Adjusted L10
-
-  -- Projection edge --
-  If bet is OVER:
-    projEdge = Projected Final - Live Book Line
-  If bet is UNDER:
-    projEdge = Live Book Line - Projected Final
-
-  -- Line drift (has the line moved for or against you?) --
-  If bet is OVER:
-    lineDrift = Original Line - Live Book Line  (positive = line dropped = good for over)
-  If bet is UNDER:
-    lineDrift = Live Book Line - Original Line  (positive = line went up = good for under)
-
-  -- Composite mispricing score --
-  mispricingScore = (l10Edge * 0.4) + (projEdge * 0.35) + (lineDrift * 0.25)
-
-  -- Classification --
-  If mispricingScore >= 1.5: SOFT (line is favorable, good value)
-  If mispricingScore <= -1.5: STALE (line moved against you)
-  Otherwise: SHARP (correctly priced)
+Current order:
+  Line 161: calculateHedgeStatus() --> uses RAW linear projectedFinal
+  Line 171: useHalftimeRecalibration() --> updates projectedFinal (too late!)
+  Line 174: useHedgeStatusRecorder() --> records the stale hedge status
 ```
 
-### UI Changes
+### Fix (1 file: `src/hooks/useSweetSpotLiveData.ts`)
 
-**Hedge Mode Table** — New "Value" column between "Gap" and "Action":
+**Step 1 -- Remove early hedge status calculation (line 159-161)**
 
-| Prop | Now | Need | Progress | Projected | Gap | **Value** | Action | Hedge |
-|------|-----|------|----------|-----------|-----|-----------|--------|-------|
-| Chet PTS O | 8 | 18.5 | ---- | 20.1 | +1.6 | **SOFT** | HOLD | — |
-| Wiggins PTS O | 4 | 14.5 | -- | 10.0 | -4.5 | **STALE** | HEDGE | UNDER 14.5 |
+Delete these lines from the enrichment memo:
+```typescript
+// REMOVE:
+const enrichedSpot = { ...spot, liveData };
+liveData.hedgeStatus = calculateHedgeStatus(enrichedSpot) ?? undefined;
+return enrichedSpot;
+```
+Replace with just:
+```typescript
+return { ...spot, liveData };
+```
 
-- **SOFT** = green pill — line is mispriced in your favor (L10 + pace say this should clear)
-- **SHARP** = gray pill — line is correctly priced, no edge
-- **STALE** = red pill — line has moved against you or L10 doesn't support this line
+**Step 2 -- Add post-recalibration hedge status calculation (after line 171)**
 
-Each pill has a tooltip showing the breakdown (L10 edge, pace adjustment, line drift).
+After `useHalftimeRecalibration` and before `useHedgeStatusRecorder`, add a new `useMemo` that recalculates hedge status on the recalibrated spots:
 
-### Files to Create/Modify
+```typescript
+const finalSpots = useMemo(() => {
+  return spotsWithRecalibration.map(spot => {
+    if (!spot.liveData) return spot;
+    const hedgeStatus = calculateHedgeStatus(spot) ?? undefined;
+    if (hedgeStatus === spot.liveData.hedgeStatus) return spot;
+    return {
+      ...spot,
+      liveData: { ...spot.liveData, hedgeStatus },
+    };
+  });
+}, [spotsWithRecalibration]);
+```
 
-**1. New file: `src/lib/liveMispricedLineScanner.ts`**
-- Pure utility function: `calculateLineMispricing(props)` 
-- Takes the WarRoomPropData array (which already has L10 hit rate, pace rating, live book line, projected final, original line)
-- Returns a Map of prop ID to mispricing result (score, classification, breakdown)
-- No API calls — uses data already in memory
+**Step 3 -- Update all downstream references**
 
-**2. Modify: `src/components/scout/warroom/HedgeModeTable.tsx`**
-- Import and call `calculateLineMispricing` on the props array
-- Add "Value" column header with tooltip
-- Add value pill to each row (SOFT/SHARP/STALE with color coding)
-- Tooltip shows: "L10 edge: +2.1 | Pace adj: 1.05x | Line drift: +0.5"
+Replace `spotsWithRecalibration` with `finalSpots` in:
+- `useHedgeStatusRecorder(finalSpots)` (line 174)
+- `liveSpots` filter (line 183)
+- `spotsWithLineMovement` filter (line 188)
+- Return value `spots: finalSpots` (line 192)
 
-**3. Modify: `src/components/scout/warroom/WarRoomPropCard.tsx`** (interface only)
-- Add `l10Avg` field to `WarRoomPropData` interface (needed for L10 baseline)
+### New execution order
+```text
+1. Enrich spots with live data (NO hedge status)
+2. useQuarterTransition()
+3. useHalftimeRecalibration() --> updates projectedFinal with regression/pace/fatigue
+4. calculateHedgeStatus() --> NOW uses the recalibrated projection
+5. useHedgeStatusRecorder() --> records the accurate status
+```
 
-**4. Modify: `src/components/scout/warroom/WarRoomLayout.tsx`**
-- Pass `l10Avg` from the sweet spot's `l10Stats.avg` into the prop card data
+### Impact
+- At halftime, hedge alerts will use the 2H-adjusted projection (accounting for ~8% regression, pace shifts, fatigue) instead of raw linear pace
+- During non-halftime periods, behavior is identical since recalibration only modifies halftime spots
+- No database changes, no new files -- single file edit
 
-### Technical Details
-
-The scanner is a pure client-side calculation — no new API calls or edge functions. All the data it needs is already available in the `WarRoomPropData`:
-- `hitRateL10` and L10 avg from sweet spot analysis
-- `paceRating` from live feed
-- `liveBookLine` from batch odds
-- `line` (original line)
-- `projectedFinal` from live projection
-- `side` (OVER/UNDER)
-
-This runs synchronously in the render cycle via `useMemo`, so it's instant and doesn't add any latency.
-
-**No database changes. No new edge functions. 4 files touched (1 new, 3 modified).**
