@@ -434,3 +434,6 @@ verify_jwt = false
 
 [functions.nba-mega-parlay-scanner]
 verify_jwt = false
+
+[functions.daily-winners-broadcast]
+verify_jwt = false
