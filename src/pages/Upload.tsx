@@ -760,10 +760,12 @@ const Upload = () => {
             });
           
           if (!uploadError && uploadData) {
-            const { data: { publicUrl } } = supabase.storage
+            const { data: signedUrlData } = await supabase.storage
               .from('betting-slips')
-              .getPublicUrl(uploadData.path);
-            setLastUploadedSlipUrl(publicUrl);
+              .createSignedUrl(uploadData.path, 3600);
+            if (signedUrlData?.signedUrl) {
+              setLastUploadedSlipUrl(signedUrlData.signedUrl);
+            }
           }
         } catch (uploadErr) {
           console.error('Slip upload error:', uploadErr);

@@ -206,6 +206,15 @@ export default function Admin() {
     }
   }, [isAdmin, isCheckingAdmin]);
 
+  const extractStoragePath = (url: string): string | null => {
+    try {
+      const match = url.match(/betting-slips\/(.+)$/);
+      return match ? match[1].split('?')[0] : null;
+    } catch {
+      return null;
+    }
+  };
+
   const fetchAdminData = async () => {
     setIsLoading(true);
     try {
@@ -223,7 +232,21 @@ export default function Admin() {
       } catch (parlayErr) {
         console.error('Exception fetching parlays:', parlayErr);
       }
-      setParlays(typedParlays);
+
+      // Generate signed URLs for slip images (bucket is now private)
+      const parlaysWithSignedUrls = await Promise.all(
+        typedParlays.map(async (parlay) => {
+          if (!parlay.slip_image_url) return parlay;
+          const storagePath = extractStoragePath(parlay.slip_image_url);
+          if (!storagePath) return parlay;
+          const { data } = await supabase.storage
+            .from('betting-slips')
+            .createSignedUrl(storagePath, 3600);
+          return { ...parlay, slip_image_url: data?.signedUrl ?? null };
+        })
+      );
+
+      setParlays(parlaysWithSignedUrls);
     } catch (err) {
       console.error('Error fetching admin data:', err);
       toast({
