@@ -1,65 +1,83 @@
 
 
-## Rebrand Mega Parlay Scanner as "Daily Lottery Parlay" + Risk Disclaimer
+## Daily Winners Recap Report — Customer Telegram Broadcast
 
-### Changes
+### Overview
 
-**File:** `supabase/functions/bot-send-telegram/index.ts` (lines 762-787)
+Create a new edge function that pulls yesterday's winning parlays from the database, formats them into a clean customer-friendly Telegram report, broadcasts it to all authorized customers, and runs automatically at 8 AM ET every day.
 
-Update `formatMegaParlayScanner()` to:
+### Report Format (Telegram)
 
-1. Rename the header from "NBA MEGA PARLAY SCANNER" to "DAILY LOTTERY PARLAY"
-2. Add a risk disclaimer at the top and bottom of the report
-3. Keep all existing leg data, odds, and payout info intact
-
-**New report format:**
-
-```
-🎰 DAILY LOTTERY PARLAY
+```text
+🏆 YESTERDAY'S WINS — Feb 22
 ━━━━━━━━━━━━━━━━━━━━
-Feb 23 | +100 Odds Only
+Excellent Day — 6 Winners
 
-⚠️ HIGH RISK / HIGH REWARD
-This is a lottery-style parlay — slight risk involved.
-Bet only what you can afford to lose.
+#1 | Validation | +596 | $1,192 profit
+  ✅ Desmond Bane PTS O18.5 (actual: 36)
+  ✅ Vucevic REB O6.5 (actual: 8)
+  ✅ Brunson REB O2.5 (actual: 5)
 
-📊 Scanned: 250 props across 12 games
-✅ 174 qualified
+#2 | Validation | +594 | $1,188 profit
+  ✅ Kon Knueppel 3PT O3.5 (actual: 5)
+  ✅ Desmond Bane PTS O18.5 (actual: 36)
+  ✅ Knueppel PTS O19.5 (actual: 28)
 
-🎯 RECOMMENDED PARLAY (3 legs)
-💰 Combined: +1112
-💵 $25 bet → $303.00
+#3 | Exploration | +596 | $447 profit
+  ✅ Knueppel 3PT O3.5 (actual: 5)
+  ✅ Vucevic REB O6.5 (actual: 8)
+  ✅ Bane PTS O18.5 (actual: 36)
 
-Leg 1: Russell Westbrook
-  OVER 1.5 threes (+102) [fanduel]
-  Hit: 0.9% | Edge: N/A | Score: 20.4
-  L10 Med: 2 | Avg: 2
+... (up to 10 winners shown)
 
-Leg 2: Malik Monk
-  OVER 2.5 threes (+150) [hardrockbet]
-  Hit: 0.9% | Edge: N/A | Score: 20.0
-  L10 Med: 3 | Avg: 2.9
+💰 Total: +$4,132 profit across 6 winners
 
-Leg 3: James Harden
-  OVER 2.5 threes (+140) [fanduel]
-  Hit: 1.0% | Edge: N/A | Score: 19.7
-  L10 Med: 3 | Avg: 2.7
+🔑 Key Players: Bane (PTS), Knueppel (3PT), Vucevic (REB)
 
-🎲 Good luck! Play responsibly.
+📊 Powered by ParlayIQ Engine
 ```
 
-### What stays the same
+The rating line ("Excellent Day", "Solid Day", "Decent Day") is based on winner count and total profit.
 
-- Customer broadcast logic (already works)
-- Structured data from scanner (no changes to `nba-mega-parlay-scanner`)
-- Bypass list for quiet hours (already in place)
-- All leg details, scoring, and payout calculations
+### New Files
+
+**1. `supabase/functions/daily-winners-broadcast/index.ts`**
+
+- Queries `bot_daily_parlays` for yesterday's date where `outcome = 'won'`
+- Pulls `strategy_name`, `tier`, `expected_odds`, `profit_loss`, `legs`, `simulated_stake`
+- Calculates total profit across all winners
+- Formats into the clean Telegram report above
+- Sends to `bot-send-telegram` with a new type `'daily_winners_recap'`
+- Can accept `{ date: "2025-02-22" }` in the body to run for a specific date (for the initial invocation)
+
+**2. Update `supabase/functions/bot-send-telegram/index.ts`**
+
+- Add `'daily_winners_recap'` to the `NotificationType` union
+- Add `formatDailyWinnersRecap()` function that renders the structured parlay winner data
+- Add to the bypass list (always sends, ignores quiet hours)
+- Add to customer broadcast block (same pattern as `mega_parlay_scanner`)
+
+### Cron Job
+
+After approval and deployment, set up a cron job via SQL:
+
+```text
+Schedule: 0 13 * * *  (13:00 UTC = 8:00 AM ET)
+Target: daily-winners-broadcast
+```
+
+This runs every day at 8 AM Eastern and sends yesterday's winning parlays to all customers.
+
+### After Deployment
+
+Immediately invoke the function with yesterday's date to send the first report to all customers.
 
 ### Technical Summary
 
-| File | Change |
+| File | Action |
 |------|--------|
-| `supabase/functions/bot-send-telegram/index.ts` | Update `formatMegaParlayScanner()` header, add risk disclaimer |
-
-One file, one function edit. Redeploys automatically.
+| `supabase/functions/daily-winners-broadcast/index.ts` | New -- fetches yesterday's won parlays, sends structured data to Telegram |
+| `supabase/functions/bot-send-telegram/index.ts` | Add `daily_winners_recap` type, formatter, bypass, and customer broadcast |
+| `supabase/config.toml` | Add `daily-winners-broadcast` function config |
+| Cron job (SQL) | Schedule at 8 AM ET daily |
 
