@@ -431,3 +431,6 @@ verify_jwt = false
 
 [functions.bot-force-fresh-parlays]
 verify_jwt = false
+
+[functions.nba-mega-parlay-scanner]
+verify_jwt = false
