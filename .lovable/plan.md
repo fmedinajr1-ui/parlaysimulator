@@ -1,76 +1,91 @@
 
 
-## NBA Mega Parlay Scanner -- High Odds Only (+100 and Up)
+## Fix Mega Parlay Scanner Telegram Report + Send to Customers
 
-### Overview
+### Problem
 
-Create a new edge function that scrapes all NBA player props from FanDuel and Hard Rock Bet for today's 3 games, filters for only props with American odds of +100 or higher, then cross-references against our full engine stack to find the most accurate high-payout picks and build a parlay.
+The mega parlay scanner report is showing raw JSON in Telegram because:
+1. The scanner sends `type: 'mega_parlay_scanner'` to `bot-send-telegram`, but that type isn't in the `NotificationType` union or the `formatMessage` switch — so it falls through to `default: return "Bot Update: ${JSON.stringify(data)}"` (line 81)
+2. The report only goes to the admin chat ID, not to customer accounts in `bot_authorized_users`
 
-### What Gets Built
+### Fix 1: Add proper formatter in `bot-send-telegram`
 
-**New file:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
+**File:** `supabase/functions/bot-send-telegram/index.ts`
 
-### How It Works
+- Add `'mega_parlay_scanner'` to the `NotificationType` union (line 36)
+- Add a case in the `formatMessage` switch (line 47)
+- Add a new `formatMegaParlayScanner()` function that produces a clean report:
 
-1. **Fetch all NBA props** from The Odds API filtered to `fanduel,hardrockbet` across 7 markets (points, rebounds, assists, threes, blocks, steals, PRA combos)
+```
+🏀 NBA MEGA PARLAY SCANNER
+━━━━━━━━━━━━━━━━━━━━
+Feb 23 | +100 Odds Only
 
-2. **Filter: Only +100 and above odds** -- discard any prop leg where both over and under prices are below +100. Keep only the side (over or under) that is +100 or higher.
+📊 Scanned: 250 props across 12 games
+✅ 174 qualified
 
-3. **Cross-reference each qualifying prop** against our database:
-   - `nba_player_game_logs` -- L5/L10/L20 averages and medians to validate the line
-   - `mispriced_lines` -- check if our engine flagged it as mispriced and the edge %
-   - `category_sweet_spots` -- L10 hit rate and recommended side
-   - `high_conviction_results` -- how many engines agree on this pick
-   - `nba_opponent_defense_stats` -- opponent defensive rank for this stat category
+🎯 RECOMMENDED PARLAY (3 legs)
+💰 Combined: +1112
+💵 $25 bet -> $303.00
 
-4. **Score each prop** with composite formula:
-   - Hit rate (40%): L10 hit rate from sweet spots
-   - Edge (25%): Mispriced edge percentage
-   - Median validation (15%): Gap between player median and the line
-   - Conviction (10%): Number of engines agreeing
-   - Odds value (10%): Higher American odds score higher
+Leg 1: Russell Westbrook
+  OVER 1.5 threes (+102) [fanduel]
+  Hit: 0.9% | Edge: N/A | Score: 20.4
+  L10 Med: 2 | Avg: 2
 
-5. **Build optimal 3-5 leg parlays** with constraints:
-   - Every leg must be +100 or higher American odds
-   - Individual leg hit rate must be 55%+
-   - No more than 2 legs from the same game
-   - Role-stat alignment (no guards on rebounds, etc.)
-   - Maximize combined payout
+Leg 2: Malik Monk
+  OVER 2.5 threes (+150) [hardrockbet]
+  Hit: 0.9% | Edge: N/A | Score: 20.0
+  L10 Med: 3 | Avg: 2.9
 
-6. **Return results** with per-leg breakdown: player, prop, side, odds, hit rate, edge, median vs line, and total parlay payout on a $25 bet
-
-### After Creation
-
-The function will be invoked immediately for today's date. Results displayed directly -- no frontend changes needed.
-
-### Technical Details
-
-**API call:**
-```text
-GET /v4/sports/basketball_nba/odds
-  ?apiKey=KEY&regions=us
-  &markets=player_points,player_rebounds,player_assists,player_threes,
-           player_blocks,player_steals,player_points_rebounds_assists
-  &oddsFormat=american
-  &bookmakers=fanduel,hardrockbet
+Leg 3: James Harden
+  OVER 2.5 threes (+140) [fanduel]
+  Hit: 1.0% | Edge: N/A | Score: 19.7
+  L10 Med: 3 | Avg: 2.7
 ```
 
-**Odds filter logic:**
-```text
-// Keep only sides with +100 or higher
-if (over_price >= 100) keep "Over" side
-if (under_price >= 100) keep "Under" side
-// Discard prop entirely if neither side qualifies
+The formatter will parse the `data.message` string (already pre-formatted by the scanner) and clean it up properly, or better yet, accept structured data and format it cleanly.
+
+### Fix 2: Update the scanner to send structured data
+
+**File:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
+
+Change the Telegram call (lines 468-472) to send structured data instead of a pre-built message string:
+
+```typescript
+body: JSON.stringify({
+  type: 'mega_parlay_scanner',
+  data: {
+    date: today,
+    scanned: rawProps.length,
+    events: events.length,
+    qualified: scoredProps.length,
+    legs: parlayBreakdown,
+    combinedOdds: combinedAmericanOdds,
+    payout25: parlayPayoutOn25.toFixed(2),
+  }
+})
 ```
 
-**Pipeline:**
-```text
-All Props (FanDuel + Hard Rock)
-  --> Filter: odds >= +100 only
-  --> Enrich: game logs, mispriced edges, sweet spots, defense stats
-  --> Score: composite formula
-  --> Validate: 55%+ hit rate, archetype alignment, minutes threshold
-  --> Build: greedy parlay maximizing combined odds
-  --> Output: best parlay with full analytics + payout estimate
-```
+### Fix 3: Broadcast to customers
 
+**File:** `supabase/functions/bot-send-telegram/index.ts`
+
+After sending to the admin, also send to all authorized customers from `bot_authorized_users`:
+
+- Query `bot_authorized_users` for all rows with `is_authorized = true`
+- Send the same formatted message to each customer's `chat_id`
+- Skip quiet hours check for mega scanner reports (they're manually triggered)
+
+### Fix 4: Add to the bypass list
+
+Add `'mega_parlay_scanner'` to the quiet hours / notification preference bypass list on line 819 so it always sends (since it's manually triggered).
+
+### Technical Summary
+
+| File | Change |
+|------|--------|
+| `supabase/functions/bot-send-telegram/index.ts` | Add `mega_parlay_scanner` type, formatter function, customer broadcast logic |
+| `supabase/functions/nba-mega-parlay-scanner/index.ts` | Send structured data instead of raw message string |
+
+Both edge functions will be redeployed automatically after changes.
