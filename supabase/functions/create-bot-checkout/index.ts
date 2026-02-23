@@ -39,8 +39,14 @@ serve(async (req) => {
       customer_email: customerId ? undefined : email,
       line_items: [{ price: resolvedPriceId, quantity: 1 }],
       mode: "subscription",
+      payment_method_collection: "always",
       subscription_data: {
         trial_period_days: isScoutTier ? 1 : 3,
+        trial_settings: {
+          end_behavior: {
+            missing_payment_method: "cancel",
+          },
+        },
       },
       success_url: isScoutTier ? `${req.headers.get("origin")}/scout` : TELEGRAM_BOT_URL,
       cancel_url: `${req.headers.get("origin")}/`,
