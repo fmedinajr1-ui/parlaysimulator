@@ -1,14 +1,16 @@
 
 
-## Remove MispricedLinesCard and HighConvictionCard from Homepage
+## Remove Simulation and Research Tabs from Dashboard
 
-Move these two analysis cards off the homepage so they only appear on the dashboard.
+Remove the "Simulation" tab and "Research" tab (and their content) from the Bot Dashboard.
 
 ### Changes
 
-**File: `src/pages/Index.tsx`**
-- Remove the `MispricedLinesCard` import and its rendered block (lines ~12, 170-173)
-- Remove the `HighConvictionCard` import and its rendered block (lines ~13, 175-178)
+**File: `src/pages/BotDashboard.tsx`**
+- Remove imports: `SimulationAccuracyCard` (line 21), `ShadowPicksFeed` (line 22), `ResearchIntelligencePanel` (line 18)
+- Remove `<TabsTrigger value="research">` (line 180)
+- Remove `<TabsTrigger value="simulation">` (line 181)
+- Remove `<TabsContent value="research">` block (lines 284-287)
+- Remove `<TabsContent value="simulation">` block (lines 289-293)
 
-No other files need to change. Both cards and their hooks remain intact for use on the dashboard.
-
+The components themselves remain in the codebase, just no longer rendered on the dashboard.
