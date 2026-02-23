@@ -1,83 +1,38 @@
 
 
-## Daily Winners Recap Report — Customer Telegram Broadcast
+## Fix & Verify All Today's Updates for Tomorrow
 
-### Overview
+### Issue Found
 
-Create a new edge function that pulls yesterday's winning parlays from the database, formats them into a clean customer-friendly Telegram report, broadcasts it to all authorized customers, and runs automatically at 8 AM ET every day.
+There is a **syntax bug** in `supabase/functions/bot-send-telegram/index.ts` — an extra `}` on line 761 that will cause a deployment/runtime error. This stray brace was left over from a previous edit and will break the Telegram notification function entirely (affecting ALL notifications, not just the new ones).
 
-### Report Format (Telegram)
+### Fix Required
 
-```text
-🏆 YESTERDAY'S WINS — Feb 22
-━━━━━━━━━━━━━━━━━━━━
-Excellent Day — 6 Winners
+**File:** `supabase/functions/bot-send-telegram/index.ts` (line 761)
 
-#1 | Validation | +596 | $1,192 profit
-  ✅ Desmond Bane PTS O18.5 (actual: 36)
-  ✅ Vucevic REB O6.5 (actual: 8)
-  ✅ Brunson REB O2.5 (actual: 5)
+Remove the extra `}` on line 761. The function `formatFreshSlateReport` already closes properly on line 760 with `return msg;` + `}`. The stray brace sits between that and `formatMegaParlayScanner`.
 
-#2 | Validation | +594 | $1,188 profit
-  ✅ Kon Knueppel 3PT O3.5 (actual: 5)
-  ✅ Desmond Bane PTS O18.5 (actual: 36)
-  ✅ Knueppel PTS O19.5 (actual: 28)
+### Verification Checklist
 
-#3 | Exploration | +596 | $447 profit
-  ✅ Knueppel 3PT O3.5 (actual: 5)
-  ✅ Vucevic REB O6.5 (actual: 8)
-  ✅ Bane PTS O18.5 (actual: 36)
+After the fix, all three customer-facing features from today will work:
 
-... (up to 10 winners shown)
+| Feature | Status | Cron / Trigger |
+|---------|--------|----------------|
+| Daily Lottery Parlay (mega scanner rebrand) | Working after fix | Manual / on-demand |
+| Daily Winners Recap (8 AM ET broadcast) | Working after fix | `0 13 * * *` UTC cron scheduled |
+| Risk disclaimer on lottery parlay | Working after fix | Part of mega scanner formatter |
 
-💰 Total: +$4,132 profit across 6 winners
+### What the Fix Enables
 
-🔑 Key Players: Bane (PTS), Knueppel (3PT), Vucevic (REB)
+- `formatMegaParlayScanner()` — Daily Lottery Parlay with risk disclaimer
+- `formatDailyWinnersRecap()` — Yesterday's Wins report
+- Customer broadcast for both types
+- Quiet hours bypass for both types
+- Cron job at 8 AM ET triggers `daily-winners-broadcast` automatically
 
-📊 Powered by ParlayIQ Engine
-```
+### Steps
 
-The rating line ("Excellent Day", "Solid Day", "Decent Day") is based on winner count and total profit.
-
-### New Files
-
-**1. `supabase/functions/daily-winners-broadcast/index.ts`**
-
-- Queries `bot_daily_parlays` for yesterday's date where `outcome = 'won'`
-- Pulls `strategy_name`, `tier`, `expected_odds`, `profit_loss`, `legs`, `simulated_stake`
-- Calculates total profit across all winners
-- Formats into the clean Telegram report above
-- Sends to `bot-send-telegram` with a new type `'daily_winners_recap'`
-- Can accept `{ date: "2025-02-22" }` in the body to run for a specific date (for the initial invocation)
-
-**2. Update `supabase/functions/bot-send-telegram/index.ts`**
-
-- Add `'daily_winners_recap'` to the `NotificationType` union
-- Add `formatDailyWinnersRecap()` function that renders the structured parlay winner data
-- Add to the bypass list (always sends, ignores quiet hours)
-- Add to customer broadcast block (same pattern as `mega_parlay_scanner`)
-
-### Cron Job
-
-After approval and deployment, set up a cron job via SQL:
-
-```text
-Schedule: 0 13 * * *  (13:00 UTC = 8:00 AM ET)
-Target: daily-winners-broadcast
-```
-
-This runs every day at 8 AM Eastern and sends yesterday's winning parlays to all customers.
-
-### After Deployment
-
-Immediately invoke the function with yesterday's date to send the first report to all customers.
-
-### Technical Summary
-
-| File | Action |
-|------|--------|
-| `supabase/functions/daily-winners-broadcast/index.ts` | New -- fetches yesterday's won parlays, sends structured data to Telegram |
-| `supabase/functions/bot-send-telegram/index.ts` | Add `daily_winners_recap` type, formatter, bypass, and customer broadcast |
-| `supabase/config.toml` | Add `daily-winners-broadcast` function config |
-| Cron job (SQL) | Schedule at 8 AM ET daily |
+1. Remove stray `}` on line 761
+2. Redeploy `bot-send-telegram`
+3. Both functions will work correctly for tomorrow's automatic 8 AM run
 
