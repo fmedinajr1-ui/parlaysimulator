@@ -83,6 +83,65 @@ async function detectWinningArchetypes(supabase: any): Promise<{ categories: Set
   }
 }
 
+// ============= UNIFIED ENVIRONMENT SCORE ENGINE =============
+function calculateEnvironmentScore(
+  paceRating: number | null,
+  oppDefenseRank: number | null,
+  blowoutProbability: number | null,
+  propType: string,
+  side: 'over' | 'under' | string,
+  oppRebRank?: number | null,
+  oppAstRank?: number | null
+): { envScore: number; confidenceAdjustment: number; components: { pace: number; defense: number; rebAst: number; blowout: number } } {
+  const isOver = side.toLowerCase() === 'over';
+
+  // 1. Pace Factor (0-1): normalize pace 94-106 range
+  let paceFactor = 0.5;
+  if (paceRating != null) {
+    paceFactor = Math.max(0, Math.min(1, (paceRating - 94) / 12));
+    if (!isOver) paceFactor = 1 - paceFactor;
+  }
+
+  // 2. Positional Defense (0-1): rank 1=best defense, 30=worst
+  let defenseFactor = 0.5;
+  if (oppDefenseRank != null) {
+    defenseFactor = (30 - oppDefenseRank) / 29; // 30=soft=1.0, 1=tough=0.0
+    if (!isOver) defenseFactor = 1 - defenseFactor;
+  }
+
+  // 3. Reb/Ast Environment (0-1): Phase 1 defaults to 0.5 when NULL
+  let rebAstFactor = 0.5;
+  const propLower = propType.toLowerCase();
+  if (propLower.includes('reb') && oppRebRank != null) {
+    rebAstFactor = (30 - oppRebRank) / 29;
+    if (!isOver) rebAstFactor = 1 - rebAstFactor;
+  } else if (propLower.includes('ast') && oppAstRank != null) {
+    rebAstFactor = (30 - oppAstRank) / 29;
+    if (!isOver) rebAstFactor = 1 - rebAstFactor;
+  } else if ((propLower.includes('pra') || (propLower.includes('pts') && propLower.includes('reb')) || (propLower.includes('pts') && propLower.includes('ast'))) && oppRebRank != null && oppAstRank != null) {
+    const rebVal = (30 - oppRebRank) / 29;
+    const astVal = (30 - oppAstRank) / 29;
+    rebAstFactor = (rebVal + astVal) / 2;
+    if (!isOver) rebAstFactor = 1 - rebAstFactor;
+  }
+
+  // 4. Blowout Risk (0-1): directly from game_environment
+  const blowoutFactor = Math.max(0, Math.min(1, blowoutProbability ?? 0));
+
+  // Composite: (pace * 0.3) + (defense * 0.3) + (rebAst * 0.2) + (blowout * -0.2)
+  const envScore = (paceFactor * 0.3) + (defenseFactor * 0.3) + (rebAstFactor * 0.2) + (blowoutFactor * -0.2);
+
+  // Scale to confidence adjustment: -20 to +20
+  const raw = Math.round((envScore - 0.3) * 50);
+  const confidenceAdjustment = Math.max(-20, Math.min(20, raw));
+
+  return {
+    envScore,
+    confidenceAdjustment,
+    components: { pace: paceFactor, defense: defenseFactor, rebAst: rebAstFactor, blowout: blowoutFactor },
+  };
+}
+
 // ============= SPREAD CAP =============
 const MAX_SPREAD_LINE = 10; // Spreads above this trigger alt line shopping or get blocked
 
@@ -1233,26 +1292,23 @@ function calculateTeamCompositeScore(
   }
 
   if (betType === 'total') {
+    // Unified Environment Score for totals
     const homePace = paceMap.get(homeAbbrev);
     const awayPace = paceMap.get(awayAbbrev);
+    const avgPaceRating = (homePace && awayPace) ? (homePace.pace_rating + awayPace.pace_rating) / 2 : null;
+    const oppAbbrev = side === 'over' ? awayAbbrev : homeAbbrev;
+    const oppDefDetail = defenseDetailMap.get(oppAbbrev);
+    const oppDefRank = oppDefDetail?.overall_rank ?? (defenseMap.get(oppAbbrev) || null);
+    const blowoutProb = env?.blowout_probability ?? null;
 
-    if (homePace && awayPace) {
-      const avgPace = (homePace.pace_rating + awayPace.pace_rating) / 2;
-      if (side === 'over' && avgPace > 101) {
-        const paceBonus = Math.round((avgPace - 99) * 3);
-        score += clampScore(0, 15, paceBonus);
-        breakdown.pace_fast = clampScore(0, 15, paceBonus);
-      } else if (side === 'under' && avgPace < 99) {
-        const paceBonus = Math.round((99 - avgPace) * 3);
-        score += clampScore(0, 15, paceBonus);
-        breakdown.pace_slow = clampScore(0, 15, paceBonus);
-      } else if ((side === 'over' && avgPace < 98) || (side === 'under' && avgPace > 102)) {
-        score -= 10; // Pace contradicts the side
-        breakdown.pace_mismatch = -10;
-      }
-    }
+    const envResult = calculateEnvironmentScore(
+      avgPaceRating, oppDefRank, blowoutProb, 'total', side,
+      oppDefDetail?.opp_rebounds_rank, oppDefDetail?.opp_assists_rank
+    );
+    score += envResult.confidenceAdjustment;
+    breakdown.environment_score = envResult.confidenceAdjustment;
 
-    // Shootout / grind factor
+    // Shootout / grind factor (keep these as supplementary)
     if (env) {
       if (side === 'over' && env.shootout_factor > 0.25) {
         const shootBonus = Math.round(env.shootout_factor * 30);
@@ -3138,7 +3194,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult, nhlStatsResult, baseballStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
-    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank').eq('is_current', true),
+    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank').eq('is_current', true),
     supabase.from('game_environment').select('home_team_abbrev, away_team_abbrev, vegas_total, vegas_spread, shootout_factor, grind_factor, blowout_probability').eq('game_date', gameDate),
     supabase.from('home_court_advantage_stats').select('team_name, home_win_rate, home_cover_rate, home_over_rate').eq('sport', 'basketball_nba'),
     supabase.from('ncaab_team_stats').select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record'),
@@ -3155,9 +3211,22 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   });
 
   const defenseMap = new Map<string, number>();
+  const defenseDetailMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null }>();
   (defenseResult.data || []).forEach((d: any) => {
     defenseMap.set(d.team_abbreviation, d.overall_rank);
-    if (d.team_name) nameToAbbrev.set(d.team_name, d.team_abbreviation);
+    defenseDetailMap.set(d.team_abbreviation, {
+      overall_rank: d.overall_rank,
+      opp_rebounds_rank: d.opp_rebounds_rank,
+      opp_assists_rank: d.opp_assists_rank,
+    });
+    if (d.team_name) {
+      nameToAbbrev.set(d.team_name, d.team_abbreviation);
+      defenseDetailMap.set(d.team_name, {
+        overall_rank: d.overall_rank,
+        opp_rebounds_rank: d.opp_rebounds_rank,
+        opp_assists_rank: d.opp_assists_rank,
+      });
+    }
   });
 
   const envMap = new Map<string, GameEnvData>();

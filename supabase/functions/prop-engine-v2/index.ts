@@ -82,7 +82,48 @@ interface SESComponents {
   line_structure_score: number;   // 20% weight
   minutes_certainty_score: number; // 15% weight
   market_type_score: number;      // 15% weight
-  blowout_pace_score: number;     // 10% weight
+  environment_score: number;      // 10% weight (was blowout_pace_score)
+}
+
+// Unified Environment Score for prop-engine-v2 (NBA only, NCAAB uses PAE)
+function calculateEnvironmentScoreV2(
+  paceRating: number | null,
+  oppDefenseRank: number | null,
+  blowoutProbability: number | null,
+  propType: string,
+  side: string,
+  oppRebRank?: number | null,
+  oppAstRank?: number | null
+): number {
+  const isOver = side.toLowerCase() === 'over';
+
+  let paceFactor = 0.5;
+  if (paceRating != null) {
+    paceFactor = Math.max(0, Math.min(1, (paceRating - 94) / 12));
+    if (!isOver) paceFactor = 1 - paceFactor;
+  }
+
+  let defenseFactor = 0.5;
+  if (oppDefenseRank != null) {
+    defenseFactor = (30 - oppDefenseRank) / 29;
+    if (!isOver) defenseFactor = 1 - defenseFactor;
+  }
+
+  let rebAstFactor = 0.5;
+  const propLower = propType.toLowerCase();
+  if (propLower.includes('reb') && oppRebRank != null) {
+    rebAstFactor = (30 - oppRebRank) / 29;
+    if (!isOver) rebAstFactor = 1 - rebAstFactor;
+  } else if (propLower.includes('ast') && oppAstRank != null) {
+    rebAstFactor = (30 - oppAstRank) / 29;
+    if (!isOver) rebAstFactor = 1 - rebAstFactor;
+  }
+
+  const blowoutFactor = Math.max(0, Math.min(1, blowoutProbability ?? 0));
+  const envScore = (paceFactor * 0.3) + (defenseFactor * 0.3) + (rebAstFactor * 0.2) + (blowoutFactor * -0.2);
+
+  // Scale to 0-10 range for SES component
+  return Math.max(0, Math.min(10, Math.round(envScore * 12.5)));
 }
 
 interface EngineResult {
@@ -333,24 +374,22 @@ function calculateSES(prop: PropInput, archetype: string): { score: number; comp
 
     blowoutPaceScore = Math.min(10, Math.max(0, paeScore));
   } else {
-    // Default spread-based blowout/pace logic for NBA / non-NCAAB
-    if (spread >= 8) {
-      if (isOver && archetype === 'Big') blowoutPaceScore = 10;
-      else if (isOver) blowoutPaceScore = 6;
-      else blowoutPaceScore = 2;
-    } else if (spread >= 4) {
-      blowoutPaceScore = 7;
-    } else {
-      blowoutPaceScore = 8;
-    }
+    // Unified Environment Score for NBA / non-NCAAB
+    // Use pace and defense data if available via prop context
+    const paceRating = (prop as any).pace_rating ?? null;
+    const oppDefRank = (prop as any).opp_defense_rank ?? null;
+    const blowoutProb = spread >= 8 ? Math.min(1, spread / 15) : spread >= 4 ? 0.2 : 0.1;
+    const oppRebRank = (prop as any).opp_rebounds_rank ?? null;
+    const oppAstRank = (prop as any).opp_assists_rank ?? null;
+    blowoutPaceScore = calculateEnvironmentScoreV2(paceRating, oppDefRank, blowoutProb, prop.prop_type, prop.side, oppRebRank, oppAstRank);
   }
 
   // Apply archetype adjustments
   if (archetype === 'Guard' && prop.prop_type.toLowerCase().includes('ast') && isOver) {
-    medianGapScore = Math.min(40, medianGapScore + 4); // Guards safer for assists overs
+    medianGapScore = Math.min(40, medianGapScore + 4);
   }
   if (archetype === 'Big' && prop.prop_type.toLowerCase().includes('reb') && !isOver && lineStructure === '.5') {
-    lineStructureScore = Math.max(0, lineStructureScore - 6); // NEVER fade rebounds on .5 for bigs
+    lineStructureScore = Math.max(0, lineStructureScore - 6);
   }
 
   const totalScore = medianGapScore + lineStructureScore + minutesCertaintyScore + marketTypeScore + blowoutPaceScore;
@@ -362,7 +401,7 @@ function calculateSES(prop: PropInput, archetype: string): { score: number; comp
       line_structure_score: lineStructureScore,
       minutes_certainty_score: minutesCertaintyScore,
       market_type_score: marketTypeScore,
-      blowout_pace_score: blowoutPaceScore,
+      environment_score: blowoutPaceScore,
     },
   };
 }
@@ -629,13 +668,28 @@ Deno.serve(async (req) => {
       console.log(`[Prop Engine v2] Full slate mode for ${today}`);
 
       // Load NCAAB team stats for PAE game context enrichment
-      const { data: ncaabStats } = await supabase
-        .from('ncaab_team_stats')
-        .select('team_name, kenpom_adj_o, kenpom_adj_d, adj_tempo, kenpom_rank');
+      const [ncaabStatsRes, paceRes, defRankRes] = await Promise.all([
+        supabase.from('ncaab_team_stats').select('team_name, kenpom_adj_o, kenpom_adj_d, adj_tempo, kenpom_rank'),
+        supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating'),
+        supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_rank, opp_assists_rank').eq('is_current', true),
+      ]);
+      const ncaabStats = ncaabStatsRes.data;
       const ncaabMap = new Map(
         (ncaabStats ?? []).map((t: any) => [t.team_name.toLowerCase(), t])
       );
-      console.log(`[Prop Engine v2] Loaded ${ncaabMap.size} NCAAB teams for PAE context`);
+      // Build pace and defense lookup maps for NBA environment scoring
+      const paceTeamMap = new Map<string, number>();
+      (paceRes.data ?? []).forEach((p: any) => {
+        paceTeamMap.set(p.team_abbrev, p.pace_rating);
+        if (p.team_name) paceTeamMap.set(p.team_name.toLowerCase(), p.pace_rating);
+      });
+      const defTeamMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null }>();
+      (defRankRes.data ?? []).forEach((d: any) => {
+        const entry = { overall_rank: d.overall_rank, opp_rebounds_rank: d.opp_rebounds_rank, opp_assists_rank: d.opp_assists_rank };
+        defTeamMap.set(d.team_abbreviation, entry);
+        if (d.team_name) defTeamMap.set(d.team_name.toLowerCase(), entry);
+      });
+      console.log(`[Prop Engine v2] Loaded ${ncaabMap.size} NCAAB teams, ${paceTeamMap.size} pace entries, ${defTeamMap.size} defense entries`);
       
       // Fetch approved props from Risk Engine (uses nba_risk_engine_picks table)
       const { data: approvedProps, error: fetchError } = await supabase
@@ -707,7 +761,13 @@ Deno.serve(async (req) => {
           }
         }
 
-        propsToAnalyze.push({
+        // Enrich with pace and defense data for environment scoring
+        const teamKey = (prop.team_name || '').toLowerCase();
+        const oppKey = (prop.opponent || '').toLowerCase();
+        const teamPace = paceTeamMap.get(teamKey) ?? paceTeamMap.get(prop.team_name || '') ?? null;
+        const oppDef = defTeamMap.get(oppKey) ?? defTeamMap.get(prop.opponent || '') ?? null;
+
+        const enrichedProp: any = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
           line: prop.current_line || prop.line,
@@ -723,7 +783,13 @@ Deno.serve(async (req) => {
           market_type: 'Standard',
           sport: prop.sport,
           game_context: gameContext,
-        });
+          pace_rating: teamPace,
+          opp_defense_rank: oppDef?.overall_rank ?? null,
+          opp_rebounds_rank: oppDef?.opp_rebounds_rank ?? null,
+          opp_assists_rank: oppDef?.opp_assists_rank ?? null,
+        };
+
+        propsToAnalyze.push(enrichedProp);
       }
       
       console.log(`[Prop Engine v2] Prepared ${propsToAnalyze.length} props for analysis`);
