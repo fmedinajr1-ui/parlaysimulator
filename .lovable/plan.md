@@ -1,103 +1,181 @@
 
 
-## Dynamic Winning Archetype Detection
+## New High-Conviction Strategies: Triple-Confirmed + Multi-Engine Conviction + Smarter Fallbacks
 
-### What Changes
+### The Gap Today
 
-Instead of hardcoding `THREE_POINT_SHOOTER`, `VOLUME_SCORER`, `BIG_REBOUNDER`, `HIGH_ASSIST` as the winning categories, the bot will **query the last 14 days of settled parlays** at the start of every run and automatically detect which category+side combos are winning the most.
+Your parlay engine currently has **one cross-reference layer**: mispriced lines x sweet spots = double-confirmed. But the `high-conviction-analyzer` already proves that 6 engines (Risk, PropV2, Sharp, Heat, MLB, Bot Parlays) often agree on the same picks -- and that data is **not being used** during parlay generation at all.
 
-### How It Works
+This means your best picks -- the ones where 3, 4, or even 5 independent engines all agree -- are getting the same priority as a pick with only 1 confirmation.
+
+### Three New Strategies
+
+#### 1. Triple-Confirmed Conviction (`triple_confirmed_conviction`)
+
+A pick qualifies when **all three** independent systems agree:
+- Sweet Spot: 70%+ L10 hit rate with direction
+- Mispriced Lines: 15%+ statistical edge with direction  
+- Risk Engine: Side agreement with confidence score
+
+Today, risk engine agreement only gives a +12 composite boost. Triple-confirmed picks would get a **+30 bonus** and be tagged as `isTripleConfirmed`, creating an exclusive ultra-high-conviction pool.
 
 ```text
-EVERY DAY AT GENERATION TIME:
-1. Query bot_daily_parlays (last 14 days, outcome = won/lost)
-2. Group by category + side, calculate parlay win rate
-3. Rank categories by win rate (minimum 5 appearances)
-4. Top categories (win rate > 25% AND at least 8 appearances) become the new "winning archetypes"
-5. Inject these into WINNING_ARCHETYPE_CATEGORIES and all archetype profile preferCategories
+Current:  Sweet Spot + Mispriced = Double-Confirmed (+20 bonus)
+Proposed: Sweet Spot + Mispriced + Risk Engine = Triple-Confirmed (+30 bonus)
 ```
 
-### Current vs Dynamic
+#### 2. Multi-Engine Consensus (`multi_engine_consensus`)
 
-**Today (static):**
-```
-WINNING_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST']
--- Never changes, even if these categories start losing
+Integrate the PropV2 and Sharp/Heat engine data directly into the parlay generation pool enrichment (currently only used in the separate high-conviction-analyzer). A pick gets an "engine count" -- the more engines that agree on the same player+prop+side, the higher it ranks.
+
+```text
+Engine count scoring:
+  2 engines agree: +8 bonus
+  3 engines agree: +16 bonus  
+  4+ engines agree: +25 bonus (near-max conviction)
 ```
 
-**After (dynamic):**
-```
-Day 1: Data says VOLUME_SCORER (34.7%), BIG_REBOUNDER (34.3%), ASSISTS (100%) are hot
-  -> WINNING_ARCHETYPE_CATEGORIES = ['VOLUME_SCORER', 'BIG_REBOUNDER', 'ASSISTS']
-  -> All archetype profiles target these
+#### 3. Smarter Double-Confirmed Fallback (`double_confirmed_fallback`)
 
-Day 14: Data shifts, SHARP_SPREAD now winning at 40%, VOLUME_SCORER drops to 15%
-  -> WINNING_ARCHETYPE_CATEGORIES = ['SHARP_SPREAD', 'BIG_REBOUNDER', ...]
-  -> Bot auto-adapts without code changes
-```
+When the pure double-confirmed pool is empty (like today), instead of skipping entirely, fall back in tiers:
+- **Tier A**: Mispriced picks with 65%+ real hit rate from sweet spots (partial double-confirmed)
+- **Tier B**: Sweet spot picks with mispriced edge 10-14% (near-miss double-confirmed)  
+- **Tier C**: Risk-engine-confirmed mispriced picks with 60%+ hit rate
+
+This ensures the double-confirmed profiles ALWAYS generate something, with clear labeling of which fallback tier was used.
 
 ### Technical Details
 
 **File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**1. Add `detectWinningArchetypes()` function (~40 lines)**
+**Change 1: Fetch PropV2 + Sharp/Heat data during pool building (~line 4227)**
 
-A new async function that:
-- Queries `bot_daily_parlays` for the last 14 days (settled only)
-- Extracts each leg's `category` and `side` from the JSONB `legs` column
-- Groups by category+side, calculates parlay-level win rate
-- Returns the top categories meeting thresholds:
-  - Minimum 8 parlay appearances (statistical significance)
-  - Win rate above 25% (above average for a 3-leg parlay)
-  - Cap at 6 categories max (prevents dilution)
-- Falls back to the current hardcoded list if no data or query fails
+After the risk engine fetch, add parallel queries for:
+- `prop_engine_v2_picks` (game_date = today) -- SES score + side
+- `sharp_ai_parlays` (parlay_date = today) -- extract legs
+- `heat_parlays` (parlay_date = today) -- extract legs
 
-**2. Call it in the main handler (after adaptive intelligence loads, ~line 6264)**
+Build a unified `multiEngineMap`: key = `player|prop_type`, value = `{ engines: string[], sides: string[] }`.
 
-Insert a call to `detectWinningArchetypes(supabase)` right before the pool building phase. Store the result in a variable `dynamicArchetypes`.
+**Change 2: Triple-confirmed tagging during mispriced enrichment (~line 4267)**
 
-**3. Replace the hardcoded `WINNING_ARCHETYPE_CATEGORIES` (line 4556)**
-
-Change from:
-```typescript
-const WINNING_ARCHETYPE_CATEGORIES = new Set(['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST']);
+During the existing mispriced pick enrichment loop, after checking `isDoubleConfirmed`, add:
 ```
-To:
-```typescript
-const WINNING_ARCHETYPE_CATEGORIES = dynamicArchetypes;
+if (isDoubleConfirmed && riskConfirmed) {
+  isTripleConfirmed = true;
+  tripleConfirmedBonus = 30;  // replaces the +20 double + +12 risk
+}
 ```
 
-The `dynamicArchetypes` variable (a `Set<string>`) will be passed through the tier generation loop and used in the sorting logic.
-
-**4. Update archetype profile `preferCategories` dynamically**
-
-Before each tier runs, update the `preferCategories` on all `winning_archetype_*` profiles to use the top categories from the dynamic detection instead of the hardcoded ones. Split them into two groups:
-- `winning_archetype_3pt_scorer` profiles get the top 2 categories
-- `winning_archetype_reb_ast` profiles get categories 3-4
-
-**5. Log the detection results**
-
-Add a console log showing what the bot detected:
+Also tag with `engineCount` from the multi-engine map:
 ```
-[Bot v2] Dynamic Archetypes: VOLUME_SCORER (34.7%, 75 apps), BIG_REBOUNDER (34.3%, 35 apps), MID_SCORER_UNDER (26.7%, 15 apps) | Fallback: false
+const multiMatch = multiEngineMap.get(key);
+const engineCount = (multiMatch?.engines.length || 0) + (riskConfirmed ? 1 : 0) + (isDoubleConfirmed ? 1 : 0);
+const multiEngineBonus = engineCount >= 4 ? 25 : engineCount >= 3 ? 16 : engineCount >= 2 ? 8 : 0;
+```
+
+**Change 3: Build triple-confirmed and multi-engine pools (~line 4378)**
+
+After the existing `doubleConfirmedPicks` filter, add:
+```
+const tripleConfirmedPicks = filteredMispricedPicks.filter(p => p.isTripleConfirmed === true);
+const multiEnginePicks = filteredMispricedPicks.filter(p => p.engineCount >= 3).sort(by compositeScore);
+```
+
+Add both to the pool return object.
+
+**Change 4: Add new profile strategy handlers (~line 4522)**
+
+Add `isTripleConfirmedProfile` and `isMultiEngineProfile` checks before the existing `isDoubleConfirmedProfile`:
+```
+if (isTripleConfirmedProfile) {
+  candidatePicks = pool.tripleConfirmedPicks;
+  // fallback to doubleConfirmedPicks if < legs needed
+}
+if (isMultiEngineProfile) {
+  candidatePicks = pool.multiEnginePicks;
+  // fallback to mispricedPicks sorted by engineCount
+}
+```
+
+**Change 5: Double-confirmed fallback tiers (~line 4530)**
+
+Replace the current `continue` when double-confirmed pool is too small:
+```
+if (candidatePicks.length < profile.legs) {
+  // Tier A: partial double-confirmed (65%+ hit rate from sweet spots)
+  candidatePicks = pool.mispricedPicks.filter(p => p.l10_hit_rate >= 0.65 && !p.isDoubleConfirmed);
+  if (candidatePicks.length < profile.legs) {
+    // Tier B: near-miss (sweet spot match with edge 10-14%)
+    candidatePicks = pool.sweetSpots.filter(p => p.isDoubleConfirmed || p.mispricedEdge >= 10);
+    if (candidatePicks.length < profile.legs) {
+      // Tier C: risk-confirmed mispriced with 60%+ hit rate  
+      candidatePicks = pool.mispricedPicks.filter(p => p.riskConfirmed && p.l10_hit_rate >= 0.60);
+    }
+  }
+  // Log which fallback tier was used
+}
+```
+
+**Change 6: Add profiles to TIER_CONFIG (~lines 136-321)**
+
+Add across all three tiers:
+```
+// Exploration
+{ legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' },
+{ legs: 3, strategy: 'multi_engine_consensus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+
+// Validation  
+{ legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+{ legs: 3, strategy: 'multi_engine_consensus', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
+
+// Execution
+{ legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
+```
+
+**Change 7: Execution tier thin-slate relaxation (~line 4462)**
+
+Add execution tier to the existing thin-slate relaxation block so it can still generate on light days:
+```
+if (isThinSlate && tier === 'execution') {
+  config.minHitRate = 55;
+  config.minEdge = 0.005;
+}
+```
+
+### Summary of Data Flow
+
+```text
+POOL BUILDING:
+  Sweet Spots (L10 hit rate) ─────────┐
+  Mispriced Lines (edge %) ───────────┤
+  Risk Engine (side + confidence) ────┤──> Enrichment Loop
+  PropV2 (SES score + side) ──────────┤     │
+  Sharp/Heat Parlays (legs) ──────────┘     │
+                                            ▼
+                                   Tag each pick:
+                                   - isDoubleConfirmed (sweet + mispriced)
+                                   - isTripleConfirmed (sweet + mispriced + risk)
+                                   - engineCount (0-6 engines agree)
+                                            │
+                                            ▼
+                                   Build 4 pools:
+                                   1. tripleConfirmedPicks
+                                   2. doubleConfirmedPicks  
+                                   3. multiEnginePicks (3+ engines)
+                                   4. mispricedPicks (all)
+                                            │
+                                            ▼
+                                   Strategy Selection:
+                                   triple > double > multi_engine > mispriced
+                                   (with tiered fallbacks at each level)
 ```
 
 ### Safety Rails
 
-- **Minimum sample size**: Categories need 8+ parlay appearances to qualify (prevents flukes)
-- **Fallback**: If the query fails or returns no qualifying categories, falls back to the current hardcoded list
-- **Cap at 6**: Even if 10 categories qualify, only the top 6 by win rate are used (prevents bonus dilution)
-- **No code deploys needed**: The bot automatically adapts every day based on what's actually winning
-
-### Expected Behavior
-
-Using today's actual data, the dynamic detector would select:
-1. VOLUME_SCORER (34.7% win rate, 75 appearances)
-2. BIG_REBOUNDER (34.3%, 35 appearances)
-3. LOW_LINE_REBOUNDER (28.6%, 14 appearances)
-4. OVER_TOTAL (28.6%, 21 appearances)
-5. MID_SCORER_UNDER (26.7%, 15 appearances)
-6. SHARP_SPREAD (26.2%, 42 appearances)
-
-Notice: THREE_POINT_SHOOTER (25.0%) and HIGH_ASSIST (21.1%) would actually drop off since they're below the 25% threshold -- the static config was giving them undeserved priority. The bot will now correctly focus on what's actually winning.
+- Triple-confirmed will be rare (maybe 2-5 picks/day) -- that's the point, they're the absolute best
+- Multi-engine consensus requires 3+ independent engines agreeing -- no single-source flukes
+- Fallback tiers are clearly logged so you can monitor which fallback level is being used
+- All existing composite score sorting, usage caps, and fingerprint dedup remain unchanged
+- If no PropV2/Sharp/Heat data exists for a day, engine count simply stays lower -- no errors
 
