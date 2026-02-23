@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAdminRole } from '@/hooks/useAdminRole';
-import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles, Zap, Eye } from 'lucide-react';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles, Zap, Eye, Users } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -15,6 +15,7 @@ import { BotLearningAnalytics } from '@/components/bot/BotLearningAnalytics';
 import { ProfitAuditCard } from '@/components/bot/ProfitAuditCard';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
+import { TelegramCustomerManager } from '@/components/bot/TelegramCustomerManager';
 
 import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
@@ -176,6 +177,7 @@ export default function BotDashboard() {
           <TabsTrigger value="parlays" className="flex-1">Parlays</TabsTrigger>
           <TabsTrigger value="analytics" className="flex-1">Analytics</TabsTrigger>
           <TabsTrigger value="warroom" className="flex-1 gap-1"><Eye className="w-3 h-3" />War Room</TabsTrigger>
+          <TabsTrigger value="customers" className="flex-1 gap-1"><Users className="w-3 h-3" />Customers</TabsTrigger>
         </TabsList>
 
         {/* Overview Tab */}
@@ -280,6 +282,11 @@ export default function BotDashboard() {
         {/* War Room Tab */}
         <TabsContent value="warroom" className="space-y-4">
           <AdminWarRoomView />
+        </TabsContent>
+
+        {/* Customers Tab */}
+        <TabsContent value="customers" className="space-y-4">
+          <TelegramCustomerManager />
         </TabsContent>
       </Tabs>
 
