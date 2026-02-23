@@ -2064,9 +2064,15 @@ function createUsageTracker(): UsageTracker {
   };
 }
 
-function getMinBuffer(propType: string): number {
-  const normalized = propType.toLowerCase().replace(/[_\s]/g, '');
-  return MIN_BUFFER_BY_PROP[normalized] || MIN_BUFFER_BY_PROP[propType.toLowerCase()] || 3.0;
+function getMinBuffer(propType: string, line: number = 10, isConviction: boolean = false): number {
+  // Stat-aware + conviction-aware minimum buffer
+  // Low-line props (threes, blocks, steals) need smaller absolute buffers
+  // Conviction picks (double/triple-confirmed, multi-engine 3+) get reduced thresholds
+  if (line <= 1.0) return isConviction ? 0.1 : 0.2;
+  if (line <= 3.0) return isConviction ? 0.3 : 0.5;
+  if (line <= 6.0) return isConviction ? 0.5 : 0.75;
+  // Standard props (points, rebounds, assists) with lines 6+
+  return isConviction ? 0.75 : 1.0;
 }
 
 function selectOptimalLine(
@@ -5123,13 +5129,15 @@ async function generateTierParlays(
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
         };
 
-        // MINIMUM PROJECTION BUFFER GATE (1.0 floor — raised from 0.3)
+        // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
         const projBuffer = legData.projection_buffer || 0;
         const projValue = legData.projected_value || 0;
-        if (projValue > 0 && Math.abs(projBuffer) < 1.0) {
+        const isConvictionPick = playerPick.isTripleConfirmed || playerPick.isDoubleConfirmed || (playerPick.engineCount >= 3);
+        const minBuf = getMinBuffer(legData.prop_type, selectedLine.line, isConvictionPick);
+        if (projValue > 0 && Math.abs(projBuffer) < minBuf) {
           const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
           if (!loggedNegEdgeKeys.has(bufKey)) {
-            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < 1.0 min)`);
+            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < ${minBuf} min${isConvictionPick ? ' [conviction]' : ''})`);
             loggedNegEdgeKeys.add(bufKey);
           }
           continue;
@@ -5788,12 +5796,14 @@ function generateMonsterParlays(
         continue;
       }
 
-      // MINIMUM PROJECTION BUFFER (0.3)
+      // MINIMUM PROJECTION BUFFER (stat-aware + conviction-aware)
       if (pick.projected_value && pick.line) {
         const side = pick.recommended_side || pick.side || 'over';
         const buffer = side === 'over' ? pick.projected_value - pick.line : pick.line - pick.projected_value;
-        if (Math.abs(buffer) < 0.3 && pick.projected_value > 0) {
-          console.log(`[Monster BufferGate] Blocked ${pick.player_name} ${pick.prop_type} (buffer: ${buffer.toFixed(2)} < 0.3)`);
+        const isMonsterConviction = pick.isTripleConfirmed || pick.isDoubleConfirmed || (pick.engineCount >= 3);
+        const monsterMinBuf = getMinBuffer(pick.prop_type, pick.line, isMonsterConviction);
+        if (Math.abs(buffer) < monsterMinBuf && pick.projected_value > 0) {
+          console.log(`[Monster BufferGate] Blocked ${pick.player_name} ${pick.prop_type} (buffer: ${buffer.toFixed(2)} < ${monsterMinBuf}${isMonsterConviction ? ' [conviction]' : ''})`);
           continue;
         }
       }
