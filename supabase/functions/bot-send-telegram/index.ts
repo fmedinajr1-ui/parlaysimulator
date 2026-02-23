@@ -34,6 +34,7 @@ type NotificationType =
   | 'fresh_slate_report'
   | 'double_confirmed_report'
   | 'mega_parlay_scanner'
+  | 'daily_winners_recap'
   | 'test';
 
 interface NotificationData {
@@ -78,6 +79,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatDoubleConfirmedReport(data, dateStr);
     case 'mega_parlay_scanner':
       return formatMegaParlayScanner(data, dateStr);
+    case 'daily_winners_recap':
+      return formatDailyWinnersRecap(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -785,7 +788,37 @@ function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): st
     }
   } else {
     msg += `⚠️ No qualifying parlay legs found today.\n`;
+}
+
+function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
+  const { date, rating, winnerCount, totalProfit, winners, keyPlayers } = data;
+  const displayDate = date || dateStr;
+
+  let msg = `🏆 YESTERDAY'S WINS — ${displayDate}\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${rating || 'Solid Day'} — ${winnerCount || 0} Winner${winnerCount !== 1 ? 's' : ''}\n\n`;
+
+  if (winners && Array.isArray(winners)) {
+    for (const w of winners) {
+      msg += `#${w.rank} | ${w.tier} | ${w.odds} | $${w.profit?.toLocaleString()} profit\n`;
+      for (const leg of (w.legs || [])) {
+        const actualStr = leg.actual !== null && leg.actual !== undefined ? ` (actual: ${leg.actual})` : '';
+        msg += `  ✅ ${leg.player} ${leg.prop} ${leg.side}${leg.line}${actualStr}\n`;
+      }
+      msg += `\n`;
+    }
   }
+
+  msg += `💰 Total: +$${(totalProfit || 0).toLocaleString()} profit across ${winnerCount || 0} winners\n\n`;
+
+  if (keyPlayers && keyPlayers.length > 0) {
+    msg += `🔑 Key Players: ${keyPlayers.join(', ')}\n\n`;
+  }
+
+  msg += `📊 Powered by ParlayIQ Engine`;
+
+  return msg;
+}
 
   msg += `🎲 Good luck! Play responsibly.`;
 
@@ -852,7 +885,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner' && type !== 'daily_winners_recap') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
@@ -990,7 +1023,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner') {
+    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap') {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
