@@ -110,6 +110,7 @@ function SafeRoutePersistence() {
 function AppContent() {
   const [isMobile, setIsMobile] = React.useState(false);
   const [isReady, setIsReady] = React.useState(false);
+  const location = useLocation();
   
   React.useEffect(() => {
     // Small delay to ensure React is fully hydrated (prevents stale chunk issues)
@@ -138,7 +139,7 @@ function AppContent() {
         <PWAUpdatePrompt />
         <AnimatedRoutes />
         <UniversalParlayBuilder />
-        {isMobile && <MobileFloatingMenu />}
+        {isMobile && location.pathname !== '/' && <MobileFloatingMenu />}
         <PWAInstallPrompt />
       </PilotRouteGuard>
     </EmailVerificationGuard>
