@@ -442,33 +442,22 @@ serve(async (req) => {
 
     // Send Telegram report
     try {
-      const telegramLines = [
-        `🏀 *NBA MEGA PARLAY SCANNER*`,
-        `📅 ${today} | +100 Odds Only`,
-        ``,
-        `📊 *Scanned:* ${rawProps.length} props across ${events.length} games`,
-        `✅ *Qualified:* ${scoredProps.length} props passed filters`,
-        ``,
-        `🎯 *RECOMMENDED PARLAY (${parlayLegs.length} legs)*`,
-        `💰 Combined: +${combinedAmericanOdds}`,
-        `💵 $25 bet → $${parlayPayoutOn25.toFixed(2)} payout`,
-        ``,
-      ];
-
-      for (const leg of parlayBreakdown) {
-        telegramLines.push(
-          `*Leg ${leg.leg}:* ${leg.player}`,
-          `  ${leg.side} ${leg.line} ${leg.prop} (${leg.odds}) [${leg.book}]`,
-          `  Hit: ${leg.hit_rate} | Edge: ${leg.edge} | Score: ${leg.composite}`,
-          `  L10 Med: ${leg.l10_median ?? 'N/A'} | Avg: ${leg.l10_avg ?? 'N/A'}`,
-          ``
-        );
-      }
 
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'mega_parlay_scanner', data: { message: telegramLines.join('\n') } }),
+        body: JSON.stringify({
+          type: 'mega_parlay_scanner',
+          data: {
+            date: today,
+            scanned: rawProps.length,
+            events: events.length,
+            qualified: scoredProps.length,
+            legs: parlayBreakdown,
+            combinedOdds: combinedAmericanOdds,
+            payout25: parlayPayoutOn25.toFixed(2),
+          }
+        }),
       });
     } catch (e) {
       console.error('[MegaParlay] Telegram failed:', e);
