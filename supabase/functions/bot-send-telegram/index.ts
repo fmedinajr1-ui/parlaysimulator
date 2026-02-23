@@ -33,6 +33,7 @@ type NotificationType =
   | 'high_conviction_report'
   | 'fresh_slate_report'
   | 'double_confirmed_report'
+  | 'mega_parlay_scanner'
   | 'test';
 
 interface NotificationData {
@@ -75,6 +76,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatFreshSlateReport(data, dateStr);
     case 'double_confirmed_report':
       return formatDoubleConfirmedReport(data, dateStr);
+    case 'mega_parlay_scanner':
+      return formatMegaParlayScanner(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -756,6 +759,34 @@ function formatDoubleConfirmedReport(data: Record<string, any>, dateStr: string)
   return msg;
 }
 
+function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): string {
+  const { date, scanned, events, qualified, legs, combinedOdds, payout25 } = data;
+  const displayDate = date || dateStr;
+
+  let msg = `🏀 NBA MEGA PARLAY SCANNER\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${displayDate} | +100 Odds Only\n\n`;
+  msg += `📊 Scanned: ${scanned || '?'} props across ${events || '?'} games\n`;
+  msg += `✅ ${qualified || '?'} qualified\n\n`;
+
+  if (legs && Array.isArray(legs) && legs.length > 0) {
+    msg += `🎯 RECOMMENDED PARLAY (${legs.length} legs)\n`;
+    msg += `💰 Combined: +${combinedOdds || '?'}\n`;
+    msg += `💵 $25 bet → $${payout25 || '?'}\n\n`;
+
+    for (const leg of legs) {
+      msg += `Leg ${leg.leg}: ${leg.player}\n`;
+      msg += `  ${leg.side} ${leg.line} ${leg.prop} (${leg.odds}) [${leg.book}]\n`;
+      msg += `  Hit: ${leg.hit_rate} | Edge: ${leg.edge} | Score: ${leg.composite}\n`;
+      msg += `  L10 Med: ${leg.l10_median ?? 'N/A'} | Avg: ${leg.l10_avg ?? 'N/A'}\n\n`;
+    }
+  } else {
+    msg += `⚠️ No qualifying parlay legs found today.\n`;
+  }
+
+  return msg;
+}
+
 function formatPropLabel(pt: string): string {
   const labels: Record<string, string> = {
     player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
@@ -816,7 +847,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
@@ -951,7 +982,48 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[Telegram] Message sent successfully`);
+    console.log(`[Telegram] Message sent successfully to admin`);
+
+    // Broadcast to all authorized customers for mega_parlay_scanner
+    if (type === 'mega_parlay_scanner') {
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const sb = createClient(supabaseUrl, supabaseKey);
+
+        const { data: customers } = await sb
+          .from('bot_authorized_users')
+          .select('chat_id, username')
+          .eq('is_active', true);
+
+        if (customers && customers.length > 0) {
+          console.log(`[Telegram] Broadcasting mega scanner to ${customers.length} customers`);
+          for (const customer of customers) {
+            if (customer.chat_id === chatId) continue; // skip admin, already sent
+            try {
+              const custBody: Record<string, any> = {
+                chat_id: customer.chat_id,
+                text: message,
+                disable_web_page_preview: true,
+              };
+              const custResp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(custBody),
+              });
+              const custResult = await custResp.json();
+              if (!custResp.ok) {
+                console.warn(`[Telegram] Failed to send to ${customer.username || customer.chat_id}:`, custResult?.description);
+              }
+            } catch (e) {
+              console.warn(`[Telegram] Error sending to ${customer.chat_id}:`, e);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[Telegram] Customer broadcast failed:', e);
+      }
+    }
 
     return new Response(
       JSON.stringify({ success: true, messageId: telegramResult.result?.message_id }),
