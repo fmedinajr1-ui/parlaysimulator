@@ -660,6 +660,9 @@ function formatHighConvictionReport(data: Record<string, any>, dateStr: string):
 
   if (plays.length > 15) {
     msg += `... +${plays.length - 15} more plays\n`;
+  }
+
+  return msg;
 }
 
 function formatFreshSlateReport(data: Record<string, any>, dateStr: string): string {
@@ -757,7 +760,6 @@ function formatDoubleConfirmedReport(data: Record<string, any>, dateStr: string)
   msg += ` | Sweet spots: ${totalSweetSpots || 0} | Mispriced: ${totalMispriced || 0}`;
 
   return msg;
-}
 }
 
 
