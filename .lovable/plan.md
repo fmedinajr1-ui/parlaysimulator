@@ -1,52 +1,74 @@
 
 
-## Telegram Customer Manager — Bot Dashboard
+## Free Trial Agreement + Cancel Subscription via Telegram
 
-### Overview
+### 1. Stripe Checkout — Add Trial Terms Agreement
 
-Add a new **"Customers"** tab to the Bot Dashboard (alongside Overview, Parlays, Analytics, War Room) with full admin control over Telegram users.
+**File:** `supabase/functions/create-bot-checkout/index.ts`
 
-### New Component
+Add `consent_collection` and `subscription_data.trial_settings` to the Stripe checkout session so users must explicitly agree to the free trial terms (3-day free, then charged $99/mo) before subscribing.
 
-**`src/components/bot/TelegramCustomerManager.tsx`**
+Changes:
+- Add `consent_collection: { terms_of_service: 'required' }` to make users agree to terms
+- Add `payment_method_collection: 'always'` so card is collected upfront during the trial
+- Add `subscription_data.trial_settings.end_behavior.missing_payment_method: 'cancel'` as a safety net
 
-A card-based UI that queries `bot_authorized_users` and shows:
+Note: Stripe's checkout page will automatically show the trial disclosure ("Free for 3 days, then $99/month") when `trial_period_days` is set and payment method is collected.
 
-- **Stats bar** — Total customers, active count, auth method breakdown (password / admin_grant / grandfathered)
-- **Search** — Filter by username or chat ID
-- **Customer list** — Each row shows:
-  - Telegram username (or chat ID if no username)
-  - Auth method badge (colored: green for grandfathered, blue for password, purple for admin_grant)
-  - Joined date (relative, e.g. "3 days ago")
-  - Active/inactive toggle switch
-  - Delete button (with confirmation dialog)
-- **Grant access** — Input field + button to add a new customer by chat ID
+### 2. Telegram `/cancel` Command for Customers
 
-### Actions available per user
+**File:** `supabase/functions/telegram-webhook/index.ts`
 
-| Action | What it does |
-|--------|-------------|
-| Toggle active | Updates `is_active` on `bot_authorized_users` — inactive users can't use commands or receive broadcasts |
-| Delete | Removes the row entirely from `bot_authorized_users` |
-| Grant access | Inserts a new row with `authorized_by: 'admin_grant'` |
+Add a `/cancel` command available to authorized customers that:
+1. Looks up the customer in `bot_authorized_users` by `chat_id`
+2. Finds their email in the `email_subscribers` table (email is captured at checkout)
+3. Calls Stripe API to find their active subscription and cancel it (at period end, not immediately)
+4. Sends admin a notification about the cancellation
+5. Responds to the user with confirmation
 
-### Dashboard Integration
+New function: `handleCancelSubscription(chatId)`
 
-**`src/pages/BotDashboard.tsx`**
-
-- Add a 5th tab: **"Customers"** with a Users icon
-- Place `TelegramCustomerManager` inside the new tab content
-
+Flow:
 ```text
-Tabs: Overview | Parlays | Analytics | War Room | Customers
+Customer sends /cancel
+  -> Confirm with inline button ("Are you sure? You'll keep access until [end date]")
+  -> On confirm: find Stripe customer by email -> cancel subscription at period end
+  -> Notify admin via sendMessage to ADMIN_CHAT_ID
+  -> Reply to customer with cancellation confirmation + end date
 ```
 
-### Technical Details
+### 3. Stripe Webhook — Handle Cancellation Events
+
+**File:** `supabase/functions/stripe-webhook/index.ts`
+
+Add handling for `customer.subscription.deleted` and `customer.subscription.updated` events to:
+- Notify admin via Telegram when a subscription is actually canceled or enters cancellation
+- Optionally deactivate the user in `bot_authorized_users` when subscription fully expires
+
+### 4. Customer Help Update
+
+**File:** `supabase/functions/telegram-webhook/index.ts`
+
+Add `/cancel` to the customer `/help` menu.
+
+### Changes Summary
 
 | File | Change |
 |------|--------|
-| `src/components/bot/TelegramCustomerManager.tsx` | New — full CRUD UI for `bot_authorized_users` |
-| `src/pages/BotDashboard.tsx` | Add Customers tab + import component |
+| `supabase/functions/create-bot-checkout/index.ts` | Add `payment_method_collection: 'always'` for upfront card collection during trial |
+| `supabase/functions/telegram-webhook/index.ts` | Add `/cancel` command + confirmation flow + admin notification |
+| `supabase/functions/stripe-webhook/index.ts` | Handle `customer.subscription.deleted` / `updated` events, notify admin via Telegram |
 
-No database changes needed — `bot_authorized_users` table already has all required columns (`chat_id`, `username`, `authorized_by`, `is_active`, `authorized_at`). RLS is handled by the admin role check already in the dashboard.
+### Technical Details
+
+**Cancel flow in telegram-webhook:**
+- New `handleCancelSubscription(chatId)` function
+- Uses inline keyboard for confirmation (reuses existing `handleCallbackQuery` pattern)
+- Looks up email from `email_subscribers` table by matching metadata or from `bot_authorized_users`
+- Calls `stripe.subscriptions.update(subId, { cancel_at_period_end: true })` (graceful cancel, keeps access until period ends)
+- Sends admin notification: "Customer @username (chat_id) requested cancellation. Sub ends [date]."
+
+**Webhook additions:**
+- `customer.subscription.updated` with `cancel_at_period_end === true` -> notify admin
+- `customer.subscription.deleted` -> deactivate user in `bot_authorized_users` + notify admin
 
