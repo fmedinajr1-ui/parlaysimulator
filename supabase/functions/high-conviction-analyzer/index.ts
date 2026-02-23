@@ -168,6 +168,35 @@ serve(async (req) => {
 
     console.log(`[HighConviction] Found ${plays.length} overlaps, ${stats.allAgree} with full agreement`);
 
+    // Persist results to high_conviction_results table
+    if (plays.length > 0) {
+      // Delete old results for today first
+      await supabase.from('high_conviction_results').delete().eq('analysis_date', today);
+
+      const rows = plays.map(p => ({
+        analysis_date: today,
+        player_name: p.player_name,
+        prop_type: p.prop_type,
+        display_prop_type: p.displayPropType,
+        signal: p.signal,
+        edge_pct: p.edge_pct,
+        confidence_tier: p.confidence_tier,
+        current_line: p.current_line,
+        player_avg: p.player_avg,
+        sport: p.sport,
+        engines: p.engines,
+        side_agreement: p.sideAgreement,
+        conviction_score: p.convictionScore,
+      }));
+
+      const { error: insertError } = await supabase.from('high_conviction_results').insert(rows);
+      if (insertError) {
+        console.error(`[HighConviction] Failed to persist results:`, insertError);
+      } else {
+        console.log(`[HighConviction] Persisted ${rows.length} results to high_conviction_results`);
+      }
+    }
+
     // Send to Telegram
     const top15 = plays.slice(0, 15);
     try {
