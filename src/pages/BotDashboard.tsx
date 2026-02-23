@@ -15,11 +15,9 @@ import { BotLearningAnalytics } from '@/components/bot/BotLearningAnalytics';
 import { ProfitAuditCard } from '@/components/bot/ProfitAuditCard';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
-import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
+
 import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
-import { SimulationAccuracyCard } from '@/components/bot/SimulationAccuracyCard';
-import { ShadowPicksFeed } from '@/components/bot/ShadowPicksFeed';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -177,8 +175,6 @@ export default function BotDashboard() {
           <TabsTrigger value="overview" className="flex-1">Overview</TabsTrigger>
           <TabsTrigger value="parlays" className="flex-1">Parlays</TabsTrigger>
           <TabsTrigger value="analytics" className="flex-1">Analytics</TabsTrigger>
-          <TabsTrigger value="research" className="flex-1">Research</TabsTrigger>
-          <TabsTrigger value="simulation" className="flex-1">Simulation</TabsTrigger>
           <TabsTrigger value="warroom" className="flex-1 gap-1"><Eye className="w-3 h-3" />War Room</TabsTrigger>
         </TabsList>
 
@@ -281,16 +277,6 @@ export default function BotDashboard() {
           <BotActivityFeed />
         </TabsContent>
 
-        {/* Research Tab */}
-        <TabsContent value="research" className="space-y-4">
-          <ResearchIntelligencePanel />
-        </TabsContent>
-
-        {/* Simulation Tab */}
-        <TabsContent value="simulation" className="space-y-4">
-          <SimulationAccuracyCard />
-          <ShadowPicksFeed />
-        </TabsContent>
         {/* War Room Tab */}
         <TabsContent value="warroom" className="space-y-4">
           <AdminWarRoomView />
