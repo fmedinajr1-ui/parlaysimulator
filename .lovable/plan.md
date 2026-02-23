@@ -1,16 +1,18 @@
 
 
-## Remove Simulation and Research Tabs from Dashboard
+## Remove Mobile Navigation from Homepage
 
-Remove the "Simulation" tab and "Research" tab (and their content) from the Bot Dashboard.
+The homepage/landing page should be a clean, distraction-free page strictly for customers to view stats and purchase subscriptions. No sidebar, floating menu, or navigation should appear.
 
 ### Changes
 
-**File: `src/pages/BotDashboard.tsx`**
-- Remove imports: `SimulationAccuracyCard` (line 21), `ShadowPicksFeed` (line 22), `ResearchIntelligencePanel` (line 18)
-- Remove `<TabsTrigger value="research">` (line 180)
-- Remove `<TabsTrigger value="simulation">` (line 181)
-- Remove `<TabsContent value="research">` block (lines 284-287)
-- Remove `<TabsContent value="simulation">` block (lines 289-293)
+**File: `src/App.tsx`**
+- Update the `MobileFloatingMenu` rendering to exclude the homepage route (`/`)
+- Change `{isMobile && <MobileFloatingMenu />}` to conditionally hide it when on the `/` path using `useLocation`
 
-The components themselves remain in the codebase, just no longer rendered on the dashboard.
+The single-line change:
+```tsx
+{isMobile && location.pathname !== '/' && <MobileFloatingMenu />}
+```
+
+This ensures the floating hamburger menu (shown in the screenshot) does not appear on the landing page, while still being available on all other pages like `/dashboard`, `/team-bets`, `/scout`, etc.
