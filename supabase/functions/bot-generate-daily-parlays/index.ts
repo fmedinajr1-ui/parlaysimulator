@@ -145,7 +145,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
+      // Triple-confirmed: sweet spot + mispriced + risk engine agreement
+      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' },
+      // Multi-engine consensus: 3+ engines agree on same pick
+      { legs: 3, strategy: 'multi_engine_consensus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       // NCAAB exploration — UNDERS ONLY (70.6% hit rate confirmed, overs/spreads blocked)
       { legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate', maxCategoryUsage: 3 },
       { legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite', maxCategoryUsage: 3 },
@@ -246,7 +249,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // REPLACED: 3 validated_standard with double_confirmed_conviction for verified-source coverage
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 60, sortBy: 'hit_rate' },
+      // Triple-confirmed validation
+      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      // Multi-engine consensus validation
+      { legs: 3, strategy: 'multi_engine_consensus', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
       // WINNING ARCHETYPE VALIDATION: 3PT + SCORER
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
@@ -320,6 +326,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      // Triple-confirmed execution — ULTRA-HIGH PRIORITY
+      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       // Mispriced edge execution — highest conviction plays
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
@@ -555,6 +563,9 @@ interface EnrichedPick extends SweetSpotPick {
   has_real_line?: boolean;
   line_source?: string;
   line_verified_at?: string | null;
+  isDoubleConfirmed?: boolean;
+  isTripleConfirmed?: boolean;
+  engineCount?: number;
 }
 
 interface TeamProp {
@@ -1924,6 +1935,8 @@ interface PropPool {
   whalePicks: EnrichedPick[];
   mispricedPicks: EnrichedPick[];
   doubleConfirmedPicks: EnrichedPick[];
+  tripleConfirmedPicks: EnrichedPick[];
+  multiEnginePicks: EnrichedPick[];
   totalPool: number;
   goldenCategories: Set<string>;
 }
@@ -4225,19 +4238,73 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   }
 
   // === CROSS-ENGINE CONVICTION BOOST ===
-  // Fetch risk engine picks for today and build a lookup for side agreement
-  const { data: riskEnginePicks } = await supabase
-    .from('nba_risk_engine_picks')
-    .select('player_name, prop_type, side, confidence_score')
-    .eq('game_date', targetDate);
+  // Fetch risk engine + PropV2 + Sharp/Heat picks for multi-engine consensus
+  const [riskEngineResult, propV2Result, sharpResult, heatResult] = await Promise.all([
+    supabase.from('nba_risk_engine_picks')
+      .select('player_name, prop_type, side, confidence_score')
+      .eq('game_date', targetDate),
+    supabase.from('prop_engine_v2_picks')
+      .select('player_name, prop_type, side, ses_score')
+      .eq('game_date', targetDate),
+    supabase.from('sharp_ai_parlays')
+      .select('leg_1, leg_2, parlay_type')
+      .eq('parlay_date', targetDate),
+    supabase.from('heat_parlays')
+      .select('legs, parlay_type')
+      .eq('parlay_date', targetDate),
+  ]);
 
+  const riskEnginePicks = riskEngineResult.data || [];
   const riskEngineMap = new Map<string, { side: string; confidence: number }>();
-  for (const rp of (riskEnginePicks || [])) {
+  for (const rp of riskEnginePicks) {
     const normProp = (rp.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
     const key = `${(rp.player_name || '').toLowerCase().trim()}|${normProp}`;
     riskEngineMap.set(key, { side: rp.side, confidence: rp.confidence_score });
   }
-  console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk engine picks loaded`);
+
+  // Build unified multi-engine map: key = "player|prop_type", value = { engines[], sides[] }
+  const multiEngineMap = new Map<string, { engines: string[]; sides: string[] }>();
+  const addToMultiEngine = (playerName: string, propType: string, side: string, engine: string) => {
+    if (!playerName || !propType) return;
+    const normProp = (propType || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const key = `${playerName.toLowerCase().trim()}|${normProp}`;
+    if (!multiEngineMap.has(key)) multiEngineMap.set(key, { engines: [], sides: [] });
+    const entry = multiEngineMap.get(key)!;
+    if (!entry.engines.includes(engine)) {
+      entry.engines.push(engine);
+      entry.sides.push(side.toLowerCase());
+    }
+  };
+
+  // Risk engine
+  for (const rp of riskEnginePicks) {
+    addToMultiEngine(rp.player_name, rp.prop_type, rp.side || 'over', 'risk');
+  }
+  // PropV2 engine
+  for (const p of (propV2Result.data || [])) {
+    addToMultiEngine(p.player_name, p.prop_type, p.side || 'over', 'propv2');
+  }
+  // Sharp AI parlays — extract legs
+  for (const parlay of (sharpResult.data || [])) {
+    for (const legKey of ['leg_1', 'leg_2']) {
+      const leg = parlay[legKey];
+      if (leg && typeof leg === 'object') {
+        addToMultiEngine(leg.player_name || '', leg.prop_type || leg.stat_type || '', leg.side || 'over', 'sharp');
+      }
+    }
+  }
+  // Heat parlays — extract legs
+  for (const parlay of (heatResult.data || [])) {
+    if (Array.isArray(parlay.legs)) {
+      for (const leg of parlay.legs) {
+        if (leg && typeof leg === 'object') {
+          addToMultiEngine(leg.player_name || '', leg.prop_type || leg.stat_type || '', leg.side || 'over', 'heat');
+        }
+      }
+    }
+  }
+
+  console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk, ${propV2Result.data?.length || 0} propV2, ${sharpResult.data?.length || 0} sharp, ${heatResult.data?.length || 0} heat | multiEngineMap: ${multiEngineMap.size} unique picks`);
   // MLB engine cross-reference PAUSED — MLB blocked from generation until more data collected
 
   // === STEP 2: ENRICH MISPRICED LINES + CROSS-REFERENCE WITH SWEET SPOTS ===
@@ -4304,8 +4371,34 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         }
       }
     }
+
+    // === TRIPLE-CONFIRMED + MULTI-ENGINE TAGGING ===
+    let isTripleConfirmed = false;
+    let tripleConfirmedBonus = 0;
+    if (isDoubleConfirmed && riskConfirmed) {
+      isTripleConfirmed = true;
+      tripleConfirmedBonus = 30; // replaces +20 double + +12 risk
+      console.log(`[Bot] 🔥🔥🔥 TRIPLE-CONFIRMED: ${ml.player_name} ${ml.prop_type} ${side} | hitRate=${(realHitRate * 100).toFixed(0)}% edge=${absEdge.toFixed(1)}% riskConf=${riskMatch?.confidence}`);
+    }
+
+    // Multi-engine consensus: count how many engines agree on this pick
+    const multiMatch = multiEngineMap.get(riskKey);
+    let engineCount = 0;
+    if (multiMatch) {
+      // Count engines that agree on the same side
+      const agreeingEngines = multiMatch.engines.filter((_, i) => multiMatch.sides[i] === side);
+      engineCount = agreeingEngines.length;
+    }
+    // Add risk + sweet spot as implicit engines if they agree
+    if (riskConfirmed) engineCount++;
+    if (isDoubleConfirmed) engineCount++;
+    const multiEngineBonus = engineCount >= 4 ? 25 : engineCount >= 3 ? 16 : engineCount >= 2 ? 8 : 0;
+
+    // Use triple-confirmed bonus if applicable (replaces double+risk bonuses)
+    const effectiveConvictionBoost = isTripleConfirmed ? 0 : convictionBoost; // risk boost already in tripleConfirmedBonus
+    const effectiveDoubleBonus = isTripleConfirmed ? 0 : doubleConfirmedBonus; // replaced by tripleConfirmedBonus
     
-    const compositeScore = Math.min(98, 50 + (absEdge * 0.3) + tierBonus + convictionBoost + doubleConfirmedBonus + mlbBoost);
+    const compositeScore = Math.min(98, 50 + (absEdge * 0.3) + tierBonus + effectiveConvictionBoost + effectiveDoubleBonus + tripleConfirmedBonus + multiEngineBonus + mlbBoost);
     const hitRate = realHitRate;
 
     // Look up real odds from the odds map
@@ -4330,8 +4423,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       oddsValueScore: calculateOddsValueScore(americanOdds, hitRate),
       compositeScore,
       has_real_line: true,
-      line_source: isDoubleConfirmed ? 'double_confirmed' : 'mispriced_edge',
+      line_source: isTripleConfirmed ? 'triple_confirmed' : isDoubleConfirmed ? 'double_confirmed' : 'mispriced_edge',
       isDoubleConfirmed,
+      isTripleConfirmed,
+      engineCount,
       archetype: matchedArchetype,
     } as EnrichedPick;
   }).filter((p: EnrichedPick) => Math.abs(p.line) > 0 && p.player_name);
@@ -4377,7 +4472,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   // Build double-confirmed pool: filtered mispriced picks with double confirmation
   const doubleConfirmedPicks = filteredMispricedPicks.filter((p: any) => p.isDoubleConfirmed === true);
-  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks, ${doubleConfirmedPicks.length} double-confirmed`);
+  // Build triple-confirmed pool: double-confirmed + risk engine agreement
+  const tripleConfirmedPicks = filteredMispricedPicks.filter((p: any) => p.isTripleConfirmed === true);
+  // Build multi-engine consensus pool: 3+ engines agree on the same pick
+  const multiEnginePicks = filteredMispricedPicks
+    .filter((p: any) => (p.engineCount || 0) >= 3)
+    .sort((a: any, b: any) => (b.compositeScore || 0) - (a.compositeScore || 0));
+  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks, ${doubleConfirmedPicks.length} double-confirmed, ${tripleConfirmedPicks.length} triple-confirmed, ${multiEnginePicks.length} multi-engine(3+)`);
 
   return {
     playerPicks: enrichedSweetSpots,
@@ -4386,6 +4487,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     whalePicks: enrichedWhalePicks,
     mispricedPicks: filteredMispricedPicks,
     doubleConfirmedPicks,
+    tripleConfirmedPicks,
+    multiEnginePicks,
     totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length,
     goldenCategories,
   };
@@ -4474,6 +4577,13 @@ async function generateTierParlays(
     config.minConfidence = 0.40;
     console.log(`[Bot] 🔶 Thin-slate: exploration gates relaxed (hitRate≥40%, edge≥0.002)`);
   }
+  if (isThinSlate && tier === 'execution') {
+    config.minHitRate = 55;
+    config.minEdge = 0.005;
+    config.minSharpe = 0.015;
+    config.minConfidence = 0.55;
+    console.log(`[Bot] 🔶 Thin-slate: execution gates relaxed (hitRate≥55%, edge≥0.005)`);
+  }
 
   // Light-slate: raise spread cap so large-spread games aren't blocked when pool is thin
   const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
@@ -4518,8 +4628,68 @@ async function generateTierParlays(
     const isMispricedProfile = profile.strategy.startsWith('mispriced_edge');
     // DOUBLE-CONFIRMED: draw exclusively from double-confirmed picks (sweet spot + mispriced)
     const isDoubleConfirmedProfile = profile.strategy.startsWith('double_confirmed');
+    // TRIPLE-CONFIRMED: sweet spot + mispriced + risk engine agreement
+    const isTripleConfirmedProfile = profile.strategy.startsWith('triple_confirmed');
+    // MULTI-ENGINE CONSENSUS: 3+ engines agree on the same pick
+    const isMultiEngineProfile = profile.strategy.startsWith('multi_engine');
     
-    if (isDoubleConfirmedProfile) {
+    if (isTripleConfirmedProfile) {
+      // Triple-confirmed: use triple pool, fallback to double-confirmed, then mispriced
+      candidatePicks = [...(pool.tripleConfirmedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          return true;
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+      if (candidatePicks.length < profile.legs) {
+        // Fallback to double-confirmed
+        const dcFallback = [...(pool.doubleConfirmedPicks || [])]
+          .filter(p => {
+            if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+            if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+            return true;
+          })
+          .sort((a, b) => b.compositeScore - a.compositeScore);
+        if (dcFallback.length >= profile.legs) {
+          candidatePicks = dcFallback;
+          console.log(`[Bot] ${tier}/triple_confirmed: fallback to ${dcFallback.length} double-confirmed picks`);
+        } else {
+          console.log(`[Bot] ${tier}/triple_confirmed: only ${candidatePicks.length} triple + ${dcFallback.length} double picks, need ${profile.legs}`);
+          continue;
+        }
+      } else {
+        console.log(`[Bot] ${tier}/triple_confirmed: using ${candidatePicks.length} triple-confirmed picks for ${profile.legs}-leg parlay`);
+      }
+    } else if (isMultiEngineProfile) {
+      // Multi-engine consensus: use picks with 3+ engine agreement
+      candidatePicks = [...(pool.multiEnginePicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          return true;
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+      if (candidatePicks.length < profile.legs) {
+        // Fallback to mispriced sorted by engineCount
+        const meFallback = [...(pool.mispricedPicks || [])]
+          .filter(p => {
+            if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+            if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+            return (p as any).engineCount >= 2;
+          })
+          .sort((a: any, b: any) => (b.engineCount || 0) - (a.engineCount || 0));
+        if (meFallback.length >= profile.legs) {
+          candidatePicks = meFallback;
+          console.log(`[Bot] ${tier}/multi_engine: fallback to ${meFallback.length} mispriced picks with 2+ engines`);
+        } else {
+          console.log(`[Bot] ${tier}/multi_engine: only ${candidatePicks.length} multi-engine + ${meFallback.length} fallback picks, need ${profile.legs}`);
+          continue;
+        }
+      } else {
+        console.log(`[Bot] ${tier}/multi_engine: using ${candidatePicks.length} multi-engine picks for ${profile.legs}-leg parlay`);
+      }
+    } else if (isDoubleConfirmedProfile) {
       candidatePicks = [...(pool.doubleConfirmedPicks || [])]
         .filter(p => {
           if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
@@ -4528,10 +4698,55 @@ async function generateTierParlays(
         })
         .sort((a, b) => b.compositeScore - a.compositeScore);
       if (candidatePicks.length < profile.legs) {
-        console.log(`[Bot] ${tier}/double_confirmed: only ${candidatePicks.length} double-confirmed picks available, need ${profile.legs}`);
-        continue;
+        // === SMARTER DOUBLE-CONFIRMED FALLBACK TIERS ===
+        let fallbackTier = '';
+        // Tier A: mispriced picks with 65%+ hit rate (partial double-confirmed)
+        const tierA = [...(pool.mispricedPicks || [])]
+          .filter(p => {
+            if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+            if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+            return (p as any).l10_hit_rate >= 0.65 && !(p as any).isDoubleConfirmed;
+          })
+          .sort((a, b) => b.compositeScore - a.compositeScore);
+        if (tierA.length >= profile.legs) {
+          candidatePicks = tierA;
+          fallbackTier = 'A (mispriced 65%+ hit rate)';
+        } else {
+          // Tier B: sweet spots with mispriced edge 10%+ (near-miss)
+          const tierB = [...(pool.sweetSpots || [])]
+            .filter(p => {
+              if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+              if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+              return (p as any).isDoubleConfirmed || (p as any).mispricedEdge >= 10;
+            })
+            .sort((a, b) => b.compositeScore - a.compositeScore);
+          if (tierB.length >= profile.legs) {
+            candidatePicks = tierB;
+            fallbackTier = 'B (sweet spots with 10%+ edge)';
+          } else {
+            // Tier C: risk-confirmed mispriced with 60%+ hit rate
+            const tierC = [...(pool.mispricedPicks || [])]
+              .filter(p => {
+                if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+                if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+                return (p as any).l10_hit_rate >= 0.60;
+              })
+              .sort((a, b) => b.compositeScore - a.compositeScore);
+            if (tierC.length >= profile.legs) {
+              candidatePicks = tierC;
+              fallbackTier = 'C (mispriced 60%+ hit rate)';
+            }
+          }
+        }
+        if (fallbackTier) {
+          console.log(`[Bot] ${tier}/double_confirmed: FALLBACK tier ${fallbackTier} with ${candidatePicks.length} picks for ${profile.legs}-leg parlay`);
+        } else {
+          console.log(`[Bot] ${tier}/double_confirmed: only ${candidatePicks.length} picks + all fallbacks exhausted, need ${profile.legs}`);
+          continue;
+        }
+      } else {
+        console.log(`[Bot] ${tier}/double_confirmed: using ${candidatePicks.length} double-confirmed picks for ${profile.legs}-leg parlay`);
       }
-      console.log(`[Bot] ${tier}/double_confirmed: using ${candidatePicks.length} double-confirmed picks for ${profile.legs}-leg parlay`);
     } else if (isMispricedProfile) {
       candidatePicks = [...pool.mispricedPicks]
         .filter(p => {
