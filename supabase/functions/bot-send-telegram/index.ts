@@ -758,9 +758,8 @@ function formatDoubleConfirmedReport(data: Record<string, any>, dateStr: string)
 
   return msg;
 }
-
-  return msg;
 }
+
 
 function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): string {
   const { date, scanned, events, qualified, legs, combinedOdds, payout25 } = data;
@@ -788,6 +787,11 @@ function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): st
     }
   } else {
     msg += `⚠️ No qualifying parlay legs found today.\n`;
+  }
+
+  msg += `🎲 Good luck! Play responsibly.`;
+
+  return msg;
 }
 
 function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
@@ -816,11 +820,6 @@ function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): st
   }
 
   msg += `📊 Powered by ParlayIQ Engine`;
-
-  return msg;
-}
-
-  msg += `🎲 Good luck! Play responsibly.`;
 
   return msg;
 }
