@@ -2261,6 +2261,13 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     }).eq('parlay_date', today).or('outcome.eq.pending,outcome.is.null');
     await logActivity('admin_void_today', `Admin voided ${voided?.length || 0} parlays`, { count: voided?.length || 0 });
     await sendMessage(chatId, `✅ Voided *${voided?.length || 0}* pending parlays for today.`);
+  } else if (data.startsWith('cancel_sub_confirm:')) {
+    const email = data.slice('cancel_sub_confirm:'.length);
+    await answerCallbackQuery(callbackQueryId, 'Cancelling subscription...');
+    await executeCancelSubscription(chatId, email);
+  } else if (data === 'cancel_sub_abort') {
+    await answerCallbackQuery(callbackQueryId, 'Keeping subscription');
+    await sendMessage(chatId, '✅ Great! Your subscription stays active.');
   } else if (data === 'fix:cancel') {
     await answerCallbackQuery(callbackQueryId, 'Cancelled');
     await sendMessage(chatId, '❌ Action cancelled.');
@@ -2631,6 +2638,117 @@ async function handleParlayStatus(chatId: string) {
   return message;
 }
 
+// ==================== CANCEL SUBSCRIPTION HANDLER ====================
+
+import Stripe from "https://esm.sh/stripe@18.5.0";
+
+async function handleCancelSubscription(chatId: string): Promise<string> {
+  // Look up user in bot_authorized_users
+  const { data: authUser } = await supabase
+    .from("bot_authorized_users")
+    .select("chat_id, username")
+    .eq("chat_id", chatId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!authUser) {
+    return "❌ You don't appear to have an active account. Contact support.";
+  }
+
+  // Find email from email_subscribers by matching chat_id metadata or by looking up linked email
+  const { data: emailRecord } = await supabase
+    .from("email_subscribers")
+    .select("email")
+    .eq("telegram_chat_id", chatId)
+    .maybeSingle();
+
+  // Fallback: try to find by username match
+  let customerEmail = emailRecord?.email;
+  if (!customerEmail && authUser.username) {
+    const { data: byUsername } = await supabase
+      .from("email_subscribers")
+      .select("email")
+      .eq("telegram_username", authUser.username)
+      .maybeSingle();
+    customerEmail = byUsername?.email;
+  }
+
+  if (!customerEmail) {
+    return "❌ Could not find your subscription email. Please contact admin for help cancelling.";
+  }
+
+  // Send confirmation with inline button
+  await sendMessage(chatId, 
+    `⚠️ *Cancel Subscription?*\n\nThis will cancel your subscription at the end of the current billing period. You'll keep access until then.\n\nEmail: ${customerEmail}`,
+    "Markdown",
+    {
+      inline_keyboard: [[
+        { text: "✅ Yes, Cancel", callback_data: `cancel_sub_confirm:${customerEmail}` },
+        { text: "❌ Keep It", callback_data: "cancel_sub_abort" },
+      ]]
+    }
+  );
+  return null as any; // Already sent
+}
+
+async function executeCancelSubscription(chatId: string, email: string): Promise<void> {
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+  if (!stripeKey) {
+    await sendMessage(chatId, "❌ Stripe is not configured. Contact admin.");
+    return;
+  }
+
+  const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+
+  try {
+    // Find Stripe customer
+    const customers = await stripe.customers.list({ email, limit: 1 });
+    if (customers.data.length === 0) {
+      await sendMessage(chatId, "❌ No Stripe customer found for your email. Contact admin.");
+      return;
+    }
+
+    const customerId = customers.data[0].id;
+
+    // Find active/trialing subscriptions
+    const [activeSubs, trialingSubs] = await Promise.all([
+      stripe.subscriptions.list({ customer: customerId, status: "active", limit: 5 }),
+      stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 5 }),
+    ]);
+
+    const allSubs = [...activeSubs.data, ...trialingSubs.data];
+    if (allSubs.length === 0) {
+      await sendMessage(chatId, "❌ No active subscription found. You may have already cancelled.");
+      return;
+    }
+
+    // Cancel at period end (graceful)
+    const sub = allSubs[0];
+    await stripe.subscriptions.update(sub.id, { cancel_at_period_end: true });
+
+    const endDate = new Date(sub.current_period_end * 1000);
+    const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    await sendMessage(chatId, `✅ *Subscription Cancelled*\n\nYour subscription will end on *${endStr}*. You'll keep full access until then.\n\nIf you change your mind, contact admin to reactivate.`);
+
+    // Notify admin
+    if (ADMIN_CHAT_ID) {
+      const { data: authUser } = await supabase
+        .from("bot_authorized_users")
+        .select("username")
+        .eq("chat_id", chatId)
+        .maybeSingle();
+      const username = authUser?.username ? `@${authUser.username}` : chatId;
+      await sendMessage(ADMIN_CHAT_ID, `🚫 *Subscription Cancelled*\n\nCustomer: ${username}\nEmail: ${email}\nChat ID: ${chatId}\nAccess ends: ${endStr}`);
+    }
+
+    await logActivity("subscription_cancelled", `Customer ${chatId} cancelled subscription`, { chatId, email, endDate: endStr });
+  } catch (error) {
+    console.error("Cancel subscription error:", error);
+    await sendMessage(chatId, "❌ Failed to cancel subscription. Please contact admin.");
+  }
+}
+
 // ==================== ADMIN CHECK ====================
 
 const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
@@ -2869,6 +2987,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/calendar") return await handleCustomerCalendar(chatId);
   if (cmd === "/roi") return await handleCustomerRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
+  if (cmd === "/cancel") return await handleCancelSubscription(chatId);
   if (cmd === "/help") {
     return `📋 *Parlay Farm — Help*
 
@@ -2877,6 +2996,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /calendar — Your monthly P&L
 /roi — Your personal ROI
 /streaks — Hot & cold streaks
+/cancel — Cancel your subscription
 
 💬 *Ask me anything:*
 Just type a question in plain English! Examples:

@@ -2438,6 +2438,8 @@ export type Database = {
           is_subscribed: boolean | null
           source: string | null
           subscribed_at: string | null
+          telegram_chat_id: string | null
+          telegram_username: string | null
           user_id: string | null
         }
         Insert: {
@@ -2446,6 +2448,8 @@ export type Database = {
           is_subscribed?: boolean | null
           source?: string | null
           subscribed_at?: string | null
+          telegram_chat_id?: string | null
+          telegram_username?: string | null
           user_id?: string | null
         }
         Update: {
@@ -2454,6 +2458,8 @@ export type Database = {
           is_subscribed?: boolean | null
           source?: string | null
           subscribed_at?: string | null
+          telegram_chat_id?: string | null
+          telegram_username?: string | null
           user_id?: string | null
         }
         Relationships: []
