@@ -763,9 +763,12 @@ function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): st
   const { date, scanned, events, qualified, legs, combinedOdds, payout25 } = data;
   const displayDate = date || dateStr;
 
-  let msg = `🏀 NBA MEGA PARLAY SCANNER\n`;
+  let msg = `🎰 DAILY LOTTERY PARLAY\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `${displayDate} | +100 Odds Only\n\n`;
+  msg += `⚠️ HIGH RISK / HIGH REWARD\n`;
+  msg += `This is a lottery-style parlay — slight risk involved.\n`;
+  msg += `Bet only what you can afford to lose.\n\n`;
   msg += `📊 Scanned: ${scanned || '?'} props across ${events || '?'} games\n`;
   msg += `✅ ${qualified || '?'} qualified\n\n`;
 
@@ -783,6 +786,8 @@ function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): st
   } else {
     msg += `⚠️ No qualifying parlay legs found today.\n`;
   }
+
+  msg += `🎲 Good luck! Play responsibly.`;
 
   return msg;
 }
