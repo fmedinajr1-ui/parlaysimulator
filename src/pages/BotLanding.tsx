@@ -12,6 +12,7 @@ import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
 import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
 import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowcase";
+import { WelcomeTipsCard } from "@/components/bot-landing/WelcomeTipsCard";
 
 interface PublicStats {
   days: Array<{
@@ -126,6 +127,10 @@ export default function BotLanding() {
             t.me/parlayiqbot
           </a>
         </div>
+      )}
+
+      {(hasBotAccess || isAdmin) && (
+        <WelcomeTipsCard forceShow={isSuccess} />
       )}
 
       <div ref={heroRef}>
