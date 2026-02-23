@@ -1,38 +1,52 @@
 
 
-## Fix & Verify All Today's Updates for Tomorrow
+## Telegram Customer Manager — Bot Dashboard
 
-### Issue Found
+### Overview
 
-There is a **syntax bug** in `supabase/functions/bot-send-telegram/index.ts` — an extra `}` on line 761 that will cause a deployment/runtime error. This stray brace was left over from a previous edit and will break the Telegram notification function entirely (affecting ALL notifications, not just the new ones).
+Add a new **"Customers"** tab to the Bot Dashboard (alongside Overview, Parlays, Analytics, War Room) with full admin control over Telegram users.
 
-### Fix Required
+### New Component
 
-**File:** `supabase/functions/bot-send-telegram/index.ts` (line 761)
+**`src/components/bot/TelegramCustomerManager.tsx`**
 
-Remove the extra `}` on line 761. The function `formatFreshSlateReport` already closes properly on line 760 with `return msg;` + `}`. The stray brace sits between that and `formatMegaParlayScanner`.
+A card-based UI that queries `bot_authorized_users` and shows:
 
-### Verification Checklist
+- **Stats bar** — Total customers, active count, auth method breakdown (password / admin_grant / grandfathered)
+- **Search** — Filter by username or chat ID
+- **Customer list** — Each row shows:
+  - Telegram username (or chat ID if no username)
+  - Auth method badge (colored: green for grandfathered, blue for password, purple for admin_grant)
+  - Joined date (relative, e.g. "3 days ago")
+  - Active/inactive toggle switch
+  - Delete button (with confirmation dialog)
+- **Grant access** — Input field + button to add a new customer by chat ID
 
-After the fix, all three customer-facing features from today will work:
+### Actions available per user
 
-| Feature | Status | Cron / Trigger |
-|---------|--------|----------------|
-| Daily Lottery Parlay (mega scanner rebrand) | Working after fix | Manual / on-demand |
-| Daily Winners Recap (8 AM ET broadcast) | Working after fix | `0 13 * * *` UTC cron scheduled |
-| Risk disclaimer on lottery parlay | Working after fix | Part of mega scanner formatter |
+| Action | What it does |
+|--------|-------------|
+| Toggle active | Updates `is_active` on `bot_authorized_users` — inactive users can't use commands or receive broadcasts |
+| Delete | Removes the row entirely from `bot_authorized_users` |
+| Grant access | Inserts a new row with `authorized_by: 'admin_grant'` |
 
-### What the Fix Enables
+### Dashboard Integration
 
-- `formatMegaParlayScanner()` — Daily Lottery Parlay with risk disclaimer
-- `formatDailyWinnersRecap()` — Yesterday's Wins report
-- Customer broadcast for both types
-- Quiet hours bypass for both types
-- Cron job at 8 AM ET triggers `daily-winners-broadcast` automatically
+**`src/pages/BotDashboard.tsx`**
 
-### Steps
+- Add a 5th tab: **"Customers"** with a Users icon
+- Place `TelegramCustomerManager` inside the new tab content
 
-1. Remove stray `}` on line 761
-2. Redeploy `bot-send-telegram`
-3. Both functions will work correctly for tomorrow's automatic 8 AM run
+```text
+Tabs: Overview | Parlays | Analytics | War Room | Customers
+```
+
+### Technical Details
+
+| File | Change |
+|------|--------|
+| `src/components/bot/TelegramCustomerManager.tsx` | New — full CRUD UI for `bot_authorized_users` |
+| `src/pages/BotDashboard.tsx` | Add Customers tab + import component |
+
+No database changes needed — `bot_authorized_users` table already has all required columns (`chat_id`, `username`, `authorized_by`, `is_active`, `authorized_at`). RLS is handled by the admin role check already in the dashboard.
 
