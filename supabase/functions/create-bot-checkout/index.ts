@@ -40,7 +40,7 @@ serve(async (req) => {
       line_items: [{ price: resolvedPriceId, quantity: 1 }],
       mode: "subscription",
       subscription_data: {
-        trial_period_days: isScoutTier ? 1 : 0,
+        trial_period_days: isScoutTier ? 1 : 3,
       },
       success_url: isScoutTier ? `${req.headers.get("origin")}/scout` : TELEGRAM_BOT_URL,
       cancel_url: `${req.headers.get("origin")}/`,

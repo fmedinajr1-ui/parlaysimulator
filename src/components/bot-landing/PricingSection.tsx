@@ -31,8 +31,8 @@ const tiers = [
       "Telegram bot alerts & commands",
       "Real-time live prop tracking",
     ],
-    cta: "Join Parlay Bot — $99/mo",
-    hasTrial: false,
+    cta: "Start 3-Day Free Trial — $99/mo",
+    hasTrial: true,
   },
   {
     id: "scout",
@@ -148,7 +148,7 @@ function TierCard({
           <span className="text-muted-foreground text-sm">/month</span>
         </div>
         <p className="text-muted-foreground text-xs mt-1">
-          Cancel anytime · {tier.hasTrial ? '1-day free trial' : 'No free trial'}
+          Cancel anytime · {tier.hasTrial ? (tier.id === 'scout' ? '1-day free trial' : '3-day free trial') : 'No free trial'}
         </p>
       </div>
 
