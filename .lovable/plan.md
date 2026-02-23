@@ -1,28 +1,28 @@
 
+## Remove Bottom Navigation from Mobile
 
-## Add 3-Day Free Trial for Parlay Bot
+The bottom navigation bar (`BottomNav`) currently shows on mobile with Bot, Analysis tabs and a hamburger menu drawer. The user wants it removed entirely. The `MobileFloatingMenu` (floating hamburger button, top-right) already provides navigation access, so removing the bottom nav is safe.
 
-Two small changes needed:
+### Changes
 
-### 1. Backend: Update `supabase/functions/create-bot-checkout/index.ts`
+**File: `src/App.tsx`**
+- Remove the `BottomNav` import (if present) or confirm it's not directly used here
+- The `MobileFloatingMenu` component stays -- it's the floating hamburger button at top-right which is separate
 
-Change the trial logic on line 43 so Parlay Bot gets a 3-day trial (instead of 0), while Scout keeps its 1-day trial:
+**File: `src/components/layout/MobileLayout.tsx`**
+- No changes needed -- it doesn't render `BottomNav`
 
-```typescript
-// Current:  trial_period_days: isScoutTier ? 1 : 0,
-// New:      trial_period_days: isScoutTier ? 1 : 3,
-```
+After checking, `BottomNav` is not imported in `App.tsx`. Let me find where it's actually rendered.
 
-### 2. Frontend: Update `src/components/bot-landing/PricingSection.tsx`
+### Investigation Needed
+I need to find where `BottomNav` is actually mounted. Looking at the screenshot, the bottom bar with the hamburger icon is the `BottomNav` component which includes `MenuDrawer`. 
 
-- Set `hasTrial: true` on the Parlay Bot tier (line 35)
-- Update the trial label text from `'1-day free trial'` to show the correct duration per tier
-- Update the CTA button text to mention the trial (e.g., "Start 3-Day Free Trial — $99/mo")
+### Approach
+1. Search for where `BottomNav` is imported and rendered
+2. Remove that import and usage
+3. The `MobileFloatingMenu` (already in `App.tsx` line 141) will continue serving as the navigation method
 
-**Changes:**
-- Line 35: `hasTrial: false` -> `hasTrial: true`
-- Line 34: CTA text -> `"Start 3-Day Free Trial — $99/mo"`
-- Line 151: Update trial text to differentiate between tiers:
-  - Parlay Bot: "3-day free trial"
-  - Scout: "1-day free trial"
-
+### Technical Details
+- Remove `BottomNav` component usage from wherever it's rendered (need to locate this)
+- Keep `MobileFloatingMenu` in `App.tsx` (line 141) as the sole mobile navigation
+- Pages may need bottom padding adjustments since the fixed bottom bar (`h-[76px]`) will no longer exist
