@@ -3996,6 +3996,60 @@ export type Database = {
         }
         Relationships: []
       }
+      high_conviction_results: {
+        Row: {
+          analysis_date: string
+          confidence_tier: string | null
+          conviction_score: number | null
+          created_at: string | null
+          current_line: number | null
+          display_prop_type: string | null
+          edge_pct: number
+          engines: Json | null
+          id: string
+          player_avg: number | null
+          player_name: string
+          prop_type: string
+          side_agreement: boolean | null
+          signal: string
+          sport: string | null
+        }
+        Insert: {
+          analysis_date: string
+          confidence_tier?: string | null
+          conviction_score?: number | null
+          created_at?: string | null
+          current_line?: number | null
+          display_prop_type?: string | null
+          edge_pct?: number
+          engines?: Json | null
+          id?: string
+          player_avg?: number | null
+          player_name: string
+          prop_type: string
+          side_agreement?: boolean | null
+          signal: string
+          sport?: string | null
+        }
+        Update: {
+          analysis_date?: string
+          confidence_tier?: string | null
+          conviction_score?: number | null
+          created_at?: string | null
+          current_line?: number | null
+          display_prop_type?: string | null
+          edge_pct?: number
+          engines?: Json | null
+          id?: string
+          player_avg?: number | null
+          player_name?: string
+          prop_type?: string
+          side_agreement?: boolean | null
+          signal?: string
+          sport?: string | null
+        }
+        Relationships: []
+      }
       hitrate_accuracy_metrics: {
         Row: {
           avg_actual_probability: number
