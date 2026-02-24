@@ -432,6 +432,8 @@ const BLOCKED_CATEGORIES = new Set([
 const STATIC_BLOCKED_PROP_TYPES = new Set([
   'player_steals',
   'player_blocks',
+  'steals',
+  'blocks',
 ]);
 
 // Dynamic prop type performance data (loaded at runtime)
@@ -498,7 +500,7 @@ function getPlayerBonus(playerName: string, propType: string): number {
   
   if (perf.hitRate >= 0.70) return 15;  // Proven winner
   if (perf.hitRate >= 0.50) return 5;   // Reliable
-  if (perf.hitRate < 0.30) return -20;  // Avoid
+  if (perf.hitRate < 0.30) return -999;  // Hard-block: serial loser
   return 0;
 }
 
@@ -4683,8 +4685,29 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] 🔥 Double-confirmed picks: ${doubleConfirmedCount} out of ${enrichedMispricedPicks.length} mispriced lines`);
 
+  // Filter blocked prop types from mispriced picks (steals, blocks, etc.)
+  const preBlockedMispricedCount = enrichedMispricedPicks.length;
+  const unblockedMispricedPicks = enrichedMispricedPicks.filter(pick => {
+    const propType = (pick.prop_type || '').toLowerCase();
+    const normProp = PROP_TYPE_NORMALIZE[propType] || propType;
+    if (isPropTypeBlocked(propType) || isPropTypeBlocked(normProp)) {
+      console.log(`[BlockedPropType] Filtered mispriced ${propType} for ${pick.player_name}`);
+      return false;
+    }
+    // Hard-block serial losers
+    const playerBonus = getPlayerBonus(pick.player_name, normProp);
+    if (playerBonus <= -999) {
+      console.log(`[HardBlock] Filtered serial loser ${pick.player_name} (${normProp}) from mispriced`);
+      return false;
+    }
+    return true;
+  });
+  if (preBlockedMispricedCount !== unblockedMispricedPicks.length) {
+    console.log(`[BlockedPropType] Removed ${preBlockedMispricedCount - unblockedMispricedPicks.length} blocked/losing mispriced picks`);
+  }
+
   // Apply availability gate to mispriced picks
-  const filteredMispricedPicks = enrichedMispricedPicks.filter(pick => {
+  const filteredMispricedPicks = unblockedMispricedPicks.filter(pick => {
     if (activePlayersToday.size > 0) {
       const normalizedName = pick.player_name.toLowerCase().trim();
       return activePlayersToday.has(normalizedName) && !blocklist.has(normalizedName);

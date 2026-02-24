@@ -122,7 +122,7 @@ serve(async (req) => {
     }
 
     // Filter out blocked prop types (static + dynamic from bot_prop_type_performance)
-    const STATIC_BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks']);
+    const STATIC_BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks', 'steals', 'blocks']);
     const preFilterCount = mispricedLines.length;
     const filteredLines = mispricedLines.filter(ml => {
       const propType = (ml.prop_type || '').toLowerCase();
