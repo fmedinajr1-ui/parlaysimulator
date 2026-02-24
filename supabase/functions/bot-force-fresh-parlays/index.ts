@@ -14,7 +14,13 @@ function getEasternDate(): string {
 }
 
 function normalizePropType(raw: string): string {
-  return raw.replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  const s = raw.replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
 }
 
 interface MispricedPick {

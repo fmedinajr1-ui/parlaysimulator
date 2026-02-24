@@ -18,8 +18,14 @@ function getEasternDate(): string {
 const normalizeName = (name: string) =>
   name.toLowerCase().replace(/\./g, '').replace(/'/g, '').replace(/jr$/i, '').replace(/sr$/i, '').replace(/iii$/i, '').replace(/ii$/i, '').trim();
 
-function normalizePropType(pt: string): string {
-  return (pt || '').toLowerCase().replace(/^player_/, '').replace(/_/g, '').trim();
+function normalizePropType(raw: string): string {
+  const s = (raw || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
 }
 
 // Convert American odds to implied probability
