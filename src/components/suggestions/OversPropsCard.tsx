@@ -35,14 +35,14 @@ interface OversSweetSpot {
   recommendation: string | null;
 }
 
-type OversCategory = 'VOLUME_SCORER' | 'HIGH_ASSIST' | 'THREE_POINT_SHOOTER';
+type OversCategory = 'STAR_FLOOR_OVER' | 'HIGH_ASSIST' | 'THREE_POINT_SHOOTER';
 
 const OVERS_CATEGORY_CONFIG: Record<OversCategory, { label: string; icon: React.ElementType; color: string; description: string }> = {
-  'VOLUME_SCORER': { 
+  'STAR_FLOOR_OVER': { 
     label: 'Scorers', 
     icon: Flame, 
     color: 'text-red-500',
-    description: 'High scorers (15+ PPG) hitting Points OVERS at 70%+ L10'
+    description: 'Star scorers hitting Points OVERS at 70%+ L10'
   },
   'HIGH_ASSIST': { 
     label: 'Playmakers', 
@@ -241,7 +241,7 @@ const OversPickSkeleton = () => (
 );
 
 export const OversPropsCard = () => {
-  const [selectedCategory, setSelectedCategory] = useState<OversCategory>('VOLUME_SCORER');
+  const [selectedCategory, setSelectedCategory] = useState<OversCategory>('STAR_FLOOR_OVER');
   const [isExpanded, setIsExpanded] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
@@ -280,7 +280,7 @@ export const OversPropsCard = () => {
         .select('*')
         .eq('is_active', true)
         .eq('analysis_date', today)
-        .in('category', ['VOLUME_SCORER', 'HIGH_ASSIST', 'THREE_POINT_SHOOTER'])
+        .in('category', ['STAR_FLOOR_OVER', 'HIGH_ASSIST', 'THREE_POINT_SHOOTER'])
         .gte('l10_hit_rate', 0.70)
         .order('l10_hit_rate', { ascending: false });
 
@@ -301,7 +301,7 @@ export const OversPropsCard = () => {
   const categoryPicks = allOversData?.filter(p => p.category === selectedCategory) || [];
   
   const categoryCounts: Record<OversCategory, number> = {
-    'VOLUME_SCORER': allOversData?.filter(p => p.category === 'VOLUME_SCORER').length || 0,
+    'STAR_FLOOR_OVER': allOversData?.filter(p => p.category === 'STAR_FLOOR_OVER').length || 0,
     'HIGH_ASSIST': allOversData?.filter(p => p.category === 'HIGH_ASSIST').length || 0,
     'THREE_POINT_SHOOTER': allOversData?.filter(p => p.category === 'THREE_POINT_SHOOTER').length || 0,
   };
@@ -424,7 +424,7 @@ export const OversPropsCard = () => {
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Points, Assists & 3PM OVERS with 70%+ L10 hit rates • Today: {todayCategoryCounts.VOLUME_SCORER} Scorers, {todayCategoryCounts.HIGH_ASSIST} Playmakers, {todayCategoryCounts.THREE_POINT_SHOOTER} 3PT
+          Points, Assists & 3PM OVERS with 70%+ L10 hit rates • Today: {todayCategoryCounts.STAR_FLOOR_OVER} Scorers, {todayCategoryCounts.HIGH_ASSIST} Playmakers, {todayCategoryCounts.THREE_POINT_SHOOTER} 3PT
         </p>
       </CardHeader>
 

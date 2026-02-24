@@ -17,7 +17,7 @@ const corsHeaders = {
 };
 
 // ============= DYNAMIC WINNING ARCHETYPE DETECTION =============
-const FALLBACK_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'VOLUME_SCORER', 'BIG_REBOUNDER', 'HIGH_ASSIST'];
+const FALLBACK_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'BIG_REBOUNDER', 'HIGH_ASSIST'];
 
 async function detectWinningArchetypes(supabase: any): Promise<{ categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[]; usedFallback: boolean }> {
   try {
@@ -273,9 +273,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
       // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
       // WINNING ARCHETYPE: 3PT + SCORER combo (proven Feb 20-21 winners)
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
       // WINNING ARCHETYPE: REBOUNDER + ASSISTS combo
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
@@ -313,8 +313,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Multi-engine consensus validation
       { legs: 3, strategy: 'multi_engine_consensus', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
       // WINNING ARCHETYPE VALIDATION: 3PT + SCORER
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
       // WINNING ARCHETYPE VALIDATION: REBOUNDER + ASSISTS
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
@@ -395,8 +395,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
       // WINNING ARCHETYPE EXECUTION: 3PT + SCORER (tightest filters)
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER', 'VOLUME_SCORER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
       // WINNING ARCHETYPE EXECUTION: REBOUNDER + ASSISTS (tightest filters)
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
@@ -424,6 +424,8 @@ const BLOCKED_CATEGORIES = new Set([
   'UNDER_TOTAL',     // 18.2% hit rate
   'ML_FAVORITE',     // 20% hit rate
   'BIG_ASSIST_OVER', // 10.3% hit rate
+  'ELITE_REB_OVER',  // 41.7% hit rate
+  'VOLUME_SCORER',   // 46.9% hit rate
 ]);
 
 // ============= STALE ODDS DETECTION =============
