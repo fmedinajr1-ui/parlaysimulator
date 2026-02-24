@@ -1,23 +1,40 @@
 
 
-## Fix: Matchup Defense Scanner Upsert Failing Silently
+## Fix: Capture and Log Upsert Error in Matchup Defense Scanner
 
-### Root Cause
+### Problem
 
-The scanner's upsert on line 300 uses `onConflict: 'category,research_date'`, but there is **no unique constraint** on `(category, research_date)` in the `bot_research_findings` table. There's only a regular (non-unique) index on `category` alone. Without a matching unique constraint, the upsert silently fails and writes nothing.
+The scanner successfully processes 53 recommendations but the final upsert to `bot_research_findings` silently fails -- the result/error from the upsert call on line 300 is never captured or logged, so we can't see why it fails.
 
 ### Changes
 
-1. **Database Migration** -- Add a unique constraint on `(category, research_date)` to the `bot_research_findings` table:
-   ```sql
-   ALTER TABLE public.bot_research_findings
-   ADD CONSTRAINT uq_research_findings_category_date UNIQUE (category, research_date);
+**File: `supabase/functions/bot-matchup-defense-scanner/index.ts`**
+
+1. **Capture upsert result** -- Change line 300 from:
    ```
-   Note: Existing data may have duplicates for the same category+date (e.g., `team_research` and `optimization` appear twice for 2026-02-24). The migration will deduplicate first by keeping only the most recent row per category+date, then add the constraint.
+   await supabase.from('bot_research_findings').upsert({...});
+   ```
+   to:
+   ```
+   const { error: upsertError } = await supabase.from('bot_research_findings').upsert({...});
+   ```
 
-2. **No code changes needed** -- The edge function's upsert logic is already correct once the unique constraint exists.
+2. **Log and handle the error** -- After the upsert, add:
+   ```
+   if (upsertError) {
+     console.error('[MatchupScanner] Upsert failed:', upsertError);
+     // Fallback: try a plain insert if upsert fails
+     const { error: insertError } = await supabase
+       .from('bot_research_findings')
+       .insert({...same payload but with id: crypto.randomUUID()...});
+     if (insertError) {
+       console.error('[MatchupScanner] Insert fallback also failed:', insertError);
+     }
+   } else {
+     console.log('[MatchupScanner] Successfully wrote matchup scan to bot_research_findings');
+   }
+   ```
 
-### After the Fix
+3. **Verify after deploy** -- Re-run the scanner and check both the response and the database for the written row.
 
-Re-running the scanner will successfully upsert the matchup defense scan into `bot_research_findings`, making the 53 recommendations (17 prime, 20 favorable, 16 avoid) available for the parlay generator to consume.
-
+This approach will either fix the write (if it was a transient issue) or give us the exact error message to diagnose the root cause.
