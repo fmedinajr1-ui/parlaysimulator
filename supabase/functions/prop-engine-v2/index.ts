@@ -105,17 +105,17 @@ function calculateEnvironmentScoreV2(
 
   let defenseFactor = 0.5;
   if (oppDefenseRank != null) {
-    defenseFactor = (30 - oppDefenseRank) / 29;
+    defenseFactor = (oppDefenseRank - 1) / 29;
     if (!isOver) defenseFactor = 1 - defenseFactor;
   }
 
   let rebAstFactor = 0.5;
   const propLower = propType.toLowerCase();
   if (propLower.includes('reb') && oppRebRank != null) {
-    rebAstFactor = (30 - oppRebRank) / 29;
+    rebAstFactor = (oppRebRank - 1) / 29;
     if (!isOver) rebAstFactor = 1 - rebAstFactor;
   } else if (propLower.includes('ast') && oppAstRank != null) {
-    rebAstFactor = (30 - oppAstRank) / 29;
+    rebAstFactor = (oppAstRank - 1) / 29;
     if (!isOver) rebAstFactor = 1 - rebAstFactor;
   }
 

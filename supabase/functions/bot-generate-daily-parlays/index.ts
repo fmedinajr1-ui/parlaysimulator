@@ -105,7 +105,7 @@ function calculateEnvironmentScore(
   // 2. Positional Defense (0-1): rank 1=best defense, 30=worst
   let defenseFactor = 0.5;
   if (oppDefenseRank != null) {
-    defenseFactor = (30 - oppDefenseRank) / 29; // 30=soft=1.0, 1=tough=0.0
+    defenseFactor = (oppDefenseRank - 1) / 29; // 1=tough=0.0, 30=soft=1.0
     if (!isOver) defenseFactor = 1 - defenseFactor;
   }
 
@@ -113,14 +113,14 @@ function calculateEnvironmentScore(
   let rebAstFactor = 0.5;
   const propLower = propType.toLowerCase();
   if (propLower.includes('reb') && oppRebRank != null) {
-    rebAstFactor = (30 - oppRebRank) / 29;
+    rebAstFactor = (oppRebRank - 1) / 29;
     if (!isOver) rebAstFactor = 1 - rebAstFactor;
   } else if (propLower.includes('ast') && oppAstRank != null) {
-    rebAstFactor = (30 - oppAstRank) / 29;
+    rebAstFactor = (oppAstRank - 1) / 29;
     if (!isOver) rebAstFactor = 1 - rebAstFactor;
   } else if ((propLower.includes('pra') || (propLower.includes('pts') && propLower.includes('reb')) || (propLower.includes('pts') && propLower.includes('ast'))) && oppRebRank != null && oppAstRank != null) {
-    const rebVal = (30 - oppRebRank) / 29;
-    const astVal = (30 - oppAstRank) / 29;
+    const rebVal = (oppRebRank - 1) / 29;
+    const astVal = (oppAstRank - 1) / 29;
     rebAstFactor = (rebVal + astVal) / 2;
     if (!isOver) rebAstFactor = 1 - rebAstFactor;
   }
