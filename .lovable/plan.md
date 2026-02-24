@@ -1,50 +1,86 @@
 
 
-## Boost Mispriced Edge Strategy & Reduce Low-Performing Exploration Profiles
+## Insert Longshot Parlay + Broadcast Announcement with Recent Win Highlight
 
-### What Changes
-Increase `mispriced_edge` profile count across all three tiers (exploration, validation, execution) and reduce/remove lower-performing generic exploration strategies like `max_diversity`, `props_mixed`, and `cross_sport_4` that correspond to the "explore mixed" category in settled results.
+### What This Does
+1. Add a new `longshot_announcement` message type to `bot-send-telegram` that formats a hype announcement referencing the Feb 9 win
+2. Create a new `bot-insert-longshot-parlay` edge function that inserts tonight's 6-leg parlay into `bot_daily_parlays` and triggers the Telegram broadcast to all customers
+3. The announcement will highlight the previous +4741 winner ("Going for TWO in a row!")
 
-### Profile Changes by Tier
+### Changes
 
-#### Exploration Tier (50 profiles)
-**Remove 8 low-value profiles:**
-- 3x `max_diversity` (keep 2 -> remove 3)
-- 2x `props_mixed` (keep 1 -> remove 2)
-- 2x `cross_sport_4` (keep 2 -> remove 2)
-- 1x `nighttime_mixed` (keep 1 -> remove 1)
+#### 1. `supabase/functions/bot-send-telegram/index.ts`
 
-**Add 8 new `mispriced_edge` profiles:**
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'hit_rate' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 52, sortBy: 'hit_rate' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'hit_rate' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' }` (duplicate for volume)
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 52, sortBy: 'composite' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' }` (duplicate for volume)
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_ncaab'], minHitRate: 52, sortBy: 'composite' }`
+- Add `'longshot_announcement'` to the `NotificationType` union (line 20)
+- Add case in `formatMessage` switch (line 51)
+- Add `'longshot_announcement'` to the customer broadcast list (line 1090)
+- New `formatLongshotAnnouncement()` function that outputs:
 
-#### Validation Tier (15 profiles)
-**Remove 1 profile:**
-- 1x `validated_aggressive` (weakest filter profile)
+```text
+🚀 LONGSHOT PARLAY — Feb 24
+━━━━━━━━━━━━━━━━━━━━
 
-**Add 2 new `mispriced_edge` profiles:**
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' }`
+🏆 LAST LONGSHOT: +$4,741 on Feb 9
+3 legs hit, 3 voided — full payout!
+We're going for TWO IN A ROW 🔥
 
-#### Execution Tier (10 profiles)
-**Add 2 new `mispriced_edge` profiles** (no removals needed since this is highest-stake):
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'composite' }`
-- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' }`
+🎯 6-LEG EXPLORER | ~+4700
 
-### Net Effect
-- **Mispriced edge profiles**: ~12 -> ~24 (doubled across all tiers)
-- **Generic mixed/diversity profiles**: ~15 -> ~7 (halved)
-- Total profile count stays roughly the same per tier
-- All new mispriced_edge profiles are 3-leg only (proven optimal structure)
+Leg 1: Carlton Carrington
+  Take OVER 1.5 3PT
+  💎 80.3% edge | Avg 2.6
 
-### Technical Details
+Leg 2: Joel Embiid
+  Take OVER 3.5 AST
+  💎 High floor | Avg 5.8
 
-**File modified:**
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- TIER_CONFIG profiles array updates in exploration (lines 226-315), validation (lines 328-373), and execution (lines 386-445)
+Leg 3: Jarrett Allen
+  Take OVER 8.5 REB
+  💎 25% edge | Avg 11.3
+
+Leg 4: Andrew Nembhard
+  Take OVER 6.5 AST
+  💎 Volume play | Avg 8.4
+
+Leg 5: Kyshawn George
+  Take OVER 2.5 AST
+  💎 Low line | Avg 3.2
+
+Leg 6: Kam Jones
+  Take UNDER 8.5 PTS
+  💎 Contrarian | Avg 5.2
+
+💰 $100 → ~$4,800
+⚠️ HIGH RISK / HIGH REWARD
+🎲 Good luck — let's eat!
+```
+
+#### 2. New: `supabase/functions/bot-insert-longshot-parlay/index.ts`
+
+This edge function will:
+1. Insert one record into `bot_daily_parlays` with:
+   - `strategy_name`: `'explore_longshot'`
+   - `tier`: `'exploration'`
+   - `leg_count`: 6
+   - `parlay_date`: today (Eastern)
+   - `expected_odds`: 4700
+   - `simulated_stake`: 100
+   - `outcome`: `'pending'`
+   - `legs`: JSON array with the 6 legs (player name, prop type, side, line, and edge notes)
+2. Call `bot-send-telegram` with type `longshot_announcement` to broadcast to admin + all active customers
+
+#### 3. Legs Data
+
+| # | Player | Prop | Line | Side | Edge |
+|---|--------|------|------|------|------|
+| 1 | Carlton Carrington | threes | 1.5 | over | 80.3% edge, avg 2.6 |
+| 2 | Joel Embiid | assists | 3.5 | over | avg 5.8 |
+| 3 | Jarrett Allen | rebounds | 8.5 | over | 25% edge, avg 11.3 |
+| 4 | Andrew Nembhard | assists | 6.5 | over | avg 8.4 |
+| 5 | Kyshawn George | assists | 2.5 | over | avg 3.2 |
+| 6 | Kam Jones | points | 8.5 | under | contrarian, avg 5.2 |
+
+### Files Modified
+- `supabase/functions/bot-send-telegram/index.ts` -- add `longshot_announcement` type, formatter, and broadcast
+- `supabase/functions/bot-insert-longshot-parlay/index.ts` -- new edge function (insert + trigger broadcast)
 
