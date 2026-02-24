@@ -3209,7 +3209,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const nameToAbbrev = new Map<string, string>();
   (paceResult.data || []).forEach((p: any) => {
     paceMap.set(p.team_abbrev, { pace_rating: p.pace_rating, pace_rank: p.pace_rank, tempo_factor: p.tempo_factor });
-    if (p.team_name) nameToAbbrev.set(p.team_name, p.team_abbrev);
+    if (p.team_name) {
+      nameToAbbrev.set(p.team_name, p.team_abbrev);
+      nameToAbbrev.set(p.team_name.toLowerCase(), p.team_abbrev);
+    }
   });
 
   const defenseMap = new Map<string, number>();
@@ -3223,11 +3226,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     });
     if (d.team_name) {
       nameToAbbrev.set(d.team_name, d.team_abbreviation);
-      defenseDetailMap.set(d.team_name, {
-        overall_rank: d.overall_rank,
-        opp_rebounds_rank: d.opp_rebounds_rank,
-        opp_assists_rank: d.opp_assists_rank,
-      });
+      nameToAbbrev.set(d.team_name.toLowerCase(), d.team_abbreviation);
+      const detail = { overall_rank: d.overall_rank, opp_rebounds_rank: d.opp_rebounds_rank, opp_assists_rank: d.opp_assists_rank };
+      defenseDetailMap.set(d.team_name, detail);
+      defenseDetailMap.set(d.team_name.toLowerCase(), detail);
     }
   });
 
