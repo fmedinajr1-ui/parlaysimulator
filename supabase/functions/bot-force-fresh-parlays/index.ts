@@ -44,6 +44,34 @@ serve(async (req) => {
   try {
     console.log(`[ForceFresh] Starting force-generate for ${today}`);
 
+    // Step 0: Load dynamic performance data
+    let dynamicBlockedProps = new Set<string>();
+    let playerPerfMap = new Map<string, { legsPlayed: number; legsWon: number; hitRate: number }>();
+    
+    try {
+      const [propPerfResult, playerPerfResult] = await Promise.all([
+        supabase.from('bot_prop_type_performance')
+          .select('prop_type, is_blocked')
+          .eq('is_blocked', true),
+        supabase.from('bot_player_performance')
+          .select('player_name, prop_type, legs_played, legs_won, hit_rate')
+          .gte('legs_played', 3),
+      ]);
+      
+      if (propPerfResult.data) {
+        dynamicBlockedProps = new Set(propPerfResult.data.map((p: any) => p.prop_type));
+      }
+      if (playerPerfResult.data) {
+        for (const p of playerPerfResult.data) {
+          const key = `${(p.player_name || '').toLowerCase()}|${(p.prop_type || '').toLowerCase()}`;
+          playerPerfMap.set(key, { legsPlayed: p.legs_played, legsWon: p.legs_won, hitRate: p.hit_rate });
+        }
+      }
+      console.log(`[ForceFresh] Loaded ${dynamicBlockedProps.size} blocked prop types, ${playerPerfMap.size} player records`);
+    } catch (perfErr) {
+      console.warn(`[ForceFresh] Performance data load failed, using static fallback:`, perfErr);
+    }
+
     // Step 1: Void existing pending parlays for today
     const { data: existingParlays, error: voidErr } = await supabase
       .from('bot_daily_parlays')
@@ -87,12 +115,12 @@ serve(async (req) => {
       riskMap.set(key, { side: rp.side, confidence: rp.confidence_score, team: rp.team_name || '' });
     }
 
-    // Filter out blocked prop types (e.g. steals with 0% win rate)
-    const BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks']);
+    // Filter out blocked prop types (static + dynamic from bot_prop_type_performance)
+    const STATIC_BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks']);
     const preFilterCount = mispricedLines.length;
     const filteredLines = mispricedLines.filter(ml => {
       const propType = (ml.prop_type || '').toLowerCase();
-      if (BLOCKED_PROP_TYPES.has(propType)) {
+      if (STATIC_BLOCKED_PROP_TYPES.has(propType) || dynamicBlockedProps.has(propType)) {
         console.log(`[BlockedPropType] Filtered ${propType} pick for ${ml.player_name}`);
         return false;
       }
@@ -114,7 +142,18 @@ serve(async (req) => {
       const tierBonus = ml.confidence_tier === 'ELITE' ? 20 : 10;
       const riskBonus = riskConfirmed ? 25 : (riskMatch ? 5 : 0);
       const underBonus = ml.signal === 'UNDER' ? 10 : 0;
-      const convictionScore = Math.min(edgeMag * 0.3 + tierBonus + riskBonus + underBonus, 100);
+      
+      // Player performance bonus from historical data
+      const playerPerfKey = `${ml.player_name.toLowerCase()}|${normalizePropType(ml.prop_type)}`;
+      const playerPerf = playerPerfMap.get(playerPerfKey);
+      let playerBonus = 0;
+      if (playerPerf && playerPerf.legsPlayed >= 5) {
+        if (playerPerf.hitRate >= 0.70) playerBonus = 15;      // Proven winner
+        else if (playerPerf.hitRate >= 0.50) playerBonus = 5;   // Reliable
+        else if (playerPerf.hitRate < 0.30) playerBonus = -20;  // Avoid
+      }
+      
+      const convictionScore = Math.min(edgeMag * 0.3 + tierBonus + riskBonus + underBonus + playerBonus, 100);
 
       picks.push({
         player_name: ml.player_name,
