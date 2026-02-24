@@ -37,6 +37,7 @@ type NotificationType =
   | 'daily_winners_recap'
   | 'slate_rebuild_alert'
   | 'slate_status_update'
+  | 'longshot_announcement'
   | 'test';
 
 interface NotificationData {
@@ -87,6 +88,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatSlateRebuildAlert(dateStr);
     case 'slate_status_update':
       return formatSlateStatusUpdate(data, dateStr);
+    case 'longshot_announcement':
+      return formatLongshotAnnouncement(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -136,6 +139,38 @@ function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): st
   }
 
   msg += `Use /parlays for full details`;
+  return msg;
+}
+
+function formatLongshotAnnouncement(data: Record<string, any>, dateStr: string): string {
+  const legs = data.legs || [];
+  const expectedOdds = data.expected_odds || 4700;
+  const payout = Math.round((expectedOdds / 100) * 100 + 100);
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA',
+  };
+
+  let msg = `🚀 *LONGSHOT PARLAY — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `🏆 *LAST LONGSHOT: +$4,741 on Feb 9*\n`;
+  msg += `3 legs hit, 3 voided — full payout!\n`;
+  msg += `We're going for *TWO IN A ROW* 🔥\n\n`;
+  msg += `🎯 *${legs.length}-LEG EXPLORER | ~+${expectedOdds}*\n\n`;
+
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+    const side = (leg.side || 'over').toUpperCase();
+    msg += `*Leg ${i + 1}: ${leg.player_name}*\n`;
+    msg += `  Take ${side} ${leg.line} ${prop}\n`;
+    msg += `  💎 ${leg.edge_note || ''}\n\n`;
+  }
+
+  msg += `💰 $100 → ~$${payout.toLocaleString()}\n`;
+  msg += `⚠️ HIGH RISK / HIGH REWARD\n`;
+  msg += `🎲 Good luck — let's eat!`;
   return msg;
 }
 
@@ -1087,7 +1122,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update') {
+    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement') {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;

@@ -437,3 +437,6 @@ verify_jwt = false
 
 [functions.daily-winners-broadcast]
 verify_jwt = false
+
+[functions.bot-insert-longshot-parlay]
+verify_jwt = false
