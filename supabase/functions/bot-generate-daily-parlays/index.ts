@@ -428,11 +428,79 @@ const BLOCKED_CATEGORIES = new Set([
   'VOLUME_SCORER',   // 46.9% hit rate
 ]);
 
-// ============= BLOCKED PROP TYPES (catastrophic win rates) =============
-const BLOCKED_PROP_TYPES = new Set([
+// ============= BLOCKED PROP TYPES (static fallback + dynamic from bot_prop_type_performance) =============
+const STATIC_BLOCKED_PROP_TYPES = new Set([
   'player_steals',   // 0% win rate (0-2 settled)
   'player_blocks',   // 0% win rate (0-7 settled)
 ]);
+
+// Dynamic prop type performance data (loaded at runtime)
+let dynamicBlockedPropTypes = new Set<string>();
+let dynamicBoostedPropTypes = new Map<string, number>(); // prop_type -> boost multiplier
+
+async function loadPropTypePerformance(supabase: any): Promise<void> {
+  try {
+    const { data: propPerf } = await supabase
+      .from('bot_prop_type_performance')
+      .select('prop_type, is_blocked, is_boosted, boost_multiplier, hit_rate, total_legs');
+    
+    if (propPerf && propPerf.length > 0) {
+      dynamicBlockedPropTypes = new Set(
+        propPerf.filter((p: any) => p.is_blocked).map((p: any) => p.prop_type)
+      );
+      dynamicBoostedPropTypes = new Map(
+        propPerf.filter((p: any) => p.is_boosted && p.boost_multiplier > 1.0)
+          .map((p: any) => [p.prop_type, p.boost_multiplier])
+      );
+      console.log(`[Bot] Dynamic prop gates: ${dynamicBlockedPropTypes.size} blocked, ${dynamicBoostedPropTypes.size} boosted`);
+    }
+  } catch (err) {
+    console.warn(`[Bot] Failed to load prop type performance: ${err}`);
+  }
+}
+
+function isPropTypeBlocked(propType: string): boolean {
+  const pt = propType.toLowerCase();
+  return STATIC_BLOCKED_PROP_TYPES.has(pt) || dynamicBlockedPropTypes.has(pt);
+}
+
+// Player performance data (loaded at runtime)
+let playerPerformanceMap = new Map<string, { legsPlayed: number; legsWon: number; hitRate: number; streak: number }>();
+
+async function loadPlayerPerformance(supabase: any): Promise<void> {
+  try {
+    const { data: playerPerf } = await supabase
+      .from('bot_player_performance')
+      .select('player_name, prop_type, side, legs_played, legs_won, hit_rate, streak')
+      .gte('legs_played', 3); // Only load players with meaningful data
+    
+    if (playerPerf && playerPerf.length > 0) {
+      for (const p of playerPerf) {
+        const key = `${(p.player_name || '').toLowerCase()}|${(p.prop_type || '').toLowerCase()}`;
+        playerPerformanceMap.set(key, {
+          legsPlayed: p.legs_played,
+          legsWon: p.legs_won,
+          hitRate: p.hit_rate,
+          streak: p.streak || 0,
+        });
+      }
+      console.log(`[Bot] Loaded ${playerPerformanceMap.size} player performance records`);
+    }
+  } catch (err) {
+    console.warn(`[Bot] Failed to load player performance: ${err}`);
+  }
+}
+
+function getPlayerBonus(playerName: string, propType: string): number {
+  const key = `${playerName.toLowerCase()}|${propType.toLowerCase()}`;
+  const perf = playerPerformanceMap.get(key);
+  if (!perf || perf.legsPlayed < 5) return 0;
+  
+  if (perf.hitRate >= 0.70) return 15;  // Proven winner
+  if (perf.hitRate >= 0.50) return 5;   // Reliable
+  if (perf.hitRate < 0.30) return -20;  // Avoid
+  return 0;
+}
 
 // ============= STALE ODDS DETECTION =============
 const STALE_ODDS_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours (NBA/NHL props)
@@ -2071,14 +2139,14 @@ function calculateCompositeScore(
   categoryWeight: number,
   calibratedHitRate?: number,
   side?: string,
-  legCount?: number
+  legCount?: number,
+  playerBonus?: number
 ): number {
   const hitRateScore = Math.min(100, hitRate);
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
   const weightScore = categoryWeight * 66.67;
   
   // === GAP 1: Dynamic hit-rate weight by parlay size ===
-  // When building 4+ leg parlays, shift weight to emphasize hit rate (50%)
   const isLongParlay = (legCount ?? 0) >= 4;
   const hitWeight = isLongParlay ? 0.50 : 0.40;
   const edgeWeight = 0.20;
@@ -2108,7 +2176,12 @@ function calculateCompositeScore(
     baseScore = Math.round(baseScore * 1.15);
   }
 
-  return baseScore;
+  // === PLAYER PERFORMANCE BONUS: Proven winners get boosted, serial losers get penalized ===
+  if (playerBonus && playerBonus !== 0) {
+    baseScore += playerBonus;
+  }
+
+  return Math.max(0, baseScore);
 }
 
 function createPickKey(playerName: string, propType: string, side: string): string {
@@ -3408,7 +3481,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
     const catHitRate = calibratedHitRateMap.get(pick.category);
-    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side);
+    const playerBonus = getPlayerBonus(pick.player_name, pick.prop_type);
+    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side, undefined, playerBonus);
     
     // Resolve team_name: category_sweet_spots has no team_name column, so we pull from playerTeamMap
     const resolvedTeamName = (pick as any).team_name || 
@@ -3436,21 +3510,30 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Block NCAAB player props from ever entering the pick pool
   enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
 
-  // Block catastrophic prop types (e.g. steals with 0% win rate)
-  {
-    const prePropTypeCount = enrichedSweetSpots.length;
-    enrichedSweetSpots = enrichedSweetSpots.filter(p => {
-      const propType = (p.prop_type || p.bet_type || '').toLowerCase();
-      if (BLOCKED_PROP_TYPES.has(propType)) {
-        console.log(`[BlockedPropType] Filtered ${propType} pick for ${p.player_name}`);
-        return false;
+  // Block catastrophic prop types (static + dynamic from bot_prop_type_performance)
+    {
+      const prePropTypeCount = enrichedSweetSpots.length;
+      enrichedSweetSpots = enrichedSweetSpots.filter(p => {
+        const propType = (p.prop_type || p.bet_type || '').toLowerCase();
+        if (isPropTypeBlocked(propType)) {
+          console.log(`[BlockedPropType] Filtered ${propType} pick for ${p.player_name}`);
+          return false;
+        }
+        return true;
+      });
+      if (prePropTypeCount !== enrichedSweetSpots.length) {
+        console.log(`[BlockedPropType] Removed ${prePropTypeCount - enrichedSweetSpots.length} blocked prop type picks`);
       }
-      return true;
-    });
-    if (prePropTypeCount !== enrichedSweetSpots.length) {
-      console.log(`[BlockedPropType] Removed ${prePropTypeCount - enrichedSweetSpots.length} blocked prop type picks`);
     }
-  }
+
+    // Apply prop type boost multiplier from performance data
+    for (const pick of enrichedSweetSpots) {
+      const propType = (pick.prop_type || '').toLowerCase();
+      const boostMultiplier = dynamicBoostedPropTypes.get(propType);
+      if (boostMultiplier && boostMultiplier > 1.0) {
+        pick.compositeScore = Math.round(pick.compositeScore * boostMultiplier);
+      }
+    }
 
   console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs, blocked NCAAB player props, blocked prop types)`);
 
@@ -3580,7 +3663,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     // Block catastrophic prop types in fallback path too
     enrichedSweetSpots = enrichedSweetSpots.filter(p => {
       const propType = (p.prop_type || p.bet_type || '').toLowerCase();
-      if (BLOCKED_PROP_TYPES.has(propType)) {
+      if (isPropTypeBlocked(propType)) {
         console.log(`[BlockedPropType] Filtered ${propType} fallback pick for ${p.player_name}`);
         return false;
       }
@@ -6625,6 +6708,21 @@ Deno.serve(async (req) => {
     } else {
       console.log(`[Bot v2] No stake config found, using hardcoded TIER_CONFIG defaults`);
     }
+
+    // ============= LOAD PLAYER & PROP TYPE PERFORMANCE =============
+    await Promise.all([
+      loadPropTypePerformance(supabase),
+      loadPlayerPerformance(supabase),
+    ]);
+    
+    // Log player performance summary
+    let provenWinners = 0, reliablePlayers = 0, avoidPlayers = 0;
+    for (const [, perf] of playerPerformanceMap) {
+      if (perf.legsPlayed >= 5 && perf.hitRate >= 0.70) provenWinners++;
+      else if (perf.legsPlayed >= 5 && perf.hitRate >= 0.50) reliablePlayers++;
+      else if (perf.legsPlayed >= 5 && perf.hitRate < 0.30) avoidPlayers++;
+    }
+    console.log(`[Bot] Player patterns: ${provenWinners} proven winners, ${reliablePlayers} reliable, ${avoidPlayers} to avoid`);
 
     // === ROUND ROBIN ACTION ===
     if (action === 'round_robin') {

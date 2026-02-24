@@ -875,6 +875,165 @@ Deno.serve(async (req) => {
     console.log(`[Bot Settle] Settled ${parlaysSettled} parlays (${parlaysWon}W ${parlaysLost}L)`);
     console.log(`[Bot Settle] P&L by date: ${JSON.stringify(Object.fromEntries(pnlByDate))}`);
 
+    // 4b. Update player performance and prop type performance tables
+    try {
+      // Collect all settled leg outcomes across all parlays
+      const playerPerfUpdates = new Map<string, { hits: number; misses: number; edges: number[] }>();
+      const propTypePerfUpdates = new Map<string, { hits: number; misses: number }>();
+
+      for (const parlay of pendingParlays) {
+        const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
+        for (const leg of legs) {
+          const legOutcome = (leg as any).outcome || leg.outcome;
+          if (legOutcome !== 'hit' && legOutcome !== 'miss') continue;
+          if (isTeamLeg(leg)) continue; // Only track player props
+
+          const playerName = (leg.player_name || '').trim();
+          const propType = (leg.prop_type || '').toLowerCase();
+          const side = (leg.side || 'over').toLowerCase();
+          if (!playerName || !propType) continue;
+
+          const isHit = legOutcome === 'hit';
+
+          // Player performance
+          const playerKey = `${playerName.toLowerCase()}|${propType}|${side}`;
+          const playerStats = playerPerfUpdates.get(playerKey) || { hits: 0, misses: 0, edges: [] };
+          if (isHit) playerStats.hits++; else playerStats.misses++;
+          if ((leg as any).edge_pct) playerStats.edges.push((leg as any).edge_pct);
+          playerPerfUpdates.set(playerKey, playerStats);
+
+          // Prop type performance
+          const propStats = propTypePerfUpdates.get(propType) || { hits: 0, misses: 0 };
+          if (isHit) propStats.hits++; else propStats.misses++;
+          propTypePerfUpdates.set(propType, propStats);
+        }
+      }
+
+      // Upsert player performance
+      let playerPerfCount = 0;
+      for (const [key, stats] of playerPerfUpdates) {
+        const [playerNameLower, propType, side] = key.split('|');
+        // Find original casing from legs
+        let originalName = playerNameLower;
+        for (const parlay of pendingParlays) {
+          const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
+          for (const leg of legs) {
+            if ((leg.player_name || '').toLowerCase() === playerNameLower) {
+              originalName = leg.player_name;
+              break;
+            }
+          }
+          if (originalName !== playerNameLower) break;
+        }
+
+        const { data: existing } = await supabase
+          .from('bot_player_performance')
+          .select('*')
+          .eq('player_name', originalName)
+          .eq('prop_type', propType)
+          .eq('side', side)
+          .maybeSingle();
+
+        const newLegsPlayed = (existing?.legs_played || 0) + stats.hits + stats.misses;
+        const newLegsWon = (existing?.legs_won || 0) + stats.hits;
+        const newHitRate = newLegsPlayed > 0 ? newLegsWon / newLegsPlayed : 0;
+        const avgEdge = stats.edges.length > 0 ? stats.edges.reduce((a, b) => a + b, 0) / stats.edges.length : (existing?.avg_edge || 0);
+        
+        // Update streak
+        let newStreak = existing?.streak || 0;
+        // Process hits then misses (simplified — last outcome determines direction)
+        if (stats.hits > 0 && stats.misses === 0) {
+          newStreak = Math.max(1, newStreak + stats.hits);
+        } else if (stats.misses > 0 && stats.hits === 0) {
+          newStreak = Math.min(-1, newStreak - stats.misses);
+        } else {
+          // Mixed — reset to net
+          newStreak = stats.hits - stats.misses;
+        }
+
+        if (existing) {
+          await supabase
+            .from('bot_player_performance')
+            .update({
+              legs_played: newLegsPlayed,
+              legs_won: newLegsWon,
+              hit_rate: newHitRate,
+              avg_edge: avgEdge,
+              streak: newStreak,
+              last_updated: new Date().toISOString().split('T')[0],
+            })
+            .eq('id', existing.id);
+        } else {
+          await supabase
+            .from('bot_player_performance')
+            .insert({
+              player_name: originalName,
+              prop_type: propType,
+              side,
+              legs_played: stats.hits + stats.misses,
+              legs_won: stats.hits,
+              hit_rate: (stats.hits + stats.misses) > 0 ? stats.hits / (stats.hits + stats.misses) : 0,
+              avg_edge: avgEdge,
+              streak: newStreak,
+              last_updated: new Date().toISOString().split('T')[0],
+            });
+        }
+        playerPerfCount++;
+      }
+
+      // Upsert prop type performance
+      let propPerfCount = 0;
+      for (const [propType, stats] of propTypePerfUpdates) {
+        const { data: existing } = await supabase
+          .from('bot_prop_type_performance')
+          .select('*')
+          .eq('prop_type', propType)
+          .maybeSingle();
+
+        const newTotal = (existing?.total_legs || 0) + stats.hits + stats.misses;
+        const newWon = (existing?.legs_won || 0) + stats.hits;
+        const newHitRate = newTotal > 0 ? newWon / newTotal : 0;
+        
+        // Auto-block: 5+ legs and <25% hit rate
+        const autoBlock = newTotal >= 5 && newHitRate < 0.25;
+        // Auto-boost: 10+ legs and >60% hit rate
+        const autoBoost = newTotal >= 10 && newHitRate > 0.60;
+
+        if (existing) {
+          await supabase
+            .from('bot_prop_type_performance')
+            .update({
+              total_legs: newTotal,
+              legs_won: newWon,
+              hit_rate: newHitRate,
+              is_blocked: autoBlock,
+              is_boosted: autoBoost,
+              boost_multiplier: autoBoost ? 1.2 : 1.0,
+              last_updated: new Date().toISOString().split('T')[0],
+            })
+            .eq('id', existing.id);
+        } else {
+          await supabase
+            .from('bot_prop_type_performance')
+            .insert({
+              prop_type: propType,
+              total_legs: stats.hits + stats.misses,
+              legs_won: stats.hits,
+              hit_rate: (stats.hits + stats.misses) > 0 ? stats.hits / (stats.hits + stats.misses) : 0,
+              is_blocked: autoBlock,
+              is_boosted: autoBoost,
+              boost_multiplier: autoBoost ? 1.2 : 1.0,
+              last_updated: new Date().toISOString().split('T')[0],
+            });
+        }
+        propPerfCount++;
+      }
+
+      console.log(`[Bot Settle] Player performance: ${playerPerfCount} players updated. Prop type performance: ${propPerfCount} prop types updated.`);
+    } catch (perfErr) {
+      console.error('[Bot Settle] Player/prop performance update error:', perfErr);
+    }
+
     // 5. Update category weights based on outcomes
     const weightChanges: Array<{ category: string; oldWeight: number; newWeight: number; delta: number }> = [];
     

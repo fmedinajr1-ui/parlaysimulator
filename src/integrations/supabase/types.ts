@@ -1362,6 +1362,87 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_player_performance: {
+        Row: {
+          avg_edge: number | null
+          created_at: string
+          hit_rate: number
+          id: string
+          last_updated: string
+          legs_played: number
+          legs_won: number
+          player_name: string
+          prop_type: string
+          side: string
+          streak: number | null
+        }
+        Insert: {
+          avg_edge?: number | null
+          created_at?: string
+          hit_rate?: number
+          id?: string
+          last_updated?: string
+          legs_played?: number
+          legs_won?: number
+          player_name: string
+          prop_type: string
+          side?: string
+          streak?: number | null
+        }
+        Update: {
+          avg_edge?: number | null
+          created_at?: string
+          hit_rate?: number
+          id?: string
+          last_updated?: string
+          legs_played?: number
+          legs_won?: number
+          player_name?: string
+          prop_type?: string
+          side?: string
+          streak?: number | null
+        }
+        Relationships: []
+      }
+      bot_prop_type_performance: {
+        Row: {
+          boost_multiplier: number | null
+          created_at: string
+          hit_rate: number
+          id: string
+          is_blocked: boolean
+          is_boosted: boolean
+          last_updated: string
+          legs_won: number
+          prop_type: string
+          total_legs: number
+        }
+        Insert: {
+          boost_multiplier?: number | null
+          created_at?: string
+          hit_rate?: number
+          id?: string
+          is_blocked?: boolean
+          is_boosted?: boolean
+          last_updated?: string
+          legs_won?: number
+          prop_type: string
+          total_legs?: number
+        }
+        Update: {
+          boost_multiplier?: number | null
+          created_at?: string
+          hit_rate?: number
+          id?: string
+          is_blocked?: boolean
+          is_boosted?: boolean
+          last_updated?: string
+          legs_won?: number
+          prop_type?: string
+          total_legs?: number
+        }
+        Relationships: []
+      }
       bot_research_findings: {
         Row: {
           action_taken: string | null
