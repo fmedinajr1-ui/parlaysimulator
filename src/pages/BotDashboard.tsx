@@ -16,6 +16,7 @@ import { ProfitAuditCard } from '@/components/bot/ProfitAuditCard';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
 import { TelegramCustomerManager } from '@/components/bot/TelegramCustomerManager';
+import { SlateRefreshControls } from '@/components/market/SlateRefreshControls';
 
 import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
@@ -182,6 +183,7 @@ export default function BotDashboard() {
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-4">
+          <SlateRefreshControls />
           <ResearchSummaryCard />
           <BotPnLCalendar />
           <BotPerformanceChart />
