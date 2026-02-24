@@ -10837,8 +10837,10 @@ export type Database = {
           is_current: boolean | null
           opp_assists_allowed_pg: number | null
           opp_assists_rank: number | null
+          opp_points_rank: number | null
           opp_rebounds_allowed_pg: number | null
           opp_rebounds_rank: number | null
+          opp_threes_rank: number | null
           overall_rank: number
           points_allowed_rank: number | null
           season: string | null
@@ -10854,8 +10856,10 @@ export type Database = {
           is_current?: boolean | null
           opp_assists_allowed_pg?: number | null
           opp_assists_rank?: number | null
+          opp_points_rank?: number | null
           opp_rebounds_allowed_pg?: number | null
           opp_rebounds_rank?: number | null
+          opp_threes_rank?: number | null
           overall_rank: number
           points_allowed_rank?: number | null
           season?: string | null
@@ -10871,8 +10875,10 @@ export type Database = {
           is_current?: boolean | null
           opp_assists_allowed_pg?: number | null
           opp_assists_rank?: number | null
+          opp_points_rank?: number | null
           opp_rebounds_allowed_pg?: number | null
           opp_rebounds_rank?: number | null
+          opp_threes_rank?: number | null
           overall_rank?: number
           points_allowed_rank?: number | null
           season?: string | null
