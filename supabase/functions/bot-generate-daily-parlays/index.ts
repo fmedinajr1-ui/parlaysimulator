@@ -91,9 +91,12 @@ function calculateEnvironmentScore(
   propType: string,
   side: 'over' | 'under' | string,
   oppRebRank?: number | null,
-  oppAstRank?: number | null
+  oppAstRank?: number | null,
+  oppPointsRank?: number | null,
+  oppThreesRank?: number | null
 ): { envScore: number; confidenceAdjustment: number; components: { pace: number; defense: number; rebAst: number; blowout: number } } {
   const isOver = side.toLowerCase() === 'over';
+  const propLower = propType.toLowerCase();
 
   // 1. Pace Factor (0-1): normalize pace 94-106 range
   let paceFactor = 0.5;
@@ -102,16 +105,44 @@ function calculateEnvironmentScore(
     if (!isOver) paceFactor = 1 - paceFactor;
   }
 
-  // 2. Positional Defense (0-1): rank 1=best defense, 30=worst
+  // 2. Prop-Specific Defense (0-1): route to the RIGHT rank for each prop type
+  let effectiveDefRank = oppDefenseRank; // fallback to overall
+  if (propLower.includes('three') || propLower === '3pm' || propLower === 'threes') {
+    effectiveDefRank = oppThreesRank ?? oppDefenseRank;
+  } else if (propLower.includes('point') || propLower === 'pts' || propLower === 'points') {
+    effectiveDefRank = oppPointsRank ?? oppDefenseRank;
+  } else if (propLower.includes('reb')) {
+    effectiveDefRank = oppRebRank ?? oppDefenseRank;
+  } else if (propLower.includes('ast') || propLower.includes('assist')) {
+    effectiveDefRank = oppAstRank ?? oppDefenseRank;
+  } else if (propLower === 'pra' || propLower.includes('pts_rebs_asts')) {
+    // Combo: weighted average of points, rebounds, assists ranks
+    const ptsR = oppPointsRank ?? oppDefenseRank ?? 15;
+    const rebR = oppRebRank ?? oppDefenseRank ?? 15;
+    const astR = oppAstRank ?? oppDefenseRank ?? 15;
+    effectiveDefRank = Math.round((ptsR * 0.5 + rebR * 0.25 + astR * 0.25));
+  } else if (propLower === 'pr' || propLower.includes('pts_rebs')) {
+    const ptsR = oppPointsRank ?? oppDefenseRank ?? 15;
+    const rebR = oppRebRank ?? oppDefenseRank ?? 15;
+    effectiveDefRank = Math.round((ptsR * 0.6 + rebR * 0.4));
+  } else if (propLower === 'pa' || propLower.includes('pts_asts')) {
+    const ptsR = oppPointsRank ?? oppDefenseRank ?? 15;
+    const astR = oppAstRank ?? oppDefenseRank ?? 15;
+    effectiveDefRank = Math.round((ptsR * 0.6 + astR * 0.4));
+  } else if (propLower === 'ra' || propLower.includes('rebs_asts')) {
+    const rebR = oppRebRank ?? oppDefenseRank ?? 15;
+    const astR = oppAstRank ?? oppDefenseRank ?? 15;
+    effectiveDefRank = Math.round((rebR * 0.5 + astR * 0.5));
+  }
+
   let defenseFactor = 0.5;
-  if (oppDefenseRank != null) {
-    defenseFactor = (oppDefenseRank - 1) / 29; // 1=tough=0.0, 30=soft=1.0
+  if (effectiveDefRank != null) {
+    defenseFactor = (effectiveDefRank - 1) / 29; // 1=tough=0.0, 30=soft=1.0
     if (!isOver) defenseFactor = 1 - defenseFactor;
   }
 
-  // 3. Reb/Ast Environment (0-1): Phase 1 defaults to 0.5 when NULL
+  // 3. Reb/Ast Environment (0-1)
   let rebAstFactor = 0.5;
-  const propLower = propType.toLowerCase();
   if (propLower.includes('reb') && oppRebRank != null) {
     rebAstFactor = (oppRebRank - 1) / 29;
     if (!isOver) rebAstFactor = 1 - rebAstFactor;
@@ -2304,7 +2335,7 @@ function normalizePropTypeCategory(propType: string): string {
   return 'other';
 }
 
-function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig): boolean {
+function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig, currentTier?: TierName): boolean {
   // === BLOCKED CATEGORIES GATE ===
   if (BLOCKED_CATEGORIES.has(pick.category)) {
     return false;
@@ -2330,6 +2361,20 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
   const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
   const hitRatePercent = pickConfidence * 100;
   if (hitRatePercent < 70) return false;
+  
+  // === GLOBAL SLATE EXPOSURE CAP (max 5 per player+prop across all tiers) ===
+  if ('player_name' in pick && 'prop_type' in pick) {
+    const globalKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
+    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= MAX_GLOBAL_PLAYER_PROP_USAGE) {
+      return false;
+    }
+  }
+  
+  // === DEFENSE HARD-BLOCK GATE (execution tier only: no OVER vs top-5 stat-specific defense) ===
+  if (currentTier === 'execution' && (pick as any).defenseHardBlocked) return false;
+  
+  // === THREES L10 FLOOR (execution only: 70% L10 required for threes) ===
+  if (currentTier === 'execution' && (pick as any).threesL10Blocked) return false;
   
   return true;
 }
@@ -3288,7 +3333,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult, nhlStatsResult, baseballStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
-    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank').eq('is_current', true),
+    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank, opp_points_rank, opp_threes_rank').eq('is_current', true),
     supabase.from('game_environment').select('home_team_abbrev, away_team_abbrev, vegas_total, vegas_spread, shootout_factor, grind_factor, blowout_probability').eq('game_date', gameDate),
     supabase.from('home_court_advantage_stats').select('team_name, home_win_rate, home_cover_rate, home_over_rate').eq('sport', 'basketball_nba'),
     supabase.from('ncaab_team_stats').select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record'),
@@ -3308,18 +3353,20 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   });
 
   const defenseMap = new Map<string, number>();
-  const defenseDetailMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null }>();
+  const defenseDetailMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null; opp_points_rank: number | null; opp_threes_rank: number | null }>();
   (defenseResult.data || []).forEach((d: any) => {
     defenseMap.set(d.team_abbreviation, d.overall_rank);
-    defenseDetailMap.set(d.team_abbreviation, {
+    const detail = {
       overall_rank: d.overall_rank,
       opp_rebounds_rank: d.opp_rebounds_rank,
       opp_assists_rank: d.opp_assists_rank,
-    });
+      opp_points_rank: d.opp_points_rank,
+      opp_threes_rank: d.opp_threes_rank,
+    };
+    defenseDetailMap.set(d.team_abbreviation, detail);
     if (d.team_name) {
       nameToAbbrev.set(d.team_name, d.team_abbreviation);
       nameToAbbrev.set(d.team_name.toLowerCase(), d.team_abbreviation);
-      const detail = { overall_rank: d.overall_rank, opp_rebounds_rank: d.opp_rebounds_rank, opp_assists_rank: d.opp_assists_rank };
       defenseDetailMap.set(d.team_name, detail);
       defenseDetailMap.set(d.team_name.toLowerCase(), detail);
     }
@@ -4427,13 +4474,47 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const envResult = calculateEnvironmentScore(
         avgPaceRating, oppDefRank, blowoutProb,
         pick.prop_type || 'points', side,
-        oppDefDetail?.opp_rebounds_rank, oppDefDetail?.opp_assists_rank
+        oppDefDetail?.opp_rebounds_rank, oppDefDetail?.opp_assists_rank,
+        oppDefDetail?.opp_points_rank, oppDefDetail?.opp_threes_rank
       );
       (pick as any).environmentScore = envResult.confidenceAdjustment;
       (pick as any).environmentComponents = envResult.components;
       // APPLY environment adjustment to composite score
       pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + envResult.confidenceAdjustment));
       envScoreApplied++;
+
+      // === PROP-SPECIFIC DEFENSE HARD-GATES ===
+      const propLowerGate = (pick.prop_type || '').toLowerCase();
+      const sideGate = (pick.recommended_side || 'over').toLowerCase();
+      let propSpecificDefRank: number | null = null;
+      if (propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') {
+        propSpecificDefRank = oppDefDetail?.opp_threes_rank ?? null;
+      } else if (propLowerGate.includes('point') || propLowerGate === 'pts' || propLowerGate === 'points') {
+        propSpecificDefRank = oppDefDetail?.opp_points_rank ?? null;
+      } else if (propLowerGate.includes('reb')) {
+        propSpecificDefRank = oppDefDetail?.opp_rebounds_rank ?? null;
+      } else if (propLowerGate.includes('ast') || propLowerGate.includes('assist')) {
+        propSpecificDefRank = oppDefDetail?.opp_assists_rank ?? null;
+      }
+      if (propSpecificDefRank != null && sideGate === 'over') {
+        if (propSpecificDefRank <= 5) {
+          // Hard-block: tag pick so execution tier skips it
+          (pick as any).defenseHardBlocked = true;
+          console.log(`[DefenseGate] Hard-blocked OVER ${pick.player_name} ${propLowerGate} vs top-5 ${propLowerGate} defense (rank ${propSpecificDefRank})`);
+        } else if (propSpecificDefRank <= 10) {
+          pick.compositeScore = Math.max(0, pick.compositeScore - 15);
+          console.log(`[DefenseGate] Penalized -15 OVER ${pick.player_name} ${propLowerGate} vs top-10 defense (rank ${propSpecificDefRank})`);
+        }
+      }
+      if (propSpecificDefRank != null && sideGate === 'over' && propSpecificDefRank >= 21) {
+        pick.compositeScore = Math.min(95, pick.compositeScore + 10);
+        console.log(`[DefenseGate] Boosted +10 OVER ${pick.player_name} ${propLowerGate} vs bottom-10 defense (rank ${propSpecificDefRank})`);
+      }
+
+      // === THREES L10 FLOOR FOR EXECUTION ===
+      if ((propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') && pick.l10_hit_rate != null && pick.l10_hit_rate < 0.70) {
+        (pick as any).threesL10Blocked = true;
+      }
     }
 
     // Save defOpponentMap for mispriced enrichment later
@@ -4859,6 +4940,8 @@ function snapLine(raw: number, betType?: string): number {
 let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
 let globalTeamUsage: Map<string, number> | undefined;
+let globalSlatePlayerPropUsage: Map<string, number> = new Map();
+const MAX_GLOBAL_PLAYER_PROP_USAGE = 5;
 
 async function generateTierParlays(
   supabase: any,
@@ -5245,7 +5328,7 @@ async function generateTierParlays(
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
-      if (!canUsePickGlobally(pick, tracker, config)) continue;
+      if (!canUsePickGlobally(pick, tracker, config, tier)) continue;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, volumeMode)) continue;
       
       // === ANTI-CORRELATION BLOCKING: prevent contradictory legs ===
@@ -5623,13 +5706,18 @@ async function generateTierParlays(
         globalTeamUsage.set(tk, (globalTeamUsage.get(tk) || 0) + 1);
       }
 
-      // Mark all picks as used
+      // Mark all picks as used + track global slate exposure
       for (const leg of legs) {
         if (leg.type === 'team') {
           tracker.usedPicks.add(createTeamPickKey(leg.id, leg.bet_type, leg.side));
         } else {
           const playerPick = pool.sweetSpots.find(p => p.id === leg.id);
           if (playerPick) markPickUsed(playerPick, tracker);
+          // Track global player+prop exposure
+          if (leg.player_name && leg.prop_type) {
+            const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
+            globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
+          }
         }
       }
 
@@ -7069,6 +7157,7 @@ Deno.serve(async (req) => {
     globalGameUsage = new Map();
     globalMatchupUsage = new Map();
     globalTeamUsage = new Map();
+    globalSlatePlayerPropUsage = new Map();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
       .select('legs, leg_count')
