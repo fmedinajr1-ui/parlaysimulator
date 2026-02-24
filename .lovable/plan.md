@@ -1,31 +1,22 @@
 
 
-## Filter Out Underperforming Categories
+## Run Full Parlay Generation Cycle
 
-### Problem
-`ELITE_REB_OVER` (41.7% hit rate) and `VOLUME_SCORER` (46.9% hit rate) are dragging down overall pipeline accuracy.
+Invoke `bot-generate-daily-parlays` to generate today's parlays with the new environment score engine and filtered categories active.
 
-### Changes
+### Steps
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+1. **Invoke `bot-generate-daily-parlays`** with default parameters to trigger a full generation cycle against today's slate.
+2. **Review the response** for:
+   - `environment_score` appearing in leg breakdowns (replacing old `blowout_pace_score`)
+   - No picks from blocked categories (`ELITE_REB_OVER`, `VOLUME_SCORER`)
+   - REB/AST props showing non-neutral environment adjustments
+3. **Query `bot_daily_parlays`** for today's date to see the generated parlays and their confidence scores.
+4. **Report findings** — show which props were picked, their environment scores, and confirm the blocked categories are excluded.
 
-1. **Add to BLOCKED_CATEGORIES set** (line ~422): Add `'ELITE_REB_OVER'` and `'VOLUME_SCORER'` to the existing blocked set. This immediately prevents them from being used in any parlay leg.
+### What to look for
 
-2. **Remove VOLUME_SCORER from archetype strategies** (lines ~276-278, ~316-317, ~398-399): Update the `preferCategories` arrays in the `winning_archetype_3pt_scorer` strategies from `['THREE_POINT_SHOOTER', 'VOLUME_SCORER']` to just `['THREE_POINT_SHOOTER']`. There are 6 strategy entries referencing this combo across the exploration, validation, and execution tiers.
-
-3. **Remove from FALLBACK_ARCHETYPE_CATEGORIES** (line ~20): Remove `'VOLUME_SCORER'` from the fallback list so it's not used when dynamic archetype detection finds no winners.
-
-**File: `supabase/functions/category-props-analyzer/index.ts`**
-
-4. **Deactivate ELITE_REB_OVER from OPTIMAL_WINNER_CATEGORIES** (line ~1880): Remove it from the array so the analyzer stops treating it as an optimal winner path.
-
-**File: `src/hooks/useOversParlayBuilder.ts`**
-
-5. **Replace VOLUME_SCORER in the Overs Parlay Builder** (lines ~24-29, ~129, ~162): Replace `'VOLUME_SCORER'` with `'STAR_FLOOR_OVER'` (or another scoring category with a better hit rate) so the UI parlay builder still has a scorer archetype without using the underperforming one.
-
-### Technical Details
-
-- The `BLOCKED_CATEGORIES` set is checked in `canUsePickGlobally()` (line ~2226), which gates every pick before it enters any parlay. Adding to this set is the single most effective filter.
-- There's also a dynamic auto-block system (line ~2991) that blocks categories below 40% hit rate with 10+ samples. `VOLUME_SCORER` at 46.9% escapes this threshold, which is why a manual block is needed.
-- The `category-props-analyzer` will still generate these picks for historical tracking, but they won't enter the parlay pipeline.
+- `environment_score` field populated in parlay leg metadata
+- Zero appearances of `ELITE_REB_OVER` or `VOLUME_SCORER` in any generated parlay
+- REB and AST props reflecting opponent-specific defensive context rather than neutral 0.5 defaults
 
