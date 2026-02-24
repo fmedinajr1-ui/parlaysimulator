@@ -36,6 +36,7 @@ type NotificationType =
   | 'mega_parlay_scanner'
   | 'daily_winners_recap'
   | 'slate_rebuild_alert'
+  | 'slate_status_update'
   | 'test';
 
 interface NotificationData {
@@ -84,11 +85,58 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatDailyWinnersRecap(data, dateStr);
     case 'slate_rebuild_alert':
       return formatSlateRebuildAlert(dateStr);
+    case 'slate_status_update':
+      return formatSlateStatusUpdate(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): string {
+  const { voidedCount, voidedReasons, activeParlays } = data;
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+    shots: 'SOG', saves: 'SVS', aces: 'ACES',
+  };
+
+  let msg = `📋 *DAILY SLATE STATUS — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Voided summary
+  msg += `🚫 *VOIDED: ${voidedCount || 0} parlays* filtered by quality gates\n`;
+  if (voidedReasons && voidedReasons.length > 0) {
+    msg += `Reasons: ${voidedReasons.join(', ')}\n`;
+  } else {
+    msg += `Reasons: low probability, redundant legs, exposure limits\n`;
+  }
+  msg += `\n`;
+
+  // Active parlays
+  const active = activeParlays || [];
+  msg += `✅ *ACTIVE PICKS: ${active.length} parlays locked in*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  for (let i = 0; i < active.length; i++) {
+    const p = active[i];
+    const strategy = (p.strategy_name || 'unknown').replace(/_/g, ' ');
+    const legs = p.legs || [];
+    msg += `*Parlay #${i + 1}* (${strategy}) — ${legs.length} legs\n`;
+
+    for (const leg of legs) {
+      const side = (leg.side || 'over').toUpperCase();
+      const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+      const hitRate = leg.hit_rate_l10 ? ` (${Math.round(leg.hit_rate_l10)}% L10)` : '';
+      msg += ` Take ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}\n`;
+    }
+    msg += `\n`;
+  }
+
+  msg += `Use /parlays for full details`;
+  return msg;
 }
 
 function formatSlateRebuildAlert(dateStr: string): string {
@@ -1039,7 +1087,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert') {
+    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update') {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
