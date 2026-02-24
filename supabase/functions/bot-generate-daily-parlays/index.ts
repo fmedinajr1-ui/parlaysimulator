@@ -428,6 +428,11 @@ const BLOCKED_CATEGORIES = new Set([
   'VOLUME_SCORER',   // 46.9% hit rate
 ]);
 
+// ============= BLOCKED PROP TYPES (catastrophic win rates) =============
+const BLOCKED_PROP_TYPES = new Set([
+  'player_steals',   // 0% win rate (0-2 settled)
+]);
+
 // ============= STALE ODDS DETECTION =============
 const STALE_ODDS_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours (NBA/NHL props)
 const STALE_ODDS_THRESHOLD_GAME_DAY_MS = 24 * 60 * 60 * 1000; // 24 hours (NCAAB game-day totals — odds set morning, valid all day)
@@ -3430,7 +3435,23 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Block NCAAB player props from ever entering the pick pool
   enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
 
-  console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs, blocked NCAAB player props)`);
+  // Block catastrophic prop types (e.g. steals with 0% win rate)
+  {
+    const prePropTypeCount = enrichedSweetSpots.length;
+    enrichedSweetSpots = enrichedSweetSpots.filter(p => {
+      const propType = (p.prop_type || p.bet_type || '').toLowerCase();
+      if (BLOCKED_PROP_TYPES.has(propType)) {
+        console.log(`[BlockedPropType] Filtered ${propType} pick for ${p.player_name}`);
+        return false;
+      }
+      return true;
+    });
+    if (prePropTypeCount !== enrichedSweetSpots.length) {
+      console.log(`[BlockedPropType] Removed ${prePropTypeCount - enrichedSweetSpots.length} blocked prop type picks`);
+    }
+  }
+
+  console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs, blocked NCAAB player props, blocked prop types)`);
 
   // === APPLY GAME CONTEXT PENALTIES/BOOSTS TO PLAYER PICKS ===
   let contextAdjustments = 0;
@@ -3554,8 +3575,18 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
     // Block NCAAB player props from fallback path too
     enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
+
+    // Block catastrophic prop types in fallback path too
+    enrichedSweetSpots = enrichedSweetSpots.filter(p => {
+      const propType = (p.prop_type || p.bet_type || '').toLowerCase();
+      if (BLOCKED_PROP_TYPES.has(propType)) {
+        console.log(`[BlockedPropType] Filtered ${propType} fallback pick for ${p.player_name}`);
+        return false;
+      }
+      return true;
+    });
     
-    console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories, blocked NCAAB player props)`);
+    console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories, blocked NCAAB player props, blocked prop types)`);
   }
 
   // === APPLY AVAILABILITY GATE TO PLAYER PICKS ===
