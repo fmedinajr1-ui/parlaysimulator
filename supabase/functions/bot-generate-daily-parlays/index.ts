@@ -430,7 +430,8 @@ const BLOCKED_CATEGORIES = new Set([
 
 // ============= BLOCKED PROP TYPES (static fallback + dynamic from bot_prop_type_performance) =============
 const STATIC_BLOCKED_PROP_TYPES = new Set([
-  'player_steals',   // 0% win rate (0-2 settled) — player_blocks removed (71% HR, data-driven blocking handles it)
+  'player_steals',
+  'player_blocks',
 ]);
 
 // Dynamic prop type performance data (loaded at runtime)
