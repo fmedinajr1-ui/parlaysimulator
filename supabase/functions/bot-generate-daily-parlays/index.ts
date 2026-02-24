@@ -4261,9 +4261,12 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
     let defAdjApplied = 0;
     let envScoreApplied = 0;
+    let unresolvedTeamCount = 0;
     for (const pick of enrichedSweetSpots) {
       if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
-      const teamKey = normalizeBdlTeamName((pick as any).team_name || '');
+      const resolvedTeam = (pick as any).team_name || playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
+      const teamKey = normalizeBdlTeamName(resolvedTeam);
+      if (!teamKey) unresolvedTeamCount++;
       const side = (pick.recommended_side || 'over').toLowerCase();
       const rank = getOpponentDefenseRank(teamKey, pick.prop_type || 'points', defOpponentMap, defMapPool);
       const adj = getDefenseMatchupAdjustment(rank, side);
@@ -4311,6 +4314,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }
     if (envScoreApplied > 0) {
       console.log(`[EnvironmentScore] Computed environment_score for ${envScoreApplied} sweet spot picks`);
+    }
+    if (unresolvedTeamCount > 0) {
+      console.log(`[EnvironmentScore] WARNING: ${unresolvedTeamCount} picks had no resolved team_name`);
     }
   } catch (defErr) {
     console.log(`[DefenseMatchup] ⚠️ Failed to apply defense adjustments: ${defErr.message}`);
