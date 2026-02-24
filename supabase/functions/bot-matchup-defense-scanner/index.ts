@@ -297,13 +297,13 @@ serve(async (req) => {
       return `${m.away_team}@${m.home_team}: HomeDef weak=[${softHome}] AwayDef weak=[${softAway}]`;
     }).join(' | ');
 
-    await supabase.from('bot_research_findings').upsert({
+    const upsertPayload = {
       title: `Matchup Defense Scan ${today}`,
       category: 'matchup_defense_scan',
       research_date: today,
       summary: summaryLines.slice(0, 2000) || 'No actionable matchups found',
       actionable: allRecommendations.length > 0,
-      relevance_score: Math.min(10, Math.max(1, Math.round(primeCount * 2 + favorableCount))),
+      relevance_score: Math.min(9.99, Math.max(1, Math.round(primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
         games_scanned: games.length,
@@ -316,7 +316,25 @@ serve(async (req) => {
       },
       sources: ['team_defense_rankings', 'game_bets'],
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'category,research_date' });
+    };
+
+    const { error: upsertError } = await supabase
+      .from('bot_research_findings')
+      .upsert(upsertPayload, { onConflict: 'category,research_date' });
+
+    if (upsertError) {
+      console.error('[MatchupScanner] Upsert failed:', upsertError);
+      const { error: insertError } = await supabase
+        .from('bot_research_findings')
+        .insert({ ...upsertPayload, id: crypto.randomUUID() });
+      if (insertError) {
+        console.error('[MatchupScanner] Insert fallback also failed:', insertError);
+      } else {
+        console.log('[MatchupScanner] Fallback insert succeeded');
+      }
+    } else {
+      console.log('[MatchupScanner] Successfully wrote matchup scan to bot_research_findings');
+    }
 
     const result = {
       scan_date: today,
