@@ -1,78 +1,61 @@
 
 
-## Tighten Prop Type Normalization Across the Entire Pipeline
+## Apply Environment Score to Player Prop Composite Scores
 
-### Problem Summary
+### Problem
 
-The pipeline has **5 remaining functions** still using broken or inconsistent prop type normalization. This means combo props (PRA, PR, PA, RA) and prefixed props are failing to match during cross-referencing, causing valid high-conviction picks to slip through undetected.
+The environment score engine (`calculateEnvironmentScore`) is correctly computing pace, defense, rebound/assist environment, and blowout risk adjustments for every NBA player prop. However, the result is **only stored as metadata** -- it is never added to the `compositeScore` that drives pick selection and parlay generation.
 
-### Mismatch Map
+This means:
+- A player OVER prop facing the #1 defense in a slow-pace game gets the **same composite score** as one facing the #30 defense in a fast-pace game
+- The environment intelligence is computed but wasted -- it only shows up in the UI badge, never influencing which picks actually get selected
+- `prop-engine-v2` correctly includes environment as 10% of its SES score, but `bot-generate-daily-parlays` does not
 
-| Function | Current Logic | Combos Match? | Issue |
-|---|---|---|---|
-| `high-conviction-analyzer` | Unified (regex combos) | YES | Already fixed |
-| `bot-force-fresh-parlays` | Unified (regex combos) | YES | Already fixed |
-| `nba-mega-parlay-scanner` | Unified (regex combos) | YES | Already fixed |
-| **`telegram-webhook`** | Strips prefix only | **NO** | `points_rebounds_assists` stays as-is, never matches `pra` |
-| **`double-confirmed-scanner`** | Strips prefix + ALL underscores | **NO** | `points_rebounds_assists` becomes `pointsreboundsassists` |
-| **`bot-generate-daily-parlays`** (inline normProp) | Strips prefix only (3 locations) | **NO** | Risk engine and multi-engine maps miss combos |
-| **`bot-generate-daily-parlays`** (PROP_TYPE_NORMALIZE map) | Has combos but only for `player_` prefix | **PARTIAL** | Misses `pra`, `pts_rebs_asts`, etc. |
-| **`recurring-winners-detector`** | Raw `.toLowerCase()` only | **NO** | `player_points` never matches `points` |
+### Current State
 
-### Fix Plan
+| Pipeline Stage | Environment Score Used? | How? |
+|---|---|---|
+| Game bets (totals/spreads) | YES | Added to composite score (line 1384) |
+| Sweet spot player props | METADATA ONLY | Stored on pick but NOT added to compositeScore |
+| Mispriced player props | METADATA ONLY | Stored on pick but NOT added to compositeScore |
+| prop-engine-v2 (SES) | YES | 10% weight in total SES score |
+| Parlay coherence scoring | YES | Pace/defense checks in parlay-level scoring |
 
-**1. `supabase/functions/telegram-webhook/index.ts` (~line 1603)**
+### Fix
 
-Replace the naive `normalizePropType` with the unified regex version that maps combo aliases to canonical short forms (pra, pr, pa, ra, threes).
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-**2. `supabase/functions/double-confirmed-scanner/index.ts` (~line 18)**
+**Change 1: Sweet spot picks (~line 4430)**
 
-Replace the destructive underscore-stripping `normalizePropType` with the unified regex version. This is critical -- this scanner cross-references sweet spots with mispriced lines and is currently unable to match any combo prop.
-
-**3. `supabase/functions/bot-generate-daily-parlays/index.ts` -- 3 inline locations**
-
-At lines ~4497, ~4506, and ~4556, replace the inline `(prop_type).replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim()` with a call to a shared `normalizePropType()` function (same unified regex version). This fixes the risk engine map, multi-engine map, and conviction multiplier lookups.
-
-**4. `supabase/functions/bot-generate-daily-parlays/index.ts` -- PROP_TYPE_NORMALIZE map (~line 3208)**
-
-Expand the static map to include non-prefixed aliases so lookups work regardless of input format:
-
-```text
-Add entries:
-  'points_rebounds_assists': 'pra',  'pts_rebs_asts': 'pra',  'pra': 'pra',
-  'points_rebounds': 'pr',  'pts_rebs': 'pr',  'pr': 'pr',
-  'points_assists': 'pa',  'pts_asts': 'pa',  'pa': 'pa',
-  'rebounds_assists': 'ra',  'rebs_asts': 'ra',  'ra': 'ra',
-  'three_pointers': 'threes',  'threes_made': 'threes',  'threes': 'threes',
-  'points': 'points',  'rebounds': 'rebounds',  'assists': 'assists',
-  'blocks': 'blocks',  'steals': 'steals',
-```
-
-**5. `supabase/functions/recurring-winners-detector/index.ts` (~lines 68, 78, 101)**
-
-Add a `normalizePropType()` function (same unified version) and use it when building lookup keys instead of raw `.toLowerCase()`. Without this, recurring winners from `category_sweet_spots` (which stores `points`) will never match props stored as `player_points`.
-
-**6. Redeploy all 5 modified functions.**
-
-### The Unified Function (applied everywhere)
+After storing the environment score as metadata, also apply it to the composite score:
 
 ```typescript
-function normalizePropType(raw: string): string {
-  const s = (raw || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
-  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
-  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
-  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
-  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
-  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
-  return s;
-}
+(pick as any).environmentScore = envResult.confidenceAdjustment;
+(pick as any).environmentComponents = envResult.components;
+// APPLY environment adjustment to composite score
+pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + envResult.confidenceAdjustment));
 ```
+
+**Change 2: Mispriced picks (~line 4725)**
+
+Same pattern -- apply the confidence adjustment to the composite score:
+
+```typescript
+(pick as any).environmentScore = envResult2.confidenceAdjustment;
+(pick as any).environmentComponents = envResult2.components;
+// APPLY environment adjustment to composite score
+pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + envResult2.confidenceAdjustment));
+```
+
+**Redeploy `bot-generate-daily-parlays`.**
 
 ### Impact
 
-- **Double-confirmed scanner**: Will now correctly match combo sweet spots (PRA, PR, PA, RA) against mispriced combo lines -- currently matching zero combos
-- **Bot daily parlay generator**: Risk engine cross-reference, multi-engine consensus map, and mispriced-to-sweet-spot lookups will all correctly resolve combo props
-- **Telegram webhook**: High-conviction cross-reference in Telegram reports will match combos
-- **Recurring winners detector**: Streak detection will work across prop naming formats
-- **Net effect**: More valid picks enter the high-conviction pool, more cross-engine confirmations are detected, and parlay quality improves
+- Player OVER props against soft defenses in fast-pace games get a score **boost up to +20**
+- Player OVER props against elite defenses in slow-pace games get a score **penalty down to -20**
+- UNDER props get the inverse adjustments (tough defense = boost, soft defense = penalty)
+- Combo props (PRA, PR, PA, RA) benefit from the rebAst factor using opponent rebound/assist ranks
+- Picks that currently squeak into parlays despite hostile environments will be filtered out
+- Picks in favorable environments that were borderline will now make the cut
+- The composite score range is still clamped to 0-95 to prevent overflow
 
