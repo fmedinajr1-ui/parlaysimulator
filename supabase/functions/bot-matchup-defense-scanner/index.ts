@@ -145,7 +145,7 @@ serve(async (req) => {
     // Fetch today's games using noon-to-noon ET window
     const { data: rawGames } = await supabase
       .from('game_bets')
-      .select('home_team, away_team, event_id, sport')
+      .select('home_team, away_team, game_id, sport')
       .in('sport', ['basketball_nba', 'basketball_wnba', 'basketball_ncaab'])
       .gte('commence_time', startUtc)
       .lte('commence_time', endUtc);
@@ -160,8 +160,8 @@ serve(async (req) => {
     // Deduplicate by event_id (multiple bookmaker rows per game)
     const seenEvents = new Set<string>();
     const games = rawGames.filter(g => {
-      if (seenEvents.has(g.event_id)) return false;
-      seenEvents.add(g.event_id);
+      if (seenEvents.has(g.game_id)) return false;
+      seenEvents.add(g.game_id);
       return true;
     });
 
