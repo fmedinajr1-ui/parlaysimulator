@@ -1,72 +1,83 @@
 
 
-## Investigation Results: Why Some Picks Still Show defense=0.50
+## Unify Hedge Status Wording Across War Room
 
-### Finding 1: All 0.50 Values Are From the Pre-Fix Run
+### The Problem
 
-The data in `bot_daily_parlays` for 2026-02-23 was generated **before** the lowercase fix was deployed. Every single leg shows `team_name: null` and `defense: 0.5`. The lowercase key fix has not yet been tested with a fresh parlay generation cycle.
+There are currently **four independent label systems** that don't align with each other:
 
-### Finding 2: The Lowercase Fix Should Resolve Most Cases
+| Component | Labels Used | Source Logic |
+|-----------|-------------|-------------|
+| Engine (`hedgeStatusUtils.ts`) | on_track, monitor, alert, urgent, profit_lock | Smart: game progress, pace, blowout, foul trouble |
+| Hedge Mode Table | LOCK, HOLD, MONITOR, HEDGE | Simple: `edge > 2 / > 0 / > -2 / else` |
+| PropHedgeIndicator | ON TRACK, MONITOR, HEDGE ALERT, HEDGE NOW | Simple: `buffer >= 3 / >= 1 / >= -1 / else` |
+| CustomerHedgeIndicator | ON TRACK, CAUTION, ACTION NEEDED | Maps from engine statuses |
 
-The chain works like this:
+The Hedge Mode Table and PropHedgeIndicator both **ignore** the smart engine logic (game progress awareness, pace overrides, blowout detection) and use their own simple buffer math.
 
-```text
-pick.team_name (e.g., "Memphis Grizzlies" from bdl_player_cache)
-  -> normalizeBdlTeamName() -> "memphis grizzlies"
-  -> defOpponentMap.get("memphis grizzlies") -> "detroit pistons" (from game_bets, stored lowercase)
-  -> nameToAbbrev.get("detroit pistons") -> "DET" (NEW: lowercase key added by fix)
-  -> defenseDetailMap.get("DET") -> { overall_rank: 9, opp_rebounds_rank: ..., opp_assists_rank: ... }
+### The Fix
+
+Align everything to a **single unified label set** that maps cleanly from the engine's 5-tier internal statuses:
+
+| Engine Status | Action Label | Color |
+|---------------|-------------|-------|
+| `profit_lock` | **LOCK** | Green |
+| `on_track` | **HOLD** | Green |
+| `monitor` | **MONITOR** | Gold |
+| `alert` | **HEDGE ALERT** | Orange |
+| `urgent` | **HEDGE NOW** | Red |
+
+### Changes
+
+**1. `HedgeModeTable.tsx` -- Use engine status instead of simple edge math**
+
+- Import `calculateHedgeStatus` from `hedgeStatusUtils.ts` (or adapt it for the `WarRoomPropData` shape since it expects `DeepSweetSpot`)
+- Create a mapping function that converts `WarRoomPropData` fields into the inputs `calculateHedgeStatus` needs (currentValue, projectedFinal, line, side, gameProgress, paceRating, riskFlags)
+- Replace the inline `edge > 2 ? 'LOCK' : ...` logic (line 159) with the mapped engine status
+- Update `actionPill` styles to include all 5 labels: LOCK, HOLD, MONITOR, HEDGE ALERT, HEDGE NOW
+
+**2. `PropHedgeIndicator.tsx` -- Align labels and thresholds**
+
+- Update `calcHedgeStatus` to use the same threshold logic as the engine (progress-aware buffers via `getBufferThresholds`) instead of hardcoded `buffer >= 3 / >= 1 / >= -1`
+- Rename labels to match: ON TRACK becomes HOLD, alert becomes HEDGE ALERT, hedge_now becomes HEDGE NOW
+- Keep the settled states (HIT, LOST) as-is since those are clear terminal states
+
+**3. `CustomerHedgeIndicator.tsx` -- Align customer-facing labels**
+
+- Update the 3-tier customer mapping to use the unified wording:
+  - `on_track` / `profit_lock` -> "ON TRACK" (no change)
+  - `monitor` -> "MONITOR" (was "CAUTION")
+  - `alert` / `urgent` -> "HEDGE ALERT" (was "ACTION NEEDED")
+- This keeps the simplified 3-tier view but uses consistent terminology
+
+**4. `actionPill` style map update in `HedgeModeTable.tsx`**
+
+Add entries for the two new labels:
+```
+LOCK: green
+HOLD: green (slightly muted)
+MONITOR: gold
+'HEDGE ALERT': orange
+'HEDGE NOW': red (same as current HEDGE)
 ```
 
-Before the fix, step 3 failed because `nameToAbbrev` only had `"Detroit Pistons"` (original case), not `"detroit pistons"`. The fix adds both.
+### Technical Detail
 
-### Finding 3: One Remaining Gap -- Missing team_name on Sweet Spot Picks
+The `HedgeModeTable` receives `WarRoomPropData` which already has `currentValue`, `projectedFinal`, `line`, `side`, `paceRating`, and `confidence`. It's missing `gameProgress` and `riskFlags`. Two options:
 
-The `category_sweet_spots` table has **no `team_name` column**. The code resolves it via `playerTeamMap` (from `bdl_player_cache`) during enrichment at line 3408. However, if a player is NOT in `bdl_player_cache` (727 players currently cached), their `team_name` stays empty, and the entire defense lookup chain fails silently.
+- **Option A**: Add `gameProgress` to `WarRoomPropData` (it's available from the live feed) and create a lightweight adapter function in the table
+- **Option B**: Create a standalone `getHedgeAction(currentValue, projectedFinal, line, side, gameProgress, paceRating)` function in `hedgeStatusUtils.ts` that both components can call directly
 
-**Hardening fix**: Add a diagnostic log at the environment score enrichment point to surface which players have unresolved teams, AND add `playerTeamMap` as a secondary fallback at line 4266 (sweet spot defense enrichment) to match the pattern already used at line 4566 (mispriced defense enrichment).
+Option B is cleaner -- a single shared function that returns the unified label.
 
-### Proposed Changes
+### Files Modified
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+| File | What Changes |
+|------|-------------|
+| `src/lib/hedgeStatusUtils.ts` | Add `getHedgeActionLabel()` utility that takes raw values and returns unified label |
+| `src/components/scout/warroom/HedgeModeTable.tsx` | Use `getHedgeActionLabel()` instead of inline edge math; update `actionPill` styles for 5 labels |
+| `src/components/scout/warroom/WarRoomPropCard.tsx` | Add optional `gameProgress` field to `WarRoomPropData` interface |
+| `src/components/scout/warroom/WarRoomLayout.tsx` | Pass `gameProgress` from live feed data into prop cards |
+| `src/components/scout/PropHedgeIndicator.tsx` | Use `getHedgeActionLabel()` and align label text |
+| `src/components/scout/CustomerHedgeIndicator.tsx` | Rename "CAUTION" to "MONITOR" and "ACTION NEEDED" to "HEDGE ALERT" |
 
-**Change 1 -- Sweet spot defense enrichment (line 4266): Add playerTeamMap fallback**
-
-Currently:
-```typescript
-const teamKey = normalizeBdlTeamName((pick as any).team_name || '');
-```
-
-Should be:
-```typescript
-const resolvedTeam = (pick as any).team_name || playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
-const teamKey = normalizeBdlTeamName(resolvedTeam);
-```
-
-This matches the pattern already used at line 4566 for mispriced picks.
-
-**Change 2 -- Add diagnostic logging to identify unresolved teams**
-
-After the environment score enrichment loop, log how many picks had empty teamKey so we can track remaining gaps:
-```typescript
-// After the loop
-let unresolvedTeamCount = 0;
-// Inside loop: if (!teamKey) unresolvedTeamCount++;
-if (unresolvedTeamCount > 0) {
-  console.log(`[EnvironmentScore] WARNING: ${unresolvedTeamCount} picks had no resolved team_name`);
-}
-```
-
-### Data Verification
-
-All three data sources use consistent "City TeamName" format:
-- `game_bets.home_team`: "Memphis Grizzlies"
-- `team_defense_rankings.team_name`: "Memphis Grizzlies"  
-- `nba_team_pace_projections.team_name`: "Memphis Grizzlies"
-- `bdl_player_cache.team_name`: "Memphis Grizzlies" (except "LA Clippers" which `normalizeBdlTeamName` handles)
-
-No format mismatches remain after the lowercase fix.
-
-### Summary
-
-The lowercase fix already deployed should resolve the vast majority of 0.50 defaults. The one additional hardening change (adding `playerTeamMap` fallback at line 4266) closes the only remaining gap. A fresh bot run after this change will confirm all defense factors are resolving correctly.
