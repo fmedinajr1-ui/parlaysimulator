@@ -1,74 +1,65 @@
 
 
-## Auto-Generated One-Time Password on Stripe Success Page
+## Telegram Slate Status Update -- Voided + Active Parlays
 
-### What This Solves
-Customers pay via Stripe but currently get redirected to the Telegram bot URL with no access password. They have to manually get a password from somewhere. This change auto-generates a unique, single-use password at checkout time and shows it on a success page so they can immediately unlock the bot.
-
-### How It Works
-1. Customer pays via Stripe
-2. Stripe redirects them to a new `/bot-success` page (instead of directly to Telegram)
-3. That page shows their one-time password and a link to the Telegram bot
-4. The password only works once -- it can't be copied and shared with others
+### What This Does
+Adds a new notification type `slate_status_update` to the Telegram bot that broadcasts a message to all customers showing:
+- How many parlays were voided today (and why they were filtered out)
+- The 8 active parlays that are good to go, with leg details
+- Clear visual separation between voided summary and active picks
 
 ### Changes
 
-#### 1. Modify `create-bot-checkout` Edge Function
-- After creating the Stripe checkout session, generate a random 8-character alphanumeric password
-- Insert it into `bot_access_passwords` with `max_uses: 1` and `created_by: 'stripe_checkout'`
-- Store the password ID in the Stripe session metadata so it can be retrieved later
-- Change the `success_url` to point to `/bot-success?session_id={CHECKOUT_SESSION_ID}` instead of the Telegram bot URL
+#### 1. Add `slate_status_update` Notification Type
+**File: `supabase/functions/bot-send-telegram/index.ts`**
 
-#### 2. Create New `retrieve-bot-password` Edge Function
-- Accepts a Stripe `session_id`
-- Verifies payment was completed via Stripe API
-- Looks up the password ID from the session metadata
-- Returns the password text (only once -- marks it as "retrieved" after first access)
-- This prevents the password from being accessed multiple times by refreshing the page
+- Add `'slate_status_update'` to the `NotificationType` union (line 20-39)
+- Add case in `formatMessage` switch to call a new `formatSlateStatusUpdate` function
+- Add it to the broadcast list (line 1042) so it goes to all customers, not just admin
 
-#### 3. Add `retrieved` Column to `bot_access_passwords` Table
-- New boolean column `retrieved` (default `false`)
-- The `retrieve-bot-password` function sets this to `true` after the first retrieval
-- Subsequent requests return a "already shown" message instead of the password
+**New `formatSlateStatusUpdate` function** formats a message like:
 
-#### 4. Create `/bot-success` Page
-- New page component at `src/pages/BotSuccess.tsx`
-- On load, reads `session_id` from URL params
-- Calls `retrieve-bot-password` to get the one-time password
-- Displays:
-  - Success confirmation with checkmark
-  - The password prominently (large, clear text)
-  - Instructions: "Open @parlayiqbot on Telegram and send `/start [password]`"
-  - Direct link to the Telegram bot
-  - Warning: "This password will only be shown once and works for one person only"
-- If password was already retrieved, shows a message directing them to contact support
-- Add route to `App.tsx`
+```text
+DAILY SLATE STATUS -- Feb 24
+================================
+
+VOIDED: 23 parlays filtered by quality gates
+Reasons: low probability, redundant legs, exposure limits
+
+ACTIVE PICKS: 8 parlays locked in
+--------------------------------
+
+Parlay #1 (cash_lock) -- 3 legs
+ Take Al Horford OVER 2.5 AST (70% L10)
+ Take Andrew Wiggins OVER 1.5 3PT (100% L10)
+ Take Player OVER X.X PROP (XX% L10)
+
+Parlay #2 (mispriced_edge) -- 3 legs
+ ...
+
+Use /parlays for full details
+```
+
+- Data payload expects: `{ voidedCount, voidedReasons, activeParlays: [...] }`
+- Each active parlay shows strategy name, leg count, and each leg with player, side, line, prop, and L10 hit rate
+
+#### 2. Create `bot-slate-status-update` Edge Function
+**New file: `supabase/functions/bot-slate-status-update/index.ts`**
+
+This function:
+- Queries `bot_daily_parlays` for today's date
+- Separates parlays by outcome: `pending` (active) vs `void` (voided)
+- Extracts leg details from active parlays (player name, prop type, line, side, hit rate)
+- Counts voided parlays
+- Sends the formatted payload to `bot-send-telegram` with type `slate_status_update`
+
+Can be triggered manually or added to the pipeline after parlay generation.
 
 ### Technical Details
 
-**Password Generation**: Random 8-char alphanumeric string (e.g., `xK9mP2qR`) generated server-side in the edge function using `crypto.getRandomValues()`
+**Files modified:**
+- `supabase/functions/bot-send-telegram/index.ts` -- add type, formatter, broadcast
+- `supabase/functions/bot-slate-status-update/index.ts` -- new edge function to query and send
 
-**Security Flow**:
-```text
-Stripe Checkout --> success_url with session_id
-       |
-       v
-/bot-success page --> calls retrieve-bot-password
-       |
-       v
-Edge function: verify payment + return password (once only)
-       |
-       v
-User copies password --> sends /start xK9mP2qR to bot
-       |
-       v
-Bot validates: max_uses=1, times_used=0 --> grants access
-```
-
-**Files changed**:
-- `supabase/functions/create-bot-checkout/index.ts` -- generate password, store in metadata, update success_url
-- `supabase/functions/retrieve-bot-password/index.ts` -- new function to securely return password once
-- `src/pages/BotSuccess.tsx` -- new success page
-- `src/App.tsx` -- add `/bot-success` route
-- Database migration: add `retrieved` column to `bot_access_passwords`
+**Broadcast:** Added to the customer broadcast list alongside `mega_parlay_scanner`, `daily_winners_recap`, and `slate_rebuild_alert` so all authorized users receive it.
 
