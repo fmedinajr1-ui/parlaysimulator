@@ -88,7 +88,7 @@ serve(async (req) => {
     }
 
     // Filter out blocked prop types (e.g. steals with 0% win rate)
-    const BLOCKED_PROP_TYPES = new Set(['player_steals']);
+    const BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks']);
     const preFilterCount = mispricedLines.length;
     const filteredLines = mispricedLines.filter(ml => {
       const propType = (ml.prop_type || '').toLowerCase();
