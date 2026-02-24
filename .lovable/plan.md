@@ -1,65 +1,64 @@
 
 
-## Telegram Slate Status Update -- Voided + Active Parlays
+## Auto-Double Stakes After Profitable Days
 
-### What This Does
-Adds a new notification type `slate_status_update` to the Telegram bot that broadcasts a message to all customers showing:
-- How many parlays were voided today (and why they were filtered out)
-- The 8 active parlays that are good to go, with leg details
-- Clear visual separation between voided summary and active picks
+### Overview
+After each day's parlays are settled, the system will check if the day was profitable. If net profit > $0, it automatically doubles all tier stakes in `bot_stake_config` for the next day's generation. If the day was a loss, stakes reset to baseline defaults.
+
+### How It Works
+
+```text
+Settlement runs (bot-settle-and-learn)
+         |
+         v
+  Check yesterday's net P&L
+  from bot_daily_parlays
+         |
+    Profitable?
+    /        \
+  YES         NO
+   |           |
+Double all    Reset to
+stakes in     baseline
+bot_stake_    defaults
+config
+```
 
 ### Changes
 
-#### 1. Add `slate_status_update` Notification Type
-**File: `supabase/functions/bot-send-telegram/index.ts`**
+#### 1. Add columns to `bot_stake_config` (Database Migration)
+- `streak_multiplier` (numeric, default 1.0) -- tracks the current multiplier
+- `baseline_execution_stake`, `baseline_validation_stake`, `baseline_exploration_stake` -- stores the "normal" stakes so we can reset after a losing day
+- `last_streak_date` -- prevents double-processing the same day
 
-- Add `'slate_status_update'` to the `NotificationType` union (line 20-39)
-- Add case in `formatMessage` switch to call a new `formatSlateStatusUpdate` function
-- Add it to the broadcast list (line 1042) so it goes to all customers, not just admin
+#### 2. Modify `bot-settle-and-learn` Edge Function
+At the end of settlement (after all parlays are graded), add a new section:
 
-**New `formatSlateStatusUpdate` function** formats a message like:
+- Query `bot_daily_parlays` for yesterday's settled results
+- Sum `profit_loss` to get net P&L
+- If net P&L > 0:
+  - Set `streak_multiplier = 2.0`
+  - Update `execution_stake = baseline_execution_stake * 2`
+  - Update `validation_stake = baseline_validation_stake * 2`
+  - Update `exploration_stake = baseline_exploration_stake * 2`
+  - Update `bankroll_doubler_stake = baseline * 2`
+  - Log: "Profitable day detected, stakes doubled for tomorrow"
+- If net P&L <= 0:
+  - Reset `streak_multiplier = 1.0`
+  - Reset all stakes back to baseline values
+  - Log: "Loss day, stakes reset to baseline"
+- Update `last_streak_date` to prevent re-processing
 
-```text
-DAILY SLATE STATUS -- Feb 24
-================================
+#### 3. Populate baseline values (Migration)
+- Copy current stake values into the new baseline columns so the system has a reference point to reset to
 
-VOIDED: 23 parlays filtered by quality gates
-Reasons: low probability, redundant legs, exposure limits
+#### 4. Admin visibility in StakeConfigPanel
+- Show the current `streak_multiplier` as a badge (e.g., "2x ACTIVE" in green or "1x Normal")
+- Display whether yesterday was profitable and the auto-adjustment that was made
+- Allow manual override to reset the multiplier back to 1x
 
-ACTIVE PICKS: 8 parlays locked in
---------------------------------
-
-Parlay #1 (cash_lock) -- 3 legs
- Take Al Horford OVER 2.5 AST (70% L10)
- Take Andrew Wiggins OVER 1.5 3PT (100% L10)
- Take Player OVER X.X PROP (XX% L10)
-
-Parlay #2 (mispriced_edge) -- 3 legs
- ...
-
-Use /parlays for full details
-```
-
-- Data payload expects: `{ voidedCount, voidedReasons, activeParlays: [...] }`
-- Each active parlay shows strategy name, leg count, and each leg with player, side, line, prop, and L10 hit rate
-
-#### 2. Create `bot-slate-status-update` Edge Function
-**New file: `supabase/functions/bot-slate-status-update/index.ts`**
-
-This function:
-- Queries `bot_daily_parlays` for today's date
-- Separates parlays by outcome: `pending` (active) vs `void` (voided)
-- Extracts leg details from active parlays (player name, prop type, line, side, hit rate)
-- Counts voided parlays
-- Sends the formatted payload to `bot-send-telegram` with type `slate_status_update`
-
-Can be triggered manually or added to the pipeline after parlay generation.
-
-### Technical Details
-
-**Files modified:**
-- `supabase/functions/bot-send-telegram/index.ts` -- add type, formatter, broadcast
-- `supabase/functions/bot-slate-status-update/index.ts` -- new edge function to query and send
-
-**Broadcast:** Added to the customer broadcast list alongside `mega_parlay_scanner`, `daily_winners_recap`, and `slate_rebuild_alert` so all authorized users receive it.
-
+### Safety Guards
+- Cap the multiplier at 2x (no compounding day after day -- it resets to baseline then doubles, not double-on-double)
+- Only triggers after settlement completes (not during)
+- `last_streak_date` prevents duplicate processing
+- Admin can always manually override via the Stake Override Panel
