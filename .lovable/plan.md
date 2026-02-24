@@ -1,83 +1,40 @@
 
+## Filter Out Steals Props from Bot Parlay Generation
 
-## Unify Hedge Status Wording Across War Room
+### Why
 
-### The Problem
+Steals (`player_steals`) have a **0% win rate** (0-2) across all settled parlay legs. This is a catastrophic category that should be blocked from inclusion in generated parlays until performance improves.
 
-There are currently **four independent label systems** that don't align with each other:
+### What Changes
 
-| Component | Labels Used | Source Logic |
-|-----------|-------------|-------------|
-| Engine (`hedgeStatusUtils.ts`) | on_track, monitor, alert, urgent, profit_lock | Smart: game progress, pace, blowout, foul trouble |
-| Hedge Mode Table | LOCK, HOLD, MONITOR, HEDGE | Simple: `edge > 2 / > 0 / > -2 / else` |
-| PropHedgeIndicator | ON TRACK, MONITOR, HEDGE ALERT, HEDGE NOW | Simple: `buffer >= 3 / >= 1 / >= -1 / else` |
-| CustomerHedgeIndicator | ON TRACK, CAUTION, ACTION NEEDED | Maps from engine statuses |
+**1. `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-The Hedge Mode Table and PropHedgeIndicator both **ignore** the smart engine logic (game progress awareness, pace overrides, blowout detection) and use their own simple buffer math.
+Add a new `BLOCKED_PROP_TYPES` set right after the existing `BLOCKED_CATEGORIES` block (around line 429):
 
-### The Fix
-
-Align everything to a **single unified label set** that maps cleanly from the engine's 5-tier internal statuses:
-
-| Engine Status | Action Label | Color |
-|---------------|-------------|-------|
-| `profit_lock` | **LOCK** | Green |
-| `on_track` | **HOLD** | Green |
-| `monitor` | **MONITOR** | Gold |
-| `alert` | **HEDGE ALERT** | Orange |
-| `urgent` | **HEDGE NOW** | Red |
-
-### Changes
-
-**1. `HedgeModeTable.tsx` -- Use engine status instead of simple edge math**
-
-- Import `calculateHedgeStatus` from `hedgeStatusUtils.ts` (or adapt it for the `WarRoomPropData` shape since it expects `DeepSweetSpot`)
-- Create a mapping function that converts `WarRoomPropData` fields into the inputs `calculateHedgeStatus` needs (currentValue, projectedFinal, line, side, gameProgress, paceRating, riskFlags)
-- Replace the inline `edge > 2 ? 'LOCK' : ...` logic (line 159) with the mapped engine status
-- Update `actionPill` styles to include all 5 labels: LOCK, HOLD, MONITOR, HEDGE ALERT, HEDGE NOW
-
-**2. `PropHedgeIndicator.tsx` -- Align labels and thresholds**
-
-- Update `calcHedgeStatus` to use the same threshold logic as the engine (progress-aware buffers via `getBufferThresholds`) instead of hardcoded `buffer >= 3 / >= 1 / >= -1`
-- Rename labels to match: ON TRACK becomes HOLD, alert becomes HEDGE ALERT, hedge_now becomes HEDGE NOW
-- Keep the settled states (HIT, LOST) as-is since those are clear terminal states
-
-**3. `CustomerHedgeIndicator.tsx` -- Align customer-facing labels**
-
-- Update the 3-tier customer mapping to use the unified wording:
-  - `on_track` / `profit_lock` -> "ON TRACK" (no change)
-  - `monitor` -> "MONITOR" (was "CAUTION")
-  - `alert` / `urgent` -> "HEDGE ALERT" (was "ACTION NEEDED")
-- This keeps the simplified 3-tier view but uses consistent terminology
-
-**4. `actionPill` style map update in `HedgeModeTable.tsx`**
-
-Add entries for the two new labels:
 ```
-LOCK: green
-HOLD: green (slightly muted)
-MONITOR: gold
-'HEDGE ALERT': orange
-'HEDGE NOW': red (same as current HEDGE)
+const BLOCKED_PROP_TYPES = new Set([
+  'player_steals',   // 0% win rate (0-2 settled)
+]);
 ```
 
-### Technical Detail
+Then add a filter step in the pick pipeline (where picks are enriched/filtered before parlay building) to reject any pick whose `prop_type` or `bet_type` matches a blocked prop type. This filter will be applied:
+- In the main enriched sweet spots filtering pass
+- In the fallback enrichment pass
+- In the sweep/monster parlay candidate pools
 
-The `HedgeModeTable` receives `WarRoomPropData` which already has `currentValue`, `projectedFinal`, `line`, `side`, `paceRating`, and `confidence`. It's missing `gameProgress` and `riskFlags`. Two options:
+Each rejection will be logged: `[BlockedPropType] Filtered player_steals pick for {player_name}`
 
-- **Option A**: Add `gameProgress` to `WarRoomPropData` (it's available from the live feed) and create a lightweight adapter function in the table
-- **Option B**: Create a standalone `getHedgeAction(currentValue, projectedFinal, line, side, gameProgress, paceRating)` function in `hedgeStatusUtils.ts` that both components can call directly
+**2. `supabase/functions/bot-force-fresh-parlays/index.ts`**
 
-Option B is cleaner -- a single shared function that returns the unified label.
+This function has its own independent generation pipeline. Add the same `BLOCKED_PROP_TYPES` filter after the mispriced lines are fetched (around step 3, before scoring), rejecting any pick with `prop_type` matching `player_steals`.
+
+### Technical Details
+
+The filter is applied at the candidate pool level (before parlay assembly) so no steals picks can enter any parlay tier -- execution, validation, sweep, or monster. This follows the same pattern as `BLOCKED_SPORTS` which filters at the pool level.
 
 ### Files Modified
 
-| File | What Changes |
-|------|-------------|
-| `src/lib/hedgeStatusUtils.ts` | Add `getHedgeActionLabel()` utility that takes raw values and returns unified label |
-| `src/components/scout/warroom/HedgeModeTable.tsx` | Use `getHedgeActionLabel()` instead of inline edge math; update `actionPill` styles for 5 labels |
-| `src/components/scout/warroom/WarRoomPropCard.tsx` | Add optional `gameProgress` field to `WarRoomPropData` interface |
-| `src/components/scout/warroom/WarRoomLayout.tsx` | Pass `gameProgress` from live feed data into prop cards |
-| `src/components/scout/PropHedgeIndicator.tsx` | Use `getHedgeActionLabel()` and align label text |
-| `src/components/scout/CustomerHedgeIndicator.tsx` | Rename "CAUTION" to "MONITOR" and "ACTION NEEDED" to "HEDGE ALERT" |
-
+| File | Change |
+|------|--------|
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | Add `BLOCKED_PROP_TYPES` set; filter picks in main, fallback, and sweep passes |
+| `supabase/functions/bot-force-fresh-parlays/index.ts` | Add same `BLOCKED_PROP_TYPES` filter before scoring step |
