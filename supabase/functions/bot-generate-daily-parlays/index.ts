@@ -4429,6 +4429,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       );
       (pick as any).environmentScore = envResult.confidenceAdjustment;
       (pick as any).environmentComponents = envResult.components;
+      // APPLY environment adjustment to composite score
+      pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + envResult.confidenceAdjustment));
       envScoreApplied++;
     }
 
@@ -4724,6 +4726,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       );
       (pick as any).environmentScore = envResult2.confidenceAdjustment;
       (pick as any).environmentComponents = envResult2.components;
+      // APPLY environment adjustment to composite score
+      pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + envResult2.confidenceAdjustment));
       mispricedEnvApplied++;
     }
     if (mispricedEnvApplied > 0) {
