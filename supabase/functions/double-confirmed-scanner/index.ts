@@ -15,8 +15,14 @@ function getEasternDate(): string {
   }).format(new Date());
 }
 
-function normalizePropType(pt: string): string {
-  return (pt || '').toLowerCase().replace(/^player_/, '').replace(/_/g, '').trim();
+function normalizePropType(raw: string): string {
+  const s = (raw || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
 }
 
 serve(async (req) => {
