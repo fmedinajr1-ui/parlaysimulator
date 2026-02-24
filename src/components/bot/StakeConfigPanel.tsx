@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Save, RefreshCw, Target, TrendingUp, DollarSign, Zap } from "lucide-react";
+import { Settings, Save, RefreshCw, Target, TrendingUp, DollarSign, Zap, RotateCcw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface StakeConfig {
   id: string;
@@ -19,6 +20,12 @@ interface StakeConfig {
   max_daily_parlays_exploration: number;
   block_two_leg_parlays: boolean;
   updated_at: string;
+  streak_multiplier: number;
+  baseline_execution_stake: number;
+  baseline_validation_stake: number;
+  baseline_exploration_stake: number;
+  baseline_bankroll_doubler_stake: number;
+  last_streak_date: string | null;
 }
 
 interface CategoryWeight {
@@ -275,6 +282,60 @@ export function StakeConfigPanel() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* === STREAK MULTIPLIER BADGE === */}
+      <Card className={`border ${(config?.streak_multiplier ?? 1) >= 2 ? "border-primary/50 bg-primary/5" : "border-border"}`}>
+        <CardContent className="py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <TrendingUp className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-sm font-semibold">Stake Multiplier</p>
+                <p className="text-xs text-muted-foreground">
+                  {(config?.streak_multiplier ?? 1) >= 2
+                    ? "Yesterday was profitable — stakes doubled automatically"
+                    : "Stakes at baseline — will double after next profitable day"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={(config?.streak_multiplier ?? 1) >= 2 ? "default" : "secondary"}>
+                {(config?.streak_multiplier ?? 1) >= 2 ? "2x ACTIVE" : "1x Normal"}
+              </Badge>
+              {(config?.streak_multiplier ?? 1) >= 2 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={async () => {
+                    if (!config?.id) return;
+                    const { error } = await supabase
+                      .from("bot_stake_config")
+                      .update({
+                        streak_multiplier: 1.0,
+                        execution_stake: config.baseline_execution_stake,
+                        validation_stake: config.baseline_validation_stake,
+                        exploration_stake: config.baseline_exploration_stake,
+                        bankroll_doubler_stake: config.baseline_bankroll_doubler_stake,
+                        updated_at: new Date().toISOString(),
+                      })
+                      .eq("id", config.id);
+                    if (error) {
+                      toast({ title: "Reset failed", description: error.message, variant: "destructive" });
+                    } else {
+                      queryClient.invalidateQueries({ queryKey: ["bot-stake-config"] });
+                      toast({ title: "Multiplier reset", description: "Stakes returned to 1x baseline." });
+                    }
+                  }}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Reset
+                </Button>
+              )}
             </div>
           </div>
         </CardContent>

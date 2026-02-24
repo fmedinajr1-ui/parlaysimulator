@@ -1494,37 +1494,55 @@ export type Database = {
       bot_stake_config: {
         Row: {
           bankroll_doubler_stake: number
+          baseline_bankroll_doubler_stake: number
+          baseline_execution_stake: number
+          baseline_exploration_stake: number
+          baseline_validation_stake: number
           block_two_leg_parlays: boolean | null
           execution_stake: number
           exploration_stake: number
           id: string
+          last_streak_date: string | null
           max_daily_parlays_execution: number | null
           max_daily_parlays_exploration: number | null
           max_daily_parlays_validation: number | null
+          streak_multiplier: number
           updated_at: string | null
           validation_stake: number
         }
         Insert: {
           bankroll_doubler_stake?: number
+          baseline_bankroll_doubler_stake?: number
+          baseline_execution_stake?: number
+          baseline_exploration_stake?: number
+          baseline_validation_stake?: number
           block_two_leg_parlays?: boolean | null
           execution_stake?: number
           exploration_stake?: number
           id?: string
+          last_streak_date?: string | null
           max_daily_parlays_execution?: number | null
           max_daily_parlays_exploration?: number | null
           max_daily_parlays_validation?: number | null
+          streak_multiplier?: number
           updated_at?: string | null
           validation_stake?: number
         }
         Update: {
           bankroll_doubler_stake?: number
+          baseline_bankroll_doubler_stake?: number
+          baseline_execution_stake?: number
+          baseline_exploration_stake?: number
+          baseline_validation_stake?: number
           block_two_leg_parlays?: boolean | null
           execution_stake?: number
           exploration_stake?: number
           id?: string
+          last_streak_date?: string | null
           max_daily_parlays_execution?: number | null
           max_daily_parlays_exploration?: number | null
           max_daily_parlays_validation?: number | null
+          streak_multiplier?: number
           updated_at?: string | null
           validation_stake?: number
         }
