@@ -17,6 +17,16 @@ function getEasternDate(daysAgo = 0): string {
   }).format(d);
 }
 
+function normalizePropType(raw: string): string {
+  const s = (raw || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
+}
+
 function formatPropType(pt: string): string {
   return (pt || '')
     .replace(/^player_/, '')
@@ -65,7 +75,7 @@ serve(async (req) => {
     // Build yesterday hits map: key = player_name|prop_type|side
     const yesterdayMap = new Map<string, typeof yesterdayHits[0]>();
     for (const h of yesterdayHits) {
-      const key = `${(h.player_name || '').toLowerCase()}|${(h.prop_type || '').toLowerCase()}|${(h.recommended_side || '').toUpperCase()}`;
+      const key = `${(h.player_name || '').toLowerCase()}|${normalizePropType(h.prop_type || '')}|${(h.recommended_side || '').toUpperCase()}`;
       const existing = yesterdayMap.get(key);
       if (!existing || (h.l10_hit_rate || 0) > (existing.l10_hit_rate || 0)) {
         yesterdayMap.set(key, h);
@@ -75,7 +85,7 @@ serve(async (req) => {
     // Build prior streak map
     const streakMap = new Map<string, number>();
     for (const s of priorStreaks) {
-      const key = `${(s.player_name || '').toLowerCase()}|${(s.prop_type || '').toLowerCase()}`;
+      const key = `${(s.player_name || '').toLowerCase()}|${normalizePropType(s.prop_type || '')}`;
       streakMap.set(key, s.streak_days || 2);
     }
 
@@ -98,8 +108,8 @@ serve(async (req) => {
     const seen = new Set<string>();
 
     for (const spot of todaySpots) {
-      const key = `${(spot.player_name || '').toLowerCase()}|${(spot.prop_type || '').toLowerCase()}|${(spot.recommended_side || '').toUpperCase()}`;
-      const dedupeKey = `${(spot.player_name || '').toLowerCase()}|${(spot.prop_type || '').toLowerCase()}`;
+      const key = `${(spot.player_name || '').toLowerCase()}|${normalizePropType(spot.prop_type || '')}|${(spot.recommended_side || '').toUpperCase()}`;
+      const dedupeKey = `${(spot.player_name || '').toLowerCase()}|${normalizePropType(spot.prop_type || '')}`;
 
       if (seen.has(dedupeKey)) continue;
 

@@ -3213,6 +3213,17 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     'batter_hits': 'hits', 'batter_total_bases': 'total_bases', 'batter_rbis': 'rbis',
     'batter_runs': 'runs', 'batter_walks': 'walks',
     'pitcher_strikeouts': 'strikeouts', 'pitcher_earned_runs': 'earned_runs', 'pitcher_outs': 'outs',
+    // Non-prefixed aliases for combo props
+    'points_rebounds_assists': 'pra', 'pts_rebs_asts': 'pra', 'pra': 'pra',
+    'points_rebounds': 'pr', 'pts_rebs': 'pr', 'pr': 'pr',
+    'points_assists': 'pa', 'pts_asts': 'pa', 'pa': 'pa',
+    'rebounds_assists': 'ra', 'rebs_asts': 'ra', 'ra': 'ra',
+    'three_pointers': 'threes', 'threes_made': 'threes', 'threes': 'threes',
+    'points': 'points', 'rebounds': 'rebounds', 'assists': 'assists',
+    'blocks': 'blocks', 'steals': 'steals',
+    'hits': 'hits', 'total_bases': 'total_bases', 'rbis': 'rbis',
+    'runs': 'runs', 'walks': 'walks', 'strikeouts': 'strikeouts',
+    'earned_runs': 'earned_runs', 'outs': 'outs',
   };
 
   const sweetSpotLookup = new Map<string, {
@@ -4494,7 +4505,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const riskEnginePicks = riskEngineResult.data || [];
   const riskEngineMap = new Map<string, { side: string; confidence: number }>();
   for (const rp of riskEnginePicks) {
-    const normProp = (rp.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const normProp = PROP_TYPE_NORMALIZE[(rp.prop_type || '').toLowerCase()] || (rp.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
     const key = `${(rp.player_name || '').toLowerCase().trim()}|${normProp}`;
     riskEngineMap.set(key, { side: rp.side, confidence: rp.confidence_score });
   }
@@ -4503,7 +4514,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const multiEngineMap = new Map<string, { engines: string[]; sides: string[] }>();
   const addToMultiEngine = (playerName: string, propType: string, side: string, engine: string) => {
     if (!playerName || !propType) return;
-    const normProp = (propType || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const normProp = PROP_TYPE_NORMALIZE[(propType || '').toLowerCase()] || (propType || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
     const key = `${playerName.toLowerCase().trim()}|${normProp}`;
     if (!multiEngineMap.has(key)) multiEngineMap.set(key, { engines: [], sides: [] });
     const entry = multiEngineMap.get(key)!;
@@ -4553,7 +4564,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const tierBonus = ml.confidence_tier === 'ELITE' ? 15 : ml.confidence_tier === 'HIGH' ? 10 : 5;
     
     // Cross-engine conviction multiplier: if risk engine agrees on side, boost score
-    const normProp = (ml.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const normProp = PROP_TYPE_NORMALIZE[(ml.prop_type || '').toLowerCase()] || (ml.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
     const riskKey = `${(ml.player_name || '').toLowerCase().trim()}|${normProp}`;
     const riskMatch = riskEngineMap.get(riskKey);
     const riskConfirmed = riskMatch && riskMatch.side.toLowerCase() === side;
