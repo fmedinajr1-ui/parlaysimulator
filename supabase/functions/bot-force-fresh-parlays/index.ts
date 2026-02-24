@@ -183,8 +183,10 @@ serve(async (req) => {
     // Step 4: Build 3-leg parlays using greedy algorithm
     const parlays: MispricedPick[][] = [];
     const usedInParlay = new Set<string>(); // track player+prop usage across parlays
+    const globalPlayerPropCount = new Map<string, number>(); // global exposure cap
     const MAX_PARLAYS = 8;
     const LEGS_PER_PARLAY = 3;
+    const MAX_PLAYER_PROP_EXPOSURE = 5;
 
     // Try to build parlays
     for (let attempt = 0; attempt < MAX_PARLAYS * 3 && parlays.length < MAX_PARLAYS; attempt++) {
@@ -199,6 +201,7 @@ serve(async (req) => {
         const playerKey = pick.player_name.toLowerCase();
         const propKey = normalizePropType(pick.prop_type);
         const parlayKey = `${playerKey}|${propKey}|${parlays.length}`;
+        const globalKey = `${playerKey}|${propKey}`;
 
         // Rule 1: No duplicate players in a parlay
         if (usedPlayers.has(playerKey)) continue;
@@ -209,8 +212,10 @@ serve(async (req) => {
         // Rule 3: Max 1 player per team (if team known)
         if (pick.team && usedTeams.has(pick.team.toLowerCase())) continue;
 
-        // Limit player+prop reuse across parlays (max 2)
-        const globalKey = `${playerKey}|${propKey}`;
+        // Rule 4: Global exposure cap (max 5 per player+prop across all parlays)
+        if ((globalPlayerPropCount.get(globalKey) || 0) >= MAX_PLAYER_PROP_EXPOSURE) continue;
+
+        // Limit player+prop reuse across parlays (max 2 per parlay index)
         const usageCount = [...usedInParlay].filter(k => k.startsWith(globalKey)).length;
         if (usageCount >= 2) continue;
 
@@ -231,7 +236,9 @@ serve(async (req) => {
         if (!isDuplicate) {
           parlays.push(parlay);
           for (const p of parlay) {
-            usedInParlay.add(`${p.player_name.toLowerCase()}|${normalizePropType(p.prop_type)}|${parlays.length - 1}`);
+            const globalKey = `${p.player_name.toLowerCase()}|${normalizePropType(p.prop_type)}`;
+            usedInParlay.add(`${globalKey}|${parlays.length - 1}`);
+            globalPlayerPropCount.set(globalKey, (globalPlayerPropCount.get(globalKey) || 0) + 1);
           }
         }
       }
