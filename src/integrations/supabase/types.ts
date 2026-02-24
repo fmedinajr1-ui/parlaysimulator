@@ -890,6 +890,7 @@ export type Database = {
           is_active: boolean
           max_uses: number | null
           password: string
+          retrieved: boolean
           times_used: number
         }
         Insert: {
@@ -899,6 +900,7 @@ export type Database = {
           is_active?: boolean
           max_uses?: number | null
           password: string
+          retrieved?: boolean
           times_used?: number
         }
         Update: {
@@ -908,6 +910,7 @@ export type Database = {
           is_active?: boolean
           max_uses?: number | null
           password?: string
+          retrieved?: boolean
           times_used?: number
         }
         Relationships: []
