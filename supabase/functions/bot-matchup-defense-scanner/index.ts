@@ -6,11 +6,85 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-function getEasternDate(): string {
-  return new Intl.DateTimeFormat('en-CA', {
+// Returns a noon-ET-to-noon-ET window in UTC ISO strings
+// This captures tonight's games which tip off in the evening ET
+// but have UTC timestamps on the next calendar day
+function getEasternDateRange(): { today: string; startUtc: string; endUtc: string } {
+  const now = new Date();
+  const today = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  }).format(now);
+
+  // Noon ET today to noon ET tomorrow
+  // ET is UTC-5 (EST) or UTC-4 (EDT)
+  // We use 17:00 UTC (noon ET during EST) as start
+  // and 17:00 UTC next day as end
+  const [year, month, day] = today.split('-').map(Number);
+  const startDate = new Date(Date.UTC(year, month - 1, day, 17, 0, 0)); // noon ET = 17:00 UTC (EST)
+  const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    today,
+    startUtc: startDate.toISOString(),
+    endUtc: endDate.toISOString(),
+  };
+}
+
+// NBA team full name -> abbreviation map
+const NBA_TEAM_NAME_TO_ABBREV: Record<string, string> = {
+  'atlanta hawks': 'ATL',
+  'boston celtics': 'BOS',
+  'brooklyn nets': 'BKN',
+  'charlotte hornets': 'CHA',
+  'chicago bulls': 'CHI',
+  'cleveland cavaliers': 'CLE',
+  'dallas mavericks': 'DAL',
+  'denver nuggets': 'DEN',
+  'detroit pistons': 'DET',
+  'golden state warriors': 'GSW',
+  'houston rockets': 'HOU',
+  'indiana pacers': 'IND',
+  'los angeles clippers': 'LAC',
+  'la clippers': 'LAC',
+  'los angeles lakers': 'LAL',
+  'la lakers': 'LAL',
+  'memphis grizzlies': 'MEM',
+  'miami heat': 'MIA',
+  'milwaukee bucks': 'MIL',
+  'minnesota timberwolves': 'MIN',
+  'new orleans pelicans': 'NOP',
+  'new york knicks': 'NYK',
+  'oklahoma city thunder': 'OKC',
+  'orlando magic': 'ORL',
+  'philadelphia 76ers': 'PHI',
+  'phoenix suns': 'PHX',
+  'portland trail blazers': 'POR',
+  'sacramento kings': 'SAC',
+  'san antonio spurs': 'SAS',
+  'toronto raptors': 'TOR',
+  'utah jazz': 'UTA',
+  'washington wizards': 'WAS',
+  // Common short forms
+  'hawks': 'ATL', 'celtics': 'BOS', 'nets': 'BKN', 'hornets': 'CHA',
+  'bulls': 'CHI', 'cavaliers': 'CLE', 'cavs': 'CLE', 'mavericks': 'DAL',
+  'mavs': 'DAL', 'nuggets': 'DEN', 'pistons': 'DET', 'warriors': 'GSW',
+  'rockets': 'HOU', 'pacers': 'IND', 'clippers': 'LAC', 'lakers': 'LAL',
+  'grizzlies': 'MEM', 'heat': 'MIA', 'bucks': 'MIL', 'timberwolves': 'MIN',
+  'wolves': 'MIN', 'pelicans': 'NOP', 'knicks': 'NYK', 'thunder': 'OKC',
+  'magic': 'ORL', '76ers': 'PHI', 'sixers': 'PHI', 'suns': 'PHX',
+  'trail blazers': 'POR', 'blazers': 'POR', 'kings': 'SAC', 'spurs': 'SAS',
+  'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS',
+};
+
+function resolveTeamAbbrev(teamName: string): string {
+  if (!teamName) return '';
+  const lower = teamName.trim().toLowerCase();
+  // Check if it's already an abbreviation (3 chars, all uppercase originally)
+  if (teamName.trim().length <= 4 && teamName.trim() === teamName.trim().toUpperCase()) {
+    return teamName.trim().toUpperCase();
+  }
+  return NBA_TEAM_NAME_TO_ABBREV[lower] || teamName.trim().toUpperCase();
 }
 
 interface DefenseProfile {
@@ -65,28 +139,33 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const today = getEasternDate();
-    console.log(`[MatchupScanner] Starting defense scan for ${today}`);
+    const { today, startUtc, endUtc } = getEasternDateRange();
+    console.log(`[MatchupScanner] Starting defense scan for ${today} (window: ${startUtc} to ${endUtc})`);
 
-    // Fetch today's NBA games
-    const startUtc = `${today}T00:00:00+00:00`;
-    const endUtc = `${today}T23:59:59+00:00`;
-
-    const { data: games } = await supabase
+    // Fetch today's games using noon-to-noon ET window
+    const { data: rawGames } = await supabase
       .from('game_bets')
       .select('home_team, away_team, event_id, sport')
       .in('sport', ['basketball_nba', 'basketball_wnba', 'basketball_ncaab'])
       .gte('commence_time', startUtc)
       .lte('commence_time', endUtc);
 
-    if (!games || games.length === 0) {
+    if (!rawGames || rawGames.length === 0) {
       console.log('[MatchupScanner] No games found for today');
       return new Response(JSON.stringify({ message: 'No games today', games: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.log(`[MatchupScanner] Found ${games.length} games to scan`);
+    // Deduplicate by event_id (multiple bookmaker rows per game)
+    const seenEvents = new Set<string>();
+    const games = rawGames.filter(g => {
+      if (seenEvents.has(g.event_id)) return false;
+      seenEvents.add(g.event_id);
+      return true;
+    });
+
+    console.log(`[MatchupScanner] Found ${games.length} unique games (from ${rawGames.length} rows)`);
 
     // Load all defense rankings
     const { data: defenseData } = await supabase
@@ -106,8 +185,12 @@ serve(async (req) => {
     const allRecommendations: MatchupRecommendation[] = [];
 
     for (const game of games) {
-      const homeAbbrev = (game.home_team || '').toUpperCase();
-      const awayAbbrev = (game.away_team || '').toUpperCase();
+      // Resolve full team names to abbreviations
+      const homeAbbrev = resolveTeamAbbrev(game.home_team || '');
+      const awayAbbrev = resolveTeamAbbrev(game.away_team || '');
+
+      console.log(`[MatchupScanner] Game: ${game.home_team} -> ${homeAbbrev} vs ${game.away_team} -> ${awayAbbrev}`);
+
       const homeDef = defenseMap.get(homeAbbrev);
       const awayDef = defenseMap.get(awayAbbrev);
 
