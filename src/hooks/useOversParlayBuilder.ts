@@ -21,11 +21,11 @@ interface OversPick {
   confidence_score: number | null;
 }
 
-type OversCategory = 'VOLUME_SCORER' | 'HIGH_ASSIST' | 'THREE_POINT_SHOOTER';
+type OversCategory = 'STAR_FLOOR_OVER' | 'HIGH_ASSIST' | 'THREE_POINT_SHOOTER';
 
 // Target composition: 1 Scorer + 1 Playmaker + 1 3PT Shooter
 const OVERS_TARGETS: Record<OversCategory, number> = {
-  'VOLUME_SCORER': 1,
+  'STAR_FLOOR_OVER': 1,
   'HIGH_ASSIST': 1,
   'THREE_POINT_SHOOTER': 1,
 };
@@ -126,7 +126,7 @@ export function useOversParlayBuilder() {
         .from('category_sweet_spots')
         .select('*')
         .eq('is_active', true)
-        .in('category', ['VOLUME_SCORER', 'HIGH_ASSIST', 'THREE_POINT_SHOOTER'])
+        .in('category', ['STAR_FLOOR_OVER', 'HIGH_ASSIST', 'THREE_POINT_SHOOTER'])
         .order('l10_hit_rate', { ascending: false });
 
       if (oversError) {
@@ -159,7 +159,7 @@ export function useOversParlayBuilder() {
       return;
     }
 
-    const scorers = getPicksByCategory('VOLUME_SCORER');
+    const scorers = getPicksByCategory('STAR_FLOOR_OVER');
     const playmakers = getPicksByCategory('HIGH_ASSIST');
     const shooters = getPicksByCategory('THREE_POINT_SHOOTER');
 
@@ -171,7 +171,7 @@ export function useOversParlayBuilder() {
     );
 
     // Count locked picks by category
-    const lockedScorer = lockedLegs.filter(l => l.category === 'VOLUME_SCORER').length;
+    const lockedScorer = lockedLegs.filter(l => l.category === 'STAR_FLOOR_OVER').length;
     const lockedPlaymaker = lockedLegs.filter(l => l.category === 'HIGH_ASSIST').length;
     const lockedShooter = lockedLegs.filter(l => l.category === 'THREE_POINT_SHOOTER').length;
 
@@ -233,7 +233,7 @@ export function useOversParlayBuilder() {
     });
 
     // Build summary
-    const scorerCount = selectedLegs.filter(l => l.category === 'VOLUME_SCORER').length;
+    const scorerCount = selectedLegs.filter(l => l.category === 'STAR_FLOOR_OVER').length;
     const playmakerCount = selectedLegs.filter(l => l.category === 'HIGH_ASSIST').length;
     const shooterCount = selectedLegs.filter(l => l.category === 'THREE_POINT_SHOOTER').length;
     const lockedCount = lockedLegs.length;
@@ -244,7 +244,7 @@ export function useOversParlayBuilder() {
 
   // Get counts per category for today
   const categoryCounts = {
-    VOLUME_SCORER: getPicksByCategory('VOLUME_SCORER').length,
+    STAR_FLOOR_OVER: getPicksByCategory('STAR_FLOOR_OVER').length,
     HIGH_ASSIST: getPicksByCategory('HIGH_ASSIST').length,
     THREE_POINT_SHOOTER: getPicksByCategory('THREE_POINT_SHOOTER').length,
   };

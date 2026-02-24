@@ -1877,7 +1877,7 @@ serve(async (req) => {
         // v3.0 OPTIMAL WINNER categories - trust L10 hit rate for activation
         // These categories have specific line ranges designed for favorable odds
         const OPTIMAL_WINNER_CATEGORIES = [
-          'ELITE_REB_OVER', 'ROLE_PLAYER_REB', 'BIG_ASSIST_OVER', 
+          'ROLE_PLAYER_REB', 'BIG_ASSIST_OVER', 
           'LOW_SCORER_UNDER', 'STAR_FLOOR_OVER'
         ];
 
