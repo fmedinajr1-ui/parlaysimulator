@@ -187,22 +187,40 @@ function detectRiskFlags(
   return flags;
 }
 
+async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url);
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[UnifiedFeed] Fetch attempt ${attempt}/${retries} failed for ${url}: ${msg}`);
+      if (attempt === retries) throw err;
+      await new Promise(r => setTimeout(r, 500 * attempt));
+    }
+  }
+  throw new Error('Unreachable');
+}
+
 async function fetchGameData(eventId: string): Promise<any> {
-  // Check cache
   const cached = cache.get(eventId);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.data;
   }
 
-  const response = await fetch(`${ESPN_NBA_SUMMARY}?event=${eventId}`);
-  if (!response.ok) {
-    console.error(`[UnifiedFeed] ESPN API error for ${eventId}: ${response.status}`);
+  try {
+    const response = await fetchWithRetry(`${ESPN_NBA_SUMMARY}?event=${eventId}`);
+    if (!response.ok) {
+      console.error(`[UnifiedFeed] ESPN API error for ${eventId}: ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    cache.set(eventId, { data, timestamp: Date.now() });
+    return data;
+  } catch (err) {
+    console.error(`[UnifiedFeed] ESPN fetch failed for ${eventId} after retries:`, err);
     return null;
   }
-
-  const data = await response.json();
-  cache.set(eventId, { data, timestamp: Date.now() });
-  return data;
 }
 
 async function fetchLiveGames(): Promise<string[]> {
@@ -211,16 +229,20 @@ async function fetchLiveGames(): Promise<string[]> {
     return cached.data;
   }
 
-  const response = await fetch(ESPN_NBA_SCOREBOARD);
-  if (!response.ok) {
-    console.error(`[UnifiedFeed] Scoreboard API error: ${response.status}`);
+  try {
+    const response = await fetchWithRetry(ESPN_NBA_SCOREBOARD);
+    if (!response.ok) {
+      console.error(`[UnifiedFeed] Scoreboard API error: ${response.status}`);
+      return [];
+    }
+    const data = await response.json();
+    const eventIds = (data.events || []).map((e: any) => e.id);
+    cache.set('scoreboard', { data: eventIds, timestamp: Date.now() });
+    return eventIds;
+  } catch (err) {
+    console.error(`[UnifiedFeed] Scoreboard fetch failed after retries:`, err);
     return [];
   }
-
-  const data = await response.json();
-  const eventIds = (data.events || []).map((e: any) => e.id);
-  cache.set('scoreboard', { data: eventIds, timestamp: Date.now() });
-  return eventIds;
 }
 
 function processGameData(data: any, eventId: string): UnifiedGame | null {
