@@ -87,9 +87,24 @@ serve(async (req) => {
       riskMap.set(key, { side: rp.side, confidence: rp.confidence_score, team: rp.team_name || '' });
     }
 
+    // Filter out blocked prop types (e.g. steals with 0% win rate)
+    const BLOCKED_PROP_TYPES = new Set(['player_steals']);
+    const preFilterCount = mispricedLines.length;
+    const filteredLines = mispricedLines.filter(ml => {
+      const propType = (ml.prop_type || '').toLowerCase();
+      if (BLOCKED_PROP_TYPES.has(propType)) {
+        console.log(`[BlockedPropType] Filtered ${propType} pick for ${ml.player_name}`);
+        return false;
+      }
+      return true;
+    });
+    if (preFilterCount !== filteredLines.length) {
+      console.log(`[BlockedPropType] Removed ${preFilterCount - filteredLines.length} blocked prop type picks`);
+    }
+
     // Step 3: Score and enrich picks
     const picks: MispricedPick[] = [];
-    for (const ml of mispricedLines) {
+    for (const ml of filteredLines) {
       const key = `${ml.player_name.toLowerCase()}|${normalizePropType(ml.prop_type)}`;
       const riskMatch = riskMap.get(key);
       const riskConfirmed = riskMatch ? riskMatch.side.toLowerCase() === ml.signal.toLowerCase() : false;
