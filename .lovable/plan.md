@@ -1,51 +1,74 @@
 
 
-## Plan: Relax Risk Engine v4.7 Filters for Better Daily Volume
+## Auto-Generated One-Time Password on Stripe Success Page
 
-### Problem
-The Risk Engine's 8-layer funnel with v4.7's stricter thresholds rejected ALL 4,063 props from 160 players today. Each filter is reasonable individually, but stacked together they create near-100% rejection rates, especially on lighter slates. This means no parlays reach the Telegram bot.
+### What This Solves
+Customers pay via Stripe but currently get redirected to the Telegram bot URL with no access password. They have to manually get a password from somewhere. This change auto-generates a unique, single-use password at checkout time and shows it on a success page so they can immediately unlock the bot.
 
-### Key Bottlenecks Identified
+### How It Works
+1. Customer pays via Stripe
+2. Stripe redirects them to a new `/bot-success` page (instead of directly to Telegram)
+3. That page shows their one-time password and a link to the Telegram bot
+4. The password only works once -- it can't be copied and shared with others
 
-1. **Rebounds Dead Zone (lines 7-9.5)** blocks ALL rebounds in the most common line range, including elite rebounders like Joel Embiid (median 9.0, line 7.5)
-2. **Sweet Spot v4.7 requirements** demand confidence >= 8.5 AND edge >= 1.5 AND L10 >= 70% -- too many simultaneous gates
-3. **Points Mid-Tier Trap (15-21.5)** requires edge >= 2.0, blocking most star player points props
-4. **Trap Line Block (45%+ deviation)** catches too many legitimate props (e.g., threes lines where median = 1.0 and line = 1.5 is only 0.5 apart)
+### Changes
 
-### Proposed Changes
+#### 1. Modify `create-bot-checkout` Edge Function
+- After creating the Stripe checkout session, generate a random 8-character alphanumeric password
+- Insert it into `bot_access_passwords` with `max_uses: 1` and `created_by: 'stripe_checkout'`
+- Store the password ID in the Stripe session metadata so it can be retrieved later
+- Change the `success_url` to point to `/bot-success?session_id={CHECKOUT_SESSION_ID}` instead of the Telegram bot URL
 
-**File: `supabase/functions/nba-player-prop-risk-engine/index.ts`**
+#### 2. Create New `retrieve-bot-password` Edge Function
+- Accepts a Stripe `session_id`
+- Verifies payment was completed via Stripe API
+- Looks up the password ID from the session metadata
+- Returns the password text (only once -- marks it as "retrieved" after first access)
+- This prevents the password from being accessed multiple times by refreshing the page
 
-#### 1. Relax Rebounds Dead Zone for Elite Rebounders
-- Currently: ALL rebounds in 7-9.5 range blocked regardless of archetype
-- Change: Allow ELITE_REBOUNDER and GLASS_CLEANER archetypes through the 7-9.5 range when their median is >= 7 (they belong in this range)
-- Impact: Joel Embiid rebounds 7.5 (median 9.0) would pass
+#### 3. Add `retrieved` Column to `bot_access_passwords` Table
+- New boolean column `retrieved` (default `false`)
+- The `retrieve-bot-password` function sets this to `true` after the first retrieval
+- Subsequent requests return a "already shown" message instead of the password
 
-#### 2. Lower Sweet Spot L10 Requirement
-- Currently: Requires 70% L10 hit rate for sweet spot qualification
-- Change: Lower to 60% L10 hit rate (still filters chronic underperformers)
-- Config change: `SWEET_SPOT_REQUIREMENTS.minL10HitRate: 0.60` (was 0.70)
+#### 4. Create `/bot-success` Page
+- New page component at `src/pages/BotSuccess.tsx`
+- On load, reads `session_id` from URL params
+- Calls `retrieve-bot-password` to get the one-time password
+- Displays:
+  - Success confirmation with checkmark
+  - The password prominently (large, clear text)
+  - Instructions: "Open @parlayiqbot on Telegram and send `/start [password]`"
+  - Direct link to the Telegram bot
+  - Warning: "This password will only be shown once and works for one person only"
+- If password was already retrieved, shows a message directing them to contact support
+- Add route to `App.tsx`
 
-#### 3. Relax Points Mid-Tier Edge Requirement
-- Currently: Lines 15-21.5 need edge >= 2.0
-- Change: Lower to edge >= 1.5 for points in mid-tier (still above the standard 1.0 minimum)
-- Line ~2352: Change `2.0` to `1.5`
+### Technical Details
 
-#### 4. Fix Trap Line Detection for Low-Value Props
-- Currently: A line of 1.5 vs median of 1.0 = 50% deviation = TRAP_LINE_BLOCK
-- Change: For props where both line and median are <= 2.5, use absolute difference instead of percentage (since small numbers create inflated percentages). Allow if absolute diff <= 1.0
-- This fixes threes/assists/blocks props being falsely flagged as traps
+**Password Generation**: Random 8-char alphanumeric string (e.g., `xK9mP2qR`) generated server-side in the edge function using `crypto.getRandomValues()`
 
-#### 5. Lower General Sweet Spot Confidence Minimum
-- Currently: `minConfidence: 8.5`
-- Change: `minConfidence: 8.0` (original v4.6 value)
-- This allows a few more borderline picks through while still filtering low-quality ones
+**Security Flow**:
+```text
+Stripe Checkout --> success_url with session_id
+       |
+       v
+/bot-success page --> calls retrieve-bot-password
+       |
+       v
+Edge function: verify payment + return password (once only)
+       |
+       v
+User copies password --> sends /start xK9mP2qR to bot
+       |
+       v
+Bot validates: max_uses=1, times_used=0 --> grants access
+```
 
-### Expected Impact
-- These changes should allow approximately 10-25 picks through the funnel on a typical slate
-- The downstream parlay generator will then have enough picks to build 3-5 quality parlays for Telegram
-- Quality remains high -- we're only relaxing the most aggressive gates, not removing layers
-
-### No Database Changes Required
-All changes are in the edge function code only.
+**Files changed**:
+- `supabase/functions/create-bot-checkout/index.ts` -- generate password, store in metadata, update success_url
+- `supabase/functions/retrieve-bot-password/index.ts` -- new function to securely return password once
+- `src/pages/BotSuccess.tsx` -- new success page
+- `src/App.tsx` -- add `/bot-success` route
+- Database migration: add `retrieved` column to `bot_access_passwords`
 
