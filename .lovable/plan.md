@@ -1,64 +1,50 @@
 
 
-## Auto-Double Stakes After Profitable Days
+## Boost Mispriced Edge Strategy & Reduce Low-Performing Exploration Profiles
 
-### Overview
-After each day's parlays are settled, the system will check if the day was profitable. If net profit > $0, it automatically doubles all tier stakes in `bot_stake_config` for the next day's generation. If the day was a loss, stakes reset to baseline defaults.
+### What Changes
+Increase `mispriced_edge` profile count across all three tiers (exploration, validation, execution) and reduce/remove lower-performing generic exploration strategies like `max_diversity`, `props_mixed`, and `cross_sport_4` that correspond to the "explore mixed" category in settled results.
 
-### How It Works
+### Profile Changes by Tier
 
-```text
-Settlement runs (bot-settle-and-learn)
-         |
-         v
-  Check yesterday's net P&L
-  from bot_daily_parlays
-         |
-    Profitable?
-    /        \
-  YES         NO
-   |           |
-Double all    Reset to
-stakes in     baseline
-bot_stake_    defaults
-config
-```
+#### Exploration Tier (50 profiles)
+**Remove 8 low-value profiles:**
+- 3x `max_diversity` (keep 2 -> remove 3)
+- 2x `props_mixed` (keep 1 -> remove 2)
+- 2x `cross_sport_4` (keep 2 -> remove 2)
+- 1x `nighttime_mixed` (keep 1 -> remove 1)
 
-### Changes
+**Add 8 new `mispriced_edge` profiles:**
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'hit_rate' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 52, sortBy: 'hit_rate' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'hit_rate' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' }` (duplicate for volume)
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 52, sortBy: 'composite' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' }` (duplicate for volume)
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_ncaab'], minHitRate: 52, sortBy: 'composite' }`
 
-#### 1. Add columns to `bot_stake_config` (Database Migration)
-- `streak_multiplier` (numeric, default 1.0) -- tracks the current multiplier
-- `baseline_execution_stake`, `baseline_validation_stake`, `baseline_exploration_stake` -- stores the "normal" stakes so we can reset after a losing day
-- `last_streak_date` -- prevents double-processing the same day
+#### Validation Tier (15 profiles)
+**Remove 1 profile:**
+- 1x `validated_aggressive` (weakest filter profile)
 
-#### 2. Modify `bot-settle-and-learn` Edge Function
-At the end of settlement (after all parlays are graded), add a new section:
+**Add 2 new `mispriced_edge` profiles:**
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' }`
 
-- Query `bot_daily_parlays` for yesterday's settled results
-- Sum `profit_loss` to get net P&L
-- If net P&L > 0:
-  - Set `streak_multiplier = 2.0`
-  - Update `execution_stake = baseline_execution_stake * 2`
-  - Update `validation_stake = baseline_validation_stake * 2`
-  - Update `exploration_stake = baseline_exploration_stake * 2`
-  - Update `bankroll_doubler_stake = baseline * 2`
-  - Log: "Profitable day detected, stakes doubled for tomorrow"
-- If net P&L <= 0:
-  - Reset `streak_multiplier = 1.0`
-  - Reset all stakes back to baseline values
-  - Log: "Loss day, stakes reset to baseline"
-- Update `last_streak_date` to prevent re-processing
+#### Execution Tier (10 profiles)
+**Add 2 new `mispriced_edge` profiles** (no removals needed since this is highest-stake):
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'composite' }`
+- `{ legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' }`
 
-#### 3. Populate baseline values (Migration)
-- Copy current stake values into the new baseline columns so the system has a reference point to reset to
+### Net Effect
+- **Mispriced edge profiles**: ~12 -> ~24 (doubled across all tiers)
+- **Generic mixed/diversity profiles**: ~15 -> ~7 (halved)
+- Total profile count stays roughly the same per tier
+- All new mispriced_edge profiles are 3-leg only (proven optimal structure)
 
-#### 4. Admin visibility in StakeConfigPanel
-- Show the current `streak_multiplier` as a badge (e.g., "2x ACTIVE" in green or "1x Normal")
-- Display whether yesterday was profitable and the auto-adjustment that was made
-- Allow manual override to reset the multiplier back to 1x
+### Technical Details
 
-### Safety Guards
-- Cap the multiplier at 2x (no compounding day after day -- it resets to baseline then doubles, not double-on-double)
-- Only triggers after settlement completes (not during)
-- `last_streak_date` prevents duplicate processing
-- Admin can always manually override via the Stake Override Panel
+**File modified:**
+- `supabase/functions/bot-generate-daily-parlays/index.ts` -- TIER_CONFIG profiles array updates in exploration (lines 226-315), validation (lines 328-373), and execution (lines 386-445)
+
