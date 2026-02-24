@@ -4225,6 +4225,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // === DEFENSE MATCHUP COMPOSITE ADJUSTMENTS (NBA player props) ===
   // Apply soft bonuses/penalties based on today's opponent defensive ranking.
   // This enriches ALL picks before parlay assembly — the master parlay will hard-filter on top of this.
+  let savedDefOpponentMap = new Map<string, string>();
   try {
     const { startUtc: defStartUtc, endUtc: defEndUtc } = getEasternDateRange();
     const { data: todayNbaGames } = await supabase
@@ -4257,6 +4258,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }
 
     let defAdjApplied = 0;
+    let envScoreApplied = 0;
     for (const pick of enrichedSweetSpots) {
       if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
       const teamKey = normalizeBdlTeamName((pick as any).team_name || '');
@@ -4269,9 +4271,44 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         (pick as any).defenseMatchupAdj = adj;
         defAdjApplied++;
       }
+
+      // Compute environment_score for this player prop
+      const oppTeamName = defOpponentMap.get(teamKey);
+      const teamAbbrev = nameToAbbrev.get(teamKey) || nameToAbbrev.get((pick as any).team_name || '') || '';
+      const oppAbbrev = oppTeamName ? (nameToAbbrev.get(oppTeamName) || '') : '';
+      const homePace = teamAbbrev ? paceMap.get(teamAbbrev) : undefined;
+      const awayPace = oppAbbrev ? paceMap.get(oppAbbrev) : undefined;
+      const avgPaceRating = (homePace && awayPace) ? (homePace.pace_rating + awayPace.pace_rating) / 2 : (homePace?.pace_rating ?? awayPace?.pace_rating ?? null);
+      const oppDefDetail = oppAbbrev ? defenseDetailMap.get(oppAbbrev) : (oppTeamName ? defenseDetailMap.get(oppTeamName) : undefined);
+      const oppDefRank = oppDefDetail?.overall_rank ?? rank;
+      // Find blowout probability from envMap
+      let blowoutProb: number | null = null;
+      for (const [envKey, envData] of envMap.entries()) {
+        const [h, a] = envKey.split('_');
+        if (h === teamAbbrev || a === teamAbbrev || h === oppAbbrev || a === oppAbbrev) {
+          blowoutProb = envData.blowout_probability ?? null;
+          break;
+        }
+      }
+
+      const envResult = calculateEnvironmentScore(
+        avgPaceRating, oppDefRank, blowoutProb,
+        pick.prop_type || 'points', side,
+        oppDefDetail?.opp_rebounds_rank, oppDefDetail?.opp_assists_rank
+      );
+      (pick as any).environmentScore = envResult.confidenceAdjustment;
+      (pick as any).environmentComponents = envResult.components;
+      envScoreApplied++;
     }
+
+    // Save defOpponentMap for mispriced enrichment later
+    savedDefOpponentMap = defOpponentMap;
+
     if (defAdjApplied > 0) {
       console.log(`[DefenseMatchup] Applied composite adjustments to ${defAdjApplied} NBA picks based on opponent defense rankings`);
+    }
+    if (envScoreApplied > 0) {
+      console.log(`[EnvironmentScore] Computed environment_score for ${envScoreApplied} sweet spot picks`);
     }
   } catch (defErr) {
     console.log(`[DefenseMatchup] ⚠️ Failed to apply defense adjustments: ${defErr.message}`);
@@ -4518,6 +4555,49 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }
     return !blocklist.has(pick.player_name.toLowerCase().trim());
   });
+
+  // === ENVIRONMENT SCORE ENRICHMENT FOR MISPRICED PICKS ===
+  try {
+    let mispricedEnvApplied = 0;
+    for (const pick of enrichedMispricedPicks) {
+      if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
+      const resolvedTeam = (pick as any).team_name || playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
+      const teamKey = normalizeBdlTeamName(resolvedTeam);
+      if (!teamKey) continue;
+      const side = (pick.recommended_side || 'over').toLowerCase();
+
+      const oppTeamName = savedDefOpponentMap.get(teamKey);
+      const teamAbbrev = nameToAbbrev.get(teamKey) || nameToAbbrev.get(resolvedTeam) || '';
+      const oppAbbrev2 = oppTeamName ? (nameToAbbrev.get(oppTeamName) || '') : '';
+      const homePace2 = teamAbbrev ? paceMap.get(teamAbbrev) : undefined;
+      const awayPace2 = oppAbbrev2 ? paceMap.get(oppAbbrev2) : undefined;
+      const avgPaceRating2 = (homePace2 && awayPace2) ? (homePace2.pace_rating + awayPace2.pace_rating) / 2 : (homePace2?.pace_rating ?? awayPace2?.pace_rating ?? null);
+      const oppDefDetail2 = oppAbbrev2 ? defenseDetailMap.get(oppAbbrev2) : (oppTeamName ? defenseDetailMap.get(oppTeamName) : undefined);
+      const oppDefRank2 = oppDefDetail2?.overall_rank ?? null;
+      let blowoutProb2: number | null = null;
+      for (const [envKey, envData] of envMap.entries()) {
+        const [h, a] = envKey.split('_');
+        if (h === teamAbbrev || a === teamAbbrev || h === oppAbbrev2 || a === oppAbbrev2) {
+          blowoutProb2 = envData.blowout_probability ?? null;
+          break;
+        }
+      }
+
+      const envResult2 = calculateEnvironmentScore(
+        avgPaceRating2, oppDefRank2, blowoutProb2,
+        pick.prop_type || 'points', side,
+        oppDefDetail2?.opp_rebounds_rank, oppDefDetail2?.opp_assists_rank
+      );
+      (pick as any).environmentScore = envResult2.confidenceAdjustment;
+      (pick as any).environmentComponents = envResult2.components;
+      mispricedEnvApplied++;
+    }
+    if (mispricedEnvApplied > 0) {
+      console.log(`[EnvironmentScore] Enriched ${mispricedEnvApplied} mispriced picks with environment_score`);
+    }
+  } catch (envErr) {
+    console.log(`[EnvironmentScore] ⚠️ Failed to enrich mispriced picks: ${(envErr as any).message}`);
+  }
 
   // === STEP 4: BOOST SWEET SPOT PICKS THAT HAVE MISPRICED MATCHES ===
   // Build a reverse lookup: mispriced lines keyed by normalized player|prop
@@ -5198,6 +5278,8 @@ async function generateTierParlays(
           sport: playerPick.sport || 'basketball_nba',
           defense_rank: (playerPick as any).defenseMatchupRank ?? null,
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
+          environment_score: (playerPick as any).environmentScore ?? null,
+          environment_components: (playerPick as any).environmentComponents ?? null,
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
@@ -6399,6 +6481,8 @@ async function generateMasterParlay(
       hit_rate: Math.round(cappedHitRate * 100),
       defense_rank: (pick as EnrichedMasterCandidate).defenseRank,
       defense_adj: (pick as EnrichedMasterCandidate).defenseAdj,
+      environment_score: (pick as any).environmentScore ?? null,
+      environment_components: (pick as any).environmentComponents ?? null,
       archetype: pick.archetype || pick.category,
       leg_index: idx,
     };
