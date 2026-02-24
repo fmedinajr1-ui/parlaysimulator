@@ -26,13 +26,13 @@ const TIER_CONFIG: Record<CustomerTier, {
     className: 'bg-chart-2/15 text-chart-2 border-chart-2/30',
   },
   caution: {
-    label: 'CAUTION',
+    label: 'MONITOR',
     message: 'Keep watching',
     icon: AlertTriangle,
     className: 'bg-chart-3/15 text-chart-3 border-chart-3/30',
   },
   action_needed: {
-    label: 'ACTION NEEDED',
+    label: 'HEDGE ALERT',
     message: 'At risk',
     icon: XCircle,
     className: 'bg-destructive/15 text-destructive border-destructive/30',

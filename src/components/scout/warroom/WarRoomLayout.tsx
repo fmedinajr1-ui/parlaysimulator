@@ -175,6 +175,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           foulRisk: 'low' as const,
           paceMult,
           l10Avg: s.l10Stats?.avg,
+          gameProgress: s.liveData?.gameProgress ?? 50,
         };
       });
   }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults]);

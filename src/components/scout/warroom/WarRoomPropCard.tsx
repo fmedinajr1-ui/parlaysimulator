@@ -32,6 +32,7 @@ export interface WarRoomPropData {
   foulRisk?: 'low' | 'medium' | 'high';
   paceMult?: number;
   l10Avg?: number;
+  gameProgress?: number;
 }
 
 const PROP_SHORT: Record<string, string> = {

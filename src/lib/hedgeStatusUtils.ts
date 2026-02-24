@@ -84,3 +84,88 @@ export function isOnTrack(spot: DeepSweetSpot): boolean {
   const status = calculateHedgeStatus(spot);
   return status === 'on_track' || status === 'profit_lock';
 }
+
+/**
+ * Unified action labels derived from engine hedge status.
+ * Single source of truth for all UI components.
+ */
+export type HedgeActionLabel = 'LOCK' | 'HOLD' | 'MONITOR' | 'HEDGE ALERT' | 'HEDGE NOW';
+
+const STATUS_TO_ACTION: Record<string, HedgeActionLabel> = {
+  profit_lock: 'LOCK',
+  on_track: 'HOLD',
+  monitor: 'MONITOR',
+  alert: 'HEDGE ALERT',
+  urgent: 'HEDGE NOW',
+};
+
+/**
+ * Standalone function that takes raw prop values and returns a unified action label.
+ * Used by HedgeModeTable, PropHedgeIndicator, and any other UI that needs
+ * consistent hedge action wording without requiring a full DeepSweetSpot object.
+ */
+export function getHedgeActionLabel(params: {
+  currentValue: number;
+  projectedFinal: number;
+  line: number;
+  side: string;
+  gameProgress?: number;
+  paceRating?: number;
+  confidence?: number;
+  riskFlags?: string[];
+  liveBookLine?: number;
+  lineMovement?: number;
+}): HedgeActionLabel {
+  const {
+    currentValue,
+    projectedFinal,
+    line,
+    side,
+    gameProgress = 50,
+    paceRating = 100,
+    confidence = 50,
+    riskFlags = [],
+    liveBookLine,
+    lineMovement,
+  } = params;
+
+  const isOver = side.toUpperCase() !== 'UNDER';
+
+  // Already-settled states
+  if (isOver && currentValue >= line) return 'LOCK';
+  if (!isOver && currentValue >= line) return 'HEDGE NOW';
+
+  // Middle / line-movement profit lock
+  if (lineMovement && Math.abs(lineMovement) >= 2 && liveBookLine) {
+    if (isOver && liveBookLine < line - 1.5) return 'LOCK';
+    if (!isOver && liveBookLine > line + 1.5) return 'LOCK';
+  }
+
+  // Risk flag overrides
+  const hasBlowout = riskFlags.includes('blowout');
+  const hasFoulTrouble = riskFlags.includes('foul_trouble');
+  if (hasBlowout && gameProgress > 60) return 'HEDGE NOW';
+  if (hasBlowout && hasFoulTrouble) return 'HEDGE NOW';
+
+  // Pace override for OVER bets
+  const buffer = isOver ? projectedFinal - line : line - projectedFinal;
+  const hasSignificantBuffer = buffer >= 2;
+  if (isOver && paceRating < 95 && !hasSignificantBuffer) {
+    if (confidence < 45) return 'HEDGE NOW';
+    if (confidence < 55) return 'HEDGE ALERT';
+  }
+
+  // Progress-aware thresholds
+  const thresholds = getBufferThresholds(gameProgress);
+  if (buffer >= thresholds.onTrack) return 'HOLD';
+  if (buffer >= thresholds.monitor) return 'MONITOR';
+  if (buffer >= thresholds.alert) return 'HEDGE ALERT';
+  return 'HEDGE NOW';
+}
+
+/**
+ * Convert an engine HedgeStatus to a unified action label.
+ */
+export function hedgeStatusToActionLabel(status: HedgeStatus): HedgeActionLabel {
+  return STATUS_TO_ACTION[status] ?? 'MONITOR';
+}
