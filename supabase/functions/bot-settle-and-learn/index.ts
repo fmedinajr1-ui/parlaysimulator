@@ -1419,6 +1419,58 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Strategy/blocked query error:', stratError);
     }
 
+    // === AUTO-DOUBLE STAKES AFTER PROFITABLE DAY ===
+    try {
+      const { data: stakeConfig } = await supabase
+        .from('bot_stake_config')
+        .select('*')
+        .limit(1)
+        .single();
+
+      if (stakeConfig) {
+        const alreadyProcessed = stakeConfig.last_streak_date === todayET;
+        if (!alreadyProcessed) {
+          if (isProfitableDay && totalProfitLoss > 0) {
+            // Double all stakes from baseline (capped at 2x, no compounding)
+            const { error: doubleErr } = await supabase
+              .from('bot_stake_config')
+              .update({
+                streak_multiplier: 2.0,
+                execution_stake: (stakeConfig.baseline_execution_stake ?? stakeConfig.execution_stake) * 2,
+                validation_stake: (stakeConfig.baseline_validation_stake ?? stakeConfig.validation_stake) * 2,
+                exploration_stake: (stakeConfig.baseline_exploration_stake ?? stakeConfig.exploration_stake) * 2,
+                bankroll_doubler_stake: (stakeConfig.baseline_bankroll_doubler_stake ?? stakeConfig.bankroll_doubler_stake) * 2,
+                last_streak_date: todayET,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', stakeConfig.id);
+            if (doubleErr) console.error('[Bot Settle] Stake doubling error:', doubleErr);
+            else console.log('[Bot Settle] Profitable day detected — stakes DOUBLED for tomorrow');
+          } else {
+            // Reset to baseline
+            const { error: resetErr } = await supabase
+              .from('bot_stake_config')
+              .update({
+                streak_multiplier: 1.0,
+                execution_stake: stakeConfig.baseline_execution_stake ?? stakeConfig.execution_stake,
+                validation_stake: stakeConfig.baseline_validation_stake ?? stakeConfig.validation_stake,
+                exploration_stake: stakeConfig.baseline_exploration_stake ?? stakeConfig.exploration_stake,
+                bankroll_doubler_stake: stakeConfig.baseline_bankroll_doubler_stake ?? stakeConfig.bankroll_doubler_stake,
+                last_streak_date: todayET,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', stakeConfig.id);
+            if (resetErr) console.error('[Bot Settle] Stake reset error:', resetErr);
+            else console.log('[Bot Settle] Loss day — stakes reset to baseline');
+          }
+        } else {
+          console.log('[Bot Settle] Stake adjustment already processed for today');
+        }
+      }
+    } catch (stakeErr) {
+      console.error('[Bot Settle] Auto-double stakes error:', stakeErr);
+    }
+
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',
