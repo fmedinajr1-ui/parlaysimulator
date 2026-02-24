@@ -269,33 +269,36 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       // Table tennis exploration — OVER TOTALS ONLY
       { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'], betTypes: ['total'], side: 'over' },
       { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'], betTypes: ['total'], side: 'over' },
-      // Nighttime mixed
-      { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
+      // Nighttime mixed (reduced from 2 to 1)
       { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
       { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
       { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
-      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
-      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
-      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
+      // Max diversity (reduced from 5 to 2)
       { legs: 4, strategy: 'max_diversity', sports: ['all'] },
       { legs: 4, strategy: 'max_diversity', sports: ['all'] },
       { legs: 3, strategy: 'props_only', sports: ['basketball_nba'] },
       { legs: 3, strategy: 'props_only', sports: ['icehockey_nhl'] },
+      // Props mixed (reduced from 3 to 1)
       { legs: 4, strategy: 'props_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
-      { legs: 4, strategy: 'props_mixed', sports: ['all'] },
-      { legs: 4, strategy: 'props_mixed', sports: ['all'] },
       // Whale signal exploration (3-leg only — 2-leg permanently removed)
       { legs: 3, strategy: 'whale_signal', sports: ['all'] },
-      // Mispriced edge parlays — high statistical edge picks from mispriced_lines
+      // Mispriced edge parlays — BOOSTED: doubled allocation based on 61.8% win rate + $17.9k profit
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'] },
       { legs: 4, strategy: 'mispriced_edge', sports: ['all'] },
+      // NEW mispriced_edge profiles (8 added — proven optimal 3-leg structure)
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 52, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 52, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_ncaab'], minHitRate: 52, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'] },
       // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
       // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
@@ -361,7 +364,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' },
-      { legs: 3, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
+      // NEW mispriced_edge validation profiles (replaced validated_aggressive)
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
       { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
       { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
@@ -425,6 +430,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // REPLACED: 5-leg mispriced (structurally weak) with 2 new 3-leg mispriced profiles
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
+      // NEW mispriced_edge execution profiles (highest conviction)
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
       // WINNING ARCHETYPE EXECUTION: 3PT + SCORER (tightest filters)
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
