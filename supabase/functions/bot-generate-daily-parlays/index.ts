@@ -431,6 +431,7 @@ const BLOCKED_CATEGORIES = new Set([
 // ============= BLOCKED PROP TYPES (catastrophic win rates) =============
 const BLOCKED_PROP_TYPES = new Set([
   'player_steals',   // 0% win rate (0-2 settled)
+  'player_blocks',   // 0% win rate (0-7 settled)
 ]);
 
 // ============= STALE ODDS DETECTION =============
