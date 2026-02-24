@@ -2927,6 +2927,34 @@ async function fetchResearchPitchingWeather(supabase: any, gameDate: string): Pr
   return weatherBias;
 }
 
+// === MATCHUP DEFENSE SCAN INTELLIGENCE ===
+async function fetchMatchupDefenseScan(supabase: any, gameDate: string): Promise<Map<string, { prop_type: string; priority: 'prime' | 'favorable' | 'avoid'; defense_rank: number }>> {
+  const matchupMap = new Map<string, { prop_type: string; priority: 'prime' | 'favorable' | 'avoid'; defense_rank: number }>();
+  try {
+    const { data } = await supabase
+      .from('bot_research_findings')
+      .select('key_insights')
+      .eq('category', 'matchup_defense_scan')
+      .eq('research_date', gameDate)
+      .maybeSingle();
+
+    if (data?.key_insights?.recommendations) {
+      for (const rec of data.key_insights.recommendations) {
+        const key = `${(rec.attacking_team || '').toUpperCase()}|${(rec.prop_type || '').toLowerCase()}`;
+        matchupMap.set(key, {
+          prop_type: rec.prop_type,
+          priority: rec.priority,
+          defense_rank: rec.defense_rank,
+        });
+      }
+      console.log(`[MatchupBoost] Loaded ${matchupMap.size} matchup recommendations for ${gameDate}`);
+    }
+  } catch (err) {
+    console.log(`[MatchupBoost] Failed to load matchup scan: ${err.message}`);
+  }
+  return matchupMap;
+}
+
 async function fetchResearchNcaabIntel(supabase: any, gameDate: string): Promise<{
   sharpBias: Map<string, 'over' | 'under' | 'spread_home' | 'spread_away'>;
   injuryImpact: Set<string>;
@@ -3137,7 +3165,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch, whaleAndSituational, tennisIntel] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch, whaleAndSituational, tennisIntel, matchupDefenseScan] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
     fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
@@ -3147,6 +3175,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     fetchResearchNcaabIntel(supabase, gameDate),
     fetchResearchWhaleAndSituational(supabase, gameDate),
     fetchResearchTennisIntel(supabase, gameDate),
+    fetchMatchupDefenseScan(supabase, gameDate),
   ]);
   const { blocklist, penalties } = injuryData;
 
@@ -4514,6 +4543,35 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       // === THREES L10 FLOOR FOR EXECUTION ===
       if ((propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') && pick.l10_hit_rate != null && pick.l10_hit_rate < 0.70) {
         (pick as any).threesL10Blocked = true;
+      }
+
+      // === MATCHUP DEFENSE SCAN BOOST ===
+      const pickTeamAbbrev = (teamAbbrev || '').toUpperCase();
+      const matchupPropKey = propLowerGate.includes('three') || propLowerGate === '3pm' ? 'threes'
+        : propLowerGate.includes('point') || propLowerGate === 'pts' ? 'points'
+        : propLowerGate.includes('reb') ? 'rebounds'
+        : propLowerGate.includes('ast') || propLowerGate.includes('assist') ? 'assists'
+        : propLowerGate;
+      const matchupKey = `${pickTeamAbbrev}|${matchupPropKey}`;
+      const matchupSignal = matchupDefenseScan.get(matchupKey);
+      if (matchupSignal) {
+        if (matchupSignal.priority === 'prime' && sideGate === 'over') {
+          pick.compositeScore = Math.min(95, pick.compositeScore + 12);
+          (pick as any).matchupBoost = 12;
+          (pick as any).matchupPriority = 'prime';
+          console.log(`[MatchupBoost] +12 PRIME boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${matchupSignal.defense_rank})`);
+        } else if (matchupSignal.priority === 'favorable' && sideGate === 'over') {
+          pick.compositeScore = Math.min(95, pick.compositeScore + 6);
+          (pick as any).matchupBoost = 6;
+          (pick as any).matchupPriority = 'favorable';
+          console.log(`[MatchupBoost] +6 FAVORABLE boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${matchupSignal.defense_rank})`);
+        } else if (matchupSignal.priority === 'avoid' && sideGate === 'over') {
+          pick.compositeScore = Math.max(0, pick.compositeScore - 20);
+          (pick as any).matchupBoost = -20;
+          (pick as any).matchupPriority = 'avoid';
+          (pick as any).defenseHardBlocked = true;
+          console.log(`[MatchupBoost] -20 AVOID block ${pick.player_name} ${matchupPropKey} OVER (opp rank ${matchupSignal.defense_rank})`);
+        }
       }
     }
 
