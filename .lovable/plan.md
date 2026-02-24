@@ -1,27 +1,15 @@
 
 
-## Block `player_blocks` Prop Type
+## Retest bot-force-fresh-parlays With player_blocks Blocked
 
-Add `player_blocks` back to the static blocked prop types list in both generation functions.
+Invoke the function and verify logs confirm `player_blocks` picks are now being filtered out.
 
-### Changes
+### Steps
 
-**1. `supabase/functions/bot-force-fresh-parlays/index.ts` (line 119)**
-
-Update the static blocklist:
-```typescript
-const STATIC_BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks']);
-```
-
-**2. `supabase/functions/bot-generate-daily-parlays/index.ts` (lines 432-434)**
-
-Update the static blocklist:
-```typescript
-const STATIC_BLOCKED_PROP_TYPES = new Set([
-  'player_steals',
-  'player_blocks',
-]);
-```
-
-**3. Redeploy both edge functions** so the block takes effect immediately.
+1. **Invoke `bot-force-fresh-parlays`** via edge function curl
+2. **Read logs** to confirm:
+   - `[BlockedPropType] Filtered player_blocks` entries appear for any blocks props
+   - `player_steals` also still filtered
+   - Parlays generated without any blocks or steals legs
+3. **Report** the results including filtered count and parlay composition
 
