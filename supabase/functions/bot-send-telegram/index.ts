@@ -35,6 +35,7 @@ type NotificationType =
   | 'double_confirmed_report'
   | 'mega_parlay_scanner'
   | 'daily_winners_recap'
+  | 'slate_rebuild_alert'
   | 'test';
 
 interface NotificationData {
@@ -81,11 +82,25 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatMegaParlayScanner(data, dateStr);
     case 'daily_winners_recap':
       return formatDailyWinnersRecap(data, dateStr);
+    case 'slate_rebuild_alert':
+      return formatSlateRebuildAlert(dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatSlateRebuildAlert(dateStr: string): string {
+  let msg = `🔄 *SLATE UPDATE — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `We're regenerating today's parlays with upgraded defensive intelligence.\n\n`;
+  msg += `*What's new:*\n`;
+  msg += `• Per-stat defense matchup analysis (points, 3PT, rebounds, assists)\n`;
+  msg += `• Weak opponent targeting — focusing on exploitable matchups\n`;
+  msg += `• Tighter exposure controls\n\n`;
+  msg += `New picks will be sent shortly. Stay tuned! 🎯`;
+  return msg;
 }
 
 function formatParlaysGenerated(data: Record<string, any>, dateStr: string): string {
@@ -1024,7 +1039,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap') {
+    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert') {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
