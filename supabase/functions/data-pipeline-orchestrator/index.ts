@@ -117,6 +117,8 @@ serve(async (req) => {
 
     // ============ PHASE 2: ANALYSIS ============
     if (mode === 'full' || mode === 'analyze') {
+      // Matchup defense scanner runs FIRST to build opportunity map
+      await runFunction('bot-matchup-defense-scanner', {});
       await runFunction('category-props-analyzer', { limit: 100 });
       await runFunction('auto-refresh-sharp-tracker', {});
       await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'] });
