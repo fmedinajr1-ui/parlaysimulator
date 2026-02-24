@@ -1,18 +1,20 @@
 import React, { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck } from "lucide-react";
+import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Zap } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { Progress } from "@/components/ui/progress";
 import { usePipelinePreflight } from "@/hooks/usePipelinePreflight";
+import { getEasternDate } from "@/lib/dateUtils";
 
 interface EngineStep {
   name: string;
-  function: string;
+  function?: string;
   body?: object;
+  custom?: () => Promise<void>;
 }
 
 const ENGINE_STEPS: EngineStep[] = [
@@ -25,7 +27,10 @@ const ENGINE_STEPS: EngineStep[] = [
 
 export function SlateRefreshControls() {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRebuilding, setIsRebuilding] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(0);
+  const [currentStepName, setCurrentStepName] = useState('');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const queryClient = useQueryClient();
   const { isHealthy, blockers, lastCheckTime, isLoading: preflightLoading } = usePipelinePreflight();
@@ -51,15 +56,17 @@ export function SlateRefreshControls() {
     
     setIsRefreshing(true);
     setCurrentStep(0);
+    setTotalSteps(ENGINE_STEPS.length);
     toast.info('Starting full engine refresh...');
     
     try {
       for (let i = 0; i < ENGINE_STEPS.length; i++) {
         const step = ENGINE_STEPS[i];
         setCurrentStep(i + 1);
+        setCurrentStepName(step.name);
         console.log(`[SlateRefresh] Running: ${step.name}`);
         
-        const { error } = await supabase.functions.invoke(step.function, {
+        const { error } = await supabase.functions.invoke(step.function!, {
           body: step.body || {}
         });
         
@@ -77,10 +84,79 @@ export function SlateRefreshControls() {
     } finally {
       setIsRefreshing(false);
       setCurrentStep(0);
+      setCurrentStepName('');
     }
   };
 
-  const progress = isRefreshing ? (currentStep / ENGINE_STEPS.length) * 100 : 0;
+  const handleCleanAndRebuild = async () => {
+    setIsRebuilding(true);
+    setCurrentStep(0);
+    const today = getEasternDate();
+
+    const CLEAN_REBUILD_STEPS: EngineStep[] = [
+      {
+        name: 'Alerting customers',
+        function: 'bot-send-telegram',
+        body: { type: 'slate_rebuild_alert', data: {} },
+      },
+      {
+        name: 'Voiding old parlays',
+        custom: async () => {
+          const { error } = await supabase
+            .from('bot_daily_parlays')
+            .update({ outcome: 'void', lesson_learned: 'Voided for defense-aware rebuild' })
+            .eq('parlay_date', today)
+            .or('outcome.eq.pending,outcome.is.null');
+          if (error) console.error('[CleanRebuild] Void error:', error);
+        },
+      },
+      { name: 'Cleaning stale props', function: 'cleanup-stale-props', body: { immediate: true } },
+      { name: 'Scanning defensive matchups', function: 'bot-matchup-defense-scanner' },
+      { name: 'Analyzing categories', function: 'category-props-analyzer', body: { forceRefresh: true } },
+      { name: 'Detecting mispriced lines', function: 'detect-mispriced-lines' },
+      { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
+      { name: 'Generating defense-aware parlays', function: 'bot-generate-daily-parlays' },
+      { name: 'Building sharp parlays', function: 'sharp-parlay-builder' },
+      { name: 'Building heat parlays', function: 'heat-prop-engine' },
+    ];
+
+    setTotalSteps(CLEAN_REBUILD_STEPS.length);
+    toast.info('🔄 Starting clean slate rebuild...');
+
+    try {
+      for (let i = 0; i < CLEAN_REBUILD_STEPS.length; i++) {
+        const step = CLEAN_REBUILD_STEPS[i];
+        setCurrentStep(i + 1);
+        setCurrentStepName(step.name);
+        console.log(`[CleanRebuild] Step ${i + 1}/${CLEAN_REBUILD_STEPS.length}: ${step.name}`);
+
+        if (step.custom) {
+          await step.custom();
+        } else {
+          const { error } = await supabase.functions.invoke(step.function!, {
+            body: step.body || {},
+          });
+          if (error) {
+            console.error(`[CleanRebuild] ${step.name} error:`, error);
+          }
+        }
+      }
+
+      invalidateAllQueries();
+      setLastRefresh(new Date());
+      toast.success('Clean rebuild complete! New defense-aware slate is live 🎯');
+    } catch (err) {
+      console.error('[CleanRebuild] Error:', err);
+      toast.error('Clean rebuild failed');
+    } finally {
+      setIsRebuilding(false);
+      setCurrentStep(0);
+      setCurrentStepName('');
+    }
+  };
+
+  const isBusy = isRefreshing || isRebuilding;
+  const progress = isBusy && totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
   return (
     <div className="space-y-2">
@@ -115,12 +191,15 @@ export function SlateRefreshControls() {
         <CardContent className="py-3 px-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              {isRefreshing ? (
+              {isBusy ? (
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
                     <span className="text-sm font-medium">
-                      {ENGINE_STEPS[currentStep - 1]?.name || 'Starting...'}
+                      {currentStepName || 'Starting...'}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      ({currentStep}/{totalSteps})
                     </span>
                   </div>
                   <Progress value={progress} className="h-1.5" />
@@ -150,16 +229,28 @@ export function SlateRefreshControls() {
               )}
             </div>
             
-            <Button 
-              variant="neon"
-              size="sm"
-              onClick={handleRefreshAllEngines}
-              disabled={isRefreshing}
-              className="gap-2 shrink-0"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              {isRefreshing ? 'Running...' : !isHealthy ? 'Refresh Anyway' : 'Refresh All Engines'}
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button 
+                variant="destructive"
+                size="sm"
+                onClick={handleCleanAndRebuild}
+                disabled={isBusy}
+                className="gap-2"
+              >
+                <Zap className={`h-4 w-4 ${isRebuilding ? 'animate-pulse' : ''}`} />
+                {isRebuilding ? 'Rebuilding...' : 'Clean & Rebuild'}
+              </Button>
+              <Button 
+                variant="neon"
+                size="sm"
+                onClick={handleRefreshAllEngines}
+                disabled={isBusy}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                {isRefreshing ? 'Running...' : 'Refresh All Engines'}
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
