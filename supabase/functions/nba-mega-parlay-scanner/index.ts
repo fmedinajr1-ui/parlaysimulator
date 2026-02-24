@@ -77,7 +77,7 @@ serve(async (req) => {
     console.log(`[MegaParlay] Scanning NBA props for ${today}, +100 odds only`);
 
     // Step 1: Get NBA events first, then fetch player props per event
-    const markets = 'player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_points_rebounds_assists';
+    const markets = 'player_points,player_rebounds,player_assists,player_threes,player_points_rebounds_assists';
     
     // First get the list of events
     const eventsListUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${apiKey}`;
