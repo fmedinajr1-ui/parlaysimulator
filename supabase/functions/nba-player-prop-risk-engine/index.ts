@@ -40,9 +40,9 @@ const SWEET_SPOT_CONFIG = {
 
 // v4.7: Stricter sweet spot requirements
 const SWEET_SPOT_REQUIREMENTS = {
-  minConfidence: 8.5,         // Was 8.0
+  minConfidence: 8.0,         // v4.7.1: Relaxed from 8.5 back to 8.0 for better volume
   minEdge: 1.5,               // Was 1.0
-  minL10HitRate: 0.70,        // NEW: Require 70%+ L10 hit rate
+  minL10HitRate: 0.60,        // v4.7.1: Relaxed from 0.70 to 0.60 (still filters underperformers)
   blockUnknownReliability: true,  // NEW: Block unknown tier with history
 };
 
@@ -57,7 +57,7 @@ const MIN_CONFIDENCE_BY_TYPE: Record<string, number> = {
 // Points line tiers based on historical performance
 const POINTS_LINE_TIERS = {
   LOW: { min: 0, max: 14.5, hitRate: 57.9, edgeRequired: 1.0 },
-  MID: { min: 15, max: 21.5, hitRate: 42.9, edgeRequired: 2.0 },  // TRAP ZONE
+  MID: { min: 15, max: 21.5, hitRate: 42.9, edgeRequired: 1.5 },  // v4.7.1: Relaxed from 2.0 to 1.5
   HIGH: { min: 22, max: 50, hitRate: 66.7, edgeRequired: 1.0 }
 };
 
@@ -119,7 +119,17 @@ function validateReboundsProp(
   }
   
   // RULE 2: Block "Dead Zone" Lines (7-9.5) - Only 30.8% hit rate historically
+  // v4.7.1: Allow elite rebounders/glass cleaners through if their median supports this range
   if (line >= 7 && line <= 9.5) {
+    const isEliteRebounderType = archetype === 'ELITE_REBOUNDER' || archetype === 'GLASS_CLEANER';
+    if (isEliteRebounderType && trueMedian >= 7) {
+      // Elite rebounders with median >= 7 belong in this range - allow through with slight penalty
+      return { 
+        approved: true, 
+        reason: `REB_DEAD_ZONE_EXCEPTION: ${archetype} with median ${trueMedian.toFixed(1)} allowed in 7-9.5 range`, 
+        confidenceAdjust: -0.5 
+      };
+    }
     return { 
       approved: false, 
       reason: `REB_DEAD_ZONE: Line ${line} in volatile 7-9.5 range (30.8% hit rate)`, 
@@ -436,7 +446,21 @@ function isLineSane(
   }
   
   // TIER 3: 45-60% deviation = BLOCK with trap flag (book likely knows something)
+  // v4.7.1: For low-value props (line & median both <= 2.5), use absolute difference instead
+  // because small numbers create inflated percentages (e.g., 1.5 vs 1.0 = 50% but only 0.5 apart)
   if (deviation > 0.45) {
+    const bothLowValue = line <= 2.5 && trueMedian <= 2.5;
+    const absDiff = Math.abs(line - trueMedian);
+    if (bothLowValue && absDiff <= 1.0) {
+      return { 
+        sane: true, 
+        reason: `LOW_VALUE_PASS: ${playerName} ${propType} line=${line} median=${trueMedian.toFixed(1)} (abs diff ${absDiff.toFixed(1)} <= 1.0, low-value exception)`,
+        deviationPct,
+        isTrapLine: false,
+        trapType: null,
+        confidencePenalty: -0.5
+      };
+    }
     return { 
       sane: false, 
       reason: `TRAP_LINE_BLOCK: ${playerName} ${propType} line=${line} is ${deviationPct.toFixed(0)}% off median=${trueMedian.toFixed(1)} (45-60% = trap zone)`,
