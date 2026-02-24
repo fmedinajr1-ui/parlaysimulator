@@ -1,0 +1,1 @@
+ALTER TABLE public.bot_research_findings ALTER COLUMN relevance_score TYPE numeric(5,2);
