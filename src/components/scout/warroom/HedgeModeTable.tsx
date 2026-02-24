@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import type { WarRoomPropData } from './WarRoomPropCard';
 import { calculateLineMispricing, type LineValueClass } from '@/lib/liveMispricedLineScanner';
+import { getHedgeActionLabel, type HedgeActionLabel } from '@/lib/hedgeStatusUtils';
 
 const BOOK_SHORT: Record<string, string> = {
   hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
@@ -37,15 +38,16 @@ function progressColor(pct: number): string {
   return 'bg-[hsl(var(--warroom-danger))]';
 }
 
-function actionPill(suggestion: string) {
-  const styles: Record<string, string> = {
+function actionPill(suggestion: HedgeActionLabel) {
+  const styles: Record<HedgeActionLabel, string> = {
     LOCK: 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] border-[hsl(var(--warroom-green)/0.3)]',
-    HOLD: 'bg-[hsl(var(--warroom-card-border)/0.3)] text-foreground border-[hsl(var(--warroom-card-border))]',
+    HOLD: 'bg-[hsl(var(--warroom-green)/0.1)] text-[hsl(var(--warroom-green)/0.8)] border-[hsl(var(--warroom-green)/0.2)]',
     MONITOR: 'bg-[hsl(var(--warroom-gold)/0.15)] text-[hsl(var(--warroom-gold))] border-[hsl(var(--warroom-gold)/0.3)]',
-    HEDGE: 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))] border-[hsl(var(--warroom-danger)/0.3)]',
+    'HEDGE ALERT': 'bg-[hsl(35,90%,55%)/0.15] text-[hsl(35,90%,55%)] border-[hsl(35,90%,55%)/0.3]',
+    'HEDGE NOW': 'bg-[hsl(var(--warroom-danger)/0.15)] text-[hsl(var(--warroom-danger))] border-[hsl(var(--warroom-danger)/0.3)]',
   };
   return (
-    <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-bold border', styles[suggestion] ?? styles.HOLD)}>
+    <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-bold border', styles[suggestion])}>
       {suggestion}
     </span>
   );
@@ -156,14 +158,22 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
               const edge = isOver
                 ? p.projectedFinal - p.line
                 : p.line - p.projectedFinal;
-              const hedgeSuggestion = edge > 2 ? 'LOCK' : edge > 0 ? 'HOLD' : edge > -2 ? 'MONITOR' : 'HEDGE';
+              const hedgeSuggestion = getHedgeActionLabel({
+                currentValue: p.currentValue,
+                projectedFinal: p.projectedFinal,
+                line: p.line,
+                side: betSide,
+                gameProgress: p.gameProgress,
+                paceRating: p.paceRating,
+                confidence: p.confidence,
+              });
               const pct = heats[i];
 
               // Hedge is always the OPPOSITE of the bet side
               const hedgeSide = isOver ? 'UNDER' : 'OVER';
               let hedgeLine = p.line;
               let hedgeBook = '';
-              if (hedgeSuggestion === 'HEDGE' && p.allBookLines && p.allBookLines.length > 0) {
+              if (hedgeSuggestion === 'HEDGE NOW' && p.allBookLines && p.allBookLines.length > 0) {
                 if (hedgeSide === 'UNDER') {
                   const best = p.allBookLines.reduce((a: any, b: any) => a.line > b.line ? a : b);
                   hedgeLine = best.line;
@@ -223,7 +233,7 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                     {actionPill(hedgeSuggestion)}
                   </td>
                   <td className="p-2 text-left">
-                    {hedgeSuggestion === 'HEDGE' ? (
+                    {(hedgeSuggestion === 'HEDGE NOW' || hedgeSuggestion === 'HEDGE ALERT') ? (
                       <span className="text-[10px] font-bold text-[hsl(var(--warroom-danger))]">
                         {hedgeSide} {hedgeLine}
                         {hedgeBook && (
