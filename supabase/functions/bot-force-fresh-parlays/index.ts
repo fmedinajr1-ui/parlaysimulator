@@ -123,10 +123,26 @@ serve(async (req) => {
     // Filter out blocked prop types (static + dynamic from bot_prop_type_performance)
     const STATIC_BLOCKED_PROP_TYPES = new Set<string>(); // Cleared: steals/blocks now allowed per relaxed filters
     const preFilterCount = mispricedLines.length;
+    // Minimum line thresholds to reject phantom/alternate lines
+    const MIN_LINES: Record<string, number> = {
+      player_points: 5.5, player_rebounds: 2.5, player_assists: 1.5,
+      player_threes: 0.5, player_blocks: 0.5, player_steals: 0.5, player_turnovers: 0.5,
+      player_points_rebounds_assists: 10.5, player_pra: 10.5,
+      player_points_rebounds: 5.5, player_pr: 5.5,
+      player_points_assists: 5.5, player_pa: 5.5,
+      player_rebounds_assists: 3.5, player_ra: 3.5,
+    };
     const filteredLines = mispricedLines.filter(ml => {
       const propType = (ml.prop_type || '').toLowerCase();
       if (STATIC_BLOCKED_PROP_TYPES.has(propType) || dynamicBlockedProps.has(propType)) {
         console.log(`[BlockedPropType] Filtered ${propType} pick for ${ml.player_name}`);
+        return false;
+      }
+      // Reject lines below minimum thresholds
+      const line = Number(ml.current_line || 0);
+      const minLine = MIN_LINES[propType] ?? 0.5;
+      if (line < minLine) {
+        console.log(`[MinLineFilter] Filtered ${ml.player_name} ${propType} line ${line} (min: ${minLine})`);
         return false;
       }
       return true;
