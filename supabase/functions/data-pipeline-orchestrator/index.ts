@@ -148,6 +148,29 @@ serve(async (req) => {
 
     // ============ PHASE 3: PARLAY GENERATION ============
     if (mode === 'full' || mode === 'generate') {
+      // Stale-data watchdog: if last collect was >6h ago, auto-trigger a fresh scrape
+      const { data: lastCollect } = await supabase
+        .from('cron_job_history')
+        .select('completed_at')
+        .eq('job_name', 'data-pipeline-orchestrator')
+        .in('status', ['completed', 'partial'])
+        .order('completed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const hoursAgo = lastCollect
+        ? (Date.now() - new Date(lastCollect.completed_at).getTime()) / 3600000
+        : 999;
+
+      if (hoursAgo > 6) {
+        console.warn(`[Pipeline] ⚠️ Data is ${hoursAgo.toFixed(1)}h stale -- triggering collect first`);
+        await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
+        await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
+        await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA'] });
+      } else {
+        console.log(`[Pipeline] ✅ Data freshness OK (${hoursAgo.toFixed(1)}h ago)`);
+      }
+
       // Collect table tennis player stats before generation
       await runFunction('tt-stats-collector', {});
       
