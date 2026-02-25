@@ -463,16 +463,11 @@ const BLOCKED_CATEGORIES = new Set([
   'UNDER_TOTAL',     // 18.2% hit rate
   'ML_FAVORITE',     // 20% hit rate
   'BIG_ASSIST_OVER', // 10.3% hit rate
-  'ELITE_REB_OVER',  // 41.7% hit rate
-  'VOLUME_SCORER',   // 46.9% hit rate
 ]);
 
 // ============= BLOCKED PROP TYPES (static fallback + dynamic from bot_prop_type_performance) =============
 const STATIC_BLOCKED_PROP_TYPES = new Set([
-  'player_steals',
-  'player_blocks',
-  'steals',
-  'blocks',
+  // steals and blocks unblocked to match Feb 23 winning config
 ]);
 
 // Dynamic prop type performance data (loaded at runtime)
@@ -3153,7 +3148,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // === AUTO-BLOCK LOW HIT-RATE CATEGORIES ===
   const blockedByHitRate = new Set<string>();
   categoryWeights.forEach(cw => {
-    if (cw.current_hit_rate < 40 && (cw.total_picks || 0) >= 10) {
+    if (cw.current_hit_rate < 30 && (cw.total_picks || 0) >= 10) {
       blockedByHitRate.add(cw.category);
     }
   });
@@ -4120,9 +4115,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const sportKey = cw.sport || 'team_all';
     const comboKey = `${cw.category}_${cw.side}`;
     const fullKey = `${sportKey}|${comboKey}`;
-    if (cw.current_hit_rate < 40 && (cw.total_picks || 0) >= 10) {
+    if (cw.current_hit_rate < 30 && (cw.total_picks || 0) >= 10) {
       blockedTeamCombos.add(fullKey);
-    } else if (cw.current_hit_rate >= 40 && sportKey !== 'team_all') {
+    } else if (cw.current_hit_rate >= 30 && sportKey !== 'team_all') {
       // This sport has a healthy hit rate — exempt it from any team_all block
       sportExemptions.add(fullKey);
     }
