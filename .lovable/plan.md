@@ -1,75 +1,97 @@
 
 
-## Restore Feb 23 Volume: Add Force-Fresh to Pipeline + Relax Filters
+## Fix: Pipeline Cron Silently Failing Due to 5-Second pg_net Timeout
 
-### The Problem
+### Root Cause Found
 
-Today's generation produced only **8 parlays** vs **97 on Feb 23** (our best day at +$12,353).
+The `pg_net` extension (which pg_cron uses to make HTTP calls) has a **hardcoded 5-second timeout**. The orchestrator's `full` mode takes 2-3 minutes to complete. Every cron-triggered `full` pipeline call has been **silently timing out** since Feb 18.
 
-### Root Cause Analysis
-
-| Factor | Feb 23 (97 parlays) | Feb 25 (8 parlays) |
-|--------|--------------------|--------------------|
-| `bot-force-fresh-parlays` | Ran (produced 24 parlays) | NOT in pipeline |
-| `bot-generate-daily-parlays` | 73 parlays | 6 parlays |
-| Prop pool | 500 sweet spots + props | 500 sweet spots + 2,636 props (bigger pool!) |
-| Blocked categories | Fewer blocks | 7+ categories auto-blocked |
-
-The pool is actually LARGER today than Feb 23, but two things are killing volume:
-
-1. **`bot-force-fresh-parlays` is missing from the pipeline** -- It contributed 24 `force_mispriced_conviction` parlays on Feb 23 but is only callable via Telegram `/forcegen`. The orchestrator never runs it.
-
-2. **Over-aggressive filters** -- Categories like `HIGH_ASSIST` (33% hit rate), `LOW_LINE_REBOUNDER` (39%), `VOLUME_SCORER` (46.9%) are all blocked. Combined with static blocks on `steals` and `blocks` prop types, most candidates get filtered out.
-
-### Plan
-
-#### Step 1: Add `bot-force-fresh-parlays` to the orchestrator pipeline
-
-**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
-
-In Phase 3 (Generation), add `bot-force-fresh-parlays` BEFORE `bot-review-and-optimize`:
-
-```text
-// Run force-fresh mispriced conviction parlays (source of 24/97 on Feb 23)
-await runFunction('bot-force-fresh-parlays', {});
+Evidence from `net._http_response`:
+```
+error_msg: "Timeout of 5000 ms reached. Total time: 5006.945 ms"
 ```
 
-This restores the `force_mispriced_conviction` strategy that produced 24 parlays on our best day.
+This means:
+- The 10:00 UTC `full` cron -- **dead** (5s timeout)
+- The 13:00 UTC `full` cron -- **dead** (5s timeout)  
+- The `verify` and `regen` crons work because they complete in under 5 seconds (they call fewer functions)
 
-#### Step 2: Relax blocked categories to match Feb 23 config
+Feb 23's 97 parlays came from **separate standalone crons** (scraper, analyzers, generators running independently), NOT from the orchestrator.
 
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+### The Fix
 
-Remove `VOLUME_SCORER` (46.9%) and `ELITE_REB_OVER` (41.7%) from `BLOCKED_CATEGORIES`. These hit rates are viable for exploration-tier parlays where we need volume.
+**Split the monolithic `full` pipeline into phased cron jobs** that each complete within 5 seconds (they just fire off the edge function and return immediately -- the edge function runs asynchronously).
 
-Keep truly catastrophic blocks: `OVER_TOTAL` (10.2%), `UNDER_TOTAL` (18.2%), `ML_FAVORITE` (20%), `BIG_ASSIST_OVER` (10.3%).
+#### Step 1: Update the orchestrator to support a `fire-and-forget` dispatch pattern
 
-#### Step 3: Relax auto-block threshold from 40% to 30%
+Add a new mode called `'dispatch'` to the orchestrator that triggers each phase as a separate async call (not awaiting the sub-functions sequentially). This way pg_cron's HTTP call returns immediately.
 
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+Alternatively (simpler and more reliable): **Replace the single `full` cron with 3 separate phased cron entries**:
 
-In `buildPropPool`, change the auto-block threshold from `current_hit_rate < 40` to `current_hit_rate < 30`. This unblocks `HIGH_ASSIST` (33%) and `LOW_LINE_REBOUNDER` (39%) which are viable for exploration volume.
+| Cron Job | Schedule (UTC) | Mode | Duration |
+|----------|---------------|------|----------|
+| `pipeline-collect` | `0 13 * * *` (8 AM ET) | `collect` | ~60s |
+| `pipeline-analyze` | `5 13 * * *` (8:05 AM ET) | `analyze` | ~45s |
+| `pipeline-generate` | `15 13 * * *` (8:15 AM ET) | `generate` | ~30s |
+| `pipeline-calibrate` | `20 13 * * *` (8:20 AM ET) | `calibrate` | ~20s |
 
-#### Step 4: Remove static blocks on steals and blocks prop types
+Each mode runs a subset of functions and completes within the edge function's 400s wall time. The pg_cron call still times out at 5s from pg_net's perspective, BUT the edge function continues running in the background (edge functions don't abort when the caller disconnects).
 
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+#### Step 2: Add afternoon NBA-focused pipeline run
 
-Remove `steals` and `blocks` from `STATIC_BLOCKED_PROP_TYPES`. These are valid peripheral props that add diversity. The Feb 23 winning slate included them.
+NBA props don't appear until ~4 PM ET (21:00 UTC). Add a second collection+analysis+generation cycle:
 
-#### Step 5: Add regen trigger to pipeline Phase 3B
+| Cron Job | Schedule (UTC) | Mode |
+|----------|---------------|------|
+| `pipeline-collect-afternoon` | `0 21 * * *` (4 PM ET) | `collect` |
+| `pipeline-analyze-afternoon` | `10 21 * * *` (4:10 PM ET) | `analyze` |
+| `pipeline-generate-afternoon` | `20 21 * * *` (4:20 PM ET) | `generate` |
 
-**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
+This ensures NBA props are collected after they're published and parlays are generated with fresh data.
 
-In the mid-day regen check (Phase 3B), also call `bot-force-fresh-parlays` when parlay count is below 10. This ensures we always have force-fresh mispriced parlays as backup volume.
+#### Step 3: Remove duplicate/conflicting cron entries
 
-### Expected Impact
+Remove `daily-data-pipeline-8am-est` (duplicate of `data-pipeline-orchestrator-full`) and the old `data-pipeline-orchestrator-full` entry that always times out.
 
-- Restores `force_mispriced_conviction` strategy (+24 parlays/day)
-- Unblocks 4 categories and 2 prop types from over-filtering
-- Target: 60-100 parlays/day (matching Feb 23 volume)
-- Maintains quality gates for execution tier (strict filters preserved)
+#### Step 4: Add a self-healing watchdog
+
+Update the orchestrator to log a warning if it detects that the last `collect` phase ran more than 6 hours ago when `generate` mode is triggered. This prevents generating parlays from stale data.
+
+### Implementation Details
+
+**Database migration**: Drop old cron jobs, create new phased cron entries.
+
+**Edge function change** (`data-pipeline-orchestrator/index.ts`): Add a stale-data guard at the top of the `generate` mode:
+
+```typescript
+if (mode === 'generate') {
+  const { data: lastCollect } = await supabase
+    .from('cron_job_history')
+    .select('completed_at')
+    .eq('job_name', 'whale-odds-scraper')
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+    
+  const hoursAgo = lastCollect 
+    ? (Date.now() - new Date(lastCollect.completed_at).getTime()) / 3600000 
+    : 999;
+    
+  if (hoursAgo > 6) {
+    console.warn(`[Pipeline] Data is ${hoursAgo.toFixed(1)}h stale -- triggering collect first`);
+    await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl'] });
+  }
+}
+```
 
 ### Files Modified
-- `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add force-fresh-parlays to generation pipeline
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- Relax blocked categories, lower auto-block threshold, unblock steals/blocks props
+- `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add stale-data guard to generate mode
+- Database migration -- Replace 2 failing cron jobs with 6-7 phased cron entries (morning + afternoon cycles)
+
+### Expected Outcome
+- Pipeline runs reliably every day without silent failures
+- Morning cycle (8 AM ET): Collects all available sports, analyzes, generates
+- Afternoon cycle (4 PM ET): Catches NBA props that weren't available in the morning
+- Stale-data guard prevents generating parlays from old data even if cron timing drifts
 
