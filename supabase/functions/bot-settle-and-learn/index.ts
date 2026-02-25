@@ -30,6 +30,31 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Player name aliases for settlement matching (handles known mismatches between prop sources and game logs)
+const NAME_ALIASES: Record<string, string[]> = {
+  'carlton carrington': ['bub carrington'],
+  'bub carrington': ['carlton carrington'],
+  'nic claxton': ['nicolas claxton'],
+  'nicolas claxton': ['nic claxton'],
+  'cam thomas': ['cameron thomas'],
+  'cameron thomas': ['cam thomas'],
+  'herb jones': ['herbert jones'],
+  'herbert jones': ['herb jones'],
+  'kenyon martin': ['kenyon martin jr', 'kj martin'],
+  'kenyon martin jr': ['kenyon martin', 'kj martin'],
+  'kj martin': ['kenyon martin', 'kenyon martin jr'],
+  'pj washington': ['p.j. washington'],
+  'p.j. washington': ['pj washington'],
+  'og anunoby': ['o.g. anunoby', 'ogugua anunoby'],
+  'o.g. anunoby': ['og anunoby'],
+  'shai gilgeous-alexander': ['shai gilgeous alexander'],
+  'shai gilgeous alexander': ['shai gilgeous-alexander'],
+  'ayo dosunmu': ['ayodeji dosunmu'],
+  'ayodeji dosunmu': ['ayo dosunmu'],
+  'moe wagner': ['moritz wagner'],
+  'moritz wagner': ['moe wagner'],
+};
+
 // Learning constants
 const WEIGHT_BOOST_BASE = 0.02;
 const WEIGHT_BOOST_STREAK = 0.005;
@@ -604,19 +629,38 @@ Deno.serve(async (req) => {
 
     if (parlaysError) throw parlaysError;
 
-    if (!pendingParlays || pendingParlays.length === 0) {
-      console.log('[Bot Settle] No pending parlays to settle');
+    // 1b. Also re-process previously voided parlays that may have had premature voids
+    // These are parlays marked 'void' but with legs still 'pending' that can now be resolved
+    const { data: voidedParlays } = await supabase
+      .from('bot_daily_parlays')
+      .select('*')
+      .in('parlay_date', targetDates)
+      .eq('outcome', 'void');
+
+    const recoveredVoided = (voidedParlays || []).filter((p: any) => {
+      const legs = Array.isArray(p.legs) ? p.legs : [];
+      return legs.some((l: any) => l.outcome === 'pending' || !l.outcome);
+    });
+
+    if (recoveredVoided.length > 0) {
+      console.log(`[Bot Settle] Found ${recoveredVoided.length} previously voided parlays with pending legs — re-processing`);
+    }
+
+    const allParlaysToProcess = [...(pendingParlays || []), ...recoveredVoided];
+
+    if (allParlaysToProcess.length === 0) {
+      console.log('[Bot Settle] No pending or recoverable parlays to settle');
       return new Response(
         JSON.stringify({ success: true, parlaysSettled: 0, message: 'No pending parlays' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`[Bot Settle] Found ${pendingParlays.length} pending parlays`);
+    console.log(`[Bot Settle] Found ${(pendingParlays || []).length} pending + ${recoveredVoided.length} recoverable voided = ${allParlaysToProcess.length} total parlays`);
 
     // 2. Batch fetch all leg IDs from category_sweet_spots at once
     const allPlayerLegIds: string[] = [];
-    for (const parlay of pendingParlays) {
+    for (const parlay of allParlaysToProcess) {
       const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
       for (const leg of legs) {
         if (!isTeamLeg(leg) && leg.id) {
@@ -678,7 +722,7 @@ Deno.serve(async (req) => {
       legs: Array<{ player_name: string; prop_type: string; line: number; side: string; outcome: string; actual_value: number | null }>;
     }> = [];
 
-    for (const parlay of pendingParlays) {
+    for (const parlay of allParlaysToProcess) {
       const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
       let legsHit = 0;
       let legsMissed = 0;
@@ -745,44 +789,62 @@ Deno.serve(async (req) => {
             }
 
             if (!fallbackFound) {
-              // FALLBACK 2: Direct game log lookup
-              const { data: gameLogs } = await supabase
-                .from('nba_player_game_logs')
-                .select('player_name, points, rebounds, assists, threes_made, steals, blocks')
-                .eq('game_date', parlay.parlay_date)
-                .ilike('player_name', `%${normalizedName}%`)
-                .limit(1);
+              // FALLBACK 2: Direct game log lookup (try primary name + aliases)
+              const namesToTry = [normalizedName];
+              const aliases = NAME_ALIASES[normalizedName];
+              if (aliases) namesToTry.push(...aliases);
 
-              if (gameLogs && gameLogs.length > 0) {
-                const gl = gameLogs[0];
-                let statVal: number | null = null;
-                if (normalizedProp === 'points') statVal = Number(gl.points) || 0;
-                else if (normalizedProp === 'rebounds') statVal = Number(gl.rebounds) || 0;
-                else if (normalizedProp === 'assists') statVal = Number(gl.assists) || 0;
-                else if (normalizedProp === 'threes') statVal = Number(gl.threes_made) || 0;
-                else if (normalizedProp === 'steals') statVal = Number(gl.steals) || 0;
-                else if (normalizedProp === 'blocks') statVal = Number(gl.blocks) || 0;
-                else if (normalizedProp === 'pra') statVal = (Number(gl.points) || 0) + (Number(gl.rebounds) || 0) + (Number(gl.assists) || 0);
-                else if (normalizedProp === 'pr') statVal = (Number(gl.points) || 0) + (Number(gl.rebounds) || 0);
-                else if (normalizedProp === 'pa') statVal = (Number(gl.points) || 0) + (Number(gl.assists) || 0);
-                else if (normalizedProp === 'ra') statVal = (Number(gl.rebounds) || 0) + (Number(gl.assists) || 0);
+              let gameLogFound = false;
+              for (const tryName of namesToTry) {
+                if (gameLogFound) break;
+                const { data: gameLogs } = await supabase
+                  .from('nba_player_game_logs')
+                  .select('player_name, points, rebounds, assists, threes_made, steals, blocks')
+                  .eq('game_date', parlay.parlay_date)
+                  .ilike('player_name', `%${tryName}%`)
+                  .limit(1);
 
-                if (statVal !== null) {
-                  actualValue = statVal;
-                  const side = (leg.side || 'OVER').toUpperCase();
-                  if (statVal === leg.line) {
-                    legOutcome = 'push';
-                  } else if (side === 'OVER') {
-                    legOutcome = statVal > leg.line ? 'hit' : 'miss';
-                  } else {
-                    legOutcome = statVal < leg.line ? 'hit' : 'miss';
+                if (gameLogs && gameLogs.length > 0) {
+                  gameLogFound = true;
+                  const gl = gameLogs[0];
+                  let statVal: number | null = null;
+                  if (normalizedProp === 'points') statVal = Number(gl.points) || 0;
+                  else if (normalizedProp === 'rebounds') statVal = Number(gl.rebounds) || 0;
+                  else if (normalizedProp === 'assists') statVal = Number(gl.assists) || 0;
+                  else if (normalizedProp === 'threes') statVal = Number(gl.threes_made) || 0;
+                  else if (normalizedProp === 'steals') statVal = Number(gl.steals) || 0;
+                  else if (normalizedProp === 'blocks') statVal = Number(gl.blocks) || 0;
+                  else if (normalizedProp === 'pra') statVal = (Number(gl.points) || 0) + (Number(gl.rebounds) || 0) + (Number(gl.assists) || 0);
+                  else if (normalizedProp === 'pr') statVal = (Number(gl.points) || 0) + (Number(gl.rebounds) || 0);
+                  else if (normalizedProp === 'pa') statVal = (Number(gl.points) || 0) + (Number(gl.assists) || 0);
+                  else if (normalizedProp === 'ra') statVal = (Number(gl.rebounds) || 0) + (Number(gl.assists) || 0);
+
+                  if (statVal !== null) {
+                    actualValue = statVal;
+                    const side = (leg.side || 'OVER').toUpperCase();
+                    if (statVal === leg.line) {
+                      legOutcome = 'push';
+                    } else if (side === 'OVER') {
+                      legOutcome = statVal > leg.line ? 'hit' : 'miss';
+                    } else {
+                      legOutcome = statVal < leg.line ? 'hit' : 'miss';
+                    }
+                    console.log(`[Bot Settle] FALLBACK 2 game log (name="${tryName}"): ${leg.player_name} ${normalizedProp} ${leg.line} ${side} -> actual=${statVal} -> ${legOutcome}`);
                   }
-                  console.log(`[Bot Settle] FALLBACK 2 game log: ${leg.player_name} ${normalizedProp} ${leg.line} ${side} -> actual=${statVal} -> ${legOutcome}`);
                 }
-              } else {
-                // No game log found — player didn't play, void the leg
-                legOutcome = 'void';
-                console.log(`[Bot Settle] FALLBACK 2 no game log: ${leg.player_name} on ${parlay.parlay_date} -> void`);
+              }
+
+              if (!gameLogFound) {
+                // No game log found — check if parlay is old enough to void
+                const parlayAge = Date.now() - new Date(parlay.parlay_date + 'T23:59:00-05:00').getTime();
+                const hoursOld = parlayAge / (1000 * 60 * 60);
+                if (hoursOld > 48) {
+                  legOutcome = 'void'; // Game was 2+ days ago, truly DNP
+                  console.log(`[Bot Settle] FALLBACK 2 no game log (48h+ old): ${leg.player_name} on ${parlay.parlay_date} -> void`);
+                } else {
+                  legOutcome = 'pending'; // Keep pending for retry — game logs may not be ingested yet
+                  console.log(`[Bot Settle] FALLBACK 2 no game log (${hoursOld.toFixed(0)}h old, <48h): ${leg.player_name} on ${parlay.parlay_date} -> keeping pending for retry`);
+                }
               }
             }
           }
@@ -881,7 +943,7 @@ Deno.serve(async (req) => {
       const playerPerfUpdates = new Map<string, { hits: number; misses: number; edges: number[] }>();
       const propTypePerfUpdates = new Map<string, { hits: number; misses: number }>();
 
-      for (const parlay of pendingParlays) {
+      for (const parlay of allParlaysToProcess) {
         const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
         for (const leg of legs) {
           const legOutcome = (leg as any).outcome || leg.outcome;
@@ -915,7 +977,7 @@ Deno.serve(async (req) => {
         const [playerNameLower, propType, side] = key.split('|');
         // Find original casing from legs
         let originalName = playerNameLower;
-        for (const parlay of pendingParlays) {
+        for (const parlay of allParlaysToProcess) {
           const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
           for (const leg of legs) {
             if ((leg.player_name || '').toLowerCase() === playerNameLower) {

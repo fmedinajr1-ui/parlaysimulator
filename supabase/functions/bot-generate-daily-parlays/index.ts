@@ -7055,15 +7055,31 @@ Deno.serve(async (req) => {
     const archetypeResult = await detectWinningArchetypes(supabase);
     const dynamicArchetypes = { categories: archetypeResult.categories, ranked: archetypeResult.ranked };
 
-    // 2. Get active strategy
-    const { data: strategy } = await supabase
+    // 2. Get active strategy — prefer elite_categories_v1 (proven +$10,308 profit, 55.6% WR)
+    let strategyName = 'tiered_v2';
+    const { data: eliteStrategy } = await supabase
       .from('bot_strategies')
       .select('*')
       .eq('is_active', true)
+      .ilike('strategy_name', '%elite_categories_v1%')
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    const strategyName = strategy?.strategy_name || 'tiered_v2';
+    if (eliteStrategy) {
+      strategyName = eliteStrategy.strategy_name;
+      console.log(`[Bot v2] ✅ Using proven strategy: ${strategyName}`);
+    } else {
+      // Fallback: get any active strategy
+      const { data: fallbackStrategy } = await supabase
+        .from('bot_strategies')
+        .select('*')
+        .eq('is_active', true)
+        .order('win_rate', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      strategyName = fallbackStrategy?.strategy_name || 'tiered_v2';
+      console.log(`[Bot v2] ⚠️ elite_categories_v1 not found, using fallback: ${strategyName}`);
+    }
 
     // 3. Get current bankroll
     const { data: activationStatus } = await supabase
