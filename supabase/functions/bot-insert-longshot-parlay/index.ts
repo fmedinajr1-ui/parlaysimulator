@@ -20,12 +20,12 @@ Deno.serve(async (req) => {
     const todayET = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
     const legs = [
-      { player_name: 'Carlton Carrington', prop_type: 'threes', side: 'over', line: 1.5, edge_note: '80.3% edge | Avg 2.6' },
-      { player_name: 'Joel Embiid', prop_type: 'assists', side: 'over', line: 3.5, edge_note: 'High floor | Avg 5.8' },
-      { player_name: 'Jarrett Allen', prop_type: 'rebounds', side: 'over', line: 8.5, edge_note: '25% edge | Avg 11.3' },
-      { player_name: 'Andrew Nembhard', prop_type: 'assists', side: 'over', line: 6.5, edge_note: 'Volume play | Avg 8.4' },
-      { player_name: 'Kyshawn George', prop_type: 'assists', side: 'over', line: 2.5, edge_note: 'Low line | Avg 3.2' },
-      { player_name: 'Kam Jones', prop_type: 'points', side: 'under', line: 8.5, edge_note: 'Contrarian | Avg 5.2' },
+      { player_name: 'Jaylen Wells', prop_type: 'assists', side: 'over', line: 0.5, edge_note: '280% edge | L10 Avg 1.9 | Ultra-safe 0.5 line' },
+      { player_name: 'Cade Cunningham', prop_type: 'blocks', side: 'over', line: 0.5, edge_note: '163% edge | L10 Avg 1.4 | Star floor' },
+      { player_name: 'Ausar Thompson', prop_type: 'steals', side: 'over', line: 1.5, edge_note: '63% edge | L10 Avg 2.6 | Strong volume' },
+      { player_name: 'Daniss Jenkins', prop_type: 'rebounds', side: 'over', line: 1.5, edge_note: '62% edge | L10 Avg 2.5 | Consistent floor' },
+      { player_name: 'Cason Wallace', prop_type: 'steals', side: 'over', line: 1.5, edge_note: '59% edge | L10 Avg 2.3 | High volume defender' },
+      { player_name: 'Duncan Robinson', prop_type: 'threes', side: 'over', line: 2.5, edge_note: '35% edge | L10 Avg 3.6 | Sharpshooter odds multiplier' },
     ];
 
     // Insert into bot_daily_parlays
@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
         combined_probability: 0.02,
         outcome: 'pending',
         legs,
-        selection_rationale: 'Modeled after Feb 9 +4741 winner. Low-line volume plays + star floors + contrarian under.',
+        selection_rationale: 'V2 — All high-floor OVERS only. No contrarian unders (lesson from Feb 24 miss). 60%+ mispriced edge on 5/6 legs. Every L10 avg comfortably clears line.',
       })
       .select()
       .single();
