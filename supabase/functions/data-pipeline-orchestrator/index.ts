@@ -159,6 +159,10 @@ serve(async (req) => {
       
       // Targeted refresh before generation to ensure fresh lines
       await runFunction('whale-odds-scraper', { mode: 'targeted' });
+      
+      // Run force-fresh mispriced conviction parlays (source of 24/97 on Feb 23)
+      await runFunction('bot-force-fresh-parlays', {});
+      
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });
     }
 
@@ -175,6 +179,7 @@ serve(async (req) => {
         console.log(`[Pipeline] 🔄 MID-DAY RE-GEN: Only ${parlayCount || 0} pending parlays for ${today}. Triggering additional generation.`);
         await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_ncaab', 'basketball_wnba'] });
         await runFunction('team-bets-scoring-engine', {});
+        await runFunction('bot-force-fresh-parlays', {});
         await runFunction('bot-review-and-optimize', { source: 'regen' });
         results['mid_day_regen'] = { success: true, message: `Re-triggered: had ${parlayCount} parlays`, duration: 0 };
       } else {
