@@ -78,16 +78,15 @@ serve(async (req) => {
       console.warn(`[ForceFresh] Performance data load failed, using static fallback:`, perfErr);
     }
 
-    // Step 1: Void existing pending parlays for today
-    const { data: existingParlays, error: voidErr } = await supabase
+    // Step 1: Count existing pending parlays (no longer voiding them -- force-fresh ADDS on top)
+    const { count: existingCount } = await supabase
       .from('bot_daily_parlays')
-      .update({ outcome: 'void', lesson_learned: 'Voided by force-fresh regeneration' })
+      .select('*', { count: 'exact', head: true })
       .eq('parlay_date', today)
-      .is('outcome', null)
-      .select('id');
+      .is('outcome', null);
 
-    const voidedCount = existingParlays?.length || 0;
-    console.log(`[ForceFresh] Voided ${voidedCount} existing pending parlays`);
+    const voidedCount = 0; // No longer voiding
+    console.log(`[ForceFresh] ${existingCount || 0} existing pending parlays (preserved). Adding force-fresh on top.`);
 
     // Step 2: Fetch mispriced lines (ELITE + HIGH, edge >= 50%)
     const [mispricedResult, riskResult] = await Promise.all([
@@ -122,7 +121,7 @@ serve(async (req) => {
     }
 
     // Filter out blocked prop types (static + dynamic from bot_prop_type_performance)
-    const STATIC_BLOCKED_PROP_TYPES = new Set(['player_steals', 'player_blocks', 'steals', 'blocks']);
+    const STATIC_BLOCKED_PROP_TYPES = new Set<string>(); // Cleared: steals/blocks now allowed per relaxed filters
     const preFilterCount = mispricedLines.length;
     const filteredLines = mispricedLines.filter(ml => {
       const propType = (ml.prop_type || '').toLowerCase();
@@ -184,7 +183,7 @@ serve(async (req) => {
     const parlays: MispricedPick[][] = [];
     const usedInParlay = new Set<string>(); // track player+prop usage across parlays
     const globalPlayerPropCount = new Map<string, number>(); // global exposure cap
-    const MAX_PARLAYS = 8;
+    const MAX_PARLAYS = 25;
     const LEGS_PER_PARLAY = 3;
     const MAX_PLAYER_PROP_EXPOSURE = 5;
 

@@ -183,7 +183,10 @@ serve(async (req) => {
       // Targeted refresh before generation to ensure fresh lines
       await runFunction('whale-odds-scraper', { mode: 'targeted' });
       
-      // Run force-fresh mispriced conviction parlays (source of 24/97 on Feb 23)
+      // Main parlay generator -- produces bulk of parlays (exploration + validation + execution tiers)
+      await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
+      
+      // Run force-fresh mispriced conviction parlays -- ADDS on top of main generator output
       await runFunction('bot-force-fresh-parlays', {});
       
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });
