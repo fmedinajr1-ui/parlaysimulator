@@ -1,37 +1,75 @@
 
 
-## Tonight's Longshot Parlay V2 — All High-Floor Overs
+## Restore Feb 23 Volume: Add Force-Fresh to Pipeline + Relax Filters
 
-### Lessons Applied from Yesterday's Miss
-- **No contrarian unders** (Kam Jones U8.5 PTS missed badly — he scored 13)
-- **All OVER legs only** with 60%+ mispriced edge where possible
-- **Floor protection**: every player's L10 avg comfortably clears the line
-- **No repeat players** to avoid correlated risk
+### The Problem
 
-### Tonight's 6-Leg Selection (Feb 25)
+Today's generation produced only **8 parlays** vs **97 on Feb 23** (our best day at +$12,353).
 
-| # | Player | Prop | Line | Side | Edge | L10 Avg | Why |
-|---|--------|------|------|------|------|---------|-----|
-| 1 | Jaylen Wells | assists | 0.5 | OVER | 280% | 1.9 | Ultra-safe 0.5 line, nearly 4x the line |
-| 2 | Cade Cunningham | blocks | 0.5 | OVER | 163% | 1.4 | Star floor, nearly 3x the line |
-| 3 | Ausar Thompson | steals | 1.5 | OVER | 63% | 2.6 | Strong volume, 73% above line |
-| 4 | Daniss Jenkins | rebounds | 1.5 | OVER | 62% | 2.5 | Consistent floor, 67% above line |
-| 5 | Cason Wallace | steals | 1.5 | OVER | 59% | 2.3 | High volume defender, 53% above line |
-| 6 | Duncan Robinson | threes | 2.5 | OVER | 35% | 3.6 | Sharpshooter, 44% above line — adds odds multiplier |
+### Root Cause Analysis
 
-### Changes
+| Factor | Feb 23 (97 parlays) | Feb 25 (8 parlays) |
+|--------|--------------------|--------------------|
+| `bot-force-fresh-parlays` | Ran (produced 24 parlays) | NOT in pipeline |
+| `bot-generate-daily-parlays` | 73 parlays | 6 parlays |
+| Prop pool | 500 sweet spots + props | 500 sweet spots + 2,636 props (bigger pool!) |
+| Blocked categories | Fewer blocks | 7+ categories auto-blocked |
 
-#### Update `supabase/functions/bot-insert-longshot-parlay/index.ts`
+The pool is actually LARGER today than Feb 23, but two things are killing volume:
 
-Replace the hardcoded legs array with tonight's v2 picks:
-- All 6 legs are OVERS — zero contrarian unders
-- Update `selection_rationale` to reference the v2 approach and yesterday's lesson
-- Keep the same insert + Telegram broadcast flow
+1. **`bot-force-fresh-parlays` is missing from the pipeline** -- It contributed 24 `force_mispriced_conviction` parlays on Feb 23 but is only callable via Telegram `/forcegen`. The orchestrator never runs it.
 
-#### Update Telegram message context
+2. **Over-aggressive filters** -- Categories like `HIGH_ASSIST` (33% hit rate), `LOW_LINE_REBOUNDER` (39%), `VOLUME_SCORER` (46.9%) are all blocked. Combined with static blocks on `steals` and `blocks` prop types, most candidates get filtered out.
 
-The announcement data sent to `bot-send-telegram` will include the new legs and reference "v2 — all high-floor overs" in the broadcast.
+### Plan
+
+#### Step 1: Add `bot-force-fresh-parlays` to the orchestrator pipeline
+
+**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
+
+In Phase 3 (Generation), add `bot-force-fresh-parlays` BEFORE `bot-review-and-optimize`:
+
+```text
+// Run force-fresh mispriced conviction parlays (source of 24/97 on Feb 23)
+await runFunction('bot-force-fresh-parlays', {});
+```
+
+This restores the `force_mispriced_conviction` strategy that produced 24 parlays on our best day.
+
+#### Step 2: Relax blocked categories to match Feb 23 config
+
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+Remove `VOLUME_SCORER` (46.9%) and `ELITE_REB_OVER` (41.7%) from `BLOCKED_CATEGORIES`. These hit rates are viable for exploration-tier parlays where we need volume.
+
+Keep truly catastrophic blocks: `OVER_TOTAL` (10.2%), `UNDER_TOTAL` (18.2%), `ML_FAVORITE` (20%), `BIG_ASSIST_OVER` (10.3%).
+
+#### Step 3: Relax auto-block threshold from 40% to 30%
+
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+In `buildPropPool`, change the auto-block threshold from `current_hit_rate < 40` to `current_hit_rate < 30`. This unblocks `HIGH_ASSIST` (33%) and `LOW_LINE_REBOUNDER` (39%) which are viable for exploration volume.
+
+#### Step 4: Remove static blocks on steals and blocks prop types
+
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+Remove `steals` and `blocks` from `STATIC_BLOCKED_PROP_TYPES`. These are valid peripheral props that add diversity. The Feb 23 winning slate included them.
+
+#### Step 5: Add regen trigger to pipeline Phase 3B
+
+**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
+
+In the mid-day regen check (Phase 3B), also call `bot-force-fresh-parlays` when parlay count is below 10. This ensures we always have force-fresh mispriced parlays as backup volume.
+
+### Expected Impact
+
+- Restores `force_mispriced_conviction` strategy (+24 parlays/day)
+- Unblocks 4 categories and 2 prop types from over-filtering
+- Target: 60-100 parlays/day (matching Feb 23 volume)
+- Maintains quality gates for execution tier (strict filters preserved)
 
 ### Files Modified
-- `supabase/functions/bot-insert-longshot-parlay/index.ts` — new v2 legs, updated rationale
+- `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add force-fresh-parlays to generation pipeline
+- `supabase/functions/bot-generate-daily-parlays/index.ts` -- Relax blocked categories, lower auto-block threshold, unblock steals/blocks props
 
