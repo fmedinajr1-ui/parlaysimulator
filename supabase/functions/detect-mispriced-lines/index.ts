@@ -292,6 +292,21 @@ serve(async (req) => {
         const line = Number(prop.current_line);
         if (line === 0) continue;
 
+        // Minimum line filter: skip phantom/alternate lines not available on standard books
+        const MIN_LINES: Record<string, number> = {
+          player_points: 5.5, player_rebounds: 2.5, player_assists: 1.5,
+          player_threes: 0.5, player_blocks: 0.5, player_steals: 0.5, player_turnovers: 0.5,
+          player_points_rebounds_assists: 10.5, player_pra: 10.5,
+          player_points_rebounds: 5.5, player_pr: 5.5,
+          player_points_assists: 5.5, player_pa: 5.5,
+          player_rebounds_assists: 3.5, player_ra: 3.5,
+        };
+        const minLine = MIN_LINES[prop.prop_type?.toLowerCase()] ?? 0.5;
+        if (line < minLine) {
+          console.log(`[MinLineFilter] Skipping ${prop.player_name} ${prop.prop_type} line ${line} (min: ${minLine})`);
+          continue;
+        }
+
         // Determine raw signal direction first (needed for defense multiplier)
         const rawEdgePct = ((avgL10 - line) / line) * 100;
         const rawSignal = rawEdgePct > 0 ? 'OVER' : 'UNDER';
