@@ -1,42 +1,70 @@
 
+## Fix: Line Validation to Prevent Phantom/Unavailable Lines in Parlays
 
-## Fix Pipeline Bugs and Rerun Full Slate Generation
+### Problem
+Lines like "Jaylen Wells 0.5 Assists" are appearing in parlays even though they're not actually available on sportsbooks. This happens because:
 
-### 3 Critical Bugs Found
+1. **No minimum line filter**: The `detect-mispriced-lines` function accepts ANY line from `unified_props`, including 0.5 lines that are either alternate lines not commonly available or stale/phantom data
+2. **No line verification step**: Neither the mispriced line detector nor the parlay generators validate that a line is currently live on a real sportsbook before using it
+3. **Hardcoded stale data**: `bot-insert-longshot-parlay` has a literal hardcoded "Jaylen Wells 0.5 assists" leg -- this function inserts a static parlay regardless of whether those lines exist today
+4. **Edge inflation on 0.5 lines**: A 0.5 line with an L10 average of 1.9 produces a 280% "edge" -- but this is meaningless if the line isn't actually offered
 
-#### Bug 1: `bot-generate-daily-parlays` is NEVER called in Phase 3 (Generation)
-The main parlay generator (responsible for 73/97 parlays on Feb 23) is only called once in Phase 2 with `source: 'mlb_pipeline'`. Phase 3 skips it entirely -- it only runs `bot-force-fresh-parlays` and `bot-review-and-optimize`.
+### Root Cause
+The Odds API occasionally returns 0.5 lines from some books (alternate markets), but these lines are often:
+- Not available on the user's preferred books (Hard Rock, FanDuel, DraftKings)
+- Alternate lines with extreme juice (-500 or worse) making them impractical
+- Stale entries that are no longer offered
 
-**Fix:** Add `bot-generate-daily-parlays` to Phase 3 BEFORE `bot-force-fresh-parlays`.
+### Fix (3 Changes)
 
-#### Bug 2: `bot-force-fresh-parlays` VOIDS all existing parlays before generating
-Lines 82-87 run `UPDATE bot_daily_parlays SET outcome = 'void'` on ALL pending parlays for today. So even if `bot-generate-daily-parlays` ran first, force-fresh would destroy its output and only produce 8 replacements.
+#### Change 1: Add minimum line filter to `detect-mispriced-lines`
+Add a filter to skip lines that are suspiciously low (0.5 for most props) since these are either alternate lines or not practically bettable. For assists, rebounds, steals, blocks, turnovers -- minimum line should be 1.5. For points -- minimum 5.5. For threes -- minimum 0.5 (this is a standard line).
 
-**Fix:** Remove the void step. Force-fresh should ADD parlays, not replace them.
+**File**: `supabase/functions/detect-mispriced-lines/index.ts`
+- After `if (line === 0) continue;` (line 293), add a minimum line check:
+  - `player_assists`: min 1.5
+  - `player_rebounds`: min 2.5
+  - `player_steals`: min 0.5
+  - `player_blocks`: min 0.5
+  - `player_turnovers`: min 0.5
+  - `player_points`: min 5.5
+  - `player_threes`: min 0.5 (standard)
+  - Combo props (PRA, PR, PA, RA): min 5.5
 
-#### Bug 3: `bot-force-fresh-parlays` caps at MAX_PARLAYS = 8
-On Feb 23 it produced 24. The hardcoded cap of 8 limits volume.
+#### Change 2: Add line validation to `bot-force-fresh-parlays`
+Add the same minimum line filter when reading from `mispriced_lines`, rejecting any pick with a suspiciously low line before building parlays.
 
-**Fix:** Increase `MAX_PARLAYS` from 8 to 25 and remove the steals/blocks static block (matching the relaxed filters from the earlier plan).
+**File**: `supabase/functions/bot-force-fresh-parlays/index.ts`
+- In the filter step (around line 126), add minimum line validation alongside the blocked prop type check
 
-### Changes
+#### Change 3: Disable `bot-insert-longshot-parlay`
+This function contains hardcoded, stale player data (Jaylen Wells 0.5 assists from a specific date) and should not run automatically. It inserts the same static parlay every time it's called.
 
-#### File 1: `supabase/functions/data-pipeline-orchestrator/index.ts`
-- Add `bot-generate-daily-parlays` call in Phase 3 (Generation), right after the preflight check and targeted scrape, BEFORE `bot-force-fresh-parlays`
+**File**: `supabase/functions/bot-insert-longshot-parlay/index.ts`
+- Add an early return with a deprecation message so it no longer inserts stale hardcoded data
 
-#### File 2: `supabase/functions/bot-force-fresh-parlays/index.ts`
-- **Remove lines 81-90**: Delete the void step that destroys existing parlays
-- **Line 187**: Change `MAX_PARLAYS = 8` to `MAX_PARLAYS = 25`
-- **Line 125**: Clear `STATIC_BLOCKED_PROP_TYPES` (remove steals/blocks to match relaxed filters)
+### Technical Details
 
-### Expected Pipeline Flow After Fix
-1. Preflight check
-2. Targeted odds refresh
-3. `bot-generate-daily-parlays` -- produces 50-70 parlays (exploration + validation + execution tiers)
-4. `bot-force-fresh-parlays` -- ADDS 15-25 force_mispriced_conviction parlays on top
-5. `bot-review-and-optimize` -- final quality pass
+Minimum line thresholds (based on standard sportsbook offerings):
 
-### Expected Volume: 65-95 parlays (matching Feb 23)
+```text
+Prop Type           | Min Line | Rationale
+--------------------|----------|----------------------------------
+player_points       | 5.5      | No book offers under 5.5 pts
+player_rebounds      | 2.5      | Standard minimum
+player_assists       | 1.5      | 0.5 is alternate/phantom
+player_threes        | 0.5      | Standard line exists
+player_blocks        | 0.5      | Standard line exists
+player_steals        | 0.5      | Standard line exists
+player_turnovers     | 0.5      | Standard line exists
+player_pra           | 10.5     | Combo prop minimum
+player_pr            | 5.5      | Combo prop minimum
+player_pa            | 5.5      | Combo prop minimum
+player_ra            | 3.5      | Combo prop minimum
+```
 
-### After deploying, trigger the pipeline with `mode: 'generate'` to produce today's full slate.
-
+### Expected Outcome
+- No more 0.5 assist lines appearing in parlays
+- Edge calculations become meaningful (no more 280% "edges" on phantom lines)
+- Parlays only contain lines that are actually bettable on standard sportsbooks
+- `bot-insert-longshot-parlay` stops inserting stale hardcoded data
