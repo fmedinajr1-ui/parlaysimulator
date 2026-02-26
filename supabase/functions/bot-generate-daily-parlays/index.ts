@@ -7050,12 +7050,30 @@ Deno.serve(async (req) => {
     const winningPatterns = body.winning_patterns || null;
     const generationSource = body.source || 'manual';
     const isDryRun = body.dry_run === true;
+    const regenBoost = Math.min(Math.max(parseInt(body.regen_boost) || 0, 0), 2); // 0, 1, or 2
 
     if (isDryRun) {
       console.log(`[Bot v2] 🧪 DRY-RUN MODE: No DB writes, synthetic data fallback enabled`);
     }
 
-    console.log(`[Bot v2] Generating tiered parlays for ${targetDate} (source: ${generationSource})`);
+    // Apply regen_boost: progressively tighten minHitRate and minConfidence (coherence gate)
+    if (regenBoost > 0) {
+      const hitRateBoost = regenBoost * 5; // +5 or +10
+      const confidenceBoost = regenBoost * 0.05; // +0.05 or +0.10
+      for (const tierKey of Object.keys(TIER_CONFIG) as TierName[]) {
+        TIER_CONFIG[tierKey].minHitRate += hitRateBoost;
+        TIER_CONFIG[tierKey].minConfidence += confidenceBoost;
+        // Also boost per-profile minHitRate
+        for (const profile of TIER_CONFIG[tierKey].profiles) {
+          if (profile.minHitRate) {
+            profile.minHitRate += hitRateBoost;
+          }
+        }
+      }
+      console.log(`[Bot v2] 🔄 REGEN BOOST ${regenBoost}: minHitRate +${hitRateBoost}, minConfidence +${confidenceBoost.toFixed(2)} applied to all tiers`);
+    }
+
+    console.log(`[Bot v2] Generating tiered parlays for ${targetDate} (source: ${generationSource}, regen_boost: ${regenBoost})`);
     if (winningPatterns) {
       console.log(`[Bot v2] Pattern replay active: ${winningPatterns.hot_patterns?.length || 0} hot, ${winningPatterns.cold_patterns?.length || 0} cold patterns`);
     }

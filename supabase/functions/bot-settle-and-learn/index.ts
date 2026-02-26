@@ -1591,6 +1591,87 @@ Deno.serve(async (req) => {
       } catch (winnersErr) {
         console.error('[Bot Settle] Daily winners report failed:', winnersErr);
       }
+
+      // === HIT RATE EVALUATION: Check if execution-tier parlays met 60% target ===
+      try {
+        const TARGET_HIT_RATE = 60;
+        
+        // Count execution-tier parlays that were settled today
+        const { data: execSettled } = await supabase
+          .from('bot_daily_parlays')
+          .select('outcome, strategy_name, tier')
+          .lt('parlay_date', todayET)
+          .not('outcome', 'in', '("pending","void")')
+          .gte('settled_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+        
+        const execParlays = (execSettled || []).filter((p: any) => {
+          if (p.tier === 'execution') return true;
+          const name = (p.strategy_name || '').toLowerCase();
+          return name.includes('cash_lock') || name.includes('boosted_cash') || 
+                 name.includes('golden_lock') || name.includes('hybrid_exec') || 
+                 name.includes('team_exec') || name.includes('execution') ||
+                 name.includes('elite') || name.includes('conviction') ||
+                 name.includes('force_') || name.includes('mispriced');
+        });
+
+        if (execParlays.length >= 3) {
+          const execWon = execParlays.filter((p: any) => p.outcome === 'won').length;
+          const actualHitRate = Math.round((execWon / execParlays.length) * 100);
+          const thresholdMaintained = actualHitRate >= TARGET_HIT_RATE;
+
+          console.log(`[Bot Settle] Hit rate evaluation: ${actualHitRate}% (${execWon}/${execParlays.length}), target=${TARGET_HIT_RATE}%, maintained=${thresholdMaintained}`);
+
+          // Log to activity log
+          await supabase.from('bot_activity_log').insert({
+            event_type: 'hit_rate_evaluation',
+            message: `Execution hit rate: ${actualHitRate}% (${execWon}/${execParlays.length}), target=${TARGET_HIT_RATE}%, threshold ${thresholdMaintained ? 'maintained' : 'missed'}`,
+            metadata: {
+              actual_hit_rate: actualHitRate,
+              target_hit_rate: TARGET_HIT_RATE,
+              parlays_won: execWon,
+              parlays_settled: execParlays.length,
+              threshold_maintained: thresholdMaintained,
+            },
+            severity: thresholdMaintained ? 'info' : 'warning',
+          });
+
+          // Send Telegram evaluation
+          await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              type: 'hit_rate_evaluation',
+              data: {
+                actualHitRate,
+                targetHitRate: TARGET_HIT_RATE,
+                parlaysWon: execWon,
+                parlaysSettled: execParlays.length,
+                thresholdMaintained,
+              },
+            }),
+          });
+
+          // If below target, trigger weight recalibration
+          if (!thresholdMaintained) {
+            console.log(`[Bot Settle] ⚠️ Below ${TARGET_HIT_RATE}% target, triggering calibrate-bot-weights`);
+            await fetch(`${supabaseUrl}/functions/v1/calibrate-bot-weights`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseKey}`,
+              },
+              body: JSON.stringify({ trigger: 'hit_rate_below_target', actual: actualHitRate, target: TARGET_HIT_RATE }),
+            });
+          }
+        } else {
+          console.log(`[Bot Settle] Skipping hit rate eval: only ${execParlays.length} exec parlays settled (need >= 3)`);
+        }
+      } catch (hitRateErr) {
+        console.error('[Bot Settle] Hit rate evaluation error:', hitRateErr);
+      }
     } catch (telegramError) {
       console.error('[Bot Settle] Telegram notification failed:', telegramError);
     }
