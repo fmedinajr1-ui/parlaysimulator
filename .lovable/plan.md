@@ -1,59 +1,30 @@
 
 
-## Fix: Empty Slate After Clean & Rebuild (3 Root Causes)
+## Findings: Edge Functions NOT Yet Deployed
 
-### Problem
+The activity logs confirm the **old code** ran during the last Clean & Rebuild:
 
-The Clean & Rebuild completed but left **0 pending parlays**. All 97 rows for today are voided. Three issues caused this:
+### Evidence from Logs
+- **Quality Regen** (17:44 UTC): Still used `target=60%` (should be 45%) and scored `0.7%` (should use `combined_probability`). All 3 attempts failed the target. This means our scoring fix and target change are **not live**.
+- **Force-Fresh Parlays**: No log entry at all -- either it didn't run or didn't log with our new saturation guard.
+- **Current state**: 97 voided parlays, 0 pending. The slate is empty.
 
-1. **Quality regen self-voiding during rebuilds** -- Step 2 voids everything, so `isSupplemental = false`. The regen loop then voids its own attempt 1 and attempt 2 output between cycles, destroying 38 parlays unnecessarily.
+### Root Cause
+The code changes were saved to the repository but the edge functions were **not redeployed** to the backend. The live functions are still running the old broken logic.
 
-2. **Hit rate scoring reads empty fields** -- The quality regen loop scores parlays by reading `hit_rate_l10` / `hit_rate` from leg JSON. But `bot-generate-daily-parlays` doesn't populate those fields in the leg data. Result: 0.7% avg across all 3 attempts, never meeting the 60% target. The loop wastes all 3 attempts and keeps the worst batch.
+### Action Plan
 
-3. **Final batch voided by duplicate void** -- The 29 parlays from attempt 3 + force-fresh were voided with "Voided for defense-aware rebuild" (the step 2 message). This indicates either a double-click on the button or a race condition where the client proceeded past step 8 while the edge function was still running, and a second rebuild was triggered.
+**Step 1: Deploy all 3 updated edge functions**
+- `bot-quality-regen-loop` (scoring fix + 45% target + skip_void flag)
+- `bot-force-fresh-parlays` (saturation guard + 10 cap)
+- `bot-generate-daily-parlays` (strategy diversity cap + promotion limit)
 
-### Changes
+**Step 2: Trigger a Clean & Rebuild**
+- Use the dashboard button to run the full 12-step pipeline
+- This time it will use the deployed fixes
 
-**File: `supabase/functions/bot-quality-regen-loop/index.ts`**
+**Step 3: Verify via logs**
+- Check `bot_activity_log` for `quality_regen` event showing `target=45%` and realistic hit rates (40-55%)
+- Confirm pending parlays exist after the rebuild completes
+- Verify no single strategy exceeds 30% of output
 
-1. **Never void between attempts during a rebuild.** Change the loop so it NEVER voids between attempts. Instead, each attempt generates parlays additively. After all attempts, keep only the latest batch by voiding older attempt parlays (identified by `source` metadata in `selection_rationale`). This prevents the loop from destroying its own output.
-
-2. **Fix hit rate scoring to use available data.** Instead of reading the missing `hit_rate_l10` field from legs, score parlays using:
-   - `combined_probability` (already populated on every parlay) -- convert to percentage
-   - Fall back to category weight data from `bot_category_weights` for the leg's category
-   - This gives a realistic score that can actually meet the 60% target
-
-3. **Lower the target to 45% as a realistic floor.** The 60% target was never achievable with the current data. Set default to 45% which represents a strong parlay batch. Allow override via the request body.
-
-**File: `src/components/market/SlateRefreshControls.tsx`**
-
-4. **Debounce the Clean & Rebuild button.** Add a guard that prevents the button from being clicked again while a rebuild is in progress. The current `disabled={isBusy}` should already do this, but add a `useRef` flag as a backup to prevent race conditions from React state batching.
-
-5. **Remove the void step from the regen loop body.** Pass `skip_void: true` in the body when calling `bot-quality-regen-loop` from the Clean & Rebuild, since step 2 already handles voiding. The regen loop should respect this flag and skip ALL void operations.
-
-### Technical Details
-
-**Scoring fix (quality regen)**:
-```text
-Current (broken):
-  leg.hit_rate_l10 ?? leg.hit_rate ?? leg.l10_hit_rate ?? 0
-  Result: always 0 -> avg = 0.7%
-
-Fixed:
-  Use parlay.combined_probability * 100
-  e.g. 0.45 probability -> 45% projected hit rate
-  Falls within achievable range
-```
-
-**Void logic fix**:
-```text
-Current: void between attempts when !isSupplemental
-Fixed: never void between attempts; only void previous-attempt parlays
-        AFTER confirming the new attempt generated successfully
-```
-
-### Expected Result
-- Clean & Rebuild generates 18-20+ parlays that remain pending
-- Quality regen scores realistically (40-55% range) instead of 0.7%
-- No more self-voiding between attempts
-- Double-click protection prevents accidental wipe
