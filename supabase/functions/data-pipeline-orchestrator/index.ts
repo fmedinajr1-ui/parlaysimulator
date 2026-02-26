@@ -297,6 +297,35 @@ serve(async (req) => {
 
     console.log('[Pipeline] Complete:', summary);
 
+    // Send Telegram alert if any steps failed
+    if (failedSteps > 0) {
+      try {
+        const failed = Object.entries(results)
+          .filter(([_, r]) => !r.success)
+          .map(([name, r]) => ({ name, error: r.message, duration_ms: r.duration }));
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            type: 'pipeline_failure_alert',
+            data: {
+              runner: `data-pipeline-orchestrator (${mode})`,
+              failedSteps: failed,
+              successCount: successfulSteps,
+              totalSteps,
+              totalDuration,
+              trigger: mode,
+            },
+          }),
+        });
+      } catch (alertErr) {
+        console.error('[Pipeline] Failed to send Telegram alert:', alertErr);
+      }
+    }
+
     return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -313,6 +342,31 @@ serve(async (req) => {
       error_message: errorMessage,
       result: { results }
     });
+
+    // Send Telegram alert for fatal crash
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          type: 'pipeline_failure_alert',
+          data: {
+            runner: 'data-pipeline-orchestrator (FATAL)',
+            failedSteps: [{ name: 'pipeline-crash', error: errorMessage, duration_ms: 0 }],
+            successCount: 0,
+            totalSteps: 1,
+            totalDuration: 0,
+            trigger: 'fatal_error',
+            critical: true,
+          },
+        }),
+      });
+    } catch (alertErr) {
+      console.error('[Pipeline] Failed to send fatal Telegram alert:', alertErr);
+    }
     
     return new Response(JSON.stringify({ 
       error: errorMessage,
