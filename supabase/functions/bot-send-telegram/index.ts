@@ -39,6 +39,7 @@ type NotificationType =
   | 'slate_status_update'
   | 'longshot_announcement'
   | 'pipeline_failure_alert'
+  | 'doctor_report'
   | 'test';
 
 interface NotificationData {
@@ -93,6 +94,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatLongshotAnnouncement(data, dateStr);
     case 'pipeline_failure_alert':
       return formatPipelineFailureAlert(data, dateStr);
+    case 'doctor_report':
+      return formatDoctorReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -126,6 +129,34 @@ function formatPipelineFailureAlert(data: Record<string, any>, dateStr: string):
     msg += `\n⚠️ *CRITICAL STEP FAILURE* — downstream steps may produce no output`;
   }
 
+  return msg;
+}
+
+function formatDoctorReport(data: Record<string, any>, dateStr: string): string {
+  const { diagnoses, autoFixedCount, failureDayWinRate, cleanDayWinRate, estimatedImpact, triggerSource } = data;
+
+  let msg = `🩺 *PIPELINE DOCTOR — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `${(diagnoses || []).length} problems detected, ${autoFixedCount || 0} auto-fixed\n\n`;
+
+  msg += `*DIAGNOSED:*\n`;
+  for (let i = 0; i < (diagnoses || []).length; i++) {
+    const d = diagnoses[i];
+    const severityIcon = d.severity === 'critical' ? '🔴' : d.severity === 'warning' ? '🟡' : '🔵';
+    msg += `\n${severityIcon} *${i + 1}. ${d.problem}*\n`;
+    msg += `  Cause: ${d.rootCause}\n`;
+    msg += `  Fix: ${d.suggestedFix}\n`;
+    msg += `  Impact: ${d.impact}\n`;
+  }
+
+  if (failureDayWinRate !== null && cleanDayWinRate !== null) {
+    msg += `\n📊 Win rate on failure days: ${failureDayWinRate}% vs ${cleanDayWinRate}% clean days\n`;
+  }
+  if (estimatedImpact !== null) {
+    msg += `💰 Est. daily profit impact: ${estimatedImpact >= 0 ? '+' : ''}$${estimatedImpact}\n`;
+  }
+
+  msg += `\n🔄 Trigger: ${triggerSource || 'unknown'}`;
   return msg;
 }
 

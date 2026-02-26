@@ -248,6 +248,24 @@ Deno.serve(async (req) => {
       console.error('[Diagnostics] Telegram send failed:', e);
     }
 
+    // Call Pipeline Doctor after diagnostics
+    try {
+      console.log('[Diagnostics] Calling Pipeline Doctor...');
+      await fetch(`${supabaseUrl}/functions/v1/bot-pipeline-doctor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          trigger_source: 'bot-daily-diagnostics',
+        }),
+      });
+      console.log('[Diagnostics] Pipeline Doctor completed');
+    } catch (doctorErr) {
+      console.error('[Diagnostics] Pipeline Doctor failed:', doctorErr);
+    }
+
     // Log activity
     await supabase.from('bot_activity_log').insert({
       event_type: 'diagnostic_run',
