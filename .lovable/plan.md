@@ -1,90 +1,45 @@
 
 
-## Auto-Promote Winning Mispriced Edge Patterns to Execution Tier + Stacking Enhancements
+## Upgrade Clean & Rebuild + Add Lottery Parlay Scanner
 
 ### What This Does
 
-Adds a **dynamic strategy promotion system** that automatically detects which `mispriced_edge` patterns are winning at high rates (like the 48% from Feb 25th) and injects them into the execution tier at runtime. Also lowers the execution tier coherence gate so these promoted parlays can actually pass through.
-
-### How It Works
-
-```text
-Before Generation:
-  1. Query last 14 days of settled mispriced_edge parlays
-  2. Group by sport + leg count + sort method
-  3. Find patterns with >= 40% win rate and >= 5 appearances
-  4. Inject matching profiles into execution tier with 60%+ minHitRate
-  5. Lower coherence gate from 85 to 70 for execution tier
-
-During Generation:
-  - Promoted mispriced_edge profiles run alongside existing execution strategies
-  - Stacking coherence still validates leg alignment (pace, defense, team totals)
-  - But the gate is relaxed enough that quality mispriced combos pass through
-```
+Updates the "Clean & Rebuild" flow to use the new quality-gated regeneration loop (with mispriced edge promotion) and adds the Daily Lottery Parlay Scanner as the final step so lottery parlays are always generated alongside the main slate.
 
 ### Changes
 
-**Modified File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+**Modified File: `src/components/market/SlateRefreshControls.tsx`**
 
-1. **New function: `detectWinningMispricedPatterns(supabase)`**
-   - Queries `bot_daily_parlays` for the last 14 days where `strategy_name = 'mispriced_edge'` and outcome is `won` or `lost`
-   - Groups results by sport composition (NBA, NHL, all, cross-sport) and leg count
-   - Calculates win rate per pattern group
-   - Returns patterns with >= 40% win rate and >= 5 settled parlays
-   - Each pattern includes: sport filter, leg count, observed win rate, sample size
+Update the `CLEAN_REBUILD_STEPS` array:
 
-2. **New function: `autoPromoteToExecution(winningPatterns)`**
-   - Takes the winning mispriced patterns and creates execution-tier profile entries
-   - Sets `minHitRate` to 60 (execution floor) and `sortBy` to 'hit_rate' for half, 'composite' for the other half
-   - Caps at 8 promoted profiles to avoid flooding execution tier
-   - Logs each promotion with the observed win rate that triggered it
+1. Replace the direct `bot-generate-daily-parlays` call (step 8) with `bot-quality-regen-loop` -- this triggers the quality-gated loop that auto-promotes winning mispriced patterns and retries up to 3x until the 60% projected hit rate is met.
+2. Add `bot-force-fresh-parlays` after the quality loop to layer on mispriced conviction parlays.
+3. Add `nba-mega-parlay-scanner` as the final step to generate the lottery parlays that nearly won yesterday.
+4. Update the completion toast to mention lottery parlays.
 
-3. **Call both functions during initialization (alongside `detectWinningArchetypes`)**
-   - After dynamic archetype detection, run `detectWinningMispricedPatterns`
-   - Append promoted profiles to `TIER_CONFIG.execution.profiles`
-   - Log summary: "Promoted N mispriced_edge patterns to execution tier"
-
-4. **Lower execution tier coherence gate from 85 to 70**
-   - The current 85 threshold is too strict and blocks most execution-tier parlays from generating (Feb 25: only 10.5% hit rate on the few that passed)
-   - Lowering to 70 aligns execution with validation tier and lets coherent-but-not-perfect combos through
-   - The stacking logic (pace alignment, team total signals, cluster matching) still applies — this just lowers the rejection floor
-
-5. **Increase execution tier count from 10 to 15**
-   - With more profiles from promotion, allow more execution-tier parlays to generate
-   - This gives the promoted mispriced patterns room to produce output
-
-### Technical Details
-
-**Pattern Detection Query:**
-```sql
-SELECT strategy_name, outcome, legs
-FROM bot_daily_parlays
-WHERE parlay_date >= (today - 14 days)
-  AND strategy_name = 'mispriced_edge'
-  AND outcome IN ('won', 'lost')
+The updated step list becomes:
+```text
+1. Alert customers (Telegram)
+2. Void old parlays
+3. Clean stale props
+4. Scan defensive matchups
+5. Analyze categories
+6. Detect mispriced lines
+7. Run risk engine
+8. Quality-gated generation (bot-quality-regen-loop) <-- was bot-generate-daily-parlays
+9. Force fresh mispriced parlays (bot-force-fresh-parlays) <-- NEW
+10. Build sharp parlays
+11. Build heat parlays
+12. Scan lottery parlays (nba-mega-parlay-scanner) <-- NEW
 ```
 
-Then in code, extract the sport composition from each parlay's legs array and group by `{sports, legCount}` to find which specific mispriced configurations are winning.
+**Modified File: `supabase/functions/data-pipeline-orchestrator/index.ts`**
 
-**Promoted Profile Format:**
-```typescript
-{
-  legs: 3,
-  strategy: 'mispriced_edge_promoted',
-  sports: ['basketball_nba'], // from winning pattern
-  minHitRate: 60,
-  sortBy: 'hit_rate',
-  useAltLines: false
-}
-```
+Add `nba-mega-parlay-scanner` to the end of Phase 3 (Generation) so the lottery scanner runs automatically on every scheduled pipeline execution too -- not just manual rebuilds.
 
-**Coherence Gate Change:**
-- Line ~5944: `coherence < 85` becomes `coherence < 70` for execution tier
-- This single change unblocks execution-tier generation while maintaining the stacking alignment bonuses/penalties
+### Why
 
-**Safety:**
-- Maximum 8 promoted profiles per cycle (prevents runaway)
-- 14-day lookback with minimum 5 sample requirement (prevents flukes)
-- Promoted profiles still go through all existing filters (hit rate, edge, Monte Carlo simulation)
-- The `mispriced_edge_promoted` strategy name distinguishes them in logs and settlement tracking
+- The Clean & Rebuild was still calling the old direct generation, bypassing the quality loop and mispriced promotion system you just added.
+- The lottery parlay scanner was only running on its own schedule, not as part of rebuilds -- so manual rebuilds missed it.
+- Yesterday's lottery parlay almost hit, so having it always run after fresh generation ensures you always get those high-upside plays with the freshest data.
 
