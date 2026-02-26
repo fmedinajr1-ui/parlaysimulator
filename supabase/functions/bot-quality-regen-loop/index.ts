@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const targetHitRate = body.target_hit_rate ?? 38; // Lowered from 45 to match natural ~39-40% combined_probability
+    const targetHitRate = body.target_hit_rate ?? 35; // Lowered to 35 to match actual ~35.9% combined_probability
     const maxAttempts = Math.min(body.max_attempts ?? 3, 3);
     const skipVoid = body.skip_void ?? false; // When true, never void anything
     const today = getEasternDate();
