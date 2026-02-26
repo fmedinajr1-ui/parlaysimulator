@@ -1,30 +1,24 @@
 
 
-## Findings: Edge Functions NOT Yet Deployed
+## Lower Quality Regen Target to 38%
 
-The activity logs confirm the **old code** ran during the last Clean & Rebuild:
+### Problem
+The deployed quality regen loop uses a 45% target, but the average `combined_probability` for generated parlays naturally lands around 39-40%. All 3 attempts scored 39.7-39.9%, wasting cycles without ever meeting the target. Parlays ARE kept (the void fix works), but the loop burns all 3 attempts unnecessarily.
 
-### Evidence from Logs
-- **Quality Regen** (17:44 UTC): Still used `target=60%` (should be 45%) and scored `0.7%` (should use `combined_probability`). All 3 attempts failed the target. This means our scoring fix and target change are **not live**.
-- **Force-Fresh Parlays**: No log entry at all -- either it didn't run or didn't log with our new saturation guard.
-- **Current state**: 97 voided parlays, 0 pending. The slate is empty.
+### Change
 
-### Root Cause
-The code changes were saved to the repository but the edge functions were **not redeployed** to the backend. The live functions are still running the old broken logic.
+**File: `supabase/functions/bot-quality-regen-loop/index.ts`**
 
-### Action Plan
+- Change the default `targetHitRate` from 45 to **38**
+- This means attempt 1 will likely meet the target immediately, saving 2 unnecessary generation cycles
+- The target is still meaningful -- it filters out batches with abnormally low probability
 
-**Step 1: Deploy all 3 updated edge functions**
-- `bot-quality-regen-loop` (scoring fix + 45% target + skip_void flag)
-- `bot-force-fresh-parlays` (saturation guard + 10 cap)
-- `bot-generate-daily-parlays` (strategy diversity cap + promotion limit)
+**File: `src/components/market/SlateRefreshControls.tsx`**
 
-**Step 2: Trigger a Clean & Rebuild**
-- Use the dashboard button to run the full 12-step pipeline
-- This time it will use the deployed fixes
+- Update the `target_hit_rate` parameter passed to the quality regen step from 45 to **38**
 
-**Step 3: Verify via logs**
-- Check `bot_activity_log` for `quality_regen` event showing `target=45%` and realistic hit rates (40-55%)
-- Confirm pending parlays exist after the rebuild completes
-- Verify no single strategy exceeds 30% of output
+### Expected Result
+- Quality regen meets target on attempt 1, saving ~60 seconds of pipeline time
+- No behavior change for parlay quality (same generation logic)
+- Logs will show `targetMet: true` instead of `false`
 
