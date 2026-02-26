@@ -21,8 +21,8 @@ const ENGINE_STEPS: EngineStep[] = [
   { name: 'Cleaning stale props', function: 'cleanup-stale-props', body: { immediate: true } },
   { name: 'Analyzing categories', function: 'category-props-analyzer', body: { forceRefresh: true } },
   { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
-  { name: 'Building sharp parlays', function: 'sharp-parlay-builder' },
-  { name: 'Building heat parlays', function: 'heat-prop-engine' },
+  { name: 'Building sharp parlays', function: 'sharp-parlay-builder', body: { action: 'build' } },
+  { name: 'Building heat parlays', function: 'heat-prop-engine', body: { action: 'build' } },
 ];
 
 export function SlateRefreshControls() {
@@ -119,8 +119,8 @@ export function SlateRefreshControls() {
       { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
       { name: 'Quality-gated generation', function: 'bot-quality-regen-loop', body: { target_hit_rate: 38, max_attempts: 3, skip_void: true } },
       { name: 'Force fresh mispriced parlays', function: 'bot-force-fresh-parlays' },
-      { name: 'Building sharp parlays', function: 'sharp-parlay-builder' },
-      { name: 'Building heat parlays', function: 'heat-prop-engine' },
+      { name: 'Building sharp parlays', function: 'sharp-parlay-builder', body: { action: 'build' } },
+      { name: 'Building heat parlays', function: 'heat-prop-engine', body: { action: 'build' } },
       { name: 'Scanning lottery parlays', function: 'nba-mega-parlay-scanner' },
     ];
 
