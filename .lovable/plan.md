@@ -1,37 +1,59 @@
 
-## Fix Mispriced Edge Flooding and Void Loop
+
+## Fix: Empty Slate After Clean & Rebuild (3 Root Causes)
 
 ### Problem
-Today's slate shows 72% of all parlays are mispriced-related, and 70% of all parlays get voided. The promotion system and force-fresh parlays are duplicating the same strategy type, and the quality loop is generating parlays that get voided on the next cycle.
 
-### Root Causes
-1. `bot-force-fresh-parlays` generates mispriced parlays without checking what the main loop already created
-2. `bot-quality-regen-loop` may be re-running and voiding its own previous output
-3. No strategy diversity cap -- mispriced edge can consume the entire slate
-4. The promotion system adds more mispriced profiles to execution tier, compounding the flood
+The Clean & Rebuild completed but left **0 pending parlays**. All 97 rows for today are voided. Three issues caused this:
+
+1. **Quality regen self-voiding during rebuilds** -- Step 2 voids everything, so `isSupplemental = false`. The regen loop then voids its own attempt 1 and attempt 2 output between cycles, destroying 38 parlays unnecessarily.
+
+2. **Hit rate scoring reads empty fields** -- The quality regen loop scores parlays by reading `hit_rate_l10` / `hit_rate` from leg JSON. But `bot-generate-daily-parlays` doesn't populate those fields in the leg data. Result: 0.7% avg across all 3 attempts, never meeting the 60% target. The loop wastes all 3 attempts and keeps the worst batch.
+
+3. **Final batch voided by duplicate void** -- The 29 parlays from attempt 3 + force-fresh were voided with "Voided for defense-aware rebuild" (the step 2 message). This indicates either a double-click on the button or a race condition where the client proceeded past step 8 while the edge function was still running, and a second rebuild was triggered.
 
 ### Changes
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-
-1. **Add strategy diversity cap**: Before generating parlays for any strategy, check how many already exist for today with that strategy name. Cap any single strategy at 30% of the tier's total count (e.g., if execution allows 15 parlays, max 5 can be mispriced_edge_promoted).
-
-2. **Reduce promoted profile cap from 8 to 4**: In `autoPromoteToExecution`, lower the maximum promoted profiles from 8 to 4 to prevent mispriced domination of the execution tier.
-
-**File: `supabase/functions/bot-force-fresh-parlays/index.ts`**
-
-3. **Skip if mispriced parlays already exist**: At the start of the function, query today's `bot_daily_parlays` for `strategy_name LIKE '%mispriced%'` with outcome = 'pending'. If 10+ mispriced parlays already exist and are active, skip generation and log "Sufficient mispriced parlays already active, skipping force-fresh."
-
-4. **Cap force-fresh output to 10 max**: Even when generating, limit the batch to 10 parlays instead of flooding with 17+.
-
 **File: `supabase/functions/bot-quality-regen-loop/index.ts`**
 
-5. **Don't void on re-run within same day**: Before voiding existing parlays, check if the current run is a retry within the same generation window (same day, same trigger). If pending parlays from the current day already exist and haven't been settled, skip the void step and only generate additional parlays to fill gaps.
+1. **Never void between attempts during a rebuild.** Change the loop so it NEVER voids between attempts. Instead, each attempt generates parlays additively. After all attempts, keep only the latest batch by voiding older attempt parlays (identified by `source` metadata in `selection_rationale`). This prevents the loop from destroying its own output.
 
-6. **Track generation runs**: Add a simple check -- query `bot_daily_parlays` for today's date. If parlays with outcome='pending' already exist from the current day, set a `is_supplemental = true` flag that skips the void step.
+2. **Fix hit rate scoring to use available data.** Instead of reading the missing `hit_rate_l10` field from legs, score parlays using:
+   - `combined_probability` (already populated on every parlay) -- convert to percentage
+   - Fall back to category weight data from `bot_category_weights` for the leg's category
+   - This gives a realistic score that can actually meet the 60% target
+
+3. **Lower the target to 45% as a realistic floor.** The 60% target was never achievable with the current data. Set default to 45% which represents a strong parlay batch. Allow override via the request body.
+
+**File: `src/components/market/SlateRefreshControls.tsx`**
+
+4. **Debounce the Clean & Rebuild button.** Add a guard that prevents the button from being clicked again while a rebuild is in progress. The current `disabled={isBusy}` should already do this, but add a `useRef` flag as a backup to prevent race conditions from React state batching.
+
+5. **Remove the void step from the regen loop body.** Pass `skip_void: true` in the body when calling `bot-quality-regen-loop` from the Clean & Rebuild, since step 2 already handles voiding. The regen loop should respect this flag and skip ALL void operations.
+
+### Technical Details
+
+**Scoring fix (quality regen)**:
+```text
+Current (broken):
+  leg.hit_rate_l10 ?? leg.hit_rate ?? leg.l10_hit_rate ?? 0
+  Result: always 0 -> avg = 0.7%
+
+Fixed:
+  Use parlay.combined_probability * 100
+  e.g. 0.45 probability -> 45% projected hit rate
+  Falls within achievable range
+```
+
+**Void logic fix**:
+```text
+Current: void between attempts when !isSupplemental
+Fixed: never void between attempts; only void previous-attempt parlays
+        AFTER confirming the new attempt generated successfully
+```
 
 ### Expected Result
-- Strategy diversity: No single strategy exceeds ~30% of output
-- Void rate drops from 70% to near 0% (no self-voiding within the day)
-- Force-fresh becomes additive only when needed, not duplicative
-- Active parlay count should be 60-80 instead of 29 survivors out of 97
+- Clean & Rebuild generates 18-20+ parlays that remain pending
+- Quality regen scores realistically (40-55% range) instead of 0.7%
+- No more self-voiding between attempts
+- Double-click protection prevents accidental wipe
