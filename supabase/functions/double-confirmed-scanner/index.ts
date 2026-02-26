@@ -44,10 +44,10 @@ serve(async (req) => {
         .from('category_sweet_spots')
         .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, actual_line, category')
         .eq('analysis_date', today)
-        .gte('l10_hit_rate', 70),
+        .gte('l10_hit_rate', 0.70),
       supabase
         .from('mispriced_lines')
-        .select('player_name, prop_type, signal, edge_pct, book_line, player_avg, sport, confidence_tier')
+        .select('player_name, prop_type, signal, edge_pct, book_line, player_avg_l10, sport, confidence_tier')
         .eq('analysis_date', today)
         .gte('edge_pct', 15),
     ]);
@@ -76,7 +76,7 @@ serve(async (req) => {
       l10_hit_rate: number;
       edge_pct: number;
       book_line: number;
-      player_avg: number;
+      player_avg_l10: number;
       sport: string;
       confidence_tier: string;
       composite_score: number;
@@ -110,7 +110,7 @@ serve(async (req) => {
         l10_hit_rate: hitRate,
         edge_pct: ml.edge_pct,
         book_line: ml.book_line,
-        player_avg: ml.player_avg,
+        player_avg_l10: ml.player_avg_l10,
         sport: ml.sport || 'unknown',
         confidence_tier: ml.confidence_tier || 'MEDIUM',
         composite_score: compositeScore,
