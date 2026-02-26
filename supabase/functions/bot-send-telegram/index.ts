@@ -38,6 +38,7 @@ type NotificationType =
   | 'slate_rebuild_alert'
   | 'slate_status_update'
   | 'longshot_announcement'
+  | 'pipeline_failure_alert'
   | 'test';
 
 interface NotificationData {
@@ -90,11 +91,42 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatSlateStatusUpdate(data, dateStr);
     case 'longshot_announcement':
       return formatLongshotAnnouncement(data, dateStr);
+    case 'pipeline_failure_alert':
+      return formatPipelineFailureAlert(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatPipelineFailureAlert(data: Record<string, any>, dateStr: string): string {
+  const { runner, failedSteps, successCount, totalSteps, totalDuration, trigger } = data;
+
+  const mins = Math.floor((totalDuration || 0) / 60000);
+  const secs = Math.round(((totalDuration || 0) % 60000) / 1000);
+  const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+  let msg = `🚨 *PIPELINE ALERT — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `${(failedSteps || []).length}/${totalSteps || '?'} steps failed in *${runner || 'unknown'}*\n\n`;
+
+  msg += `❌ *FAILED:*\n`;
+  for (const step of (failedSteps || [])) {
+    const stepSecs = step.duration_ms ? `${(step.duration_ms / 1000).toFixed(1)}s` : '?';
+    const errShort = (step.error || 'unknown error').substring(0, 80);
+    msg += `  • ${step.name} — ${errShort} (${stepSecs})\n`;
+  }
+
+  msg += `\n✅ *SUCCEEDED:* ${successCount || 0}/${totalSteps || '?'}\n`;
+  msg += `⏱ *Duration:* ${durationStr}\n`;
+  msg += `🔄 *Trigger:* ${trigger || 'unknown'}\n`;
+
+  if (data.critical) {
+    msg += `\n⚠️ *CRITICAL STEP FAILURE* — downstream steps may produce no output`;
+  }
+
+  return msg;
 }
 
 function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): string {

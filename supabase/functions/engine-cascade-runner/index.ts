@@ -240,6 +240,36 @@ serve(async (req) => {
       failCount++;
     }
 
+    // Immediate alert for critical step failures
+    const lastResult = results[results.length - 1];
+    const CRITICAL_STEPS = ['refresh-todays-props', 'nba-player-prop-risk-engine', 'sharp-parlay-builder', 'heat-prop-engine'];
+    if (!lastResult.success && CRITICAL_STEPS.includes(step.name)) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            type: 'pipeline_failure_alert',
+            data: {
+              runner: 'engine-cascade-runner',
+              failedSteps: [{ name: step.name, error: lastResult.error, duration_ms: lastResult.duration_ms }],
+              successCount,
+              totalSteps: CASCADE_STEPS.length,
+              totalDuration: Date.now() - startTime,
+              trigger,
+              critical: true,
+            },
+          }),
+        });
+        console.log(`[Engine Cascade] Critical step alert sent for ${step.name}`);
+      } catch (alertErr) {
+        console.error('[Engine Cascade] Failed to send critical alert:', alertErr);
+      }
+    }
+
     // Small delay between steps to prevent overwhelming the system
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
@@ -248,6 +278,38 @@ serve(async (req) => {
   const overallStatus = failCount === 0 ? 'completed' : (successCount > 0 ? 'partial' : 'failed');
 
   console.log(`[Engine Cascade] Cascade complete - ${successCount}/${CASCADE_STEPS.length} steps succeeded in ${totalDuration}ms`);
+
+  // Send Telegram alert if any steps failed
+  if (failCount > 0) {
+    try {
+      const failedSteps = results.filter(r => !r.success).map(r => ({
+        name: r.name,
+        error: r.error || 'unknown',
+        duration_ms: r.duration_ms,
+      }));
+      await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          type: 'pipeline_failure_alert',
+          data: {
+            runner: 'engine-cascade-runner',
+            failedSteps,
+            successCount,
+            totalSteps: CASCADE_STEPS.length,
+            totalDuration,
+            trigger,
+          },
+        }),
+      });
+      console.log('[Engine Cascade] Pipeline failure alert sent to Telegram');
+    } catch (alertErr) {
+      console.error('[Engine Cascade] Failed to send Telegram alert:', alertErr);
+    }
+  }
 
   // Update job record with results
   if (jobRecord?.id) {
