@@ -12,10 +12,10 @@ const menuItems = [
   { icon: Target, label: "Analysis", path: "/sweet-spots", description: "Sweet spot analysis" },
   { icon: Users, label: "Team Bets", path: "/team-bets", description: "NCAAB spreads, totals & ML" },
   { icon: Eye, label: "Scout", path: "/scout", description: "AI video analysis" },
-  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard", description: "Bot dashboard" },
 ];
 
 const adminItems = [
+  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard", description: "Bot dashboard" },
   { icon: Activity, label: "Tracker", path: "/tracker", description: "Real-time picks" },
   { icon: Calculator, label: "PVS Calculator", path: "/pvs-calculator", description: "Prop value scoring" },
   { icon: Shield, label: "Admin", path: "/admin", description: "System management" },
