@@ -1,44 +1,28 @@
 
 
-## Fix: Phantom Line Filter Bug — Wrong Column Name
+## Fix: Double-Confirmed Scanner is Broken (2 Bugs)
 
-### Problem
-**Jaylen Wells 0.5 Assists** and other phantom lines are STILL appearing in parlays despite the minimum line filter being added. The filter code exists but is **broken due to a column name mismatch**.
+The double-confirmed scanner has **never produced results** due to two critical bugs in the database query. It silently returns 0 matches every time.
 
-### Root Cause
-In `bot-force-fresh-parlays/index.ts`, line 142:
-```typescript
-const line = Number(ml.current_line || 0);  // BUG: column doesn't exist
-```
+### Bug 1: Hit Rate Threshold is Wrong Scale
+The scanner filters `category_sweet_spots` with `.gte('l10_hit_rate', 70)`, but values are stored as **decimals (0 to 1)**, not percentages. A perfect 100% hit rate is stored as `1.0`, so filtering for `>= 70` matches nothing.
 
-The query on line 94 selects `book_line` from `mispriced_lines`, NOT `current_line`. So `ml.current_line` is always `undefined`, which evaluates to `Number(0)` = `0`. Since `0` is never less than any minimum threshold, **every phantom line passes the filter**.
+**Fix**: Change threshold from `70` to `0.70` (line 47).
 
-### Fix (2 changes, 1 cleanup action)
+### Bug 2: Wrong Column Name for Player Average
+The scanner selects `player_avg` from `mispriced_lines`, but that column doesn't exist. The actual column is `player_avg_l10`. This causes the query to error silently via the Supabase client.
 
-#### Change 1: Fix column name in `bot-force-fresh-parlays`
-**File**: `supabase/functions/bot-force-fresh-parlays/index.ts` (line 142)
+**Fix**: Change `player_avg` to `player_avg_l10` in the select statement (line 50) and update all references throughout the function.
 
-Change:
-```typescript
-const line = Number(ml.current_line || 0);
-```
-To:
-```typescript
-const line = Number(ml.book_line || 0);
-```
+### Changes
 
-#### Change 2: Clean stale mispriced_lines from today
-The old phantom entries (Jaylen Wells 0.5 assists, etc.) were inserted BEFORE the `detect-mispriced-lines` filter was deployed. They need to be purged and re-detected with the filter active.
-
-Run `detect-mispriced-lines` to regenerate today's data (it upserts on the unique constraint, so re-running replaces stale rows). Then void any existing parlays containing phantom legs and regenerate.
-
-#### Change 3: Void and regenerate today's parlays
-After fixing the column bug and re-running detection:
-1. Void all pending parlays for today
-2. Re-trigger the generate pipeline to build a clean slate
+**File: `supabase/functions/double-confirmed-scanner/index.ts`**
+- Line 47: Change `.gte('l10_hit_rate', 70)` to `.gte('l10_hit_rate', 0.70)`
+- Line 50: Change `player_avg` to `player_avg_l10` in the select query
+- Update all downstream references from `player_avg` to `player_avg_l10` (the pick object construction around line 95)
 
 ### Expected Outcome
-- The `book_line` column is correctly read, so 0.5 assist lines (min 1.5) get rejected
-- 0.5 block/steal/three lines still pass (those are standard sportsbook lines)
-- No more phantom/unbettable lines in any parlays
-
+- Scanner will correctly find sweet spots with 70%+ L10 hit rate (currently ~500 qualifying records per day)
+- Cross-referencing against mispriced lines (37 qualifying on Feb 25) will produce actual double-confirmed picks
+- Telegram reports will start delivering real double-confirmed picks
+- The parlay generator's "double_confirmed_conviction" strategy will finally have data to work with
