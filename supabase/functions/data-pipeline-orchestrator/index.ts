@@ -183,10 +183,16 @@ serve(async (req) => {
       // Targeted refresh before generation to ensure fresh lines
       await runFunction('whale-odds-scraper', { mode: 'targeted' });
       
-      // Main parlay generator -- produces bulk of parlays (exploration + validation + execution tiers)
-      await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
+      // Quality-gated regeneration loop: generates up to 3x, keeps batch only if 60%+ projected hit rate
+      const regenOk = await runFunction('bot-quality-regen-loop', { target_hit_rate: 60, max_attempts: 3 });
       
-      // Run force-fresh mispriced conviction parlays -- ADDS on top of main generator output
+      if (!regenOk) {
+        // Fallback: if quality loop failed entirely, run standard generation
+        console.warn('[Pipeline] ⚠️ Quality regen loop failed, falling back to standard generation');
+        await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
+      }
+      
+      // Run force-fresh mispriced conviction parlays -- ADDS on top of quality loop output
       await runFunction('bot-force-fresh-parlays', {});
       
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });

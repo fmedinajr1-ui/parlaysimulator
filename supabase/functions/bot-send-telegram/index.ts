@@ -40,6 +40,8 @@ type NotificationType =
   | 'longshot_announcement'
   | 'pipeline_failure_alert'
   | 'doctor_report'
+  | 'quality_regen_report'
+  | 'hit_rate_evaluation'
   | 'test';
 
 interface NotificationData {
@@ -96,6 +98,10 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatPipelineFailureAlert(data, dateStr);
     case 'doctor_report':
       return formatDoctorReport(data, dateStr);
+    case 'quality_regen_report':
+      return formatQualityRegenReport(data, dateStr);
+    case 'hit_rate_evaluation':
+      return formatHitRateEvaluation(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -157,6 +163,47 @@ function formatDoctorReport(data: Record<string, any>, dateStr: string): string 
   }
 
   msg += `\n🔄 Trigger: ${triggerSource || 'unknown'}`;
+  return msg;
+}
+
+function formatQualityRegenReport(data: Record<string, any>, dateStr: string): string {
+  const { attempts, bestAttempt, bestHitRate, targetHitRate, targetMet, hoursBeforeDeadline, totalParlaysKept } = data;
+
+  let msg = `🔄 *QUALITY REGEN REPORT — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `Target: ${targetHitRate}% projected hit rate\n`;
+  msg += `Result: ${targetMet ? '✅ TARGET MET' : '⚠️ BEST EFFORT'}\n\n`;
+
+  msg += `*ATTEMPTS:*\n`;
+  for (const att of (attempts || [])) {
+    const icon = att.meetsTarget ? '✅' : att.parlayCount === 0 ? '⏭️' : '❌';
+    const boost = att.regenBoost === 0 ? 'Standard' : att.regenBoost === 1 ? 'Tight (+5)' : 'Elite (+10)';
+    msg += `${icon} #${att.attempt} [${boost}]: ${att.avgProjectedHitRate}% avg | ${att.parlayCount} parlays\n`;
+  }
+
+  msg += `\n🏆 *Kept:* Attempt #${bestAttempt} (${bestHitRate}%)\n`;
+  msg += `📊 *Parlays Active:* ${totalParlaysKept}\n`;
+  msg += `⏰ *Hours before deadline:* ${hoursBeforeDeadline}h\n`;
+
+  return msg;
+}
+
+function formatHitRateEvaluation(data: Record<string, any>, dateStr: string): string {
+  const { actualHitRate, targetHitRate, parlaysWon, parlaysSettled, thresholdMaintained } = data;
+
+  let msg = `📈 *HIT RATE EVALUATION — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `*Actual:* ${actualHitRate}% (${parlaysWon}/${parlaysSettled} exec parlays won)\n`;
+  msg += `*Target:* ${targetHitRate}%\n\n`;
+
+  if (thresholdMaintained) {
+    msg += `✅ *Threshold maintained* — 60% minimum confirmed\n`;
+    msg += `Model weights unchanged for tomorrow.`;
+  } else {
+    msg += `⚠️ *Below target* — gap of ${(targetHitRate - actualHitRate).toFixed(1)}%\n`;
+    msg += `🔧 Triggering weight recalibration for tomorrow's generation.`;
+  }
+
   return msg;
 }
 
