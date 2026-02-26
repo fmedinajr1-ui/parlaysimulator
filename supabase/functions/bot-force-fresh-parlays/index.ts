@@ -50,7 +50,25 @@ serve(async (req) => {
   try {
     console.log(`[ForceFresh] Starting force-generate for ${today}`);
 
-    // Step 0: Load dynamic performance data
+    // Step 0a: Check if sufficient mispriced parlays already exist (skip if 10+)
+    const { count: existingMispricedCount } = await supabase
+      .from('bot_daily_parlays')
+      .select('*', { count: 'exact', head: true })
+      .eq('parlay_date', today)
+      .eq('outcome', 'pending')
+      .ilike('strategy_name', '%mispriced%');
+
+    if ((existingMispricedCount || 0) >= 10) {
+      console.log(`[ForceFresh] ⏭️ ${existingMispricedCount} mispriced parlays already active, skipping force-fresh.`);
+      return new Response(JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: `Sufficient mispriced parlays already active (${existingMispricedCount})`,
+        parlaysGenerated: 0,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // Step 0b: Load dynamic performance data
     let dynamicBlockedProps = new Set<string>();
     let playerPerfMap = new Map<string, { legsPlayed: number; legsWon: number; hitRate: number }>();
     
@@ -199,7 +217,7 @@ serve(async (req) => {
     const parlays: MispricedPick[][] = [];
     const usedInParlay = new Set<string>(); // track player+prop usage across parlays
     const globalPlayerPropCount = new Map<string, number>(); // global exposure cap
-    const MAX_PARLAYS = 25;
+    const MAX_PARLAYS = 10; // Capped from 25 to prevent flooding
     const LEGS_PER_PARLAY = 3;
     const MAX_PLAYER_PROP_EXPOSURE = 5;
 

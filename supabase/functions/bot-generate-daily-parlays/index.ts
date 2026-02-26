@@ -151,7 +151,7 @@ async function detectWinningMispricedPatterns(supabase: any): Promise<{ sports: 
 
 function autoPromoteToExecution(winningPatterns: { sports: string[]; legCount: number; winRate: number; sampleSize: number }[]): any[] {
   const promoted: any[] = [];
-  const maxPromoted = 8;
+  const maxPromoted = 4; // Reduced from 8 to prevent mispriced domination
 
   for (const pattern of winningPatterns) {
     if (promoted.length >= maxPromoted) break;
@@ -5265,12 +5265,25 @@ async function generateTierParlays(
     console.log(`[Bot] Baseball season gate: ACTIVE (${etDateForGate} < March 1st) — skipping baseball_ncaa profiles`);
   }
 
+  // === STRATEGY DIVERSITY CAP ===
+  // No single strategy can exceed 30% of the tier's total count
+  const strategyDiversityCap = Math.max(2, Math.ceil(config.count * 0.30));
+  const strategyCountMap = new Map<string, number>();
+  console.log(`[Bot] Strategy diversity cap: max ${strategyDiversityCap} parlays per strategy (30% of ${config.count})`);
+
   for (const profile of config.profiles) {
     // Season gate: skip baseball profiles before March 1st
     if (!isBaseballSeasonActive && profile.sports?.includes('baseball_ncaa')) {
       continue;
     }
     if (parlaysToCreate.length >= config.count) break;
+
+    // Enforce strategy diversity cap
+    const currentStrategyCount = strategyCountMap.get(profile.strategy) || 0;
+    if (currentStrategyCount >= strategyDiversityCap) {
+      console.log(`[Bot] ⏭️ Strategy cap reached for '${profile.strategy}' (${currentStrategyCount}/${strategyDiversityCap}), skipping`);
+      continue;
+    }
 
     const legs: any[] = [];
     const parlayTeamCount = new Map<string, number>();
@@ -6076,6 +6089,8 @@ async function generateTierParlays(
         tier: tier,
       });
 
+      // Track strategy count for diversity cap
+      strategyCountMap.set(profile.strategy, (strategyCountMap.get(profile.strategy) || 0) + 1);
       console.log(`[Bot] Created ${tier}/${profile.strategy} ${legs.length}-leg parlay #${parlaysToCreate.length}`);
     }
   }
