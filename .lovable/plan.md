@@ -1,105 +1,90 @@
 
 
-## Quality-Gated Regeneration Loop — "Keep Rolling Until 60%"
+## Auto-Promote Winning Mispriced Edge Patterns to Execution Tier + Stacking Enhancements
 
 ### What This Does
 
-Creates an automatic regeneration system that generates parlays up to 3 times before 3PM ET. After games settle the next day, it checks if the 60% hit rate target was met — if yes, the threshold stays; if not, it adjusts for the next cycle.
+Adds a **dynamic strategy promotion system** that automatically detects which `mispriced_edge` patterns are winning at high rates (like the 48% from Feb 25th) and injects them into the execution tier at runtime. Also lowers the execution tier coherence gate so these promoted parlays can actually pass through.
 
 ### How It Works
 
 ```text
-Day-of (before 3PM ET):
+Before Generation:
+  1. Query last 14 days of settled mispriced_edge parlays
+  2. Group by sport + leg count + sort method
+  3. Find patterns with >= 40% win rate and >= 5 appearances
+  4. Inject matching profiles into execution tier with 60%+ minHitRate
+  5. Lower coherence gate from 85 to 70 for execution tier
 
-  10:00 ET — Attempt 1: Normal generation (standard thresholds)
-     |— Score batch projected hit rate
-     |— If >= 60%: DONE, distribute parlays
-     |— If < 60%: Void batch
-     |
-  11:30 ET — Attempt 2: Tighter filters (minHitRate +5%, coherence +5)
-     |— Score batch projected hit rate
-     |— If >= 60%: DONE, distribute parlays
-     |— If < 60%: Void batch
-     |
-  13:00 ET — Attempt 3: Elite filters (minHitRate +10%, coherence +10)
-     |— Keep best batch regardless
-     |— Distribute parlays + Telegram report
-
-Next Day (after settlement):
-
-  Settlement runs → check actual hit rate
-     |— If >= 60%: Keep current threshold (60%)
-     |— If < 60%: Log to adaptive tracker, adjust weights
+During Generation:
+  - Promoted mispriced_edge profiles run alongside existing execution strategies
+  - Stacking coherence still validates leg alignment (pace, defense, team totals)
+  - But the gate is relaxed enough that quality mispriced combos pass through
 ```
 
 ### Changes
 
-**New File: `supabase/functions/bot-quality-regen-loop/index.ts`**
-
-The orchestrator function that manages the regeneration loop:
-
-- Accepts `target_hit_rate` (default: 60) and `max_attempts` (default: 3)
-- Enforces a hard deadline of **3:00 PM ET** — no generation after this time regardless of attempt count
-- On each attempt:
-  - Calls `bot-generate-daily-parlays` with a `regen_boost` parameter (0, 1, or 2)
-  - Queries execution-tier parlays generated for today
-  - Calculates batch average projected hit rate from leg-level confidence scores
-  - If below target: voids today's pending parlays and increments attempt
-  - Tracks the best-scoring attempt across all rounds
-- After all attempts or hitting the deadline, keeps the best batch
-- Sends Telegram summary via `bot-send-telegram` with a `quality_regen_report` message type
-- Logs each attempt to `bot_activity_log` with `event_type: 'quality_regen'`
-
 **Modified File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-- Parse `regen_boost` (0, 1, or 2) from the request body
-- When `regen_boost = 1`: increase all tier `minHitRate` by +5 and coherence gates by +5
-- When `regen_boost = 2`: increase all tier `minHitRate` by +10 and coherence gates by +10
-- This progressively filters out weaker picks, keeping only the highest-conviction legs
-- Fully backward-compatible: defaults to `regen_boost = 0` when not provided
+1. **New function: `detectWinningMispricedPatterns(supabase)`**
+   - Queries `bot_daily_parlays` for the last 14 days where `strategy_name = 'mispriced_edge'` and outcome is `won` or `lost`
+   - Groups results by sport composition (NBA, NHL, all, cross-sport) and leg count
+   - Calculates win rate per pattern group
+   - Returns patterns with >= 40% win rate and >= 5 settled parlays
+   - Each pattern includes: sport filter, leg count, observed win rate, sample size
 
-**Modified File: `supabase/functions/data-pipeline-orchestrator/index.ts`**
+2. **New function: `autoPromoteToExecution(winningPatterns)`**
+   - Takes the winning mispriced patterns and creates execution-tier profile entries
+   - Sets `minHitRate` to 60 (execution floor) and `sortBy` to 'hit_rate' for half, 'composite' for the other half
+   - Caps at 8 promoted profiles to avoid flooding execution tier
+   - Logs each promotion with the observed win rate that triggered it
 
-- Replace the direct call to `bot-generate-daily-parlays` in Phase 3 with a call to `bot-quality-regen-loop`
-- Keep `bot-force-fresh-parlays` after the loop (adds mispriced conviction parlays on top)
-- Keep `bot-review-and-optimize` after both
+3. **Call both functions during initialization (alongside `detectWinningArchetypes`)**
+   - After dynamic archetype detection, run `detectWinningMispricedPatterns`
+   - Append promoted profiles to `TIER_CONFIG.execution.profiles`
+   - Log summary: "Promoted N mispriced_edge patterns to execution tier"
 
-**Modified File: `supabase/functions/bot-settle-and-learn/index.ts`**
+4. **Lower execution tier coherence gate from 85 to 70**
+   - The current 85 threshold is too strict and blocks most execution-tier parlays from generating (Feb 25: only 10.5% hit rate on the few that passed)
+   - Lowering to 70 aligns execution with validation tier and lets coherent-but-not-perfect combos through
+   - The stacking logic (pace alignment, team total signals, cluster matching) still applies — this just lowers the rejection floor
 
-- After settling today's parlays, calculate the **actual hit rate** for the day's execution-tier parlays
-- Compare against the 60% target
-- Log the result to `bot_activity_log` with `event_type: 'hit_rate_evaluation'`
-- If actual hit rate >= 60%: log success, threshold stays at 60%
-- If actual hit rate < 60%: log the gap, send a Telegram alert with the shortfall and trigger `calibrate-bot-weights` for next-day adjustment
-
-**Modified File: `supabase/functions/bot-send-telegram/index.ts`**
-
-- Add `quality_regen_report` to the notification type list
-- Format shows: number of attempts, projected hit rate per attempt, which attempt was kept, time remaining before the 3PM deadline
-- Add `hit_rate_evaluation` message: shows actual vs target hit rate after settlement, whether threshold is maintained or adjustment is needed
-
-**Config: `supabase/config.toml`**
-
-- Add `[functions.bot-quality-regen-loop]` with `verify_jwt = false`
-
-### The 3PM ET Deadline
-
-The loop checks `new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })` before each attempt. If the current ET hour is >= 15 (3PM), it stops immediately and keeps the best batch so far. This ensures all parlays are distributed well before tip-off.
-
-### Next-Day Adaptive Threshold
-
-The settlement engine already runs daily. After it processes outcomes, a new step checks:
-- Count execution-tier parlays that won vs total settled
-- If win rate >= 60%: threshold confirmed, no changes
-- If win rate < 60%: the system logs the shortfall and triggers weight recalibration, which will naturally tighten the next day's generation quality
-
-This is NOT a moving target — the 60% minimum stays fixed. What changes is the underlying model weights and sweet spot calibration to help the engine actually hit that target consistently.
+5. **Increase execution tier count from 10 to 15**
+   - With more profiles from promotion, allow more execution-tier parlays to generate
+   - This gives the promoted mispriced patterns room to produce output
 
 ### Technical Details
 
-**Projected Hit Rate Calculation:** For each execution-tier parlay, average the `hit_rate_l10` (last-10-game hit rate) across all legs. This uses historical sweet spot performance as a forward-looking quality metric.
+**Pattern Detection Query:**
+```sql
+SELECT strategy_name, outcome, legs
+FROM bot_daily_parlays
+WHERE parlay_date >= (today - 14 days)
+  AND strategy_name = 'mispriced_edge'
+  AND outcome IN ('won', 'lost')
+```
 
-**Voiding Between Attempts:** Uses `UPDATE bot_daily_parlays SET outcome = 'void', lesson_learned = 'quality_regen_attempt_N' WHERE parlay_date = today AND outcome = 'pending'` to clear the slate before regenerating.
+Then in code, extract the sport composition from each parlay's legs array and group by `{sports, legCount}` to find which specific mispriced configurations are winning.
 
-**Safety:** Maximum 3 attempts hard-coded. 3PM ET deadline hard-coded. Each attempt logged individually. If generator produces 0 parlays on any attempt, that attempt is skipped.
+**Promoted Profile Format:**
+```typescript
+{
+  legs: 3,
+  strategy: 'mispriced_edge_promoted',
+  sports: ['basketball_nba'], // from winning pattern
+  minHitRate: 60,
+  sortBy: 'hit_rate',
+  useAltLines: false
+}
+```
+
+**Coherence Gate Change:**
+- Line ~5944: `coherence < 85` becomes `coherence < 70` for execution tier
+- This single change unblocks execution-tier generation while maintaining the stacking alignment bonuses/penalties
+
+**Safety:**
+- Maximum 8 promoted profiles per cycle (prevents runaway)
+- 14-day lookback with minimum 5 sample requirement (prevents flukes)
+- Promoted profiles still go through all existing filters (hit rate, edge, Monte Carlo simulation)
+- The `mispriced_edge_promoted` strategy name distinguishes them in logs and settlement tracking
 
