@@ -784,6 +784,8 @@ interface HomeCourtData { home_win_rate: number; home_cover_rate: number; home_o
 
 // ============= GAME CONTEXT FOR INTELLIGENT STACKING =============
 
+type EnvironmentCluster = 'SHOOTOUT' | 'GRIND' | 'NEUTRAL';
+
 interface PickGameContext {
   pace: 'fast' | 'neutral' | 'slow';
   defenseStrength: 'soft' | 'neutral' | 'tough';
@@ -794,6 +796,55 @@ interface PickGameContext {
   teamTotalSignal?: 'OVER' | 'UNDER' | null;
   teamTotalComposite?: number | null;
   teamTotalSport?: string | null;
+  envCluster?: EnvironmentCluster;
+  envClusterStrength?: number; // how many signals matched (1-4)
+}
+
+// ============= ENVIRONMENT CLUSTER CLASSIFIER =============
+function classifyEnvironmentCluster(ctx: PickGameContext | null | undefined, side?: string): { cluster: EnvironmentCluster; strength: number } {
+  if (!ctx) return { cluster: 'NEUTRAL', strength: 0 };
+
+  let shootoutSignals = 0;
+  let grindSignals = 0;
+
+  // Pace
+  if (ctx.pace === 'fast') shootoutSignals++;
+  if (ctx.pace === 'slow') grindSignals++;
+
+  // Defense
+  if (ctx.defenseStrength === 'soft') shootoutSignals++;
+  if (ctx.defenseStrength === 'tough') grindSignals++;
+
+  // Vegas total
+  if (ctx.vegasTotal != null) {
+    if (ctx.vegasTotal >= 225) shootoutSignals++;
+    if (ctx.vegasTotal <= 210) grindSignals++;
+  }
+
+  // Team total signal
+  if (ctx.teamTotalSignal === 'OVER') shootoutSignals++;
+  if (ctx.teamTotalSignal === 'UNDER') grindSignals++;
+
+  // Side alignment bonus
+  const pickSide = (side || '').toLowerCase();
+  if (pickSide === 'over' && shootoutSignals > 0) shootoutSignals++;
+  if (pickSide === 'under' && grindSignals > 0) grindSignals++;
+
+  // Classify: need at least 1 signal, prefer the stronger cluster
+  if (shootoutSignals >= 2 && shootoutSignals > grindSignals) {
+    return { cluster: 'SHOOTOUT', strength: shootoutSignals };
+  }
+  if (grindSignals >= 2 && grindSignals > shootoutSignals) {
+    return { cluster: 'GRIND', strength: grindSignals };
+  }
+  if (shootoutSignals >= 1 && grindSignals === 0) {
+    return { cluster: 'SHOOTOUT', strength: shootoutSignals };
+  }
+  if (grindSignals >= 1 && shootoutSignals === 0) {
+    return { cluster: 'GRIND', strength: grindSignals };
+  }
+
+  return { cluster: 'NEUTRAL', strength: 0 };
 }
 
 function classifyPace(paceRating: number, sport: string): 'fast' | 'neutral' | 'slow' {
@@ -928,41 +979,55 @@ function calculateParlayCoherence(legs: any[]): number {
   const overLegs = legs.filter(l => (l.side || l.recommended_side) === 'over' && l.player_name);
   const underLegs = legs.filter(l => (l.side || l.recommended_side) === 'under' && l.player_name);
 
-  // Game environment alignment bonuses/penalties
+  // Game environment alignment bonuses/penalties (STRENGTHENED)
   for (const leg of overLegs) {
     const ctx = leg._gameContext as PickGameContext | undefined;
     if (!ctx) continue;
-    if (ctx.pace === 'fast') coherenceScore += 3;
-    if (ctx.pace === 'slow') coherenceScore -= 5;
-    if (ctx.defenseStrength === 'soft') coherenceScore += 3;
-    if (ctx.defenseStrength === 'tough') coherenceScore -= 5;
+    if (ctx.pace === 'fast') coherenceScore += 6;
+    if (ctx.pace === 'slow') coherenceScore -= 8;
+    if (ctx.defenseStrength === 'soft') coherenceScore += 6;
+    if (ctx.defenseStrength === 'tough') coherenceScore -= 8;
 
     // TEAM TOTAL ALIGNMENT: Player OVER vs game total signal
     if (ctx.teamTotalSignal && ctx.teamTotalComposite) {
       if (ctx.teamTotalSignal === 'OVER' && ctx.teamTotalComposite >= 70) {
-        coherenceScore += 8; // Aligned: player OVER in OVER game
+        coherenceScore += 10; // Aligned: player OVER in OVER game
       } else if (ctx.teamTotalSignal === 'UNDER' && ctx.teamTotalComposite >= 70) {
-        coherenceScore -= 15; // Conflict: player OVER in strong UNDER game
+        coherenceScore -= 18; // Conflict: player OVER in strong UNDER game
       }
     }
   }
   for (const leg of underLegs) {
     const ctx = leg._gameContext as PickGameContext | undefined;
     if (!ctx) continue;
-    if (ctx.pace === 'slow') coherenceScore += 3;
-    if (ctx.pace === 'fast') coherenceScore -= 4;
-    if (ctx.defenseStrength === 'tough') coherenceScore += 3;
-    if (ctx.defenseStrength === 'soft') coherenceScore -= 3;
+    if (ctx.pace === 'slow') coherenceScore += 6;
+    if (ctx.pace === 'fast') coherenceScore -= 7;
+    if (ctx.defenseStrength === 'tough') coherenceScore += 6;
+    if (ctx.defenseStrength === 'soft') coherenceScore -= 6;
 
     // TEAM TOTAL ALIGNMENT: Player UNDER vs game total signal
     if (ctx.teamTotalSignal && ctx.teamTotalComposite) {
       if (ctx.teamTotalSignal === 'UNDER' && ctx.teamTotalComposite >= 70) {
-        coherenceScore += 8; // Aligned: player UNDER in UNDER game
+        coherenceScore += 10; // Aligned: player UNDER in UNDER game
       } else if (ctx.teamTotalSignal === 'OVER' && ctx.teamTotalComposite >= 70) {
-        coherenceScore -= 10; // Conflict: player UNDER in strong OVER game
+        coherenceScore -= 14; // Conflict: player UNDER in strong OVER game
       }
     }
   }
+
+  // === ENVIRONMENT CLUSTER COHERENCE ===
+  const clusters = legs.map(l => {
+    const ctx = l._gameContext as PickGameContext | undefined;
+    return ctx?.envCluster || 'NEUTRAL';
+  });
+  const shootoutCount = clusters.filter(c => c === 'SHOOTOUT').length;
+  const grindCount = clusters.filter(c => c === 'GRIND').length;
+
+  // All same cluster = big bonus
+  if (shootoutCount === legs.length) coherenceScore += 12;
+  else if (grindCount === legs.length) coherenceScore += 12;
+  // Mixed shootout+grind = heavy penalty
+  else if (shootoutCount > 0 && grindCount > 0) coherenceScore -= 15;
 
   // Positive correlation bonus: player OVER + same team ML/spread = correlated upside
   for (let i = 0; i < legs.length; i++) {
@@ -988,7 +1053,7 @@ function calculateParlayCoherence(legs: any[]): number {
     }
   }
 
-  return Math.max(0, Math.min(130, coherenceScore));
+  return Math.max(0, Math.min(150, coherenceScore));
 }
 
 // Calculate coherence bonus for a candidate pick relative to already-selected legs
@@ -1002,23 +1067,52 @@ function pickCoherenceBonus(pick: any, existingLegs: any[]): number {
 
   if (!pickCtx || !isPlayerPick) return 0;
 
-  // Check alignment with existing legs' game environments
+  const pickCluster = pickCtx.envCluster || 'NEUTRAL';
+
   for (const leg of existingLegs) {
     const legCtx = leg._gameContext as PickGameContext | undefined;
     if (!legCtx) continue;
     const legSide = (leg.side || leg.recommended_side || '').toLowerCase();
+    const legCluster = legCtx.envCluster || 'NEUTRAL';
 
-    // Both overs in fast-pace games = synergy
+    // Both overs in fast-pace games = strong synergy
     if (pickSide === 'over' && legSide === 'over' && pickCtx.pace === 'fast' && legCtx.pace === 'fast') {
-      bonus += 2;
+      bonus += 8;
     }
-    // Both unders in slow-pace / tough-defense games = synergy
+    // Both overs in soft-defense games = strong synergy
+    if (pickSide === 'over' && legSide === 'over' && pickCtx.defenseStrength === 'soft' && legCtx.defenseStrength === 'soft') {
+      bonus += 8;
+    }
+    // Both unders in slow-pace games = strong synergy
     if (pickSide === 'under' && legSide === 'under' && pickCtx.pace === 'slow' && legCtx.pace === 'slow') {
-      bonus += 2;
+      bonus += 8;
     }
-    // Over in slow-pace game mixed with under in fast-pace game = incoherent
-    if (pickSide === 'over' && pickCtx.pace === 'slow' && legSide === 'under' && legCtx.pace === 'fast') {
-      bonus -= 2;
+    // Both unders in tough-defense games = strong synergy
+    if (pickSide === 'under' && legSide === 'under' && pickCtx.defenseStrength === 'tough' && legCtx.defenseStrength === 'tough') {
+      bonus += 8;
+    }
+    // OVER in slow pace mixed with UNDER in fast pace = heavily incoherent
+    if ((pickSide === 'over' && pickCtx.pace === 'slow' && legSide === 'under' && legCtx.pace === 'fast') ||
+        (pickSide === 'under' && pickCtx.pace === 'fast' && legSide === 'over' && legCtx.pace === 'slow')) {
+      bonus -= 10;
+    }
+    // Same environment cluster match = synergy
+    if (pickCluster !== 'NEUTRAL' && pickCluster === legCluster) {
+      bonus += 6;
+    }
+    // Mixed cluster (SHOOTOUT + GRIND) = heavy penalty
+    if ((pickCluster === 'SHOOTOUT' && legCluster === 'GRIND') ||
+        (pickCluster === 'GRIND' && legCluster === 'SHOOTOUT')) {
+      bonus -= 8;
+    }
+
+    // === DEFENSE-STRENGTH MATCHING ===
+    // If existing legs all face soft defense, penalize tough-defense candidates
+    if (pickCtx.defenseStrength === 'tough' && legCtx.defenseStrength === 'soft') {
+      bonus -= 15;
+    }
+    if (pickCtx.defenseStrength === 'soft' && legCtx.defenseStrength === 'tough') {
+      bonus -= 15;
     }
   }
 
@@ -3595,7 +3689,12 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       line_source: hasRealLine ? 'verified' : 'projected',
       sport: pick.sport || 'basketball_nba',
       team_name: resolvedTeamName,
-      _gameContext: gameCtx || null,
+      _gameContext: (() => {
+        if (!gameCtx) return null;
+        const side = (pick.recommended_side || '').toLowerCase();
+        const { cluster, strength } = classifyEnvironmentCluster(gameCtx, side);
+        return { ...gameCtx, envCluster: cluster, envClusterStrength: strength };
+      })(),
     };
   }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category) && p.has_real_line);
 
@@ -5381,7 +5480,7 @@ async function generateTierParlays(
           const aBonus = pickCoherenceBonus(a, legs);
           const bBonus = pickCoherenceBonus(b, legs);
           // Primary: coherence-adjusted composite score
-          return ((b.compositeScore || 0) + bBonus * 3) - ((a.compositeScore || 0) + aBonus * 3);
+          return ((b.compositeScore || 0) + bBonus * 10) - ((a.compositeScore || 0) + aBonus * 10);
         });
       }
       
@@ -5840,9 +5939,13 @@ async function generateTierParlays(
         continue;
       }
 
-      // === COHERENCE GATE: reject incoherent leg combinations ===
+      // === COHERENCE GATE: reject incoherent leg combinations (RAISED) ===
       const coherence = calculateParlayCoherence(legs);
-      if (coherence < 70 && tier === 'execution') {
+      if (coherence < 85 && tier === 'execution') {
+        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 85)`);
+        continue;
+      }
+      if (coherence < 70 && tier === 'validation') {
         console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 70)`);
         continue;
       }
@@ -7263,6 +7366,111 @@ Deno.serve(async (req) => {
       TIER_CONFIG.exploration.maxCategoryUsage = 10;
       TIER_CONFIG.exploration.minHitRate = 40;
       console.log(`[Bot v2] Volume mode: exploration maxPlayerUsage=4, maxTeamUsage=5, maxCategoryUsage=10, minHitRate=40`);
+    }
+
+    // ============= ENVIRONMENT-CLUSTERED PARLAY ASSEMBLY =============
+    // Pre-cluster picks by game environment and build parlays within each cluster FIRST
+    const clusterParlays: any[] = [];
+    if (tiersToGenerate.includes('execution')) {
+      const allPicks = [...pool.playerPicks];
+      const shootoutPicks = allPicks.filter(p => {
+        const ctx = (p as any)._gameContext as PickGameContext | undefined;
+        return ctx?.envCluster === 'SHOOTOUT';
+      });
+      const grindPicks = allPicks.filter(p => {
+        const ctx = (p as any)._gameContext as PickGameContext | undefined;
+        return ctx?.envCluster === 'GRIND';
+      });
+
+      console.log(`[EnvCluster] SHOOTOUT: ${shootoutPicks.length} picks, GRIND: ${grindPicks.length} picks`);
+
+      // Build clustered parlays for clusters with 3+ picks
+      for (const [clusterName, clusterPool] of [['shootout', shootoutPicks], ['grind', grindPicks]] as const) {
+        if (clusterPool.length < 3) {
+          console.log(`[EnvCluster] ${clusterName} cluster too small (${clusterPool.length}), skipping`);
+          continue;
+        }
+
+        // Sort by composite score (strongest picks first)
+        const sorted = [...clusterPool].sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+        
+        // Build up to 3 parlays per cluster
+        const usedPlayers = new Set<string>();
+        for (let pi = 0; pi < 3; pi++) {
+          const legs: any[] = [];
+          for (const pick of sorted) {
+            if (legs.length >= 3) break;
+            const pName = (pick.player_name || '').toLowerCase();
+            if (usedPlayers.has(pName)) continue;
+            
+            // Check anti-correlation
+            const antiCorr = hasAntiCorrelation(pick, legs);
+            if (antiCorr.blocked) continue;
+
+            legs.push({
+              player_name: pick.player_name,
+              team_name: pick.team_name,
+              prop_type: pick.prop_type,
+              line: pick.line,
+              side: pick.recommended_side,
+              category: pick.category,
+              weight: pick.weight,
+              hit_rate: pick.confidence_score,
+              american_odds: pick.americanOdds,
+              composite_score: pick.compositeScore,
+              sport: pick.sport,
+              type: 'player',
+              _gameContext: (pick as any)._gameContext,
+            });
+            usedPlayers.add(pName);
+          }
+
+          if (legs.length < 3) break;
+
+          // Calculate coherence (should be high since all same cluster)
+          const coherence = calculateParlayCoherence(legs) + 10; // +10 cluster bonus
+          if (coherence < 85) {
+            console.log(`[EnvCluster] ${clusterName} parlay #${pi + 1} failed coherence (${coherence})`);
+            continue;
+          }
+
+          // Calculate combined probability and odds
+          const combinedProb = legs.reduce((p, l) => p * (l.hit_rate || 0.5), 1);
+          const decimalOdds = legs.reduce((acc, l) => {
+            const odds = l.american_odds || -110;
+            return acc * (odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1);
+          }, 1);
+          const americanOdds = decimalOdds >= 2 ? Math.round((decimalOdds - 1) * 100) : Math.round(-100 / (decimalOdds - 1));
+
+          const fingerprint = legs.map(l => `${l.player_name}_${l.prop_type}_${l.side}`).sort().join('|');
+          if (globalFingerprints.has(fingerprint)) continue;
+          globalFingerprints.add(fingerprint);
+
+          clusterParlays.push({
+            parlay_date: targetDate,
+            legs,
+            leg_count: legs.length,
+            combined_probability: combinedProb,
+            expected_odds: Math.min(americanOdds, 10000),
+            simulated_win_rate: combinedProb,
+            simulated_edge: combinedProb - (1 / decimalOdds),
+            simulated_sharpe: (combinedProb - (1 / decimalOdds)) / (0.5 * Math.sqrt(legs.length)),
+            strategy_name: `${strategyName}_execution_${clusterName}_stack`,
+            selection_rationale: `execution tier: ${clusterName}_stack (3-leg environment cluster)`,
+            outcome: 'pending',
+            is_simulated: false,
+            simulated_stake: 100,
+            tier: 'execution',
+          });
+
+          console.log(`[EnvCluster] ✅ Created ${clusterName}_stack parlay #${pi + 1} (coherence: ${coherence})`);
+        }
+      }
+
+      if (clusterParlays.length > 0) {
+        allParlays.push(...clusterParlays);
+        console.log(`[EnvCluster] 🌊 ${clusterParlays.length} clustered parlays created (ride the same wave)`);
+      }
     }
 
     for (const tier of tiersToGenerate) {
