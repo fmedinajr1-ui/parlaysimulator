@@ -333,6 +333,29 @@ serve(async (req) => {
       .eq('id', jobRecord.id);
   }
 
+  // Call Pipeline Doctor for diagnosis
+  try {
+    console.log('[Engine Cascade] Calling Pipeline Doctor...');
+    await fetch(`${supabaseUrl}/functions/v1/bot-pipeline-doctor`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseKey}`,
+      },
+      body: JSON.stringify({
+        trigger_source: `engine-cascade-runner (${trigger})`,
+        pipeline_results: {
+          steps_failed: failCount,
+          steps_succeeded: successCount,
+          step_results: results,
+        },
+      }),
+    });
+    console.log('[Engine Cascade] Pipeline Doctor completed');
+  } catch (doctorErr) {
+    console.error('[Engine Cascade] Pipeline Doctor failed:', doctorErr);
+  }
+
   const response = {
     success: failCount === 0,
     status: overallStatus,

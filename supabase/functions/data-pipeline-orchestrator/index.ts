@@ -326,6 +326,29 @@ serve(async (req) => {
       }
     }
 
+    // Call Pipeline Doctor for diagnosis
+    try {
+      console.log('[Pipeline] Calling Pipeline Doctor...');
+      await fetch(`${supabaseUrl}/functions/v1/bot-pipeline-doctor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          trigger_source: `data-pipeline-orchestrator (${mode})`,
+          pipeline_results: {
+            steps_failed: failedSteps,
+            steps_succeeded: successfulSteps,
+            results,
+          },
+        }),
+      });
+      console.log('[Pipeline] Pipeline Doctor completed');
+    } catch (doctorErr) {
+      console.error('[Pipeline] Pipeline Doctor failed:', doctorErr);
+    }
+
     return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

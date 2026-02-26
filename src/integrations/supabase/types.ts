@@ -1269,6 +1269,51 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_doctor_reports: {
+        Row: {
+          auto_remediations: Json
+          clean_day_win_rate: number | null
+          created_at: string
+          diagnoses: Json
+          failure_day_win_rate: number | null
+          id: string
+          pipeline_context: Json | null
+          problems_auto_fixed: number
+          problems_detected: number
+          profit_impact_estimate: number | null
+          report_date: string
+          trigger_source: string
+        }
+        Insert: {
+          auto_remediations?: Json
+          clean_day_win_rate?: number | null
+          created_at?: string
+          diagnoses?: Json
+          failure_day_win_rate?: number | null
+          id?: string
+          pipeline_context?: Json | null
+          problems_auto_fixed?: number
+          problems_detected?: number
+          profit_impact_estimate?: number | null
+          report_date?: string
+          trigger_source?: string
+        }
+        Update: {
+          auto_remediations?: Json
+          clean_day_win_rate?: number | null
+          created_at?: string
+          diagnoses?: Json
+          failure_day_win_rate?: number | null
+          id?: string
+          pipeline_context?: Json | null
+          problems_auto_fixed?: number
+          problems_detected?: number
+          profit_impact_estimate?: number | null
+          report_date?: string
+          trigger_source?: string
+        }
+        Relationships: []
+      }
       bot_learning_metrics: {
         Row: {
           ci_lower: number | null
