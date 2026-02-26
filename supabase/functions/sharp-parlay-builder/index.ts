@@ -676,7 +676,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   }
 
   // Filter out blocked picks from matchup intelligence
-  const props = (allProps || []).filter((p: any) => {
+  let props = (allProps || []).filter((p: any) => {
     const key = `${p.player_name?.toLowerCase()}_${p.prop_type?.toLowerCase()}_${(p.side || "over")?.toLowerCase()}_${p.line}`;
     const isBlocked = blockedSet.has(key);
     if (isBlocked) {
@@ -692,16 +692,58 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   });
 
   console.log(
-    `[Sharp Parlay Builder] Found ${allProps?.length || 0} total props, ${props.length} after matchup filter for ${today}`,
+    `[Sharp Parlay Builder] Found ${allProps?.length || 0} total risk props, ${props.length} after matchup filter for ${today}`,
   );
+
+  // FALLBACK: If risk engine picks are too thin (<6), supplement from category_sweet_spots
+  const MIN_RISK_PICKS_THRESHOLD = 6;
+  let usedFallback = false;
+
+  if (props.length < MIN_RISK_PICKS_THRESHOLD) {
+    console.log(`[Sharp Builder] ⚠️ Only ${props.length} risk picks (< ${MIN_RISK_PICKS_THRESHOLD}). Falling back to category_sweet_spots.`);
+    
+    const { data: sweetSpots } = await supabase
+      .from("category_sweet_spots")
+      .select("player_name, prop_type, recommended_side, recommended_line, l10_hit_rate, confidence_score, actual_line, projected_value, season_avg, l10_avg")
+      .eq("analysis_date", today)
+      .eq("is_active", true)
+      .gte("l10_hit_rate", 0.60) // 60%+ L10 hit rate
+      .gte("confidence_score", 0.65); // 65%+ confidence
+
+    const existingKeys = new Set(props.map((p: any) => 
+      `${p.player_name?.toLowerCase()}_${normalizePropType(p.prop_type)}`
+    ));
+
+    const fallbackProps = (sweetSpots || [])
+      .filter((ss: any) => {
+        const key = `${ss.player_name?.toLowerCase()}_${normalizePropType(ss.prop_type)}`;
+        return !existingKeys.has(key); // Don't duplicate
+      })
+      .map((ss: any) => ({
+        player_name: ss.player_name,
+        prop_type: ss.prop_type,
+        side: ss.recommended_side || 'over',
+        line: ss.actual_line || ss.recommended_line,
+        odds: -110, // Default odds for sweet spot fallback
+        confidence_score: ss.confidence_score || 0.65,
+        game_date: today,
+        avg_minutes: 30, // Assume adequate minutes for sweet spots
+        source: 'category_sweet_spots_fallback',
+      }));
+
+    console.log(`[Sharp Builder] 📊 Fallback: ${fallbackProps.length} candidates from category_sweet_spots (60%+ L10, 65%+ confidence)`);
+    props = [...props, ...fallbackProps];
+    usedFallback = true;
+  }
 
   if (!props || props.length === 0) {
     return {
-      message: "No approved props available for today",
+      message: `No approved props available for today (risk_picks: ${allProps?.length || 0}, fallback_used: ${usedFallback})`,
       parlays: null,
       candidates_evaluated: 0,
       candidates_passed: 0,
       saved: [],
+      source_diagnostics: { risk_rows: allProps?.length || 0, fallback_used: usedFallback, fallback_rows: 0 },
     };
   }
 
