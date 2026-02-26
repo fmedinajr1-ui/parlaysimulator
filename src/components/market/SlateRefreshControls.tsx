@@ -115,9 +115,11 @@ export function SlateRefreshControls() {
       { name: 'Analyzing categories', function: 'category-props-analyzer', body: { forceRefresh: true } },
       { name: 'Detecting mispriced lines', function: 'detect-mispriced-lines' },
       { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
-      { name: 'Generating defense-aware parlays', function: 'bot-generate-daily-parlays' },
+      { name: 'Quality-gated generation', function: 'bot-quality-regen-loop', body: { target_hit_rate: 60, max_attempts: 3 } },
+      { name: 'Force fresh mispriced parlays', function: 'bot-force-fresh-parlays' },
       { name: 'Building sharp parlays', function: 'sharp-parlay-builder' },
       { name: 'Building heat parlays', function: 'heat-prop-engine' },
+      { name: 'Scanning lottery parlays', function: 'nba-mega-parlay-scanner' },
     ];
 
     setTotalSteps(CLEAN_REBUILD_STEPS.length);
@@ -144,7 +146,7 @@ export function SlateRefreshControls() {
 
       invalidateAllQueries();
       setLastRefresh(new Date());
-      toast.success('Clean rebuild complete! New defense-aware slate is live 🎯');
+      toast.success('Clean rebuild complete! Slate + lottery parlays are live 🎯🎰');
     } catch (err) {
       console.error('[CleanRebuild] Error:', err);
       toast.error('Clean rebuild failed');
