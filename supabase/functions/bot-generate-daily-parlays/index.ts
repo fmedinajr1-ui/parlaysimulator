@@ -8165,8 +8165,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 6. Append new parlays (no longer deletes previous runs so multiple generations accumulate)
-    console.log(`[Bot v2] Appending ${allParlays.length} new parlays for ${targetDate}`);
+    // 6. Tag all parlays with generation source for attribution tracking
+    for (const p of allParlays) {
+      p.selection_rationale = `${p.selection_rationale || ''} [source:${generationSource}]`.trim();
+    }
+
+    // Append new parlays (no longer deletes previous runs so multiple generations accumulate)
+    console.log(`[Bot v2] Appending ${allParlays.length} new parlays for ${targetDate} (source: ${generationSource})`);
 
     if (allParlays.length > 0) {
       const { error: insertError } = await supabase
