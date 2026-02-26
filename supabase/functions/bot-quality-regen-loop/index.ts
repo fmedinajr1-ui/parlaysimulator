@@ -54,6 +54,18 @@ Deno.serve(async (req) => {
 
     console.log(`[QualityRegen] Starting quality-gated loop for ${today} | target=${targetHitRate}% | maxAttempts=${maxAttempts}`);
 
+    // Check if pending parlays already exist (supplemental mode)
+    const { count: existingPending } = await supabase
+      .from('bot_daily_parlays')
+      .select('*', { count: 'exact', head: true })
+      .eq('parlay_date', today)
+      .eq('outcome', 'pending');
+
+    const isSupplemental = (existingPending || 0) > 0;
+    if (isSupplemental) {
+      console.log(`[QualityRegen] 📌 ${existingPending} pending parlays already exist — running in SUPPLEMENTAL mode (no voiding)`);
+    }
+
     const attempts: AttemptResult[] = [];
     let bestAttempt: AttemptResult | null = null;
     let finalBatchKept = false;
@@ -69,8 +81,8 @@ Deno.serve(async (req) => {
       const regenBoost = attempt - 1; // 0, 1, 2
       console.log(`[QualityRegen] === Attempt ${attempt}/${maxAttempts} (regen_boost=${regenBoost}) ===`);
 
-      // Void previous pending parlays if this is attempt 2+
-      if (attempt > 1) {
+      // Only void previous attempts if NOT supplemental (first run of day)
+      if (attempt > 1 && !isSupplemental) {
         const { count: voidedCount } = await supabase
           .from('bot_daily_parlays')
           .update({ 
@@ -82,6 +94,8 @@ Deno.serve(async (req) => {
           .select('*', { count: 'exact', head: true });
 
         console.log(`[QualityRegen] Voided ${voidedCount || 0} pending parlays from attempt ${attempt - 1}`);
+      } else if (attempt > 1 && isSupplemental) {
+        console.log(`[QualityRegen] ⏭️ Skipping void step (supplemental mode)`);
       }
 
       // Call bot-generate-daily-parlays with regen_boost
