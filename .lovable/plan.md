@@ -1,45 +1,37 @@
 
+## Fix Mispriced Edge Flooding and Void Loop
 
-## Upgrade Clean & Rebuild + Add Lottery Parlay Scanner
+### Problem
+Today's slate shows 72% of all parlays are mispriced-related, and 70% of all parlays get voided. The promotion system and force-fresh parlays are duplicating the same strategy type, and the quality loop is generating parlays that get voided on the next cycle.
 
-### What This Does
-
-Updates the "Clean & Rebuild" flow to use the new quality-gated regeneration loop (with mispriced edge promotion) and adds the Daily Lottery Parlay Scanner as the final step so lottery parlays are always generated alongside the main slate.
+### Root Causes
+1. `bot-force-fresh-parlays` generates mispriced parlays without checking what the main loop already created
+2. `bot-quality-regen-loop` may be re-running and voiding its own previous output
+3. No strategy diversity cap -- mispriced edge can consume the entire slate
+4. The promotion system adds more mispriced profiles to execution tier, compounding the flood
 
 ### Changes
 
-**Modified File: `src/components/market/SlateRefreshControls.tsx`**
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-Update the `CLEAN_REBUILD_STEPS` array:
+1. **Add strategy diversity cap**: Before generating parlays for any strategy, check how many already exist for today with that strategy name. Cap any single strategy at 30% of the tier's total count (e.g., if execution allows 15 parlays, max 5 can be mispriced_edge_promoted).
 
-1. Replace the direct `bot-generate-daily-parlays` call (step 8) with `bot-quality-regen-loop` -- this triggers the quality-gated loop that auto-promotes winning mispriced patterns and retries up to 3x until the 60% projected hit rate is met.
-2. Add `bot-force-fresh-parlays` after the quality loop to layer on mispriced conviction parlays.
-3. Add `nba-mega-parlay-scanner` as the final step to generate the lottery parlays that nearly won yesterday.
-4. Update the completion toast to mention lottery parlays.
+2. **Reduce promoted profile cap from 8 to 4**: In `autoPromoteToExecution`, lower the maximum promoted profiles from 8 to 4 to prevent mispriced domination of the execution tier.
 
-The updated step list becomes:
-```text
-1. Alert customers (Telegram)
-2. Void old parlays
-3. Clean stale props
-4. Scan defensive matchups
-5. Analyze categories
-6. Detect mispriced lines
-7. Run risk engine
-8. Quality-gated generation (bot-quality-regen-loop) <-- was bot-generate-daily-parlays
-9. Force fresh mispriced parlays (bot-force-fresh-parlays) <-- NEW
-10. Build sharp parlays
-11. Build heat parlays
-12. Scan lottery parlays (nba-mega-parlay-scanner) <-- NEW
-```
+**File: `supabase/functions/bot-force-fresh-parlays/index.ts`**
 
-**Modified File: `supabase/functions/data-pipeline-orchestrator/index.ts`**
+3. **Skip if mispriced parlays already exist**: At the start of the function, query today's `bot_daily_parlays` for `strategy_name LIKE '%mispriced%'` with outcome = 'pending'. If 10+ mispriced parlays already exist and are active, skip generation and log "Sufficient mispriced parlays already active, skipping force-fresh."
 
-Add `nba-mega-parlay-scanner` to the end of Phase 3 (Generation) so the lottery scanner runs automatically on every scheduled pipeline execution too -- not just manual rebuilds.
+4. **Cap force-fresh output to 10 max**: Even when generating, limit the batch to 10 parlays instead of flooding with 17+.
 
-### Why
+**File: `supabase/functions/bot-quality-regen-loop/index.ts`**
 
-- The Clean & Rebuild was still calling the old direct generation, bypassing the quality loop and mispriced promotion system you just added.
-- The lottery parlay scanner was only running on its own schedule, not as part of rebuilds -- so manual rebuilds missed it.
-- Yesterday's lottery parlay almost hit, so having it always run after fresh generation ensures you always get those high-upside plays with the freshest data.
+5. **Don't void on re-run within same day**: Before voiding existing parlays, check if the current run is a retry within the same generation window (same day, same trigger). If pending parlays from the current day already exist and haven't been settled, skip the void step and only generate additional parlays to fill gaps.
 
+6. **Track generation runs**: Add a simple check -- query `bot_daily_parlays` for today's date. If parlays with outcome='pending' already exist from the current day, set a `is_supplemental = true` flag that skips the void step.
+
+### Expected Result
+- Strategy diversity: No single strategy exceeds ~30% of output
+- Void rate drops from 70% to near 0% (no self-voiding within the day)
+- Force-fresh becomes additive only when needed, not duplicative
+- Active parlay count should be 60-80 instead of 29 survivors out of 97
