@@ -83,6 +83,108 @@ async function detectWinningArchetypes(supabase: any): Promise<{ categories: Set
   }
 }
 
+// ============= DYNAMIC MISPRICED EDGE PROMOTION =============
+async function detectWinningMispricedPatterns(supabase: any): Promise<{ sports: string[]; legCount: number; winRate: number; sampleSize: number }[]> {
+  try {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    
+    const { data: settledParlays, error } = await supabase
+      .from('bot_daily_parlays')
+      .select('outcome, legs, leg_count')
+      .gte('parlay_date', fourteenDaysAgo)
+      .eq('strategy_name', 'mispriced_edge')
+      .in('outcome', ['won', 'lost']);
+
+    if (error || !settledParlays || settledParlays.length === 0) {
+      console.log(`[Bot v2] Mispriced Promotion: No settled mispriced_edge data (${error?.message || 'empty'})`);
+      return [];
+    }
+
+    // Group by sport composition + leg count
+    const patternStats = new Map<string, { wins: number; total: number; sports: string[]; legCount: number }>();
+    
+    for (const parlay of settledParlays) {
+      const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+      const legCount = parlay.leg_count || legs.length;
+      const isWin = parlay.outcome === 'won';
+      
+      // Extract unique sports from legs
+      const sportSet = new Set<string>();
+      for (const leg of legs) {
+        const sport = (leg as any).sport_key || (leg as any).sport || '';
+        if (sport) sportSet.add(sport);
+      }
+      const sports = Array.from(sportSet).sort();
+      const sportKey = sports.length > 1 ? 'cross_sport' : (sports[0] || 'all');
+      const patternKey = `${sportKey}|${legCount}`;
+      
+      const stats = patternStats.get(patternKey) || { wins: 0, total: 0, sports: sports.length > 0 ? sports : ['all'], legCount };
+      stats.total++;
+      if (isWin) stats.wins++;
+      patternStats.set(patternKey, stats);
+    }
+
+    // Filter: >= 40% win rate, >= 5 appearances
+    const winningPatterns = Array.from(patternStats.values())
+      .map(stats => ({
+        sports: stats.sports,
+        legCount: stats.legCount,
+        winRate: stats.total > 0 ? (stats.wins / stats.total) * 100 : 0,
+        sampleSize: stats.total,
+      }))
+      .filter(p => p.winRate >= 40 && p.sampleSize >= 5)
+      .sort((a, b) => b.winRate - a.winRate);
+
+    if (winningPatterns.length > 0) {
+      const logStr = winningPatterns.map(p => `${p.sports.join('+')} ${p.legCount}L (${p.winRate.toFixed(1)}%, n=${p.sampleSize})`).join(', ');
+      console.log(`[Bot v2] 🎯 Winning Mispriced Patterns: ${logStr}`);
+    } else {
+      console.log(`[Bot v2] Mispriced Promotion: No patterns met 40% WR / 5 sample threshold`);
+    }
+
+    return winningPatterns;
+  } catch (err) {
+    console.log(`[Bot v2] Mispriced Promotion error: ${err.message}`);
+    return [];
+  }
+}
+
+function autoPromoteToExecution(winningPatterns: { sports: string[]; legCount: number; winRate: number; sampleSize: number }[]): any[] {
+  const promoted: any[] = [];
+  const maxPromoted = 8;
+
+  for (const pattern of winningPatterns) {
+    if (promoted.length >= maxPromoted) break;
+    
+    const sportsFilter = pattern.sports.length > 1 ? ['all'] : pattern.sports;
+    
+    // Create two profiles per pattern: one hit_rate sorted, one composite sorted
+    promoted.push({
+      legs: pattern.legCount,
+      strategy: 'mispriced_edge_promoted',
+      sports: sportsFilter,
+      minHitRate: 60,
+      sortBy: 'hit_rate',
+      useAltLines: false,
+    });
+    console.log(`[Bot v2] ✅ Promoted mispriced_edge → execution: ${sportsFilter.join('+')} ${pattern.legCount}L (observed ${pattern.winRate.toFixed(1)}% WR, n=${pattern.sampleSize}) [hit_rate]`);
+
+    if (promoted.length >= maxPromoted) break;
+
+    promoted.push({
+      legs: pattern.legCount,
+      strategy: 'mispriced_edge_promoted',
+      sports: sportsFilter,
+      minHitRate: 60,
+      sortBy: 'composite',
+      useAltLines: false,
+    });
+    console.log(`[Bot v2] ✅ Promoted mispriced_edge → execution: ${sportsFilter.join('+')} ${pattern.legCount}L (observed ${pattern.winRate.toFixed(1)}% WR, n=${pattern.sampleSize}) [composite]`);
+  }
+
+  return promoted;
+}
+
 // ============= UNIFIED ENVIRONMENT SCORE ENGINE =============
 function calculateEnvironmentScore(
   paceRating: number | null,
@@ -378,7 +480,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     ],
   },
   execution: {
-    count: 10,
+    count: 15,
     iterations: 25000,
     maxPlayerUsage: 2,
     maxTeamUsage: 2,
@@ -5939,10 +6041,10 @@ async function generateTierParlays(
         continue;
       }
 
-      // === COHERENCE GATE: reject incoherent leg combinations (RAISED) ===
+      // === COHERENCE GATE: reject incoherent leg combinations (LOWERED from 85 to 70) ===
       const coherence = calculateParlayCoherence(legs);
-      if (coherence < 85 && tier === 'execution') {
-        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 85)`);
+      if (coherence < 70 && tier === 'execution') {
+        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 70)`);
         continue;
       }
       if (coherence < 70 && tier === 'validation') {
@@ -7171,6 +7273,16 @@ Deno.serve(async (req) => {
     const archetypeResult = await detectWinningArchetypes(supabase);
     const dynamicArchetypes = { categories: archetypeResult.categories, ranked: archetypeResult.ranked };
 
+    // === DYNAMIC MISPRICED EDGE PROMOTION ===
+    const winningMispricedPatterns = await detectWinningMispricedPatterns(supabase);
+    if (winningMispricedPatterns.length > 0) {
+      const promotedProfiles = autoPromoteToExecution(winningMispricedPatterns);
+      TIER_CONFIG.execution.profiles.push(...promotedProfiles);
+      console.log(`[Bot v2] 🚀 Promoted ${promotedProfiles.length} mispriced_edge patterns to execution tier`);
+    } else {
+      console.log(`[Bot v2] No mispriced_edge patterns qualified for promotion`);
+    }
+
     // 2. Get active strategy — prefer elite_categories_v1 (proven +$10,308 profit, 55.6% WR)
     let strategyName = 'tiered_v2';
     const { data: eliteStrategy } = await supabase
@@ -7447,7 +7559,7 @@ Deno.serve(async (req) => {
 
           // Calculate coherence (should be high since all same cluster)
           const coherence = calculateParlayCoherence(legs) + 10; // +10 cluster bonus
-          if (coherence < 85) {
+          if (coherence < 70) {
             console.log(`[EnvCluster] ${clusterName} parlay #${pi + 1} failed coherence (${coherence})`);
             continue;
           }
