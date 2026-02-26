@@ -139,7 +139,7 @@ serve(async (req) => {
         return false;
       }
       // Reject lines below minimum thresholds
-      const line = Number(ml.current_line || 0);
+      const line = Number(ml.book_line || 0);
       const minLine = MIN_LINES[propType] ?? 0.5;
       if (line < minLine) {
         console.log(`[MinLineFilter] Filtered ${ml.player_name} ${propType} line ${line} (min: ${minLine})`);

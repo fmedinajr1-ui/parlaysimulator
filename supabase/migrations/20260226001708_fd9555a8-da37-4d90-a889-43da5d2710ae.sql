@@ -1,0 +1,1 @@
+UPDATE bot_daily_parlays SET outcome = 'void' WHERE parlay_date = '2026-02-25' AND outcome = 'pending';
