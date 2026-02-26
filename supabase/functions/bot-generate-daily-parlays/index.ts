@@ -6095,7 +6095,30 @@ async function generateTierParlays(
     }
   }
 
-  return { count: parlaysToCreate.length, parlays: parlaysToCreate };
+  // === POST-GENERATION DIVERSITY TRIM ===
+  // The pre-generation cap uses config.count (target), but actual output may be much smaller.
+  // Enforce 30% cap on ACTUAL output to prevent any strategy from dominating.
+  const actualCount = parlaysToCreate.length;
+  const actualDiversityCap = Math.max(2, Math.ceil(actualCount * 0.30));
+  const postTrimStrategyCount = new Map<string, number>();
+  const trimmedParlays: typeof parlaysToCreate = [];
+  
+  for (const parlay of parlaysToCreate) {
+    const strategy = parlay.strategy_name || 'unknown';
+    const currentCount = postTrimStrategyCount.get(strategy) || 0;
+    if (currentCount >= actualDiversityCap) {
+      console.log(`[Bot] ✂️ Post-trim: voiding excess '${strategy}' parlay (${currentCount + 1} > ${actualDiversityCap} cap on ${actualCount} actual)`);
+      continue; // Skip this parlay
+    }
+    postTrimStrategyCount.set(strategy, currentCount + 1);
+    trimmedParlays.push(parlay);
+  }
+  
+  if (trimmedParlays.length < actualCount) {
+    console.log(`[Bot] Post-generation diversity trim: ${actualCount} → ${trimmedParlays.length} parlays (removed ${actualCount - trimmedParlays.length} excess)`);
+  }
+
+  return { count: trimmedParlays.length, parlays: trimmedParlays };
 }
 
 // ============= ROUND ROBIN BANKROLL DOUBLER =============
