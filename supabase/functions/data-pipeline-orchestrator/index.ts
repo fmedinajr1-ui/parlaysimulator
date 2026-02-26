@@ -196,6 +196,9 @@ serve(async (req) => {
       await runFunction('bot-force-fresh-parlays', {});
       
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });
+      
+      // Lottery parlay scanner: generates high-odds parlays from yesterday's near-misses
+      await runFunction('nba-mega-parlay-scanner', {});
     }
 
     // ============ PHASE 3B: MID-DAY RE-GENERATION CHECK ============
