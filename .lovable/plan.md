@@ -1,98 +1,105 @@
 
 
-## Environment-Clustered Parlay Assembly — "Ride the Same Wave"
+## Quality-Gated Regeneration Loop — "Keep Rolling Until 60%"
 
-### The Problem
+### What This Does
 
-Your current stacking logic is too weak to meaningfully cluster legs by game environment:
+Creates an automatic regeneration system that generates parlays up to 3 times before 3PM ET. After games settle the next day, it checks if the 60% hit rate target was met — if yes, the threshold stays; if not, it adjusts for the next cycle.
 
-- `pickCoherenceBonus` only gives tiny +2/-2 adjustments for pace alignment
-- The coherence gate (min 60-70) only rejects obvious contradictions
-- Legs are primarily sorted by composite score, so a high-scoring pick against a tough defense gets mixed with a high-scoring pick against a weak defense
-- Result: parlays contain a mix of environments (fast-pace + slow-pace, soft defense + tough defense), diluting the narrative
-
-### The Fix: Environment Cluster Stacking
-
-Instead of assembling parlays leg-by-leg from a single sorted pool, **pre-cluster picks by game environment** and build parlays within each cluster. This ensures every leg in a parlay is riding the same environmental wave.
-
-### Architecture
+### How It Works
 
 ```text
-All Enriched Picks
-       |
-  Environment Classifier
-       |
-  +----+----+----+----+
-  |         |         |
-SHOOTOUT  GRIND    NEUTRAL
-(fast pace (slow pace
- soft def   tough def
- high total low total)
- game OVER)
-       |         |
-  Build parlays  Build parlays
-  ALL OVER legs  ALL UNDER legs
-  soft defense   tough defense
+Day-of (before 3PM ET):
+
+  10:00 ET — Attempt 1: Normal generation (standard thresholds)
+     |— Score batch projected hit rate
+     |— If >= 60%: DONE, distribute parlays
+     |— If < 60%: Void batch
+     |
+  11:30 ET — Attempt 2: Tighter filters (minHitRate +5%, coherence +5)
+     |— Score batch projected hit rate
+     |— If >= 60%: DONE, distribute parlays
+     |— If < 60%: Void batch
+     |
+  13:00 ET — Attempt 3: Elite filters (minHitRate +10%, coherence +10)
+     |— Keep best batch regardless
+     |— Distribute parlays + Telegram report
+
+Next Day (after settlement):
+
+  Settlement runs → check actual hit rate
+     |— If >= 60%: Keep current threshold (60%)
+     |— If < 60%: Log to adaptive tracker, adjust weights
 ```
 
 ### Changes
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+**New File: `supabase/functions/bot-quality-regen-loop/index.ts`**
 
-**1. New Environment Cluster System**
+The orchestrator function that manages the regeneration loop:
 
-Add a function that classifies each pick into an environment cluster based on its `_gameContext`:
+- Accepts `target_hit_rate` (default: 60) and `max_attempts` (default: 3)
+- Enforces a hard deadline of **3:00 PM ET** — no generation after this time regardless of attempt count
+- On each attempt:
+  - Calls `bot-generate-daily-parlays` with a `regen_boost` parameter (0, 1, or 2)
+  - Queries execution-tier parlays generated for today
+  - Calculates batch average projected hit rate from leg-level confidence scores
+  - If below target: voids today's pending parlays and increments attempt
+  - Tracks the best-scoring attempt across all rounds
+- After all attempts or hitting the deadline, keeps the best batch
+- Sends Telegram summary via `bot-send-telegram` with a `quality_regen_report` message type
+- Logs each attempt to `bot_activity_log` with `event_type: 'quality_regen'`
 
-- **SHOOTOUT cluster**: pace = fast OR defense = soft OR vegas total >= 225 OR team total signal = OVER. These picks get assembled into OVER-heavy parlays.
-- **GRIND cluster**: pace = slow OR defense = tough OR vegas total <= 210 OR team total signal = UNDER. These picks get assembled into UNDER-heavy parlays.
-- **NEUTRAL cluster**: everything else — assembled normally.
+**Modified File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-Each pick gets tagged with its cluster. Picks that strongly match a cluster (2+ signals) get priority within that cluster.
+- Parse `regen_boost` (0, 1, or 2) from the request body
+- When `regen_boost = 1`: increase all tier `minHitRate` by +5 and coherence gates by +5
+- When `regen_boost = 2`: increase all tier `minHitRate` by +10 and coherence gates by +10
+- This progressively filters out weaker picks, keeping only the highest-conviction legs
+- Fully backward-compatible: defaults to `regen_boost = 0` when not provided
 
-**2. Cluster-First Parlay Assembly**
+**Modified File: `supabase/functions/data-pipeline-orchestrator/index.ts`**
 
-Before the main parlay generation loop, add a new "clustered" generation pass for the **execution tier**:
+- Replace the direct call to `bot-generate-daily-parlays` in Phase 3 with a call to `bot-quality-regen-loop`
+- Keep `bot-force-fresh-parlays` after the loop (adds mispriced conviction parlays on top)
+- Keep `bot-review-and-optimize` after both
 
-- For each environment cluster with 3+ picks, build parlays exclusively from that cluster
-- Within a cluster, picks are sorted by composite score (same as now) but the coherence bonus is amplified to **10x** (from 3x) since all picks should naturally align
-- These clustered parlays get a **+10 coherence bonus** on top of the normal calculation
-- Clustered parlays are labeled with their environment (e.g., `execution_shootout_stack`, `execution_grind_stack`)
+**Modified File: `supabase/functions/bot-settle-and-learn/index.ts`**
 
-**3. Strengthen pickCoherenceBonus**
+- After settling today's parlays, calculate the **actual hit rate** for the day's execution-tier parlays
+- Compare against the 60% target
+- Log the result to `bot_activity_log` with `event_type: 'hit_rate_evaluation'`
+- If actual hit rate >= 60%: log success, threshold stays at 60%
+- If actual hit rate < 60%: log the gap, send a Telegram alert with the shortfall and trigger `calibrate-bot-weights` for next-day adjustment
 
-Increase the coherence bonuses from +2/-2 to much more impactful values:
+**Modified File: `supabase/functions/bot-send-telegram/index.ts`**
 
-| Signal | Current | New |
-|--------|---------|-----|
-| Both OVER + both fast pace | +2 | +8 |
-| Both OVER + both soft defense | (none) | +8 |
-| Both UNDER + both tough defense | (none) | +8 |
-| Both UNDER + both slow pace | +2 | +8 |
-| OVER in slow pace mixed with UNDER in fast pace | -2 | -10 |
-| Same-game environment cluster match | (none) | +6 |
-| Mixed cluster (shootout + grind) | (none) | -8 |
+- Add `quality_regen_report` to the notification type list
+- Format shows: number of attempts, projected hit rate per attempt, which attempt was kept, time remaining before the 3PM deadline
+- Add `hit_rate_evaluation` message: shows actual vs target hit rate after settlement, whether threshold is maintained or adjustment is needed
 
-**4. Raise Coherence Gate for Execution Tier**
+**Config: `supabase/config.toml`**
 
-- Execution tier minimum: 70 (current) raised to **85**
-- Validation tier minimum: 60 (current) raised to **70**
-- Exploration tier: keep at 60 (allows data collection)
+- Add `[functions.bot-quality-regen-loop]` with `verify_jwt = false`
 
-**5. Defense-Strength Matching During Selection**
+### The 3PM ET Deadline
 
-Add a new check in the leg selection loop: when adding leg 2+, if all existing legs face **soft defense** (rank 20-30), penalize candidates facing **tough defense** (rank 1-10) by -15, and vice versa. This creates natural clustering without rigid cluster boundaries.
+The loop checks `new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })` before each attempt. If the current ET hour is >= 15 (3PM), it stops immediately and keeps the best batch so far. This ensures all parlays are distributed well before tip-off.
 
-### Expected Impact
+### Next-Day Adaptive Threshold
 
-- Parlays become **thematically coherent**: all legs benefit from the same game script
-- OVER parlays only contain legs against weak defenses in fast-paced, high-total games
-- UNDER parlays only contain legs against tough defenses in slow-paced, low-total games
-- Eliminates the "1 leg kills the parlay because it was in a grind game" scenario
-- The coherence gate raise ensures only well-stacked parlays reach execution tier
+The settlement engine already runs daily. After it processes outcomes, a new step checks:
+- Count execution-tier parlays that won vs total settled
+- If win rate >= 60%: threshold confirmed, no changes
+- If win rate < 60%: the system logs the shortfall and triggers weight recalibration, which will naturally tighten the next day's generation quality
 
-### Parlay Volume Consideration
+This is NOT a moving target — the 60% minimum stays fixed. What changes is the underlying model weights and sweet spot calibration to help the engine actually hit that target consistently.
 
-Clustering will reduce the candidate pool per parlay, so:
-- If a cluster has fewer than 3 picks, its picks fall back to the normal (unclustered) assembly
-- The normal assembly still runs after clustered parlays, ensuring volume targets are met
-- Clustered parlays are generated **first** (best quality), then normal parlays fill remaining volume
+### Technical Details
+
+**Projected Hit Rate Calculation:** For each execution-tier parlay, average the `hit_rate_l10` (last-10-game hit rate) across all legs. This uses historical sweet spot performance as a forward-looking quality metric.
+
+**Voiding Between Attempts:** Uses `UPDATE bot_daily_parlays SET outcome = 'void', lesson_learned = 'quality_regen_attempt_N' WHERE parlay_date = today AND outcome = 'pending'` to clear the slate before regenerating.
+
+**Safety:** Maximum 3 attempts hard-coded. 3PM ET deadline hard-coded. Each attempt logged individually. If generator produces 0 parlays on any attempt, that attempt is skipped.
+
