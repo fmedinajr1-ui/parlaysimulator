@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Zap } from "lucide-react";
@@ -33,6 +33,7 @@ export function SlateRefreshControls() {
   const [currentStepName, setCurrentStepName] = useState('');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const queryClient = useQueryClient();
+  const rebuildInProgress = useRef(false);
   const { isHealthy, blockers, lastCheckTime, isLoading: preflightLoading } = usePipelinePreflight();
 
   const invalidateAllQueries = () => {
@@ -89,8 +90,9 @@ export function SlateRefreshControls() {
   };
 
   const handleCleanAndRebuild = async () => {
+    if (rebuildInProgress.current) return; // Debounce guard
+    rebuildInProgress.current = true;
     setIsRebuilding(true);
-    setCurrentStep(0);
     const today = getEasternDate();
 
     const CLEAN_REBUILD_STEPS: EngineStep[] = [
@@ -115,7 +117,7 @@ export function SlateRefreshControls() {
       { name: 'Analyzing categories', function: 'category-props-analyzer', body: { forceRefresh: true } },
       { name: 'Detecting mispriced lines', function: 'detect-mispriced-lines' },
       { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
-      { name: 'Quality-gated generation', function: 'bot-quality-regen-loop', body: { target_hit_rate: 60, max_attempts: 3 } },
+      { name: 'Quality-gated generation', function: 'bot-quality-regen-loop', body: { target_hit_rate: 45, max_attempts: 3, skip_void: true } },
       { name: 'Force fresh mispriced parlays', function: 'bot-force-fresh-parlays' },
       { name: 'Building sharp parlays', function: 'sharp-parlay-builder' },
       { name: 'Building heat parlays', function: 'heat-prop-engine' },
@@ -154,6 +156,7 @@ export function SlateRefreshControls() {
       setIsRebuilding(false);
       setCurrentStep(0);
       setCurrentStepName('');
+      rebuildInProgress.current = false;
     }
   };
 
