@@ -5066,15 +5066,19 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const side = (pick.recommended_side || 'over').toLowerCase();
       const rank = getOpponentDefenseRank(teamKey, pick.prop_type || 'points', defOpponentMap, defMapPool);
       const adj = getDefenseMatchupAdjustment(rank, side);
-      if (adj !== 0) {
-        pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + adj));
+      // Always store defense rank for line adjustment system
+      if (rank != null) {
         (pick as any).defenseMatchupRank = rank;
         (pick as any).defenseMatchupAdj = adj;
+      }
+      if (adj !== 0) {
+        pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + adj));
         defAdjApplied++;
       }
 
       // Compute environment_score for this player prop
       const oppTeamName = defOpponentMap.get(teamKey);
+      (pick as any).opponent_team = oppTeamName || '';
       const teamAbbrev = nameToAbbrev.get(teamKey) || nameToAbbrev.get((pick as any).team_name || '') || '';
       const oppAbbrev = oppTeamName ? (nameToAbbrev.get(oppTeamName) || '') : '';
       const homePace = teamAbbrev ? paceMap.get(teamAbbrev) : undefined;
@@ -5460,7 +5464,16 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       if (!teamKey) continue;
       const side = (pick.recommended_side || 'over').toLowerCase();
 
+      // Always store defense rank for mispriced picks (enables line adjustment system)
+      const mispRank = getOpponentDefenseRank(teamKey, pick.prop_type || 'points', savedDefOpponentMap, defMapPool);
+      const mispAdj = getDefenseMatchupAdjustment(mispRank, side);
+      if (mispRank != null) {
+        (pick as any).defenseMatchupRank = mispRank;
+        (pick as any).defenseMatchupAdj = mispAdj;
+      }
+
       const oppTeamName = savedDefOpponentMap.get(teamKey);
+      (pick as any).opponent_team = oppTeamName || '';
       const teamAbbrev = nameToAbbrev.get(teamKey) || nameToAbbrev.get(resolvedTeam) || '';
       const oppAbbrev2 = oppTeamName ? (nameToAbbrev.get(oppTeamName) || '') : '';
       const homePace2 = teamAbbrev ? paceMap.get(teamAbbrev) : undefined;
