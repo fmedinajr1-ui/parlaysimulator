@@ -1,99 +1,84 @@
 
-## Matchup-Aware Alt Line Shopping (Defensive Downgrade System)
+
+## Matchup-Aware Alt Line UPGRADE System (Offensive Boost)
 
 ### Problem
-Andrew Wiggins Over 2.5 Threes missed by 1 (got 2). The other 2 legs hit. The bot had the matchup data showing a tough defensive matchup but still picked the standard 2.5 line instead of shopping for the safer Over 2.0 alt line on Hard Rock.
+Kon Knueppel went over by 8 -- meaning the bot left value on the table. When the matchup data clearly shows a player is facing a weak defense and their L10 average is well above the line, the bot should shop for a HIGHER alt line to get better odds (plus money) while still winning comfortably.
 
-### Root Cause
-The current `selectOptimalLine()` function only moves lines **UP** (higher line for better odds/plus money). It never considers moving lines **DOWN** for safety when matchup data signals the player will underperform. Additionally, this function is gated behind `useAltLines: true` profiles and aggressive strategy names -- so GOD MODE and execution tier profiles (which use `useAltLines: false`) never even attempt alt line shopping.
+### What Already Exists
+The Defensive Downgrade system (just implemented) only moves lines DOWN for safety when facing tough defense. It needs a mirror: an **Offensive Upgrade** that moves lines UP for better odds when facing weak defense with a large projection buffer.
 
-### Solution: "Defensive Downgrade" Alt Line System
+### Solution: Add "Offensive Upgrade" Logic
 
-#### 1. Add `shouldDowngradeLine()` Function
-A new function that checks if a pick's matchup context warrants dropping to a lower (safer) line:
+Expand the existing `shouldDowngradeLine()` function into a bidirectional `shouldAdjustLine()` function that can recommend lines in BOTH directions:
 
-**Triggers for downgrade (OVER picks):**
-- Opponent defense rank <= 10 for the specific stat category (top-10 defense)
-- Player's defense-adjusted average is within 0.5 of the line (tight margin)
-- Player's L10 average is within 1.0 of the line
+**Triggers for UPGRADE (OVER picks):**
+- Opponent defense rank >= 20 for the specific stat (bottom-10 defense = soft matchup)
+- Player's defense-adjusted average is MORE than 2x the step size above the line (large buffer)
+- Player's L10 average is MORE than 3x the step size above the line
+- Example: Knueppel L10 avg ~18, line at 10.5, opponent defense rank 25 -> upgrade to 12.5 or 14.5
 
-**Triggers for downgrade (UNDER picks):**
-- Opponent defense rank >= 20 (weak defense = players score more)
-- Same tight-margin checks but inverted
+**Triggers for UPGRADE (UNDER picks):**
+- Opponent defense rank <= 10 (elite defense suppresses stats)
+- Player's average is well below the line with large margin
 
-The function returns a recommended alt line (e.g., line - 0.5 for threes/blocks/steals, line - 1.0 for points/rebounds/assists).
+**Step sizes remain the same:** threes/blocks/steals = 0.5, points/rebounds/assists = 1.0, combos = 1.5
 
-#### 2. Add `fetchAltLinesFromBooks()` Function
-Before applying a downgrade, the bot checks if the alt line actually exists on Hard Rock (or other books):
-- Query `unified_props` for the same player + prop type to find all available lines
-- If the alt line exists, use it (with the corresponding odds)
-- If it doesn't exist, keep the original line but flag it as "tight margin - no alt available"
-- This prevents the bot from recommending phantom lines that can't be bet
+**Safety cap:** Maximum upgrade of 2 steps (e.g., points can go up by 2.0 max, threes by 1.0 max) to avoid overreaching.
 
-#### 3. Integrate Into Pick Selection (All Tiers)
-Unlike the current `useAltLines` system (which is opt-in per profile), the defensive downgrade runs on ALL execution and GOD MODE picks automatically:
-- After a pick is selected but before it's added to the parlay legs
-- Check `shouldDowngradeLine()` using the existing `defenseDetailMap` and environment score data
-- If triggered, look up available alt lines and swap if found
-- Log the downgrade: `[DefDowngrade] Wiggins threes 2.5 -> 2.0 (OPP defense rank 4, adj avg 2.3)`
-
-#### 4. Store Downgrade Metadata on Parlay Legs
-Add fields to the leg data so you can track performance:
-- `was_downgraded: boolean`
-- `original_line_before_downgrade: number`  
-- `downgrade_reason: string` (e.g., "top_10_defense_tight_margin")
-
-This lets the settlement engine measure whether downgrades are improving hit rates.
-
-### Technical Details
+### Changes Required
 
 **File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-1. **New function `shouldDowngradeLine()`** (near `passesGodModeMatchup`):
-   - Inputs: pick data, defenseDetailMap, prop type
-   - Uses stat-specific defense ranks (opp_threes_rank, opp_points_rank, etc.)
-   - Returns `{ shouldDowngrade: boolean, recommendedLine: number, reason: string }`
-   - Stat-aware step sizes: threes/blocks/steals drop by 0.5, points/rebounds/assists drop by 1.0, combos drop by 1.5
+#### 1. Rename and expand `shouldDowngradeLine()` to `shouldAdjustLine()`
+- Add new return field: `direction: 'downgrade' | 'upgrade' | 'none'`
+- Keep all existing downgrade logic unchanged
+- Add new UPGRADE logic block after the downgrade checks:
+  - For OVER picks facing weak defense (rank >= 20) with large buffer (defAdjAvg - line > 2x step): recommend line + stepSize (capped at line + 2*stepSize)
+  - For UNDER picks facing elite defense (rank <= 10) with large buffer: recommend line - stepSize
+  - GOD MODE uses rank >= 18 (more aggressive upgrade threshold)
 
-2. **New function `findAvailableAltLine()`**:
-   - Queries the already-loaded `oddsMap` and `alternateLines` data for lower lines
-   - Falls back to checking `unified_props` for the player to find all available lines from books
-   - Returns the alt line + odds if found, or null
+#### 2. Update `findAvailableAltLine()` to handle upgrades
+- Already works bidirectionally (the fallback search in step 3 filters by direction)
+- Just need to ensure the "closest alts" search also works for higher lines when upgrading
 
-3. **Integration point** (around line 6035-6043 in the leg selection block):
-   - After `selectedLine` is determined, run `shouldDowngradeLine()`
-   - If downgrade triggered, call `findAvailableAltLine()` with the recommended lower line
-   - If alt found, override `selectedLine` with the safer line
-   - This runs for ALL profiles (not just `useAltLines: true`)
+#### 3. Update integration point (around line 6190-6220)
+- Change `shouldDowngradeLine` call to `shouldAdjustLine`
+- Handle both `downgrade` and `upgrade` directions
+- Log upgrades: `[LineUpgrade] Knueppel points 10.5 -> 12.5 (OPP def rank 25, adj avg 18.2)`
 
-4. **Leg metadata** (around line 6045-6072):
-   - Add `was_downgraded`, `original_line_before_downgrade`, `downgrade_reason` to legData
+#### 4. Update leg metadata
+- Rename `was_downgraded` to `was_line_adjusted` (or keep and add `was_upgraded`)
+- Add `line_adjustment_direction: 'downgrade' | 'upgrade' | null`
+- Keep `original_line_before_downgrade` (works for both directions)
 
-5. **GOD MODE profiles get mandatory downgrade checking**:
-   - For `god_mode_lock` profiles, the downgrade threshold is more aggressive (opponent defense rank <= 15 instead of <= 10)
-
-### Example: How This Would Have Saved the Wiggins Pick
+### Example: How This Would Have Improved the Knueppel Pick
 
 ```text
-Pick: Andrew Wiggins Over 2.5 Threes
-Opponent defense rank (3PT): ~4 (top-5)
-L10 average: ~2.3
-Defense-adjusted average: ~2.1
+Pick: Kon Knueppel Over 10.5 Points
+Opponent defense rank (points): ~25 (bottom-10)
+L10 average: ~18
+Defense-adjusted average: ~18.5
 
-shouldDowngradeLine() triggers:
-  - Defense rank 4 <= 10 (top-10 3PT defense)
-  - Adjusted avg 2.1 within 0.5 of line 2.5
-  - Recommended alt: 2.5 - 0.5 = 2.0
+shouldAdjustLine() triggers UPGRADE:
+  - Defense rank 25 >= 20 (weak defense)
+  - Buffer: 18.5 - 10.5 = 8.0 > 2.0 (2x step)
+  - Recommended: 10.5 + 1.0 = 11.5 (or even 12.5)
 
 findAvailableAltLine():
-  - Checks Hard Rock for "Wiggins threes Over 2.0"
-  - Found at -180 odds
-  - Returns { line: 2.0, odds: -180 }
+  - Checks Hard Rock for "Knueppel points Over 12.5"
+  - Found at +120 odds (plus money!)
+  - Returns { line: 12.5, odds: +120 }
 
-Result: Bot picks Over 2.0 instead of Over 2.5
-Wiggins gets 2 -> Over 2.0 HITS
-Parlay wins instead of losing by 1 three
+Result: Bot picks Over 12.5 at +120 instead of Over 10.5 at -130
+Knueppel gets 18 -> Both hit, but +120 adds more parlay value
 ```
 
 ### No Database Changes Needed
-All changes are within the existing edge function. The downgrade metadata fields are stored in the existing JSON leg structure of `bot_daily_parlays`.
+All changes are within the existing edge function. The metadata fields already exist on leg data from the downgrade implementation.
+
+### Technical Summary
+- Modify ~30 lines in `shouldDowngradeLine()` to add upgrade path
+- Update ~5 lines in the integration block to handle both directions  
+- Update ~3 lines in leg metadata for upgrade tracking
+- Total: ~40 lines changed in one file
