@@ -1,84 +1,84 @@
 
 
-## Auto-Update Hit Rates Across All Engines
+## Engine Hit Rate L10 Feed + Dynamic Offense/Defense Rank Scoring
 
-### Problem Summary
+### Problem
+1. **No L10 feedback loop**: The generation engine does not query `bot_prop_type_performance` or `bot_strategies` hit rates before building parlays. Strategies like `mispriced_edge` generated 119 parlays at 13.4% because nothing throttled volume based on recent performance.
+2. **Static defense usage**: The environment score uses defense ranks but doesn't weight them by offensive rank (opponent offense), meaning matchups aren't fully contextualized.
+3. **No offensive rank data**: The system tracks defensive rankings but doesn't factor in offensive strength (e.g., a team that scores a lot vs one that doesn't).
 
-Yesterday (Feb 25) hit **41%** overall. Today (Feb 26) dropped to **23.6%** on 250 parlays. The core issue: **engine hit rates are not feeding back into strategy selection**. Specifically:
+### Changes
 
-1. `bot_strategies.win_rate` shows 0 for 5 of 6 strategies -- the settlement engine never updates it
-2. `bot_prop_type_performance` is partially stale (some props stuck at Feb 24)
-3. Player performance has suspicious 25/25 perfect records suggesting double-counting
-4. No automated mechanism recalculates strategy-level hit rates after settlement
+#### 1. L10 Hit Rate Feed into Generation Engine
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-### Strategy Breakdown (Feb 26)
+Add a new function `fetchStrategyHitRates()` that queries:
+- `bot_strategies` for rolling 7-day win rates per strategy
+- `bot_prop_type_performance` for prop-type hit rates and blocked/boosted flags
+
+Then integrate into the parlay generation pipeline:
+- **Volume throttling**: If a strategy's 7d win rate is below 25%, cap its parlay count to max 10 (instead of unlimited). If below 15%, cap to 5.
+- **Prop type gating**: Skip any prop type where `is_blocked = true` in `bot_prop_type_performance`. Boost weight by +15 for `is_boosted = true` types.
+- **Strategy weight multiplier**: Scale each strategy's allocation by its win rate relative to the average. A 57% strategy gets 1.5x allocation; a 13% strategy gets 0.3x.
+
+This uses data already being refreshed by the `bot-update-engine-hit-rates` function.
+
+#### 2. Offensive Rank Scoring in team_defense_rankings
+**Database Migration**: Add offensive rank columns to `team_defense_rankings`:
+- `off_points_rank` (1-30, 1 = highest scoring)
+- `off_rebounds_rank`
+- `off_assists_rank`
+- `off_threes_rank`
+- `off_pace_rank`
+
+**File: `supabase/functions/fetch-team-defense-ratings/index.ts`**
+- Extend the API fetch to also pull offensive stats (points scored per game, 3PT made, assists, rebounds)
+- Rank teams 1-30 for each offensive category
+- Store alongside existing defensive ranks
+
+#### 3. Dynamic Offense/Defense Matchup Scoring
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+
+Enhance `calculateEnvironmentScore()` to incorporate both sides of the matchup:
 
 ```text
-Strategy                              Wins/Total  Hit Rate
-------------------------------------------------------
-cross_sport (exploration)              8/14       57.1%
-shootout_stack (execution)            14/42       33.3%
-grind_stack (execution)               14/42       33.3%
-force_mispriced_conviction             7/26       26.9%
-mispriced_edge (exploration)          16/119      13.4%  <-- 119 parlays!
-mispriced_edge (validation)            0/7         0.0%
+Current:  defenseFactor = oppDefenseRank normalized (0-1)
+Proposed: matchupFactor = (oppDefenseRank * 0.6 + teamOffenseRank * 0.4) normalized
 ```
 
-### What Needs to Happen
+- For OVER picks: weak opponent defense (high rank) + strong team offense (low rank) = high score
+- For UNDER picks: strong opponent defense (low rank) + weak team offense (high rank) = high score
+- This creates a true matchup advantage score rather than defense-only
 
-#### 1. Create `bot-update-engine-hit-rates` edge function
+Update the composite formula weights:
+```text
+Current:  pace(0.3) + defense(0.3) + rebAst(0.2) + blowout(-0.2)
+Proposed: pace(0.25) + matchup(0.35) + rebAst(0.2) + blowout(-0.2)
+```
 
-A new function that runs after every settlement cycle to refresh ALL performance tables:
-
-**A) Update `bot_strategies` table** with actual win rates computed from `bot_daily_parlays`:
-- For each strategy, query settled parlays (won + lost) from last 7 days
-- Calculate win_rate, times_used, times_won
-- Update the `bot_strategies` row
-
-**B) Refresh `bot_prop_type_performance`** to ensure all prop types (not just `player_*` variants) are current:
-- Aggregate from settled parlay legs
-- Update `last_updated`, `hit_rate`, `total_legs`, `legs_won`
-- Auto-set `is_blocked = true` when hit_rate < 25% and total_legs >= 10
-- Auto-set `is_boosted = true` when hit_rate > 65% and total_legs >= 10
-
-**C) Refresh `bot_player_performance`** with deduplication guard:
-- Query settled legs grouped by player + prop_type + side
-- Upsert with proper dedup to prevent inflated perfect records
-- Recalculate streak from most recent 5 outcomes
-
-**D) Update `strategy_performance`** table (currently empty) with per-strategy daily stats
-
-#### 2. Wire into settlement pipeline
-
-Add a call to `bot-update-engine-hit-rates` at the end of `bot-settle-and-learn` so hit rates refresh every time parlays settle.
-
-#### 3. Add cron safety net
-
-Schedule a daily 11:30 PM ET run to catch any missed updates.
+#### 4. Prop-Specific Offensive Routing
+Mirror the existing prop-specific defense routing for offense:
+- Points props use `off_points_rank`
+- Threes props use `off_threes_rank`
+- Rebounds use `off_rebounds_rank`
+- Assists use `off_assists_rank`
+- Combo props use weighted averages
 
 ### Technical Details
 
-**New file:** `supabase/functions/bot-update-engine-hit-rates/index.ts`
+**New database columns** (migration on `team_defense_rankings`):
+- `off_points_rank INT`, `off_rebounds_rank INT`, `off_assists_rank INT`, `off_threes_rank INT`, `off_pace_rank INT`
 
-The function will:
-1. Query `bot_daily_parlays` for settled outcomes grouped by `strategy_name`
-2. Extract base strategy (e.g., `elite_categories_v1` from `elite_categories_v1_execution_grind_stack`)
-3. Compute rolling 7-day and all-time hit rates
-4. Upsert into `bot_strategies` (win_rate, times_used, times_won)
-5. Reaggregate `bot_prop_type_performance` from leg-level data
-6. Validate `bot_player_performance` and remove duplicate inflation
-7. Log results to `bot_activity_log`
+**Modified files**:
+1. `supabase/functions/bot-generate-daily-parlays/index.ts`
+   - Add `fetchStrategyHitRates()` and `fetchPropTypePerformance()`
+   - Add volume throttling logic using fetched hit rates
+   - Update `calculateEnvironmentScore()` signature to accept offensive ranks
+   - Update matchup scoring formula
+2. `supabase/functions/fetch-team-defense-ratings/index.ts`
+   - Fetch and compute offensive rankings
+   - Store in new columns
+3. Database migration for new columns
 
-**Modified file:** `supabase/functions/bot-settle-and-learn/index.ts`
-- Add call to `bot-update-engine-hit-rates` after settlement completes
-
-**Cron job:** Daily at 11:30 PM ET as a safety net
-
-### Success Criteria
-
-1. `bot_strategies.win_rate` reflects actual 7-day performance (not 0 or stale values)
-2. All prop types in `bot_prop_type_performance` have `last_updated` within 24 hours
-3. Player performance records do not show inflated perfect streaks from double-counting
-4. Generation engine uses fresh hit rates to filter and weight picks
-5. Underperforming strategies get lower weight or auto-blocked in next generation cycle
+**Expected impact**: Strategies with poor recent hit rates get throttled automatically. The 119-parlay mispriced_edge flood on Feb 26 would have been capped to ~15 parlays. Matchup scoring becomes bidirectional (offense vs defense) instead of defense-only, improving pick quality for all prop types.
 
