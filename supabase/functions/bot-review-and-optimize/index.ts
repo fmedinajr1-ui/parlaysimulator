@@ -302,7 +302,7 @@ Deno.serve(async (req) => {
       // NCAAB team stats (ATS, scoring, tempo)
       supabase.from('ncaab_team_stats').select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record'),
       // Defense rankings
-      supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, points_allowed_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank').eq('is_current', true),
+      supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, points_allowed_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank, opp_points_rank, opp_threes_rank, off_points_rank, off_rebounds_rank, off_assists_rank, off_threes_rank, off_pace_rank').eq('is_current', true),
       // Active injury alerts
       supabase.from('lineup_alerts').select('player_name, team_name, status, sport, impact_level')
         .in('status', ['Out', 'Doubtful', 'Questionable'])
@@ -354,6 +354,32 @@ Deno.serve(async (req) => {
         } : null,
         home_defense_rank: homeDef?.overall_rank || null,
         away_defense_rank: awayDef?.overall_rank || null,
+        home_defense_detail: homeDef ? {
+          opp_points_rank: homeDef.opp_points_rank,
+          opp_threes_rank: homeDef.opp_threes_rank,
+          opp_rebounds_rank: homeDef.opp_rebounds_rank,
+          opp_assists_rank: homeDef.opp_assists_rank,
+        } : null,
+        away_defense_detail: awayDef ? {
+          opp_points_rank: awayDef.opp_points_rank,
+          opp_threes_rank: awayDef.opp_threes_rank,
+          opp_rebounds_rank: awayDef.opp_rebounds_rank,
+          opp_assists_rank: awayDef.opp_assists_rank,
+        } : null,
+        home_offense_rank: homeDef ? {
+          off_points_rank: homeDef.off_points_rank,
+          off_rebounds_rank: homeDef.off_rebounds_rank,
+          off_assists_rank: homeDef.off_assists_rank,
+          off_threes_rank: homeDef.off_threes_rank,
+          off_pace_rank: homeDef.off_pace_rank,
+        } : null,
+        away_offense_rank: awayDef ? {
+          off_points_rank: awayDef.off_points_rank,
+          off_rebounds_rank: awayDef.off_rebounds_rank,
+          off_assists_rank: awayDef.off_assists_rank,
+          off_threes_rank: awayDef.off_threes_rank,
+          off_pace_rank: awayDef.off_pace_rank,
+        } : null,
         key_injuries: gameInjuries.map((i: any) => ({
           player: i.player_name,
           team: i.team_name,
