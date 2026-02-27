@@ -22,6 +22,12 @@ interface TeamDefenseRating {
   assists_allowed: number;
   threes_rank: number;
   threes_allowed: number;
+  // Offensive rankings (1=best, 30=worst) - populated from OFFENSIVE_RANKINGS map after array init
+  off_points_rank?: number;
+  off_rebounds_rank?: number;
+  off_assists_rank?: number;
+  off_threes_rank?: number;
+  off_pace_rank?: number;
   // Position-specific: Points allowed
   pts_to_guards_rank: number;
   pts_to_guards_allowed: number;
@@ -260,6 +266,59 @@ const NBA_DEFENSE_RATINGS: TeamDefenseRating[] = [
   },
 ];
 
+// 2024-25 Offensive Rankings (1=best, 30=worst)
+// Source: NBA.com team stats — PPG, RPG, APG, 3PM/G, Pace
+const OFFENSIVE_RANKINGS: Record<string, { off_points_rank: number; off_rebounds_rank: number; off_assists_rank: number; off_threes_rank: number; off_pace_rank: number }> = {
+  'CLE': { off_points_rank: 4, off_rebounds_rank: 8, off_assists_rank: 2, off_threes_rank: 5, off_pace_rank: 15 },
+  'OKC': { off_points_rank: 2, off_rebounds_rank: 6, off_assists_rank: 3, off_threes_rank: 8, off_pace_rank: 5 },
+  'BOS': { off_points_rank: 3, off_rebounds_rank: 10, off_assists_rank: 4, off_threes_rank: 1, off_pace_rank: 8 },
+  'HOU': { off_points_rank: 14, off_rebounds_rank: 1, off_assists_rank: 12, off_threes_rank: 15, off_pace_rank: 10 },
+  'MEM': { off_points_rank: 8, off_rebounds_rank: 5, off_assists_rank: 8, off_threes_rank: 12, off_pace_rank: 3 },
+  'ORL': { off_points_rank: 20, off_rebounds_rank: 3, off_assists_rank: 18, off_threes_rank: 20, off_pace_rank: 22 },
+  'MIN': { off_points_rank: 12, off_rebounds_rank: 9, off_assists_rank: 10, off_threes_rank: 9, off_pace_rank: 18 },
+  'NYK': { off_points_rank: 6, off_rebounds_rank: 4, off_assists_rank: 6, off_threes_rank: 6, off_pace_rank: 7 },
+  'DEN': { off_points_rank: 9, off_rebounds_rank: 12, off_assists_rank: 1, off_threes_rank: 11, off_pace_rank: 12 },
+  'MIL': { off_points_rank: 5, off_rebounds_rank: 11, off_assists_rank: 7, off_threes_rank: 4, off_pace_rank: 9 },
+  'LAL': { off_points_rank: 10, off_rebounds_rank: 7, off_assists_rank: 5, off_threes_rank: 14, off_pace_rank: 14 },
+  'GSW': { off_points_rank: 11, off_rebounds_rank: 15, off_assists_rank: 9, off_threes_rank: 2, off_pace_rank: 6 },
+  'MIA': { off_points_rank: 18, off_rebounds_rank: 14, off_assists_rank: 14, off_threes_rank: 7, off_pace_rank: 20 },
+  'DAL': { off_points_rank: 7, off_rebounds_rank: 18, off_assists_rank: 11, off_threes_rank: 3, off_pace_rank: 11 },
+  'PHX': { off_points_rank: 13, off_rebounds_rank: 20, off_assists_rank: 13, off_threes_rank: 10, off_pace_rank: 4 },
+  'IND': { off_points_rank: 1, off_rebounds_rank: 13, off_assists_rank: 15, off_threes_rank: 13, off_pace_rank: 1 },
+  'LAC': { off_points_rank: 22, off_rebounds_rank: 16, off_assists_rank: 16, off_threes_rank: 16, off_pace_rank: 19 },
+  'PHI': { off_points_rank: 16, off_rebounds_rank: 17, off_assists_rank: 17, off_threes_rank: 17, off_pace_rank: 16 },
+  'CHI': { off_points_rank: 17, off_rebounds_rank: 19, off_assists_rank: 19, off_threes_rank: 18, off_pace_rank: 13 },
+  'TOR': { off_points_rank: 19, off_rebounds_rank: 22, off_assists_rank: 20, off_threes_rank: 19, off_pace_rank: 2 },
+  'BKN': { off_points_rank: 23, off_rebounds_rank: 24, off_assists_rank: 22, off_threes_rank: 22, off_pace_rank: 17 },
+  'NOP': { off_points_rank: 21, off_rebounds_rank: 21, off_assists_rank: 21, off_threes_rank: 21, off_pace_rank: 23 },
+  'SAS': { off_points_rank: 24, off_rebounds_rank: 23, off_assists_rank: 23, off_threes_rank: 24, off_pace_rank: 21 },
+  'CHA': { off_points_rank: 25, off_rebounds_rank: 25, off_assists_rank: 24, off_threes_rank: 23, off_pace_rank: 24 },
+  'POR': { off_points_rank: 15, off_rebounds_rank: 26, off_assists_rank: 25, off_threes_rank: 25, off_pace_rank: 25 },
+  'DET': { off_points_rank: 26, off_rebounds_rank: 27, off_assists_rank: 26, off_threes_rank: 26, off_pace_rank: 26 },
+  'ATL': { off_points_rank: 11, off_rebounds_rank: 28, off_assists_rank: 27, off_threes_rank: 27, off_pace_rank: 27 },
+  'SAC': { off_points_rank: 27, off_rebounds_rank: 29, off_assists_rank: 28, off_threes_rank: 28, off_pace_rank: 28 },
+  'UTA': { off_points_rank: 28, off_rebounds_rank: 30, off_assists_rank: 29, off_threes_rank: 29, off_pace_rank: 29 },
+  'WAS': { off_points_rank: 30, off_rebounds_rank: 2, off_assists_rank: 30, off_threes_rank: 30, off_pace_rank: 30 },
+};
+
+// Apply offensive rankings to each team in the ratings array
+for (const team of NBA_DEFENSE_RATINGS) {
+  const offRanks = OFFENSIVE_RANKINGS[team.team_abbrev];
+  if (offRanks) {
+    team.off_points_rank = offRanks.off_points_rank;
+    team.off_rebounds_rank = offRanks.off_rebounds_rank;
+    team.off_assists_rank = offRanks.off_assists_rank;
+    team.off_threes_rank = offRanks.off_threes_rank;
+    team.off_pace_rank = offRanks.off_pace_rank;
+  } else {
+    team.off_points_rank = 15;
+    team.off_rebounds_rank = 15;
+    team.off_assists_rank = 15;
+    team.off_threes_rank = 15;
+    team.off_pace_rank = 15;
+  }
+}
+
 // Helper to get position-specific defense
 function getPositionDefense(
   team: TeamDefenseRating,
@@ -448,12 +507,33 @@ serve(async (req) => {
         console.log(`[Defense Ratings] Also updated ${nbaDefenseStatRecords.length} rows in nba_opponent_defense_stats`);
       }
       
+      // === UPDATE team_defense_rankings WITH OFFENSIVE RANKS ===
+      // bot-generate-daily-parlays reads from this table for matchup scoring
+      let offRanksUpdated = 0;
+      for (const teamData of NBA_DEFENSE_RATINGS) {
+        const { error: offErr } = await supabase
+          .from('team_defense_rankings')
+          .update({
+            off_points_rank: teamData.off_points_rank,
+            off_rebounds_rank: teamData.off_rebounds_rank,
+            off_assists_rank: teamData.off_assists_rank,
+            off_threes_rank: teamData.off_threes_rank,
+            off_pace_rank: teamData.off_pace_rank,
+          })
+          .eq('team_abbreviation', teamData.team_abbrev)
+          .eq('is_current', true);
+        
+        if (!offErr) offRanksUpdated++;
+      }
+      console.log(`[Defense Ratings] Updated ${offRanksUpdated} teams with offensive rankings in team_defense_rankings`);
+      
       console.log(`[Defense Ratings] Updated ${records.length} defensive rating records (position-specific)`);
       
       return new Response(JSON.stringify({
         success: true,
         updated: records.length,
         nba_defense_stats_updated: nbaDefenseStatRecords.length,
+        off_ranks_updated: offRanksUpdated,
         teams: NBA_DEFENSE_RATINGS.length,
         positionGroups: positionGroups.length,
         statTypes: statTypes.length,

@@ -10901,6 +10901,11 @@ export type Database = {
           efficiency_rank: number | null
           id: string
           is_current: boolean | null
+          off_assists_rank: number | null
+          off_pace_rank: number | null
+          off_points_rank: number | null
+          off_rebounds_rank: number | null
+          off_threes_rank: number | null
           opp_assists_allowed_pg: number | null
           opp_assists_rank: number | null
           opp_points_rank: number | null
@@ -10920,6 +10925,11 @@ export type Database = {
           efficiency_rank?: number | null
           id?: string
           is_current?: boolean | null
+          off_assists_rank?: number | null
+          off_pace_rank?: number | null
+          off_points_rank?: number | null
+          off_rebounds_rank?: number | null
+          off_threes_rank?: number | null
           opp_assists_allowed_pg?: number | null
           opp_assists_rank?: number | null
           opp_points_rank?: number | null
@@ -10939,6 +10949,11 @@ export type Database = {
           efficiency_rank?: number | null
           id?: string
           is_current?: boolean | null
+          off_assists_rank?: number | null
+          off_pace_rank?: number | null
+          off_points_rank?: number | null
+          off_rebounds_rank?: number | null
+          off_threes_rank?: number | null
           opp_assists_allowed_pg?: number | null
           opp_assists_rank?: number | null
           opp_points_rank?: number | null

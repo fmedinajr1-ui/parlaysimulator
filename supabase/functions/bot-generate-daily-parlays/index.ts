@@ -186,6 +186,79 @@ function autoPromoteToExecution(winningPatterns: { sports: string[]; legCount: n
 }
 
 // ============= UNIFIED ENVIRONMENT SCORE ENGINE =============
+// L10 strategy hit rate data (loaded at runtime)
+let strategyHitRates = new Map<string, { winRate: number; total: number }>();
+let strategyWeightMultipliers = new Map<string, number>();
+
+async function fetchStrategyHitRates(supabase: any): Promise<void> {
+  try {
+    const { data: strategies } = await supabase
+      .from('bot_strategies')
+      .select('strategy_name, win_rate, times_used, times_won, is_active')
+      .eq('is_active', true);
+
+    if (!strategies || strategies.length === 0) {
+      console.log(`[L10 Feed] No active strategies found`);
+      return;
+    }
+
+    // Compute average win rate for relative weighting
+    let totalWinRate = 0;
+    let countWithData = 0;
+    for (const s of strategies) {
+      const wr = s.win_rate || 0;
+      strategyHitRates.set(s.strategy_name, { winRate: wr, total: s.times_used || 0 });
+      if (wr > 0 && s.times_used >= 5) {
+        totalWinRate += wr;
+        countWithData++;
+      }
+    }
+    const avgWinRate = countWithData > 0 ? totalWinRate / countWithData : 35;
+
+    // Compute weight multipliers relative to average
+    for (const s of strategies) {
+      const wr = s.win_rate || 0;
+      if (s.times_used < 5 || wr === 0) {
+        strategyWeightMultipliers.set(s.strategy_name, 1.0); // No data = neutral
+        continue;
+      }
+      // Scale: 57% strategy at 35% avg = 1.63x; 13% strategy at 35% avg = 0.37x
+      const multiplier = Math.max(0.2, Math.min(2.0, wr / avgWinRate));
+      strategyWeightMultipliers.set(s.strategy_name, multiplier);
+    }
+
+    const logStr = strategies
+      .filter((s: any) => s.win_rate > 0)
+      .map((s: any) => `${s.strategy_name}:${s.win_rate}%→${(strategyWeightMultipliers.get(s.strategy_name) || 1).toFixed(2)}x`)
+      .join(', ');
+    console.log(`[L10 Feed] Strategy multipliers (avg=${avgWinRate.toFixed(1)}%): ${logStr}`);
+  } catch (err) {
+    console.warn(`[L10 Feed] Failed to load strategy hit rates: ${err}`);
+  }
+}
+
+function getStrategyVolumeCap(strategy: string, defaultCap: number): number {
+  // Extract base strategy name for lookup
+  const base = strategy
+    .replace(/_execution_.*$/, '')
+    .replace(/_exploration.*$/, '')
+    .replace(/_validation.*$/, '')
+    .replace(/_bankroll_doubler.*$/, '');
+
+  const rates = strategyHitRates.get(base);
+  if (!rates || rates.total < 5) return defaultCap; // Not enough data
+
+  if (rates.winRate < 15) {
+    console.log(`[L10 Feed] 🚫 Strategy '${base}' at ${rates.winRate}% → hard cap 5`);
+    return Math.min(defaultCap, 5);
+  }
+  if (rates.winRate < 25) {
+    console.log(`[L10 Feed] ⚠️ Strategy '${base}' at ${rates.winRate}% → cap 10`);
+    return Math.min(defaultCap, 10);
+  }
+  return defaultCap;
+}
+
 function calculateEnvironmentScore(
   paceRating: number | null,
   oppDefenseRank: number | null,
@@ -195,8 +268,14 @@ function calculateEnvironmentScore(
   oppRebRank?: number | null,
   oppAstRank?: number | null,
   oppPointsRank?: number | null,
-  oppThreesRank?: number | null
-): { envScore: number; confidenceAdjustment: number; components: { pace: number; defense: number; rebAst: number; blowout: number } } {
+  oppThreesRank?: number | null,
+  // NEW: Offensive rank parameters for bidirectional matchup scoring
+  teamOffPointsRank?: number | null,
+  teamOffReboundsRank?: number | null,
+  teamOffAssistsRank?: number | null,
+  teamOffThreesRank?: number | null,
+  teamOffPaceRank?: number | null
+): { envScore: number; confidenceAdjustment: number; components: { pace: number; matchup: number; rebAst: number; blowout: number } } {
   const isOver = side.toLowerCase() === 'over';
   const propLower = propType.toLowerCase();
 
@@ -209,38 +288,59 @@ function calculateEnvironmentScore(
 
   // 2. Prop-Specific Defense (0-1): route to the RIGHT rank for each prop type
   let effectiveDefRank = oppDefenseRank; // fallback to overall
+  let effectiveOffRank: number | null = null; // team's offensive rank for this prop type
+
   if (propLower.includes('three') || propLower === '3pm' || propLower === 'threes') {
     effectiveDefRank = oppThreesRank ?? oppDefenseRank;
+    effectiveOffRank = teamOffThreesRank ?? null;
   } else if (propLower.includes('point') || propLower === 'pts' || propLower === 'points') {
     effectiveDefRank = oppPointsRank ?? oppDefenseRank;
+    effectiveOffRank = teamOffPointsRank ?? null;
   } else if (propLower.includes('reb')) {
     effectiveDefRank = oppRebRank ?? oppDefenseRank;
+    effectiveOffRank = teamOffReboundsRank ?? null;
   } else if (propLower.includes('ast') || propLower.includes('assist')) {
     effectiveDefRank = oppAstRank ?? oppDefenseRank;
+    effectiveOffRank = teamOffAssistsRank ?? null;
   } else if (propLower === 'pra' || propLower.includes('pts_rebs_asts')) {
-    // Combo: weighted average of points, rebounds, assists ranks
     const ptsR = oppPointsRank ?? oppDefenseRank ?? 15;
     const rebR = oppRebRank ?? oppDefenseRank ?? 15;
     const astR = oppAstRank ?? oppDefenseRank ?? 15;
     effectiveDefRank = Math.round((ptsR * 0.5 + rebR * 0.25 + astR * 0.25));
+    // Weighted average offensive ranks for combo
+    const offPts = teamOffPointsRank ?? 15;
+    const offReb = teamOffReboundsRank ?? 15;
+    const offAst = teamOffAssistsRank ?? 15;
+    effectiveOffRank = Math.round((offPts * 0.5 + offReb * 0.25 + offAst * 0.25));
   } else if (propLower === 'pr' || propLower.includes('pts_rebs')) {
     const ptsR = oppPointsRank ?? oppDefenseRank ?? 15;
     const rebR = oppRebRank ?? oppDefenseRank ?? 15;
     effectiveDefRank = Math.round((ptsR * 0.6 + rebR * 0.4));
+    effectiveOffRank = Math.round(((teamOffPointsRank ?? 15) * 0.6 + (teamOffReboundsRank ?? 15) * 0.4));
   } else if (propLower === 'pa' || propLower.includes('pts_asts')) {
     const ptsR = oppPointsRank ?? oppDefenseRank ?? 15;
     const astR = oppAstRank ?? oppDefenseRank ?? 15;
     effectiveDefRank = Math.round((ptsR * 0.6 + astR * 0.4));
+    effectiveOffRank = Math.round(((teamOffPointsRank ?? 15) * 0.6 + (teamOffAssistsRank ?? 15) * 0.4));
   } else if (propLower === 'ra' || propLower.includes('rebs_asts')) {
     const rebR = oppRebRank ?? oppDefenseRank ?? 15;
     const astR = oppAstRank ?? oppDefenseRank ?? 15;
     effectiveDefRank = Math.round((rebR * 0.5 + astR * 0.5));
+    effectiveOffRank = Math.round(((teamOffReboundsRank ?? 15) * 0.5 + (teamOffAssistsRank ?? 15) * 0.5));
   }
 
-  let defenseFactor = 0.5;
+  // BIDIRECTIONAL MATCHUP SCORING: combine defense weakness + offensive strength
+  let matchupFactor = 0.5;
   if (effectiveDefRank != null) {
-    defenseFactor = (effectiveDefRank - 1) / 29; // 1=tough=0.0, 30=soft=1.0
-    if (!isOver) defenseFactor = 1 - defenseFactor;
+    const defFactor = (effectiveDefRank - 1) / 29; // 1=tough(0.0), 30=soft(1.0)
+    if (effectiveOffRank != null) {
+      // For OVER: want weak defense (high rank=1.0) + strong offense (low rank → invert: 1-(rank-1)/29)
+      const offFactor = 1 - (effectiveOffRank - 1) / 29; // 1=strong(1.0), 30=weak(0.0)
+      matchupFactor = defFactor * 0.6 + offFactor * 0.4;
+    } else {
+      matchupFactor = defFactor; // fallback to defense-only
+    }
+    if (!isOver) matchupFactor = 1 - matchupFactor;
   }
 
   // 3. Reb/Ast Environment (0-1)
@@ -261,8 +361,8 @@ function calculateEnvironmentScore(
   // 4. Blowout Risk (0-1): directly from game_environment
   const blowoutFactor = Math.max(0, Math.min(1, blowoutProbability ?? 0));
 
-  // Composite: (pace * 0.3) + (defense * 0.3) + (rebAst * 0.2) + (blowout * -0.2)
-  const envScore = (paceFactor * 0.3) + (defenseFactor * 0.3) + (rebAstFactor * 0.2) + (blowoutFactor * -0.2);
+  // Updated composite: pace(0.25) + matchup(0.35) + rebAst(0.2) + blowout(-0.2)
+  const envScore = (paceFactor * 0.25) + (matchupFactor * 0.35) + (rebAstFactor * 0.2) + (blowoutFactor * -0.2);
 
   // Scale to confidence adjustment: -20 to +20
   const raw = Math.round((envScore - 0.3) * 50);
@@ -271,7 +371,7 @@ function calculateEnvironmentScore(
   return {
     envScore,
     confidenceAdjustment,
-    components: { pace: paceFactor, defense: defenseFactor, rebAst: rebAstFactor, blowout: blowoutFactor },
+    components: { pace: paceFactor, matchup: matchupFactor, rebAst: rebAstFactor, blowout: blowoutFactor },
   };
 }
 
@@ -587,8 +687,8 @@ async function loadPropTypePerformance(supabase: any): Promise<void> {
         propPerf.filter((p: any) => p.is_blocked).map((p: any) => p.prop_type)
       );
       dynamicBoostedPropTypes = new Map(
-        propPerf.filter((p: any) => p.is_boosted && p.boost_multiplier > 1.0)
-          .map((p: any) => [p.prop_type, p.boost_multiplier])
+        propPerf.filter((p: any) => p.is_boosted)
+          .map((p: any) => [p.prop_type, p.boost_multiplier && p.boost_multiplier > 1.0 ? p.boost_multiplier : 1.15])
       );
       console.log(`[Bot] Dynamic prop gates: ${dynamicBlockedPropTypes.size} blocked, ${dynamicBoostedPropTypes.size} boosted`);
     }
@@ -3561,7 +3661,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult, nhlStatsResult, baseballStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
-    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank, opp_points_rank, opp_threes_rank').eq('is_current', true),
+    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank, opp_points_rank, opp_threes_rank, off_points_rank, off_rebounds_rank, off_assists_rank, off_threes_rank, off_pace_rank').eq('is_current', true),
     supabase.from('game_environment').select('home_team_abbrev, away_team_abbrev, vegas_total, vegas_spread, shootout_factor, grind_factor, blowout_probability').eq('game_date', gameDate),
     supabase.from('home_court_advantage_stats').select('team_name, home_win_rate, home_cover_rate, home_over_rate').eq('sport', 'basketball_nba'),
     supabase.from('ncaab_team_stats').select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record'),
@@ -3581,7 +3681,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   });
 
   const defenseMap = new Map<string, number>();
-  const defenseDetailMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null; opp_points_rank: number | null; opp_threes_rank: number | null }>();
+  const defenseDetailMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null; opp_points_rank: number | null; opp_threes_rank: number | null; off_points_rank: number | null; off_rebounds_rank: number | null; off_assists_rank: number | null; off_threes_rank: number | null; off_pace_rank: number | null }>();
   (defenseResult.data || []).forEach((d: any) => {
     defenseMap.set(d.team_abbreviation, d.overall_rank);
     const detail = {
@@ -3590,6 +3690,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       opp_assists_rank: d.opp_assists_rank,
       opp_points_rank: d.opp_points_rank,
       opp_threes_rank: d.opp_threes_rank,
+      off_points_rank: d.off_points_rank,
+      off_rebounds_rank: d.off_rebounds_rank,
+      off_assists_rank: d.off_assists_rank,
+      off_threes_rank: d.off_threes_rank,
+      off_pace_rank: d.off_pace_rank,
     };
     defenseDetailMap.set(d.team_abbreviation, detail);
     if (d.team_name) {
@@ -4704,11 +4809,15 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         }
       }
 
+      // Get team's offensive ranks for bidirectional matchup scoring
+      const teamDetail = teamAbbrev ? defenseDetailMap.get(teamAbbrev) : undefined;
       const envResult = calculateEnvironmentScore(
         avgPaceRating, oppDefRank, blowoutProb,
         pick.prop_type || 'points', side,
         oppDefDetail?.opp_rebounds_rank, oppDefDetail?.opp_assists_rank,
-        oppDefDetail?.opp_points_rank, oppDefDetail?.opp_threes_rank
+        oppDefDetail?.opp_points_rank, oppDefDetail?.opp_threes_rank,
+        teamDetail?.off_points_rank, teamDetail?.off_rebounds_rank,
+        teamDetail?.off_assists_rank, teamDetail?.off_threes_rank, teamDetail?.off_pace_rank
       );
       (pick as any).environmentScore = envResult.confidenceAdjustment;
       (pick as any).environmentComponents = envResult.components;
@@ -5085,10 +5194,15 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         }
       }
 
+      const teamDetail2 = teamAbbrev ? defenseDetailMap.get(teamAbbrev) : undefined;
       const envResult2 = calculateEnvironmentScore(
         avgPaceRating2, oppDefRank2, blowoutProb2,
         pick.prop_type || 'points', side,
-        oppDefDetail2?.opp_rebounds_rank, oppDefDetail2?.opp_assists_rank
+        oppDefDetail2?.opp_rebounds_rank, oppDefDetail2?.opp_assists_rank,
+        oppDefDetail2?.opp_points_rank, oppDefDetail2?.opp_threes_rank,
+        teamDetail2?.off_points_rank, teamDetail2?.off_rebounds_rank,
+        teamDetail2?.off_assists_rank, teamDetail2?.off_threes_rank, teamDetail2?.off_pace_rank
+      );
       );
       (pick as any).environmentScore = envResult2.confidenceAdjustment;
       (pick as any).environmentComponents = envResult2.components;
@@ -5278,10 +5392,12 @@ async function generateTierParlays(
     }
     if (parlaysToCreate.length >= config.count) break;
 
-    // Enforce strategy diversity cap
+    // Enforce strategy diversity cap + L10 volume throttling
     const currentStrategyCount = strategyCountMap.get(profile.strategy) || 0;
-    if (currentStrategyCount >= strategyDiversityCap) {
-      console.log(`[Bot] ⏭️ Strategy cap reached for '${profile.strategy}' (${currentStrategyCount}/${strategyDiversityCap}), skipping`);
+    const l10VolumeCap = getStrategyVolumeCap(profile.strategy, strategyDiversityCap);
+    const effectiveCap = Math.min(strategyDiversityCap, l10VolumeCap);
+    if (currentStrategyCount >= effectiveCap) {
+      console.log(`[Bot] ⏭️ Strategy cap reached for '${profile.strategy}' (${currentStrategyCount}/${effectiveCap}${l10VolumeCap < strategyDiversityCap ? ' L10-throttled' : ''}), skipping`);
       continue;
     }
 
@@ -7139,10 +7255,11 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] No stake config found, using hardcoded TIER_CONFIG defaults`);
     }
 
-    // ============= LOAD PLAYER & PROP TYPE PERFORMANCE =============
+    // ============= LOAD PLAYER, PROP TYPE, & STRATEGY PERFORMANCE =============
     await Promise.all([
       loadPropTypePerformance(supabase),
       loadPlayerPerformance(supabase),
+      fetchStrategyHitRates(supabase),
     ]);
     
     // Log player performance summary
