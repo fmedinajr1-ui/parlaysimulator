@@ -93,34 +93,90 @@ function calculateEnvironmentScoreV2(
   propType: string,
   side: string,
   oppRebRank?: number | null,
-  oppAstRank?: number | null
+  oppAstRank?: number | null,
+  oppPointsRank?: number | null,
+  oppThreesRank?: number | null,
+  offPointsRank?: number | null,
+  offReboundsRank?: number | null,
+  offAssistsRank?: number | null,
+  offThreesRank?: number | null,
+  offPaceRank?: number | null
 ): number {
   const isOver = side.toLowerCase() === 'over';
+  const propLower = propType.toLowerCase();
 
+  // --- Pace Factor (15%) ---
   let paceFactor = 0.5;
   if (paceRating != null) {
     paceFactor = Math.max(0, Math.min(1, (paceRating - 94) / 12));
     if (!isOver) paceFactor = 1 - paceFactor;
   }
 
+  // --- Prop-Specific Defense Factor (30%) ---
+  // Route to the specific defensive rank for this prop type
+  let propDefRank = oppDefenseRank; // fallback to overall
+  if (propLower.includes('pts') || propLower.includes('point')) {
+    propDefRank = oppPointsRank ?? oppDefenseRank;
+  } else if (propLower.includes('three') || propLower.includes('3p')) {
+    propDefRank = oppThreesRank ?? oppDefenseRank;
+  } else if (propLower.includes('reb')) {
+    propDefRank = oppRebRank ?? oppDefenseRank;
+  } else if (propLower.includes('ast') || propLower.includes('assist')) {
+    propDefRank = oppAstRank ?? oppDefenseRank;
+  }
+  // Combo props: weighted average of relevant ranks
+  if (propLower.includes('pts') && propLower.includes('reb')) {
+    const pRank = oppPointsRank ?? oppDefenseRank ?? 15;
+    const rRank = oppRebRank ?? oppDefenseRank ?? 15;
+    propDefRank = Math.round(pRank * 0.6 + rRank * 0.4);
+  } else if (propLower.includes('pts') && propLower.includes('ast')) {
+    const pRank = oppPointsRank ?? oppDefenseRank ?? 15;
+    const aRank = oppAstRank ?? oppDefenseRank ?? 15;
+    propDefRank = Math.round(pRank * 0.6 + aRank * 0.4);
+  } else if (propLower.includes('pra') || (propLower.includes('pts') && propLower.includes('reb') && propLower.includes('ast'))) {
+    const pRank = oppPointsRank ?? oppDefenseRank ?? 15;
+    const rRank = oppRebRank ?? oppDefenseRank ?? 15;
+    const aRank = oppAstRank ?? oppDefenseRank ?? 15;
+    propDefRank = Math.round(pRank * 0.5 + rRank * 0.25 + aRank * 0.25);
+  }
+
   let defenseFactor = 0.5;
-  if (oppDefenseRank != null) {
-    defenseFactor = (oppDefenseRank - 1) / 29;
+  if (propDefRank != null) {
+    defenseFactor = (propDefRank - 1) / 29;
     if (!isOver) defenseFactor = 1 - defenseFactor;
   }
 
-  let rebAstFactor = 0.5;
-  const propLower = propType.toLowerCase();
-  if (propLower.includes('reb') && oppRebRank != null) {
-    rebAstFactor = (oppRebRank - 1) / 29;
-    if (!isOver) rebAstFactor = 1 - rebAstFactor;
-  } else if (propLower.includes('ast') && oppAstRank != null) {
-    rebAstFactor = (oppAstRank - 1) / 29;
-    if (!isOver) rebAstFactor = 1 - rebAstFactor;
+  // --- Offensive Matchup Factor (20%) - Bidirectional ---
+  // How good is the player's team at generating this stat type?
+  let offRank: number | null = null;
+  if (propLower.includes('pts') || propLower.includes('point')) {
+    offRank = offPointsRank;
+  } else if (propLower.includes('three') || propLower.includes('3p')) {
+    offRank = offThreesRank;
+  } else if (propLower.includes('reb')) {
+    offRank = offReboundsRank;
+  } else if (propLower.includes('ast') || propLower.includes('assist')) {
+    offRank = offAssistsRank;
+  }
+
+  let offenseFactor = 0.5;
+  if (offRank != null) {
+    // Lower rank = better offense (rank 1 is best), so invert
+    offenseFactor = 1 - ((offRank - 1) / 29);
+    if (!isOver) offenseFactor = 1 - offenseFactor;
+  }
+
+  // --- Pace Rank Boost (5%) ---
+  let paceRankFactor = 0.5;
+  if (offPaceRank != null) {
+    paceRankFactor = 1 - ((offPaceRank - 1) / 29); // lower rank = faster pace
+    if (!isOver) paceRankFactor = 1 - paceRankFactor;
   }
 
   const blowoutFactor = Math.max(0, Math.min(1, blowoutProbability ?? 0));
-  const envScore = (paceFactor * 0.3) + (defenseFactor * 0.3) + (rebAstFactor * 0.2) + (blowoutFactor * -0.2);
+
+  // Weighted: defense 30%, offense 20%, pace 15%, pace_rank 5%, blowout -10%
+  const envScore = (defenseFactor * 0.30) + (offenseFactor * 0.20) + (paceFactor * 0.15) + (paceRankFactor * 0.05) + (blowoutFactor * -0.10);
 
   // Scale to 0-10 range for SES component
   return Math.max(0, Math.min(10, Math.round(envScore * 12.5)));
@@ -381,7 +437,14 @@ function calculateSES(prop: PropInput, archetype: string): { score: number; comp
     const blowoutProb = spread >= 8 ? Math.min(1, spread / 15) : spread >= 4 ? 0.2 : 0.1;
     const oppRebRank = (prop as any).opp_rebounds_rank ?? null;
     const oppAstRank = (prop as any).opp_assists_rank ?? null;
-    blowoutPaceScore = calculateEnvironmentScoreV2(paceRating, oppDefRank, blowoutProb, prop.prop_type, prop.side, oppRebRank, oppAstRank);
+    const oppPointsRank = (prop as any).opp_points_rank ?? null;
+    const oppThreesRank = (prop as any).opp_threes_rank ?? null;
+    const offPointsRank = (prop as any).off_points_rank ?? null;
+    const offReboundsRank = (prop as any).off_rebounds_rank ?? null;
+    const offAssistsRank = (prop as any).off_assists_rank ?? null;
+    const offThreesRank = (prop as any).off_threes_rank ?? null;
+    const offPaceRank = (prop as any).off_pace_rank ?? null;
+    blowoutPaceScore = calculateEnvironmentScoreV2(paceRating, oppDefRank, blowoutProb, prop.prop_type, prop.side, oppRebRank, oppAstRank, oppPointsRank, oppThreesRank, offPointsRank, offReboundsRank, offAssistsRank, offThreesRank, offPaceRank);
   }
 
   // Apply archetype adjustments
@@ -671,7 +734,7 @@ Deno.serve(async (req) => {
       const [ncaabStatsRes, paceRes, defRankRes] = await Promise.all([
         supabase.from('ncaab_team_stats').select('team_name, kenpom_adj_o, kenpom_adj_d, adj_tempo, kenpom_rank'),
         supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating'),
-        supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_rebounds_rank, opp_assists_rank').eq('is_current', true),
+        supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank, off_points_rank, off_rebounds_rank, off_assists_rank, off_threes_rank, off_pace_rank').eq('is_current', true),
       ]);
       const ncaabStats = ncaabStatsRes.data;
       const ncaabMap = new Map(
@@ -683,9 +746,9 @@ Deno.serve(async (req) => {
         paceTeamMap.set(p.team_abbrev, p.pace_rating);
         if (p.team_name) paceTeamMap.set(p.team_name.toLowerCase(), p.pace_rating);
       });
-      const defTeamMap = new Map<string, { overall_rank: number; opp_rebounds_rank: number | null; opp_assists_rank: number | null }>();
+      const defTeamMap = new Map<string, { overall_rank: number; opp_points_rank: number | null; opp_threes_rank: number | null; opp_rebounds_rank: number | null; opp_assists_rank: number | null; off_points_rank: number | null; off_rebounds_rank: number | null; off_assists_rank: number | null; off_threes_rank: number | null; off_pace_rank: number | null }>();
       (defRankRes.data ?? []).forEach((d: any) => {
-        const entry = { overall_rank: d.overall_rank, opp_rebounds_rank: d.opp_rebounds_rank, opp_assists_rank: d.opp_assists_rank };
+        const entry = { overall_rank: d.overall_rank, opp_points_rank: d.opp_points_rank, opp_threes_rank: d.opp_threes_rank, opp_rebounds_rank: d.opp_rebounds_rank, opp_assists_rank: d.opp_assists_rank, off_points_rank: d.off_points_rank, off_rebounds_rank: d.off_rebounds_rank, off_assists_rank: d.off_assists_rank, off_threes_rank: d.off_threes_rank, off_pace_rank: d.off_pace_rank };
         defTeamMap.set(d.team_abbreviation, entry);
         if (d.team_name) defTeamMap.set(d.team_name.toLowerCase(), entry);
       });
@@ -767,6 +830,9 @@ Deno.serve(async (req) => {
         const teamPace = paceTeamMap.get(teamKey) ?? paceTeamMap.get(prop.team_name || '') ?? null;
         const oppDef = defTeamMap.get(oppKey) ?? defTeamMap.get(prop.opponent || '') ?? null;
 
+        // Also look up the player's own team defense entry for offensive ranks
+        const teamDef = defTeamMap.get(teamKey) ?? defTeamMap.get(prop.team_name || '') ?? null;
+
         const enrichedProp: any = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -785,8 +851,15 @@ Deno.serve(async (req) => {
           game_context: gameContext,
           pace_rating: teamPace,
           opp_defense_rank: oppDef?.overall_rank ?? null,
+          opp_points_rank: oppDef?.opp_points_rank ?? null,
+          opp_threes_rank: oppDef?.opp_threes_rank ?? null,
           opp_rebounds_rank: oppDef?.opp_rebounds_rank ?? null,
           opp_assists_rank: oppDef?.opp_assists_rank ?? null,
+          off_points_rank: teamDef?.off_points_rank ?? null,
+          off_rebounds_rank: teamDef?.off_rebounds_rank ?? null,
+          off_assists_rank: teamDef?.off_assists_rank ?? null,
+          off_threes_rank: teamDef?.off_threes_rank ?? null,
+          off_pace_rank: teamDef?.off_pace_rank ?? null,
         };
 
         propsToAnalyze.push(enrichedProp);
