@@ -443,3 +443,6 @@ verify_jwt = false
 
 [functions.bot-quality-regen-loop]
 verify_jwt = false
+
+[functions.bot-update-engine-hit-rates]
+verify_jwt = false

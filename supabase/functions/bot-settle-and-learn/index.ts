@@ -1676,6 +1676,22 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Telegram notification failed:', telegramError);
     }
 
+    // Trigger hit rate refresh after settlement
+    try {
+      console.log('[Bot Settle] Triggering bot-update-engine-hit-rates...');
+      await fetch(`${supabaseUrl}/functions/v1/bot-update-engine-hit-rates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ trigger: 'post_settlement' }),
+      });
+      console.log('[Bot Settle] Hit rate refresh triggered successfully');
+    } catch (hitRateRefreshErr) {
+      console.error('[Bot Settle] Hit rate refresh trigger failed:', hitRateRefreshErr);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
