@@ -107,10 +107,13 @@ async function fetchNBAStats(measureType: string, season: string): Promise<NBASt
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       console.log(`[Defense Ratings] Fetching NBA.com ${measureType} stats (attempt ${attempt})...`);
-      const resp = await fetch(url, { headers: NBA_STATS_HEADERS });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout per request
+      const resp = await fetch(url, { headers: NBA_STATS_HEADERS, signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!resp.ok) {
         console.error(`[Defense Ratings] NBA.com returned ${resp.status} for ${measureType}`);
-        if (attempt < 3) { await new Promise(r => setTimeout(r, 2000 * attempt)); continue; }
+        if (attempt < 3) { await new Promise(r => setTimeout(r, 1000 * attempt)); continue; }
         return null;
       }
       const json = await resp.json();
@@ -131,8 +134,6 @@ async function fetchNBAStats(measureType: string, season: string): Promise<NBASt
       const astCol = measureType === 'Opponent' ? 'OPP_AST' : 'AST';
       const fg3mCol = measureType === 'Opponent' ? 'OPP_FG3M' : 'FG3M';
       
-      // For Base stats, column names are just PTS, REB, AST, FG3M
-      // For Opponent stats, they may or may not have OPP_ prefix depending on API version
       const ptsIdx = idx(ptsCol) >= 0 ? idx(ptsCol) : idx('PTS');
       const rebIdx = idx(rebCol) >= 0 ? idx(rebCol) : idx('REB');
       const astIdx = idx(astCol) >= 0 ? idx(astCol) : idx('AST');
@@ -154,10 +155,11 @@ async function fetchNBAStats(measureType: string, season: string): Promise<NBASt
       }
       
       console.log(`[Defense Ratings] Got ${result.length} teams from NBA.com ${measureType}`);
-      return result.length >= 28 ? result : null; // Need most teams
+      return result.length >= 28 ? result : null;
     } catch (err) {
-      console.error(`[Defense Ratings] Error fetching ${measureType} (attempt ${attempt}):`, err);
-      if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+      const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+      console.error(`[Defense Ratings] ${isTimeout ? 'TIMEOUT' : 'Error'} fetching ${measureType} (attempt ${attempt}):`, isTimeout ? '8s timeout exceeded' : err);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
     }
   }
   return null;
@@ -467,17 +469,15 @@ serve(async (req) => {
         console.log(`[Defense Ratings] Updated ${nbaDefenseStatRecords.length} rows in nba_opponent_defense_stats`);
       }
       
-      // === Update team_defense_rankings with both defense + offense ranks ===
-      let ranksUpdated = 0;
-      for (const teamData of ratings) {
-        const { error: rankErr } = await supabase
+      // === Update team_defense_rankings with both defense + offense ranks (batch) ===
+      const rankUpdatePromises = ratings.map(teamData =>
+        supabase
           .from('team_defense_rankings')
           .update({
             opp_points_rank: teamData.points_rank,
             opp_rebounds_rank: teamData.rebounds_rank,
             opp_assists_rank: teamData.assists_rank,
             opp_threes_rank: teamData.threes_rank,
-            opp_points_allowed_pg: teamData.points_allowed,
             opp_rebounds_allowed_pg: teamData.rebounds_allowed,
             opp_assists_allowed_pg: teamData.assists_allowed,
             off_points_rank: teamData.off_points_rank,
@@ -488,12 +488,15 @@ serve(async (req) => {
             updated_at: now,
           })
           .eq('team_abbreviation', teamData.team_abbrev)
-          .eq('is_current', true);
-        
-        if (!rankErr) ranksUpdated++;
+          .eq('is_current', true)
+      );
+      const rankResults = await Promise.all(rankUpdatePromises);
+      const rankErrors = rankResults.filter(r => r.error);
+      const ranksUpdated = rankResults.length - rankErrors.length;
+      if (rankErrors.length > 0) {
+        console.error(`[Defense Ratings] ${rankErrors.length} rank update errors, first:`, rankErrors[0].error);
       }
       console.log(`[Defense Ratings] Updated ${ranksUpdated} teams in team_defense_rankings (defense + offense)`);
-      
       console.log(`[Defense Ratings] Refresh complete: ${records.length} position records, source: ${dataSource}`);
       
       return new Response(JSON.stringify({
