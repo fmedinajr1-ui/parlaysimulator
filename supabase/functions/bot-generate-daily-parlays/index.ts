@@ -318,6 +318,151 @@ function passesGodModeMatchup(
   return { pass: true, penalty };
 }
 
+// ============= DEFENSIVE DOWNGRADE ALT LINE SYSTEM =============
+// Checks if a pick's matchup context warrants dropping to a lower (safer) line
+function shouldDowngradeLine(
+  pick: any,
+  defenseDetailMap: Map<string, any>,
+  propType: string,
+  side: string,
+  currentLine: number,
+  isGodMode: boolean = false
+): { shouldDowngrade: boolean; recommendedLine: number; reason: string } {
+  const noDowngrade = { shouldDowngrade: false, recommendedLine: currentLine, reason: '' };
+  const isOver = side.toLowerCase() === 'over';
+  const isUnder = side.toLowerCase() === 'under';
+  if (!isOver && !isUnder) return noDowngrade;
+
+  // Get defense detail for opponent
+  const oppTeam = (pick as any).opponent_team || (pick as any).oppTeamName || '';
+  const oppDefDetail = defenseDetailMap.get(oppTeam) || defenseDetailMap.get(oppTeam.toLowerCase());
+  
+  // Also try defenseMatchupRank already attached to pick
+  const propLower = (propType || '').toLowerCase();
+  let propSpecificDefRank: number | null = null;
+  
+  if (oppDefDetail) {
+    if (propLower.includes('three') || propLower === '3pm' || propLower === 'threes') {
+      propSpecificDefRank = oppDefDetail.opp_threes_rank ?? oppDefDetail.overall_rank ?? null;
+    } else if (propLower.includes('point') || propLower === 'pts' || propLower === 'points') {
+      propSpecificDefRank = oppDefDetail.opp_points_rank ?? oppDefDetail.overall_rank ?? null;
+    } else if (propLower.includes('reb')) {
+      propSpecificDefRank = oppDefDetail.opp_rebounds_rank ?? oppDefDetail.overall_rank ?? null;
+    } else if (propLower.includes('ast') || propLower.includes('assist')) {
+      propSpecificDefRank = oppDefDetail.opp_assists_rank ?? oppDefDetail.overall_rank ?? null;
+    } else {
+      propSpecificDefRank = oppDefDetail.overall_rank ?? null;
+    }
+  }
+  
+  // Fallback to already-attached defenseMatchupRank
+  if (propSpecificDefRank == null) {
+    propSpecificDefRank = (pick as any).defenseMatchupRank ?? null;
+  }
+  
+  if (propSpecificDefRank == null) return noDowngrade;
+
+  // Get player averages
+  const projectedValue = pick.projected_value || pick.l10_avg || 0;
+  const defAdjAvg = (pick as any).defense_adjusted_avg || projectedValue;
+  
+  // Stat-aware step sizes
+  let stepSize = 1.0; // default for points/rebounds/assists
+  if (propLower.includes('three') || propLower.includes('block') || propLower.includes('steal') || propLower === '3pm') {
+    stepSize = 0.5;
+  } else if (propLower.includes('pra') || propLower.includes('pts_rebs') || propLower.includes('pts_asts') || propLower.includes('rebs_asts')) {
+    stepSize = 1.5;
+  }
+
+  // Threshold: more aggressive for GOD MODE
+  const defRankThreshold = isGodMode ? 15 : 10;
+  const tightMarginThreshold = stepSize; // margin considered "tight"
+  
+  if (isOver) {
+    // OVER picks: downgrade when facing top defense AND margin is tight
+    const marginFromLine = defAdjAvg - currentLine;
+    const l10Margin = projectedValue - currentLine;
+    
+    if (propSpecificDefRank <= defRankThreshold && (marginFromLine <= tightMarginThreshold || l10Margin <= tightMarginThreshold * 2)) {
+      const recommendedLine = currentLine - stepSize;
+      const reason = `top_${propSpecificDefRank}_defense_tight_margin`;
+      console.log(`[DefDowngrade] ${pick.player_name} ${propType} OVER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)})`);
+      return { shouldDowngrade: true, recommendedLine, reason };
+    }
+  } else if (isUnder) {
+    // UNDER picks: downgrade (raise line) when facing weak defense
+    const marginFromLine = currentLine - defAdjAvg;
+    const l10Margin = currentLine - projectedValue;
+    
+    if (propSpecificDefRank >= (30 - defRankThreshold) && (marginFromLine <= tightMarginThreshold || l10Margin <= tightMarginThreshold * 2)) {
+      const recommendedLine = currentLine + stepSize;
+      const reason = `weak_defense_rank_${propSpecificDefRank}_tight_margin`;
+      console.log(`[DefDowngrade] ${pick.player_name} ${propType} UNDER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)})`);
+      return { shouldDowngrade: true, recommendedLine, reason };
+    }
+  }
+
+  return noDowngrade;
+}
+
+// Finds an available alt line from the pick's alternateLines or oddsMap
+function findAvailableAltLine(
+  pick: any,
+  recommendedLine: number,
+  side: string,
+  oddsMap: Map<string, any>,
+  playerProps: any[]
+): { line: number; odds: number } | null {
+  const isOver = side.toLowerCase() === 'over';
+  
+  // 1. Check pick's existing alternateLines array
+  const altLines: AlternateLine[] = pick.alternateLines || [];
+  for (const alt of altLines) {
+    if (Math.abs(alt.line - recommendedLine) < 0.01) {
+      const odds = isOver ? alt.overOdds : alt.underOdds;
+      if (odds && odds !== 0) {
+        console.log(`[DefDowngrade] Found alt line ${recommendedLine} in alternateLines (odds: ${odds})`);
+        return { line: recommendedLine, odds };
+      }
+    }
+  }
+
+  // 2. Check unified_props for the same player + prop type at the recommended line
+  const playerName = (pick.player_name || '').toLowerCase().trim();
+  const propType = (pick.prop_type || '').toLowerCase();
+  
+  for (const prop of (playerProps || [])) {
+    const pName = (prop.player_name || '').toLowerCase().trim();
+    const pType = (prop.prop_type || '').toLowerCase();
+    if (pName === playerName && pType === propType && Math.abs((prop.current_line || 0) - recommendedLine) < 0.01) {
+      const odds = isOver ? (prop.over_price || -110) : (prop.under_price || -110);
+      console.log(`[DefDowngrade] Found alt line ${recommendedLine} in unified_props (odds: ${odds})`);
+      return { line: recommendedLine, odds };
+    }
+  }
+
+  // 3. Check if any alt line exists between current and recommended (closest safe line)
+  const currentLine = pick.line || 0;
+  const closestAlts = altLines
+    .filter(alt => {
+      if (isOver) return alt.line < currentLine && alt.line >= recommendedLine;
+      return alt.line > currentLine && alt.line <= recommendedLine;
+    })
+    .sort((a, b) => isOver ? (b.line - a.line) : (a.line - b.line)); // closest to original first
+  
+  if (closestAlts.length > 0) {
+    const best = closestAlts[0];
+    const odds = isOver ? best.overOdds : best.underOdds;
+    if (odds && odds !== 0) {
+      console.log(`[DefDowngrade] Found closest alt line ${best.line} (target was ${recommendedLine}, odds: ${odds})`);
+      return { line: best.line, odds };
+    }
+  }
+
+  console.log(`[DefDowngrade] No alt line found for ${pick.player_name} ${propType} at ${recommendedLine} - keeping original`);
+  return null;
+}
+
 function calculateEnvironmentScore(
   paceRating: number | null,
   oppDefenseRank: number | null,
@@ -6042,6 +6187,38 @@ async function generateTierParlays(
             )
           : { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
 
+        // === DEFENSIVE DOWNGRADE: Check if matchup warrants a safer alt line ===
+        let wasDowngraded = false;
+        let originalLineBeforeDowngrade: number | null = null;
+        let downgradeReason = '';
+        
+        const isGodModeProfile = profile.strategy === 'god_mode_lock';
+        const pickSide = playerPick.recommended_side || 'over';
+        const downgradeResult = shouldDowngradeLine(
+          playerPick, defenseDetailMap,
+          playerPick.prop_type, pickSide,
+          selectedLine.line, isGodModeProfile
+        );
+        
+        if (downgradeResult.shouldDowngrade) {
+          const altResult = findAvailableAltLine(
+            playerPick, downgradeResult.recommendedLine,
+            pickSide, oddsMap, playerProps || []
+          );
+          if (altResult) {
+            originalLineBeforeDowngrade = selectedLine.line;
+            selectedLine.line = altResult.line;
+            selectedLine.odds = altResult.odds;
+            selectedLine.reason = `defensive_downgrade_${downgradeResult.reason}`;
+            wasDowngraded = true;
+            downgradeReason = downgradeResult.reason;
+            console.log(`[DefDowngrade] ✅ Applied: ${playerPick.player_name} ${playerPick.prop_type} ${pickSide} ${originalLineBeforeDowngrade} -> ${altResult.line} (${downgradeReason})`);
+          } else {
+            downgradeReason = `no_alt_available_${downgradeResult.reason}`;
+            console.log(`[DefDowngrade] ⚠️ Flagged but no alt: ${playerPick.player_name} ${playerPick.prop_type} ${pickSide} ${selectedLine.line} (${downgradeReason})`);
+          }
+        }
+
         legData = {
           id: playerPick.id,
           player_name: playerPick.player_name,
@@ -6069,6 +6246,9 @@ async function generateTierParlays(
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
           environment_score: (playerPick as any).environmentScore ?? null,
           environment_components: (playerPick as any).environmentComponents ?? null,
+          was_downgraded: wasDowngraded,
+          original_line_before_downgrade: originalLineBeforeDowngrade,
+          downgrade_reason: downgradeReason || null,
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
