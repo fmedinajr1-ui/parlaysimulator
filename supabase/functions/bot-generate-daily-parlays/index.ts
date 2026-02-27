@@ -5499,7 +5499,6 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         teamDetail2?.off_points_rank, teamDetail2?.off_rebounds_rank,
         teamDetail2?.off_assists_rank, teamDetail2?.off_threes_rank, teamDetail2?.off_pace_rank
       );
-      );
       (pick as any).environmentScore = envResult2.confidenceAdjustment;
       (pick as any).environmentComponents = envResult2.components;
       // APPLY environment adjustment to composite score
