@@ -1,46 +1,84 @@
 
 
-## Secure Internal Pipeline Data from Customers
+## Auto-Update Hit Rates Across All Engines
 
-### Problem
-While the Dashboard UI is admin-gated (redirects non-admins), there are two gaps:
+### Problem Summary
 
-1. **Database-level exposure**: The `bot_activity_log` table has a fully public SELECT RLS policy (`USING (true)`). Any authenticated customer can query the API directly and see settlement reports, pipeline doctor diagnostics, hit rate evaluations, calibration data, and internal operational metadata.
+Yesterday (Feb 25) hit **41%** overall. Today (Feb 26) dropped to **23.6%** on 250 parlays. The core issue: **engine hit rates are not feeding back into strategy selection**. Specifically:
 
-2. **Navigation leak**: The "Dashboard" link appears in the mobile menu for ALL users (not just admins). Non-admins get redirected, but they shouldn't see the link at all.
+1. `bot_strategies.win_rate` shows 0 for 5 of 6 strategies -- the settlement engine never updates it
+2. `bot_prop_type_performance` is partially stale (some props stuck at Feb 24)
+3. Player performance has suspicious 25/25 perfect records suggesting double-counting
+4. No automated mechanism recalculates strategy-level hit rates after settlement
 
-### Changes
+### Strategy Breakdown (Feb 26)
 
-#### 1. Restrict `bot_activity_log` RLS to admins only
-Replace the current open SELECT policy with one that uses the `has_role` function:
-
-```sql
-DROP POLICY "Anyone can view bot activity log" ON bot_activity_log;
-
-CREATE POLICY "Only admins can view bot activity log"
-ON bot_activity_log FOR SELECT
-TO authenticated
-USING (public.has_role(auth.uid(), 'admin'));
+```text
+Strategy                              Wins/Total  Hit Rate
+------------------------------------------------------
+cross_sport (exploration)              8/14       57.1%
+shootout_stack (execution)            14/42       33.3%
+grind_stack (execution)               14/42       33.3%
+force_mispriced_conviction             7/26       26.9%
+mispriced_edge (exploration)          16/119      13.4%  <-- 119 parlays!
+mispriced_edge (validation)            0/7         0.0%
 ```
 
-This ensures customers cannot query pipeline internals even via direct API calls.
+### What Needs to Happen
 
-#### 2. Move "Dashboard" to admin-only section in mobile navigation
-In `src/components/layout/MobileFloatingMenu.tsx`, move the Dashboard menu item from `menuItems` (visible to all) into `adminItems` (visible only when `showAdmin` is true).
+#### 1. Create `bot-update-engine-hit-rates` edge function
+
+A new function that runs after every settlement cycle to refresh ALL performance tables:
+
+**A) Update `bot_strategies` table** with actual win rates computed from `bot_daily_parlays`:
+- For each strategy, query settled parlays (won + lost) from last 7 days
+- Calculate win_rate, times_used, times_won
+- Update the `bot_strategies` row
+
+**B) Refresh `bot_prop_type_performance`** to ensure all prop types (not just `player_*` variants) are current:
+- Aggregate from settled parlay legs
+- Update `last_updated`, `hit_rate`, `total_legs`, `legs_won`
+- Auto-set `is_blocked = true` when hit_rate < 25% and total_legs >= 10
+- Auto-set `is_boosted = true` when hit_rate > 65% and total_legs >= 10
+
+**C) Refresh `bot_player_performance`** with deduplication guard:
+- Query settled legs grouped by player + prop_type + side
+- Upsert with proper dedup to prevent inflated perfect records
+- Recalculate streak from most recent 5 outcomes
+
+**D) Update `strategy_performance`** table (currently empty) with per-strategy daily stats
+
+#### 2. Wire into settlement pipeline
+
+Add a call to `bot-update-engine-hit-rates` at the end of `bot-settle-and-learn` so hit rates refresh every time parlays settle.
+
+#### 3. Add cron safety net
+
+Schedule a daily 11:30 PM ET run to catch any missed updates.
 
 ### Technical Details
 
-**File: `src/components/layout/MobileFloatingMenu.tsx`**
-- Remove `{ icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" }` from `menuItems`
-- Add it to `adminItems`
+**New file:** `supabase/functions/bot-update-engine-hit-rates/index.ts`
 
-**Database Migration:**
-- Drop the existing open SELECT policy on `bot_activity_log`
-- Create a new admin-only SELECT policy using `public.has_role(auth.uid(), 'admin')`
+The function will:
+1. Query `bot_daily_parlays` for settled outcomes grouped by `strategy_name`
+2. Extract base strategy (e.g., `elite_categories_v1` from `elite_categories_v1_execution_grind_stack`)
+3. Compute rolling 7-day and all-time hit rates
+4. Upsert into `bot_strategies` (win_rate, times_used, times_won)
+5. Reaggregate `bot_prop_type_performance` from leg-level data
+6. Validate `bot_player_performance` and remove duplicate inflation
+7. Log results to `bot_activity_log`
 
-### What customers will see after this
-- No "Dashboard" link in their navigation
-- No access to `bot_activity_log` data via API
-- No visibility into settlement reports, hit rate targets, pipeline doctor diagnostics, or calibration weights
-- Their existing customer-facing features (parlay cards on landing page, Telegram bot commands) remain unaffected
+**Modified file:** `supabase/functions/bot-settle-and-learn/index.ts`
+- Add call to `bot-update-engine-hit-rates` after settlement completes
+
+**Cron job:** Daily at 11:30 PM ET as a safety net
+
+### Success Criteria
+
+1. `bot_strategies.win_rate` reflects actual 7-day performance (not 0 or stale values)
+2. All prop types in `bot_prop_type_performance` have `last_updated` within 24 hours
+3. Player performance records do not show inflated perfect streaks from double-counting
+4. Generation engine uses fresh hit rates to filter and weight picks
+5. Underperforming strategies get lower weight or auto-blocked in next generation cycle
 
