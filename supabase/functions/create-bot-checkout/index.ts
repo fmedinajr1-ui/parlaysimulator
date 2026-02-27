@@ -74,6 +74,16 @@ serve(async (req) => {
       line_items: [{ price: resolvedPriceId, quantity: 1 }],
       mode: "subscription",
       payment_method_collection: "always",
+      consent_collection: {
+        terms_of_service: "required",
+      },
+      custom_text: {
+        terms_of_service_acceptance: {
+          message: isScoutTier
+            ? "By subscribing, you agree to a 1-day free trial. Your card will be charged after the trial unless you cancel."
+            : "By subscribing, you agree to a 3-day free trial. Your card will be charged after the trial unless you cancel.",
+        },
+      },
       subscription_data: {
         trial_period_days: isScoutTier ? 1 : 3,
         trial_settings: {

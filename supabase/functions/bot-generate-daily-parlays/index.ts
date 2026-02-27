@@ -841,14 +841,14 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 2.0 },
       { legs: 3, strategy: 'cash_lock_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       // BOOSTED: Shop odds on 1 leg for plus-money
       { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'boosted_cash_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.2 },
       // GOLDEN LOCKS: Require golden category legs
-      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
       // HYBRID: Mix player props + team props for diversity
@@ -2840,7 +2840,7 @@ function selectOptimalLine(
   const side = pick.recommended_side || 'over';
   const buffer = projection - mainLine;
   
-  if (!strategy.includes('aggressive') && !strategy.includes('alt')) {
+  if (!strategy.includes('aggressive') && !strategy.includes('alt') && !strategy.includes('boosted') && !strategy.includes('golden') && !strategy.includes('cash_lock')) {
     return { line: mainLine, odds: mainOdds, reason: 'safe_profile' };
   }
   
@@ -4095,7 +4095,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(rawTeamProps || []).length} raw team bets → ${teamProps.length} deduped (${staleCount} stale removed)`);
 
   // Build odds map
-  const oddsMap = new Map<string, { overOdds: number; underOdds: number; line: number; sport: string }>();
+  const oddsMap = new Map<string, { overOdds: number; underOdds: number; line: number; sport: string; event_id?: string }>();
   (playerProps || []).forEach((od: any) => {
     const key = `${od.player_name}_${od.prop_type}`.toLowerCase();
     oddsMap.set(key, {
@@ -4103,6 +4103,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       underOdds: od.under_price || -110,
       line: od.current_line,
       sport: od.sport,
+      event_id: od.event_id || undefined,
     });
   });
 
@@ -4179,6 +4180,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       line_source: hasRealLine ? 'verified' : 'projected',
       sport: pick.sport || 'basketball_nba',
       team_name: resolvedTeamName,
+      event_id: oddsEntry?.event_id || pick.event_id || undefined,
       _gameContext: (() => {
         if (!gameCtx) return null;
         const side = (pick.recommended_side || '').toLowerCase();
@@ -4273,6 +4275,66 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   if (contextAdjustments > 0) {
     console.log(`[Bot] Applied ${contextAdjustments} game context adjustments (incl. team total alignment)`);
   }
+
+  // === FETCH PLAYER PROP ALTERNATE LINES ===
+  // Only fetch if any execution profile uses alt lines
+  const anyProfileUsesAltLines = config.profiles.some((p: any) => p.useAltLines === true);
+  if (anyProfileUsesAltLines) {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    
+    // Select top 15 NBA player picks by composite score with sufficient projection buffer
+    const altLineCandidates = enrichedSweetSpots
+      .filter(p => {
+        if (!p.event_id || !p.player_name) return false;
+        if ((p.sport || 'basketball_nba') !== 'basketball_nba') return false;
+        const buffer = (p.projected_value || 0) - p.line;
+        const minBuffer = getMinBuffer(p.prop_type);
+        return buffer >= minBuffer;
+      })
+      .sort((a, b) => b.compositeScore - a.compositeScore)
+      .slice(0, 15);
+
+    if (altLineCandidates.length > 0) {
+      console.log(`[AltLines] Fetching alternate lines for ${altLineCandidates.length} player prop candidates`);
+      let altLinesFetched = 0;
+      
+      for (const pick of altLineCandidates) {
+        try {
+          const altResponse = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              eventId: pick.event_id,
+              playerName: pick.player_name,
+              propType: pick.prop_type,
+              sport: pick.sport || 'basketball_nba',
+            }),
+          });
+          
+          if (altResponse.ok) {
+            const altData = await altResponse.json();
+            if (altData.lines && altData.lines.length > 0) {
+              pick.alternateLines = altData.lines;
+              altLinesFetched++;
+              console.log(`[AltLines] Fetched ${altData.lines.length} alternate lines for ${pick.player_name} ${pick.prop_type}`);
+            }
+          }
+          // 100ms delay between calls to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (err) {
+          console.warn(`[AltLines] Failed to fetch alt lines for ${pick.player_name}: ${err}`);
+        }
+      }
+      console.log(`[AltLines] Completed: ${altLinesFetched}/${altLineCandidates.length} picks received alternate lines`);
+    } else {
+      console.log(`[AltLines] No qualifying candidates for alternate line fetching`);
+    }
+  }
+
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
     console.log(`[Bot] No sweet spots for ${targetDate}, using ${playerProps.length} unified_props directly`);

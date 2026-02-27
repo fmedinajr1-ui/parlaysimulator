@@ -63,6 +63,14 @@ serve(async (req) => {
       ],
       mode: "subscription",
       payment_method_collection: "always",
+      consent_collection: {
+        terms_of_service: "required",
+      },
+      custom_text: {
+        terms_of_service_acceptance: {
+          message: "By subscribing, you agree to a 3-day free trial. Your card will be charged $99.99/mo after the trial unless you cancel.",
+        },
+      },
       subscription_data: {
         trial_period_days: 3,
         trial_settings: {
