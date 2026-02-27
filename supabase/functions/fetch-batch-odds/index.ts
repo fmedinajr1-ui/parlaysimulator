@@ -44,6 +44,16 @@ interface PlayerResult {
   }>;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -92,7 +102,7 @@ serve(async (req) => {
 
     console.log(`[fetch-batch-odds] Fetching ${marketGroups.size} markets across all events`);
     
-    const response = await fetch(eventsUrl);
+    const response = await fetchWithTimeout(eventsUrl);
 
     if (!response.ok) {
       throw new Error(`API returned ${response.status}: ${await response.text()}`);

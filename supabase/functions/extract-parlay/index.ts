@@ -8,6 +8,16 @@ const corsHeaders = {
 
 // ============= INTERFACES =============
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 interface ExtractedLeg {
   description: string;
   odds: string;
@@ -687,7 +697,7 @@ async function extractWithOpenAI(
         : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks.");
   
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${openAIKey}`,
@@ -775,7 +785,7 @@ async function extractWithOpenAIMini(
   console.log(`[OpenAI-Mini] Processing image ${imageIndex + 1}/${totalImages}...`);
   
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${openAIKey}`,

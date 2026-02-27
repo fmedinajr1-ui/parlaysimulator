@@ -100,7 +100,10 @@ function getCurrentSeason() {
 }
 
 async function fetchESPNStandings(url: string, sport: string, season: string): Promise<any[]> {
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const response = await fetch(url, { signal: controller.signal });
+  clearTimeout(timeoutId);
   
   if (!response.ok) {
     throw new Error(`ESPN API error: ${response.status}`);

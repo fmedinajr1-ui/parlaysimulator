@@ -6,6 +6,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // EST-aware date helper
 function getEasternDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -2336,7 +2346,7 @@ serve(async (req) => {
     // STEP 1: Scene Classification (fast model)
     console.log('[Scout Agent] Step 1: Scene classification');
     
-    const classifyResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const classifyResponse = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_API_KEY}`,
@@ -2463,7 +2473,7 @@ serve(async (req) => {
 
     // Note: Roster context is now built into getVisionAnalysisPrompt via gameContext
 
-    const visionResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const visionResponse = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_API_KEY}`,

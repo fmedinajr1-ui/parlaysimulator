@@ -131,6 +131,16 @@ function getEasternDate(): string {
   }).format(new Date());
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -195,7 +205,7 @@ serve(async (req) => {
       for (const sport of ALL_ACTIVE_SPORTS) {
         try {
           const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
-          const resp = await fetch(eventsUrl);
+          const resp = await fetchWithTimeout(eventsUrl);
           await trackApiCall();
 
           if (resp.ok) {
@@ -265,7 +275,7 @@ serve(async (req) => {
       for (const sport of TIER_1_SPORTS) {
         try {
           const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
-          const resp = await fetch(eventsUrl);
+          const resp = await fetchWithTimeout(eventsUrl);
           await trackApiCall();
           if (resp.ok) {
             const events: OddsAPIEvent[] = await resp.json();
@@ -288,7 +298,7 @@ serve(async (req) => {
             try {
               const marketsParam = batch.join(',');
               const url = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-              const resp = await fetch(url);
+              const resp = await fetchWithTimeout(url);
               await trackApiCall();
               if (!resp.ok) continue;
 
@@ -385,7 +395,7 @@ serve(async (req) => {
       // Phase 1: Fetch events
       console.log(`[Full] Fetching events for ${sport}...`);
       const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
-      const eventsResponse = await fetch(eventsUrl);
+      const eventsResponse = await fetchWithTimeout(eventsUrl);
       await trackApiCall();
 
       if (!eventsResponse.ok) {
@@ -417,7 +427,7 @@ serve(async (req) => {
         // Golf uses the sport-level odds endpoint with outrights market
         try {
           const outrightsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds?apiKey=${apiKey}&regions=us&markets=outrights&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-          const outrightsResp = await fetch(outrightsUrl);
+          const outrightsResp = await fetchWithTimeout(outrightsUrl);
           await trackApiCall();
 
           if (outrightsResp.ok) {
@@ -481,7 +491,7 @@ serve(async (req) => {
           try {
             const marketsParam = batch.join(',');
             const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-            const propsResponse = await fetch(propsUrl);
+            const propsResponse = await fetchWithTimeout(propsUrl);
             await trackApiCall();
 
             if (!propsResponse.ok) {
@@ -529,7 +539,7 @@ serve(async (req) => {
         // Phase 3: Fetch team props (spreads/totals/h2h) - single batched call
         try {
           const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-          const teamResponse = await fetch(teamUrl);
+          const teamResponse = await fetchWithTimeout(teamUrl);
           await trackApiCall();
 
           if (teamResponse.ok) {

@@ -146,9 +146,13 @@ async function calculatePaceFromGameLogs(supabase: any, teamInfo: typeof NBA_TEA
 async function fetchTeamRecord(teamId: number): Promise<{ wins: number; losses: number; gamesPlayed: number } | null> {
   try {
     const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' }
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' },
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     
     if (!response.ok) return null;
     

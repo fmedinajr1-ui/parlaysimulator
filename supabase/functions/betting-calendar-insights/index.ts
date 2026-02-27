@@ -6,6 +6,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 interface TimePattern {
   month: number;
   day_of_week: number;
@@ -143,7 +153,7 @@ Upset wins: ${Array.from(monthStats.values()).reduce((sum, m) => sum + m.upsets,
 Give a brief, actionable insight about when they should focus their betting. Be encouraging but realistic. Use betting slang.`;
 
         try {
-          const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${OPENAI_API_KEY}`,

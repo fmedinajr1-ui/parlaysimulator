@@ -266,6 +266,16 @@ function findGameForLeg(games: GameResult[], legDescription: string): GameResult
   return null;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Fetch scores from The Odds API
 async function fetchFromOddsAPI(sport: string): Promise<GameResult[]> {
   if (!ODDS_API_KEY) {
@@ -283,7 +293,7 @@ async function fetchFromOddsAPI(sport: string): Promise<GameResult[]> {
     const url = `${ODDS_API_BASE}/sports/${sportKey}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
     console.log(`Fetching from Odds API: ${sportKey}`);
     
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       console.log(`Odds API error: ${response.status}`);
       return [];
@@ -324,7 +334,7 @@ async function fetchFromESPN(sport: string, date?: string): Promise<GameResult[]
       
     console.log(`Fetching from ESPN: ${url}`);
     
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url, {}, 8000); // 8s for ESPN
     if (!response.ok) {
       console.log(`ESPN error: ${response.status}`);
       return [];

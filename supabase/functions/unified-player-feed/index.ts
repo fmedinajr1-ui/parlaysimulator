@@ -190,11 +190,15 @@ function detectRiskFlags(
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
       return response;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[UnifiedFeed] Fetch attempt ${attempt}/${retries} failed for ${url}: ${msg}`);
+      const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+      const msg = isTimeout ? '8s timeout exceeded' : (err instanceof Error ? err.message : String(err));
+      console.warn(`[UnifiedFeed] Fetch attempt ${attempt}/${retries} ${isTimeout ? 'TIMEOUT' : 'failed'} for ${url}: ${msg}`);
       if (attempt === retries) throw err;
       await new Promise(r => setTimeout(r, 500 * attempt));
     }

@@ -15,6 +15,16 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // EST-aware date helper
 function getEasternDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -223,7 +233,7 @@ async function settleTennisViaOddsAPI(
 
   try {
     const scoresUrl = `https://api.the-odds-api.com/v4/sports/${sport}/scores/?apiKey=${apiKey}&daysFrom=3`;
-    const resp = await fetch(scoresUrl);
+    const resp = await fetchWithTimeout(scoresUrl, {}, 10000);
     if (!resp.ok) {
       console.error(`[Bot Settle] Odds API scores error for ${sport}: ${resp.status}`);
       return { outcome: 'no_data', actual_value: null };
@@ -270,7 +280,7 @@ async function settleNcaabTeamLegViaESPN(
     const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
     
     try {
-      const resp = await fetch(`${ESPN_NCAAB_SCOREBOARD}?dates=${dateStr}&limit=200&groups=50`);
+      const resp = await fetchWithTimeout(`${ESPN_NCAAB_SCOREBOARD}?dates=${dateStr}&limit=200&groups=50`);
       if (!resp.ok) {
         console.warn(`[Bot Settle] ESPN NCAAB scoreboard ${dateStr} returned ${resp.status}`);
         continue;
@@ -331,7 +341,7 @@ async function settleNcaaBaseballViaESPN(
     const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
 
     try {
-      const resp = await fetch(`${ESPN_NCAA_BASEBALL_SCOREBOARD}?dates=${dateStr}&limit=200`);
+      const resp = await fetchWithTimeout(`${ESPN_NCAA_BASEBALL_SCOREBOARD}?dates=${dateStr}&limit=200`);
       if (!resp.ok) continue;
       const data = await resp.json();
       const events = data.events || [];
@@ -381,7 +391,7 @@ async function settleNhlViaESPN(
     const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
 
     try {
-      const resp = await fetch(`${ESPN_NHL_SCOREBOARD}?dates=${dateStr}&limit=50`);
+      const resp = await fetchWithTimeout(`${ESPN_NHL_SCOREBOARD}?dates=${dateStr}&limit=50`);
       if (!resp.ok) continue;
       const data = await resp.json();
       const events = data.events || [];
