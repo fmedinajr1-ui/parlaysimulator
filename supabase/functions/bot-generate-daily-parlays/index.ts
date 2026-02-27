@@ -318,26 +318,25 @@ function passesGodModeMatchup(
   return { pass: true, penalty };
 }
 
-// ============= DEFENSIVE DOWNGRADE ALT LINE SYSTEM =============
-// Checks if a pick's matchup context warrants dropping to a lower (safer) line
-function shouldDowngradeLine(
+// ============= MATCHUP-AWARE ALT LINE ADJUSTMENT SYSTEM =============
+// Checks if a pick's matchup context warrants adjusting to a safer (downgrade) or higher-value (upgrade) line
+function shouldAdjustLine(
   pick: any,
   defenseDetailMap: Map<string, any>,
   propType: string,
   side: string,
   currentLine: number,
   isGodMode: boolean = false
-): { shouldDowngrade: boolean; recommendedLine: number; reason: string } {
-  const noDowngrade = { shouldDowngrade: false, recommendedLine: currentLine, reason: '' };
+): { shouldAdjust: boolean; recommendedLine: number; reason: string; direction: 'downgrade' | 'upgrade' | 'none' } {
+  const noAdjust = { shouldAdjust: false, recommendedLine: currentLine, reason: '', direction: 'none' as const };
   const isOver = side.toLowerCase() === 'over';
   const isUnder = side.toLowerCase() === 'under';
-  if (!isOver && !isUnder) return noDowngrade;
+  if (!isOver && !isUnder) return noAdjust;
 
   // Get defense detail for opponent
   const oppTeam = (pick as any).opponent_team || (pick as any).oppTeamName || '';
   const oppDefDetail = defenseDetailMap.get(oppTeam) || defenseDetailMap.get(oppTeam.toLowerCase());
   
-  // Also try defenseMatchupRank already attached to pick
   const propLower = (propType || '').toLowerCase();
   let propSpecificDefRank: number | null = null;
   
@@ -355,65 +354,99 @@ function shouldDowngradeLine(
     }
   }
   
-  // Fallback to already-attached defenseMatchupRank
   if (propSpecificDefRank == null) {
     propSpecificDefRank = (pick as any).defenseMatchupRank ?? null;
   }
   
-  if (propSpecificDefRank == null) return noDowngrade;
+  if (propSpecificDefRank == null) return noAdjust;
 
   // Get player averages
   const projectedValue = pick.projected_value || pick.l10_avg || 0;
   const defAdjAvg = (pick as any).defense_adjusted_avg || projectedValue;
   
   // Stat-aware step sizes
-  let stepSize = 1.0; // default for points/rebounds/assists
+  let stepSize = 1.0;
   if (propLower.includes('three') || propLower.includes('block') || propLower.includes('steal') || propLower === '3pm') {
     stepSize = 0.5;
   } else if (propLower.includes('pra') || propLower.includes('pts_rebs') || propLower.includes('pts_asts') || propLower.includes('rebs_asts')) {
     stepSize = 1.5;
   }
 
-  // Threshold: more aggressive for GOD MODE
+  // === DOWNGRADE CHECKS (existing logic - tough defense, tight margin) ===
   const defRankThreshold = isGodMode ? 15 : 10;
-  const tightMarginThreshold = stepSize; // margin considered "tight"
+  const tightMarginThreshold = stepSize;
   
   if (isOver) {
-    // OVER picks: downgrade when facing top defense AND margin is tight
     const marginFromLine = defAdjAvg - currentLine;
     const l10Margin = projectedValue - currentLine;
     
     if (propSpecificDefRank <= defRankThreshold && (marginFromLine <= tightMarginThreshold || l10Margin <= tightMarginThreshold * 2)) {
       const recommendedLine = currentLine - stepSize;
       const reason = `top_${propSpecificDefRank}_defense_tight_margin`;
-      console.log(`[DefDowngrade] ${pick.player_name} ${propType} OVER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)})`);
-      return { shouldDowngrade: true, recommendedLine, reason };
+      console.log(`[LineAdjust] DOWNGRADE ${pick.player_name} ${propType} OVER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)})`);
+      return { shouldAdjust: true, recommendedLine, reason, direction: 'downgrade' };
     }
   } else if (isUnder) {
-    // UNDER picks: downgrade (raise line) when facing weak defense
     const marginFromLine = currentLine - defAdjAvg;
     const l10Margin = currentLine - projectedValue;
     
     if (propSpecificDefRank >= (30 - defRankThreshold) && (marginFromLine <= tightMarginThreshold || l10Margin <= tightMarginThreshold * 2)) {
       const recommendedLine = currentLine + stepSize;
       const reason = `weak_defense_rank_${propSpecificDefRank}_tight_margin`;
-      console.log(`[DefDowngrade] ${pick.player_name} ${propType} UNDER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)})`);
-      return { shouldDowngrade: true, recommendedLine, reason };
+      console.log(`[LineAdjust] DOWNGRADE ${pick.player_name} ${propType} UNDER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)})`);
+      return { shouldAdjust: true, recommendedLine, reason, direction: 'downgrade' };
     }
   }
 
-  return noDowngrade;
+  // === UPGRADE CHECKS (new logic - weak defense, large buffer -> better odds) ===
+  const upgradeDefRankThreshold = isGodMode ? 18 : 20; // rank >= this = weak defense
+  const maxUpgradeSteps = 2; // safety cap: max 2 steps up
+  
+  if (isOver) {
+    // OVER + weak defense = player should crush -> upgrade line for plus money
+    const bufferFromLine = defAdjAvg - currentLine;
+    const l10Buffer = projectedValue - currentLine;
+    
+    if (propSpecificDefRank >= upgradeDefRankThreshold && bufferFromLine > stepSize * 2 && l10Buffer > stepSize * 3) {
+      // Calculate how many steps we can upgrade (capped at maxUpgradeSteps)
+      const maxSteps = Math.min(Math.floor(bufferFromLine / stepSize) - 1, maxUpgradeSteps);
+      if (maxSteps >= 1) {
+        const recommendedLine = currentLine + (stepSize * maxSteps);
+        const reason = `weak_defense_rank_${propSpecificDefRank}_large_buffer`;
+        console.log(`[LineAdjust] UPGRADE ${pick.player_name} ${propType} OVER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)}, buffer ${bufferFromLine.toFixed(1)})`);
+        return { shouldAdjust: true, recommendedLine, reason, direction: 'upgrade' };
+      }
+    }
+  } else if (isUnder) {
+    // UNDER + elite defense = stats suppressed -> upgrade line (move up) for plus money
+    const bufferFromLine = currentLine - defAdjAvg;
+    const l10Buffer = currentLine - projectedValue;
+    
+    if (propSpecificDefRank <= (30 - upgradeDefRankThreshold) && bufferFromLine > stepSize * 2 && l10Buffer > stepSize * 3) {
+      const maxSteps = Math.min(Math.floor(bufferFromLine / stepSize) - 1, maxUpgradeSteps);
+      if (maxSteps >= 1) {
+        const recommendedLine = currentLine - (stepSize * maxSteps);
+        const reason = `elite_defense_rank_${propSpecificDefRank}_large_buffer`;
+        console.log(`[LineAdjust] UPGRADE ${pick.player_name} ${propType} UNDER ${currentLine} -> ${recommendedLine} (OPP def rank ${propSpecificDefRank}, adj avg ${defAdjAvg.toFixed(1)}, l10 ${projectedValue.toFixed(1)}, buffer ${bufferFromLine.toFixed(1)})`);
+        return { shouldAdjust: true, recommendedLine, reason, direction: 'upgrade' };
+      }
+    }
+  }
+
+  return noAdjust;
 }
 
-// Finds an available alt line from the pick's alternateLines or oddsMap
+// Finds an available alt line from the pick's alternateLines or oddsMap (works for both upgrades and downgrades)
 function findAvailableAltLine(
   pick: any,
   recommendedLine: number,
   side: string,
   oddsMap: Map<string, any>,
-  playerProps: any[]
+  playerProps: any[],
+  direction: 'downgrade' | 'upgrade' = 'downgrade'
 ): { line: number; odds: number } | null {
   const isOver = side.toLowerCase() === 'over';
+  const logTag = direction === 'upgrade' ? '[LineUpgrade]' : '[LineDowngrade]';
   
   // 1. Check pick's existing alternateLines array
   const altLines: AlternateLine[] = pick.alternateLines || [];
@@ -421,7 +454,7 @@ function findAvailableAltLine(
     if (Math.abs(alt.line - recommendedLine) < 0.01) {
       const odds = isOver ? alt.overOdds : alt.underOdds;
       if (odds && odds !== 0) {
-        console.log(`[DefDowngrade] Found alt line ${recommendedLine} in alternateLines (odds: ${odds})`);
+        console.log(`${logTag} Found alt line ${recommendedLine} in alternateLines (odds: ${odds})`);
         return { line: recommendedLine, odds };
       }
     }
@@ -436,30 +469,40 @@ function findAvailableAltLine(
     const pType = (prop.prop_type || '').toLowerCase();
     if (pName === playerName && pType === propType && Math.abs((prop.current_line || 0) - recommendedLine) < 0.01) {
       const odds = isOver ? (prop.over_price || -110) : (prop.under_price || -110);
-      console.log(`[DefDowngrade] Found alt line ${recommendedLine} in unified_props (odds: ${odds})`);
+      console.log(`${logTag} Found alt line ${recommendedLine} in unified_props (odds: ${odds})`);
       return { line: recommendedLine, odds };
     }
   }
 
-  // 3. Check if any alt line exists between current and recommended (closest safe line)
+  // 3. Check if any alt line exists between current and recommended (closest line in the right direction)
   const currentLine = pick.line || 0;
   const closestAlts = altLines
     .filter(alt => {
-      if (isOver) return alt.line < currentLine && alt.line >= recommendedLine;
-      return alt.line > currentLine && alt.line <= recommendedLine;
+      if (direction === 'upgrade') {
+        // For upgrades: look for lines ABOVE current, up to recommended
+        return isOver ? (alt.line > currentLine && alt.line <= recommendedLine) : (alt.line < currentLine && alt.line >= recommendedLine);
+      } else {
+        // For downgrades: look for lines BELOW current, down to recommended
+        return isOver ? (alt.line < currentLine && alt.line >= recommendedLine) : (alt.line > currentLine && alt.line <= recommendedLine);
+      }
     })
-    .sort((a, b) => isOver ? (b.line - a.line) : (a.line - b.line)); // closest to original first
+    .sort((a, b) => {
+      if (direction === 'upgrade') {
+        return isOver ? (b.line - a.line) : (a.line - b.line); // highest first for over upgrades
+      }
+      return isOver ? (b.line - a.line) : (a.line - b.line); // closest to original first
+    });
   
   if (closestAlts.length > 0) {
     const best = closestAlts[0];
     const odds = isOver ? best.overOdds : best.underOdds;
     if (odds && odds !== 0) {
-      console.log(`[DefDowngrade] Found closest alt line ${best.line} (target was ${recommendedLine}, odds: ${odds})`);
+      console.log(`${logTag} Found closest alt line ${best.line} (target was ${recommendedLine}, odds: ${odds})`);
       return { line: best.line, odds };
     }
   }
 
-  console.log(`[DefDowngrade] No alt line found for ${pick.player_name} ${propType} at ${recommendedLine} - keeping original`);
+  console.log(`${logTag} No alt line found for ${pick.player_name} ${propType} at ${recommendedLine} - keeping original`);
   return null;
 }
 
@@ -6187,35 +6230,40 @@ async function generateTierParlays(
             )
           : { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
 
-        // === DEFENSIVE DOWNGRADE: Check if matchup warrants a safer alt line ===
-        let wasDowngraded = false;
-        let originalLineBeforeDowngrade: number | null = null;
-        let downgradeReason = '';
+        // === MATCHUP LINE ADJUSTMENT: Check if matchup warrants a safer (downgrade) or higher-value (upgrade) alt line ===
+        let wasLineAdjusted = false;
+        let lineAdjustmentDirection: 'downgrade' | 'upgrade' | null = null;
+        let originalLineBeforeAdjust: number | null = null;
+        let adjustReason = '';
         
         const isGodModeProfile = profile.strategy === 'god_mode_lock';
         const pickSide = playerPick.recommended_side || 'over';
-        const downgradeResult = shouldDowngradeLine(
+        const adjustResult = shouldAdjustLine(
           playerPick, defenseDetailMap,
           playerPick.prop_type, pickSide,
           selectedLine.line, isGodModeProfile
         );
         
-        if (downgradeResult.shouldDowngrade) {
+        if (adjustResult.shouldAdjust) {
           const altResult = findAvailableAltLine(
-            playerPick, downgradeResult.recommendedLine,
-            pickSide, oddsMap, playerProps || []
+            playerPick, adjustResult.recommendedLine,
+            pickSide, oddsMap, playerProps || [],
+            adjustResult.direction
           );
           if (altResult) {
-            originalLineBeforeDowngrade = selectedLine.line;
+            originalLineBeforeAdjust = selectedLine.line;
             selectedLine.line = altResult.line;
             selectedLine.odds = altResult.odds;
-            selectedLine.reason = `defensive_downgrade_${downgradeResult.reason}`;
-            wasDowngraded = true;
-            downgradeReason = downgradeResult.reason;
-            console.log(`[DefDowngrade] ✅ Applied: ${playerPick.player_name} ${playerPick.prop_type} ${pickSide} ${originalLineBeforeDowngrade} -> ${altResult.line} (${downgradeReason})`);
+            selectedLine.reason = `${adjustResult.direction}_${adjustResult.reason}`;
+            wasLineAdjusted = true;
+            lineAdjustmentDirection = adjustResult.direction;
+            adjustReason = adjustResult.reason;
+            const tag = adjustResult.direction === 'upgrade' ? 'LineUpgrade' : 'LineDowngrade';
+            console.log(`[${tag}] ✅ Applied: ${playerPick.player_name} ${playerPick.prop_type} ${pickSide} ${originalLineBeforeAdjust} -> ${altResult.line} (${adjustReason})`);
           } else {
-            downgradeReason = `no_alt_available_${downgradeResult.reason}`;
-            console.log(`[DefDowngrade] ⚠️ Flagged but no alt: ${playerPick.player_name} ${playerPick.prop_type} ${pickSide} ${selectedLine.line} (${downgradeReason})`);
+            adjustReason = `no_alt_available_${adjustResult.reason}`;
+            const tag = adjustResult.direction === 'upgrade' ? 'LineUpgrade' : 'LineDowngrade';
+            console.log(`[${tag}] ⚠️ Flagged but no alt: ${playerPick.player_name} ${playerPick.prop_type} ${pickSide} ${selectedLine.line} (${adjustReason})`);
           }
         }
 
@@ -6246,9 +6294,11 @@ async function generateTierParlays(
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
           environment_score: (playerPick as any).environmentScore ?? null,
           environment_components: (playerPick as any).environmentComponents ?? null,
-          was_downgraded: wasDowngraded,
-          original_line_before_downgrade: originalLineBeforeDowngrade,
-          downgrade_reason: downgradeReason || null,
+          was_downgraded: wasLineAdjusted && lineAdjustmentDirection === 'downgrade',
+          was_line_adjusted: wasLineAdjusted,
+          line_adjustment_direction: lineAdjustmentDirection,
+          original_line_before_downgrade: originalLineBeforeAdjust,
+          downgrade_reason: adjustReason || null,
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
