@@ -1,118 +1,99 @@
 
+## Matchup-Aware Alt Line Shopping (Defensive Downgrade System)
 
-## GOD MODE: Superior Prediction Engine (Target 70-80% Parlay Hit Rate)
+### Problem
+Andrew Wiggins Over 2.5 Threes missed by 1 (got 2). The other 2 legs hit. The bot had the matchup data showing a tough defensive matchup but still picked the standard 2.5 line instead of shopping for the safer Over 2.0 alt line on Hard Rock.
 
-### Current State Assessment
+### Root Cause
+The current `selectOptimalLine()` function only moves lines **UP** (higher line for better odds/plus money). It never considers moving lines **DOWN** for safety when matchup data signals the player will underperform. Additionally, this function is gated behind `useAltLines: true` profiles and aggressive strategy names -- so GOD MODE and execution tier profiles (which use `useAltLines: false`) never even attempt alt line shopping.
 
-The engine currently has all the components needed -- L10 feedback, offense/defense matchup scoring, coherence stacking, multi-engine consensus, and winning pattern detection. The problem is these components aren't working together at maximum intensity. Here's what's leaving accuracy on the table:
+### Solution: "Defensive Downgrade" Alt Line System
 
-1. **Execution tier gates are too loose**: 60% minHitRate allows marginal picks that drag down parlay win rates
-2. **Coherence gate at 70 is too low**: Parlays with mixed environments (SHOOTOUT + GRIND) still slip through
-3. **No parlay-level hit rate floor**: Individual legs may pass but the combined probability isn't gated aggressively
-4. **L10 feed doesn't boost composite scores**: Strategy multipliers throttle volume but don't amplify high-performers
-5. **Offense/defense matchup doesn't hard-block bad matchups**: OVER picks against top-5 defenses + weak team offense still get through
-6. **No "GOD MODE" execution tier**: The highest-conviction picks (triple-confirmed + favorable matchup + proven winner) aren't isolated into a premium tier
+#### 1. Add `shouldDowngradeLine()` Function
+A new function that checks if a pick's matchup context warrants dropping to a lower (safer) line:
 
-### Plan: 7 Surgical Upgrades
+**Triggers for downgrade (OVER picks):**
+- Opponent defense rank <= 10 for the specific stat category (top-10 defense)
+- Player's defense-adjusted average is within 0.5 of the line (tight margin)
+- Player's L10 average is within 1.0 of the line
 
-#### 1. Create GOD MODE Execution Tier
-Add a new ultra-premium tier within the execution profiles that ONLY accepts picks meeting ALL of these criteria simultaneously:
-- Triple-confirmed OR multi-engine consensus (3+ engines)
-- Player is a proven winner (70%+ L10 hit rate, 5+ legs)
-- Favorable offense/defense matchup (matchupFactor >= 0.6)
-- NOT on a losing streak (streak >= 0)
-- Environment coherence with other legs >= 85
+**Triggers for downgrade (UNDER picks):**
+- Opponent defense rank >= 20 (weak defense = players score more)
+- Same tight-margin checks but inverted
 
-This tier generates 5-8 parlays with the absolute highest conviction.
+The function returns a recommended alt line (e.g., line - 0.5 for threes/blocks/steals, line - 1.0 for points/rebounds/assists).
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Add 8 new `god_mode_lock` profiles to the execution tier with `minHitRate: 70`, `sortBy: 'hit_rate'`
-- These profiles draw from a new `godModePicks` pool (intersection of triple-confirmed + proven winners + favorable matchup)
+#### 2. Add `fetchAltLinesFromBooks()` Function
+Before applying a downgrade, the bot checks if the alt line actually exists on Hard Rock (or other books):
+- Query `unified_props` for the same player + prop type to find all available lines
+- If the alt line exists, use it (with the corresponding odds)
+- If it doesn't exist, keep the original line but flag it as "tight margin - no alt available"
+- This prevents the bot from recommending phantom lines that can't be bet
 
-#### 2. Raise Execution Tier Quality Gates
-Tighten the execution tier to reject anything that isn't elite:
-- Raise `minHitRate` from 60 to 65 for all execution profiles
-- Raise coherence gate from 70 to 80 for execution tier
-- Raise `minConfidence` from 0.60 to 0.65
-- Add a parlay-level combined probability floor: reject if combinedProbability < 0.20 (each leg averaging ~58.5%+ for 3-leg)
+#### 3. Integrate Into Pick Selection (All Tiers)
+Unlike the current `useAltLines` system (which is opt-in per profile), the defensive downgrade runs on ALL execution and GOD MODE picks automatically:
+- After a pick is selected but before it's added to the parlay legs
+- Check `shouldDowngradeLine()` using the existing `defenseDetailMap` and environment score data
+- If triggered, look up available alt lines and swap if found
+- Log the downgrade: `[DefDowngrade] Wiggins threes 2.5 -> 2.0 (OPP defense rank 4, adj avg 2.3)`
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Update `TIER_CONFIG.execution` thresholds
-- Add combinedProbability floor check in the post-leg-selection validation block
+#### 4. Store Downgrade Metadata on Parlay Legs
+Add fields to the leg data so you can track performance:
+- `was_downgraded: boolean`
+- `original_line_before_downgrade: number`  
+- `downgrade_reason: string` (e.g., "top_10_defense_tight_margin")
 
-#### 3. L10 Hit Rate Composite Score Amplifier
-Make the L10 strategy multiplier directly boost composite scores, not just throttle volume:
-- When a strategy has >45% win rate (7d), apply a +8 composite bonus to all its candidate picks
-- When a strategy has >55% win rate, apply +15 composite bonus
-- When a strategy has <25% win rate, apply -15 composite penalty (actively demote, not just cap volume)
-
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Add `getStrategyCompositeBoost(strategy)` function
-- Apply boost during candidate sorting in `generateTierParlays`
-
-#### 4. Hard Matchup Block for Execution Tier
-Extend the existing prop-specific defense routing to HARD BLOCK execution-tier picks with terrible matchups:
-- OVER picks: Block when opponent defense rank <= 5 AND team offense rank >= 25 (strong D vs weak O)
-- UNDER picks: Block when opponent defense rank >= 25 AND team offense rank <= 5 (weak D vs strong O)
-- Apply a sliding matchup penalty: -10 composite for borderline matchups (rank 6-10 defense + rank 20-25 offense)
-
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Add `passesGodModeMatchup()` function that checks bidirectional matchup
-- Insert matchup check in the candidate pick loop for execution tier, using the defenseDetailMap offensive ranks
-
-#### 5. Proven Winner Priority Queue
-Restructure execution tier pick selection to prioritize proven winners:
-- Sort proven winners (70%+ L10, 5+ legs, streak >= 0) to the TOP of every candidate list
-- Apply +20 composite bonus for proven winners in execution tier
-- Apply -999 (hard block) for serial losers (hit rate < 30%, 5+ legs) -- already exists but verify it's active in all pools
-
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Enhance the accuracy-first sorting to add a proven-winner priority tier above archetype bonuses
-- Verify serial loser blocking is applied to mispriced and team pick pools (not just sweet spots)
-
-#### 6. Coherence-Aware Stacking Enforcer
-Strengthen the coherence system to ensure every parlay is environmentally aligned:
-- Raise coherence gate to 85 for GOD MODE profiles
-- Add a new coherence check: all legs must share the same environment cluster (SHOOTOUT or GRIND) -- no mixing allowed for execution tier
-- Add offense/defense alignment check: all OVER legs must face bottom-half defenses (rank 16-30), all UNDER legs must face top-half defenses (rank 1-15)
-
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Update `calculateParlayCoherence()` to include matchup alignment scoring
-- Add cluster homogeneity check in the post-leg validation block
-
-#### 7. Autonomous Hit Rate Recalibration Loop
-Ensure the L10 feed is working end-to-end autonomously:
-- Verify `bot-update-engine-hit-rates` is called after settlement (already wired)
-- Add a pre-generation verification step: if `bot_strategies.win_rate` hasn't been updated in 24 hours, trigger an immediate refresh before generating
-- Log the effective strategy multipliers to `bot_activity_log` for daily monitoring
-
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-- Add stale-check logic at the start of the main handler: query `bot_strategies.updated_at` and trigger refresh if stale
-- Log strategy multipliers to `bot_activity_log` after loading
+This lets the settlement engine measure whether downgrades are improving hit rates.
 
 ### Technical Details
 
-**Modified file: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-Changes (by section):
-1. New `god_mode_lock` profiles added to `TIER_CONFIG.execution.profiles` (8 profiles)
-2. `TIER_CONFIG.execution` thresholds raised: `minHitRate: 65`, `minConfidence: 0.65`
-3. New `getStrategyCompositeBoost()` function added near `getStrategyVolumeCap()`
-4. New `passesGodModeMatchup()` function added near defense filter helpers
-5. Proven winner +20 bonus in accuracy-first sorting
-6. Coherence gate raised to 80 for execution, 85 for god_mode profiles
-7. Combined probability floor (0.20) added to parlay validation
-8. Stale hit rate detection + auto-refresh at start of main handler
-9. New `godModePicks` pool creation in `buildPropPool()` -- intersection of triple-confirmed + proven winners + favorable matchup
-10. Matchup hard-block in execution tier candidate loop
+1. **New function `shouldDowngradeLine()`** (near `passesGodModeMatchup`):
+   - Inputs: pick data, defenseDetailMap, prop type
+   - Uses stat-specific defense ranks (opp_threes_rank, opp_points_rank, etc.)
+   - Returns `{ shouldDowngrade: boolean, recommendedLine: number, reason: string }`
+   - Stat-aware step sizes: threes/blocks/steals drop by 0.5, points/rebounds/assists drop by 1.0, combos drop by 1.5
 
-No new files or database migrations needed -- this is pure logic hardening within the existing generation engine.
+2. **New function `findAvailableAltLine()`**:
+   - Queries the already-loaded `oddsMap` and `alternateLines` data for lower lines
+   - Falls back to checking `unified_props` for the player to find all available lines from books
+   - Returns the alt line + odds if found, or null
 
-### Expected Impact
+3. **Integration point** (around line 6035-6043 in the leg selection block):
+   - After `selectedLine` is determined, run `shouldDowngradeLine()`
+   - If downgrade triggered, call `findAvailableAltLine()` with the recommended lower line
+   - If alt found, override `selectedLine` with the safer line
+   - This runs for ALL profiles (not just `useAltLines: true`)
 
-- **Execution tier**: Only elite picks survive the raised gates, pushing individual leg accuracy from ~60% to ~70%+
-- **GOD MODE tier**: The intersection of triple-confirmed + proven winner + favorable matchup targets 75-80% per-leg accuracy
-- **3-leg parlay math**: At 70% per-leg accuracy, 3-leg parlays hit 34.3%. At 75%, they hit 42.2%. At 80%, they hit 51.2%.
-- **Volume trade-off**: Execution tier output drops from ~15 to ~8-12 parlays, but quality dramatically increases. GOD MODE adds 5-8 ultra-premium parlays.
-- **Autonomous feedback**: Stale hit rate detection ensures the engine never runs blind again
+4. **Leg metadata** (around line 6045-6072):
+   - Add `was_downgraded`, `original_line_before_downgrade`, `downgrade_reason` to legData
 
+5. **GOD MODE profiles get mandatory downgrade checking**:
+   - For `god_mode_lock` profiles, the downgrade threshold is more aggressive (opponent defense rank <= 15 instead of <= 10)
+
+### Example: How This Would Have Saved the Wiggins Pick
+
+```text
+Pick: Andrew Wiggins Over 2.5 Threes
+Opponent defense rank (3PT): ~4 (top-5)
+L10 average: ~2.3
+Defense-adjusted average: ~2.1
+
+shouldDowngradeLine() triggers:
+  - Defense rank 4 <= 10 (top-10 3PT defense)
+  - Adjusted avg 2.1 within 0.5 of line 2.5
+  - Recommended alt: 2.5 - 0.5 = 2.0
+
+findAvailableAltLine():
+  - Checks Hard Rock for "Wiggins threes Over 2.0"
+  - Found at -180 odds
+  - Returns { line: 2.0, odds: -180 }
+
+Result: Bot picks Over 2.0 instead of Over 2.5
+Wiggins gets 2 -> Over 2.0 HITS
+Parlay wins instead of losing by 1 three
+```
+
+### No Database Changes Needed
+All changes are within the existing edge function. The downgrade metadata fields are stored in the existing JSON leg structure of `bot_daily_parlays`.
