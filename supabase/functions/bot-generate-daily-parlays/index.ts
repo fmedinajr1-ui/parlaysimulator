@@ -259,6 +259,65 @@ function getStrategyVolumeCap(strategy: string, defaultCap: number): number {
   return defaultCap;
 }
 
+// ============= L10 COMPOSITE SCORE AMPLIFIER =============
+function getStrategyCompositeBoost(strategy: string): number {
+  const base = strategy
+    .replace(/_execution_.*$/, '')
+    .replace(/_exploration.*$/, '')
+    .replace(/_validation.*$/, '')
+    .replace(/_bankroll_doubler.*$/, '');
+
+  const rates = strategyHitRates.get(base);
+  if (!rates || rates.total < 5) return 0;
+
+  if (rates.winRate > 55) return 15;
+  if (rates.winRate > 45) return 8;
+  if (rates.winRate < 25) return -15;
+  return 0;
+}
+
+// ============= GOD MODE MATCHUP HARD-BLOCK =============
+// Returns { pass: boolean, penalty: number } for bidirectional matchup check
+function passesGodModeMatchup(
+  pick: any,
+  defenseDetailMap: Map<string, any>,
+  tier: string
+): { pass: boolean; penalty: number } {
+  if (tier !== 'execution') return { pass: true, penalty: 0 };
+  
+  const side = (pick.recommended_side || pick.side || '').toLowerCase();
+  const isOver = side === 'over';
+  const isUnder = side === 'under';
+  if (!isOver && !isUnder) return { pass: true, penalty: 0 };
+  
+  // Get opponent defense rank and team offense rank
+  const oppDefRank = (pick as any).defenseMatchupRank ?? null;
+  const teamOffRank = (pick as any).offenseMatchupRank ?? null;
+  
+  if (oppDefRank == null || teamOffRank == null) return { pass: true, penalty: 0 };
+
+  // HARD BLOCK: OVER vs top-5 defense + weak offense (rank >= 25)
+  if (isOver && oppDefRank <= 5 && teamOffRank >= 25) {
+    console.log(`[GodModeMatchup] HARD BLOCK: ${pick.player_name || 'pick'} OVER vs top-${oppDefRank} defense + weak offense (rank ${teamOffRank})`);
+    return { pass: false, penalty: -999 };
+  }
+  // HARD BLOCK: UNDER vs bottom-5 defense + strong offense (rank <= 5)
+  if (isUnder && oppDefRank >= 25 && teamOffRank <= 5) {
+    console.log(`[GodModeMatchup] HARD BLOCK: ${pick.player_name || 'pick'} UNDER vs weak defense (rank ${oppDefRank}) + strong offense (rank ${teamOffRank})`);
+    return { pass: false, penalty: -999 };
+  }
+
+  // SLIDING PENALTY: borderline matchups
+  let penalty = 0;
+  if (isOver && oppDefRank <= 10 && teamOffRank >= 20) {
+    penalty = -10;
+  } else if (isUnder && oppDefRank >= 20 && teamOffRank <= 10) {
+    penalty = -10;
+  }
+  
+  return { pass: true, penalty };
+}
+
 function calculateEnvironmentScore(
   paceRating: number | null,
   oppDefenseRank: number | null,
@@ -585,11 +644,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     maxPlayerUsage: 2,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
-    minHitRate: 60,
+    minHitRate: 65,
     minEdge: 0.008,
     minSharpe: 0.02,
     stake: 100,
-    minConfidence: 0.60,
+    minConfidence: 0.65,
     profiles: [
       // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
@@ -652,6 +711,17 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'hot_streak_lock_cross', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'hot_streak_lock_ncaab', sports: ['basketball_ncaab', 'basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+      // ============= GOD MODE EXECUTION TIER =============
+      // ULTRA-PREMIUM: Only triple-confirmed + proven winners + favorable matchup picks
+      // These draw from the godModePicks pool (intersection of all quality signals)
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
     ],
   },
 };
@@ -729,15 +799,40 @@ async function loadPlayerPerformance(supabase: any): Promise<void> {
   }
 }
 
-function getPlayerBonus(playerName: string, propType: string): number {
+function getPlayerBonus(playerName: string, propType: string, tier?: string): number {
   const key = `${playerName.toLowerCase()}|${propType.toLowerCase()}`;
   const perf = playerPerformanceMap.get(key);
   if (!perf || perf.legsPlayed < 5) return 0;
   
-  if (perf.hitRate >= 0.70) return 15;  // Proven winner
+  // GOD MODE: Proven winners get +20 in execution tier (upgraded from +15)
+  if (perf.hitRate >= 0.70 && perf.streak >= 0) {
+    return tier === 'execution' ? 20 : 15;
+  }
+  if (perf.hitRate >= 0.70) return 15;  // Proven winner (on losing streak — standard bonus)
   if (perf.hitRate >= 0.50) return 5;   // Reliable
   if (perf.hitRate < 0.30) return -999;  // Hard-block: serial loser
   return 0;
+}
+
+// Check if a pick qualifies for GOD MODE pool
+function isGodModePick(pick: any): boolean {
+  // Must be triple-confirmed OR multi-engine (3+)
+  const isHighConviction = pick.isTripleConfirmed || (pick.engineCount >= 3);
+  if (!isHighConviction) return false;
+  
+  // Must be a proven winner (70%+ L10, 5+ legs)
+  const playerKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
+  const perf = playerPerformanceMap.get(playerKey);
+  if (!perf || perf.legsPlayed < 5 || perf.hitRate < 0.70) return false;
+  
+  // Must not be on a losing streak
+  if (perf.streak < 0) return false;
+  
+  // Must have favorable matchup (matchupFactor >= 0.6)
+  const envScore = (pick as any).environmentScore;
+  if (envScore != null && envScore < 0.35) return false; // env score maps to matchup quality
+  
+  return true;
 }
 
 // ============= STALE ODDS DETECTION =============
@@ -5424,8 +5519,47 @@ async function generateTierParlays(
     const isTripleConfirmedProfile = profile.strategy.startsWith('triple_confirmed');
     // MULTI-ENGINE CONSENSUS: 3+ engines agree on the same pick
     const isMultiEngineProfile = profile.strategy.startsWith('multi_engine');
+    // GOD MODE LOCK: intersection of triple-confirmed + proven winners + favorable matchup
+    const isGodModeLockProfile = profile.strategy === 'god_mode_lock';
     
-    if (isTripleConfirmedProfile) {
+    if (isGodModeLockProfile) {
+      // GOD MODE: filter for picks that pass ALL quality gates simultaneously
+      const godCandidates = [
+        ...(pool.tripleConfirmedPicks || []),
+        ...(pool.multiEnginePicks || []).filter(p => (p as any).engineCount >= 3),
+      ];
+      candidatePicks = godCandidates
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          // Must be a GOD MODE pick (proven winner + favorable matchup + high conviction)
+          return isGodModePick(p);
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+      
+      if (candidatePicks.length < profile.legs) {
+        // Fallback: triple-confirmed OR multi-engine with 70%+ L10 hit rate
+        const fallback = [...(pool.tripleConfirmedPicks || []), ...(pool.doubleConfirmedPicks || [])]
+          .filter(p => {
+            if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+            if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+            const playerKey = `${(p.player_name || '').toLowerCase()}|${((p as any).prop_type || '').toLowerCase()}`;
+            const perf = playerPerformanceMap.get(playerKey);
+            return perf && perf.legsPlayed >= 5 && perf.hitRate >= 0.70;
+          })
+          .sort((a, b) => b.compositeScore - a.compositeScore);
+        
+        if (fallback.length >= profile.legs) {
+          candidatePicks = fallback;
+          console.log(`[GOD MODE] Fallback: ${fallback.length} proven winners from triple+double confirmed`);
+        } else {
+          console.log(`[GOD MODE] Only ${candidatePicks.length} god-mode + ${fallback.length} fallback picks, need ${profile.legs}`);
+          continue;
+        }
+      } else {
+        console.log(`[GOD MODE] 🔥 Using ${candidatePicks.length} GOD MODE picks for ${profile.legs}-leg parlay`);
+      }
+    } else if (isTripleConfirmedProfile) {
       // Triple-confirmed: use triple pool, fallback to double-confirmed, then mispriced
       candidatePicks = [...(pool.tripleConfirmedPicks || [])]
         .filter(p => {
@@ -5644,8 +5778,14 @@ async function generateTierParlays(
     }
 
     // === ACCURACY-FIRST SORTING (all tiers) ===
-    // Sort by: archetype bonus → category weight (sport-aware) → calibrated hit rate → composite score
+    // Sort by: proven winner priority → archetype bonus → L10 strategy boost → category weight → hit rate → composite
+    const isGodModeProfile = profile.strategy === 'god_mode_lock';
     candidatePicks = [...candidatePicks].sort((a, b) => {
+      // GOD MODE PRIORITY: proven winners with favorable matchup float to absolute top
+      const aIsProven = ('player_name' in a) ? (getPlayerBonus(a.player_name, (a as any).prop_type, tier) >= 15 ? 25 : 0) : 0;
+      const bIsProven = ('player_name' in b) ? (getPlayerBonus(b.player_name, (b as any).prop_type, tier) >= 15 ? 25 : 0) : 0;
+      if (bIsProven !== aIsProven) return bIsProven - aIsProven;
+
       // Winning archetype bonus: +15 composite for matching categories
       const aArchetypeBonus = WINNING_ARCHETYPE_CATEGORIES.has(a.category) ? 15 : 0;
       const bArchetypeBonus = WINNING_ARCHETYPE_CATEGORIES.has(b.category) ? 15 : 0;
@@ -5654,14 +5794,18 @@ async function generateTierParlays(
       const aPreferred = profilePreferCategories.length > 0 && profilePreferCategories.includes(a.category) ? 20 : 0;
       const bPreferred = profilePreferCategories.length > 0 && profilePreferCategories.includes(b.category) ? 20 : 0;
 
+      // L10 strategy composite boost
+      const aStratBoost = getStrategyCompositeBoost(profile.strategy);
+      const bStratBoost = aStratBoost; // same strategy for same profile
+
       const aSport = a.sport || 'basketball_nba';
       const bSport = b.sport || 'basketball_nba';
       const aWeight = weightMap.get(`${a.category}__${a.recommended_side}__${aSport}`) ?? weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
       const bWeight = weightMap.get(`${b.category}__${b.recommended_side}__${bSport}`) ?? weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
       
-      // Primary: profile preference + archetype bonus
-      const aTotalBonus = aPreferred + aArchetypeBonus;
-      const bTotalBonus = bPreferred + bArchetypeBonus;
+      // Primary: profile preference + archetype bonus + strategy boost
+      const aTotalBonus = aPreferred + aArchetypeBonus + aStratBoost;
+      const bTotalBonus = bPreferred + bArchetypeBonus + bStratBoost;
       if (bTotalBonus !== aTotalBonus) return bTotalBonus - aTotalBonus;
 
       // Secondary: category weight (blocked=0 sink to bottom, boosted=1.2 rise to top)
@@ -5721,6 +5865,16 @@ async function generateTierParlays(
       
       if (!canUsePickGlobally(pick, tracker, config, tier)) continue;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, volumeMode)) continue;
+      
+      // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
+      if (tier === 'execution' && 'player_name' in pick) {
+        const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
+        if (!matchupResult.pass) continue;
+        // Apply sliding penalty to composite for borderline matchups
+        if (matchupResult.penalty !== 0) {
+          (pick as any).compositeScore = Math.max(0, (pick.compositeScore || 0) + matchupResult.penalty);
+        }
+      }
       
       // === ANTI-CORRELATION BLOCKING: prevent contradictory legs ===
       const antiCorr = hasAntiCorrelation(pick, legs);
@@ -6117,6 +6271,13 @@ async function generateTierParlays(
         const hr = l.hit_rate ? l.hit_rate / 100 : l.sharp_score ? l.sharp_score / 100 : 0.5;
         return product * hr;
       }, 1);
+
+      // === COMBINED PROBABILITY FLOOR (GOD MODE gate) ===
+      // Reject parlays where combined probability is too low (each leg must average ~58.5%+ for 3-leg)
+      if (tier === 'execution' && combinedProbability < 0.20) {
+        console.log(`[ProbFloor] Rejected ${tier}/${profile.strategy}: combinedProbability ${(combinedProbability * 100).toFixed(1)}% < 20% floor`);
+        continue;
+      }
       
       // Calculate real sportsbook parlay odds by multiplying decimal odds of each leg
       const totalDecimalOdds = legs.reduce((product, l) => {
@@ -6170,19 +6331,50 @@ async function generateTierParlays(
         continue;
       }
 
-      // === COHERENCE GATE: reject incoherent leg combinations (LOWERED from 85 to 70) ===
+      // === COHERENCE GATE: GOD MODE=85, execution=80, validation=70 ===
       const coherence = calculateParlayCoherence(legs);
-      if (coherence < 70 && tier === 'execution') {
-        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 70)`);
+      const isGodModeParlay = profile.strategy === 'god_mode_lock';
+      const coherenceFloor = isGodModeParlay ? 85 : (tier === 'execution' ? 80 : (tier === 'validation' ? 70 : 60));
+      if (coherence < coherenceFloor) {
+        if (tier === 'execution') console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < ${coherenceFloor}${isGodModeParlay ? ' GOD MODE' : ''})`);
         continue;
       }
-      if (coherence < 70 && tier === 'validation') {
-        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 70)`);
-        continue;
+
+      // === ENVIRONMENT CLUSTER HOMOGENEITY (execution tier): no SHOOTOUT+GRIND mixing ===
+      if (tier === 'execution') {
+        const legClusters = legs.map(l => {
+          const ctx = l._gameContext as PickGameContext | undefined;
+          return ctx?.envCluster || 'NEUTRAL';
+        }).filter(c => c !== 'NEUTRAL');
+        const hasShootout = legClusters.includes('SHOOTOUT');
+        const hasGrind = legClusters.includes('GRIND');
+        if (hasShootout && hasGrind) {
+          console.log(`[ClusterEnforcer] Rejected ${tier}/${profile.strategy}: mixed SHOOTOUT+GRIND clusters`);
+          continue;
+        }
       }
-      if (coherence < 60) {
-        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 60)`);
-        continue;
+
+      // === MATCHUP ALIGNMENT (GOD MODE): OVER legs must face bottom-half defense, UNDER face top-half ===
+      if (isGodModeParlay) {
+        let matchupAligned = true;
+        for (const leg of legs) {
+          if (leg.type === 'team') continue;
+          const defRank = leg.defense_rank;
+          if (defRank == null) continue;
+          const legSide = (leg.side || '').toLowerCase();
+          if (legSide === 'over' && defRank <= 15) {
+            matchupAligned = false; // OVER vs top-half defense = misaligned
+            break;
+          }
+          if (legSide === 'under' && defRank > 15) {
+            matchupAligned = false; // UNDER vs bottom-half defense = misaligned
+            break;
+          }
+        }
+        if (!matchupAligned) {
+          console.log(`[GodModeMatchup] Rejected god_mode_lock parlay: defense alignment mismatch`);
+          continue;
+        }
       }
 
       // Calculate stake (flat $100 for all tiers)
@@ -7261,6 +7453,55 @@ Deno.serve(async (req) => {
       loadPlayerPerformance(supabase),
       fetchStrategyHitRates(supabase),
     ]);
+
+    // ============= STALE HIT RATE DETECTION + AUTO-REFRESH =============
+    // If bot_strategies haven't been updated in 24 hours, trigger immediate refresh
+    try {
+      const { data: latestStrat } = await supabase
+        .from('bot_strategies')
+        .select('updated_at')
+        .eq('is_active', true)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (latestStrat?.updated_at) {
+        const lastUpdate = new Date(latestStrat.updated_at).getTime();
+        const hoursSinceUpdate = (Date.now() - lastUpdate) / (1000 * 60 * 60);
+        if (hoursSinceUpdate > 24) {
+          console.log(`[GOD MODE] ⚠️ Strategy hit rates stale (${hoursSinceUpdate.toFixed(1)}h old). Triggering auto-refresh...`);
+          try {
+            const refreshUrl = `${supabaseUrl}/functions/v1/bot-update-engine-hit-rates`;
+            await fetch(refreshUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+              body: JSON.stringify({}),
+            });
+            // Re-fetch after refresh
+            await fetchStrategyHitRates(supabase);
+            console.log(`[GOD MODE] ✅ Hit rates auto-refreshed successfully`);
+          } catch (refreshErr) {
+            console.warn(`[GOD MODE] Auto-refresh failed: ${refreshErr}`);
+          }
+        } else {
+          console.log(`[GOD MODE] Hit rates fresh (${hoursSinceUpdate.toFixed(1)}h old)`);
+        }
+      }
+    } catch (staleErr) {
+      console.warn(`[GOD MODE] Stale check failed: ${staleErr}`);
+    }
+
+    // Log strategy multipliers to activity log for monitoring
+    const multiplierLog: Record<string, number> = {};
+    for (const [name, mult] of strategyWeightMultipliers) {
+      multiplierLog[name] = Math.round(mult * 100) / 100;
+    }
+    await supabase.from('bot_activity_log').insert({
+      event_type: 'god_mode_strategy_multipliers',
+      message: `GOD MODE: Strategy multipliers loaded for ${Object.keys(multiplierLog).length} strategies`,
+      metadata: multiplierLog,
+      severity: 'info',
+    }).catch(() => {});
     
     // Log player performance summary
     let provenWinners = 0, reliablePlayers = 0, avoidPlayers = 0;
