@@ -1,70 +1,49 @@
 
+## Deploy and Fix fetch-team-defense-ratings
 
-## Ensure All Engines Use Fresh Defense + Offense Rankings
+### Problem Identified
+The function was successfully deployed and invoked, but it **hangs indefinitely** on NBA.com API calls. The logs show it started fetching all 3 endpoints (Opponent, Base, Advanced) but never progressed further -- NBA.com is either blocking or not responding to requests from edge function IPs.
 
-### Audit Summary
+The current code has retry logic (3 attempts per endpoint) but **no per-request timeout**, so if NBA.com silently drops the connection, the function waits until the edge function's global 60s timeout kills it -- never reaching the fallback path.
 
-After tracing every engine that consumes defensive/offensive ranking data, **2 engines have gaps** that need to be updated:
+### Fix: Add Fetch Timeouts + Immediate Fallback
 
-### Gap 1: `prop-engine-v2` (SES Scoring Engine)
+**File**: `supabase/functions/fetch-team-defense-ratings/index.ts`
 
-**Problem**: This engine's `calculateEnvironmentScoreV2` function only uses 3 fields from `team_defense_rankings`:
-- `overall_rank`, `opp_rebounds_rank`, `opp_assists_rank`
+1. **Add AbortController timeout** to each `fetch()` call in `fetchNBAStats()` (8-second timeout per attempt)
+   - This ensures each NBA.com request either succeeds quickly or fails fast
+   - After 3 failed attempts, returns `null` which triggers the hardcoded fallback
 
-It is **missing**:
-- `opp_points_rank` and `opp_threes_rank` (prop-specific defense routing)
-- All 5 offensive columns (`off_points_rank`, `off_rebounds_rank`, `off_assists_rank`, `off_threes_rank`, `off_pace_rank`)
+2. **Reduce retry delays** from 2s/4s/6s to 1s/2s so total worst-case is ~30s instead of hanging
 
-This means the SES scoring engine cannot do prop-specific defense routing (points props vs points defense, threes props vs threes defense) and has zero bidirectional matchup scoring.
+### Code Changes
 
-**Fix**:
-- Update the SELECT query (line 674) to include all columns: `opp_points_rank, opp_threes_rank, off_points_rank, off_rebounds_rank, off_assists_rank, off_threes_rank, off_pace_rank`
-- Expand the `defTeamMap` type (line 686) to store all fields
-- Upgrade `calculateEnvironmentScoreV2` to match the bidirectional logic from `bot-generate-daily-parlays` -- route to prop-specific defense rank AND factor in team offensive rank
-- Pass the new fields through to the scoring call (line 384)
+In `fetchNBAStats()` (~line 107-163), wrap the fetch with an AbortController:
 
----
+```typescript
+// Before the fetch call, add timeout:
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
-### Gap 2: `bot-review-and-optimize` (AI Review Layer)
+const resp = await fetch(url, { 
+  headers: NBA_STATS_HEADERS, 
+  signal: controller.signal 
+});
+clearTimeout(timeoutId);
+```
 
-**Problem**: This engine queries `team_defense_rankings` but only selects:
-- `team_abbreviation, team_name, overall_rank, points_allowed_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg, opp_rebounds_rank, opp_assists_rank`
+And reduce retry delay:
+```typescript
+if (attempt < 3) { await new Promise(r => setTimeout(r, 1000 * attempt)); continue; }
+```
 
-It is **missing**:
-- `opp_points_rank` and `opp_threes_rank`
-- All 5 offensive columns
+### After Fix
+- Redeploy the function
+- Invoke it again -- it should either pull live data (if NBA.com responds within 8s) or fall back to hardcoded data within ~30s
+- Verify `team_defense_rankings` gets updated with offensive columns populated
+- The cron job will also work correctly going forward since the function won't hang
 
-This means the AI review layer cannot assess offensive matchup context when reviewing/optimizing parlays.
-
-**Fix**:
-- Update the SELECT query (line 305) to include: `opp_points_rank, opp_threes_rank, off_points_rank, off_rebounds_rank, off_assists_rank, off_threes_rank, off_pace_rank`
-- Update the `teamIntel` builder (lines 326-350) to pass the new fields into the review context
-
----
-
-### Already Correct (No Changes Needed)
-
-| Engine | Data Source | Status |
-|--------|-----------|--------|
-| `bot-generate-daily-parlays` | `team_defense_rankings` | All defense + offense columns selected, bidirectional matchup scoring implemented |
-| `bot-matchup-defense-scanner` | `team_defense_rankings` | Uses all 4 defensive rank columns correctly |
-| `detect-mispriced-lines` | `nba_opponent_defense_stats` | Properly updated by `fetch-team-defense-ratings` |
-| `matchup-intelligence-analyzer` | `team_defensive_ratings` | Uses position-specific data, properly updated |
-| `game-environment-validator` | `team_defensive_ratings` | Uses stat-type defense data, properly updated |
-| `hedge-parlay-builder` | `team_defensive_ratings` | Full select, properly updated |
-| `calculate-player-usage` | `nba_opponent_defense_stats` | Properly updated |
-
----
-
-### Files Modified
-
-1. **`supabase/functions/prop-engine-v2/index.ts`**
-   - Expand SELECT query to include all defense + offense rank columns
-   - Expand `defTeamMap` to store the new fields
-   - Upgrade `calculateEnvironmentScoreV2` to add prop-specific defense routing and bidirectional matchup scoring (matching the logic in `bot-generate-daily-parlays`)
-   - Pass offensive rank fields through to scoring calls
-
-2. **`supabase/functions/bot-review-and-optimize/index.ts`**
-   - Expand SELECT query to include `opp_points_rank, opp_threes_rank, off_points_rank, off_rebounds_rank, off_assists_rank, off_threes_rank, off_pace_rank`
-   - Include these fields in the `teamIntel` context passed to the AI reviewer
-
+### Expected Outcome
+- `off_points_rank`, `off_rebounds_rank`, `off_assists_rank`, `off_threes_rank`, `off_pace_rank` all populated
+- `updated_at` set to today's date
+- All downstream engines (`prop-engine-v2`, `bot-review-and-optimize`, `bot-generate-daily-parlays`) will have fresh data
