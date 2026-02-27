@@ -1,51 +1,70 @@
 
 
-## Fix pp-props-scraper Timeout and Deploy All Pipeline Functions
+# Enable Alt Lines for Player Props + Fix Stripe Trial Card Enforcement
 
-### Problem 1: pp-props-scraper Statement Timeout
-The logs show the function successfully fetches ~4,800 props but crashes on insert:
-```
-"canceling statement due to statement timeout"
-```
-**Root cause**: A single `supabase.insert()` call with ~4,800 rows exceeds the database statement timeout. Additionally, the "previous lines" query uses `.in('player_name', playerNames)` with thousands of names, which is also slow.
+## Two Issues to Address
 
-**Fix**: Batch inserts into chunks of 500 rows, and batch the previous-lines lookup similarly.
+### Issue 1: Alt Lines Not Working for Player Props
 
-### Problem 2: Most Edge Functions Not Deployed
-~150 functions exist in code but only ~10 are deployed. The entire automated pipeline is non-functional.
+**Root Cause:** The `selectOptimalLine` function (line 2843) has a strategy gate that only allows alt line selection when the strategy name contains `'aggressive'` or `'alt'`:
 
-**Fix**: Deploy all functions in batches.
-
----
-
-### Technical Changes
-
-#### 1. Fix pp-props-scraper batched inserts (supabase/functions/pp-props-scraper/index.ts)
-
-**Previous lines lookup** (line ~384-398): Batch the `.in()` query into chunks of 200 player names to avoid query size limits.
-
-**Insert** (line ~408-415): Replace single bulk insert with batched inserts of 500 rows:
-```typescript
-// Batch insert in chunks of 500
-const BATCH_SIZE = 500;
-for (let i = 0; i < propsToInsert.length; i += BATCH_SIZE) {
-  const batch = propsToInsert.slice(i, i + BATCH_SIZE);
-  const { error } = await supabase.from('pp_snapshot').insert(batch);
-  if (error) {
-    console.error(`[PP Scraper] Batch ${i / BATCH_SIZE + 1} error:`, error);
-    throw new Error(`Failed to insert batch: ${error.message}`);
-  }
-  console.log(`[PP Scraper] Inserted batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} rows)`);
+```text
+if (!strategy.includes('aggressive') && !strategy.includes('alt')) {
+    return { line: mainLine, odds: mainOdds, reason: 'safe_profile' };
 }
 ```
 
-#### 2. Deploy all edge functions
+But actual strategy names are `boosted_cash`, `golden_lock`, `proving_boosted`, etc. -- none contain those strings. So even when `useAltLines: true` is set on a profile, every call returns `'safe_profile'` immediately without ever checking alternate lines.
 
-Deploy all ~160 functions in batches using the deploy tool. This will be done in groups of ~20 to avoid overwhelming the deployment system. Functions will be deployed in priority order:
-- **Batch 1**: Core pipeline (data-pipeline-orchestrator, engine-cascade-runner, prop-engine-v2, nba-player-prop-risk-engine, refresh-todays-props)
-- **Batch 2**: Parlay builders (sharp-parlay-builder, heat-prop-engine, bot-generate-daily-parlays, bot-quality-regen-loop, bot-force-fresh-parlays, bot-review-and-optimize)
-- **Batch 3**: Data collection (backfill-player-stats, calculate-season-stats, auto-classify-archetypes, daily-fatigue-calculator, firecrawl-lineup-scraper, fetch-vegas-lines, nba-team-pace-fetcher)
-- **Batch 4**: Analysis engines (category-props-analyzer, detect-mispriced-lines, matchup-intelligence-analyzer, game-environment-validator, sync-archetypes, sync-matchup-history)
-- **Batch 5**: Settlement and verification (bot-settle-and-learn, auto-settle-parlays, verify-risk-engine-outcomes, verify-sharp-outcomes, verify-whale-outcomes, etc.)
-- **Batch 6-8**: All remaining functions (bot utilities, MLB/NFL/NHL/NCAAB modules, admin tools, checkout/billing, etc.)
+Additionally, player prop alternate lines are never fetched from the `fetch-alternate-lines` function. The only fetch call is for team spread cap shopping (lines 6143-6203).
+
+**Fix (in `bot-generate-daily-parlays/index.ts`):**
+
+1. **Update `selectOptimalLine` strategy gate** (line 2843) to also allow strategies containing `'boosted'`, `'golden'`, or `'cash_lock'`:
+   - Change condition to: `if (!strategy.includes('aggressive') && !strategy.includes('alt') && !strategy.includes('boosted') && !strategy.includes('golden') && !strategy.includes('cash_lock'))`
+
+2. **Add `fetchPlayerPropAltLines()` helper function** after the enrichment phase (~line 4189):
+   - Identify profiles with `useAltLines: true` -- if none exist, skip entirely
+   - Select top 15 enriched picks by composite score that have sufficient projection buffer (`projected_value - line >= getMinBuffer(prop_type)`)
+   - For each qualifying pick, call `fetch-alternate-lines` with `{ eventId, playerName, propType, sport }`
+   - Attach returned lines to `pick.alternateLines`
+   - Sequential calls with 100ms delay, wrapped in try/catch so failures don't break the pipeline
+   - Log results: `[AltLines] Fetched N alternate lines for PlayerName propType`
+
+3. **Resolve `event_id` during enrichment** so the `fetch-alternate-lines` call has the required event ID:
+   - During the enrichment loop, populate `event_id` from the oddsMap or unified_props data
+
+4. **Enable `useAltLines` on 2 additional execution profiles:**
+   - `golden_lock` (first NBA instance, line 851): `useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5`
+   - `cash_lock` (3rd profile, line 844): `useAltLines: true, boostLegs: 1, minBufferMultiplier: 2.0`
+
+---
+
+### Issue 2: Stripe Not Enforcing Card During Free Trial
+
+**Analysis:** The code in both `create-checkout` and `create-bot-checkout` already has the correct configuration:
+- `payment_method_collection: "always"` (forces card collection)
+- `trial_settings.end_behavior.missing_payment_method: "cancel"` (cancels if no card)
+
+This configuration is correct per Stripe docs. The code-level implementation is right. Possible causes:
+
+- **Stripe dashboard subscription settings** may override checkout session settings (e.g., if "Don't require payment method for trials" is enabled at the product/subscription level)
+- The `consent_collection` parameter could add explicit terms acceptance
+
+**Fix:** Add `consent_collection` with `terms_of_service: 'required'` to both checkout functions. This forces users to explicitly agree to terms and ensures card is validated with a $0 or $1 auth hold. Additionally, add `payment_intent_data` with `setup_future_usage: 'off_session'` to signal Stripe to validate the card more rigorously during trial signup.
+
+### Files Modified
+
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
+   - Fix `selectOptimalLine` strategy gate to allow boosted/golden/cash_lock strategies
+   - Add `fetchPlayerPropAltLines()` function after enrichment
+   - Resolve `event_id` in enrichment loop
+   - Enable `useAltLines: true` on `golden_lock` and one `cash_lock` profile
+
+2. **`supabase/functions/create-checkout/index.ts`**
+   - Add `consent_collection: { terms_of_service: 'required' }` to session creation
+   - Add `custom_text` with trial terms disclosure
+
+3. **`supabase/functions/create-bot-checkout/index.ts`**
+   - Same Stripe trial enforcement changes as `create-checkout`
 
