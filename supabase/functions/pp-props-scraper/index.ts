@@ -380,21 +380,26 @@ serve(async (req) => {
       );
     }
 
-    // Get previous lines for move detection
-    const playerNames = propsToInsert.map(p => p.player_name);
-    const { data: previousProps } = await supabase
-      .from('pp_snapshot')
-      .select('player_name, stat_type, pp_line, captured_at')
-      .in('player_name', playerNames)
-      .order('captured_at', { ascending: false });
+    // Get previous lines for move detection (batched to avoid query size limits)
+    const playerNames = [...new Set(propsToInsert.map(p => p.player_name))];
+    const LOOKUP_BATCH = 200;
+    const allPreviousProps: PPSnapshotRow[] = [];
+    for (let i = 0; i < playerNames.length; i += LOOKUP_BATCH) {
+      const nameBatch = playerNames.slice(i, i + LOOKUP_BATCH);
+      const { data: batchProps } = await supabase
+        .from('pp_snapshot')
+        .select('player_name, stat_type, pp_line, captured_at')
+        .in('player_name', nameBatch)
+        .order('captured_at', { ascending: false });
+      if (batchProps) allPreviousProps.push(...(batchProps as PPSnapshotRow[]));
+    }
+    console.log(`[PP Scraper] Fetched ${allPreviousProps.length} previous lines in ${Math.ceil(playerNames.length / LOOKUP_BATCH)} batches`);
 
     const previousLineMap = new Map<string, number>();
-    if (previousProps && Array.isArray(previousProps)) {
-      for (const prev of previousProps as PPSnapshotRow[]) {
-        const key = `${prev.player_name}_${prev.stat_type}`;
-        if (!previousLineMap.has(key)) {
-          previousLineMap.set(key, prev.pp_line);
-        }
+    for (const prev of allPreviousProps) {
+      const key = `${prev.player_name}_${prev.stat_type}`;
+      if (!previousLineMap.has(key)) {
+        previousLineMap.set(key, prev.pp_line);
       }
     }
 
@@ -405,13 +410,16 @@ serve(async (req) => {
 
     const now = new Date().toISOString();
 
-    const { error: insertError } = await supabase
-      .from('pp_snapshot')
-      .insert(propsToInsert);
-
-    if (insertError) {
-      console.error('[PP Scraper] Insert error:', insertError);
-      throw new Error(`Failed to insert props: ${insertError.message}`);
+    // Batch insert in chunks of 500 to avoid statement timeout
+    const INSERT_BATCH = 500;
+    for (let i = 0; i < propsToInsert.length; i += INSERT_BATCH) {
+      const batch = propsToInsert.slice(i, i + INSERT_BATCH);
+      const { error: insertError } = await supabase.from('pp_snapshot').insert(batch);
+      if (insertError) {
+        console.error(`[PP Scraper] Batch ${Math.floor(i / INSERT_BATCH) + 1} error:`, insertError);
+        throw new Error(`Failed to insert batch: ${insertError.message}`);
+      }
+      console.log(`[PP Scraper] Inserted batch ${Math.floor(i / INSERT_BATCH) + 1} (${batch.length} rows)`);
     }
 
     console.log('[PP Scraper] Successfully inserted', propsToInsert.length, 'props');
