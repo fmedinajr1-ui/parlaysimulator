@@ -60,6 +60,16 @@ function roleStatAligned(position: string | null, propType: string): boolean {
   return true;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -81,7 +91,7 @@ serve(async (req) => {
     
     // First get the list of events
     const eventsListUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${apiKey}`;
-    const eventsListRes = await fetch(eventsListUrl);
+    const eventsListRes = await fetchWithTimeout(eventsListUrl);
     if (!eventsListRes.ok) throw new Error(`Events API returned ${eventsListRes.status}: ${await eventsListRes.text()}`);
     const eventsList: any[] = await eventsListRes.json();
     console.log(`[MegaParlay] Found ${eventsList.length} NBA events today`);
@@ -90,7 +100,7 @@ serve(async (req) => {
     const eventPropsPromises = eventsList.map(async (evt) => {
       const eventUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${evt.id}/odds?apiKey=${apiKey}&regions=us&markets=${markets}&oddsFormat=american&bookmakers=fanduel,hardrockbet`;
       try {
-        const res = await fetch(eventUrl);
+        const res = await fetchWithTimeout(eventUrl);
         if (!res.ok) {
           console.warn(`[MegaParlay] Event ${evt.id} returned ${res.status}`);
           await res.text(); // consume body

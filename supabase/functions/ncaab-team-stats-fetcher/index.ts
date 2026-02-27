@@ -17,14 +17,19 @@ const ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball
 async function fetchWithRetry(url: string, retries = 2): Promise<Response | null> {
   for (let i = 0; i <= retries; i++) {
     try {
-      const resp = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const resp = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (resp.ok) return resp;
       if (resp.status === 429 && i < retries) {
         await new Promise(r => setTimeout(r, 1000 * (i + 1)));
         continue;
       }
       return null;
-    } catch {
+    } catch (err) {
+      const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+      if (isTimeout) console.warn(`[NCAAB] Timeout fetching ${url}`);
       if (i < retries) await new Promise(r => setTimeout(r, 500));
     }
   }

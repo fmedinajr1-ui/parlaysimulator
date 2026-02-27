@@ -6,6 +6,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 interface ParlayLeg {
   description: string;
   odds: number;
@@ -63,7 +73,7 @@ Generate 4-6 savage roasts about this parlay. Reference specific legs when appro
 
     console.log("Generating roasts for parlay with OpenAI...");
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,

@@ -229,7 +229,10 @@ async function fetchPrizePicksAPI(retries = 3): Promise<any> {
       console.log(`[PP Scraper] Trying ${url} (attempt ${attempt}/${retries})`);
       
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
         const response = await fetch(url, {
+          signal: controller.signal,
           headers: {
             'Accept': 'application/json',
             'User-Agent': ua,
@@ -244,6 +247,7 @@ async function fetchPrizePicksAPI(retries = 3): Promise<any> {
             'sec-fetch-site': 'same-site',
           },
         });
+        clearTimeout(timeoutId);
         
         if (response.status === 403 || response.status === 429) {
           console.warn(`[PP Scraper] Got ${response.status} from ${url}`);

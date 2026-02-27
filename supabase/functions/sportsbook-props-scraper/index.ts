@@ -6,6 +6,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 interface UnifiedPropInsert {
   player_name: string;
   prop_type: string;
@@ -262,7 +272,7 @@ serve(async (req) => {
             { type: 'wait', milliseconds: 3000 },
           ];
 
-          const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+          const response = await fetchWithTimeout('https://api.firecrawl.dev/v1/scrape', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${firecrawlKey}`,

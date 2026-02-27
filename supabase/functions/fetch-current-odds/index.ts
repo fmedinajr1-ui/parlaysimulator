@@ -38,6 +38,16 @@ const normalizeName = (name: string) => {
     .trim();
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -76,7 +86,7 @@ serve(async (req) => {
 
     console.log(`[fetch-current-odds] Fetching from API with bookmakers: ${bookmakerParam}`);
     
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     
     if (!response.ok) {
       if (response.status === 404) {

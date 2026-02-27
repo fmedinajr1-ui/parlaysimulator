@@ -8,6 +8,15 @@ const corsHeaders = {
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 interface AnalysisRequest {
   frames: string[];
   gameContext: {
@@ -284,7 +293,7 @@ IMPORTANT:
     console.log(`[analyze-game-footage] Sending ${framesToAnalyze.length} frames to AI (${strategy.interval} strategy)`);
 
     // Call OpenAI API with GPT-4o (vision)
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,

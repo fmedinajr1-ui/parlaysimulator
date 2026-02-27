@@ -105,6 +105,16 @@ Return JSON:
 If nothing notable is happening (regular play), return detectedMoment as null.`;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -143,7 +153,7 @@ serve(async (req) => {
         },
       ];
 
-      const autoResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      const autoResponse = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${OPENAI_API_KEY}`,
@@ -268,7 +278,7 @@ Focus on NEW observations. Be concise but specific.`;
 
     console.log(`Analyzing ${framesToAnalyze.length} frames for ${momentType} moment`);
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_API_KEY}`,

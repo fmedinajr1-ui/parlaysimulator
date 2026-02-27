@@ -352,6 +352,16 @@ async function loadCalibrationFactors(supabase: any): Promise<CalibrationFactors
   }
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // OPTIMIZED: Background processing with batched operations
 async function processOddsInBackground(
   sports: string[],
@@ -379,7 +389,7 @@ async function processOddsInBackground(
 
     try {
       // Fetch game lines
-      const oddsResponse = await fetch(
+      const oddsResponse = await fetchWithTimeout(
         `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
       );
 
@@ -980,7 +990,7 @@ async function processPlayerPropsOptimized(
   
   console.log(`[Props] Fetching ${propMarkets.join(', ')} for: ${event.away_team} @ ${event.home_team}`);
   
-  const propsResponse = await fetch(propsUrl);
+  const propsResponse = await fetchWithTimeout(propsUrl);
   
   if (!propsResponse.ok) {
     console.error(`[Props] Failed to fetch for ${event.id}:`, propsResponse.status);

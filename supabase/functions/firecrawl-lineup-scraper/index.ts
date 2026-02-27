@@ -76,13 +76,23 @@ function getImpactLevel(status: PlayerStatus['status']): string {
 
 // ============= ESPN API FUNCTIONS =============
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Fetch injury data from ESPN NBA Injuries endpoint
 async function fetchESPNInjuries(): Promise<PlayerStatus[]> {
   console.log('[ESPN] Fetching injuries from ESPN API...');
   
   try {
     const url = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries';
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { 'Accept': 'application/json' }
     });
     
@@ -169,7 +179,7 @@ async function fetchTodaysGames(): Promise<GameInfo[]> {
     const today = getEasternDate().replace(/-/g, '');
     const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${today}`;
     
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { 'Accept': 'application/json' }
     });
     
@@ -210,7 +220,7 @@ async function fetchTodaysGames(): Promise<GameInfo[]> {
 async function fetchGameInactives(eventId: string): Promise<string[]> {
   try {
     const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${eventId}`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { 'Accept': 'application/json' }
     });
     
@@ -361,7 +371,7 @@ async function scrapeRotoWire(apiKey: string): Promise<PlayerStatus[]> {
   console.log('[RotoWire] Starting Firecrawl scrape...');
   
   try {
-    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    const response = await fetchWithTimeout('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -373,7 +383,7 @@ async function scrapeRotoWire(apiKey: string): Promise<PlayerStatus[]> {
         onlyMainContent: true,
         waitFor: 3000,
       }),
-    });
+    }, 15000); // 15s timeout for Firecrawl
 
     const data = await response.json();
 

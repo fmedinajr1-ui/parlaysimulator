@@ -26,6 +26,16 @@ interface MovementSnapshot {
   movement_direction: string;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -105,7 +115,7 @@ serve(async (req) => {
             for (const market of markets) {
               const oddsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${oddsApiKey}&regions=us&markets=${market}&oddsFormat=american`;
               
-              const response = await fetch(oddsUrl);
+              const response = await fetchWithTimeout(oddsUrl);
               if (!response.ok) continue;
               
               const data = await response.json();

@@ -6,6 +6,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * ncaab-referee-scraper
  * 
@@ -42,7 +52,7 @@ serve(async (req) => {
     console.log(`[Referee Scraper] Starting for ${today}...`);
 
     // Step 1: Search for today's NCAAB referee assignments
-    const searchResp = await fetch('https://api.firecrawl.dev/v1/search', {
+    const searchResp = await fetchWithTimeout('https://api.firecrawl.dev/v1/search', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${firecrawlKey}`,
@@ -60,7 +70,7 @@ serve(async (req) => {
     console.log(`[Referee Scraper] Found ${searchResults.length} search results`);
 
     // Step 2: Try to scrape barttorvik referee page for tendency data
-    const bartResp = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    const bartResp = await fetchWithTimeout('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${firecrawlKey}`,
