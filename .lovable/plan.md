@@ -1,62 +1,66 @@
 
 
-## Fix: Always Populate Defense Rank on Picks for Line Adjustment System
+## Refresh Defense Rankings + Add Offensive Rankings + Automate Daily Updates
 
-### Problem
-The defensive downgrade and offensive upgrade system (`shouldAdjustLine()`) is currently non-functional because it lacks data. Today's 35 pending parlays had **zero** line adjustments applied.
+### Current State
 
-**Root cause**: `defenseMatchupRank` is only set on picks when `adj !== 0` (line 5069), meaning picks with neutral defensive adjustments never get a defense rank stored. The `shouldAdjustLine()` function exits early at line 361 when it finds `null`.
+**Defense Data**: All 30 NBA teams have defensive rankings (`opp_points_rank`, `opp_threes_rank`, `opp_rebounds_rank`, `opp_assists_rank`) but they are **stale -- last updated December 19, 2025** (over 2 months old).
 
-### What's Working
-- The `shouldAdjustLine()` logic is correctly coded for both downgrades and upgrades
-- The `findAvailableAltLine()` lookup is properly wired
-- The leg metadata fields (`was_line_adjusted`, `line_adjustment_direction`, etc.) are correctly stored
-- The 2 picks that DO have defense_rank (Duncan Robinson rank 1, Dean Wade rank 27) were correctly evaluated and correctly NOT adjusted (one is an under helped by elite defense, other has too small a buffer)
+**Offensive Data**: The database columns exist (`off_points_rank`, `off_rebounds_rank`, `off_assists_rank`, `off_threes_rank`, `off_pace_rank`) but are **all NULL**. The `fetch-team-defense-ratings` function already has hardcoded offensive ranking data and the code to write it (lines 510-528), but it hasn't been run since those columns were added.
 
-### Changes Required
+**Root Problem**: The `fetch-team-defense-ratings` function uses **hardcoded arrays** (lines 56-301) rather than scraping live data. Running it will populate offensive ranks but won't fix the staleness issue.
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+### Plan
 
-#### 1. Always store `defenseMatchupRank` on enriched sweet spot picks (around line 5069)
-Currently:
-```typescript
-if (adj !== 0) {
-  pick.compositeScore = ...;
-  (pick as any).defenseMatchupRank = rank;
-  (pick as any).defenseMatchupAdj = adj;
-}
+#### 1. Convert `fetch-team-defense-ratings` to scrape live data from NBA.com
+
+Replace the hardcoded `NBA_DEFENSE_RATINGS` and `OFFENSIVE_RANKINGS` arrays with live API calls to the NBA.com stats endpoint:
+- **Defensive stats**: `https://stats.nba.com/stats/leaguedashteamstats` with `MeasureType=Opponent` to get opponent points, rebounds, assists, 3PM per game, then rank them 1-30
+- **Offensive stats**: Same endpoint with `MeasureType=Base` to get team PPG, RPG, APG, 3PM/G, then rank 1-30
+- **Pace**: Use `MeasureType=Advanced` to get team pace ratings
+
+This ensures every time the function runs, it pulls **current season** data.
+
+**Fallback**: Keep the hardcoded data as a fallback if the NBA.com API fails (rate limits, offseason, etc.)
+
+#### 2. Write both defensive AND offensive rankings to all 3 target tables
+
+The function currently writes to:
+- `team_defensive_ratings` (position-specific, used by matchup-intelligence)
+- `nba_opponent_defense_stats` (used by composite scoring)
+- `team_defense_rankings` (used by `shouldAdjustLine()` and `calculateEnvironmentScore()`)
+
+Ensure all three get updated with fresh data, and `team_defense_rankings` gets the offensive columns populated.
+
+#### 3. Add daily cron schedule
+
+Create a `pg_cron` job to run `fetch-team-defense-ratings` daily at **11:00 AM ET** (before the 3:00 PM generation deadline). This runs as part of the existing `engine-cascade-runner` pipeline (which already calls it at step 3), but adding a standalone cron ensures it runs even if the cascade isn't triggered.
+
+### Technical Details
+
+**File: `supabase/functions/fetch-team-defense-ratings/index.ts`**
+
+- Add `fetchLiveNBAStats()` function that calls the NBA.com stats API endpoints
+- Parse response to extract per-team opponent stats (OPP_PTS, OPP_REB, OPP_AST, OPP_FG3M) and team stats (PTS, REB, AST, FG3M, PACE)
+- Rank teams 1-30 for each category (1 = fewest allowed for defense, 1 = most produced for offense)
+- Fall back to existing hardcoded arrays if API returns errors
+- Update the `updated_at` timestamp on all records so staleness is trackable
+
+**Cron Job (SQL insert)**
+
+```text
+Schedule: Daily at 16:00 UTC (11:00 AM ET)
+Target: fetch-team-defense-ratings with action='refresh'
 ```
-Change to always store the rank regardless of adjustment value:
-```typescript
-// Always store defense rank for line adjustment system
-if (rank != null) {
-  (pick as any).defenseMatchupRank = rank;
-  (pick as any).defenseMatchupAdj = adj;
-}
-if (adj !== 0) {
-  pick.compositeScore = ...;
-}
-```
-
-#### 2. Store opponent team name on picks for `shouldAdjustLine()` fallback
-After computing `oppTeamName` at line 5077, also store it on the pick:
-```typescript
-(pick as any).opponent_team = oppTeamName || '';
-```
-This enables the secondary defense lookup path inside `shouldAdjustLine()` (lines 337-338).
-
-#### 3. Same fix for mispriced/master candidates enrichment loop (around line 5460)
-The same pattern exists in the second enrichment loop for mispriced and master candidate picks. Apply the same two changes:
-- Always store `defenseMatchupRank` even when `adj === 0`
-- Store `opponent_team` on the pick
 
 ### Impact
-- All NBA picks will now have `defenseMatchupRank` populated (instead of only the ~10% that had non-zero adjustments)
-- `shouldAdjustLine()` will be able to evaluate every pick against its matchup context
-- Picks like Jarrett Allen (rebounds OVER 8.5, buffer 3.77) facing weak defenses will be properly evaluated for upgrades
-- Picks facing top-10 defenses with tight margins will be properly evaluated for downgrades
-- No behavioral change for picks where defense data is genuinely unavailable (non-NBA, missing schedule data)
+
+- The `shouldAdjustLine()` system will use current defensive data instead of 2-month-old rankings
+- Offensive rankings (`off_points_rank`, etc.) will be populated, enabling the `calculateEnvironmentScore()` function to factor in team offensive strength
+- Data refreshes automatically every day without manual intervention
+- If NBA.com API is down, the system gracefully falls back to the last known good data
 
 ### Files Modified
-- `supabase/functions/bot-generate-daily-parlays/index.ts` — ~6 lines changed across 2 enrichment loops
+- `supabase/functions/fetch-team-defense-ratings/index.ts` -- add live scraping, keep hardcoded fallback
+- SQL insert for cron job schedule
 
