@@ -28,6 +28,44 @@ function normalizePropType(raw: string): string {
   return s;
 }
 
+// ============= STRICT PROP OVERLAP PREVENTION =============
+const COMBO_BASES: Record<string, string[]> = {
+  pra: ['points', 'rebounds', 'assists'],
+  pr: ['points', 'rebounds'],
+  pa: ['points', 'assists'],
+  ra: ['rebounds', 'assists'],
+};
+
+function hasCorrelatedProp(
+  existingLegs: Array<{ player_name: string; prop_type: string }>,
+  candidatePlayer: string,
+  candidateProp: string
+): boolean {
+  const player = candidatePlayer.toLowerCase().trim();
+  const prop = normalizePropType(candidateProp);
+
+  const playerLegs = existingLegs
+    .filter(l => l.player_name.toLowerCase().trim() === player)
+    .map(l => normalizePropType(l.prop_type));
+
+  if (playerLegs.length === 0) return false;
+
+  const combos = Object.keys(COMBO_BASES);
+  if (combos.includes(prop)) {
+    const bases = COMBO_BASES[prop];
+    if (playerLegs.some(s => bases.includes(s))) return true;
+    if (playerLegs.some(s => combos.includes(s))) return true;
+  }
+  for (const existing of playerLegs) {
+    if (combos.includes(existing)) {
+      const bases = COMBO_BASES[existing];
+      if (bases?.includes(prop)) return true;
+    }
+  }
+
+  return true; // Same player = always block
+}
+
 function americanToImpliedProb(odds: number): number {
   if (odds >= 100) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
@@ -571,21 +609,21 @@ serve(async (req) => {
       const gc = gameCount.get(prop.game) || 0;
       if (gc >= MAX_PER_GAME) continue;
 
-      // No duplicate players
-      const nameKey = normalizeName(prop.player_name);
-      if (usedPlayers.has(nameKey)) continue;
+      // No correlated props (same player OR base+combo overlap)
+      const existingForCheck = parlayLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
+      if (hasCorrelatedProp(existingForCheck, prop.player_name, prop.prop_type)) continue;
 
       parlayLegs.push(prop);
       gameCount.set(prop.game, gc + 1);
-      usedPlayers.add(nameKey);
+      usedPlayers.add(normalizeName(prop.player_name));
     }
 
     // Relaxed fallback — but still require hit rate >= 50 (no 0% props)
     if (parlayLegs.length < MIN_LEGS) {
       for (const prop of scoredProps) {
         if (parlayLegs.length >= MIN_LEGS) break;
-        const nameKey = normalizeName(prop.player_name);
-        if (usedPlayers.has(nameKey)) continue;
+        const existingForCheckRelaxed = parlayLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
+        if (hasCorrelatedProp(existingForCheckRelaxed, prop.player_name, prop.prop_type)) continue;
         const gc = gameCount.get(prop.game) || 0;
         if (gc >= MAX_PER_GAME) continue;
         if (prop.hitRate < 50) continue; // Relaxed but still requires data

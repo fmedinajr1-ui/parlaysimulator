@@ -2904,6 +2904,55 @@ function selectOptimalLine(
   return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
 }
 
+// ============= STRICT PROP OVERLAP PREVENTION =============
+function normalizePropTypeForCorrelation(raw: string): string {
+  const s = (raw || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
+}
+
+const COMBO_BASES: Record<string, string[]> = {
+  pra: ['points', 'rebounds', 'assists'],
+  pr: ['points', 'rebounds'],
+  pa: ['points', 'assists'],
+  ra: ['rebounds', 'assists'],
+};
+
+function hasCorrelatedProp(
+  existingLegs: Array<{ player_name: string; prop_type: string }>,
+  candidatePlayer: string,
+  candidateProp: string
+): boolean {
+  const player = candidatePlayer.toLowerCase().trim();
+  const prop = normalizePropTypeForCorrelation(candidateProp);
+
+  const playerLegs = existingLegs
+    .filter(l => l.player_name.toLowerCase().trim() === player)
+    .map(l => normalizePropTypeForCorrelation(l.prop_type));
+
+  if (playerLegs.length === 0) return false;
+
+  // Combo + base overlap check
+  const combos = Object.keys(COMBO_BASES);
+  if (combos.includes(prop)) {
+    const bases = COMBO_BASES[prop];
+    if (playerLegs.some(s => bases.includes(s))) return true;
+    if (playerLegs.some(s => combos.includes(s))) return true;
+  }
+  for (const existing of playerLegs) {
+    if (combos.includes(existing)) {
+      const bases = COMBO_BASES[existing];
+      if (bases?.includes(prop)) return true;
+    }
+  }
+
+  return true; // Same player = always block (one player per parlay)
+}
+
 // Normalize prop type to a canonical category for concentration tracking
 function normalizePropTypeCategory(propType: string): string {
   const lower = (propType || '').toLowerCase();
@@ -3003,6 +3052,14 @@ function canUsePickInParlay(
   // Team conflict detection: no contradictory or duplicate same-game legs
   if ('type' in pick && pick.type === 'team' && existingLegs) {
     if (!canAddTeamLegToParlay(pick as EnrichedTeamPick, existingLegs)) return false;
+  }
+  
+  // STRICT: No correlated props for same player in parlay
+  if ('player_name' in pick && existingLegs && existingLegs.length > 0) {
+    const playerLegsInParlay = existingLegs
+      .filter((l: any) => l.player_name)
+      .map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || l.bet_type || '' }));
+    if (hasCorrelatedProp(playerLegsInParlay, (pick as any).player_name, (pick as any).prop_type || (pick as any).bet_type || '')) return false;
   }
   
   return true;
