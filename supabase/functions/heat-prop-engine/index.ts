@@ -527,6 +527,57 @@ function getPropCategory(propType: string): string {
   return "other";
 }
 
+// ========================
+// STRICT PROP CORRELATION BLOCKING (consistent across all 5 engines)
+// ========================
+const COMBO_BASES: Record<string, string[]> = {
+  pra: ['points', 'rebounds', 'assists'],
+  pr: ['points', 'rebounds'],
+  pa: ['points', 'assists'],
+  ra: ['rebounds', 'assists'],
+};
+
+function normalizeForCorrelation(raw: string): string {
+  const s = raw.replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
+}
+
+function hasCorrelatedProp(
+  existingLegs: Array<{ player_name: string; prop_type: string }>,
+  candidatePlayer: string,
+  candidateProp: string
+): boolean {
+  const player = candidatePlayer.toLowerCase().trim();
+  const prop = normalizeForCorrelation(candidateProp);
+
+  const playerLegs = existingLegs
+    .filter(l => l.player_name.toLowerCase().trim() === player)
+    .map(l => normalizeForCorrelation(l.prop_type));
+
+  if (playerLegs.length === 0) return false;
+
+  // Check combo-base overlap
+  const combos = Object.keys(COMBO_BASES);
+  if (combos.includes(prop)) {
+    const bases = COMBO_BASES[prop];
+    if (playerLegs.some(s => bases.includes(s))) return true;
+    if (playerLegs.some(s => combos.includes(s))) return true;
+  }
+  for (const existing of playerLegs) {
+    if (combos.includes(existing)) {
+      const bases = COMBO_BASES[existing];
+      if (bases?.includes(prop)) return true;
+    }
+  }
+
+  return true; // Same player = always block
+}
+
 function buildParlays(
   eligibleProps: any[],
   parlayType: "CORE" | "UPSIDE",
@@ -591,6 +642,13 @@ function buildParlays(
     if (c.player_name === leg1.player_name) return false;
     if (c.event_id === leg1.event_id) return false; // Different games preferred
 
+    // CORRELATION CHECK: Block base+combo overlap
+    const leg1ForCheck = [{ player_name: leg1.player_name, prop_type: leg1.market_type }];
+    if (hasCorrelatedProp(leg1ForCheck, c.player_name, c.market_type)) {
+      console.log(`[Heat Engine] CORRELATION BLOCKED: ${c.player_name} ${c.market_type} overlaps ${leg1.player_name} ${leg1.market_type}`);
+      return false;
+    }
+
     // NEW: Team diversity enforcement - must be different team
     const candidateTeam = getPlayerTeam(c.player_name);
     if (candidateTeam === leg1Team && candidateTeam !== "UNKNOWN" && leg1Team !== "UNKNOWN") {
@@ -615,6 +673,10 @@ function buildParlays(
     leg2 = candidates.find((c) => {
       if (c.player_name === leg1.player_name) return false;
 
+      // CORRELATION CHECK
+      const leg1ForCheck = [{ player_name: leg1.player_name, prop_type: leg1.market_type }];
+      if (hasCorrelatedProp(leg1ForCheck, c.player_name, c.market_type)) return false;
+
       // Still enforce team diversity in fallback
       const candidateTeam = getPlayerTeam(c.player_name);
       if (candidateTeam === leg1Team && candidateTeam !== "UNKNOWN" && leg1Team !== "UNKNOWN") {
@@ -631,6 +693,10 @@ function buildParlays(
   if (!leg2) {
     leg2 = candidates.find((c) => {
       if (c.player_name === leg1.player_name) return false;
+
+      // CORRELATION CHECK
+      const leg1ForCheck = [{ player_name: leg1.player_name, prop_type: leg1.market_type }];
+      if (hasCorrelatedProp(leg1ForCheck, c.player_name, c.market_type)) return false;
       const isStar = isStarPlayer(c.player_name);
       if (leg1IsStar && isStar) return false;
       return true;
@@ -646,6 +712,12 @@ function buildParlays(
       if (c.player_name !== leg1.player_name) return false; // Must be same player
       const category = getPropCategory(c.market_type);
       if (category === getPropCategory(leg1.market_type)) return false; // Must be different prop type
+      // CORRELATION CHECK: Block base+combo overlap even for same-player fallback
+      const leg1ForCheck = [{ player_name: leg1.player_name, prop_type: leg1.market_type }];
+      if (hasCorrelatedProp(leg1ForCheck, c.player_name, c.market_type)) {
+        console.log(`[Heat Engine] CORRELATION BLOCKED (same-player fallback): ${c.player_name} ${c.market_type}`);
+        return false;
+      }
       return true;
     });
     if (leg2) {

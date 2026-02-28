@@ -165,6 +165,57 @@ function isArchetypePropAligned(playerName: string, propType: string): { aligned
   return { aligned: !isBlocked, isPrimary: !isBlocked };
 }
 
+// ========================
+// STRICT PROP CORRELATION BLOCKING (consistent across all 5 engines)
+// ========================
+const COMBO_BASES: Record<string, string[]> = {
+  pra: ['points', 'rebounds', 'assists'],
+  pr: ['points', 'rebounds'],
+  pa: ['points', 'assists'],
+  ra: ['rebounds', 'assists'],
+};
+
+function normalizeForCorrelation(raw: string): string {
+  const s = raw.replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+  if (/points.*rebounds.*assists|pts.*rebs.*asts|^pra$/.test(s)) return 'pra';
+  if (/points.*rebounds|pts.*rebs|^pr$/.test(s)) return 'pr';
+  if (/points.*assists|pts.*asts|^pa$/.test(s)) return 'pa';
+  if (/rebounds.*assists|rebs.*asts|^ra$/.test(s)) return 'ra';
+  if (/three_pointers|threes_made|^threes$/.test(s)) return 'threes';
+  return s;
+}
+
+function hasCorrelatedProp(
+  existingLegs: Array<{ player_name: string; prop_type: string }>,
+  candidatePlayer: string,
+  candidateProp: string
+): boolean {
+  const player = candidatePlayer.toLowerCase().trim();
+  const prop = normalizeForCorrelation(candidateProp);
+
+  const playerLegs = existingLegs
+    .filter(l => l.player_name.toLowerCase().trim() === player)
+    .map(l => normalizeForCorrelation(l.prop_type));
+
+  if (playerLegs.length === 0) return false;
+
+  // Check combo-base overlap
+  const combos = Object.keys(COMBO_BASES);
+  if (combos.includes(prop)) {
+    const bases = COMBO_BASES[prop];
+    if (playerLegs.some(s => bases.includes(s))) return true;
+    if (playerLegs.some(s => combos.includes(s))) return true;
+  }
+  for (const existing of playerLegs) {
+    if (combos.includes(existing)) {
+      const bases = COMBO_BASES[existing];
+      if (bases?.includes(prop)) return true;
+    }
+  }
+
+  return true; // Same player = always block
+}
+
 // Role locks by stat type - BIG allowed for rebounds, WING for all core stats
 const ROLE_STAT_LOCKS = {
   rebounds: ["C", "PF", "F-C", "C-F", "SF", "BIG", "WING"],
@@ -1181,6 +1232,13 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   for (const candidate of pool) {
     if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
 
+    // CORRELATION CHECK: Block base+combo overlap for same player
+    const legsForCheck = legs.map(l => ({ player_name: l.player_name, prop_type: l.prop_type }));
+    if (hasCorrelatedProp(legsForCheck, candidate.player_name, candidate.prop_type)) {
+      console.log(`[Sharp Builder] CORRELATION BLOCKED: ${candidate.player_name} ${candidate.prop_type} overlaps existing leg`);
+      continue;
+    }
+
     // NEW: Team diversity enforcement for Dream Team parlays
     const team = candidate.team?.toLowerCase() || "unknown";
     if (config.requireTeamDiversity && usedTeams.has(team) && team !== "unknown") {
@@ -1224,6 +1282,13 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   if (legs.length < config.minLegs) {
     for (const candidate of pool) {
       if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
+
+      // CORRELATION CHECK: Block base+combo overlap for same player (2nd pass)
+      const legsForCheck2 = legs.map(l => ({ player_name: l.player_name, prop_type: l.prop_type }));
+      if (hasCorrelatedProp(legsForCheck2, candidate.player_name, candidate.prop_type)) {
+        console.log(`[Sharp Builder] CORRELATION BLOCKED (2nd pass): ${candidate.player_name} ${candidate.prop_type}`);
+        continue;
+      }
 
       // Still enforce team diversity for Dream Team in second pass
       const team = candidate.team?.toLowerCase() || "unknown";
