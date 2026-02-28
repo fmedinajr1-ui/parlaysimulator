@@ -7125,6 +7125,7 @@ function generateMonsterParlays(
   strategyName: string,
   weightMap: Map<string, number>,
   bankroll: number,
+  config?: { exploration_stake?: number },
 ): any[] {
   console.log(`[Bot v2] 🔥 MONSTER PARLAY: Evaluating big-slate eligibility...`);
 
@@ -7377,8 +7378,8 @@ function generateMonsterParlays(
       selection_rationale: `🔥 Monster Parlay: ${conservativeBuiltLegs.length} accuracy-first legs targeting +${conservativeResult.americanOdds}. Avg hit rate: ${avgHitRate.toFixed(1)}%. Every leg has 55%+ historical accuracy.`,
       outcome: 'pending',
       is_simulated: true,
-      simulated_stake: 10,
-      simulated_payout: 10 * conservativeResult.decimalOdds,
+      simulated_stake: config?.exploration_stake ?? 75,
+      simulated_payout: (config?.exploration_stake ?? 75) * conservativeResult.decimalOdds,
       tier: 'monster',
     });
     console.log(`[Bot v2] 🔥 MONSTER Conservative: ${conservativeBuiltLegs.length}L, +${conservativeResult.americanOdds}, avg HR ${avgHitRate.toFixed(1)}%`);
@@ -7422,8 +7423,8 @@ function generateMonsterParlays(
             selection_rationale: `🔥🔥 Aggressive Monster: ${aggressiveBuiltLegs.length} legs targeting +${aggressiveResult.americanOdds}. Avg hit rate: ${aggAvgHR.toFixed(1)}%. High-upside moonshot.`,
             outcome: 'pending',
             is_simulated: true,
-            simulated_stake: 10,
-            simulated_payout: 10 * aggressiveResult.decimalOdds,
+            simulated_stake: config?.exploration_stake ?? 75,
+            simulated_payout: (config?.exploration_stake ?? 75) * aggressiveResult.decimalOdds,
             tier: 'monster',
           });
           console.log(`[Bot v2] 🔥🔥 MONSTER Aggressive: ${aggressiveBuiltLegs.length}L, +${aggressiveResult.americanOdds}, avg HR ${aggAvgHR.toFixed(1)}%`);
@@ -8481,7 +8482,7 @@ Deno.serve(async (req) => {
     }
 
     // === MONSTER PARLAY (big-slate only) ===
-    const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll);
+    const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll, stakeConfig ? { exploration_stake: stakeConfig.exploration_stake } : undefined);
     if (monsterParlays.length > 0) {
       allParlays.push(...monsterParlays);
       console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);

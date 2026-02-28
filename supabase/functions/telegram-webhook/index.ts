@@ -380,7 +380,7 @@ async function getPerformance() {
   const wins = settled.filter((p) => p.outcome === "won").length;
   const losses = settled.filter((p) => p.outcome === "lost").length;
   const totalProfit = settled.reduce((sum, p) => sum + (p.profit_loss || 0), 0);
-  const totalStaked = settled.length * 10;
+  const totalStaked = settled.reduce((sum, p) => sum + (p.simulated_stake || 10), 0);
 
   return {
     winRate: settled.length > 0 ? (wins / settled.length) * 100 : 0,
