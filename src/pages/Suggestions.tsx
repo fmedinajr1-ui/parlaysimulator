@@ -933,11 +933,11 @@ const Suggestions = () => {
                             </p>
                           </div>
                           <div className="text-center">
-                            <p className="text-xs text-muted-foreground">$10 Wins</p>
+                            <p className="text-xs text-muted-foreground">$100 Wins</p>
                             <p className="text-lg font-bold text-neon-green">
                               ${suggestion.total_odds > 0 
-                                ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
-                                : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)
+                                ? ((suggestion.total_odds / 100) * 100 + 100).toFixed(0)
+                                : ((100 / Math.abs(suggestion.total_odds)) * 100 + 100).toFixed(0)
                               }
                             </p>
                           </div>
@@ -1148,11 +1148,11 @@ const Suggestions = () => {
                                   <p className="text-lg font-bold">{(suggestion.combined_probability * 100).toFixed(1)}%</p>
                                 </div>
                                 <div className="text-center">
-                                  <p className="text-xs text-muted-foreground">$10 Wins</p>
+                                  <p className="text-xs text-muted-foreground">$100 Wins</p>
                                   <p className="text-lg font-bold text-neon-green">
                                     ${suggestion.total_odds > 0 
-                                      ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
-                                      : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)}
+                                      ? ((suggestion.total_odds / 100) * 100 + 100).toFixed(0)
+                                      : ((100 / Math.abs(suggestion.total_odds)) * 100 + 100).toFixed(0)}
                                   </p>
                                 </div>
                               </div>
@@ -1224,11 +1224,11 @@ const Suggestions = () => {
                                   <p className="text-lg font-bold">{(suggestion.combined_probability * 100).toFixed(1)}%</p>
                                 </div>
                                 <div className="text-center">
-                                  <p className="text-xs text-muted-foreground">$10 Wins</p>
+                                  <p className="text-xs text-muted-foreground">$100 Wins</p>
                                   <p className="text-lg font-bold text-neon-green">
                                     ${suggestion.total_odds > 0 
-                                      ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
-                                      : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)}
+                                      ? ((suggestion.total_odds / 100) * 100 + 100).toFixed(0)
+                                      : ((100 / Math.abs(suggestion.total_odds)) * 100 + 100).toFixed(0)}
                                   </p>
                                 </div>
                               </div>
@@ -1332,11 +1332,11 @@ const Suggestions = () => {
                                   <p className="text-lg font-bold">{(suggestion.combined_probability * 100).toFixed(1)}%</p>
                                 </div>
                                 <div className="text-center">
-                                  <p className="text-xs text-muted-foreground">$10 Wins</p>
+                                  <p className="text-xs text-muted-foreground">$100 Wins</p>
                                   <p className="text-lg font-bold text-neon-green">
                                     ${suggestion.total_odds > 0 
-                                      ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
-                                      : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)}
+                                      ? ((suggestion.total_odds / 100) * 100 + 100).toFixed(0)
+                                      : ((100 / Math.abs(suggestion.total_odds)) * 100 + 100).toFixed(0)}
                                   </p>
                                 </div>
                               </div>

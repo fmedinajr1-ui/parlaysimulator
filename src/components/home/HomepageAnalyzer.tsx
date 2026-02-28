@@ -60,7 +60,7 @@ export function HomepageAnalyzer() {
       if (data?.legs) {
         setExtractedLegs(data.legs);
         const parlayLegs = data.legs.map((l: ExtractedLeg) => createLeg(l.description, parseInt(l.odds) || -110));
-        setSimulation(simulateParlay(parlayLegs, 10));
+        setSimulation(simulateParlay(parlayLegs, 100));
       }
       if (data?.advanced) {
         setAdvancedResults(data.advanced);
@@ -146,7 +146,7 @@ export function HomepageAnalyzer() {
     try {
       const parlayLegs = legs.map((l) => createLeg(l.description, parseInt(l.odds) || -110));
       const providedTotal = totalOdds ? parseInt(totalOdds.replace("+", "")) : undefined;
-      const sim = simulateParlay(parlayLegs, 10, providedTotal);
+      const sim = simulateParlay(parlayLegs, 100, providedTotal);
       setSimulation(sim);
       setState("results");
     } catch {
@@ -354,7 +354,7 @@ export function HomepageAnalyzer() {
 
                 {/* Payout Tile */}
                 <div className="bounce-in flex flex-col items-center justify-center p-3 rounded-xl bg-card border border-border/50" style={{ animationDelay: "0.2s" }}>
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">$10 Pays</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">$100 Pays</p>
                   <div className="w-full h-0.5 bg-primary rounded-full mb-2" />
                   <p className="font-display text-2xl text-primary">${simulation.potentialPayout.toFixed(0)}</p>
                 </div>

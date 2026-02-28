@@ -106,7 +106,14 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Step 0b: Load dynamic performance data
+    // Step 0b: Load stake config
+    let stakeConfig: { execution_stake: number } | null = null;
+    try {
+      const { data: sc } = await supabase.from('bot_stake_config').select('execution_stake').limit(1).single();
+      stakeConfig = sc;
+    } catch (e) { console.warn('[ForceFresh] Could not load stake config, using default 500'); }
+
+    // Step 0c: Load dynamic performance data
     let dynamicBlockedProps = new Set<string>();
     let playerPerfMap = new Map<string, { legsPlayed: number; legsWon: number; hitRate: number }>();
     
@@ -366,7 +373,7 @@ serve(async (req) => {
         selection_rationale: `Force-generated conviction parlay #${idx + 1}. Avg score: ${avgScore.toFixed(1)}. ${parlay.filter(p => p.riskConfirmed).length}/${parlay.length} risk-confirmed.`,
         tier: 'execution',
         is_simulated: true,
-        simulated_stake: 10,
+        simulated_stake: stakeConfig?.execution_stake ?? 500,
       };
     });
 
