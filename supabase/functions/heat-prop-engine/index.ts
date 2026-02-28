@@ -245,7 +245,8 @@ function passesStatSafety(
   // NEW: Hard block points for star players
   if (playerName && isStarPlayer(playerName)) {
     if (lowerMarket.includes("points") && !lowerMarket.includes("rebounds") && !lowerMarket.includes("assists")) {
-      return { passes: false, reason: `Star player ${playerName} - use rebounds/assists instead of points` };
+      console.warn(`[Heat] ⚠️ Star player ${playerName} points prop - deprioritized but not blocked`);
+      // No longer hard-blocking; the -15 baseScore penalty in calculateBaseRoleScore already deprioritizes points
     }
   }
 
@@ -531,7 +532,7 @@ function buildParlays(
   parlayType: "CORE" | "UPSIDE",
   excludePlayerNames: string[] = [], // Exclude these players (used for UPSIDE to avoid CORE overlap)
 ): { leg_1: ParlayLeg; leg_2: ParlayLeg; summary: string; risk_level: string; team_diversity: number } | null {
-  const minScore = parlayType === "CORE" ? 78 : 70;
+  const minScore = parlayType === "CORE" ? 70 : 60;
 
   // Filter by score threshold AND exclude already-used players
   let candidates = eligibleProps.filter(
@@ -847,7 +848,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         .from("category_sweet_spots")
         .select("*")
         .eq("analysis_date", today)
-        .gte("confidence_score", 0.7)
+        .gte("confidence_score", 0.45)
         .not("actual_line", "is", null)
         .eq("is_active", true);
 
@@ -1022,10 +1023,10 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
 
       // Eligibility (now includes dead-zone filter)
       const isEligibleCore =
-        finalScore >= 78 && statSafety.passes && roleValidation.passes && signalLabel !== "PUBLIC_TRAP" && !inDeadZone;
+        finalScore >= 70 && statSafety.passes && roleValidation.passes && signalLabel !== "PUBLIC_TRAP" && !inDeadZone;
 
       const isEligibleUpside =
-        finalScore >= 70 &&
+        finalScore >= 60 &&
         roleValidation.passes &&
         (signalLabel === "STRONG_SHARP" || signalLabel === "SHARP_LEAN" || statSafety.passes) &&
         !inDeadZone;
