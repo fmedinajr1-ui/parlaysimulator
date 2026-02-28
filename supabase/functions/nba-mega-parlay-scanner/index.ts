@@ -340,8 +340,27 @@ serve(async (req) => {
       // Role-stat alignment check
       if (!roleStatAligned(position, prop.prop_type)) continue;
 
-      // Hit rate from sweet spots
+      // Hit rate from sweet spots, with game-log fallback
       let hitRate = ss?.l10_hit_rate || 0;
+
+      // FALLBACK: If no sweet spot hit rate, calculate from game logs
+      if (hitRate === 0 && gl) {
+        // Fetch L10 game logs for this player to calculate hit rate
+        const glKey = `${nameNorm}|${ptNorm}`;
+        const gameLogEntry = gameLogMap.get(glKey);
+        if (gameLogEntry && gameLogEntry.l10_avg != null) {
+          // Use l10_avg vs line to estimate hit rate
+          const avg = gameLogEntry.l10_avg;
+          if (prop.side === 'OVER') {
+            // If avg is well above line, high hit rate
+            const ratio = avg / prop.line;
+            hitRate = Math.min(90, Math.max(0, ratio * 55)); // scale: 1.0x = 55%, 1.3x = 71.5%, etc.
+          } else {
+            const ratio = prop.line / avg;
+            hitRate = Math.min(90, Math.max(0, ratio * 55));
+          }
+        }
+      }
 
       // FIX #2 & #3: Edge from mispriced — NO Math.abs, with direction validation
       let edgePct = 0;
@@ -533,8 +552,18 @@ serve(async (req) => {
     const gameCount = new Map<string, number>();
     const usedPlayers = new Set<string>();
 
+    // MIN_LINES filter: reject binary blocks/steals props
+    const LOTTERY_MIN_LINES: Record<string, number> = {
+      player_blocks: 1.5,
+      player_steals: 1.5,
+    };
+
     for (const prop of scoredProps) {
       if (parlayLegs.length >= MAX_LEGS) break;
+
+      // Reject binary 0.5-line blocks/steals
+      const lotteryMin = LOTTERY_MIN_LINES[prop.prop_type];
+      if (lotteryMin && prop.line < lotteryMin) continue;
 
       // FIX #6: Strict hit rate — must meet minimum, no 0% fallback
       if (prop.hitRate < MIN_HIT_RATE) continue;
