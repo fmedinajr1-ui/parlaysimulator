@@ -73,8 +73,8 @@ serve(async (req) => {
         {
           price_data: {
             currency: "usd",
-            product_data: { name: "Card verification fee" },
-            unit_amount: 1, // $0.01
+            product_data: { name: "Card authentication hold" },
+            unit_amount: 2000, // $20.00
           },
           quantity: 1,
         },
@@ -88,8 +88,8 @@ serve(async (req) => {
       custom_text: {
         terms_of_service_acceptance: {
           message: isScoutTier
-            ? "By subscribing, you agree to a 1-day free trial. A $0.01 card verification fee will be charged now. Your card will be charged after the trial unless you cancel."
-            : "By subscribing, you agree to a 3-day free trial. A $0.01 card verification fee will be charged now. Your card will be charged after the trial unless you cancel.",
+            ? "By subscribing, you agree to a 1-day free trial. A $20 card authentication hold will be charged now. Your card will be charged after the trial unless you cancel."
+            : "By subscribing, you agree to a 3-day free trial. A $20 card authentication hold will be charged now. Your card will be charged after the trial unless you cancel.",
         },
       },
       subscription_data: {
