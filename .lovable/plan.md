@@ -1,66 +1,110 @@
 
-# Fix: Lower minLegs and Add Single-Player Fallback
 
-## Root Cause (from live test)
+# Role-Based Leg Stacking + Replay Yesterday's Lottery Pattern
 
-Both engines still produced 0 parlays despite the threshold changes:
+## Overview
 
-1. **Sharp Builder**: Found 2 candidates (both Herb Jones). BALANCED and UPSIDE assembled 2 legs each, but `minLegs` is **3** for both -- save condition `2 >= 3` fails. SAFE got 0 legs because Dream Team validation rejected Herb Jones rebounds (minutes 27.3 < 28 minimum).
+Currently, both the **bot-generate-daily-parlays** and **nba-mega-parlay-scanner** (lottery) use greedy top-down composite scoring to fill parlay legs -- they just grab the highest-scoring picks in order. There's no concept of *role-based stacking* where each leg serves a distinct purpose (safe anchor, balanced value, high-odds upside).
 
-2. **Heat Engine**: Only 2 eligible props, both Herb Jones. `buildParlays()` requires 2 **different players** (line 591). With only 1 unique player, both CORE and UPSIDE return null.
+This plan introduces **role-based 3-leg stacking** and runs one additional lottery today using yesterday's pattern to validate it.
 
-## Fix Plan
+---
 
-### 1. Sharp Builder: Lower minLegs for BALANCED and UPSIDE
+## Part 1: Role-Based Leg Assignment in `nba-mega-parlay-scanner`
 
-**File:** `supabase/functions/sharp-parlay-builder/index.ts`
+Instead of greedy composite sort, the lottery scanner will build each 3-leg parlay with intentional roles:
 
-| Config | Current minLegs | New minLegs |
-|--------|----------------|-------------|
-| SAFE | 2 | 2 (keep) |
-| BALANCED | 3 | 2 |
-| UPSIDE | 3 | 2 |
+| Leg | Role | Criteria |
+|-----|------|----------|
+| 1 | **SAFE** | Highest L10 hit rate (>= 70%), mispriced edge confirmed, defense rank 15+ (neutral/weak), lowest variance |
+| 2 | **BALANCED** | Hit rate >= 60%, edge >= 5%, defense-aware (rank 18+), mispriced or sweet spot agreement |
+| 3 | **GREAT ODDS** | Plus-money odds (+120 or higher), alt line shopped, volume candidate, L10 avg clears line by 1.3x+ |
 
-This allows 2-leg parlays to save when only 2 candidates are available.
+### Implementation in `nba-mega-parlay-scanner/index.ts`:
 
-### 2. Sharp Builder: Lower Dream Team Minutes Threshold
+**Replace the single greedy loop (lines 585-636) with a 3-pass role-based builder:**
 
-The SAFE parlay rejected Herb Jones rebounds because minutes (27.3) was below the 28-minute minimum. Lower this to **25** so role players with adequate minutes aren't blocked.
+```text
+Pass 1 (SAFE): Filter scoredProps for hitRate >= 70, edgePct >= 3, defenseRank >= 15 (or null).
+               Sort by hitRate DESC. Pick the best one.
 
-**File:** `supabase/functions/sharp-parlay-builder/index.ts`
+Pass 2 (BALANCED): Filter remaining for hitRate >= 60, edgePct >= 5,
+                    (sweetSpotSide === side OR mispricedSide === side).
+                    Exclude same player as Leg 1.
+                    Sort by compositeScore DESC. Pick the best one.
 
-Find the Dream Team minutes check (currently `< 28`) and change to `< 25`.
+Pass 3 (GREAT ODDS): Filter remaining for odds >= +120, L10 avg >= line * 1.15.
+                      Prefer volumeCandidates. Exclude same player/game as Leg 1-2.
+                      If alt line available, swap to higher line for plus money.
+                      Sort by odds DESC then compositeScore.
+```
 
-### 3. Heat Engine: Allow Same-Player 2-Leg Parlays as Fallback
+Each leg gets tagged with `leg_role: 'safe' | 'balanced' | 'great_odds'` in the saved JSON.
 
-When `buildParlays()` can't find 2 different players, fall back to allowing 2 legs from the same player (different prop types). This is a last-resort -- the existing different-player logic runs first.
+**Fallback**: If any role can't fill, fall back to the existing greedy composite logic to ensure a parlay is still generated.
 
-**File:** `supabase/functions/heat-prop-engine/index.ts`
+---
 
-In `buildParlays()` (around line 590), after the current `leg2` search fails to find a different player:
-- Add a fallback that picks a same-player leg with a **different prop category** (e.g., Herb Jones rebounds + Herb Jones points)
-- Log a warning when using the same-player fallback
-- Mark the parlay with a `same_player_fallback: true` flag in the summary
+## Part 2: Role-Based Stacking in `bot-generate-daily-parlays`
 
-### 4. Heat Engine: Lower Fallback Query Thresholds
+Add a new execution profile `role_stacked_3leg` that uses the same 3-pass logic:
 
-The scan step's fallback query still uses the old `0.60` L10 hit rate threshold (only the confidence was lowered to 0.45). Lower the L10 threshold too.
+```typescript
+{ legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'],
+  minHitRate: 60, sortBy: 'hit_rate', useAltLines: true }
+```
 
-**File:** `supabase/functions/heat-prop-engine/index.ts`
+In the parlay assembly loop, when `strategy === 'role_stacked_3leg'`:
+- Leg 1: Pick from enrichedSweetSpots with `l10_hit_rate >= 0.70`, no defense hard-block, strongest composite
+- Leg 2: Pick with `l10_hit_rate >= 0.60`, `isDoubleConfirmed || isMispriced`, composite >= 75
+- Leg 3: Pick with plus-money alt line or highest `oddsValueScore`, volume candidate preferred
 
-Find the fallback `.gte("l10_hit_rate", 0.60)` and change to `.gte("l10_hit_rate", 0.50)`.
+---
 
-## Summary of Changes
+## Part 3: Replay Yesterday's Lottery Pattern
 
-| Change | File | Why |
-|--------|------|-----|
-| BALANCED minLegs 3 to 2 | sharp-parlay-builder | 2-leg parlays can save |
-| UPSIDE minLegs 3 to 2 | sharp-parlay-builder | 2-leg parlays can save |
-| Dream Team minutes 28 to 25 | sharp-parlay-builder | Role players pass SAFE validation |
-| Same-player fallback in buildParlays | heat-prop-engine | Single-player slates produce output |
-| Lower fallback L10 to 0.50 | heat-prop-engine | More candidates enter the tracker |
+Add a `replay_mode` parameter to `nba-mega-parlay-scanner`. When `{ replay: true }` is passed:
+
+1. Fetch yesterday's lottery parlay from `bot_daily_parlays` where `strategy_name = 'mega_lottery_scanner'` and `parlay_date = yesterday`
+2. Extract the **pattern**: prop types used, sides, defense rank thresholds, odds ranges, hit rate ranges
+3. Apply the same filters but with today's player data:
+   - Same prop type distribution (e.g., if yesterday had 2 points + 1 threes, replicate)
+   - Same side distribution (e.g., 2 OVER + 1 UNDER)
+   - Same defense rank floor (e.g., all facing rank 18+ defense)
+   - Same minimum hit rate floor
+4. Save the replay parlay as `strategy_name: 'mega_lottery_replay'` to `bot_daily_parlays`
+5. Send a Telegram report comparing the two patterns
+
+---
 
 ## Files Modified
 
-1. `supabase/functions/sharp-parlay-builder/index.ts` -- minLegs, minutes threshold
-2. `supabase/functions/heat-prop-engine/index.ts` -- same-player fallback, L10 threshold
+### 1. `supabase/functions/nba-mega-parlay-scanner/index.ts`
+- Replace greedy loop (lines 585-636) with 3-pass role-based builder
+- Add `leg_role` tag to each leg in saved JSON
+- Add `replay_mode` handler that fetches yesterday's pattern and replicates it
+- Save replay parlay separately as `mega_lottery_replay`
+
+### 2. `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Add `role_stacked_3leg` profiles to execution tier (2 slots)
+- Add role-based selection logic in the assembly loop when strategy matches
+- Tag legs with `leg_role` in saved parlay data
+
+---
+
+## Leg Role Validation Checklist
+
+Each leg must pass ALL of these before inclusion:
+
+| Check | Safe | Balanced | Great Odds |
+|-------|------|----------|------------|
+| Defense rank (soft = rank 18+) | >= 15 | >= 18 | any |
+| L10 hit rate | >= 70% | >= 60% | >= 55% |
+| Mispriced edge | >= 3% | >= 5% | >= 3% |
+| Sweet spot / mispriced agree | required | either | either |
+| Odds | any | any | >= +120 |
+| Alt line shopped | no | optional | yes (preferred) |
+| L10 avg vs line buffer | >= 1.1x | >= 1.15x | >= 1.3x |
+| `hasCorrelatedProp` check | yes | yes | yes |
+| Different player per leg | yes | yes | yes |
+
