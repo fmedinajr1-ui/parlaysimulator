@@ -1,27 +1,33 @@
 
 
-# Change Card Verification from $0.01 to $20.00
+# Add Prop Type Diversity Enforcement to Lottery Scanner
 
-## Current State (Verified)
+## Problem
+The lottery scanner can stack multiple legs of the same prop type (e.g., 3-4 threes legs), reducing diversity and increasing correlation risk.
 
-Both checkout functions correctly enforce free trials:
-- `create-bot-checkout`: 3-day trial (1-day for scout tier), card-only, TOS required, auto-cancel if no payment method
-- `create-checkout`: 3-day trial, card-only, TOS required, auto-cancel if no payment method
-
-The card verification fee is currently $0.01 (`unit_amount: 1`) in both files.
+## Solution
+Add a single guard in `passesBasicChecks` to cap any normalized prop type at 2 legs max per parlay.
 
 ## Changes
 
-### 1. `supabase/functions/create-bot-checkout/index.ts`
-- Change `unit_amount: 1` to `unit_amount: 2000` ($20.00)
-- Update product name from "Card verification fee" to "Card authentication hold"
-- Update TOS message: replace "$0.01" with "$20" in both scout and non-scout messages
+### File: `supabase/functions/nba-mega-parlay-scanner/index.ts`
 
-### 2. `supabase/functions/create-checkout/index.ts`
-- Change `unit_amount: 1` to `unit_amount: 2000` ($20.00)
-- Update product name from "Card verification fee" to "Card authentication hold"
-- Update TOS message: replace "$0.01" with "$20"
+**1. Add constant (line 596, after `MAX_PER_GAME`):**
+```typescript
+const MAX_SAME_PROP = 2;
+```
 
-## Note
-The $20 charge is a one-time line item added to the checkout session alongside the subscription. Stripe will charge this immediately at checkout while the subscription enters the trial period. If you want this to be a refundable hold rather than a permanent charge, that would require a different Stripe flow (using SetupIntents with authorization holds), which is significantly more complex. This plan keeps the current approach of a real charge.
+**2. Add check in `passesBasicChecks` (before `return true` at line 611):**
+```typescript
+const propNorm = normalizePropType(prop.prop_type);
+const sameTypeCount = existingLegs.filter(l => normalizePropType(l.prop_type) === propNorm).length;
+if (sameTypeCount >= MAX_SAME_PROP) return false;
+```
+
+This single change covers all build paths -- role-based (safe/balanced/great_odds), replay mode, relaxed fallbacks, and greedy fill -- since they all call `passesBasicChecks`.
+
+## Result
+- Any 3-leg parlay must have at least 2 different prop categories
+- No prop type (threes, points, rebounds, etc.) can appear more than twice
+- Zero risk of 4x threes stacking
 
