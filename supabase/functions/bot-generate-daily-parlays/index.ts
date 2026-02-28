@@ -3936,7 +3936,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .from('mispriced_lines')
     .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, defense_adjusted_avg, opponent_defense_rank')
     .eq('analysis_date', targetDate)
-    .gte('edge_pct', -999) // get all, sort by abs edge
+    .gte('edge_pct', 3) // require minimum 3% positive edge
     .order('edge_pct', { ascending: false })
     .limit(100);
 
@@ -5365,7 +5365,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const enrichedMispricedPicks: EnrichedPick[] = (rawMispricedLines || []).map((ml: any) => {
     const side = (ml.signal || 'OVER').toLowerCase();
     const category = mapPropTypeToCategory(ml.prop_type);
-    const absEdge = Math.abs(ml.edge_pct || 0);
+    const absEdge = ml.edge_pct || 0; // no Math.abs — negatives filtered at source
     const tierBonus = ml.confidence_tier === 'ELITE' ? 15 : ml.confidence_tier === 'HIGH' ? 10 : 5;
     
     // Cross-engine conviction multiplier: if risk engine agrees on side, boost score
@@ -5481,8 +5481,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       isTripleConfirmed,
       engineCount,
       archetype: matchedArchetype,
+      edge_pct: ml.edge_pct || 0,
     } as EnrichedPick;
-  }).filter((p: EnrichedPick) => Math.abs(p.line) > 0 && p.player_name);
+  }).filter((p: any) => Math.abs(p.line) > 0 && p.player_name && (p.edge_pct >= 3));
 
   console.log(`[Bot] 🔥 Double-confirmed picks: ${doubleConfirmedCount} out of ${enrichedMispricedPicks.length} mispriced lines`);
 
@@ -6394,6 +6395,15 @@ async function generateTierParlays(
           if (!loggedNegEdgeKeys.has(negKey)) {
             console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
             loggedNegEdgeKeys.add(negKey);
+          }
+          continue;
+        }
+        // EDGE_PCT SAFETY NET: Block any pick with negative or insufficient edge_pct from mispriced_lines
+        if (playerPick.edge_pct !== undefined && playerPick.edge_pct < 3) {
+          const edgeKey = `${legData.player_name}_${legData.prop_type}_edge`;
+          if (!loggedNegEdgeKeys.has(edgeKey)) {
+            console.log(`[EdgePctBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} (edge_pct: ${playerPick.edge_pct.toFixed(1)}% < 3% min)`);
+            loggedNegEdgeKeys.add(edgeKey);
           }
           continue;
         }
@@ -8649,14 +8659,16 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Filter mispriced lines to unused ones
+      // Filter mispriced lines to unused ones with positive edge
       const unusedMispriced = (rawMispricedLines || []).filter((ml: any) => {
         const key = `${(ml.player_name || '').toLowerCase().trim()}|${(ml.prop_type || '').toLowerCase().trim()}`;
-        return !usedPlayerProps.has(key);
+        if (usedPlayerProps.has(key)) return false;
+        if ((ml.edge_pct || 0) < 3) return false; // block negative/low edge
+        return true;
       });
 
-      // Sort by absolute edge percentage descending
-      unusedMispriced.sort((a: any, b: any) => Math.abs(b.edge_pct || 0) - Math.abs(a.edge_pct || 0));
+      // Sort by edge percentage descending (all positive now)
+      unusedMispriced.sort((a: any, b: any) => (b.edge_pct || 0) - (a.edge_pct || 0));
 
       console.log(`[Bot v2] 🧹 SWEEP: ${unusedMispriced.length} unused mispriced lines (of ${(rawMispricedLines || []).length} total)`);
 
