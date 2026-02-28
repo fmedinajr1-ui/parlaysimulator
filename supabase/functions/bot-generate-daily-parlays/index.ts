@@ -910,6 +910,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
+      // ROLE-STACKED 3-LEG: SAFE/BALANCED/GREAT_ODDS intentional stacking
+      { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
+      { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
     ],
   },
 };
@@ -5841,8 +5844,92 @@ async function generateTierParlays(
     const isMultiEngineProfile = profile.strategy.startsWith('multi_engine');
     // GOD MODE LOCK: intersection of triple-confirmed + proven winners + favorable matchup
     const isGodModeLockProfile = profile.strategy === 'god_mode_lock';
+    // ROLE-STACKED 3-LEG: intentional SAFE/BALANCED/GREAT_ODDS stacking
+    const isRoleStackedProfile = profile.strategy === 'role_stacked_3leg';
     
-    if (isGodModeLockProfile) {
+    if (isRoleStackedProfile) {
+      // Build 3-pass role-based parlay from enrichedSweetSpots
+      const nbaPlayerPicks = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        return true;
+      });
+
+      // PASS 1: SAFE — l10_hit_rate >= 70%, no defense hard-block, strongest composite
+      const safePick = nbaPlayerPicks
+        .filter(p => {
+          const hr = p.l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          if (hrPct < 70) return false;
+          const defRank = (p as any).defenseMatchupRank ?? null;
+          if (defRank !== null && defRank < 15) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+          const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+          return bHr - aHr;
+        })[0];
+
+      // PASS 2: BALANCED — l10_hit_rate >= 60%, isDoubleConfirmed || isMispriced, composite >= 75
+      const usedSafeName = safePick ? (safePick.player_name || '').toLowerCase() : '';
+      const balancedPick = nbaPlayerPicks
+        .filter(p => {
+          if ((p.player_name || '').toLowerCase() === usedSafeName) return false;
+          const hr = p.l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          if (hrPct < 60) return false;
+          if (!(p as any).isDoubleConfirmed && !(p as any).isMispriced) return false;
+          if (p.compositeScore < 75) return false;
+          const defRank = (p as any).defenseMatchupRank ?? null;
+          if (defRank !== null && defRank < 18) return false;
+          return true;
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore)[0];
+
+      // PASS 3: GREAT ODDS — plus-money alt line or highest oddsValueScore, volume candidate preferred
+      const usedNames = new Set([usedSafeName, balancedPick ? (balancedPick.player_name || '').toLowerCase() : '']);
+      const greatOddsPick = nbaPlayerPicks
+        .filter(p => {
+          if (usedNames.has((p.player_name || '').toLowerCase())) return false;
+          const hr = p.l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          if (hrPct < 55) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          // Prefer plus-money odds, then oddsValueScore
+          const aPlus = a.americanOdds >= 120 ? 1 : 0;
+          const bPlus = b.americanOdds >= 120 ? 1 : 0;
+          if (bPlus !== aPlus) return bPlus - aPlus;
+          return (b.oddsValueScore || 0) - (a.oddsValueScore || 0);
+        })[0];
+
+      // Build candidatePicks from the 3 role picks
+      const rolePicks = [safePick, balancedPick, greatOddsPick].filter(Boolean);
+      if (rolePicks.length < 3) {
+        // Fallback: fill from top composite
+        const remaining = nbaPlayerPicks
+          .filter(p => !usedNames.has((p.player_name || '').toLowerCase()))
+          .sort((a, b) => b.compositeScore - a.compositeScore);
+        for (const p of remaining) {
+          if (rolePicks.length >= 3) break;
+          if (!usedNames.has((p.player_name || '').toLowerCase())) {
+            rolePicks.push(p);
+            usedNames.add((p.player_name || '').toLowerCase());
+          }
+        }
+      }
+      candidatePicks = rolePicks as EnrichedPick[];
+      
+      // Tag the leg roles for later
+      const roleLabels = ['safe', 'balanced', 'great_odds'];
+      for (let ri = 0; ri < candidatePicks.length; ri++) {
+        (candidatePicks[ri] as any)._legRole = roleLabels[ri] || 'fallback';
+      }
+      
+      console.log(`[Bot] ${tier}/role_stacked_3leg: ${candidatePicks.length} role picks (safe: ${safePick ? safePick.player_name : 'none'}, balanced: ${balancedPick ? balancedPick.player_name : 'none'}, great_odds: ${greatOddsPick ? greatOddsPick.player_name : 'none'})`);
+    } else if (isGodModeLockProfile) {
       // GOD MODE: filter for picks that pass ALL quality gates simultaneously
       const godCandidates = [
         ...(pool.tripleConfirmedPicks || []),
@@ -6431,6 +6518,7 @@ async function generateTierParlays(
           line_adjustment_direction: lineAdjustmentDirection,
           original_line_before_downgrade: originalLineBeforeAdjust,
           downgrade_reason: adjustReason || null,
+          leg_role: (playerPick as any)._legRole || null,
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
