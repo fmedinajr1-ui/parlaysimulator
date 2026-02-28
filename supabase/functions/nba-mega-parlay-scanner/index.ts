@@ -114,6 +114,17 @@ function propToDefenseCategory(propType: string): string | null {
   return null;
 }
 
+function getYesterdayEasternDate(): string {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(yesterday);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -125,10 +136,16 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
+    let replayMode = false;
+    try {
+      const body = await req.json();
+      replayMode = body?.replay === true;
+    } catch { /* no body or invalid JSON, that's fine */ }
+
     if (!apiKey) throw new Error('THE_ODDS_API_KEY not configured');
 
     const today = getEasternDate();
-    console.log(`[MegaParlay] Scanning NBA props for ${today}, +100 odds only`);
+    console.log(`[MegaParlay] Scanning NBA props for ${today}, +100 odds only${replayMode ? ' [REPLAY MODE]' : ''}`);
 
     // Step 1: Get NBA events first, then fetch player props per event
     const markets = 'player_points,player_rebounds,player_assists,player_threes,player_points_rebounds_assists';
@@ -574,66 +591,206 @@ serve(async (req) => {
     // Re-sort after alt line swaps
     scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
 
-    // Step 5: Build optimal parlay (greedy, 3-5 legs)
-    // FIX #6: Stricter filters
-    const MIN_HIT_RATE = 60; // Raised from 55
-    const MIN_EDGE = 3;      // New: 3% minimum edge floor
-    const MAX_LEGS = 5;
+    // Step 5: Build 3-leg role-based parlay (SAFE / BALANCED / GREAT ODDS)
     const MIN_LEGS = 3;
     const MAX_PER_GAME = 2;
 
-    const parlayLegs: ScoredProp[] = [];
-    const gameCount = new Map<string, number>();
-    const usedPlayers = new Set<string>();
-
-    // MIN_LINES filter: reject binary blocks/steals props
     const LOTTERY_MIN_LINES: Record<string, number> = {
       player_blocks: 1.5,
       player_steals: 1.5,
     };
 
-    for (const prop of scoredProps) {
-      if (parlayLegs.length >= MAX_LEGS) break;
-
-      // Reject binary 0.5-line blocks/steals
+    // Helper: basic eligibility checks shared across all roles
+    function passesBasicChecks(prop: ScoredProp, existingLegs: ScoredProp[], gameCount: Map<string, number>): boolean {
       const lotteryMin = LOTTERY_MIN_LINES[prop.prop_type];
-      if (lotteryMin && prop.line < lotteryMin) continue;
-
-      // FIX #6: Strict hit rate — must meet minimum, no 0% fallback
-      if (prop.hitRate < MIN_HIT_RATE) continue;
-
-      // FIX #6: Edge must be >= 3% (already filtered at source, but safety net)
-      if (prop.edgePct > 0 && prop.edgePct < MIN_EDGE) continue;
-
-      // Game diversity
+      if (lotteryMin && prop.line < lotteryMin) return false;
       const gc = gameCount.get(prop.game) || 0;
-      if (gc >= MAX_PER_GAME) continue;
-
-      // No correlated props (same player OR base+combo overlap)
-      const existingForCheck = parlayLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
-      if (hasCorrelatedProp(existingForCheck, prop.player_name, prop.prop_type)) continue;
-
-      parlayLegs.push(prop);
-      gameCount.set(prop.game, gc + 1);
-      usedPlayers.add(normalizeName(prop.player_name));
+      if (gc >= MAX_PER_GAME) return false;
+      const existingForCheck = existingLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
+      if (hasCorrelatedProp(existingForCheck, prop.player_name, prop.prop_type)) return false;
+      return true;
     }
 
-    // Relaxed fallback — but still require hit rate >= 50 (no 0% props)
-    if (parlayLegs.length < MIN_LEGS) {
-      for (const prop of scoredProps) {
-        if (parlayLegs.length >= MIN_LEGS) break;
-        const existingForCheckRelaxed = parlayLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
-        if (hasCorrelatedProp(existingForCheckRelaxed, prop.player_name, prop.prop_type)) continue;
-        const gc = gameCount.get(prop.game) || 0;
-        if (gc >= MAX_PER_GAME) continue;
-        if (prop.hitRate < 50) continue; // Relaxed but still requires data
-        if (prop.compositeScore < 20) continue; // Must have some quality signal
+    const parlayLegs: (ScoredProp & { leg_role: string })[] = [];
+    const gameCount = new Map<string, number>();
+    const usedPlayers = new Set<string>();
 
-        parlayLegs.push(prop);
-        gameCount.set(prop.game, gc + 1);
-        usedPlayers.add(nameKey);
+    // === REPLAY MODE: Fetch yesterday's pattern and apply to today's data ===
+    let replayPattern: { propTypes: string[]; sides: string[]; minDefenseRank: number; minHitRate: number } | null = null;
+    if (replayMode) {
+      try {
+        const yesterday = getYesterdayEasternDate();
+        const { data: yesterdayParlays } = await supabase
+          .from('bot_daily_parlays')
+          .select('legs')
+          .eq('strategy_name', 'mega_lottery_scanner')
+          .eq('parlay_date', yesterday)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (yesterdayParlays && yesterdayParlays.length > 0) {
+          const yLegs = Array.isArray(yesterdayParlays[0].legs) ? yesterdayParlays[0].legs : [];
+          const propTypes = yLegs.map((l: any) => normalizePropType(l.prop_type || ''));
+          const sides = yLegs.map((l: any) => (l.side || 'OVER').toUpperCase());
+          const defRanks = yLegs.map((l: any) => l.defense_rank || 0).filter((r: number) => r > 0);
+          const hitRates = yLegs.map((l: any) => l.hit_rate || 0).filter((r: number) => r > 0);
+          replayPattern = {
+            propTypes,
+            sides,
+            minDefenseRank: defRanks.length > 0 ? Math.min(...defRanks) : 15,
+            minHitRate: hitRates.length > 0 ? Math.min(...hitRates) : 55,
+          };
+          console.log(`[MegaParlay] REPLAY: Yesterday's pattern — props: [${propTypes.join(', ')}], sides: [${sides.join(', ')}], minDef: ${replayPattern.minDefenseRank}, minHR: ${replayPattern.minHitRate}`);
+        } else {
+          console.log(`[MegaParlay] REPLAY: No yesterday parlay found, falling back to role-based`);
+        }
+      } catch (e) {
+        console.error(`[MegaParlay] REPLAY fetch error:`, e);
       }
     }
+
+    if (replayPattern && replayPattern.propTypes.length >= MIN_LEGS) {
+      // === REPLAY BUILD: Match yesterday's pattern with today's players ===
+      console.log(`[MegaParlay] Building REPLAY parlay from yesterday's pattern`);
+      for (let i = 0; i < replayPattern.propTypes.length && parlayLegs.length < replayPattern.propTypes.length; i++) {
+        const targetProp = replayPattern.propTypes[i];
+        const targetSide = replayPattern.sides[i] || 'OVER';
+
+        const candidate = scoredProps.find(p => {
+          if (normalizePropType(p.prop_type) !== targetProp) return false;
+          if (p.side !== targetSide) return false;
+          if (p.hitRate < replayPattern!.minHitRate) return false;
+          if (replayPattern!.minDefenseRank > 0 && p.defenseRank !== null && p.defenseRank < replayPattern!.minDefenseRank) return false;
+          return passesBasicChecks(p, parlayLegs, gameCount);
+        });
+
+        if (candidate) {
+          parlayLegs.push({ ...candidate, leg_role: `replay_leg_${i + 1}` });
+          gameCount.set(candidate.game, (gameCount.get(candidate.game) || 0) + 1);
+          usedPlayers.add(normalizeName(candidate.player_name));
+          console.log(`[MegaParlay] REPLAY leg ${i + 1}: ${candidate.player_name} ${candidate.prop_type} ${candidate.side} ${candidate.line} +${candidate.odds}`);
+        } else {
+          console.log(`[MegaParlay] REPLAY leg ${i + 1}: No match for ${targetProp} ${targetSide}, will fill with role-based`);
+        }
+      }
+    }
+
+    // === ROLE-BASED 3-PASS BUILDER (primary path, or fills remaining replay gaps) ===
+    if (parlayLegs.length < MIN_LEGS) {
+      // PASS 1: SAFE LEG — highest hit rate, mispriced edge confirmed, neutral/weak defense
+      if (!parlayLegs.some(l => l.leg_role === 'safe')) {
+        const safeCandidates = scoredProps
+          .filter(p => {
+            if (p.hitRate < 70) return false;
+            if (p.edgePct < 3) return false;
+            if (p.defenseRank !== null && p.defenseRank < 15) return false;
+            if (p.sweetSpotSide !== p.side && p.mispricedSide !== p.side) return false;
+            if (p.l10Avg !== null && p.side === 'OVER' && p.l10Avg < p.line * 1.1) return false;
+            if (p.l10Avg !== null && p.side === 'UNDER' && p.line < (p.l10Avg || 0) * 1.1) return false;
+            return passesBasicChecks(p, parlayLegs, gameCount);
+          })
+          .sort((a, b) => b.hitRate - a.hitRate);
+
+        if (safeCandidates.length > 0) {
+          const pick = safeCandidates[0];
+          parlayLegs.push({ ...pick, leg_role: 'safe' });
+          gameCount.set(pick.game, (gameCount.get(pick.game) || 0) + 1);
+          usedPlayers.add(normalizeName(pick.player_name));
+          console.log(`[MegaParlay] SAFE leg: ${pick.player_name} ${pick.prop_type} ${pick.side} ${pick.line} +${pick.odds} (HR: ${pick.hitRate.toFixed(1)}%, edge: ${pick.edgePct.toFixed(1)}%, def: ${pick.defenseRank})`);
+        } else {
+          console.log(`[MegaParlay] SAFE: No candidate met all criteria, relaxing...`);
+          // Relaxed safe: 65%+ hit rate, any edge
+          const relaxedSafe = scoredProps.find(p => p.hitRate >= 65 && passesBasicChecks(p, parlayLegs, gameCount));
+          if (relaxedSafe) {
+            parlayLegs.push({ ...relaxedSafe, leg_role: 'safe' });
+            gameCount.set(relaxedSafe.game, (gameCount.get(relaxedSafe.game) || 0) + 1);
+            usedPlayers.add(normalizeName(relaxedSafe.player_name));
+            console.log(`[MegaParlay] SAFE (relaxed): ${relaxedSafe.player_name} ${relaxedSafe.prop_type} ${relaxedSafe.side} +${relaxedSafe.odds}`);
+          }
+        }
+      }
+
+      // PASS 2: BALANCED LEG — 60%+ hit rate, 5%+ edge, defense rank 18+, sweet spot or mispriced agree
+      if (parlayLegs.length < MIN_LEGS && !parlayLegs.some(l => l.leg_role === 'balanced')) {
+        const balancedCandidates = scoredProps
+          .filter(p => {
+            if (p.hitRate < 60) return false;
+            if (p.edgePct < 5) return false;
+            if (p.defenseRank !== null && p.defenseRank < 18) return false;
+            if (p.sweetSpotSide !== p.side && p.mispricedSide !== p.side) return false;
+            if (p.l10Avg !== null && p.side === 'OVER' && p.l10Avg < p.line * 1.15) return false;
+            return passesBasicChecks(p, parlayLegs, gameCount);
+          })
+          .sort((a, b) => b.compositeScore - a.compositeScore);
+
+        if (balancedCandidates.length > 0) {
+          const pick = balancedCandidates[0];
+          parlayLegs.push({ ...pick, leg_role: 'balanced' });
+          gameCount.set(pick.game, (gameCount.get(pick.game) || 0) + 1);
+          usedPlayers.add(normalizeName(pick.player_name));
+          console.log(`[MegaParlay] BALANCED leg: ${pick.player_name} ${pick.prop_type} ${pick.side} ${pick.line} +${pick.odds} (HR: ${pick.hitRate.toFixed(1)}%, edge: ${pick.edgePct.toFixed(1)}%, def: ${pick.defenseRank})`);
+        } else {
+          console.log(`[MegaParlay] BALANCED: No candidate met all criteria, relaxing...`);
+          const relaxedBalanced = scoredProps.find(p => p.hitRate >= 55 && p.edgePct >= 3 && passesBasicChecks(p, parlayLegs, gameCount));
+          if (relaxedBalanced) {
+            parlayLegs.push({ ...relaxedBalanced, leg_role: 'balanced' });
+            gameCount.set(relaxedBalanced.game, (gameCount.get(relaxedBalanced.game) || 0) + 1);
+            usedPlayers.add(normalizeName(relaxedBalanced.player_name));
+            console.log(`[MegaParlay] BALANCED (relaxed): ${relaxedBalanced.player_name} ${relaxedBalanced.prop_type} ${relaxedBalanced.side} +${relaxedBalanced.odds}`);
+          }
+        }
+      }
+
+      // PASS 3: GREAT ODDS LEG — +120 or higher, L10 avg clears line by 1.3x, volume candidate preferred
+      if (parlayLegs.length < MIN_LEGS && !parlayLegs.some(l => l.leg_role === 'great_odds')) {
+        const greatOddsCandidates = scoredProps
+          .filter(p => {
+            if (p.odds < 120) return false;
+            if (p.hitRate < 55) return false;
+            if (p.l10Avg !== null && p.side === 'OVER' && p.l10Avg < p.line * 1.3) return false;
+            return passesBasicChecks(p, parlayLegs, gameCount);
+          })
+          .sort((a, b) => {
+            // Prefer volume candidates, then sort by odds DESC then composite
+            if (a.volumeCandidate !== b.volumeCandidate) return a.volumeCandidate ? -1 : 1;
+            if (b.odds !== a.odds) return b.odds - a.odds;
+            return b.compositeScore - a.compositeScore;
+          });
+
+        if (greatOddsCandidates.length > 0) {
+          const pick = greatOddsCandidates[0];
+          parlayLegs.push({ ...pick, leg_role: 'great_odds' });
+          gameCount.set(pick.game, (gameCount.get(pick.game) || 0) + 1);
+          usedPlayers.add(normalizeName(pick.player_name));
+          console.log(`[MegaParlay] GREAT ODDS leg: ${pick.player_name} ${pick.prop_type} ${pick.side} ${pick.line} +${pick.odds} (HR: ${pick.hitRate.toFixed(1)}%, L10 avg: ${pick.l10Avg}, volume: ${pick.volumeCandidate})`);
+        } else {
+          console.log(`[MegaParlay] GREAT ODDS: No candidate met all criteria, relaxing...`);
+          const relaxedGreat = scoredProps.find(p => p.odds >= 110 && p.hitRate >= 50 && passesBasicChecks(p, parlayLegs, gameCount));
+          if (relaxedGreat) {
+            parlayLegs.push({ ...relaxedGreat, leg_role: 'great_odds' });
+            gameCount.set(relaxedGreat.game, (gameCount.get(relaxedGreat.game) || 0) + 1);
+            usedPlayers.add(normalizeName(relaxedGreat.player_name));
+            console.log(`[MegaParlay] GREAT ODDS (relaxed): ${relaxedGreat.player_name} ${relaxedGreat.prop_type} ${relaxedGreat.side} +${relaxedGreat.odds}`);
+          }
+        }
+      }
+
+      // FALLBACK: If still under MIN_LEGS, fill with greedy composite (existing logic)
+      if (parlayLegs.length < MIN_LEGS) {
+        console.log(`[MegaParlay] Role-based produced ${parlayLegs.length} legs, filling remaining with greedy composite`);
+        for (const prop of scoredProps) {
+          if (parlayLegs.length >= MIN_LEGS) break;
+          if (prop.hitRate < 50) continue;
+          if (prop.compositeScore < 20) continue;
+          if (!passesBasicChecks(prop, parlayLegs, gameCount)) continue;
+          parlayLegs.push({ ...prop, leg_role: 'fallback' });
+          gameCount.set(prop.game, (gameCount.get(prop.game) || 0) + 1);
+          usedPlayers.add(normalizeName(prop.player_name));
+        }
+      }
+    }
+
+    console.log(`[MegaParlay] Built ${parlayLegs.length}-leg parlay with roles: [${parlayLegs.map(l => l.leg_role).join(', ')}]`);
 
     // Calculate parlay odds
     let combinedDecimalOdds = 1;
@@ -667,6 +824,7 @@ serve(async (req) => {
 
     const parlayBreakdown = parlayLegs.map((leg, i) => ({
       leg: i + 1,
+      leg_role: leg.leg_role,
       player: leg.player_name,
       prop: leg.prop_type.replace('player_', ''),
       side: leg.side,
@@ -733,22 +891,27 @@ serve(async (req) => {
           defense_rank: leg.defenseRank,
           defense_bonus: leg.defenseBonus,
           volume_candidate: leg.volumeCandidate,
+          leg_role: leg.leg_role,
         }));
 
         const combinedProb = parlayLegs.reduce((acc, leg) => acc * americanToImpliedProb(leg.odds), 1);
+        const strategyName = replayMode ? 'mega_lottery_replay' : 'mega_lottery_scanner';
+        const rationale = replayMode
+          ? `Replay of yesterday's pattern: [${replayPattern?.propTypes.join(', ')}] sides [${replayPattern?.sides.join(', ')}]. Role-based fill for gaps.`
+          : `Role-based scanner: SAFE/BALANCED/GREAT_ODDS. ${volumeCandidates.length} volume candidates, ${altLineResults.size} alt lines checked.`;
 
         const { error: insertError } = await supabase
           .from('bot_daily_parlays')
           .insert({
             parlay_date: today,
-            strategy_name: 'mega_lottery_scanner',
+            strategy_name: strategyName,
             tier: 'lottery',
             legs: parlayLegsJson,
             leg_count: parlayLegs.length,
             combined_probability: combinedProb,
             expected_odds: combinedAmericanOdds,
             is_simulated: true,
-            selection_rationale: `Lottery scanner: ${volumeCandidates.length} volume candidates, ${altLineResults.size} alt lines checked. Defense-aware + direction-validated.`,
+            selection_rationale: rationale,
           });
 
         if (insertError) {
@@ -767,9 +930,11 @@ serve(async (req) => {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'mega_parlay_scanner',
+          type: replayMode ? 'mega_parlay_replay' : 'mega_parlay_scanner',
           data: {
             date: today,
+            isReplay: replayMode,
+            replayPattern: replayPattern || null,
             scanned: rawProps.length,
             events: events.length,
             qualified: scoredProps.length,
