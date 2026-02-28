@@ -201,7 +201,7 @@ const PARLAY_CONFIGS = {
     maxLegs: 5,
     maxVolatilityLegs: 1,
     confidenceThreshold: 0.55,
-    minEdge: 10,
+    minEdge: 5,
     requireTeamDiversity: true,
   },
   DREAM_TEAM_3: {
@@ -209,31 +209,31 @@ const PARLAY_CONFIGS = {
     maxLegs: 3,
     maxVolatilityLegs: 0,
     confidenceThreshold: 0.65,
-    minEdge: 12,
+    minEdge: 8,
     requireTeamDiversity: true,
   },
   SAFE: {
     minLegs: 2,
     maxLegs: 3,
     maxVolatilityLegs: 0,
-    confidenceThreshold: 0.7,
-    minEdge: 12,
+    confidenceThreshold: 0.55,
+    minEdge: 8,
     requireTeamDiversity: false,
   },
   BALANCED: {
     minLegs: 3,
     maxLegs: 4,
     maxVolatilityLegs: 1,
-    confidenceThreshold: 0.6,
-    minEdge: 8,
+    confidenceThreshold: 0.45,
+    minEdge: 5,
     requireTeamDiversity: false,
   },
   UPSIDE: {
     minLegs: 3,
     maxLegs: 4,
     maxVolatilityLegs: 1,
-    confidenceThreshold: 0.5,
-    minEdge: 5,
+    confidenceThreshold: 0.35,
+    minEdge: 3,
     requireTeamDiversity: false,
   },
 };
@@ -696,7 +696,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   );
 
   // FALLBACK: If risk engine picks are too thin (<6), supplement from category_sweet_spots
-  const MIN_RISK_PICKS_THRESHOLD = 6;
+  const MIN_RISK_PICKS_THRESHOLD = 4;
   let usedFallback = false;
 
   if (props.length < MIN_RISK_PICKS_THRESHOLD) {
@@ -707,8 +707,8 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       .select("player_name, prop_type, recommended_side, recommended_line, l10_hit_rate, confidence_score, actual_line, projected_value, season_avg, l10_avg")
       .eq("analysis_date", today)
       .eq("is_active", true)
-      .gte("l10_hit_rate", 0.60) // 60%+ L10 hit rate
-      .gte("confidence_score", 0.65); // 65%+ confidence
+      .gte("l10_hit_rate", 0.50) // 50%+ L10 hit rate (lowered for thin slates)
+      .gte("confidence_score", 0.45); // 45%+ confidence (lowered for thin slates)
 
     const existingKeys = new Set(props.map((p: any) => 
       `${p.player_name?.toLowerCase()}_${normalizePropType(p.prop_type)}`
