@@ -41,24 +41,21 @@ serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    // Generate a one-time password and insert into DB (only for non-scout tier)
-    let passwordId: string | undefined;
-    if (!isScoutTier) {
-      const password = generatePassword();
-      const { data, error } = await supabaseClient
-        .from("bot_access_passwords")
-        .insert({
-          password,
-          created_by: "stripe_checkout",
-          is_active: true,
-          max_uses: 1,
-        })
-        .select("id")
-        .single();
+    // Generate a one-time password for ALL tiers (bot + scout)
+    const password = generatePassword();
+    const { data, error } = await supabaseClient
+      .from("bot_access_passwords")
+      .insert({
+        password,
+        created_by: "stripe_checkout",
+        is_active: true,
+        max_uses: 1,
+      })
+      .select("id")
+      .single();
 
-      if (error) throw new Error(`Failed to create password: ${error.message}`);
-      passwordId = data.id;
-    }
+    if (error) throw new Error(`Failed to create password: ${error.message}`);
+    const passwordId = data.id;
 
     const customers = await stripe.customers.list({ email, limit: 1 });
     let customerId: string | undefined;
@@ -71,8 +68,19 @@ serve(async (req) => {
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : email,
-      line_items: [{ price: resolvedPriceId, quantity: 1 }],
+      line_items: [
+        { price: resolvedPriceId, quantity: 1 },
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: "Card verification fee" },
+            unit_amount: 1, // $0.01
+          },
+          quantity: 1,
+        },
+      ],
       mode: "subscription",
+      payment_method_types: ["card"],
       payment_method_collection: "always",
       consent_collection: {
         terms_of_service: "required",
@@ -80,8 +88,8 @@ serve(async (req) => {
       custom_text: {
         terms_of_service_acceptance: {
           message: isScoutTier
-            ? "By subscribing, you agree to a 1-day free trial. Your card will be charged after the trial unless you cancel."
-            : "By subscribing, you agree to a 3-day free trial. Your card will be charged after the trial unless you cancel.",
+            ? "By subscribing, you agree to a 1-day free trial. A $0.01 card verification fee will be charged now. Your card will be charged after the trial unless you cancel."
+            : "By subscribing, you agree to a 3-day free trial. A $0.01 card verification fee will be charged now. Your card will be charged after the trial unless you cancel.",
         },
       },
       subscription_data: {
@@ -92,10 +100,8 @@ serve(async (req) => {
           },
         },
       },
-      metadata: passwordId ? { password_id: passwordId } : undefined,
-      success_url: isScoutTier
-        ? `${origin}/scout`
-        : `${origin}/bot-success?session_id={CHECKOUT_SESSION_ID}`,
+      metadata: { password_id: passwordId },
+      success_url: `${origin}/bot-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/`,
     });
 

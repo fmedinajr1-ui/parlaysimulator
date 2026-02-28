@@ -1,13 +1,20 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const PRICE_ID = "price_1SYvuT9D6r1PTCBB7ayu2nJz";
+
+function generatePassword(length = 8): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => chars[b % chars.length]).join("");
+}
 
 const logStep = (step: string, details?: any) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : '';
@@ -21,7 +28,8 @@ serve(async (req) => {
 
   const supabaseClient = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_ANON_KEY") ?? ""
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
   );
 
   try {
@@ -38,6 +46,22 @@ serve(async (req) => {
     
     logStep("User authenticated", { userId: user.id, email: user.email });
 
+    // Generate bot access password
+    const password = generatePassword();
+    const { data: pwData, error: pwError } = await supabaseClient
+      .from("bot_access_passwords")
+      .insert({
+        password,
+        created_by: "stripe_checkout",
+        is_active: true,
+        max_uses: 1,
+      })
+      .select("id")
+      .single();
+
+    if (pwError) throw new Error(`Failed to create password: ${pwError.message}`);
+    logStep("Bot password created", { passwordId: pwData.id });
+
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2025-08-27.basil",
     });
@@ -50,7 +74,7 @@ serve(async (req) => {
       logStep("Found existing customer", { customerId });
     }
 
-    const origin = req.headers.get("origin") || "https://9714e2b6-7ba7-45c3-badf-c223a02d206c.lovableproject.com";
+    const origin = req.headers.get("origin") || "https://parlaysimulator.lovable.app";
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
@@ -60,15 +84,24 @@ serve(async (req) => {
           price: PRICE_ID,
           quantity: 1,
         },
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: "Card verification fee" },
+            unit_amount: 1, // $0.01
+          },
+          quantity: 1,
+        },
       ],
       mode: "subscription",
+      payment_method_types: ["card"],
       payment_method_collection: "always",
       consent_collection: {
         terms_of_service: "required",
       },
       custom_text: {
         terms_of_service_acceptance: {
-          message: "By subscribing, you agree to a 3-day free trial. Your card will be charged $99.99/mo after the trial unless you cancel.",
+          message: "By subscribing, you agree to a 3-day free trial. A $0.01 card verification fee will be charged now. Your card will be charged $99.99/mo after the trial unless you cancel.",
         },
       },
       subscription_data: {
@@ -79,10 +112,11 @@ serve(async (req) => {
           },
         },
       },
-      success_url: `${origin}/upload?success=true`,
+      success_url: `${origin}/bot-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/upload?canceled=true`,
       metadata: {
         user_id: user.id,
+        password_id: pwData.id,
       },
     });
 
