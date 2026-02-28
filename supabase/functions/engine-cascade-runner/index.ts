@@ -102,6 +102,31 @@ serve(async (req) => {
 
   console.log(`[Engine Cascade] Starting cascade run - trigger: ${trigger}`);
 
+  // ========== STALE RUN CLEANUP ==========
+  // Mark any "running" cascade jobs older than 30 minutes as failed
+  const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data: staleJobs, error: staleError } = await supabase
+    .from('cron_job_history')
+    .select('id')
+    .eq('job_name', jobName)
+    .eq('status', 'running')
+    .lt('started_at', thirtyMinAgo);
+
+  if (!staleError && staleJobs && staleJobs.length > 0) {
+    console.log(`[Engine Cascade] Found ${staleJobs.length} stale running job(s), marking as failed`);
+    for (const stale of staleJobs) {
+      await supabase
+        .from('cron_job_history')
+        .update({
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+          error_message: 'Timed out - marked stale by next run',
+          result: { error: 'Timed out after 30+ minutes, marked stale by next cascade run' },
+        })
+        .eq('id', stale.id);
+    }
+  }
+
   // ========== PRE-FLIGHT CHECKS ==========
   const preflightResults: { check: string; status: string; detail: string }[] = [];
   
@@ -185,6 +210,10 @@ serve(async (req) => {
     console.log(`[Engine Cascade] Starting step: ${step.name}`);
 
     try {
+      // 90-second timeout per step to prevent cascade hangs
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90_000);
+
       const response = await fetch(`${supabaseUrl}/functions/v1/${step.name}`, {
         method: 'POST',
         headers: {
@@ -192,8 +221,10 @@ serve(async (req) => {
           'Authorization': `Bearer ${supabaseKey}`,
         },
         body: JSON.stringify(step.body),
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
       const stepDuration = Date.now() - stepStart;
 
       if (!response.ok) {
@@ -227,9 +258,12 @@ serve(async (req) => {
       }
     } catch (error) {
       const stepDuration = Date.now() - stepStart;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+      const errorMessage = isTimeout 
+        ? `Timed out after 90s` 
+        : (error instanceof Error ? error.message : String(error));
       
-      console.error(`[Engine Cascade] Step ${step.name} threw error:`, errorMessage);
+      console.error(`[Engine Cascade] Step ${step.name} ${isTimeout ? 'timed out' : 'threw error'}:`, errorMessage);
       
       results.push({
         name: step.name,
