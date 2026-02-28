@@ -23,6 +23,44 @@ function normalizePropType(raw: string): string {
   return s;
 }
 
+// ============= STRICT PROP OVERLAP PREVENTION =============
+const COMBO_BASES: Record<string, string[]> = {
+  pra: ['points', 'rebounds', 'assists'],
+  pr: ['points', 'rebounds'],
+  pa: ['points', 'assists'],
+  ra: ['rebounds', 'assists'],
+};
+
+function hasCorrelatedProp(
+  existingLegs: Array<{ player_name: string; prop_type: string }>,
+  candidatePlayer: string,
+  candidateProp: string
+): boolean {
+  const player = candidatePlayer.toLowerCase().trim();
+  const prop = normalizePropType(candidateProp);
+
+  const playerLegs = existingLegs
+    .filter(l => l.player_name.toLowerCase().trim() === player)
+    .map(l => normalizePropType(l.prop_type));
+
+  if (playerLegs.length === 0) return false;
+
+  const combos = Object.keys(COMBO_BASES);
+  if (combos.includes(prop)) {
+    const bases = COMBO_BASES[prop];
+    if (playerLegs.some(s => bases.includes(s))) return true;
+    if (playerLegs.some(s => combos.includes(s))) return true;
+  }
+  for (const existing of playerLegs) {
+    if (combos.includes(existing)) {
+      const bases = COMBO_BASES[existing];
+      if (bases?.includes(prop)) return true;
+    }
+  }
+
+  return true; // Same player = always block
+}
+
 interface MispricedPick {
   player_name: string;
   prop_type: string;
@@ -236,8 +274,9 @@ serve(async (req) => {
         const parlayKey = `${playerKey}|${propKey}|${parlays.length}`;
         const globalKey = `${playerKey}|${propKey}`;
 
-        // Rule 1: No duplicate players in a parlay
-        if (usedPlayers.has(playerKey)) continue;
+        // Rule 1: No correlated props (same player OR base+combo overlap)
+        const parlayLegsForCheck = parlay.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
+        if (hasCorrelatedProp(parlayLegsForCheck, pick.player_name, pick.prop_type)) continue;
 
         // Rule 2: No duplicate prop types in a parlay
         if (usedPropTypes.has(propKey)) continue;
