@@ -1,90 +1,66 @@
 
+# Fix: Lower minLegs and Add Single-Player Fallback
 
-# Enforce Card-Only Payments + Auto Bot Password on All Subscriptions
+## Root Cause (from live test)
 
-## Problem
+Both engines still produced 0 parlays despite the threshold changes:
 
-1. Users bypass payment using Link, Google Pay, Apple Pay, and other wallet methods that may not properly validate the card during trial signups
-2. The main app subscription (`create-checkout`) does NOT generate a bot access password -- only `create-bot-checkout` does. Users who subscribe through the main flow never get their Telegram bot link + passcode
+1. **Sharp Builder**: Found 2 candidates (both Herb Jones). BALANCED and UPSIDE assembled 2 legs each, but `minLegs` is **3** for both -- save condition `2 >= 3` fails. SAFE got 0 legs because Dream Team validation rejected Herb Jones rebounds (minutes 27.3 < 28 minimum).
 
-## Solution
+2. **Heat Engine**: Only 2 eligible props, both Herb Jones. `buildParlays()` requires 2 **different players** (line 591). With only 1 unique player, both CORE and UPSIDE return null.
 
-### Part 1: Card-Only + $0.01 Hold (Both Checkout Functions)
+## Fix Plan
 
-Add to both `create-checkout` and `create-bot-checkout`:
+### 1. Sharp Builder: Lower minLegs for BALANCED and UPSIDE
 
-- `payment_method_types: ['card']` -- removes Link, Apple Pay, Google Pay, all wallets
-- A one-time `$0.01` "Card verification fee" line item that forces Stripe to authorize the card immediately
-- Updated `custom_text` mentioning the $0.01 verification charge
+**File:** `supabase/functions/sharp-parlay-builder/index.ts`
 
-### Part 2: Auto-Generate Bot Password in Main Checkout
+| Config | Current minLegs | New minLegs |
+|--------|----------------|-------------|
+| SAFE | 2 | 2 (keep) |
+| BALANCED | 3 | 2 |
+| UPSIDE | 3 | 2 |
 
-Currently `create-checkout` redirects to `/upload?success=true` with no bot password. We need to:
+This allows 2-leg parlays to save when only 2 candidates are available.
 
-1. **Add password generation to `create-checkout`** -- same logic as `create-bot-checkout` (generate 8-char password, insert into `bot_access_passwords`, store `password_id` in session metadata)
-2. **Change success URL** from `/upload?success=true` to `/bot-success?session_id={CHECKOUT_SESSION_ID}` so users land on the existing BotSuccess page that shows their one-time passcode + Telegram link
+### 2. Sharp Builder: Lower Dream Team Minutes Threshold
 
-This means every subscriber (bot or main app) automatically gets their Telegram bot access code on the success page.
+The SAFE parlay rejected Herb Jones rebounds because minutes (27.3) was below the 28-minute minimum. Lower this to **25** so role players with adequate minutes aren't blocked.
+
+**File:** `supabase/functions/sharp-parlay-builder/index.ts`
+
+Find the Dream Team minutes check (currently `< 28`) and change to `< 25`.
+
+### 3. Heat Engine: Allow Same-Player 2-Leg Parlays as Fallback
+
+When `buildParlays()` can't find 2 different players, fall back to allowing 2 legs from the same player (different prop types). This is a last-resort -- the existing different-player logic runs first.
+
+**File:** `supabase/functions/heat-prop-engine/index.ts`
+
+In `buildParlays()` (around line 590), after the current `leg2` search fails to find a different player:
+- Add a fallback that picks a same-player leg with a **different prop category** (e.g., Herb Jones rebounds + Herb Jones points)
+- Log a warning when using the same-player fallback
+- Mark the parlay with a `same_player_fallback: true` flag in the summary
+
+### 4. Heat Engine: Lower Fallback Query Thresholds
+
+The scan step's fallback query still uses the old `0.60` L10 hit rate threshold (only the confidence was lowered to 0.45). Lower the L10 threshold too.
+
+**File:** `supabase/functions/heat-prop-engine/index.ts`
+
+Find the fallback `.gte("l10_hit_rate", 0.60)` and change to `.gte("l10_hit_rate", 0.50)`.
+
+## Summary of Changes
+
+| Change | File | Why |
+|--------|------|-----|
+| BALANCED minLegs 3 to 2 | sharp-parlay-builder | 2-leg parlays can save |
+| UPSIDE minLegs 3 to 2 | sharp-parlay-builder | 2-leg parlays can save |
+| Dream Team minutes 28 to 25 | sharp-parlay-builder | Role players pass SAFE validation |
+| Same-player fallback in buildParlays | heat-prop-engine | Single-player slates produce output |
+| Lower fallback L10 to 0.50 | heat-prop-engine | More candidates enter the tracker |
 
 ## Files Modified
 
-### 1. `supabase/functions/create-checkout/index.ts`
-
-- Add `generatePassword()` function (same as in `create-bot-checkout`)
-- Switch from `SUPABASE_ANON_KEY` to `SUPABASE_SERVICE_ROLE_KEY` (needed to insert into `bot_access_passwords`)
-- Generate password and insert into `bot_access_passwords` before creating checkout session
-- Add `payment_method_types: ['card']`
-- Add $0.01 verification line item
-- Store `password_id` in session metadata
-- Change `success_url` to `/bot-success?session_id={CHECKOUT_SESSION_ID}`
-- Update `custom_text` to mention $0.01 hold
-
-### 2. `supabase/functions/create-bot-checkout/index.ts`
-
-- Add `payment_method_types: ['card']`
-- Add $0.01 verification line item to both scout and non-scout flows
-- Update `custom_text` to mention $0.01 hold
-- Generate password for scout tier too (currently skipped) so scout subscribers also get a bot passcode
-- Change scout `success_url` from `/scout` to `/bot-success?session_id={CHECKOUT_SESSION_ID}`
-
-## Technical Details
-
-**$0.01 line item (added to both functions):**
-```typescript
-line_items: [
-  { price: PRICE_ID, quantity: 1 },
-  {
-    price_data: {
-      currency: 'usd',
-      product_data: { name: 'Card verification fee' },
-      unit_amount: 1, // $0.01
-    },
-    quantity: 1,
-  },
-],
-payment_method_types: ['card'],
-```
-
-**Password generation (added to create-checkout):**
-```typescript
-const password = generatePassword();
-const { data, error } = await supabaseClient
-  .from("bot_access_passwords")
-  .insert({ password, created_by: "stripe_checkout", is_active: true, max_uses: 1 })
-  .select("id").single();
-```
-
-**Success URL change (create-checkout):**
-```
-Before: /upload?success=true
-After:  /bot-success?session_id={CHECKOUT_SESSION_ID}
-```
-
-## Impact
-
-After this change:
-- Only real credit/debit cards accepted (no Link, wallets, Apple Pay, Google Pay)
-- Every trial signup clears a $0.01 charge proving the card is valid and funded
-- Every subscriber (main app OR bot) automatically lands on the bot-success page with their one-time Telegram passcode and bot link
-- No separate step needed to get bot access -- it's part of the subscription flow
-
+1. `supabase/functions/sharp-parlay-builder/index.ts` -- minLegs, minutes threshold
+2. `supabase/functions/heat-prop-engine/index.ts` -- same-player fallback, L10 threshold
