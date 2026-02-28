@@ -221,7 +221,7 @@ const PARLAY_CONFIGS = {
     requireTeamDiversity: false,
   },
   BALANCED: {
-    minLegs: 3,
+    minLegs: 2,
     maxLegs: 4,
     maxVolatilityLegs: 1,
     confidenceThreshold: 0.45,
@@ -229,7 +229,7 @@ const PARLAY_CONFIGS = {
     requireTeamDiversity: false,
   },
   UPSIDE: {
-    minLegs: 3,
+    minLegs: 2,
     maxLegs: 4,
     maxVolatilityLegs: 1,
     confidenceThreshold: 0.35,
@@ -294,8 +294,8 @@ function isDreamTeamLeg(
 
   // 5. Minutes locked (28+ for Dream Team)
   const avgMinutes = candidate.avg_minutes || 0;
-  if (avgMinutes < 28 && parlayType === "SAFE") {
-    return { passes: false, reason: `Minutes ${avgMinutes.toFixed(1)} < 28 for SAFE parlay` };
+  if (avgMinutes < 25 && parlayType === "SAFE") {
+    return { passes: false, reason: `Minutes ${avgMinutes.toFixed(1)} < 25 for SAFE parlay` };
   }
   if (avgMinutes < 24) {
     return { passes: false, reason: `Minutes ${avgMinutes.toFixed(1)} < 24 minimum` };
