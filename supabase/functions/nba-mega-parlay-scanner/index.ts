@@ -594,6 +594,7 @@ serve(async (req) => {
     // Step 5: Build 3-leg role-based parlay (SAFE / BALANCED / GREAT ODDS)
     const MIN_LEGS = 3;
     const MAX_PER_GAME = 2;
+    const MAX_SAME_PROP = 2;
 
     const LOTTERY_MIN_LINES: Record<string, number> = {
       player_blocks: 1.5,
@@ -608,6 +609,9 @@ serve(async (req) => {
       if (gc >= MAX_PER_GAME) return false;
       const existingForCheck = existingLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
       if (hasCorrelatedProp(existingForCheck, prop.player_name, prop.prop_type)) return false;
+      const propNorm = normalizePropType(prop.prop_type);
+      const sameTypeCount = existingLegs.filter(l => normalizePropType(l.prop_type) === propNorm).length;
+      if (sameTypeCount >= MAX_SAME_PROP) return false;
       return true;
     }
 
