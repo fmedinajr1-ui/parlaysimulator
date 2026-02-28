@@ -212,10 +212,11 @@ serve(async (req) => {
         .eq('analysis_date', today)
         .gte('edge_pct', 3), // FIX: Only fetch positive edges >= 3%
       supabase
-        .from('nba_player_game_logs')
-        .select('player_name, stat_category, l5_avg, l10_avg, l20_avg, l5_median, l10_median, position, minutes_avg')
-        .order('game_date', { ascending: false })
-        .limit(500), // FIX #1: Get recent logs, not today's empty ones
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, l10_avg, l10_median, category')
+        .not('l10_avg', 'is', null)
+        .order('analysis_date', { ascending: false })
+        .limit(1000), // Use sweet spots as game log proxy (has L10 stats)
       supabase
         .from('nba_opponent_defense_stats')
         .select('team_name, stat_category, defensive_rank, pts_allowed_rank'),
@@ -234,7 +235,7 @@ serve(async (req) => {
     const playerPositions = archetypesRes.data || [];
     const teamDefenseRankings = teamDefenseRes.data || [];
 
-    console.log(`[MegaParlay] DB: ${sweetSpots.length} sweet spots, ${mispricedLines.length} mispriced (3%+ edge only), ${gameLogs.length} game logs (recent), ${defenseStats.length} defense stats, ${teamDefenseRankings.length} team defense rankings`);
+    console.log(`[MegaParlay] DB: ${sweetSpots.length} sweet spots, ${mispricedLines.length} mispriced (3%+ edge only), ${gameLogs.length} game log proxies, ${defenseStats.length} defense stats, ${teamDefenseRankings.length} team defense rankings`);
 
     // Build lookup maps
     const sweetSpotMap = new Map<string, any>();
@@ -249,12 +250,12 @@ serve(async (req) => {
       mispricedMap.set(key, ml);
     }
 
-    // FIX #1: Deduplicate game logs (keep most recent per player+stat)
+    // Build game log proxy map from second sweet spots query (L10 stats)
     const gameLogMap = new Map<string, any>();
     for (const gl of gameLogs) {
-      const key = `${normalizeName(gl.player_name)}|${normalizePropType(gl.stat_category)}`;
+      const key = `${normalizeName(gl.player_name)}|${normalizePropType(gl.prop_type)}`;
       if (!gameLogMap.has(key)) {
-        gameLogMap.set(key, gl); // first = most recent due to ORDER BY desc
+        gameLogMap.set(key, gl);
       }
     }
 
@@ -342,23 +343,18 @@ serve(async (req) => {
 
       // Hit rate from sweet spots, with game-log fallback
       let hitRate = ss?.l10_hit_rate || 0;
+      // Normalize: if stored as decimal (0.7 = 70%), convert to percentage
+      if (hitRate > 0 && hitRate <= 1) hitRate = hitRate * 100;
 
-      // FALLBACK: If no sweet spot hit rate, calculate from game logs
-      if (hitRate === 0 && gl) {
-        // Fetch L10 game logs for this player to calculate hit rate
-        const glKey = `${nameNorm}|${ptNorm}`;
-        const gameLogEntry = gameLogMap.get(glKey);
-        if (gameLogEntry && gameLogEntry.l10_avg != null) {
-          // Use l10_avg vs line to estimate hit rate
-          const avg = gameLogEntry.l10_avg;
-          if (prop.side === 'OVER') {
-            // If avg is well above line, high hit rate
-            const ratio = avg / prop.line;
-            hitRate = Math.min(90, Math.max(0, ratio * 55)); // scale: 1.0x = 55%, 1.3x = 71.5%, etc.
-          } else {
-            const ratio = prop.line / avg;
-            hitRate = Math.min(90, Math.max(0, ratio * 55));
-          }
+      // FALLBACK: If no sweet spot hit rate, estimate from L10 avg vs line
+      if (hitRate === 0 && gl && gl.l10_avg != null) {
+        const avg = gl.l10_avg;
+        if (prop.side === 'OVER') {
+          const ratio = avg / prop.line;
+          hitRate = Math.min(90, Math.max(0, ratio * 55));
+        } else {
+          const ratio = prop.line / avg;
+          hitRate = Math.min(90, Math.max(0, ratio * 55));
         }
       }
 
