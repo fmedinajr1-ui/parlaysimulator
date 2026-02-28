@@ -1,116 +1,110 @@
 
 
-# Strict Prop Overlap Prevention Across All Bot Functions
+# Fix Sharp Parlay Builder and Heat Prop Engine: Zero Output Diagnosis and Threshold Lowering
 
-## Problem
+## Root Cause Analysis
 
-The `parlayVetoUtils.ts` file defines combo overlap rules (e.g., points + PRA = correlated, blocks for same player twice), but **no edge function imports or enforces these rules**. The three parlay-building functions each have partial checks:
+Today's slate has extremely thin upstream data:
+- **Risk Engine**: Only **2 approved picks** (both Herb Jones -- points and rebounds)
+- **Heat Tracker**: Only **2 entries** (both Herb Jones), so `buildParlays()` can't find 2 different players
+- **Category Sweet Spots**: Only **9 total** for today, and only **4** pass the current fallback thresholds (`l10_hit_rate >= 0.60 AND confidence_score >= 0.65`)
+- **Sharp Builder**: After archetype blocking, category-side conflicts, minutes rules, and median dead-zone filters, there aren't enough candidates from different players to form even a 2-leg SAFE parlay
 
-- **bot-generate-daily-parlays**: Tracks `playerUsageCount` across parlays but does NOT check for same-player-within-a-parlay or combo stat overlap (points + PRA)
-- **bot-force-fresh-parlays**: Checks `usedPlayers` within a parlay (good), but no combo overlap check
-- **nba-mega-parlay-scanner**: Checks `usedPlayers` (good), but no combo overlap check
+Both engines fail because they require **multiple different players** but the input pool is too narrow after filtering.
 
-None of them prevent correlated props like "LeBron points OVER + LeBron PRA OVER" in the same parlay.
+## Fix Plan
 
-## Solution: Inline Veto Function in All 3 Bot Functions
+### 1. Lower Sharp Builder Fallback Thresholds
 
-Since edge functions can't import from `src/utils/`, we'll add an inline `isCorrelatedProp()` function to each bot. This function enforces:
+**File:** `supabase/functions/sharp-parlay-builder/index.ts`
 
-1. **No same player twice** in a single parlay (already partially done, but tightened)
-2. **No base + combo overlap**: points + PRA, rebounds + PR, assists + RA, etc. for the same player
-3. **No combo stacking**: PRA + PR for the same player
-
-### The shared inline function (added to all 3 files):
-
-```typescript
-const COMBO_BASES: Record<string, string[]> = {
-  pra: ['points', 'rebounds', 'assists'],
-  pr: ['points', 'rebounds'],
-  pa: ['points', 'assists'],
-  ra: ['rebounds', 'assists'],
-};
-
-function hasCorrelatedProp(
-  existingLegs: Array<{ player_name: string; prop_type: string }>,
-  candidatePlayer: string,
-  candidateProp: string
-): boolean {
-  const player = candidatePlayer.toLowerCase().trim();
-  const prop = normalizePropType(candidateProp);
-  
-  const playerLegs = existingLegs
-    .filter(l => l.player_name.toLowerCase().trim() === player)
-    .map(l => normalizePropType(l.prop_type));
-  
-  if (playerLegs.length === 0) return false;
-  
-  // Rule 1: Same player already in parlay = always correlated
-  // (catches exact duplicates AND any multi-prop same-player)
-  
-  // Rule 2: Combo + base overlap
-  const combos = Object.keys(COMBO_BASES);
-  if (combos.includes(prop)) {
-    const bases = COMBO_BASES[prop];
-    if (playerLegs.some(s => bases.includes(s))) return true;
-    if (playerLegs.some(s => combos.includes(s))) return true;
-  }
-  for (const existing of playerLegs) {
-    if (combos.includes(existing)) {
-      const bases = COMBO_BASES[existing];
-      if (bases?.includes(prop)) return true;
-    }
-  }
-  
-  return true; // Same player = always block (one player per parlay)
-}
+Current fallback (line ~710-711):
+```
+.gte("l10_hit_rate", 0.60)
+.gte("confidence_score", 0.65)
 ```
 
-### File 1: `bot-generate-daily-parlays/index.ts`
-
-Add the `hasCorrelatedProp` function and integrate it into `canUsePickInParlay()`. Before the `return true` at line 3008, add:
-
-```typescript
-// STRICT: No correlated props for same player in parlay
-if ('player_name' in pick && existingLegs && existingLegs.length > 0) {
-  const playerLegsInParlay = existingLegs
-    .filter(l => l.player_name)
-    .map(l => ({ player_name: l.player_name, prop_type: l.prop_type || l.bet_type || '' }));
-  if (hasCorrelatedProp(playerLegsInParlay, pick.player_name, pick.prop_type)) return false;
-}
+Change to:
+```
+.gte("l10_hit_rate", 0.50)
+.gte("confidence_score", 0.45)
 ```
 
-### File 2: `bot-force-fresh-parlays/index.ts`
+This expands the fallback pool from 4 to all 9 sweet spots. The builder's own median/minutes/archetype rules will still filter out bad picks.
 
-Add the `hasCorrelatedProp` function. In the parlay-building loop (line 231), replace the simple `usedPlayers.has(playerKey)` check with:
+Also lower `MIN_RISK_PICKS_THRESHOLD` from 6 to **4** (line 699) so the fallback triggers earlier when the risk engine is thin.
 
-```typescript
-// Rule 1: No correlated props (same player OR base+combo overlap)
-const parlayLegsForCheck = parlay.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
-if (hasCorrelatedProp(parlayLegsForCheck, pick.player_name, pick.prop_type)) continue;
+### 2. Lower Heat Engine Fallback Thresholds
+
+**File:** `supabase/functions/heat-prop-engine/index.ts`
+
+Current fallback (line ~851-852):
+```
+.gte("confidence_score", 0.7)
 ```
 
-### File 3: `nba-mega-parlay-scanner/index.ts`
-
-Add the `hasCorrelatedProp` function. In the parlay-building loop (line 574-580), replace the `usedPlayers.has(nameKey)` check with:
-
-```typescript
-// No correlated props (same player OR base+combo overlap)
-const existingForCheck = parlayLegs.map(p => ({ player_name: p.player_name, prop_type: p.prop_type }));
-if (hasCorrelatedProp(existingForCheck, prop.player_name, prop.prop_type)) continue;
+Change to:
+```
+.gte("confidence_score", 0.45)
 ```
 
-Same for the relaxed fallback loop (line 588).
+This lets more sweet spot picks flow into the heat tracker on thin-slate days.
+
+### 3. Lower Heat Engine CORE/UPSIDE Score Thresholds
+
+**File:** `supabase/functions/heat-prop-engine/index.ts`
+
+Current thresholds (lines 1024-1031):
+- CORE: `finalScore >= 78`
+- UPSIDE: `finalScore >= 70`
+
+Change to:
+- CORE: `finalScore >= 70`
+- UPSIDE: `finalScore >= 60`
+
+And in `buildParlays()` (line 534):
+- CORE minScore: `78` -> `70`
+- UPSIDE minScore: `70` -> `60`
+
+### 4. Lower Sharp Builder SAFE/BALANCED Confidence Thresholds
+
+**File:** `supabase/functions/sharp-parlay-builder/index.ts`
+
+Current PARLAY_CONFIGS thresholds (lines 213-238):
+- SAFE: `confidenceThreshold: 0.7, minEdge: 12`
+- BALANCED: `confidenceThreshold: 0.6, minEdge: 8`
+- UPSIDE: `confidenceThreshold: 0.5, minEdge: 5`
+
+Change to:
+- SAFE: `confidenceThreshold: 0.55, minEdge: 8`
+- BALANCED: `confidenceThreshold: 0.45, minEdge: 5`
+- UPSIDE: `confidenceThreshold: 0.35, minEdge: 3`
+
+### 5. Lower Sharp Builder Dream Team minEdge Thresholds
+
+In PARLAY_CONFIGS (lines 199-214):
+- DREAM_TEAM_5: `minEdge: 10` -> `minEdge: 5`
+- DREAM_TEAM_3: `minEdge: 12` -> `minEdge: 8`
+
+### 6. Lower Heat Engine Points Block for Stars
+
+The `passesStatSafety` function (lines 246-249) hard-blocks **all** points props for star players. On thin slates this eliminates too many candidates. Change it to only log a warning instead of blocking, since the scoring system already penalizes points via `STAT_PRIORITY`.
+
+Change the star player points check in `passesStatSafety` from `return false` to `return true` with a console warning. The `-15 baseScore` penalty in `calculateBaseRoleScore` already deprioritizes points.
+
+## Technical Summary
+
+| Change | File | Impact |
+|--------|------|--------|
+| Lower fallback thresholds | sharp-parlay-builder | Pool grows from 4 to 9 candidates |
+| Lower fallback confidence | heat-prop-engine | More sweet spot picks enter tracker |
+| Lower CORE/UPSIDE score gates | heat-prop-engine | More props become eligible |
+| Lower SAFE/BALANCED confidence | sharp-parlay-builder | Easier to form parlays on thin slates |
+| Lower Dream Team minEdge | sharp-parlay-builder | More candidates pass DT validation |
+| Soften star points block | heat-prop-engine | Star points props available as last resort |
 
 ## Files Modified
 
-1. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Add `hasCorrelatedProp` + integrate into `canUsePickInParlay`
-2. `supabase/functions/bot-force-fresh-parlays/index.ts` -- Add `hasCorrelatedProp` + replace simple player check
-3. `supabase/functions/nba-mega-parlay-scanner/index.ts` -- Add `hasCorrelatedProp` + replace simple player check in both loops
-
-## Impact
-
-After this change, no parlay from any bot will ever contain:
-- Same player twice (any prop combination)
-- Points + PRA, Rebounds + PR, Assists + RA, or any base+combo pair for the same player
-- Two combo stats (PRA + PR) for the same player
+1. `supabase/functions/sharp-parlay-builder/index.ts` -- Lower 5 threshold values
+2. `supabase/functions/heat-prop-engine/index.ts` -- Lower 4 threshold values, soften star points block
 
