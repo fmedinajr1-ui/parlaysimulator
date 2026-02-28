@@ -640,6 +640,19 @@ function buildParlays(
     }
   }
 
+  // SAME-PLAYER FALLBACK: Allow 2 legs from same player with different prop categories
+  if (!leg2) {
+    leg2 = candidates.find((c) => {
+      if (c.player_name !== leg1.player_name) return false; // Must be same player
+      const category = getPropCategory(c.market_type);
+      if (category === getPropCategory(leg1.market_type)) return false; // Must be different prop type
+      return true;
+    });
+    if (leg2) {
+      console.warn(`[Heat Engine] ⚠️ SAME-PLAYER FALLBACK: ${parlayType} using ${leg1.player_name} for both legs (${getPropCategory(leg1.market_type)} + ${getPropCategory(leg2.market_type)})`);
+    }
+  }
+
   if (!leg2) return null;
 
   const formatLeg = (p: any): ParlayLeg => {
@@ -680,23 +693,26 @@ function buildParlays(
   // Calculate team diversity
   const leg2Team = getPlayerTeam(leg2.player_name);
   const teamDiversity = leg1Team !== leg2Team && leg1Team !== "UNKNOWN" && leg2Team !== "UNKNOWN" ? 2 : 1;
+  const samePlayerFallback = leg1.player_name === leg2.player_name;
 
   // Log diversity status
   const leg1Cat = getPropCategory(leg1.market_type);
   const leg2Cat = getPropCategory(leg2.market_type);
   console.log(
-    `[Heat Engine] ${parlayType} parlay: ${leg1Cat} + ${leg2Cat} (diverse: ${leg1Cat !== leg2Cat}), teams: ${leg1Team} + ${leg2Team}`,
+    `[Heat Engine] ${parlayType} parlay: ${leg1Cat} + ${leg2Cat} (diverse: ${leg1Cat !== leg2Cat}), teams: ${leg1Team} + ${leg2Team}, same_player: ${samePlayerFallback}`,
   );
+
+  const baseSummary = parlayType === "CORE"
+    ? `Role player ${leg1Cat}/${leg2Cat} with strong market signals`
+    : `Higher upside with sharp-confirmed legs (${leg1Cat}/${leg2Cat})`;
 
   return {
     leg_1: formatLeg(leg1),
     leg_2: formatLeg(leg2),
-    summary:
-      parlayType === "CORE"
-        ? `Role player ${leg1Cat}/${leg2Cat} with strong market signals`
-        : `Higher upside with sharp-confirmed legs (${leg1Cat}/${leg2Cat})`,
+    summary: samePlayerFallback ? `${baseSummary} [same-player fallback]` : baseSummary,
     risk_level: parlayType === "CORE" ? "Low" : "Med",
     team_diversity: teamDiversity,
+    same_player_fallback: samePlayerFallback,
   };
 }
 
