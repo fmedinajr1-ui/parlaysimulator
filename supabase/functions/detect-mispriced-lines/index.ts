@@ -295,7 +295,7 @@ serve(async (req) => {
         // Minimum line filter: skip phantom/alternate lines not available on standard books
         const MIN_LINES: Record<string, number> = {
           player_points: 5.5, player_rebounds: 2.5, player_assists: 1.5,
-          player_threes: 0.5, player_blocks: 0.5, player_steals: 0.5, player_turnovers: 0.5,
+          player_threes: 0.5, player_blocks: 1.5, player_steals: 1.5, player_turnovers: 0.5,
           player_points_rebounds_assists: 10.5, player_pra: 10.5,
           player_points_rebounds: 5.5, player_pr: 5.5,
           player_points_assists: 5.5, player_pa: 5.5,
@@ -324,7 +324,9 @@ serve(async (req) => {
         const adjustedAvg = avgL10 * defMultiplier;
 
         // Use defense-adjusted avg for edge calculation
-        const edgePct = ((adjustedAvg - line) / line) * 100;
+        let edgePct = ((adjustedAvg - line) / line) * 100;
+        // Cap edge inflation: prevents 0.5-line props from producing 240% edges
+        edgePct = Math.max(-75, Math.min(75, edgePct));
         const trendEdge = ((avgL5 - avgL20) / (avgL20 || 1)) * 100;
         if (Math.abs(edgePct) < 15) continue;
 
@@ -464,7 +466,9 @@ serve(async (req) => {
         if (line === 0) continue;
 
         // Use season avg as primary edge for MLB (larger sample = more stable)
-        const edgePct = ((avgSeason - line) / line) * 100;
+        let edgePct = ((avgSeason - line) / line) * 100;
+        // Cap edge inflation for MLB too
+        edgePct = Math.max(-75, Math.min(75, edgePct));
         const trendEdge = ((avgL20 - avgSeason) / (avgSeason || 1)) * 100;
         if (Math.abs(edgePct) < 15) continue;
 

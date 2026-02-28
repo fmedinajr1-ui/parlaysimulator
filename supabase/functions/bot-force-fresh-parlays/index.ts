@@ -112,7 +112,7 @@ serve(async (req) => {
         .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport')
         .eq('analysis_date', today)
         .in('confidence_tier', ['ELITE', 'HIGH'])
-        .gt('book_line', 0)
+        .gte('book_line', 1.5)
         .order('edge_pct', { ascending: true }),
       supabase.from('nba_risk_engine_picks')
         .select('player_name, prop_type, side, confidence_score, team_name')
@@ -144,7 +144,7 @@ serve(async (req) => {
     // Minimum line thresholds to reject phantom/alternate lines
     const MIN_LINES: Record<string, number> = {
       player_points: 5.5, player_rebounds: 2.5, player_assists: 1.5,
-      player_threes: 0.5, player_blocks: 0.5, player_steals: 0.5, player_turnovers: 0.5,
+      player_threes: 0.5, player_blocks: 1.5, player_steals: 1.5, player_turnovers: 0.5,
       player_points_rebounds_assists: 10.5, player_pra: 10.5,
       player_points_rebounds: 5.5, player_pr: 5.5,
       player_points_assists: 5.5, player_pa: 5.5,
@@ -177,7 +177,7 @@ serve(async (req) => {
       const riskConfirmed = riskMatch ? riskMatch.side.toLowerCase() === ml.signal.toLowerCase() : false;
 
       // Conviction score: edge magnitude + tier bonus + risk confirmation
-      const edgeMag = Math.abs(ml.edge_pct);
+      const edgeMag = ml.edge_pct; // Use raw edge (positive = real value), not Math.abs
       const tierBonus = ml.confidence_tier === 'ELITE' ? 20 : 10;
       const riskBonus = riskConfirmed ? 25 : (riskMatch ? 5 : 0);
       const underBonus = ml.signal === 'UNDER' ? 10 : 0;
