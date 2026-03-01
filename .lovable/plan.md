@@ -1,23 +1,34 @@
 
 
-## Fetch Hard Rock Bet Longshot Odds (+650 and up)
+## Send HRB Longshots to Admin via Telegram
 
 ### What We'll Do
-Create a backend function that pulls all current Hard Rock Bet odds at +650 or higher across NBA games, then invoke it immediately and display the results here in chat.
+Modify the `fetch-hardrock-longshots` function to optionally fetch + format + send results directly to the admin Telegram chat. Since `bot-send-telegram` already sends to only the admin by default (broadcasting only happens for specific types like `mega_parlay_scanner`), we just need to:
+
+1. **Update `fetch-hardrock-longshots`** to accept an optional `send_telegram: true` flag
+2. When enabled, format the longshots into a clean Telegram message and call `bot-send-telegram` with a non-broadcast type (e.g. `diagnostic_report` or a new admin-only type)
+3. Invoke the function immediately to send results
 
 ### Technical Details
 
-**New file: `supabase/functions/fetch-hardrock-longshots/index.ts`**
-- Queries The Odds API for all active NBA events with `hardrockbet` as the bookmaker
-- Requests moneyline (`h2h`) and key player prop markets (points, rebounds, assists, threes, PRA, steals, blocks)
-- Filters all outcomes for American odds >= +650
-- Returns structured results: player/team name, prop type, line, odds, event info
+**File modified: `supabase/functions/fetch-hardrock-longshots/index.ts`**
 
-**Invocation**
-- Deploy the function (automatic)
-- Invoke it immediately via the edge function tools
-- Display results directly in chat
-
-### Caveat
-If Hard Rock Bet isn't active in The Odds API for today's events, the response will be empty. This depends entirely on their API coverage of HRB.
+- Parse request body for `{ send_telegram?: boolean }`
+- After collecting longshots, if `send_telegram` is true:
+  - Format a MarkdownV2 message with header, each pick (game, market, line, odds), sorted by highest odds first
+  - Call `bot-send-telegram` with type `diagnostic_report` (admin-only, no customer broadcast)
+  - The message format will look like:
+    ```
+    🎰 HRB LONGSHOTS (+650 and up)
+    
+    +1000 | Spurs ML
+    Spurs @ Knicks
+    
+    +700 | Mavericks ML
+    Thunder @ Mavericks
+    
+    +650 | Jared McCain O0.5 Blocks
+    Thunder @ Mavericks
+    ```
+- No new files needed -- `bot-send-telegram` already handles admin-only delivery for non-broadcast types
 
