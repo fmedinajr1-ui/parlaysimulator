@@ -446,3 +446,6 @@ verify_jwt = false
 
 [functions.bot-update-engine-hit-rates]
 verify_jwt = false
+
+[functions.nba-ladder-challenge]
+verify_jwt = false
