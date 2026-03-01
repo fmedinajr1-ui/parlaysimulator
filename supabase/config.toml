@@ -449,3 +449,6 @@ verify_jwt = false
 
 [functions.nba-ladder-challenge]
 verify_jwt = false
+
+[functions.bot-announce-strategy-update]
+verify_jwt = false

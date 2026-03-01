@@ -1,10 +1,10 @@
 /**
  * bot-generate-daily-parlays (v2 - Tiered System)
  * 
- * Generates 65-75 daily parlays across three tiers:
- * - Exploration (50/day): Edge discovery, $0 stake, 2K iterations
- * - Validation (15/day): Pattern confirmation, simulated stake, 10K iterations
- * - Execution (8/day): Best bets, Kelly stakes, 25K iterations
+ * Generates 240+ daily parlays across three tiers:
+ * - Exploration (150/day): Edge discovery, $0 stake, 2K iterations
+ * - Validation (50/day): Pattern confirmation, simulated stake, 10K iterations
+ * - Execution (40/day): Best bets, Kelly stakes, 25K iterations
  * 
  * Runs at 9 AM ET daily via cron.
  */
@@ -653,7 +653,7 @@ interface ParlayProfile {
   useAltLines?: boolean;
   minBufferMultiplier?: number;
   preferPlusMoney?: boolean;
-  sortBy?: 'composite' | 'hit_rate';
+  sortBy?: 'composite' | 'hit_rate' | 'shuffle';
   boostLegs?: number;
   allowTeamLegs?: number;
   maxMlLegs?: number;
@@ -662,9 +662,9 @@ interface ParlayProfile {
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
   exploration: {
-    count: 50,
+    count: 150,
     iterations: 2000,
-    maxPlayerUsage: 2,
+    maxPlayerUsage: 3,
     maxTeamUsage: 3,
     maxCategoryUsage: 6,
     minHitRate: 45,
@@ -763,13 +763,34 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
-      // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
+       // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
+      // === SHUFFLE VARIATION PROFILES (break deterministic selection) ===
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 50, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_ncaab'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'], sortBy: 'shuffle' },
+      { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'basketball_ncaab'], sortBy: 'shuffle' },
+      { legs: 3, strategy: 'cross_sport', sports: ['basketball_ncaab', 'icehockey_nhl'], sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
     ],
   },
   validation: {
-    count: 15,
+    count: 50,
     iterations: 10000,
-    maxPlayerUsage: 2,
+    maxPlayerUsage: 3,
     maxTeamUsage: 2,
     maxCategoryUsage: 3,
     minHitRate: 52,
@@ -824,10 +845,26 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'proving_boosted', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'proving_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
+      // === SHUFFLE VARIATION PROFILES (break deterministic selection) ===
+      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'validated_balanced', sports: ['all'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['THREE_POINT_SHOOTER'] },
+      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
+      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', preferCategories: ['THREE_POINT_SHOOTER'] },
     ],
   },
   execution: {
-    count: 15,
+    count: 40,
     iterations: 25000,
     maxPlayerUsage: 2,
     maxTeamUsage: 2,
@@ -913,6 +950,17 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // ROLE-STACKED 3-LEG: SAFE/BALANCED/GREAT_ODDS intentional stacking
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
+      // === SHUFFLE VARIATION PROFILES (break deterministic selection) ===
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'boosted_cash_cross', sports: ['all'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.2 },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
     ],
   },
 };
@@ -5735,7 +5783,7 @@ let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
 let globalTeamUsage: Map<string, number> | undefined;
 let globalSlatePlayerPropUsage: Map<string, number> = new Map();
-const MAX_GLOBAL_PLAYER_PROP_USAGE = 5;
+const MAX_GLOBAL_PLAYER_PROP_USAGE = 2;
 
 async function generateTierParlays(
   supabase: any,
@@ -6244,9 +6292,10 @@ async function generateTierParlays(
     // === COHERENCE-AWARE SELECTION: re-rank candidates after each leg ===
     let remainingCandidates = [...candidatePicks];
     
-    // Shuffle top candidates for exploration tier to avoid deterministic output across runs
-    if (tier === 'exploration') {
-      const shuffleCount = Math.floor(remainingCandidates.length * 0.7);
+    // Shuffle top candidates for exploration tier OR when profile uses 'shuffle' sortBy
+    if (tier === 'exploration' || profile.sortBy === 'shuffle') {
+      const shufflePct = profile.sortBy === 'shuffle' ? 1.0 : 0.7;
+      const shuffleCount = Math.floor(remainingCandidates.length * shufflePct);
       const topSlice = remainingCandidates.slice(0, shuffleCount);
       for (let i = topSlice.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
