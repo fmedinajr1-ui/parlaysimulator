@@ -12,6 +12,7 @@ import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
 import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
 import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowcase";
+import { FreeTrialBanner } from "@/components/bot-landing/FreeTrialBanner";
 
 
 interface PublicStats {
@@ -136,6 +137,13 @@ export default function BotLanding() {
           totalWins={totals.totalWins}
         />
       </div>
+
+      {!(hasBotAccess || isAdmin) && (
+        <FreeTrialBanner
+          onSubscribe={handleCheckout}
+          isLoading={checkoutLoading}
+        />
+      )}
 
       <div ref={calendarRef}>
         <PerformanceCalendar
