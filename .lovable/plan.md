@@ -1,24 +1,51 @@
 
 
-## Apply Approval Flow to ALL Generated Parlays
+## Add `/admin` Command with Approval Dashboard
 
-### What Changes
-Currently, only execution-tier parlays (elite, cash_lock, conviction, etc.) are set to `pending_approval`. All other tiers are inserted with the default `auto_approved` status, meaning they could be broadcast without your review.
+### Problem
+The `/admin` command isn't registered as a Telegram command. It falls through to the AI natural language handler, which generates an outdated "ADMIN DASHBOARD" response without the new approval flow controls.
 
-This change removes the execution-tier filter so that **every parlay** generated gets sent to you for approval before it reaches customers.
+### Solution
+Add a dedicated `/admin` command handler that shows:
+1. Today's parlay approval status summary (pending, approved, rejected, edited counts)
+2. Inline buttons for quick actions: Review Pending, Approve All, Broadcast
+3. Each pending parlay listed with Approve/Edit/Reject buttons
 
 ### Technical Details
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts` (~lines 9052-9100)**
+**File: `supabase/functions/telegram-webhook/index.ts`**
 
-1. **Remove the execution-tier filter** -- Instead of filtering `allParlays` down to execution strategies, simply set `pending_approval` on ALL inserted parlays for the target date
-2. **Simplify the update query** -- Change from `.in('strategy_name', executionParlays.map(...))` to just `.eq('parlay_date', targetDate)` so all parlays for that date get flagged
-3. **Send ALL parlays to admin for review** -- The Telegram approval request will include every generated parlay, not just execution ones
+1. **Create `handleAdminDashboard(chatId)` function** (~line 2090 area, near other admin handlers)
+   - Query `bot_daily_parlays` for today's date
+   - Group by `approval_status` to get counts (pending, approved, rejected, edited, auto_approved)
+   - Format a dashboard message showing:
+     ```
+     🤖 ADMIN DASHBOARD -- Mar 1
+     ━━━━━━━━━━━━━━━━━━━━━
+     
+     📊 Today's Parlays:
+      - Pending: 5
+      - Approved: 3
+      - Rejected: 1
+      - Edited: 2
+     
+     Quick Actions:
+     ```
+   - Add inline keyboard buttons:
+     - `[📋 Review Pending]` -> callback `review_pending_parlays`
+     - `[✅ Approve All]` -> callback `approve_all_parlays`
+     - `[📢 Broadcast Approved]` -> callback `trigger_broadcast`
+   - If there are pending parlays, list each one with Approve/Edit/Reject buttons (reusing the existing approval message format)
 
-The callback handlers in `telegram-webhook` (approve, reject, edit, flip, broadcast) already work on a per-parlay basis using IDs, so they need no changes.
+2. **Register the command** (~line 3107, before admin-only operational commands)
+   - Add: `if (cmd === "/admin") { await handleAdminDashboard(chatId); return null; }`
 
-### Before vs After
+3. **Add `review_pending_parlays` callback handler** (~line 2470 area, near existing approval callbacks)
+   - Fetches all `pending_approval` parlays for today
+   - Sends each one as a separate message with Approve/Edit/Reject inline buttons (same format as `parlay_approval_request`)
 
-**Before:** Only ~6-8 execution-tier parlays require approval; research/analysis parlays auto-approve and could leak to broadcast.
+4. **Add `trigger_broadcast` callback handler**
+   - Calls the existing `handleBroadcast` function
 
-**After:** Every single generated parlay starts as `pending_approval`. Nothing reaches customers until you explicitly approve or broadcast.
+### Files Modified
+- `supabase/functions/telegram-webhook/index.ts` -- Add `handleAdminDashboard`, register `/admin` command, add new callback handlers
