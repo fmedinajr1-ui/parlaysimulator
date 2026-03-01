@@ -258,6 +258,67 @@ serve(async (req) => {
     picks.sort((a, b) => b.convictionScore - a.convictionScore);
     console.log(`[ForceFresh] Scored ${picks.length} picks, top score: ${picks[0]?.convictionScore.toFixed(1)}`);
 
+    // Step 3b: Fetch alternate lines for top NBA picks with sufficient buffer
+    const ALT_LINE_BUFFER_MULTIPLIER = 1.5;
+    const ALT_LINE_ODDS_FLOOR = -200;
+    const altLineCandidates = picks
+      .filter(p => p.sport === 'basketball_nba' && p.player_avg_l10 && p.book_line)
+      .filter(p => {
+        const buffer = Math.abs(p.player_avg_l10 - p.book_line);
+        const minBuffer = p.book_line * 0.1; // 10% of line as baseline buffer
+        return buffer >= minBuffer * ALT_LINE_BUFFER_MULTIPLIER;
+      })
+      .slice(0, 10);
+
+    if (altLineCandidates.length > 0) {
+      console.log(`[ForceFresh] Fetching alt lines for ${altLineCandidates.length} candidates`);
+      
+      // We need event_ids — look them up from mispriced_lines
+      const playerNames = altLineCandidates.map(p => p.player_name);
+      const { data: mispricedWithEvents } = await supabase
+        .from('mispriced_lines')
+        .select('player_name, event_id, prop_type')
+        .in('player_name', playerNames)
+        .not('event_id', 'is', null)
+        .eq('analysis_date', today);
+
+      const eventMap = new Map<string, string>();
+      for (const row of mispricedWithEvents || []) {
+        if (row.event_id) {
+          eventMap.set(`${row.player_name}|${normalizePropType(row.prop_type)}`, row.event_id);
+        }
+      }
+
+      for (const pick of altLineCandidates) {
+        const key = `${pick.player_name}|${normalizePropType(pick.prop_type)}`;
+        const eventId = eventMap.get(key);
+        if (!eventId) continue;
+
+        try {
+          const altResp = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              eventId,
+              playerName: pick.player_name,
+              propType: pick.prop_type,
+              sport: 'basketball_nba',
+            }),
+          });
+          const altData = await altResp.json();
+          if (altData.lines?.length > 0) {
+            (pick as any).altLines = altData.lines;
+            console.log(`[ForceFresh] Got ${altData.lines.length} alt lines for ${pick.player_name} ${pick.prop_type}`);
+          }
+        } catch (altErr) {
+          console.warn(`[ForceFresh] Alt line fetch failed for ${pick.player_name}:`, altErr);
+        }
+      }
+    }
+
     // Step 4: Build 3-leg parlays using greedy algorithm
     const parlays: MispricedPick[][] = [];
     const usedInParlay = new Set<string>(); // track player+prop usage across parlays
@@ -357,17 +418,45 @@ serve(async (req) => {
         parlay_date: today,
         strategy_name: 'force_mispriced_conviction',
         leg_count: 3,
-        legs: parlay.map(p => ({
+        legs: parlay.map((p, legIdx) => {
+          let finalLine = p.book_line;
+          let altLineUsed = false;
+          
+          // Alt line substitution: only boost first leg per parlay (boostLegs: 1 cap)
+          if (legIdx === 0 && (p as any).altLines?.length > 0) {
+            const altLines = (p as any).altLines as Array<{ line: number; overOdds: number; underOdds: number }>;
+            const side = p.signal.toLowerCase();
+            // Find a lower line (for overs) or higher line (for unders) with acceptable odds
+            for (const alt of altLines) {
+              const altOdds = side === 'over' ? alt.overOdds : alt.underOdds;
+              if (altOdds > ALT_LINE_ODDS_FLOOR) { // better than -200
+                if (side === 'over' && alt.line < p.book_line) {
+                  finalLine = alt.line;
+                  altLineUsed = true;
+                  break;
+                } else if (side === 'under' && alt.line > p.book_line) {
+                  finalLine = alt.line;
+                  altLineUsed = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          return {
           player_name: p.player_name,
           prop_type: p.prop_type,
           side: p.signal.toLowerCase(),
-          line: p.book_line,
+          line: finalLine,
+          original_line: altLineUsed ? p.book_line : undefined,
+          alt_line_used: altLineUsed,
           edge_pct: p.edge_pct,
           confidence_tier: p.confidence_tier,
           risk_confirmed: p.riskConfirmed,
           player_avg: p.player_avg_l10,
           sport: p.sport,
-        })),
+          };
+        }),
         combined_probability: combinedProb,
         expected_odds: combinedProb > 0 ? Math.round(1 / combinedProb * 100) : 300,
         selection_rationale: `Force-generated conviction parlay #${idx + 1}. Avg score: ${avgScore.toFixed(1)}. ${parlay.filter(p => p.riskConfirmed).length}/${parlay.length} risk-confirmed.`,
