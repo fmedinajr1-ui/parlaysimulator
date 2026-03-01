@@ -2088,6 +2088,42 @@ async function handleDeleteByStrat(chatId: string, args: string) {
   await logActivity('admin_delete_by_strat', `Admin voided ${matches.length} parlays for strategy ${stratName}`, { strategy: stratName, count: matches.length });
   return `✅ Voided *${matches.length}* parlays for strategy \`${stratName}\`.`;
 }
+async function handleAdminDashboard(chatId: string) {
+  const today = getEasternDate();
+  const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+
+  const { data: parlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('id, approval_status, strategy_name, legs, expected_odds, tier')
+    .eq('parlay_date', today);
+
+  const counts: Record<string, number> = { pending_approval: 0, approved: 0, rejected: 0, edited: 0, auto_approved: 0 };
+  for (const p of (parlays || [])) {
+    const status = p.approval_status || 'pending_approval';
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  const total = parlays?.length || 0;
+
+  let msg = `🤖 *ADMIN DASHBOARD — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `📊 *Today's Parlays:* (${total} total)\n`;
+  msg += ` ⏳ Pending: ${counts.pending_approval}\n`;
+  msg += ` ✅ Approved: ${counts.approved}\n`;
+  msg += ` ❌ Rejected: ${counts.rejected}\n`;
+  msg += ` ✏️ Edited: ${counts.edited}\n\n`;
+
+  const inline_keyboard: any[][] = [];
+  if (counts.pending_approval > 0) {
+    inline_keyboard.push([{ text: `📋 Review Pending (${counts.pending_approval})`, callback_data: 'review_pending_parlays' }]);
+    inline_keyboard.push([{ text: '✅ Approve All', callback_data: 'approve_all_parlays' }]);
+  }
+  if (counts.approved + counts.edited > 0) {
+    inline_keyboard.push([{ text: '📢 Broadcast Approved', callback_data: 'trigger_broadcast' }]);
+  }
+
+  await sendMessage(chatId, msg, 'Markdown', inline_keyboard.length > 0 ? { inline_keyboard } : undefined);
+  await logActivity('admin_dashboard', 'Admin opened dashboard', { counts, total });
+}
 
 async function handleFixPipeline(chatId: string) {
   await sendMessage(chatId, "⏳ Running *full data pipeline*...", "Markdown");
@@ -2467,6 +2503,55 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     await answerCallbackQuery(callbackQueryId, `Flipped to ${legs[legIndex].side.toUpperCase()}`);
     await sendMessage(chatId, msg, 'Markdown', { inline_keyboard });
     await logActivity('parlay_leg_flipped', `Admin flipped leg ${legIndex} in parlay ${parlayId}`, { parlayId, legIndex, newSide: legs[legIndex].side });
+
+  } else if (data === 'review_pending_parlays') {
+    const today = getEasternDate();
+    const { data: pending } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, legs, strategy_name, expected_odds, tier')
+      .eq('parlay_date', today)
+      .eq('approval_status', 'pending_approval');
+
+    if (!pending || pending.length === 0) {
+      await answerCallbackQuery(callbackQueryId, 'No pending parlays');
+      await sendMessage(chatId, '✅ No pending parlays to review!');
+    } else {
+      await answerCallbackQuery(callbackQueryId, `Loading ${pending.length} parlays...`);
+      const propLabels: Record<string, string> = {
+        threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+        steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+        shots: 'SOG', saves: 'SVS', aces: 'ACES',
+      };
+      for (let pi = 0; pi < pending.length; pi++) {
+        const p = pending[pi];
+        const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+        const strategy = (p.strategy_name || 'unknown').replace(/_/g, ' ');
+        const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+        const tierLabel = p.tier ? ` | ${p.tier}` : '';
+
+        let msg = `📋 *Pending #${pi + 1}/${pending.length}* (${strategy}${tierLabel}) ${oddsStr}\n\n`;
+        for (let i = 0; i < legs.length; i++) {
+          const leg = legs[i];
+          const side = (leg.side || 'over').toUpperCase();
+          const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+          msg += `${i + 1}. ${leg.player_name || 'Player'} *${side}* ${leg.line} ${prop}\n`;
+        }
+
+        await sendMessage(chatId, msg, 'Markdown', {
+          inline_keyboard: [
+            [
+              { text: '✅ Approve', callback_data: `approve_parlay:${p.id}` },
+              { text: '✏️ Edit', callback_data: `edit_parlay:${p.id}` },
+              { text: '❌ Reject', callback_data: `reject_parlay:${p.id}` },
+            ],
+          ],
+        });
+      }
+    }
+
+  } else if (data === 'trigger_broadcast') {
+    await answerCallbackQuery(callbackQueryId, 'Starting broadcast...');
+    await handleBroadcast(chatId);
 
   } else if (data === 'approve_all_parlays') {
     const today = getEasternDate();
@@ -3104,6 +3189,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/grantaccess") return await handleGrantAccess(chatId, args);
     if (cmd === "/listusers") return await handleListUsers(chatId);
     if (cmd === "/revokeaccess") return await handleRevokeAccess(chatId, args);
+    // Admin dashboard
+    if (cmd === "/admin") { await handleAdminDashboard(chatId); return null; }
     // Admin-only operational commands
     if (cmd === "/status") return await handleStatus(chatId);
     if (cmd === "/compare") return await handleCompare(chatId);
