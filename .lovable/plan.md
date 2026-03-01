@@ -1,44 +1,46 @@
 
 
-## Fix High Roller + Mega Jackpot: Market Diversification and Filter Tuning
+## Add Free Trial Paywall Banner Above Performance Calendar
 
-### Problems Found
-1. **Mega Jackpot hit +2.1 billion odds** -- it stacked only extreme exotic props (triple doubles at +2000-5000 each) with no diversification, producing unrealistic combined odds
-2. **High Roller failed to generate** -- the combo of +200 min odds, 40% hit rate, and defense rank 15+ was too restrictive for the available slate
+### Overview
+Create an animated promotional banner component that appears between the HeroStats and PerformanceCalendar sections on the Bot Landing page. It highlights the $99/mo subscription with a free trial ending March 12th, and includes a "Join Now" CTA that triggers checkout.
 
-### Changes (all in `supabase/functions/nba-mega-parlay-scanner/index.ts`)
+### New Component: `src/components/bot-landing/FreeTrialBanner.tsx`
 
-#### 1. Mega Jackpot: Market Type Diversification + Odds Cap
+A visually striking, animated paywall card featuring:
+- Gradient background with glowing accents (consistent with existing design language)
+- Animated entrance using `animate-fade-in` and `animate-scale-in` keyframes already in the project
+- Pulsing border glow effect using Tailwind animation
+- "FREE TRIAL" badge at top
+- Headline: "Start Your 3-Day Free Trial"
+- Price display: "$99/month after trial"
+- Urgency line: "Free trial ends March 12th" with a clock/timer icon
+- "Join Now" CTA button (gradient style matching existing buttons)
+- Email input field (matches PricingSection pattern -- email required for checkout)
+- Calls `create-bot-checkout` with the Parlay Bot price ID on submit
+- Only shown to non-subscribers (same `hasBotAccess || isAdmin` guard used elsewhere)
 
-Add per-market-type caps to force a diverse mix:
-- Max 2 `exotic_player` legs (first basket, double/triple double)
-- Max 2 `team_bet` legs (ML underdog, Q1 ML)
-- Max 4 `player_prop` legs (standard high-odds props)
-- Cap combined odds at 50,000 (stop adding legs once reached) -- still a true lottery but not billions
-- Build in rounds: pick 1 exotic, 1 team bet, 1 player prop, then fill remaining slots
-- Early exit once combined odds reach 10,000+ with at least 4 legs
+### Changes to `src/pages/BotLanding.tsx`
 
-This ensures the ticket has a realistic structure like:
+Insert the `FreeTrialBanner` component between `HeroStats` and `PerformanceCalendar`:
+
 ```
-1x First Basket (+800), 1x Q1 ML Underdog (+250), 
-1x Triple Double (+1500), 2x Player Props (+300 each)
-= ~+10,000 to +50,000 combined
+<HeroStats />
+<FreeTrialBanner />       <-- NEW
+<PerformanceCalendar />
 ```
 
-#### 2. High Roller: Relax Filters
+Pass `onSubscribe` and `isLoading` props (same as PricingSection) so checkout works identically.
 
-- Hit rate: 40% down to 35%
-- Defense rank: 15+ down to 12+
-- L10/L20 line clearance: 1.1x down to 1.0x (just needs to meet the line)
-- Allow exotic and team bet market types (currently only checks player props for L10/L20)
-- If still < 3 legs after primary pass, do a relaxed pass at 30% hit rate and +150 min odds
+### Animation Details
+- Container: `animate-fade-in` with slight delay for staggered entrance after hero
+- Inner glow orbs: CSS `animate-pulse` on pseudo-elements for ambient glow
+- CTA button: `hover:scale-105` transition + `shadow-lg shadow-primary/30` glow
+- Urgency text: subtle `animate-pulse` on the deadline to draw attention
+- Border: `border-primary/40` with gradient shimmer effect
 
-#### 3. Sort Mega Candidates by Odds Band (not raw odds)
-
-Instead of sorting purely by odds descending (which picks the most extreme props first), sort by "closeness to +400-800 sweet spot" to favor moderate high-odds legs over extreme ones:
-- Preferred range: +300 to +800 per leg (manageable odds that sum to 10k+ with 4-6 legs)
-- Deprioritize +1500 legs unless needed to reach the target
-
-### After Fix: Clear and Re-run
-Once the code is updated, clear today's lottery entries and invoke the scanner again to validate all 3 tickets generate with proper diversification.
-
+### Design Spec
+- Uses existing color tokens (`primary`, `accent`, `destructive` for urgency)
+- Rounded-2xl card with `backdrop-blur-sm` glass effect
+- Max-width `max-w-2xl mx-auto` to match page content width
+- Responsive padding and text sizing
