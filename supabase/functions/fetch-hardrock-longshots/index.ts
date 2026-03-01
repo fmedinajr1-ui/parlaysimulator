@@ -33,6 +33,13 @@ serve(async (req) => {
   }
 
   try {
+    // Parse optional send_telegram flag
+    let sendTelegram = false;
+    try {
+      const body = await req.json();
+      sendTelegram = body?.send_telegram === true;
+    } catch { /* no body or not JSON, that's fine */ }
+
     const apiKey = Deno.env.get('THE_ODDS_API_KEY');
     if (!apiKey) throw new Error('THE_ODDS_API_KEY not configured');
 
@@ -120,6 +127,37 @@ serve(async (req) => {
     longshots.sort((a, b) => b.odds_raw - a.odds_raw);
     console.log(`[fetch-hardrock-longshots] Found ${longshots.length} longshots at +${MIN_ODDS}+`);
 
+    // Send to admin via Telegram if requested
+    if (sendTelegram && longshots.length > 0) {
+      const lines = longshots.map(l => {
+        const marketLabel = l.market === 'moneyline' ? 'ML' :
+          `${l.side} ${l.line !== null ? l.line : ''} ${l.market.replace('player_', '').replace(/_/g, ' ')}`;
+        return `${l.odds} | ${l.name} ${marketLabel}\n${l.game}`;
+      });
+      const message = `🎰 HRB LONGSHOTS (${'+' + MIN_ODDS} and up)\n\n${lines.join('\n\n')}`;
+
+      const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+      const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
+      if (botToken && chatId) {
+        try {
+          const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: message,
+            }),
+          });
+          const tgData = await tgRes.text();
+          console.log(`[fetch-hardrock-longshots] Telegram send result: ${tgRes.status} ${tgData}`);
+        } catch (err) {
+          console.warn(`[fetch-hardrock-longshots] Telegram send failed:`, err);
+        }
+      } else {
+        console.warn(`[fetch-hardrock-longshots] Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID`);
+      }
+    }
+
     return new Response(JSON.stringify({
       success: true,
       count: longshots.length,
@@ -127,6 +165,7 @@ serve(async (req) => {
       bookmaker: 'hardrockbet',
       sport,
       events_searched: events.length,
+      telegram_sent: sendTelegram && longshots.length > 0,
       longshots,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
