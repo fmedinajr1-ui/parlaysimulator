@@ -14,13 +14,13 @@ const corsHeaders = {
 
 const ANNOUNCEMENT_MESSAGE = `📢 *STRATEGY UPDATE — March 2026*
 
-Hey! Quick update on how your picks are delivered:
+Hey\\! Quick update on how your picks are delivered:
 
 🔄 *More Parlays, More Coverage*
-We've significantly increased daily parlay volume. Instead of \\~80 parlays, we now generate *200\\-300\\+ unique combinations per day*\\. This means more chances to hit\\.
+We've significantly increased daily parlay volume\\. Instead of \\~80 parlays, we now generate *200\\-300\\+ unique combinations per day*\\. This means more chances to hit\\.
 
 💰 *Adjusted Stake Sizing*
-With more parlays in play, individual stake sizes are lower to manage total exposure — but your overall profit potential increases because we're casting a wider net\\.
+With more parlays in play, individual stake sizes are lower to manage total exposure \\— but your overall profit potential increases because we're casting a wider net\\.
 
 🔗 *Every Pick Cross\\-Referenced*
 Every single pick is cross\\-referenced across multiple engines \\(conviction analyzer, bot parlay validator, double\\-confirmed scanner\\) before making it into a slip\\.
@@ -29,11 +29,11 @@ Every single pick is cross\\-referenced across multiple engines \\(conviction an
 Our individual picks are hitting at \\~70%\\. The challenge has been combining them into parlays where 1 miss kills the slip\\. More unique combinations with strict player caps means when 1 leg misses, only 2 parlays are affected instead of 5\\+\\.
 
 🚫 *Strict Player Caps*
-No player appears in more than 2 parlays across the entire daily slate\\. This eliminates correlated losses — if one player busts, it doesn't sink your whole day\\.
+No player appears in more than 2 parlays across the entire daily slate\\. This eliminates correlated losses \\— if one player busts, it doesn't sink your whole day\\.
 
-Questions? Just type your question here and the bot will answer\\.
+Questions\\? Just type your question here and the bot will answer\\.
 
-— Parlay Bot Team`;
+\\— Parlay Bot Team`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
