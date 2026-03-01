@@ -1,23 +1,23 @@
 
 
-## Fix MarkdownV2 Escaping in Telegram Announcement
+## Fetch Hard Rock Bet Longshot Odds (+650 and up)
 
-### Problem
-The announcement failed to send to all 6 active customers because Telegram's MarkdownV2 format requires escaping special characters like `!`, `?`, `—`, and leading `—`. The current message has unescaped `!`, `?`, and `—` characters.
+### What We'll Do
+Create a backend function that pulls all current Hard Rock Bet odds at +650 or higher across NBA games, then invoke it immediately and display the results here in chat.
 
-### Fix
-**File:** `supabase/functions/bot-announce-strategy-update/index.ts`
+### Technical Details
 
-Update the `ANNOUNCEMENT_MESSAGE` string to properly escape all MarkdownV2 reserved characters:
+**New file: `supabase/functions/fetch-hardrock-longshots/index.ts`**
+- Queries The Odds API for all active NBA events with `hardrockbet` as the bookmaker
+- Requests moneyline (`h2h`) and key player prop markets (points, rebounds, assists, threes, PRA, steals, blocks)
+- Filters all outcomes for American odds >= +650
+- Returns structured results: player/team name, prop type, line, odds, event info
 
-- `Hey!` → `Hey\\!`
-- `— but` → `\\— but`  
-- `— if` → `\\— if`
-- `Questions?` → `Questions\\?`
-- `— Parlay Bot Team` → `\\— Parlay Bot Team`
+**Invocation**
+- Deploy the function (automatic)
+- Invoke it immediately via the edge function tools
+- Display results directly in chat
 
-These are the 5 unescaped special characters causing the Telegram API to reject the message.
-
-### After Fix
-Redeploy the function and invoke it again to send the announcement to all 6 active customers.
+### Caveat
+If Hard Rock Bet isn't active in The Odds API for today's events, the response will be empty. This depends entirely on their API coverage of HRB.
 
