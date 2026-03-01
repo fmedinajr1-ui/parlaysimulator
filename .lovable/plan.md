@@ -1,33 +1,49 @@
 
 
-# Add Prop Type Diversity Enforcement to Lottery Scanner
+## Void Duplicates and Generate 3 Distinct Lottery Parlays
 
-## Problem
-The lottery scanner can stack multiple legs of the same prop type (e.g., 3-4 threes legs), reducing diversity and increasing correlation risk.
+### Problem
+The lottery scanner is deterministic -- each run picks the same top-scoring candidates, producing identical tickets. We need to void 2 duplicates and add an exclusion mechanism so consecutive runs produce unique parlays.
 
-## Solution
-Add a single guard in `passesBasicChecks` to cap any normalized prop type at 2 legs max per parlay.
+### Step 1: Void 2 Duplicate Lottery Tickets
+Use the database insert tool to mark 2 of the 3 duplicate pending lottery tickets (March 1) as `void` with a note explaining the reason, keeping only the oldest one active.
 
-## Changes
+### Step 2: Add Deduplication to the Lottery Scanner
+Modify `supabase/functions/nba-mega-parlay-scanner/index.ts` to:
+- Accept an optional `exclude_players` array in the request body
+- Before building the parlay, filter out any props from players in the exclusion list
+- Also add automatic dedup: at the start, query today's existing `mega_lottery_scanner` parlays from `bot_daily_parlays` and extract all player names already used, merging them into the exclusion set
+- This ensures each consecutive run naturally avoids repeating the same players
 
-### File: `supabase/functions/nba-mega-parlay-scanner/index.ts`
+The key change is in the `passesBasicChecks` function and pre-build filtering:
+```text
+// Parse exclude_players from request body
+const { exclude_players = [] } = body;
 
-**1. Add constant (line 596, after `MAX_PER_GAME`):**
-```typescript
-const MAX_SAME_PROP = 2;
+// Query existing lottery parlays for today and extract used players
+const existingLotteryParlays = await supabase
+  .from('bot_daily_parlays')
+  .select('legs')
+  .eq('parlay_date', today)
+  .eq('strategy_name', 'mega_lottery_scanner')
+  .neq('outcome', 'void');
+
+// Merge into a single exclusion set
+const excludeSet = new Set([
+  ...exclude_players.map(normalizeName),
+  ...extractedPlayerNames.map(normalizeName)
+]);
+
+// Add to passesBasicChecks:
+if (excludeSet.has(normalizeName(prop.player_name))) return false;
 ```
 
-**2. Add check in `passesBasicChecks` (before `return true` at line 611):**
-```typescript
-const propNorm = normalizePropType(prop.prop_type);
-const sameTypeCount = existingLegs.filter(l => normalizePropType(l.prop_type) === propNorm).length;
-if (sameTypeCount >= MAX_SAME_PROP) return false;
-```
+### Step 3: Regenerate 2 Fresh Lottery Tickets
+After deploying the updated scanner, invoke it twice. Each run will automatically exclude players from already-saved tickets, producing 3 distinct parlays with different player combinations and proper prop diversity (`MAX_SAME_PROP = 2`).
 
-This single change covers all build paths -- role-based (safe/balanced/great_odds), replay mode, relaxed fallbacks, and greedy fill -- since they all call `passesBasicChecks`.
-
-## Result
-- Any 3-leg parlay must have at least 2 different prop categories
-- No prop type (threes, points, rebounds, etc.) can appear more than twice
-- Zero risk of 4x threes stacking
+### Technical Details
+- **File modified**: `supabase/functions/nba-mega-parlay-scanner/index.ts`
+- **Database operations**: UPDATE 2 rows in `bot_daily_parlays` to `outcome = 'void'`
+- **No schema changes needed**
+- The auto-dedup is additive to the existing `MAX_SAME_PROP` and `MAX_PER_GAME` constraints
 
