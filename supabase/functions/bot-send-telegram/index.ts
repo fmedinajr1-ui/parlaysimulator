@@ -34,6 +34,7 @@ type NotificationType =
   | 'fresh_slate_report'
   | 'double_confirmed_report'
   | 'mega_parlay_scanner'
+  | 'mega_lottery_v2'
   | 'daily_winners_recap'
   | 'slate_rebuild_alert'
   | 'slate_status_update'
@@ -87,6 +88,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatDoubleConfirmedReport(data, dateStr);
     case 'mega_parlay_scanner':
       return formatMegaParlayScanner(data, dateStr);
+    case 'mega_lottery_v2':
+      return formatMegaLotteryV2(data, dateStr);
     case 'daily_winners_recap':
       return formatDailyWinnersRecap(data, dateStr);
     case 'slate_rebuild_alert':
@@ -1007,6 +1010,52 @@ function formatMegaParlayScanner(data: Record<string, any>, dateStr: string): st
   return msg;
 }
 
+function formatMegaLotteryV2(data: Record<string, any>, dateStr: string): string {
+  const { date, tickets, ticketCount, scanned, events, exoticProps, teamBets } = data;
+  const displayDate = date || dateStr;
+
+  const tierEmoji: Record<string, string> = {
+    standard: '🎟️',
+    high_roller: '🎲',
+    mega_jackpot: '🎰',
+  };
+  const tierLabel: Record<string, string> = {
+    standard: 'STANDARD',
+    high_roller: 'HIGH ROLLER',
+    mega_jackpot: 'MEGA JACKPOT',
+  };
+
+  let msg = `🎰 LOTTERY TICKETS (${ticketCount || 0} Tickets)\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${displayDate} | V2 3-Ticket System\n`;
+  msg += `📊 ${scanned || '?'} props | ${events || '?'} games | ${exoticProps || 0} exotic | ${teamBets || 0} team bets\n\n`;
+  msg += `⚠️ LOTTERY — High risk, high reward.\n`;
+  msg += `Bet only what you can afford to lose.\n\n`;
+
+  if (tickets && Array.isArray(tickets)) {
+    for (const ticket of tickets) {
+      const emoji = tierEmoji[ticket.tier] || '🎟️';
+      const label = tierLabel[ticket.tier] || ticket.tier.toUpperCase();
+      msg += `${emoji} Ticket — ${label} (+${ticket.combinedOdds?.toLocaleString()}) | $${ticket.stake} stake\n`;
+      msg += `💵 Potential: $${ticket.payout}\n`;
+
+      for (const leg of (ticket.legs || [])) {
+        const propLabel = (leg.prop || '').replace(/_/g, ' ').toUpperCase();
+        const defStr = leg.defense_rank ? ` | Def: ${leg.defense_rank}` : '';
+        const hrStr = leg.hit_rate ? ` | HR: ${leg.hit_rate}%` : '';
+        const typeTag = leg.market_type === 'exotic_player' ? ' 🌟' : leg.market_type === 'team_bet' ? ' 🏀' : '';
+        msg += `  L${leg.leg}: ${leg.player} ${leg.side} ${leg.line || ''} ${propLabel} (${leg.odds})${typeTag}${defStr}${hrStr}\n`;
+      }
+      msg += `\n`;
+    }
+  } else {
+    msg += `⚠️ No qualifying tickets found today.\n`;
+  }
+
+  msg += `🎲 Good luck! Play responsibly.`;
+  return msg;
+}
+
 function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
   const { date, rating, winnerCount, totalProfit, winners, keyPlayers } = data;
   const displayDate = date || dateStr;
@@ -1097,7 +1146,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner' && type !== 'daily_winners_recap') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner' && type !== 'mega_lottery_v2' && type !== 'daily_winners_recap') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
@@ -1235,7 +1284,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement') {
+    if (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement') {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
