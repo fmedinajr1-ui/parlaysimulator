@@ -82,7 +82,7 @@ serve(async (req) => {
     const today = getEasternDate();
     console.log(`[LadderChallenge] Starting scan for ${today}`);
 
-    // === DEDUP CHECK: Skip if we already have a ladder for today ===
+    // === DEDUP CHECK: Skip if we already have 3 ladders for today ===
     const { data: existingLadders } = await supabase
       .from('bot_daily_parlays')
       .select('id')
@@ -90,7 +90,7 @@ serve(async (req) => {
       .eq('strategy_name', 'ladder_challenge')
       .neq('outcome', 'void');
 
-    if (existingLadders && existingLadders.length > 0) {
+    if (existingLadders && existingLadders.length >= 3) {
       console.log(`[LadderChallenge] Already have ${existingLadders.length} ladder(s) for today, skipping`);
       return new Response(JSON.stringify({ success: true, skipped: true, reason: 'already_exists' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -214,6 +214,20 @@ serve(async (req) => {
       if (p.team_name) paceMap.set(p.team_name.toLowerCase(), p);
     }
 
+    // === Build player-to-team map from bdl_player_cache ===
+    const { data: playerCacheData } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, team_name')
+      .not('team_name', 'is', null);
+
+    const playerTeamMap = new Map<string, string>();
+    for (const p of playerCacheData || []) {
+      if (p.team_name) {
+        playerTeamMap.set(normalizeName(p.player_name), p.team_name);
+      }
+    }
+    console.log(`[LadderChallenge] Loaded ${playerTeamMap.size} player-team mappings`);
+
     // === STEP 4: Fetch L10 game logs for ceiling analysis ===
     // Get threes_made from last 10 games for each candidate player
     const gameLogPromises = playerNames.slice(0, 30).map(async (name) => {
@@ -258,43 +272,58 @@ serve(async (req) => {
       if (!ss || !ss.l10_avg) continue;
 
       const firstLine = lines[0];
-      
-      // Determine opponent team
-      // The game string is "Away @ Home" — find which team the player is NOT on
-      const opponent = firstLine.game; // We'll match defense by both teams
       const homeTeamLower = firstLine.home_team.toLowerCase();
       const awayTeamLower = firstLine.away_team.toLowerCase();
 
-      // Find opponent defense rank — we need to figure out which team the player is on
-      // Try matching player to sweet_spots team or just check both teams
-      const homeDef = defenseMap.get(homeTeamLower);
-      const awayDef = defenseMap.get(awayTeamLower);
-
-      // Use the worse 3PT defense (higher rank = worse) as the opponent
-      // This is a simplification — ideally we'd know the player's team
-      let oppThreesRank = 15; // default middle
+      // === Resolve player's actual team from bdl_player_cache ===
+      const playerTeam = playerTeamMap.get(key);
       let oppTeamName = '';
-      let offPaceRank = 15;
+      let playerTeamName = '';
 
-      // Try to determine player's team from game logs or sweet spots
-      // For now, use the team with WORSE 3PT defense as the presumed opponent
-      if (homeDef && awayDef) {
-        if ((homeDef.opp_threes_rank || 0) > (awayDef.opp_threes_rank || 0)) {
-          oppThreesRank = homeDef.opp_threes_rank || 15;
-          oppTeamName = firstLine.home_team;
-          offPaceRank = awayDef.off_pace_rank || 15;
-        } else {
-          oppThreesRank = awayDef.opp_threes_rank || 15;
+      if (playerTeam) {
+        const playerTeamLower = playerTeam.toLowerCase();
+        // Match player's team to home or away
+        if (homeTeamLower.includes(playerTeamLower) || playerTeamLower.includes(homeTeamLower)) {
           oppTeamName = firstLine.away_team;
-          offPaceRank = homeDef.off_pace_rank || 15;
+          playerTeamName = firstLine.home_team;
+        } else if (awayTeamLower.includes(playerTeamLower) || playerTeamLower.includes(awayTeamLower)) {
+          oppTeamName = firstLine.home_team;
+          playerTeamName = firstLine.away_team;
+        } else {
+          // Fuzzy: check if any word matches
+          const ptWords = playerTeamLower.split(' ');
+          if (ptWords.some(w => homeTeamLower.includes(w) && w.length > 3)) {
+            oppTeamName = firstLine.away_team;
+            playerTeamName = firstLine.home_team;
+          } else {
+            oppTeamName = firstLine.home_team;
+            playerTeamName = firstLine.away_team;
+          }
         }
-      } else if (homeDef) {
-        oppThreesRank = homeDef.opp_threes_rank || 15;
-        oppTeamName = firstLine.home_team;
-      } else if (awayDef) {
-        oppThreesRank = awayDef.opp_threes_rank || 15;
-        oppTeamName = firstLine.away_team;
+        console.log(`[LadderChallenge] ${firstLine.player_name}: team=${playerTeam}, opponent=${oppTeamName}`);
+      } else {
+        // Fallback: guess using worse 3PT defense (old behavior)
+        const homeDef = defenseMap.get(homeTeamLower);
+        const awayDef = defenseMap.get(awayTeamLower);
+        if (homeDef && awayDef) {
+          if ((homeDef.opp_threes_rank || 0) > (awayDef.opp_threes_rank || 0)) {
+            oppTeamName = firstLine.home_team;
+            playerTeamName = firstLine.away_team;
+          } else {
+            oppTeamName = firstLine.away_team;
+            playerTeamName = firstLine.home_team;
+          }
+        } else {
+          oppTeamName = firstLine.away_team;
+          playerTeamName = firstLine.home_team;
+        }
+        console.log(`[LadderChallenge] ${firstLine.player_name}: NO team mapping, guessed opponent=${oppTeamName}`);
       }
+
+      const oppDef = defenseMap.get(oppTeamName.toLowerCase());
+      let oppThreesRank = oppDef?.opp_threes_rank || 15;
+      const playerDef = defenseMap.get(playerTeamName.toLowerCase());
+      let offPaceRank = playerDef?.off_pace_rank || 15;
 
       // Filter: no ladders against top-15 3PT defense
       if (oppThreesRank < 15) continue;
@@ -368,76 +397,95 @@ serve(async (req) => {
       });
     }
 
-    // === STEP 6: Build the 3-rung ladder for #1 pick ===
-    const pick = candidates[0];
-    const ladderLines = pick.lines.slice(0, 3); // Take up to 3 rungs
+    // === STEP 6: Build single boom pick for top 3 candidates ===
+    const topPicks = candidates.slice(0, 3);
+    const savedPicks: any[] = [];
+    const telegramLines: string[] = [];
 
-    // Calculate hit rates per rung from game logs
-    const logs = gameLogMap.get(normalizeName(pick.player_name)) || [];
-    const rungHitRates = ladderLines.map(l => {
-      const hits = logs.filter((g: any) => (g.threes_made || 0) > l.line).length;
-      return { hits, total: logs.length };
-    });
+    for (let i = 0; i < topPicks.length; i++) {
+      const pick = topPicks[i];
+      const logs = gameLogMap.get(normalizeName(pick.player_name)) || [];
 
-    // Build legs for bot_daily_parlays
-    const legs = ladderLines.map((l, i) => ({
-      player_name: pick.player_name,
-      prop_type: 'player_threes',
-      line: l.line,
-      side: 'OVER',
-      odds: l.over_odds,
-      bookmaker: l.bookmaker,
-      rung: i + 1,
-      rung_label: i === 0 ? 'Safety' : i === 1 ? 'Value' : 'Boom',
-      l10_hit_rate: rungHitRates[i] ? `${rungHitRates[i].hits}/${rungHitRates[i].total}` : 'N/A',
-    }));
+      // Find the boom line: highest line where L10 avg >= line value
+      let boomLine: PlayerLine | null = null;
+      for (let j = pick.lines.length - 1; j >= 0; j--) {
+        if (pick.l10_avg >= pick.lines[j].line) {
+          boomLine = pick.lines[j];
+          break;
+        }
+      }
+      // Fallback to highest available line if none qualifies
+      if (!boomLine) boomLine = pick.lines[pick.lines.length - 1];
 
-    // Calculate combined probability
-    const combinedProb = legs.reduce((acc, l) => {
-      const imp = l.odds >= 100 ? 100 / (l.odds + 100) : Math.abs(l.odds) / (Math.abs(l.odds) + 100);
-      return acc * imp;
-    }, 1);
+      const boomHits = logs.filter((g: any) => (g.threes_made || 0) > boomLine!.line).length;
+      const boomHitRate = logs.length > 0 ? `${boomHits}/${logs.length}` : 'N/A';
 
-    const combinedDecimalOdds = legs.reduce((acc, l) => acc * americanToDecimal(l.odds), 1);
+      // Matchup grade
+      let matchupGrade = 'NEUTRAL';
+      if (pick.opp_threes_rank >= 25) matchupGrade = 'ELITE';
+      else if (pick.opp_threes_rank >= 20) matchupGrade = 'GOOD';
+      else matchupGrade = 'FAIR';
 
-    // Matchup grade
-    let matchupGrade = 'NEUTRAL';
-    if (pick.opp_threes_rank >= 25) matchupGrade = 'ELITE';
-    else if (pick.opp_threes_rank >= 20) matchupGrade = 'GOOD';
-    else matchupGrade = 'FAIR';
+      const oddsStr = boomLine.over_odds > 0 ? `+${boomLine.over_odds}` : `${boomLine.over_odds}`;
+      const decimalOdds = americanToDecimal(boomLine.over_odds);
+      const impliedProb = boomLine.over_odds >= 100
+        ? 100 / (boomLine.over_odds + 100)
+        : Math.abs(boomLine.over_odds) / (Math.abs(boomLine.over_odds) + 100);
 
-    const rationale = `Ladder Challenge: ${pick.player_name} 3PT OVER vs ${pick.opponent} (Rank ${pick.opp_threes_rank} 3PT D). L10 Avg: ${pick.l10_avg}, Floor: ${pick.l10_min}, Ceiling: ${pick.l10_max}. Composite Score: ${pick.composite_score.toFixed(2)}. Matchup: ${matchupGrade}.`;
+      // All available lines for rationale context
+      const allLinesStr = pick.lines.map(l => {
+        const hits = logs.filter((g: any) => (g.threes_made || 0) > l.line).length;
+        const os = l.over_odds > 0 ? `+${l.over_odds}` : `${l.over_odds}`;
+        return `Over ${l.line} (${os}) ${hits}/${logs.length}`;
+      }).join(' | ');
 
-    // === STEP 7: Save to bot_daily_parlays ===
-    const { error: insertError } = await supabase
-      .from('bot_daily_parlays')
-      .insert({
-        parlay_date: today,
-        strategy_name: 'ladder_challenge',
-        tier: 'execution',
-        legs: legs,
-        leg_count: legs.length,
-        combined_probability: Math.round(combinedProb * 10000) / 10000,
-        expected_odds: Math.round(combinedDecimalOdds),
-        selection_rationale: rationale,
-        is_simulated: false,
-      });
+      const rationale = `Ladder Challenge #${i + 1}: ${pick.player_name} 3PT Over ${boomLine.line} (${oddsStr}) vs ${pick.opponent} (Rank ${pick.opp_threes_rank} 3PT D). L10 Avg: ${pick.l10_avg}, Floor: ${pick.l10_min}, Ceiling: ${pick.l10_max}. Boom hit rate: ${boomHitRate}. All lines: ${allLinesStr}. Score: ${pick.composite_score.toFixed(2)}. Matchup: ${matchupGrade}.`;
 
-    if (insertError) {
-      console.error(`[LadderChallenge] Insert error:`, insertError);
-      throw new Error(`Failed to save ladder: ${insertError.message}`);
+      const leg = {
+        player_name: pick.player_name,
+        prop_type: 'player_threes',
+        line: boomLine.line,
+        side: 'OVER',
+        odds: boomLine.over_odds,
+        bookmaker: boomLine.bookmaker,
+        rung_label: 'Boom',
+        l10_hit_rate: boomHitRate,
+      };
+
+      // Save to bot_daily_parlays as single-leg entry
+      const { error: insertError } = await supabase
+        .from('bot_daily_parlays')
+        .insert({
+          parlay_date: today,
+          strategy_name: 'ladder_challenge',
+          tier: 'execution',
+          legs: [leg],
+          leg_count: 1,
+          combined_probability: Math.round(impliedProb * 10000) / 10000,
+          expected_odds: Math.round(decimalOdds),
+          selection_rationale: rationale,
+          is_simulated: false,
+        });
+
+      if (insertError) {
+        console.error(`[LadderChallenge] Insert error for ${pick.player_name}:`, insertError);
+      } else {
+        console.log(`[LadderChallenge] Saved boom pick for ${pick.player_name}: Over ${boomLine.line} (${oddsStr})`);
+        savedPicks.push({ player: pick.player_name, line: boomLine.line, odds: oddsStr });
+      }
+
+      // Build Telegram line
+      const matchIcon = matchupGrade === 'ELITE' ? '🔥' : matchupGrade === 'GOOD' ? '✅' : '⚠️';
+      telegramLines.push(
+        `${i + 1}. ${pick.player_name} | 3PT Over ${boomLine.line} (${oddsStr})\n` +
+        `   vs ${pick.opponent} (Rank ${pick.opp_threes_rank} 3PT D)\n` +
+        `   L10 Avg: ${pick.l10_avg} | Floor: ${pick.l10_min} | Ceiling: ${pick.l10_max}\n` +
+        `   Matchup: ${matchupGrade} ${matchIcon}`
+      );
     }
 
-    console.log(`[LadderChallenge] Saved ladder for ${pick.player_name}`);
-
-    // === STEP 8: Send Telegram notification ===
-    const rungsText = legs.map((l, i) => {
-      const oddsStr = l.odds > 0 ? `+${l.odds}` : `${l.odds}`;
-      const hr = rungHitRates[i];
-      return `Rung ${i + 1}: Over ${l.line} (${oddsStr}) — L10: ${hr.hits}/${hr.total}`;
-    }).join('\n');
-
-    const telegramMessage = `🪜 LADDER CHALLENGE 🪜\n${pick.player_name} | 3PT OVER\nvs ${pick.opponent} (Rank ${pick.opp_threes_rank} 3PT Defense)\n\n${rungsText}\n\nL10 Avg: ${pick.l10_avg} | Floor: ${pick.l10_min} | Ceiling: ${pick.l10_max}\nMatchup: ${matchupGrade} ${matchupGrade === 'ELITE' ? '🔥' : matchupGrade === 'GOOD' ? '✅' : '⚠️'}\nScore: ${pick.composite_score.toFixed(2)}`;
+    // === STEP 7: Send combined Telegram notification ===
+    const telegramMessage = `🪜 LADDER CHALLENGE (${savedPicks.length} Picks) 🪜\n\n${telegramLines.join('\n\n')}`;
 
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
@@ -450,33 +498,37 @@ serve(async (req) => {
           type: 'ladder_challenge',
           data: {
             message: telegramMessage,
-            player: pick.player_name,
-            opponent: pick.opponent,
-            legs,
-            composite_score: pick.composite_score,
-            matchup_grade: matchupGrade,
+            picks: savedPicks,
           },
         }),
       });
-      console.log(`[LadderChallenge] Telegram notification sent`);
+      console.log(`[LadderChallenge] Telegram notification sent with ${savedPicks.length} picks`);
     } catch (e) {
       console.warn(`[LadderChallenge] Telegram send failed:`, e.message);
     }
 
     return new Response(JSON.stringify({
       success: true,
-      player: pick.player_name,
-      opponent: pick.opponent,
-      composite_score: pick.composite_score,
-      matchup_grade: matchupGrade,
-      ladder: legs,
-      l10: { avg: pick.l10_avg, min: pick.l10_min, max: pick.l10_max, median: pick.l10_median },
-      runners_up: candidates.slice(1, 4).map(c => ({
-        player: c.player_name, score: c.composite_score.toFixed(2), l10_avg: c.l10_avg,
+      picks: topPicks.map((p, i) => ({
+        player: p.player_name,
+        opponent: p.opponent,
+        composite_score: p.composite_score,
+        boom_line: savedPicks[i]?.line,
+        boom_odds: savedPicks[i]?.odds,
+        l10: { avg: p.l10_avg, min: p.l10_min, max: p.l10_max },
       })),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+
+  } catch (error) {
+    console.error(`[LadderChallenge] Fatal error:`, error);
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});
 
   } catch (error) {
     console.error(`[LadderChallenge] Fatal error:`, error);
