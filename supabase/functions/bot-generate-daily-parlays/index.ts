@@ -9049,6 +9049,56 @@ Deno.serve(async (req) => {
 
       if (insertError) throw insertError;
 
+      // Set execution-tier parlays to pending_approval for admin review
+      const executionParlays = allParlays.filter((p: any) => {
+        const tier = (p.tier || '').toLowerCase();
+        const strategy = (p.strategy_name || '').toLowerCase();
+        return tier === 'execution' || strategy.includes('execution') || strategy.includes('elite') ||
+          strategy.includes('cash_lock') || strategy.includes('boosted_cash') || strategy.includes('golden_lock') ||
+          strategy.includes('hybrid_exec') || strategy.includes('team_exec') || strategy.includes('mispriced') ||
+          strategy.includes('conviction') || strategy.startsWith('force_');
+      });
+
+      if (executionParlays.length > 0) {
+        // Update approval_status for execution parlays
+        await supabase
+          .from('bot_daily_parlays')
+          .update({ approval_status: 'pending_approval' })
+          .eq('parlay_date', targetDate)
+          .in('strategy_name', executionParlays.map((p: any) => p.strategy_name));
+
+        // Send approval request to admin via Telegram
+        try {
+          // Fetch the inserted execution parlays with IDs
+          const { data: execParlaysWithIds } = await supabase
+            .from('bot_daily_parlays')
+            .select('*')
+            .eq('parlay_date', targetDate)
+            .eq('approval_status', 'pending_approval')
+            .order('created_at', { ascending: false });
+
+          if (execParlaysWithIds && execParlaysWithIds.length > 0) {
+            await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseKey}`,
+              },
+              body: JSON.stringify({
+                type: 'parlay_approval_request',
+                data: {
+                  parlays: execParlaysWithIds,
+                  date: targetDate,
+                },
+              }),
+            });
+            console.log(`[Bot v2] Sent ${execParlaysWithIds.length} execution parlays for admin approval`);
+          }
+        } catch (approvalErr) {
+          console.error('[Bot v2] Failed to send approval request:', approvalErr);
+        }
+      }
+
       // Mark research findings as consumed
       await markResearchConsumed(supabase, targetDate);
     }

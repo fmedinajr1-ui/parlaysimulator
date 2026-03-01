@@ -1151,6 +1151,7 @@ export type Database = {
       }
       bot_daily_parlays: {
         Row: {
+          approval_status: string | null
           category_weights_snapshot: Json | null
           combined_probability: number
           created_at: string
@@ -1178,6 +1179,7 @@ export type Database = {
           tier: string | null
         }
         Insert: {
+          approval_status?: string | null
           category_weights_snapshot?: Json | null
           combined_probability?: number
           created_at?: string
@@ -1205,6 +1207,7 @@ export type Database = {
           tier?: string | null
         }
         Update: {
+          approval_status?: string | null
           category_weights_snapshot?: Json | null
           combined_probability?: number
           created_at?: string
