@@ -15,7 +15,15 @@ const PROP_MARKETS = [
   'player_blocks',
 ];
 
-const MIN_ODDS = 650;
+const MIN_ODDS = 500;
+
+function getTier(odds: number): string {
+  if (odds >= 1000) return '+1000+';
+  if (odds >= 900) return '+900';
+  if (odds >= 700) return '+700';
+  if (odds >= 650) return '+650';
+  return '+500';
+}
 
 async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
   const controller = new AbortController();
@@ -74,6 +82,7 @@ serve(async (req) => {
                 line: null,
                 odds: `+${outcome.price}`,
                 odds_raw: outcome.price,
+                tier: getTier(outcome.price),
               });
             }
           }
@@ -114,6 +123,7 @@ serve(async (req) => {
                   line: outcome.point ?? null,
                   odds: `+${outcome.price}`,
                   odds_raw: outcome.price,
+                  tier: getTier(outcome.price),
                 });
               }
             }
@@ -127,14 +137,33 @@ serve(async (req) => {
     longshots.sort((a, b) => b.odds_raw - a.odds_raw);
     console.log(`[fetch-hardrock-longshots] Found ${longshots.length} longshots at +${MIN_ODDS}+`);
 
+    // Build tiers summary
+    const tierOrder = ['+1000+', '+900', '+700', '+650', '+500'];
+    const tiers: Record<string, number> = {};
+    for (const t of tierOrder) tiers[t] = 0;
+    for (const l of longshots) tiers[l.tier] = (tiers[l.tier] || 0) + 1;
+
     // Send to admin via Telegram if requested
     if (sendTelegram && longshots.length > 0) {
-      const lines = longshots.map(l => {
-        const marketLabel = l.market === 'moneyline' ? 'ML' :
-          `${l.side} ${l.line !== null ? l.line : ''} ${l.market.replace('player_', '').replace(/_/g, ' ')}`;
-        return `${l.odds} | ${l.name} ${marketLabel}\n${l.game}`;
-      });
-      const message = `🎰 HRB LONGSHOTS (${'+' + MIN_ODDS} and up)\n\n${lines.join('\n\n')}`;
+      const tierLabels: Record<string, string> = {
+        '+1000+': '🔥 +1000 & UP',
+        '+900': '💰 +900',
+        '+700': '🎯 +700',
+        '+650': '📊 +650',
+        '+500': '🎲 +500',
+      };
+      const sections: string[] = [];
+      for (const tier of tierOrder) {
+        const items = longshots.filter(l => l.tier === tier);
+        if (items.length === 0) continue;
+        const lines = items.map(l => {
+          const marketLabel = l.market === 'moneyline' ? 'ML' :
+            `${l.side} ${l.line !== null ? l.line : ''} ${l.market.replace('player_', '').replace(/_/g, ' ')}`;
+          return `${l.odds} | ${l.name} ${marketLabel}\n${l.game}`;
+        });
+        sections.push(`--- ${tierLabels[tier]} ---\n${lines.join('\n\n')}`);
+      }
+      const message = `🎰 HRB LONGSHOTS\n\n${sections.join('\n\n')}`;
 
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
       const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
@@ -166,6 +195,7 @@ serve(async (req) => {
       sport,
       events_searched: events.length,
       telegram_sent: sendTelegram && longshots.length > 0,
+      tiers,
       longshots,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
