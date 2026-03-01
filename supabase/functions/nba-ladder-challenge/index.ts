@@ -184,7 +184,7 @@ serve(async (req) => {
       supabase
         .from('category_sweet_spots')
         .select('player_name, l10_avg, l10_median, l10_min, l10_max, l10_hit_rate, confidence_score, prop_type')
-        .eq('prop_type', 'player_threes')
+        .in('prop_type', ['threes', 'player_threes'])
         .eq('is_active', true),
       supabase
         .from('team_defense_rankings')
@@ -236,7 +236,25 @@ serve(async (req) => {
     const candidates: PlayerLadderCandidate[] = [];
 
     for (const [key, lines] of playerBestLines) {
-      const ss = sweetSpotMap.get(key);
+      let ss = sweetSpotMap.get(key);
+      
+      // Fallback: compute L10 stats from game logs if no sweet spot data
+      const logs = gameLogMap.get(key) || [];
+      if ((!ss || !ss.l10_avg) && logs.length >= 5) {
+        const values = logs.map((g: any) => g.threes_made || 0);
+        const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
+        const sorted = [...values].sort((a: number, b: number) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        ss = {
+          l10_avg: Math.round(avg * 10) / 10,
+          l10_median: median,
+          l10_min: Math.min(...values),
+          l10_max: Math.max(...values),
+          l10_hit_rate: null,
+        };
+        console.log(`[LadderChallenge] Computed L10 from game logs for ${lines[0].player_name}: avg=${ss.l10_avg}, min=${ss.l10_min}, max=${ss.l10_max}`);
+      }
+      
       if (!ss || !ss.l10_avg) continue;
 
       const firstLine = lines[0];
@@ -288,8 +306,7 @@ serve(async (req) => {
       // Safety check: L10 avg must be >= middle rung
       if (ss.l10_avg < middleLine) continue;
 
-      // Ceiling analysis from game logs
-      const logs = gameLogMap.get(key) || [];
+      // Ceiling analysis from game logs (reuse logs from above)
       const ceilingGames = logs.filter((g: any) => (g.threes_made || 0) >= 4).length;
 
       // Calculate L10 hit rate at middle rung from game logs
@@ -400,8 +417,8 @@ serve(async (req) => {
         tier: 'execution',
         legs: legs,
         leg_count: legs.length,
-        combined_probability: combinedProb,
-        expected_odds: combinedDecimalOdds,
+        combined_probability: Math.round(combinedProb * 10000) / 10000,
+        expected_odds: Math.round(combinedDecimalOdds),
         selection_rationale: rationale,
         is_simulated: false,
       });
