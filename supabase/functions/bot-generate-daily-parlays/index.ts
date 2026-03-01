@@ -875,6 +875,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.65,
     profiles: [
+      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (run first) =============
+      // Triple-confirmed: sweet spot + mispriced + risk engine agreement
+      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
+      // Double-confirmed: sweet spot + mispriced edge agreement
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      // ============= STANDARD EXECUTION STRATEGIES =============
       // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
@@ -903,12 +913,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       // Whale signal execution (3-leg only — 2-leg permanently removed)
       { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      // Double-confirmed execution — HIGHEST PRIORITY: sweet spot + mispriced edge agreement
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
-      // Triple-confirmed execution — ULTRA-HIGH PRIORITY
-      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
+      // (Double/triple confirmed conviction profiles moved to top of profiles array)
       // Mispriced edge execution — highest conviction plays
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
@@ -927,9 +932,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       // MASTER PARLAY: DISABLED (0-15 record, -$650 P/L, structurally doomed at 6-legs)
       // { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
-      // REPLACEMENT: Additional double_confirmed_conviction profiles
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      // (Additional double_confirmed_conviction profiles moved to top of profiles array)
       // HOT-STREAK LOCKS: Force selection from categories with current_streak >= 3 and 100% hit rate
       // These run FIRST before standard profiles to guarantee hot-streak concentration in 3-leg parlays
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
@@ -5862,13 +5865,18 @@ async function generateTierParlays(
     }
     if (parlaysToCreate.length >= config.count) break;
 
-    // Enforce strategy diversity cap + L10 volume throttling
-    const currentStrategyCount = strategyCountMap.get(profile.strategy) || 0;
-    const l10VolumeCap = getStrategyVolumeCap(profile.strategy, strategyDiversityCap);
-    const effectiveCap = Math.min(strategyDiversityCap, l10VolumeCap);
-    if (currentStrategyCount >= effectiveCap) {
-      console.log(`[Bot] ⏭️ Strategy cap reached for '${profile.strategy}' (${currentStrategyCount}/${effectiveCap}${l10VolumeCap < strategyDiversityCap ? ' L10-throttled' : ''}), skipping`);
-      continue;
+    // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
+    const PRIORITY_STRATEGIES = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction']);
+    
+    // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
+    if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
+      const currentStrategyCount = strategyCountMap.get(profile.strategy) || 0;
+      const l10VolumeCap = getStrategyVolumeCap(profile.strategy, strategyDiversityCap);
+      const effectiveCap = Math.min(strategyDiversityCap, l10VolumeCap);
+      if (currentStrategyCount >= effectiveCap) {
+        console.log(`[Bot] ⏭️ Strategy cap reached for '${profile.strategy}' (${currentStrategyCount}/${effectiveCap}${l10VolumeCap < strategyDiversityCap ? ' L10-throttled' : ''}), skipping`);
+        continue;
+      }
     }
 
     const legs: any[] = [];
@@ -6923,10 +6931,12 @@ async function generateTierParlays(
   const postTrimStrategyCount = new Map<string, number>();
   const trimmedParlays: typeof parlaysToCreate = [];
   
+  const POST_TRIM_PRIORITY = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction']);
   for (const parlay of parlaysToCreate) {
     const strategy = parlay.strategy_name || 'unknown';
     const currentCount = postTrimStrategyCount.get(strategy) || 0;
-    if (currentCount >= actualDiversityCap) {
+    // Priority strategies bypass the post-trim diversity cap
+    if (!POST_TRIM_PRIORITY.has(strategy) && currentCount >= actualDiversityCap) {
       console.log(`[Bot] ✂️ Post-trim: voiding excess '${strategy}' parlay (${currentCount + 1} > ${actualDiversityCap} cap on ${actualCount} actual)`);
       continue; // Skip this parlay
     }
