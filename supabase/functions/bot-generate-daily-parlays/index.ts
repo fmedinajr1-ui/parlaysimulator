@@ -2737,6 +2737,7 @@ interface PropPool {
   multiEnginePicks: EnrichedPick[];
   totalPool: number;
   goldenCategories: Set<string>;
+  defenseDetailMap: Map<string, any>;
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -4385,8 +4386,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   }
 
   // === FETCH PLAYER PROP ALTERNATE LINES ===
-  // Only fetch if any execution profile uses alt lines
-  const anyProfileUsesAltLines = config.profiles.some((p: any) => p.useAltLines === true);
+  // Check if any execution profile uses alt lines
+  const allProfiles = Object.values(TIER_CONFIG).flatMap((tc: any) => tc.profiles || []);
+  const anyProfileUsesAltLines = allProfiles.some((p: any) => p.useAltLines === true);
   if (anyProfileUsesAltLines) {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -5732,6 +5734,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     multiEnginePicks,
     totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length,
     goldenCategories,
+    defenseDetailMap,
   };
 }
 
@@ -5804,6 +5807,7 @@ async function generateTierParlays(
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
+  const defenseDetailMap = pool.defenseDetailMap;
 
   // Thin-slate relaxation: loosen validation AND exploration tier gates (execution stays strict)
   if (isThinSlate && tier === 'validation') {
@@ -7608,8 +7612,13 @@ function generateSyntheticPool(): PropPool {
     teamPicks,
     sweetSpots: playerPicks,
     whalePicks: [],
+    mispricedPicks: [],
+    doubleConfirmedPicks: [],
+    tripleConfirmedPicks: [],
+    multiEnginePicks: [],
     totalPool: playerPicks.length + teamPicks.length,
     goldenCategories: new Set(['HIGH_SCORER_OVER', 'ELITE_ASSIST_OVER']),
+    defenseDetailMap: new Map(),
   };
 }
 
@@ -8005,12 +8014,14 @@ Deno.serve(async (req) => {
     for (const [name, mult] of strategyWeightMultipliers) {
       multiplierLog[name] = Math.round(mult * 100) / 100;
     }
-    await supabase.from('bot_activity_log').insert({
-      event_type: 'god_mode_strategy_multipliers',
-      message: `GOD MODE: Strategy multipliers loaded for ${Object.keys(multiplierLog).length} strategies`,
-      metadata: multiplierLog,
-      severity: 'info',
-    }).catch(() => {});
+    try {
+      await supabase.from('bot_activity_log').insert({
+        event_type: 'god_mode_strategy_multipliers',
+        message: `GOD MODE: Strategy multipliers loaded for ${Object.keys(multiplierLog).length} strategies`,
+        metadata: multiplierLog,
+        severity: 'info',
+      });
+    } catch (_) { /* ignore */ }
     
     // Log player performance summary
     let provenWinners = 0, reliablePlayers = 0, avoidPlayers = 0;
