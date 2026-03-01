@@ -1,75 +1,60 @@
 
 
-## Daily Ladder Challenge Bot
+## Fix Ladder Challenge: Correct Opponent, Single Pick Per Player, Top 3 Candidates
 
-### Concept
-Inspired by the Brandon Miller 6-threes game: find ONE player per day most likely to massively exceed their prop line, then create a "ladder" of bets at increasing lines (e.g., Over 1.5 at -200, Over 2.5 at -110, Over 3.5 at +130). When the player goes off, every rung of the ladder hits.
+### Problem
+Three issues with the current ladder challenge:
 
-### Intelligence Criteria (Pick Selection)
-The scanner will rank players using a weighted composite of:
-1. **L10 Average vs Line** (25%) -- How far above the lowest line is their recent average?
-2. **L10 Floor (Minimum)** (15%) -- Worst-case scenario protection; higher floor = safer ladder
-3. **Opponent 3PT Defense Rank** (20%) -- `opp_threes_rank` from `team_defense_rankings`; targeting rank 20-30 (weak perimeter D)
-4. **Offensive Pace** (10%) -- Fast-paced games create more possessions and shot opportunities
-5. **L10 Hit Rate at Middle Rung** (15%) -- How often they'd clear the 2nd ladder line in last 10
-6. **Ceiling Games** (15%) -- Count of L10 games where they hit 4+ threes (explosion potential)
+1. **Wrong opponent**: The bot doesn't know which team a player is on, so it guesses by picking the team with worse 3PT defense. This caused Julian Champagnie (Spurs) to show "vs San Antonio Spurs" instead of "vs New York Knicks."
 
-### Ladder Structure (3 Rungs)
-For the selected player, the function builds 3 legs saved as a single `bot_daily_parlays` entry:
-- **Rung 1 (Safety)**: Lowest available line (e.g., Over 1.5) -- high probability anchor
-- **Rung 2 (Value)**: Middle line (e.g., Over 2.5) -- the sweet spot
-- **Rung 3 (Boom)**: Highest line (e.g., Over 3.5) -- the upside swing
+2. **Can't stack same prop at different lines**: Sportsbooks won't let you parlay Over 1.5, Over 2.5, and Over 3.5 threes for the same player -- they're correlated. The ladder needs to pick ONE line (the boom/highest value line) per player as a single-leg pick.
 
-Each rung is a separate leg with its own odds, but they're grouped as a ladder strategy.
+3. **Only shows 1 pick**: You want the top 3 candidates (e.g., Julian, Sam, Jayson), each as their own single-leg ladder pick at their best boom line.
 
-### New Edge Function
-**File**: `supabase/functions/nba-ladder-challenge/index.ts`
+### Changes
 
-The function will:
-1. Fetch today's available player props from The Odds API (3-pointers only initially)
-2. Group all lines for each player (1.5, 2.5, 3.5, 4.5, etc.)
-3. Cross-reference with `category_sweet_spots` for L10 stats (avg, median, min, hit rate)
-4. Fetch `team_defense_rankings` for opponent `opp_threes_rank`
-5. Score each player using the weighted composite above
-6. Select the top-1 player and build the 3-rung ladder
-7. Save to `bot_daily_parlays` with `strategy_name: 'ladder_challenge'`, `tier: 'execution'`
-8. Send a Telegram notification with the ladder pick details
+**File: `supabase/functions/nba-ladder-challenge/index.ts`**
 
-### Telegram Output Format
+1. **Fix opponent detection** (lines 260-297):
+   - Query `bdl_player_cache` for `player_name, team_name` at startup
+   - Build a `playerTeamMap` (normalized name -> team name)
+   - When scoring, look up the player's actual team, then set opponent to the OTHER team in the game
+   - Use the actual opponent's `opp_threes_rank` (not the worse of the two)
+
+2. **Switch from multi-rung parlay to single boom pick** (lines 371-425):
+   - Instead of building 3 legs at different lines, pick the highest line where the player's L10 avg still clears comfortably (the "boom" line)
+   - Save as a single-leg entry with that line's odds (e.g., Over 4.5 at +650)
+   - Still show all available lines and hit rates in the rationale for context
+
+3. **Generate top 3 candidates** (lines 371-478):
+   - Loop over `candidates.slice(0, 3)` instead of just `candidates[0]`
+   - Save each as a separate `bot_daily_parlays` row
+   - Build a combined Telegram message showing all 3 picks
+   - Update dedup check threshold from `> 0` to `>= 3`
+
+4. **Updated Telegram format**:
 ```text
--- LADDER CHALLENGE --
-Brandon Miller | 3PT OVER
-vs Trail Blazers (Rank 28 3PT Defense)
+LADDER CHALLENGE (3 Picks)
 
-Rung 1: Over 1.5 (-180) -- L10: 10/10
-Rung 2: Over 2.5 (-110) -- L10: 8/10
-Rung 3: Over 3.5 (+130) -- L10: 6/10
+1. Julian Champagnie | 3PT Over 4.5 (+650)
+   vs Knicks (Rank 22 3PT D)
+   L10 Avg: 3.9 | Floor: 1 | Ceiling: 8
+   Matchup: GOOD
 
-L10 Avg: 3.8 | Floor: 2 | Ceiling: 6
-Matchup: ELITE (weak perimeter D + fast pace)
+2. Sam Hauser | 3PT Over 3.5 (+180)
+   vs Wizards (Rank 28 3PT D)
+   L10 Avg: 4.2 | Floor: 2 | Ceiling: 7
+   Matchup: ELITE
+
+3. Jayson Tatum | 3PT Over 3.5 (+150)
+   vs Pistons (Rank 25 3PT D)
+   L10 Avg: 3.6 | Floor: 1 | Ceiling: 6
+   Matchup: ELITE
 ```
 
 ### Technical Details
+- **File modified**: `supabase/functions/nba-ladder-challenge/index.ts`
+- Uses existing `bdl_player_cache` table for player-team mapping (same pattern as `bot-generate-daily-parlays`)
+- Each pick is a single-leg entry in `bot_daily_parlays` (leg_count: 1)
+- The "boom line" selection logic: pick the highest available line where L10 avg >= line value, maximizing upside odds
 
-**Data sources used:**
-- The Odds API (live sportsbook lines for all available 3PT lines per player)
-- `category_sweet_spots` (L10 avg, median, min, hit rate, confidence)
-- `nba_player_game_logs` (individual game values for ceiling/floor analysis)
-- `team_defense_rankings` (opp_threes_rank for matchup grading)
-
-**Key logic:**
-- Only considers players with 3+ different lines available from sportsbooks (ensures ladder depth)
-- Requires L10 avg >= middle rung line (safety check)
-- Requires opponent `opp_threes_rank` >= 15 (no ladders against elite 3PT defense)
-- Deduplication: checks existing `ladder_challenge` entries for today to avoid duplicates
-
-**Config in `supabase/config.toml`:**
-```toml
-[functions.nba-ladder-challenge]
-verify_jwt = false
-```
-
-**Files to create:**
-- `supabase/functions/nba-ladder-challenge/index.ts`
-
-**No database schema changes needed** -- uses existing `bot_daily_parlays` table with `strategy_name = 'ladder_challenge'`.
