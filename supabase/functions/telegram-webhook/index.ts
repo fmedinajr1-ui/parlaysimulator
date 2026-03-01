@@ -598,7 +598,7 @@ async function handleStart(chatId: string) {
 /mlb /pitcherk /runmlbbatter
 
 *Intelligence:*
-/research /watch [player]
+/research /watch [player] /extras /engineaccuracy
 
 *Control:*
 /pause /resume /bankroll [amt] /subscribe /export [date]
@@ -3125,6 +3125,88 @@ RULES:
   }
 }
 
+// ==================== EXTRA PLAYS & ENGINE ACCURACY ====================
+
+async function handleExtras(chatId: string): Promise<string> {
+  await logActivity("telegram_extras", "Admin requested extra plays report", { chatId });
+  await sendMessage(chatId, "⏳ Generating extra plays report...", "Markdown");
+  try {
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/generate-extra-plays-report`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return `❌ Extra plays report failed (${resp.status}): ${errText.slice(0, 200)}`;
+    }
+    const data = await resp.json();
+    if (data.totalExtras === 0) {
+      return `🎯 *Extra Plays*\n\nNo extra plays found — all quality picks are already in today's parlays!`;
+    }
+    return `✅ Extra plays report sent! (${data.totalExtras} picks found)`;
+  } catch (err) {
+    return `❌ Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleEngineAccuracy(chatId: string): Promise<string> {
+  await logActivity("telegram_engine_accuracy", "Admin requested engine accuracy", { chatId });
+
+  const engines: Array<{ name: string; won: number; lost: number; total: number }> = [];
+
+  // Risk Engine
+  const { data: riskPicks } = await supabase
+    .from('nba_risk_engine_picks')
+    .select('outcome')
+    .in('outcome', ['won', 'lost']);
+  if (riskPicks) {
+    const won = riskPicks.filter(p => p.outcome === 'won').length;
+    const lost = riskPicks.filter(p => p.outcome === 'lost').length;
+    engines.push({ name: 'Risk Engine', won, lost, total: won + lost });
+  }
+
+  // Sweet Spots
+  const { data: sweetPicks } = await supabase
+    .from('category_sweet_spots')
+    .select('outcome')
+    .in('outcome', ['won', 'lost', 'hit', 'miss']);
+  if (sweetPicks) {
+    const won = sweetPicks.filter(p => p.outcome === 'won' || p.outcome === 'hit').length;
+    const lost = sweetPicks.filter(p => p.outcome === 'lost' || p.outcome === 'miss').length;
+    engines.push({ name: 'Sweet Spots', won, lost, total: won + lost });
+  }
+
+  // Mispriced Lines
+  const { data: mispricedPicks } = await supabase
+    .from('mispriced_lines')
+    .select('outcome')
+    .in('outcome', ['won', 'lost']);
+  if (mispricedPicks) {
+    const won = mispricedPicks.filter(p => p.outcome === 'won').length;
+    const lost = mispricedPicks.filter(p => p.outcome === 'lost').length;
+    engines.push({ name: 'Mispriced Lines', won, lost, total: won + lost });
+  }
+
+  // Send formatted report via bot-send-telegram
+  await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/bot-send-telegram`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+    },
+    body: JSON.stringify({
+      type: 'engine_accuracy_report',
+      data: { engines },
+    }),
+  });
+
+  return null as any; // Already sent via bot-send-telegram
+}
+
 // ==================== MAIN ROUTER ====================
 
 async function handleMessage(chatId: string, text: string, username?: string) {
@@ -3155,6 +3237,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /compare — Compare strategies
 /sharp — Sharp signals
 /avoid — Avoid patterns
+/extras — Extra plays (not in parlays)
+/engineaccuracy — Engine standalone accuracy
 /backtest — Run backtest
 /watch — Watch picks
 /pause / /resume — Pause/resume bot
@@ -3228,6 +3312,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/healthcheck") { const r = await handleHealthcheck(chatId); return r; }
     if (cmd === "/errorlog") return await handleErrorLog(chatId);
     if (cmd === "/broadcast") { await handleBroadcast(chatId); return null; }
+    if (cmd === "/extras") { return await handleExtras(chatId); }
+    if (cmd === "/engineaccuracy") { return await handleEngineAccuracy(chatId); }
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {

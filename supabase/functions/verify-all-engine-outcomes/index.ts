@@ -412,6 +412,58 @@ serve(async (req) => {
 
     results.push(heatResult);
 
+    // ========== VERIFY MISPRICED LINES ==========
+    console.log('[verify-all] Verifying Mispriced Lines picks...');
+    
+    const { data: mispricedPicks, error: mispricedError } = await supabase
+      .from('mispriced_lines')
+      .select('id, player_name, prop_type, book_line, signal, analysis_date, outcome')
+      .in('analysis_date', dates)
+      .or('outcome.is.null,outcome.eq.pending');
+
+    if (mispricedError) {
+      console.error('[verify-all] Error fetching mispriced lines:', mispricedError);
+    }
+
+    let mispricedResult: VerificationResult = { engine: 'mispriced', verified: 0, partial: 0, won: 0, lost: 0, pushes: 0 };
+
+    for (const pick of (mispricedPicks || [])) {
+      const normalizedPlayer = normalizePlayerName(pick.player_name);
+      const lookupKey = `${normalizedPlayer}_${pick.analysis_date}`;
+      const gameLog = logMap.get(lookupKey);
+
+      if (!gameLog || !validateGameLogDate(gameLog, pick.analysis_date)) {
+        continue;
+      }
+
+      // NULL-line guard: skip if book_line is missing
+      if (pick.book_line === null || pick.book_line === undefined) {
+        console.log(`[verify-all] Mispriced: Skipping ${pick.player_name} - no book_line`);
+        continue;
+      }
+
+      const actualValue = calculateActualValue(gameLog, pick.prop_type);
+      if (actualValue === null) continue;
+
+      // signal is 'OVER' or 'UNDER'
+      const side = (pick.signal || 'OVER').toLowerCase();
+      const outcome = determineOutcome(actualValue, pick.book_line, side);
+      
+      await supabase
+        .from('mispriced_lines')
+        .update({ outcome, actual_value: actualValue, settled_at: new Date().toISOString() })
+        .eq('id', pick.id);
+
+      if (outcome === 'won') mispricedResult.won++;
+      else if (outcome === 'lost') mispricedResult.lost++;
+      else mispricedResult.pushes++;
+      mispricedResult.verified++;
+
+      console.log(`[verify-all] Mispriced: ${pick.player_name} ${pick.prop_type} ${side} ${pick.book_line} → ${actualValue} = ${outcome}`);
+    }
+
+    results.push(mispricedResult);
+
     // Log to cron job history
     const totalVerified = results.reduce((sum, r) => sum + r.verified, 0);
     const totalPartial = results.reduce((sum, r) => sum + r.partial, 0);

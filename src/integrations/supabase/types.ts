@@ -5760,6 +5760,7 @@ export type Database = {
       }
       mispriced_lines: {
         Row: {
+          actual_value: number | null
           analysis_date: string
           book_line: number
           confidence_tier: string | null
@@ -5770,10 +5771,12 @@ export type Database = {
           id: string
           opponent: string | null
           opponent_defense_rank: number | null
+          outcome: string | null
           player_avg_l10: number | null
           player_avg_l20: number | null
           player_name: string
           prop_type: string
+          settled_at: string | null
           shooting_context: Json | null
           signal: string | null
           sport: string
@@ -5781,6 +5784,7 @@ export type Database = {
           team_total_signal: string | null
         }
         Insert: {
+          actual_value?: number | null
           analysis_date?: string
           book_line: number
           confidence_tier?: string | null
@@ -5791,10 +5795,12 @@ export type Database = {
           id?: string
           opponent?: string | null
           opponent_defense_rank?: number | null
+          outcome?: string | null
           player_avg_l10?: number | null
           player_avg_l20?: number | null
           player_name: string
           prop_type: string
+          settled_at?: string | null
           shooting_context?: Json | null
           signal?: string | null
           sport?: string
@@ -5802,6 +5808,7 @@ export type Database = {
           team_total_signal?: string | null
         }
         Update: {
+          actual_value?: number | null
           analysis_date?: string
           book_line?: number
           confidence_tier?: string | null
@@ -5812,10 +5819,12 @@ export type Database = {
           id?: string
           opponent?: string | null
           opponent_defense_rank?: number | null
+          outcome?: string | null
           player_avg_l10?: number | null
           player_avg_l20?: number | null
           player_name?: string
           prop_type?: string
+          settled_at?: string | null
           shooting_context?: Json | null
           signal?: string | null
           sport?: string
