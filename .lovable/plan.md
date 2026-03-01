@@ -1,71 +1,34 @@
 
 
-## Mega Lottery V2: 3-Ticket System with Exotic Props and 10,000+ Jackpot
+## Test Mega Jackpot: Clear and Re-run
 
-### Overview
-Transform the mega lottery scanner into a true 3-ticket lottery system. One ticket must target 10,000+ combined odds using exotic high-odds markets (first basket, moneyline, Q1 ML). All tickets still run through the existing filter pipeline (defense rankings, hit rates, edge validation, correlation blocking) but with relaxed thresholds. L20 averages are incorporated alongside L10 for stability.
+### Step 1: Clear existing lottery entries
+Delete today's `mega_lottery_scanner` entries from `bot_daily_parlays` so the dedup check (which skips when >= 3 tickets exist) allows a fresh run:
 
-### 3 Ticket Structure
+```sql
+DELETE FROM bot_daily_parlays 
+WHERE parlay_date = CURRENT_DATE 
+AND strategy_name = 'mega_lottery_scanner';
+```
 
-| Ticket | Legs | Min Per-Leg Odds | Target Total | Stake |
-|--------|------|-----------------|--------------|-------|
-| Standard Lottery | 2-4 | +100 | +500 to +2000 | $5 |
-| High Roller | 3-6 | +200 | +2000 to +8000 | $3 |
-| Mega Jackpot | 4-8 | +300 | +10,000 minimum | $1 |
+### Step 2: Invoke the edge function
+Call `nba-mega-parlay-scanner` to generate all 3 tickets fresh, including the Mega Jackpot (Ticket 3).
 
-### New Exotic Markets to Scrape
-Add these markets to the per-event API call alongside existing player props:
-- `player_first_basket` -- First Basket Scorer (+400 to +2500)
-- `h2h` -- Full Game Moneyline underdog side (+150 to +600)
-- `h2h_q1` -- 1st Quarter Moneyline underdog side (+130 to +300)
-- `player_double_double` -- Double Double Yes (+200 to +800)
-- `player_triple_double` -- Triple Double Yes (+500 to +5000)
+### Step 3: Review logs
+Check the edge function logs to verify:
+- Exotic markets (first basket, double double, triple double) are being scraped
+- Mega Jackpot candidates have defense rank 18+ 
+- L10/L20 data is being used for validation
+- Combined odds reach 10,000+ target
+- Per-leg odds are +300 minimum
 
-### Filter Adjustments Per Tier
+### What we're validating
+- The Mega Jackpot ticket uses exotic props (first basket, ML underdogs, Q1 ML, double/triple double)
+- Defense ranking filter of 18+ is applied for player props
+- L10 and L20 averages are checked (within 0.8x of line for OVER bets)
+- Combined odds target of +10,000 is reached with 4-8 legs
+- All 3 tiers (Standard, High Roller, Mega Jackpot) generate successfully
 
-**Standard Lottery** (existing logic, allow 2 legs minimum):
-- Same SAFE/BALANCED/GREAT_ODDS roles, same thresholds
-- Min legs reduced from 3 to 2
-
-**High Roller** (relaxed filters):
-- Hit rate: 40%+ (down from 70%/60%/55%)
-- Edge: 0%+ (no minimum, odds carry the value)
-- Defense rank: 15+ for OVERs (still meaningful)
-- L10 avg or L20 avg must clear the line by 1.1x
-- Per-leg odds: +200 minimum
-
-**Mega Jackpot** (lottery-grade filters, defense still matters):
-- Hit rate: 30%+ (just needs a pulse of viability)
-- Edge: no minimum
-- Defense rank: 18+ for player props (weak defense = things are possible)
-- L10 or L20 avg must be within 0.8x of the line (not impossible)
-- Per-leg odds: +300 minimum
-- Exotic props (first basket, triple double) skip L10/L20 checks since no game log data exists
-- Team bets (ML, Q1 ML) use defense rank as primary filter -- only pick underdogs vs weak defenses
-
-### Technical Changes
-
-**File: `supabase/functions/nba-mega-parlay-scanner/index.ts`**
-
-1. **Expand market scraping** (line 183): Add exotic markets to API call string. Parse team-based markets (h2h, h2h_q1) differently -- extract underdog side only. Parse Yes/No markets (first basket, double/triple double) -- extract Yes outcomes only. Tag each prop with `market_type`: 'player_prop', 'exotic_player', or 'team_bet'.
-
-2. **Add L20 data** (lines 291-316): Query `mispriced_lines` for `player_avg_l20` alongside existing data. Build an `l20Map` and attach `l20Avg` to each scored prop. Use `l20Avg` as fallback when `l10Avg` is missing, and as a stability check in the mega jackpot tier.
-
-3. **Replace single-parlay builder with 3-ticket builder** (lines 626-828):
-   - **Ticket 1 (Standard)**: Keep existing 3-pass role-based logic (SAFE/BALANCED/GREAT_ODDS), allow 2-4 legs, $5 stake
-   - **Ticket 2 (High Roller)**: New pass with relaxed thresholds (40% HR, +200 min odds, defense 15+), build 3-6 legs targeting +2000-+8000, $3 stake
-   - **Ticket 3 (Mega Jackpot)**: New pass prioritizing exotic props and +300 min per-leg odds, defense rank 18+ required for player props, build 4-8 legs until combined odds reach 10,000+, $1 stake
-
-4. **Correlation blocking for team bets**: Extend `hasCorrelatedProp` to block stacking h2h + h2h_q1 from the same game. First basket doesn't correlate with standard player props, so mixing is allowed.
-
-5. **Save 3 separate entries to `bot_daily_parlays`** (lines 914-963): Each ticket saved as its own row with strategy_name 'mega_lottery_scanner' and a `ticket_tier` field in the legs metadata ('standard', 'high_roller', 'mega_jackpot'). Update dedup check to allow 3 entries.
-
-6. **Telegram message**: Combined message showing all 3 tickets with legs, odds, and potential payouts at their respective stake sizes ($5, $3, $1).
-
-### Key Design Decisions
-- Defense ranking remains a core filter across all tiers -- higher rank (weaker defense) means things are more possible, especially for the mega jackpot
-- L20 avg provides a larger sample for stability, used as fallback and secondary validation
-- Exotic props (first basket, triple double) naturally produce +300 to +2500 per leg, making 10,000+ combined odds achievable with 4-8 legs
-- Team bets only pick underdog sides (plus-money) to ensure high per-leg odds
-- Same auto-dedup logic prevents reusing players across tickets
+### Approval needed
+This requires clearing today's existing lottery data to allow a re-run. Once approved, I'll execute the delete and invoke the function.
 
