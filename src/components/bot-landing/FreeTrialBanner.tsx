@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Zap } from "lucide-react";
+import { Check, Clock, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -35,10 +35,10 @@ export function FreeTrialBanner({ onSubscribe, isLoading }: FreeTrialBannerProps
 
   return (
     <section className="px-4 py-6 animate-fade-in" style={{ animationDelay: "0.2s", animationFillMode: "both" }}>
-      <div className="relative max-w-md mx-auto rounded-2xl border-2 border-primary/40 bg-card/95 backdrop-blur-sm overflow-hidden shadow-xl shadow-primary/10">
+      <div className="relative max-w-md mx-auto rounded-2xl border-2 border-primary/40 bg-card/95 backdrop-blur-sm overflow-hidden shadow-[0_0_30px_hsl(var(--primary)/0.3)] animate-pulse-glow">
         {/* Glow orbs */}
-        <div className="absolute -top-12 -left-12 w-32 h-32 bg-primary/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-accent/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
+        <div className="absolute -top-16 -left-16 w-48 h-48 bg-primary/30 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute -bottom-16 -right-16 w-48 h-48 bg-accent/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
 
         {/* MOST POPULAR badge */}
         <div className="absolute top-4 right-4 z-20 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider animate-scale-in">
@@ -59,6 +59,10 @@ export function FreeTrialBanner({ onSubscribe, isLoading }: FreeTrialBannerProps
               <span className="text-muted-foreground text-base">/month</span>
             </div>
             <p className="text-muted-foreground text-sm">Cancel anytime · 3-day free trial</p>
+            <p className="inline-flex items-center gap-1.5 text-destructive text-sm font-semibold animate-pulse mt-1">
+              <Clock className="w-4 h-4" />
+              Free trial ends March 12th
+            </p>
           </div>
 
           <Separator />
@@ -92,7 +96,7 @@ export function FreeTrialBanner({ onSubscribe, isLoading }: FreeTrialBannerProps
               {error && <p className="text-destructive text-xs mt-1">{error}</p>}
             </div>
             <Button
-              className="w-full font-bold text-base py-5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/30 hover:scale-105 transition-transform"
+              className="w-full font-bold text-base py-5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-[0_0_20px_hsl(var(--primary)/0.4)] hover:shadow-[0_0_30px_hsl(var(--primary)/0.6)] hover:scale-105 transition-all animate-pulse-glow"
               onClick={handleSubmit}
               disabled={isLoading}
             >
