@@ -137,14 +137,46 @@ serve(async (req) => {
 
   try {
     let replayMode = false;
+    let excludePlayers: string[] = [];
     try {
       const body = await req.json();
       replayMode = body?.replay === true;
+      excludePlayers = Array.isArray(body?.exclude_players) ? body.exclude_players : [];
     } catch { /* no body or invalid JSON, that's fine */ }
 
     if (!apiKey) throw new Error('THE_ODDS_API_KEY not configured');
 
     const today = getEasternDate();
+
+    // === AUTO-DEDUP: Query existing lottery parlays for today and extract used players ===
+    const { data: existingLotteryParlays } = await supabase
+      .from('bot_daily_parlays')
+      .select('legs')
+      .eq('parlay_date', today)
+      .eq('strategy_name', 'mega_lottery_scanner')
+      .neq('outcome', 'void');
+
+    const existingPlayerNames: string[] = [];
+    if (existingLotteryParlays && existingLotteryParlays.length > 0) {
+      for (const p of existingLotteryParlays) {
+        const legs = Array.isArray(p.legs) ? p.legs : [];
+        for (const leg of legs) {
+          if ((leg as any)?.player_name) {
+            existingPlayerNames.push((leg as any).player_name);
+          }
+        }
+      }
+    }
+
+    const excludeSet = new Set([
+      ...excludePlayers.map(normalizeName),
+      ...existingPlayerNames.map(normalizeName),
+    ]);
+
+    if (excludeSet.size > 0) {
+      console.log(`[MegaParlay] Excluding ${excludeSet.size} players from previous tickets: [${Array.from(excludeSet).join(', ')}]`);
+    }
+
     console.log(`[MegaParlay] Scanning NBA props for ${today}, +100 odds only${replayMode ? ' [REPLAY MODE]' : ''}`);
 
     // Step 1: Get NBA events first, then fetch player props per event
@@ -603,6 +635,8 @@ serve(async (req) => {
 
     // Helper: basic eligibility checks shared across all roles
     function passesBasicChecks(prop: ScoredProp, existingLegs: ScoredProp[], gameCount: Map<string, number>): boolean {
+      // Auto-dedup: skip players already used in today's lottery tickets
+      if (excludeSet.has(normalizeName(prop.player_name))) return false;
       const lotteryMin = LOTTERY_MIN_LINES[prop.prop_type];
       if (lotteryMin && prop.line < lotteryMin) return false;
       const gc = gameCount.get(prop.game) || 0;
