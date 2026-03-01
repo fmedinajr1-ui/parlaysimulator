@@ -45,6 +45,8 @@ type NotificationType =
   | 'hit_rate_evaluation'
   | 'ladder_challenge'
   | 'parlay_approval_request'
+  | 'extra_plays_report'
+  | 'engine_accuracy_report'
   | 'test';
 
 interface NotificationData {
@@ -111,11 +113,87 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return data.message || `🪜 Ladder Challenge pick generated`;
     case 'parlay_approval_request':
       return formatParlayApprovalRequest(data, dateStr);
+    case 'extra_plays_report':
+      return formatExtraPlaysReport(data, dateStr);
+    case 'engine_accuracy_report':
+      return formatEngineAccuracyReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatExtraPlaysReport(data: Record<string, any>, dateStr: string): string {
+  const mispriced = data.mispriced || [];
+  const sweetSpots = data.sweetSpots || [];
+  const totalExtras = data.totalExtras || 0;
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA', player_points: 'PTS',
+    player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
+    player_blocks: 'BLK', player_steals: 'STL',
+  };
+
+  let msg = `🎯 *EXTRA PLAYS — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Picks engines found but NOT in any parlay\n\n`;
+
+  if (mispriced.length > 0) {
+    msg += `🔥 *Mispriced Lines (${mispriced.length}):*\n`;
+    for (const m of mispriced.slice(0, 10)) {
+      const prop = propLabels[(m.prop_type || '').toLowerCase()] || (m.prop_type || '').toUpperCase();
+      const side = (m.signal || 'OVER').charAt(0);
+      const edge = m.edge_pct ? `${Math.round(m.edge_pct)}%` : '?';
+      msg += `• ${m.player_name} ${prop} ${side}${m.book_line} | Edge: ${edge} | ${m.tier || 'HIGH'}\n`;
+    }
+    if (mispriced.length > 10) msg += `  ... and ${mispriced.length - 10} more\n`;
+    msg += `\n`;
+  }
+
+  if (sweetSpots.length > 0) {
+    msg += `💎 *Sweet Spots (${sweetSpots.length}):*\n`;
+    for (const s of sweetSpots.slice(0, 10)) {
+      const prop = propLabels[(s.prop_type || '').toLowerCase()] || (s.prop_type || '').toUpperCase();
+      const side = (s.recommended_side || 'OVER').charAt(0);
+      const hit = s.actual_hit_rate ? `${Math.round(s.actual_hit_rate)}%` : '?';
+      const score = s.confidence_score ? Math.round(s.confidence_score) : '?';
+      msg += `• ${s.player_name} ${prop} ${side}${s.recommended_line || '?'} | Hit: ${hit} | Score: ${score}\n`;
+    }
+    if (sweetSpots.length > 10) msg += `  ... and ${sweetSpots.length - 10} more\n`;
+    msg += `\n`;
+  }
+
+  msg += `📊 *Total:* ${totalExtras} extra plays available`;
+  return msg;
+}
+
+function formatEngineAccuracyReport(data: Record<string, any>, dateStr: string): string {
+  const engines = data.engines || [];
+
+  let msg = `🔬 *ENGINE ACCURACY — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Standalone pick accuracy (not parlay-based)\n\n`;
+
+  if (engines.length === 0) {
+    msg += `No settled engine picks found yet.`;
+    return msg;
+  }
+
+  for (const e of engines) {
+    const wr = e.total > 0 ? ((e.won / e.total) * 100).toFixed(1) : '0.0';
+    const icon = parseFloat(wr) >= 55 ? '🟢' : parseFloat(wr) >= 50 ? '🟡' : '🔴';
+    msg += `${icon} *${e.name}*\n`;
+    msg += `  ${e.won}W - ${e.lost}L (${wr}%) | ${e.total} settled\n`;
+  }
+
+  const totalWon = engines.reduce((s: number, e: any) => s + (e.won || 0), 0);
+  const totalSettled = engines.reduce((s: number, e: any) => s + (e.total || 0), 0);
+  const overallWr = totalSettled > 0 ? ((totalWon / totalSettled) * 100).toFixed(1) : '0.0';
+  msg += `\n📊 *Overall:* ${totalWon}/${totalSettled} (${overallWr}%)`;
+
+  return msg;
 }
 
 function formatParlayApprovalRequest(data: Record<string, any>, dateStr: string): { text: string; reply_markup?: object } | string {
