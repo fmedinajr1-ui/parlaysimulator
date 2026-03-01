@@ -1,0 +1,1 @@
+ALTER TABLE public.bot_daily_parlays ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'auto_approved';

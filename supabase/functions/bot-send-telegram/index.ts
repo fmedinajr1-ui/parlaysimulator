@@ -44,6 +44,7 @@ type NotificationType =
   | 'quality_regen_report'
   | 'hit_rate_evaluation'
   | 'ladder_challenge'
+  | 'parlay_approval_request'
   | 'test';
 
 interface NotificationData {
@@ -108,11 +109,72 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatHitRateEvaluation(data, dateStr);
     case 'ladder_challenge':
       return data.message || `🪜 Ladder Challenge pick generated`;
+    case 'parlay_approval_request':
+      return formatParlayApprovalRequest(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatParlayApprovalRequest(data: Record<string, any>, dateStr: string): { text: string; reply_markup?: object } | string {
+  const parlays = data.parlays || [];
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+    shots: 'SOG', saves: 'SVS', aces: 'ACES',
+  };
+
+  if (parlays.length === 0) {
+    return `🔍 *REVIEW PARLAYS — ${dateStr}*\n\nNo execution parlays to review.`;
+  }
+
+  // Send first parlay with buttons; remaining as follow-up messages handled by the send logic
+  // We'll format all parlays into one message with approve-all at the bottom
+  let msg = `🔍 *REVIEW PARLAYS — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${parlays.length} execution parlays pending approval\n\n`;
+
+  for (let i = 0; i < Math.min(parlays.length, 5); i++) {
+    const p = parlays[i];
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+    const strategy = (p.strategy_name || 'unknown').replace(/_/g, ' ');
+
+    msg += `*Parlay #${i + 1}* (${strategy}) ${oddsStr}\n`;
+    for (let j = 0; j < legs.length; j++) {
+      const leg = legs[j];
+      const side = (leg.side || 'over').toUpperCase();
+      const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+      const hitRate = leg.hit_rate_l10 || leg.hit_rate ? ` (${Math.round(leg.hit_rate_l10 || leg.hit_rate)}% L10)` : '';
+      msg += `  ${j + 1}. ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (parlays.length > 5) {
+    msg += `... and ${parlays.length - 5} more parlays\n\n`;
+  }
+
+  msg += `Tap buttons below to review each parlay:`;
+
+  // Build inline keyboard: one row per parlay with Approve/Edit/Reject
+  const inline_keyboard: any[][] = [];
+  for (let i = 0; i < parlays.length; i++) {
+    const p = parlays[i];
+    const shortId = p.id.slice(0, 8);
+    inline_keyboard.push([
+      { text: `✅ #${i + 1}`, callback_data: `approve_parlay:${p.id}` },
+      { text: `✏️ #${i + 1}`, callback_data: `edit_parlay:${p.id}` },
+      { text: `❌ #${i + 1}`, callback_data: `reject_parlay:${p.id}` },
+    ]);
+  }
+  // Add approve-all button
+  inline_keyboard.push([{ text: '✅ APPROVE ALL', callback_data: 'approve_all_parlays' }]);
+
+  return { text: msg, reply_markup: { inline_keyboard } };
 }
 
 function formatPipelineFailureAlert(data: Record<string, any>, dateStr: string): string {

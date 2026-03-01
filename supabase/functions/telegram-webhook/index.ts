@@ -607,7 +607,7 @@ async function handleStart(chatId: string) {
 /deleteparlay [id] /voidtoday /fixleg
 /deletesweep /deletebystrat [name]
 /fixpipeline /regenparlay /fixprops
-/healthcheck /errorlog
+/healthcheck /errorlog /broadcast
 
 Or *ask me anything* naturally!`;
 }
@@ -2203,6 +2203,80 @@ async function handleErrorLog(chatId: string) {
   return msg;
 }
 
+async function handleBroadcast(chatId: string) {
+  const today = getEasternDate();
+
+  // Fetch approved/edited parlays for today
+  const { data: approvedParlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('*')
+    .eq('parlay_date', today)
+    .in('approval_status', ['approved', 'edited'])
+    .order('created_at', { ascending: false });
+
+  if (!approvedParlays || approvedParlays.length === 0) {
+    await sendMessage(chatId, '⚠️ No approved parlays to broadcast. Review and approve parlays first.');
+    return;
+  }
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+    shots: 'SOG', saves: 'SVS', aces: 'ACES',
+  };
+
+  const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+
+  let msg = `📋 *DAILY PICKS — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `✅ *${approvedParlays.length} parlays locked in*\n\n`;
+
+  for (let i = 0; i < approvedParlays.length; i++) {
+    const p = approvedParlays[i];
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    const strategy = (p.strategy_name || 'unknown').replace(/_/g, ' ');
+    const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+    msg += `*Parlay #${i + 1}* (${strategy}) ${oddsStr}\n`;
+
+    for (const leg of legs) {
+      const side = (leg.side || 'over').toUpperCase();
+      const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+      const hitRate = leg.hit_rate_l10 || leg.hit_rate ? ` (${Math.round(leg.hit_rate_l10 || leg.hit_rate)}% L10)` : '';
+      msg += ` Take ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}\n`;
+    }
+    msg += `\n`;
+  }
+
+  // Send to all active customers
+  const { data: customers } = await supabase
+    .from('bot_authorized_users')
+    .select('chat_id, username')
+    .eq('is_active', true);
+
+  let sentCount = 0;
+  let failCount = 0;
+
+  if (customers && customers.length > 0) {
+    for (const customer of customers) {
+      try {
+        await sendLongMessage(customer.chat_id, msg, 'Markdown');
+        sentCount++;
+      } catch (e) {
+        console.warn(`[Broadcast] Failed to send to ${customer.chat_id}:`, e);
+        failCount++;
+      }
+    }
+  }
+
+  await logActivity('broadcast_sent', `Admin broadcast ${approvedParlays.length} parlays to ${sentCount} customers`, {
+    parlayCount: approvedParlays.length,
+    sentCount,
+    failCount,
+  });
+
+  await sendMessage(chatId, `📡 *Broadcast complete!*\n\n✅ Sent ${approvedParlays.length} parlays to ${sentCount} customers${failCount > 0 ? `\n⚠️ ${failCount} failed` : ''}`);
+}
+
 // ==================== CALLBACK QUERY HANDLER ====================
 
 async function handleCallbackQuery(callbackQueryId: string, data: string, chatId: string) {
@@ -2277,6 +2351,143 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
   } else if (data === 'fix:cancel') {
     await answerCallbackQuery(callbackQueryId, 'Cancelled');
     await sendMessage(chatId, '❌ Action cancelled.');
+  } else if (data.startsWith('approve_parlay:')) {
+    const parlayId = data.slice('approve_parlay:'.length);
+    await supabase.from('bot_daily_parlays').update({ approval_status: 'approved' }).eq('id', parlayId);
+    await answerCallbackQuery(callbackQueryId, '✅ Parlay approved!');
+    await sendMessage(chatId, `✅ Parlay approved! Use /broadcast when ready to send to customers.`);
+    await logActivity('parlay_approved', `Admin approved parlay ${parlayId}`, { parlayId });
+
+  } else if (data.startsWith('reject_parlay:')) {
+    const parlayId = data.slice('reject_parlay:'.length);
+    await supabase.from('bot_daily_parlays').update({ approval_status: 'rejected', outcome: 'void' }).eq('id', parlayId);
+    await answerCallbackQuery(callbackQueryId, '❌ Parlay rejected');
+    await sendMessage(chatId, `❌ Parlay rejected and voided.`);
+    await logActivity('parlay_rejected', `Admin rejected parlay ${parlayId}`, { parlayId });
+
+  } else if (data.startsWith('edit_parlay:')) {
+    const parlayId = data.slice('edit_parlay:'.length);
+    const { data: parlay } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, legs, strategy_name, expected_odds')
+      .eq('id', parlayId)
+      .maybeSingle();
+
+    if (!parlay) {
+      await answerCallbackQuery(callbackQueryId, 'Parlay not found');
+      return;
+    }
+
+    const propLabels: Record<string, string> = {
+      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+      shots: 'SOG', saves: 'SVS', aces: 'ACES',
+    };
+
+    const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
+    let msg = `✏️ *Editing Parlay* (${(parlay.strategy_name || '').replace(/_/g, ' ')})\n\n`;
+    msg += `Tap Flip to change OVER↔UNDER:\n\n`;
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      const side = (leg.side || 'over').toUpperCase();
+      const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+      msg += `${i + 1}. ${leg.player_name || 'Player'} *${side}* ${leg.line} ${prop}\n`;
+    }
+
+    const inline_keyboard: any[][] = [];
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      const currentSide = (leg.side || 'over').toUpperCase();
+      const flipTo = currentSide === 'OVER' ? 'UNDER' : 'OVER';
+      inline_keyboard.push([
+        { text: `🔄 #${i + 1} → ${flipTo}`, callback_data: `flip_leg:${parlayId}:${i}` },
+      ]);
+    }
+    inline_keyboard.push([{ text: '✅ Done - Approve', callback_data: `approve_parlay:${parlayId}` }]);
+
+    await answerCallbackQuery(callbackQueryId);
+    await sendMessage(chatId, msg, 'Markdown', { inline_keyboard });
+
+  } else if (data.startsWith('flip_leg:')) {
+    const parts = data.split(':');
+    const parlayId = parts[1];
+    const legIndex = parseInt(parts[2], 10);
+
+    const { data: parlay } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, legs, strategy_name')
+      .eq('id', parlayId)
+      .maybeSingle();
+
+    if (!parlay) {
+      await answerCallbackQuery(callbackQueryId, 'Parlay not found');
+      return;
+    }
+
+    const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
+    if (legIndex < 0 || legIndex >= legs.length) {
+      await answerCallbackQuery(callbackQueryId, 'Invalid leg index');
+      return;
+    }
+
+    // Flip the side
+    const currentSide = (legs[legIndex].side || 'over').toLowerCase();
+    legs[legIndex].side = currentSide === 'over' ? 'under' : 'over';
+
+    // Save back
+    await supabase.from('bot_daily_parlays').update({ legs, approval_status: 'edited' }).eq('id', parlayId);
+
+    const propLabels: Record<string, string> = {
+      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+      shots: 'SOG', saves: 'SVS', aces: 'ACES',
+    };
+
+    // Re-render edit view
+    let msg = `✏️ *Editing Parlay* (${(parlay.strategy_name || '').replace(/_/g, ' ')})\n\n`;
+    msg += `🔄 Flipped leg #${legIndex + 1} to ${legs[legIndex].side.toUpperCase()}\n\n`;
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      const side = (leg.side || 'over').toUpperCase();
+      const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+      msg += `${i + 1}. ${leg.player_name || 'Player'} *${side}* ${leg.line} ${prop}\n`;
+    }
+
+    const inline_keyboard: any[][] = [];
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      const cSide = (leg.side || 'over').toUpperCase();
+      const flipTo = cSide === 'OVER' ? 'UNDER' : 'OVER';
+      inline_keyboard.push([
+        { text: `🔄 #${i + 1} → ${flipTo}`, callback_data: `flip_leg:${parlayId}:${i}` },
+      ]);
+    }
+    inline_keyboard.push([{ text: '✅ Done - Approve', callback_data: `approve_parlay:${parlayId}` }]);
+
+    await answerCallbackQuery(callbackQueryId, `Flipped to ${legs[legIndex].side.toUpperCase()}`);
+    await sendMessage(chatId, msg, 'Markdown', { inline_keyboard });
+    await logActivity('parlay_leg_flipped', `Admin flipped leg ${legIndex} in parlay ${parlayId}`, { parlayId, legIndex, newSide: legs[legIndex].side });
+
+  } else if (data === 'approve_all_parlays') {
+    const today = getEasternDate();
+    const { data: pending } = await supabase
+      .from('bot_daily_parlays')
+      .select('id')
+      .eq('parlay_date', today)
+      .eq('approval_status', 'pending_approval');
+
+    const count = pending?.length || 0;
+    if (count > 0) {
+      await supabase.from('bot_daily_parlays')
+        .update({ approval_status: 'approved' })
+        .eq('parlay_date', today)
+        .eq('approval_status', 'pending_approval');
+    }
+
+    await answerCallbackQuery(callbackQueryId, `✅ ${count} parlays approved!`);
+    await sendMessage(chatId, `✅ All ${count} pending parlays approved! Use /broadcast to send to customers.`);
+    await logActivity('parlays_bulk_approved', `Admin approved all ${count} pending parlays`, { count });
+
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {
@@ -2929,6 +3140,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/fixprops") { const r = await handleFixProps(chatId); return r; }
     if (cmd === "/healthcheck") { const r = await handleHealthcheck(chatId); return r; }
     if (cmd === "/errorlog") return await handleErrorLog(chatId);
+    if (cmd === "/broadcast") { await handleBroadcast(chatId); return null; }
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
