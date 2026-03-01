@@ -836,27 +836,52 @@ serve(async (req) => {
       const gc = new Map<string, number>();
       const used = new Set<string>();
 
-      // High roller: 40%+ hit rate, +200 min odds, defense 15+, L10 or L20 clears line by 1.1x
+      // High roller: 35%+ hit rate, +200 min odds, defense 12+, L10 or L20 clears line by 1.0x
+      // Allow all market types but cap per-leg odds at +500 to prevent extreme picks
       const hrCandidates = scoredProps.filter(p => {
         if (p.odds < 200) return false;
-        if (p.hitRate < 40) return false;
-        if (p.defenseRank !== null && p.defenseRank < 15) return false;
+        if (p.odds > 500) return false; // Cap per-leg odds for HR
+        if (p.hitRate < 35) return false;
+        if (p.defenseRank !== null && p.defenseRank < 12) return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
-        // L10 or L20 must clear line by 1.1x for player props
+        // L10 or L20 must meet the line (1.0x) for player props OVER bets
         if (p.market_type === 'player_prop' && p.side === 'OVER') {
           const bestAvg = p.l10Avg || p.l20Avg;
-          if (bestAvg !== null && bestAvg < p.line * 1.1) return false;
+          if (bestAvg !== null && bestAvg < p.line * 1.0) return false;
         }
         return passesBasicChecks(p, legs, gc);
-      }).sort((a, b) => b.odds - a.odds); // Sort by odds for high value
+      }).sort((a, b) => b.compositeScore - a.compositeScore);
 
       for (const c of hrCandidates) {
         if (legs.length >= 6) break;
+        const currentOddsBefore = calcCombinedOdds(legs);
+        if (legs.length >= 3 && currentOddsBefore >= 2000) break; // Hit min target
+        if (currentOddsBefore >= 8000) break; // Don't exceed upper bound
         if (!passesBasicChecks(c, legs, gc)) continue;
+        // Limit exotic to 1 leg in HR to keep odds manageable
+        if (c.market_type === 'exotic_player' && legs.filter(l => l.market_type === 'exotic_player').length >= 1) continue;
         addLeg(c, legs, gc, used, 'high_roller', 'high_roller');
         const currentOdds = calcCombinedOdds(legs);
-        console.log(`[MegaParlay] HR leg ${legs.length}: ${c.player_name} ${c.prop_type} +${c.odds} (running: +${currentOdds})`);
-        if (legs.length >= 3 && currentOdds >= 2000) break; // Hit target
+        console.log(`[MegaParlay] HR leg ${legs.length}: ${c.player_name} ${c.prop_type} +${c.odds} [${c.market_type}] (running: +${currentOdds})`);
+      }
+
+      // Relaxed fallback pass if < 3 legs: 30% hit rate, +150 min odds
+      if (legs.length < 3) {
+        console.log(`[MegaParlay] HR primary pass got ${legs.length} legs, trying relaxed pass...`);
+        const relaxedHR = scoredProps.filter(p => {
+          if (p.odds < 150) return false;
+          if (p.hitRate < 30) return false;
+          if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
+          if (used.has(normalizeName(p.player_name))) return false;
+          return passesBasicChecks(p, legs, gc);
+        }).sort((a, b) => b.compositeScore - a.compositeScore);
+
+        for (const c of relaxedHR) {
+          if (legs.length >= 4) break;
+          if (!passesBasicChecks(c, legs, gc)) continue;
+          addLeg(c, legs, gc, used, 'high_roller_relaxed', 'high_roller');
+          console.log(`[MegaParlay] HR relaxed leg ${legs.length}: ${c.player_name} +${c.odds}`);
+        }
       }
 
       if (legs.length >= 3) {
@@ -869,71 +894,121 @@ serve(async (req) => {
       }
     }
 
-    // ============= TICKET 3: MEGA JACKPOT (4-8 legs, +10000 min, $1) =============
+    // ============= TICKET 3: MEGA JACKPOT (4-8 legs, +10000 to +50000, $1) =============
+    // Market diversification: max 2 exotic, max 2 team_bet, max 4 player_prop
+    // Sort by "sweet spot" odds band (+300-800) instead of raw odds descending
+    // Cap combined odds at 50,000
     console.log(`\n[MegaParlay] === TICKET 3: MEGA JACKPOT ===`);
     {
       const legs: (ScoredProp & { leg_role: string; ticket_tier: string })[] = [];
       const gc = new Map<string, number>();
       const used = new Set<string>();
 
-      // Mega jackpot filters:
-      // - +300 min per leg
-      // - 30%+ hit rate (just viable)
-      // - Defense rank 18+ for player props
-      // - L10 or L20 within 0.8x of line (not impossible)
-      // - Exotic props skip L10/L20 checks
-      // - Team bets use defense rank as primary filter
+      const MAX_EXOTIC = 2;
+      const MAX_TEAM_BET = 2;
+      const MAX_PLAYER_PROP = 4;
+      const MAX_COMBINED_ODDS = 50000;
+      // Market-specific per-leg caps to allow diversity without billion-dollar combos
+      const PER_LEG_CAPS: Record<string, number> = {
+        player_prop: 800,
+        team_bet: 500,
+        exotic_player: 1200, // First basket ~500-1200, some double doubles ~200-800
+      };
+
+      const marketTypeCounts = { exotic_player: 0, team_bet: 0, player_prop: 0 };
+
+      // Filter mega candidates - relaxed filters to ensure diversity
       const megaCandidates = scoredProps.filter(p => {
-        if (p.odds < 300) return false;
-        if (p.hitRate < 30 && p.market_type !== 'exotic_player') return false;
+        const maxOdds = PER_LEG_CAPS[p.market_type] || 800;
+        // Lower floor for player props (+150) and team bets (+130) to get more diversity
+        const minOdds = p.market_type === 'team_bet' ? 130 : p.market_type === 'player_prop' ? 150 : 200;
+        if (p.odds < minOdds) return false;
+        if (p.odds > maxOdds) return false;
+        if (p.hitRate < 25 && p.market_type !== 'exotic_player') return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
 
-        // Defense filter: 18+ for player props, any for exotic
         if (p.market_type === 'player_prop') {
-          if (p.defenseRank !== null && p.defenseRank < 18) return false;
-          // L10 or L20 must be within 0.8x of line
+          if (p.defenseRank !== null && p.defenseRank < 12) return false;
           if (p.side === 'OVER') {
             const bestAvg = p.l10Avg || p.l20Avg;
-            if (bestAvg !== null && bestAvg < p.line * 0.8) return false;
+            if (bestAvg !== null && bestAvg < p.line * 0.7) return false;
           }
         }
-
-        // Team bets: only pick underdogs vs weak defenses (rank 18+)
         if (p.market_type === 'team_bet') {
-          if (p.defenseRank !== null && p.defenseRank < 18) return false;
+          if (p.defenseRank !== null && p.defenseRank < 12) return false;
         }
 
-        return passesBasicChecks(p, legs, gc);
-      }).sort((a, b) => {
-        // Prioritize exotic props (highest odds), then team bets, then player props
-        const typeOrder = { exotic_player: 0, team_bet: 1, player_prop: 2 };
-        const aOrder = typeOrder[a.market_type] ?? 2;
-        const bOrder = typeOrder[b.market_type] ?? 2;
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        return b.odds - a.odds;
+        return true;
       });
 
-      console.log(`[MegaParlay] Mega jackpot candidates: ${megaCandidates.length} (exotic: ${megaCandidates.filter(p => p.market_type === 'exotic_player').length}, team: ${megaCandidates.filter(p => p.market_type === 'team_bet').length})`);
+      // Sort by closeness to +300-800 sweet spot (prefer moderate odds)
+      const sweetSpotScore = (odds: number) => {
+        if (odds >= 300 && odds <= 800) return 100 - Math.abs(odds - 500) / 10;
+        if (odds >= 200 && odds < 300) return 60 - (300 - odds) / 5;
+        if (odds > 800 && odds <= 1500) return 40 - (odds - 800) / 30;
+        return 5;
+      };
+      megaCandidates.sort((a, b) => sweetSpotScore(b.odds) - sweetSpotScore(a.odds));
 
-      for (const c of megaCandidates) {
-        if (legs.length >= 8) break;
-        if (!passesBasicChecks(c, legs, gc)) continue;
-        addLeg(c, legs, gc, used, `mega_${c.market_type}`, 'mega_jackpot');
-        const currentOdds = calcCombinedOdds(legs);
-        console.log(`[MegaParlay] MEGA leg ${legs.length}: ${c.player_name} ${c.prop_type} ${c.side} +${c.odds} [${c.market_type}] def:${c.defenseRank} (running: +${currentOdds})`);
-        if (legs.length >= 4 && currentOdds >= 10000) break; // Hit target!
+      // Separate by market type for round-robin picking
+      const exoticPool = megaCandidates.filter(p => p.market_type === 'exotic_player');
+      const teamPool = megaCandidates.filter(p => p.market_type === 'team_bet');
+      const playerPool = megaCandidates.filter(p => p.market_type === 'player_prop');
+
+      console.log(`[MegaParlay] Mega candidates: ${megaCandidates.length} (exotic: ${exoticPool.length}, team: ${teamPool.length}, player: ${playerPool.length})`);
+
+      // Helper to get max for a market type
+      const getMaxForType = (type: string) => type === 'exotic_player' ? MAX_EXOTIC : type === 'team_bet' ? MAX_TEAM_BET : MAX_PLAYER_PROP;
+
+      // Round-robin: pick 1 exotic, 1 team bet, 1 player prop, then fill
+      const pools = [
+        { pool: exoticPool, type: 'exotic_player' as const },
+        { pool: teamPool, type: 'team_bet' as const },
+        { pool: playerPool, type: 'player_prop' as const },
+      ];
+
+      // Round 1: one from each pool
+      for (const { pool, type } of pools) {
+        if (marketTypeCounts[type] >= getMaxForType(type)) continue;
+        for (const c of pool) {
+          if (!passesBasicChecks(c, legs, gc)) continue;
+          if (used.has(normalizeName(c.player_name))) continue;
+          addLeg(c, legs, gc, used, `mega_${type}`, 'mega_jackpot');
+          marketTypeCounts[type]++;
+          const currentOdds = calcCombinedOdds(legs);
+          console.log(`[MegaParlay] MEGA R1 leg ${legs.length}: ${c.player_name} ${c.prop_type} ${c.side} +${c.odds} [${type}] def:${c.defenseRank} (running: +${currentOdds})`);
+          break;
+        }
       }
 
-      // If we haven't hit 10k yet and have < 8 legs, add more with relaxed filters
+      // Round 2+: fill remaining slots, respecting per-type caps and odds cap
+      for (const c of megaCandidates) {
+        if (legs.length >= 8) break;
+        const currentOdds = calcCombinedOdds(legs);
+        if (legs.length >= 4 && currentOdds >= 10000) break;
+        if (currentOdds >= MAX_COMBINED_ODDS) break;
+        if (marketTypeCounts[c.market_type] >= getMaxForType(c.market_type)) continue;
+        if (used.has(normalizeName(c.player_name))) continue;
+        if (!passesBasicChecks(c, legs, gc)) continue;
+        addLeg(c, legs, gc, used, `mega_${c.market_type}`, 'mega_jackpot');
+        marketTypeCounts[c.market_type]++;
+        const newOdds = calcCombinedOdds(legs);
+        console.log(`[MegaParlay] MEGA R2 leg ${legs.length}: ${c.player_name} ${c.prop_type} ${c.side} +${c.odds} [${c.market_type}] (running: +${newOdds})`);
+      }
+
+      // Relaxed filler if still below 10k and < 8 legs (still respect per-leg cap and type caps)
       if (legs.length < 8 && calcCombinedOdds(legs) < 10000) {
         const relaxedCandidates = scoredProps.filter(p => {
-          if (p.odds < 200) return false;
+          const maxOdds = PER_LEG_CAPS[p.market_type] || 800;
+          if (p.odds < 150 || p.odds > maxOdds) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
-          return passesBasicChecks(p, legs, gc);
-        }).sort((a, b) => b.odds - a.odds);
+          if (used.has(normalizeName(p.player_name))) return false;
+          return true;
+        }).sort((a, b) => sweetSpotScore(b.odds) - sweetSpotScore(a.odds));
 
         for (const c of relaxedCandidates) {
           if (legs.length >= 8) break;
+          if (calcCombinedOdds(legs) >= MAX_COMBINED_ODDS) break;
           if (!passesBasicChecks(c, legs, gc)) continue;
           addLeg(c, legs, gc, used, 'mega_filler', 'mega_jackpot');
           const currentOdds = calcCombinedOdds(legs);
@@ -942,7 +1017,7 @@ serve(async (req) => {
         }
       }
 
-      if (legs.length >= 4) {
+      if (legs.length >= 3) {
         const odds = calcCombinedOdds(legs);
         allTickets.push({ tier: 'mega_jackpot', legs, stake: 1, combinedOdds: odds });
         for (const n of used) allUsedPlayers.add(n);
