@@ -42,6 +42,7 @@ type NotificationType =
   | 'doctor_report'
   | 'quality_regen_report'
   | 'hit_rate_evaluation'
+  | 'ladder_challenge'
   | 'test';
 
 interface NotificationData {
@@ -102,6 +103,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatQualityRegenReport(data, dateStr);
     case 'hit_rate_evaluation':
       return formatHitRateEvaluation(data, dateStr);
+    case 'ladder_challenge':
+      return data.message || `🪜 Ladder Challenge pick generated`;
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
