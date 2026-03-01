@@ -1,60 +1,71 @@
 
 
-## Fix Ladder Challenge: Correct Opponent, Single Pick Per Player, Top 3 Candidates
+## Mega Lottery V2: 3-Ticket System with Exotic Props and 10,000+ Jackpot
 
-### Problem
-Three issues with the current ladder challenge:
+### Overview
+Transform the mega lottery scanner into a true 3-ticket lottery system. One ticket must target 10,000+ combined odds using exotic high-odds markets (first basket, moneyline, Q1 ML). All tickets still run through the existing filter pipeline (defense rankings, hit rates, edge validation, correlation blocking) but with relaxed thresholds. L20 averages are incorporated alongside L10 for stability.
 
-1. **Wrong opponent**: The bot doesn't know which team a player is on, so it guesses by picking the team with worse 3PT defense. This caused Julian Champagnie (Spurs) to show "vs San Antonio Spurs" instead of "vs New York Knicks."
+### 3 Ticket Structure
 
-2. **Can't stack same prop at different lines**: Sportsbooks won't let you parlay Over 1.5, Over 2.5, and Over 3.5 threes for the same player -- they're correlated. The ladder needs to pick ONE line (the boom/highest value line) per player as a single-leg pick.
+| Ticket | Legs | Min Per-Leg Odds | Target Total | Stake |
+|--------|------|-----------------|--------------|-------|
+| Standard Lottery | 2-4 | +100 | +500 to +2000 | $5 |
+| High Roller | 3-6 | +200 | +2000 to +8000 | $3 |
+| Mega Jackpot | 4-8 | +300 | +10,000 minimum | $1 |
 
-3. **Only shows 1 pick**: You want the top 3 candidates (e.g., Julian, Sam, Jayson), each as their own single-leg ladder pick at their best boom line.
+### New Exotic Markets to Scrape
+Add these markets to the per-event API call alongside existing player props:
+- `player_first_basket` -- First Basket Scorer (+400 to +2500)
+- `h2h` -- Full Game Moneyline underdog side (+150 to +600)
+- `h2h_q1` -- 1st Quarter Moneyline underdog side (+130 to +300)
+- `player_double_double` -- Double Double Yes (+200 to +800)
+- `player_triple_double` -- Triple Double Yes (+500 to +5000)
 
-### Changes
+### Filter Adjustments Per Tier
 
-**File: `supabase/functions/nba-ladder-challenge/index.ts`**
+**Standard Lottery** (existing logic, allow 2 legs minimum):
+- Same SAFE/BALANCED/GREAT_ODDS roles, same thresholds
+- Min legs reduced from 3 to 2
 
-1. **Fix opponent detection** (lines 260-297):
-   - Query `bdl_player_cache` for `player_name, team_name` at startup
-   - Build a `playerTeamMap` (normalized name -> team name)
-   - When scoring, look up the player's actual team, then set opponent to the OTHER team in the game
-   - Use the actual opponent's `opp_threes_rank` (not the worse of the two)
+**High Roller** (relaxed filters):
+- Hit rate: 40%+ (down from 70%/60%/55%)
+- Edge: 0%+ (no minimum, odds carry the value)
+- Defense rank: 15+ for OVERs (still meaningful)
+- L10 avg or L20 avg must clear the line by 1.1x
+- Per-leg odds: +200 minimum
 
-2. **Switch from multi-rung parlay to single boom pick** (lines 371-425):
-   - Instead of building 3 legs at different lines, pick the highest line where the player's L10 avg still clears comfortably (the "boom" line)
-   - Save as a single-leg entry with that line's odds (e.g., Over 4.5 at +650)
-   - Still show all available lines and hit rates in the rationale for context
+**Mega Jackpot** (lottery-grade filters, defense still matters):
+- Hit rate: 30%+ (just needs a pulse of viability)
+- Edge: no minimum
+- Defense rank: 18+ for player props (weak defense = things are possible)
+- L10 or L20 avg must be within 0.8x of the line (not impossible)
+- Per-leg odds: +300 minimum
+- Exotic props (first basket, triple double) skip L10/L20 checks since no game log data exists
+- Team bets (ML, Q1 ML) use defense rank as primary filter -- only pick underdogs vs weak defenses
 
-3. **Generate top 3 candidates** (lines 371-478):
-   - Loop over `candidates.slice(0, 3)` instead of just `candidates[0]`
-   - Save each as a separate `bot_daily_parlays` row
-   - Build a combined Telegram message showing all 3 picks
-   - Update dedup check threshold from `> 0` to `>= 3`
+### Technical Changes
 
-4. **Updated Telegram format**:
-```text
-LADDER CHALLENGE (3 Picks)
+**File: `supabase/functions/nba-mega-parlay-scanner/index.ts`**
 
-1. Julian Champagnie | 3PT Over 4.5 (+650)
-   vs Knicks (Rank 22 3PT D)
-   L10 Avg: 3.9 | Floor: 1 | Ceiling: 8
-   Matchup: GOOD
+1. **Expand market scraping** (line 183): Add exotic markets to API call string. Parse team-based markets (h2h, h2h_q1) differently -- extract underdog side only. Parse Yes/No markets (first basket, double/triple double) -- extract Yes outcomes only. Tag each prop with `market_type`: 'player_prop', 'exotic_player', or 'team_bet'.
 
-2. Sam Hauser | 3PT Over 3.5 (+180)
-   vs Wizards (Rank 28 3PT D)
-   L10 Avg: 4.2 | Floor: 2 | Ceiling: 7
-   Matchup: ELITE
+2. **Add L20 data** (lines 291-316): Query `mispriced_lines` for `player_avg_l20` alongside existing data. Build an `l20Map` and attach `l20Avg` to each scored prop. Use `l20Avg` as fallback when `l10Avg` is missing, and as a stability check in the mega jackpot tier.
 
-3. Jayson Tatum | 3PT Over 3.5 (+150)
-   vs Pistons (Rank 25 3PT D)
-   L10 Avg: 3.6 | Floor: 1 | Ceiling: 6
-   Matchup: ELITE
-```
+3. **Replace single-parlay builder with 3-ticket builder** (lines 626-828):
+   - **Ticket 1 (Standard)**: Keep existing 3-pass role-based logic (SAFE/BALANCED/GREAT_ODDS), allow 2-4 legs, $5 stake
+   - **Ticket 2 (High Roller)**: New pass with relaxed thresholds (40% HR, +200 min odds, defense 15+), build 3-6 legs targeting +2000-+8000, $3 stake
+   - **Ticket 3 (Mega Jackpot)**: New pass prioritizing exotic props and +300 min per-leg odds, defense rank 18+ required for player props, build 4-8 legs until combined odds reach 10,000+, $1 stake
 
-### Technical Details
-- **File modified**: `supabase/functions/nba-ladder-challenge/index.ts`
-- Uses existing `bdl_player_cache` table for player-team mapping (same pattern as `bot-generate-daily-parlays`)
-- Each pick is a single-leg entry in `bot_daily_parlays` (leg_count: 1)
-- The "boom line" selection logic: pick the highest available line where L10 avg >= line value, maximizing upside odds
+4. **Correlation blocking for team bets**: Extend `hasCorrelatedProp` to block stacking h2h + h2h_q1 from the same game. First basket doesn't correlate with standard player props, so mixing is allowed.
+
+5. **Save 3 separate entries to `bot_daily_parlays`** (lines 914-963): Each ticket saved as its own row with strategy_name 'mega_lottery_scanner' and a `ticket_tier` field in the legs metadata ('standard', 'high_roller', 'mega_jackpot'). Update dedup check to allow 3 entries.
+
+6. **Telegram message**: Combined message showing all 3 tickets with legs, odds, and potential payouts at their respective stake sizes ($5, $3, $1).
+
+### Key Design Decisions
+- Defense ranking remains a core filter across all tiers -- higher rank (weaker defense) means things are more possible, especially for the mega jackpot
+- L20 avg provides a larger sample for stability, used as fallback and secondary validation
+- Exotic props (first basket, triple double) naturally produce +300 to +2500 per leg, making 10,000+ combined odds achievable with 4-8 legs
+- Team bets only pick underdog sides (plus-money) to ensure high per-leg odds
+- Same auto-dedup logic prevents reusing players across tickets
 
