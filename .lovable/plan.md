@@ -1,46 +1,47 @@
 
 
-## Add Free Trial Paywall Banner Above Performance Calendar
+## Redesign Free Trial Banner to Match Reference Screenshot
 
 ### Overview
-Create an animated promotional banner component that appears between the HeroStats and PerformanceCalendar sections on the Bot Landing page. It highlights the $99/mo subscription with a free trial ending March 12th, and includes a "Join Now" CTA that triggers checkout.
+Update the existing `FreeTrialBanner` component to match the reference design -- a card-style layout with a header bar, feature checklist, and prominent CTA, while keeping the existing animations.
 
-### New Component: `src/components/bot-landing/FreeTrialBanner.tsx`
+### Changes to `src/components/bot-landing/FreeTrialBanner.tsx`
 
-A visually striking, animated paywall card featuring:
-- Gradient background with glowing accents (consistent with existing design language)
-- Animated entrance using `animate-fade-in` and `animate-scale-in` keyframes already in the project
-- Pulsing border glow effect using Tailwind animation
-- "FREE TRIAL" badge at top
-- Headline: "Start Your 3-Day Free Trial"
-- Price display: "$99/month after trial"
-- Urgency line: "Free trial ends March 12th" with a clock/timer icon
-- "Join Now" CTA button (gradient style matching existing buttons)
-- Email input field (matches PricingSection pattern -- email required for checkout)
-- Calls `create-bot-checkout` with the Parlay Bot price ID on submit
-- Only shown to non-subscribers (same `hasBotAccess || isAdmin` guard used elsewhere)
+Restructure the component layout to match the screenshot:
 
-### Changes to `src/pages/BotLanding.tsx`
+**Header Section:**
+- Dark gradient header bar with "PARLAY BOT" in bold white/bebas font
+- "MOST POPULAR" badge (with Zap icon) positioned top-right of the card
 
-Insert the `FreeTrialBanner` component between `HeroStats` and `PerformanceCalendar`:
+**Pricing Section:**
+- Large "$99" with "/month" next to it
+- Subtitle: "Cancel anytime · 3-day free trial"
+- Thin separator line below
 
-```
-<HeroStats />
-<FreeTrialBanner />       <-- NEW
-<PerformanceCalendar />
-```
+**Feature Checklist (6 items with check icons):**
+1. Daily AI-generated parlay picks
+2. Full parlay leg breakdowns and odds
+3. Strategy analysis and reasoning
+4. Performance calendar with P&L details
+5. Telegram bot alerts and commands
+6. Real-time live prop tracking
 
-Pass `onSubscribe` and `isLoading` props (same as PricingSection) so checkout works identically.
+**Bottom Section:**
+- Email input field
+- CTA button text: "Start 3-Day Free Trial — $99/mo"
+- Button styled with primary blue gradient
 
-### Animation Details
-- Container: `animate-fade-in` with slight delay for staggered entrance after hero
-- Inner glow orbs: CSS `animate-pulse` on pseudo-elements for ambient glow
-- CTA button: `hover:scale-105` transition + `shadow-lg shadow-primary/30` glow
-- Urgency text: subtle `animate-pulse` on the deadline to draw attention
-- Border: `border-primary/40` with gradient shimmer effect
+**Animations (kept/enhanced):**
+- Container: `animate-fade-in` with delay
+- Badge: `animate-scale-in`
+- Glow orbs: `animate-pulse` on corners
+- Border: `border-2 border-primary/40` with shadow glow
+- CTA: `hover:scale-105` transition
+- Feature list items: staggered fade-in using inline `animationDelay`
 
-### Design Spec
-- Uses existing color tokens (`primary`, `accent`, `destructive` for urgency)
-- Rounded-2xl card with `backdrop-blur-sm` glass effect
-- Max-width `max-w-2xl mx-auto` to match page content width
-- Responsive padding and text sizing
+### Technical Details
+- Single file change: `src/components/bot-landing/FreeTrialBanner.tsx`
+- Import `Check` from lucide-react (replacing `Clock`)
+- Keep existing props interface, price ID, and checkout logic unchanged
+- Remove the "Free trial ends March 12th" urgency line (replaced by "Cancel anytime · 3-day free trial" subtitle)
+
