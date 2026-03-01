@@ -1,49 +1,75 @@
 
 
-## Void Duplicates and Generate 3 Distinct Lottery Parlays
+## Daily Ladder Challenge Bot
 
-### Problem
-The lottery scanner is deterministic -- each run picks the same top-scoring candidates, producing identical tickets. We need to void 2 duplicates and add an exclusion mechanism so consecutive runs produce unique parlays.
+### Concept
+Inspired by the Brandon Miller 6-threes game: find ONE player per day most likely to massively exceed their prop line, then create a "ladder" of bets at increasing lines (e.g., Over 1.5 at -200, Over 2.5 at -110, Over 3.5 at +130). When the player goes off, every rung of the ladder hits.
 
-### Step 1: Void 2 Duplicate Lottery Tickets
-Use the database insert tool to mark 2 of the 3 duplicate pending lottery tickets (March 1) as `void` with a note explaining the reason, keeping only the oldest one active.
+### Intelligence Criteria (Pick Selection)
+The scanner will rank players using a weighted composite of:
+1. **L10 Average vs Line** (25%) -- How far above the lowest line is their recent average?
+2. **L10 Floor (Minimum)** (15%) -- Worst-case scenario protection; higher floor = safer ladder
+3. **Opponent 3PT Defense Rank** (20%) -- `opp_threes_rank` from `team_defense_rankings`; targeting rank 20-30 (weak perimeter D)
+4. **Offensive Pace** (10%) -- Fast-paced games create more possessions and shot opportunities
+5. **L10 Hit Rate at Middle Rung** (15%) -- How often they'd clear the 2nd ladder line in last 10
+6. **Ceiling Games** (15%) -- Count of L10 games where they hit 4+ threes (explosion potential)
 
-### Step 2: Add Deduplication to the Lottery Scanner
-Modify `supabase/functions/nba-mega-parlay-scanner/index.ts` to:
-- Accept an optional `exclude_players` array in the request body
-- Before building the parlay, filter out any props from players in the exclusion list
-- Also add automatic dedup: at the start, query today's existing `mega_lottery_scanner` parlays from `bot_daily_parlays` and extract all player names already used, merging them into the exclusion set
-- This ensures each consecutive run naturally avoids repeating the same players
+### Ladder Structure (3 Rungs)
+For the selected player, the function builds 3 legs saved as a single `bot_daily_parlays` entry:
+- **Rung 1 (Safety)**: Lowest available line (e.g., Over 1.5) -- high probability anchor
+- **Rung 2 (Value)**: Middle line (e.g., Over 2.5) -- the sweet spot
+- **Rung 3 (Boom)**: Highest line (e.g., Over 3.5) -- the upside swing
 
-The key change is in the `passesBasicChecks` function and pre-build filtering:
+Each rung is a separate leg with its own odds, but they're grouped as a ladder strategy.
+
+### New Edge Function
+**File**: `supabase/functions/nba-ladder-challenge/index.ts`
+
+The function will:
+1. Fetch today's available player props from The Odds API (3-pointers only initially)
+2. Group all lines for each player (1.5, 2.5, 3.5, 4.5, etc.)
+3. Cross-reference with `category_sweet_spots` for L10 stats (avg, median, min, hit rate)
+4. Fetch `team_defense_rankings` for opponent `opp_threes_rank`
+5. Score each player using the weighted composite above
+6. Select the top-1 player and build the 3-rung ladder
+7. Save to `bot_daily_parlays` with `strategy_name: 'ladder_challenge'`, `tier: 'execution'`
+8. Send a Telegram notification with the ladder pick details
+
+### Telegram Output Format
 ```text
-// Parse exclude_players from request body
-const { exclude_players = [] } = body;
+-- LADDER CHALLENGE --
+Brandon Miller | 3PT OVER
+vs Trail Blazers (Rank 28 3PT Defense)
 
-// Query existing lottery parlays for today and extract used players
-const existingLotteryParlays = await supabase
-  .from('bot_daily_parlays')
-  .select('legs')
-  .eq('parlay_date', today)
-  .eq('strategy_name', 'mega_lottery_scanner')
-  .neq('outcome', 'void');
+Rung 1: Over 1.5 (-180) -- L10: 10/10
+Rung 2: Over 2.5 (-110) -- L10: 8/10
+Rung 3: Over 3.5 (+130) -- L10: 6/10
 
-// Merge into a single exclusion set
-const excludeSet = new Set([
-  ...exclude_players.map(normalizeName),
-  ...extractedPlayerNames.map(normalizeName)
-]);
-
-// Add to passesBasicChecks:
-if (excludeSet.has(normalizeName(prop.player_name))) return false;
+L10 Avg: 3.8 | Floor: 2 | Ceiling: 6
+Matchup: ELITE (weak perimeter D + fast pace)
 ```
 
-### Step 3: Regenerate 2 Fresh Lottery Tickets
-After deploying the updated scanner, invoke it twice. Each run will automatically exclude players from already-saved tickets, producing 3 distinct parlays with different player combinations and proper prop diversity (`MAX_SAME_PROP = 2`).
-
 ### Technical Details
-- **File modified**: `supabase/functions/nba-mega-parlay-scanner/index.ts`
-- **Database operations**: UPDATE 2 rows in `bot_daily_parlays` to `outcome = 'void'`
-- **No schema changes needed**
-- The auto-dedup is additive to the existing `MAX_SAME_PROP` and `MAX_PER_GAME` constraints
 
+**Data sources used:**
+- The Odds API (live sportsbook lines for all available 3PT lines per player)
+- `category_sweet_spots` (L10 avg, median, min, hit rate, confidence)
+- `nba_player_game_logs` (individual game values for ceiling/floor analysis)
+- `team_defense_rankings` (opp_threes_rank for matchup grading)
+
+**Key logic:**
+- Only considers players with 3+ different lines available from sportsbooks (ensures ladder depth)
+- Requires L10 avg >= middle rung line (safety check)
+- Requires opponent `opp_threes_rank` >= 15 (no ladders against elite 3PT defense)
+- Deduplication: checks existing `ladder_challenge` entries for today to avoid duplicates
+
+**Config in `supabase/config.toml`:**
+```toml
+[functions.nba-ladder-challenge]
+verify_jwt = false
+```
+
+**Files to create:**
+- `supabase/functions/nba-ladder-challenge/index.ts`
+
+**No database schema changes needed** -- uses existing `bot_daily_parlays` table with `strategy_name = 'ladder_challenge'`.
