@@ -1,47 +1,28 @@
 
 
-## Redesign Free Trial Banner to Match Reference Screenshot
-
-### Overview
-Update the existing `FreeTrialBanner` component to match the reference design -- a card-style layout with a header bar, feature checklist, and prominent CTA, while keeping the existing animations.
+## Fix Free Trial Banner: Add March 12th Deadline + Glowing Animations
 
 ### Changes to `src/components/bot-landing/FreeTrialBanner.tsx`
 
-Restructure the component layout to match the screenshot:
+**1. Add "Free trial ends March 12th" urgency line**
+- Add below the "Cancel anytime · 3-day free trial" subtitle
+- Use destructive color with a Clock icon and `animate-pulse` class
 
-**Header Section:**
-- Dark gradient header bar with "PARLAY BOT" in bold white/bebas font
-- "MOST POPULAR" badge (with Zap icon) positioned top-right of the card
+**2. Add glowing border animation to the card**
+- Apply `animate-pulse-glow` (already defined in tailwind config) to the outer container
+- Add a glowing `box-shadow` using `shadow-[0_0_30px_hsl(var(--primary)/0.3)]` on the card
+- Make the border shimmer with a pulsing primary color effect
 
-**Pricing Section:**
-- Large "$99" with "/month" next to it
-- Subtitle: "Cancel anytime · 3-day free trial"
-- Thin separator line below
+**3. Add glowing CTA button**
+- Apply `animate-pulse-glow` or similar pulsing glow shadow to the "Start 3-Day Free Trial" button
+- Enhance the existing `shadow-lg shadow-primary/30` to a more visible pulsing glow
 
-**Feature Checklist (6 items with check icons):**
-1. Daily AI-generated parlay picks
-2. Full parlay leg breakdowns and odds
-3. Strategy analysis and reasoning
-4. Performance calendar with P&L details
-5. Telegram bot alerts and commands
-6. Real-time live prop tracking
-
-**Bottom Section:**
-- Email input field
-- CTA button text: "Start 3-Day Free Trial — $99/mo"
-- Button styled with primary blue gradient
-
-**Animations (kept/enhanced):**
-- Container: `animate-fade-in` with delay
-- Badge: `animate-scale-in`
-- Glow orbs: `animate-pulse` on corners
-- Border: `border-2 border-primary/40` with shadow glow
-- CTA: `hover:scale-105` transition
-- Feature list items: staggered fade-in using inline `animationDelay`
+**4. Enhance glow orbs**
+- Increase size and opacity of the existing corner glow orbs for more visible ambient glow effect
 
 ### Technical Details
 - Single file change: `src/components/bot-landing/FreeTrialBanner.tsx`
-- Import `Check` from lucide-react (replacing `Clock`)
-- Keep existing props interface, price ID, and checkout logic unchanged
-- Remove the "Free trial ends March 12th" urgency line (replaced by "Cancel anytime · 3-day free trial" subtitle)
+- Re-import `Clock` from lucide-react alongside `Check` and `Zap`
+- Use existing `animate-pulse-glow` keyframe from tailwind.config.ts for the card border glow
+- No new keyframes needed -- leverage what's already configured
 
