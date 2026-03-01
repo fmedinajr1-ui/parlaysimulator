@@ -3191,6 +3191,17 @@ async function handleEngineAccuracy(chatId: string): Promise<string> {
     engines.push({ name: 'Mispriced Lines', won, lost, total: won + lost });
   }
 
+  // High Conviction
+  const { data: hcPicks } = await supabase
+    .from('high_conviction_results')
+    .select('outcome')
+    .in('outcome', ['won', 'lost']);
+  if (hcPicks) {
+    const won = hcPicks.filter(p => p.outcome === 'won').length;
+    const lost = hcPicks.filter(p => p.outcome === 'lost').length;
+    engines.push({ name: 'High Conviction', won, lost, total: won + lost });
+  }
+
   // Send formatted report via bot-send-telegram
   await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/bot-send-telegram`, {
     method: 'POST',

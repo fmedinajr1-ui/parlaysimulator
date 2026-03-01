@@ -4154,6 +4154,7 @@ export type Database = {
       }
       high_conviction_results: {
         Row: {
+          actual_value: number | null
           analysis_date: string
           confidence_tier: string | null
           conviction_score: number | null
@@ -4163,14 +4164,17 @@ export type Database = {
           edge_pct: number
           engines: Json | null
           id: string
+          outcome: string | null
           player_avg: number | null
           player_name: string
           prop_type: string
+          settled_at: string | null
           side_agreement: boolean | null
           signal: string
           sport: string | null
         }
         Insert: {
+          actual_value?: number | null
           analysis_date: string
           confidence_tier?: string | null
           conviction_score?: number | null
@@ -4180,14 +4184,17 @@ export type Database = {
           edge_pct?: number
           engines?: Json | null
           id?: string
+          outcome?: string | null
           player_avg?: number | null
           player_name: string
           prop_type: string
+          settled_at?: string | null
           side_agreement?: boolean | null
           signal: string
           sport?: string | null
         }
         Update: {
+          actual_value?: number | null
           analysis_date?: string
           confidence_tier?: string | null
           conviction_score?: number | null
@@ -4197,9 +4204,11 @@ export type Database = {
           edge_pct?: number
           engines?: Json | null
           id?: string
+          outcome?: string | null
           player_avg?: number | null
           player_name?: string
           prop_type?: string
+          settled_at?: string | null
           side_agreement?: boolean | null
           signal?: string
           sport?: string | null

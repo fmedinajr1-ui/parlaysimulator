@@ -464,6 +464,58 @@ serve(async (req) => {
 
     results.push(mispricedResult);
 
+    // ========== VERIFY HIGH CONVICTION RESULTS ==========
+    console.log('[verify-all] Verifying High Conviction picks...');
+    
+    const { data: hcPicks, error: hcError } = await supabase
+      .from('high_conviction_results')
+      .select('id, player_name, prop_type, current_line, signal, analysis_date, outcome')
+      .in('analysis_date', dates)
+      .or('outcome.is.null,outcome.eq.pending');
+
+    if (hcError) {
+      console.error('[verify-all] Error fetching high conviction results:', hcError);
+    }
+
+    let hcResult: VerificationResult = { engine: 'high_conviction', verified: 0, partial: 0, won: 0, lost: 0, pushes: 0 };
+
+    for (const pick of (hcPicks || [])) {
+      const normalizedPlayer = normalizePlayerName(pick.player_name);
+      const lookupKey = `${normalizedPlayer}_${pick.analysis_date}`;
+      const gameLog = logMap.get(lookupKey);
+
+      if (!gameLog || !validateGameLogDate(gameLog, pick.analysis_date)) {
+        continue;
+      }
+
+      // NULL-line guard: skip if current_line is missing
+      if (pick.current_line === null || pick.current_line === undefined) {
+        console.log(`[verify-all] HighConviction: Skipping ${pick.player_name} - no current_line`);
+        continue;
+      }
+
+      const actualValue = calculateActualValue(gameLog, pick.prop_type);
+      if (actualValue === null) continue;
+
+      // signal is 'OVER' or 'UNDER'
+      const side = (pick.signal || 'OVER').toLowerCase();
+      const outcome = determineOutcome(actualValue, pick.current_line, side);
+      
+      await supabase
+        .from('high_conviction_results')
+        .update({ outcome, actual_value: actualValue, settled_at: new Date().toISOString() })
+        .eq('id', pick.id);
+
+      if (outcome === 'won') hcResult.won++;
+      else if (outcome === 'lost') hcResult.lost++;
+      else hcResult.pushes++;
+      hcResult.verified++;
+
+      console.log(`[verify-all] HighConviction: ${pick.player_name} ${pick.prop_type} ${side} ${pick.current_line} → ${actualValue} = ${outcome}`);
+    }
+
+    results.push(hcResult);
+
     // Log to cron job history
     const totalVerified = results.reduce((sum, r) => sum + r.verified, 0);
     const totalPartial = results.reduce((sum, r) => sum + r.partial, 0);
