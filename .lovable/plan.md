@@ -1,94 +1,75 @@
 
 
-## Scrape Double Doubles, Triple Doubles, Team Moneylines + Correct-Priced Lines Funnel
+## Customer `/lookup` Command for Telegram Bot
 
-### Overview
-Add three new data types (double doubles, triple doubles, team moneylines) to the scraping pipeline AND run them through the correct-priced/mispriced lines fork so they produce both mispriced (15%+) and correct-priced (3-14%) entries.
+### What You'll Get
+A new `/lookup` command available to **all authorized customers** (not just admin) that lets them type a player name and get an instant cross-reference report pulling from your existing data:
 
----
-
-### 1. Add DD/TD to PP Props Scraper
-
-**File:** `supabase/functions/pp-props-scraper/index.ts`
-
-Add to `STAT_TYPE_MAP` (line ~111):
-- `'Double Doubles'` -> `'player_double_double'`
-- `'Triple Doubles'` -> `'player_triple_double'`
-
-These already flow through PrizePicks API -- they're just unmapped and get dropped. Once mapped, they'll land in `pp_projection_snapshots` automatically.
-
-### 2. Add DD/TD to Sportsbook Props Scraper
-
-**File:** `supabase/functions/sportsbook-props-scraper/index.ts`
-
-Add to `STAT_TYPE_MAP` (line ~33):
-- `'double doubles'` -> `'player_double_double'`
-- `'triple doubles'` -> `'player_triple_double'`
-
-This ensures any sportsbook odds for these markets get normalized into `unified_props`.
-
-### 3. New Edge Function: `fetch-team-moneylines`
-
-**New file:** `supabase/functions/fetch-team-moneylines/index.ts`
-
-Fetches h2h (moneyline) odds from The Odds API for NBA, MLB, NHL, NFL, NCAAB. Persists into a new `team_moneyline_odds` table. Uses the existing `THE_ODDS_API_KEY` secret.
-
-Logic:
-- Loop through sport keys: `basketball_nba`, `baseball_mlb`, `icehockey_nhl`, `americanfootball_nfl`, `basketball_ncaab`
-- Call `https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={key}&regions=us&markets=h2h&oddsFormat=american`
-- Parse each event into rows with home/away teams, odds, implied probabilities
-- Upsert into `team_moneyline_odds`
-
-### 4. New Database Table: `team_moneyline_odds`
-
-```text
-Columns:
-  id              uuid PRIMARY KEY
-  sport           text
-  event_id        text
-  home_team       text
-  away_team       text
-  home_odds       numeric
-  away_odds       numeric
-  bookmaker       text
-  commence_time   timestamptz
-  implied_home_prob numeric
-  implied_away_prob numeric
-  analysis_date   date DEFAULT CURRENT_DATE
-  created_at      timestamptz DEFAULT now()
-  UNIQUE(event_id, bookmaker, analysis_date)
+**Example usage:**
+```
+/lookup LeBron James
 ```
 
-Public read, service role write. RLS enabled.
+**Example response:**
+```
+🔍 PLAYER LOOKUP — LeBron James
+━━━━━━━━━━━━━━━━━━━━━
 
-### 5. Update `detect-mispriced-lines` -- DD/TD + Moneyline Edge Detection
+📊 L10 Game Log:
+  Mar 1: 28 PTS | 8 REB | 7 AST | 2 3PT
+  Feb 28: 31 PTS | 6 REB | 9 AST | 3 3PT
+  ... (10 games)
 
-**File:** `supabase/functions/detect-mispriced-lines/index.ts`
+📈 L10 Averages:
+  PTS: 27.3 | REB: 7.1 | AST: 8.2 | 3PT: 2.4
 
-**Double Double / Triple Double edge detection:**
-- Add `'player_double_double'` and `'player_triple_double'` to `NBA_PROP_TO_STAT` mapping
-- For these binary props (line = 0.5), calculate edge differently: compute historical DD/TD frequency from game logs (e.g., games with pts >= 10 AND reb >= 10 = double double), compare frequency vs implied probability from the 0.5 line
-- Fork result into mispriced (15%+) or correct-priced (3-14%) like all other props
+🛡️ Tonight's Matchup vs BOS:
+  Opp Def Overall: #4 (Elite)
+  vs PTS: #3 ⚠️ | vs 3PT: #7 ⚠️
+  vs REB: #22 🔥 | vs AST: #15
 
-**Team moneyline mispricing:**
-- Fetch today's `team_moneyline_odds` and today's `team_bets_scoring` composite scores
-- For each game: if composite score >= 70 but implied probability is low (e.g., team at +150 = 40% implied, but model says 65%+), flag as mispriced moneyline
-- Store in `mispriced_lines` with `sport` and `prop_type = 'team_moneyline'`
-- Apply same 3-14% / 15%+ fork for correct-priced vs mispriced
+📋 Today's Props (if available):
+  PTS O25.5 (-110) | L10 hit: 8/10
+  REB O6.5 (-115) | L10 hit: 6/10
+  AST O7.5 (-120) | L10 hit: 7/10
+```
 
-### 6. Correct-Priced Lines Funnel
+### How It Works (Data Sources -- All Existing)
 
-All three new data types (DD, TD, moneylines) flow through the **existing** correct-priced/mispriced fork already in `detect-mispriced-lines`. The fork at line ~407 already routes 3-14% edge to `correct_priced_lines` and 15%+ to `mispriced_lines`. The new prop types just need to produce `resultEntry` objects with the same shape, and they'll automatically land in the right table.
+1. **L10 Game Logs** — `nba_player_game_logs` table (points, rebounds, assists, threes, steals, blocks, minutes)
+2. **Defense Rankings** — `team_defense_rankings` table (opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank)
+3. **Today's Props** — `unified_props` table (current lines, over/under prices)
+4. **Opponent Identification** — Game description from `unified_props` or `game_bets` to find tonight's opponent
+5. **Player-to-Team Mapping** — Derived from game logs (most recent opponent field) or game_description in unified_props
 
----
+No new scrapers needed -- all data already exists in the pipeline.
+
+### Technical Changes
+
+#### 1. `telegram-webhook/index.ts` — Add `/lookup` command handler
+
+Add a new `handleLookup(chatId, playerName)` function that:
+
+- **Fuzzy-matches** the player name using `ilike` on `nba_player_game_logs` (last name match)
+- **Pulls L10 game logs** sorted by game_date descending, limit 10
+- **Calculates L10 averages** for PTS, REB, AST, 3PT, STL, BLK
+- **Finds today's opponent** by checking `unified_props` for this player's name today, extracting opponent from `game_description`
+- **Fetches defense rankings** for the opponent from `team_defense_rankings` where `is_current = true`
+- **Pulls today's prop lines** from `unified_props` for this player
+- **Calculates hit rates** — for each prop line, counts how many of L10 games would have gone over/under
+- **Formats** into a compact Telegram message
+
+Wire it into the customer command router (line ~3387) and admin command router (line ~3229) so both can use it.
+
+Update `/help` for customers to include `/lookup [player]`.
+
+#### 2. Team Abbreviation Resolution
+
+Reuse the NBA team name-to-abbreviation mapping (already exists in `bot-matchup-defense-scanner`) inline in the webhook to resolve opponent names from game descriptions to abbreviations for defense ranking lookups.
 
 ### Files Modified
-- `supabase/functions/pp-props-scraper/index.ts` -- add DD/TD stat type mappings
-- `supabase/functions/sportsbook-props-scraper/index.ts` -- add DD/TD stat type mappings
-- `supabase/functions/detect-mispriced-lines/index.ts` -- add DD/TD binary edge calc + moneyline mispricing via team scoring engine
-- **New:** `supabase/functions/fetch-team-moneylines/index.ts` -- dedicated moneyline scraper
-- **New migration:** `team_moneyline_odds` table
+- `supabase/functions/telegram-webhook/index.ts` — add `handleLookup()` function + wire into both admin and customer command routers + update help text
 
-### No Breaking Changes
-All existing pipelines remain untouched. New data flows through the same infrastructure.
+### No New Tables or Scrapers Needed
+Everything pulls from existing data that's already being populated by the pipeline.
 
