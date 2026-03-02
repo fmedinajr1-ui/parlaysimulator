@@ -3011,7 +3011,7 @@ function normalizePropTypeCategory(propType: string): string {
   return 'other';
 }
 
-function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig, currentTier?: TierName): boolean {
+function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig, currentTier?: TierName, isSweetSpotProfile?: boolean): boolean {
   // === BLOCKED CATEGORIES GATE ===
   if (BLOCKED_CATEGORIES.has(pick.category)) {
     return false;
@@ -3033,10 +3033,14 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     if (playerCount >= tierConfig.maxPlayerUsage) return false;
   }
   
-  // === HIT RATE SCORE GATE (minimum 70%) ===
-  const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
-  const hitRatePercent = pickConfidence * 100;
-  if (hitRatePercent < 70) return false;
+  // === HIT RATE SCORE GATE ===
+  // Sweet spot profiles: skip this gate entirely (engine already pre-vetted quality)
+  // Other profiles: require 70% minimum
+  if (!isSweetSpotProfile) {
+    const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
+    const hitRatePercent = pickConfidence * 100;
+    if (hitRatePercent < 70) return false;
+  }
   
   // === GLOBAL SLATE EXPOSURE CAP (max 5 per player+prop across all tiers) ===
   if ('player_name' in pick && 'prop_type' in pick) {
@@ -4542,49 +4546,27 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const preFilterCount = enrichedSweetSpots.length;
   const filteredOutPlayers: string[] = [];
 
-  if (activePlayersToday.size > 0) {
-    enrichedSweetSpots = enrichedSweetSpots.filter(pick => {
-      const normalizedName = pick.player_name.toLowerCase().trim();
+  // Sweet spots: only filter by injury (OUT/DOUBTFUL) + GTD penalty. 
+  // Do NOT require activePlayersToday — the game schedule gate handles team check.
+  enrichedSweetSpots = enrichedSweetSpots.filter(pick => {
+    const normalizedName = pick.player_name.toLowerCase().trim();
 
-      // Block: player not in today's active lines
-      if (!activePlayersToday.has(normalizedName)) {
-        filteredOutPlayers.push(`${pick.player_name} (no active lines)`);
-        return false;
-      }
+    // Block: OUT or DOUBTFUL
+    if (blocklist.has(normalizedName)) {
+      filteredOutPlayers.push(`${pick.player_name} (injury blocklist)`);
+      return false;
+    }
 
-      // Block: OUT or DOUBTFUL
-      if (blocklist.has(normalizedName)) {
-        filteredOutPlayers.push(`${pick.player_name} (injury blocklist)`);
-        return false;
-      }
+    // Penalize: GTD/QUESTIONABLE - reduce confidence but don't block
+    const penalty = penalties.get(normalizedName);
+    if (penalty) {
+      pick.confidence_score *= penalty;
+      pick.l10_hit_rate *= penalty;
+      pick.compositeScore = Math.round(pick.compositeScore * penalty);
+    }
 
-      // Penalize: GTD/QUESTIONABLE - reduce confidence
-      const penalty = penalties.get(normalizedName);
-      if (penalty) {
-        pick.confidence_score *= penalty;
-        pick.l10_hit_rate *= penalty;
-        pick.compositeScore = Math.round(pick.compositeScore * penalty);
-      }
-
-      return true;
-    });
-  } else {
-    // If no active players data, at least apply injury blocklist
-    enrichedSweetSpots = enrichedSweetSpots.filter(pick => {
-      const normalizedName = pick.player_name.toLowerCase().trim();
-      if (blocklist.has(normalizedName)) {
-        filteredOutPlayers.push(`${pick.player_name} (injury blocklist)`);
-        return false;
-      }
-      const penalty = penalties.get(normalizedName);
-      if (penalty) {
-        pick.confidence_score *= penalty;
-        pick.l10_hit_rate *= penalty;
-        pick.compositeScore = Math.round(pick.compositeScore * penalty);
-      }
-      return true;
-    });
-  }
+    return true;
+  });
 
   console.log(`[AvailabilityGate] Filtered sweet spots: ${preFilterCount} → ${enrichedSweetSpots.length}`);
   if (filteredOutPlayers.length > 0) {
@@ -6609,7 +6591,7 @@ async function generateTierParlays(
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
-      if (!canUsePickGlobally(pick, tracker, config, tier)) continue;
+      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile)) continue;
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
       const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
