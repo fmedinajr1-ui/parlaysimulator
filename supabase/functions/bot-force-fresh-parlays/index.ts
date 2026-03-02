@@ -88,6 +88,29 @@ serve(async (req) => {
   try {
     console.log(`[ForceFresh] Starting force-generate for ${today}`);
 
+    // === SWEET SPOT ALIGNMENT GATE ===
+    // Fetch today's sweet spot recommendations to cross-check against
+    let sweetSpotLookup = new Map<string, { side: string; hitRate: number }>();
+    try {
+      const { data: ssData } = await supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, recommended_side, l10_hit_rate')
+        .eq('analysis_date', today)
+        .eq('is_active', true);
+      
+      if (ssData) {
+        for (const ss of ssData) {
+          const key = `${(ss.player_name || '').toLowerCase()}|${normalizePropType(ss.prop_type || '')}`;
+          sweetSpotLookup.set(key, {
+            side: (ss.recommended_side || '').toLowerCase(),
+            hitRate: ss.l10_hit_rate || 0,
+          });
+        }
+        console.log(`[ForceFresh] Loaded ${sweetSpotLookup.size} sweet spot cross-check entries`);
+      }
+    } catch (ssErr) {
+      console.warn(`[ForceFresh] Sweet spot lookup failed, proceeding without alignment gate:`, ssErr);
+    }
     // Step 0a: Check if sufficient mispriced parlays already exist (skip if 10+)
     const { count: existingMispricedCount } = await supabase
       .from('bot_daily_parlays')
@@ -214,30 +237,48 @@ serve(async (req) => {
       console.log(`[BlockedPropType] Removed ${preFilterCount - filteredLines.length} blocked prop type picks`);
     }
 
-    // Step 3: Score and enrich picks
+    // Step 3: Score and enrich picks (with Sweet Spot alignment gate)
+    let ssAlignedCount = 0;
+    let ssConflictCount = 0;
     const picks: MispricedPick[] = [];
     for (const ml of filteredLines) {
       const key = `${ml.player_name.toLowerCase()}|${normalizePropType(ml.prop_type)}`;
       const riskMatch = riskMap.get(key);
       const riskConfirmed = riskMatch ? riskMatch.side.toLowerCase() === ml.signal.toLowerCase() : false;
 
+      // === SWEET SPOT CONFLICT CHECK ===
+      const ssMatch = sweetSpotLookup.get(key);
+      if (ssMatch) {
+        if (ssMatch.side && ssMatch.side !== ml.signal.toLowerCase()) {
+          // REJECT: this leg conflicts with a sweet spot recommendation (opposite side)
+          ssConflictCount++;
+          console.log(`[ForceFresh] ❌ SS CONFLICT: ${ml.player_name} ${ml.prop_type} ${ml.signal} vs sweet spot ${ssMatch.side} (HR: ${ssMatch.hitRate})`);
+          continue;
+        }
+        ssAlignedCount++;
+      }
+
       // Conviction score: edge magnitude + tier bonus + risk confirmation
-      const edgeMag = ml.edge_pct; // Use raw edge (positive = real value), not Math.abs
+      const edgeMag = ml.edge_pct;
       const tierBonus = ml.confidence_tier === 'ELITE' ? 20 : 10;
       const riskBonus = riskConfirmed ? 25 : (riskMatch ? 5 : 0);
       const underBonus = ml.signal === 'UNDER' ? 10 : 0;
+      
+      // Sweet spot alignment bonus: picks that ARE in the sweet spot pool get a boost
+      const ssAlignBonus = ssMatch ? 20 : 0;
       
       // Player performance bonus from historical data
       const playerPerfKey = `${ml.player_name.toLowerCase()}|${normalizePropType(ml.prop_type)}`;
       const playerPerf = playerPerfMap.get(playerPerfKey);
       let playerBonus = 0;
       if (playerPerf && playerPerf.legsPlayed >= 5) {
-        if (playerPerf.hitRate >= 0.70) playerBonus = 15;      // Proven winner
-        else if (playerPerf.hitRate >= 0.50) playerBonus = 5;   // Reliable
-        else if (playerPerf.hitRate < 0.30) playerBonus = -20;  // Avoid
+        if (playerPerf.hitRate >= 0.70) playerBonus = 15;
+        else if (playerPerf.hitRate >= 0.50) playerBonus = 5;
+        else if (playerPerf.hitRate < 0.30) playerBonus = -20;
       }
       
-      const convictionScore = Math.min(edgeMag * 0.3 + tierBonus + riskBonus + underBonus + playerBonus, 100);
+      const convictionScore = Math.min(edgeMag * 0.3 + tierBonus + riskBonus + underBonus + playerBonus + ssAlignBonus, 100);
+
 
       picks.push({
         player_name: ml.player_name,
@@ -256,7 +297,7 @@ serve(async (req) => {
 
     // Sort by conviction (highest first)
     picks.sort((a, b) => b.convictionScore - a.convictionScore);
-    console.log(`[ForceFresh] Scored ${picks.length} picks, top score: ${picks[0]?.convictionScore.toFixed(1)}`);
+    console.log(`[ForceFresh] Scored ${picks.length} picks, top score: ${picks[0]?.convictionScore.toFixed(1)} | SS aligned: ${ssAlignedCount}, SS conflicts rejected: ${ssConflictCount}`);
 
     // Step 3b: Fetch alternate lines for top NBA picks with sufficient buffer
     const ALT_LINE_BUFFER_MULTIPLIER = 1.5;

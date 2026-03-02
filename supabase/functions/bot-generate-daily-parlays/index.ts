@@ -875,98 +875,70 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.65,
     profiles: [
-      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (run first) =============
-      // Triple-confirmed: sweet spot + mispriced + risk engine agreement
+      // ============= SWEET SPOT CORE: 3-leg parlays from 80%+ Sweet Spot engine =============
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 75, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 75, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 65, sortBy: 'hit_rate' },
+      // ============= SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus engine leg =============
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 65, sortBy: 'shuffle' },
+      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
-      // Double-confirmed: sweet spot + mispriced edge agreement
+      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      // ============= MIXED CONVICTION STACK (mispriced + correct-priced + conviction) =============
+      // ============= MIXED CONVICTION STACK =============
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
-      // ============= STANDARD EXECUTION STRATEGIES =============
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 2.0 },
-      { legs: 3, strategy: 'cash_lock_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      // BOOSTED: Shop odds on 1 leg for plus-money
-      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'boosted_cash_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.2 },
-      // GOLDEN LOCKS: Require golden category legs
-      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
-      // HYBRID: Mix player props + team props for diversity
-      { legs: 3, strategy: 'hybrid_exec', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
-      { legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
-      // TEAM EXECUTION: Pure team props with high composite scores
-      { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
-      // NCAAB EXECUTION: UNDERS ONLY — 70.6% hit rate (12/17), replaces 1 NBA slot
-      { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
-      { legs: 3, strategy: 'nba_under_specialist', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'nba_3pt_focus', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'nba_mixed_cats', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', useAltLines: false },
-      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      // NCAA Baseball execution — PAUSED (needs more data)
-      // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
-      // Whale signal execution (3-leg only — 2-leg permanently removed)
-      { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      // (Double/triple confirmed conviction profiles moved to top of profiles array)
-      // Mispriced edge execution — highest conviction plays
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
-      // REPLACED: 5-leg mispriced (structurally weak) with 2 new 3-leg mispriced profiles
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
-      // NEW mispriced_edge execution profiles (highest conviction)
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      // WINNING ARCHETYPE EXECUTION: 3PT + SCORER (tightest filters)
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
-      // WINNING ARCHETYPE EXECUTION: REBOUNDER + ASSISTS (tightest filters)
-      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
-      { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
-      // MASTER PARLAY: DISABLED (0-15 record, -$650 P/L, structurally doomed at 6-legs)
-      // { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
-      // (Additional double_confirmed_conviction profiles moved to top of profiles array)
-      // HOT-STREAK LOCKS: Force selection from categories with current_streak >= 3 and 100% hit rate
-      // These run FIRST before standard profiles to guarantee hot-streak concentration in 3-leg parlays
-      { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'hot_streak_lock_cross', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'hot_streak_lock_ncaab', sports: ['basketball_ncaab', 'basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       // ============= GOD MODE EXECUTION TIER =============
-      // ULTRA-PREMIUM: Only triple-confirmed + proven winners + favorable matchup picks
-      // These draw from the godModePicks pool (intersection of all quality signals)
       { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
-      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
-      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
-      // ROLE-STACKED 3-LEG: SAFE/BALANCED/GREAT_ODDS intentional stacking
-      { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
-      { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
-      // === SHUFFLE VARIATION PROFILES (break deterministic selection) ===
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: false },
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
-      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'boosted_cash_cross', sports: ['all'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.2 },
-      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
-      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'shuffle', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
+      // ROLE-STACKED 3-LEG
+      { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
+      { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
+      // ============= REDUCED: Standard execution (kept for diversity) =============
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
+      { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      // NCAAB EXECUTION: UNDERS ONLY
+      { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
+      { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
     ],
   },
 };
@@ -5951,7 +5923,7 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack']);
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack']);
     
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
@@ -5977,6 +5949,10 @@ async function generateTierParlays(
     // Filter picks based on profile
     let candidatePicks: (EnrichedPick | EnrichedTeamPick)[] = [];
     
+    // SWEET SPOT CORE: draw ONLY from sweet spots, all 3 legs must be sweet spot picks
+    const isSweetSpotCoreProfile = profile.strategy === 'sweet_spot_core';
+    // SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus engine leg
+    const isSweetSpotPlusProfile = profile.strategy === 'sweet_spot_plus';
     // WHALE SIGNAL: draw exclusively from whale picks pool
     const isWhaleProfile = profile.strategy.startsWith('whale_signal');
     // MISPRICED EDGE: draw exclusively from mispriced lines pool
@@ -5994,7 +5970,81 @@ async function generateTierParlays(
     // MIXED CONVICTION STACK: mispriced + correct-priced + conviction
     const isMixedConvictionProfile = profile.strategy === 'mixed_conviction_stack';
     
-    if (isMixedConvictionProfile) {
+    if (isSweetSpotCoreProfile) {
+      // === SWEET SPOT CORE: All legs from category_sweet_spots ===
+      candidatePicks = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        return hrPct >= (profile.minHitRate || 70);
+      }).sort((a, b) => {
+        if (profile.sortBy === 'hit_rate') {
+          const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+          const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+          return bHr - aHr;
+        }
+        return b.compositeScore - a.compositeScore;
+      });
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/sweet_spot_core: only ${candidatePicks.length} sweet spots with ${profile.minHitRate}%+ hit rate, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/sweet_spot_core: ${candidatePicks.length} sweet spot candidates (minHR=${profile.minHitRate}%, sort=${profile.sortBy})`);
+    } else if (isSweetSpotPlusProfile) {
+      // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
+      const sweetCandidates = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        return hrPct >= (profile.minHitRate || 70);
+      }).sort((a, b) => {
+        if (profile.sortBy === 'hit_rate') {
+          const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+          const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+          return bHr - aHr;
+        }
+        return b.compositeScore - a.compositeScore;
+      });
+
+      if (sweetCandidates.length < 3) {
+        console.log(`[Bot] ${tier}/sweet_spot_plus: only ${sweetCandidates.length} sweet spots, need 3 for base`);
+        continue;
+      }
+
+      // Collect used player names from top 3 sweet spots
+      const usedNames = new Set(sweetCandidates.slice(0, 3).map(p => (p.player_name || '').toLowerCase()));
+
+      // Bonus leg: best pick from other engines NOT already in parlay
+      const bonusCandidates = [
+        ...(pool.mispricedPicks || []),
+        ...(pool.whalePicks || []),
+        ...(pool.doubleConfirmedPicks || []),
+        ...(pool.multiEnginePicks || []),
+      ].filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        if (usedNames.has((p.player_name || '').toLowerCase())) return false;
+        // Quality gate: composite >= 75 and hit rate >= 60%
+        if (p.compositeScore < 75) return false;
+        const hr = (p as any).l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < 60) return false;
+        return true;
+      }).sort((a, b) => b.compositeScore - a.compositeScore);
+
+      if (bonusCandidates.length === 0) {
+        console.log(`[Bot] ${tier}/sweet_spot_plus: no bonus candidates pass quality gate, falling back to sweet_spot_core`);
+        candidatePicks = sweetCandidates;
+        // Override to 3 legs
+        (profile as any)._overrideLegs = 3;
+      } else {
+        // Build candidate array: 3 sweet spots + bonus candidates appended
+        candidatePicks = [...sweetCandidates.slice(0, 3), ...bonusCandidates];
+        console.log(`[Bot] ${tier}/sweet_spot_plus: 3 sweet spots + ${bonusCandidates.length} bonus candidates (best: ${bonusCandidates[0]?.player_name})`);
+      }
+    } else if (isMixedConvictionProfile) {
       // === MIXED CONVICTION STACK: 3-leg with one from each conviction source ===
       const usedNames = new Set<string>();
       const minHitRate = (profile.minHitRate || 65) / 100;

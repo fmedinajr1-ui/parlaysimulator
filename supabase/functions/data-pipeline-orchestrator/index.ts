@@ -195,8 +195,20 @@ serve(async (req) => {
         await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
       }
       
-      // Run force-fresh mispriced conviction parlays -- ADDS on top of quality loop output
-      await runFunction('bot-force-fresh-parlays', {});
+      // Force-fresh is now a CONDITIONAL fallback — only run if insufficient quality parlays
+      const { count: execCount } = await supabase
+        .from('bot_daily_parlays')
+        .select('*', { count: 'exact', head: true })
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending')
+        .not('strategy_name', 'ilike', '%force_mispriced%');
+
+      if ((execCount || 0) < 8) {
+        console.log(`[Pipeline] Only ${execCount} non-mispriced parlays, running force-fresh as fallback`);
+        await runFunction('bot-force-fresh-parlays', {});
+      } else {
+        console.log(`[Pipeline] ✅ ${execCount} quality parlays generated, skipping force-fresh`);
+      }
       
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });
       
@@ -217,7 +229,22 @@ serve(async (req) => {
         console.log(`[Pipeline] 🔄 MID-DAY RE-GEN: Only ${parlayCount || 0} pending parlays for ${today}. Triggering additional generation.`);
         await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_ncaab', 'basketball_wnba'] });
         await runFunction('team-bets-scoring-engine', {});
-        await runFunction('bot-force-fresh-parlays', {});
+        
+        // Mid-day force-fresh also conditional
+        const { count: midExecCount } = await supabase
+          .from('bot_daily_parlays')
+          .select('*', { count: 'exact', head: true })
+          .eq('parlay_date', today)
+          .eq('outcome', 'pending')
+          .not('strategy_name', 'ilike', '%force_mispriced%');
+
+        if ((midExecCount || 0) < 8) {
+          console.log(`[Pipeline] Mid-day: only ${midExecCount} quality parlays, running force-fresh`);
+          await runFunction('bot-force-fresh-parlays', {});
+        } else {
+          console.log(`[Pipeline] Mid-day: ${midExecCount} quality parlays, skipping force-fresh`);
+        }
+        
         await runFunction('bot-review-and-optimize', { source: 'regen' });
         results['mid_day_regen'] = { success: true, message: `Re-triggered: had ${parlayCount} parlays`, duration: 0 };
       } else {
