@@ -373,7 +373,7 @@ serve(async (req) => {
     console.log(`[MegaParlay] ${uniqueProps.length} unique props after dedup`);
 
     // Step 3: Cross-reference with database (include L20)
-    const [sweetSpotsRes, mispricedRes, gameLogsRes, defenseRes, archetypesRes, teamDefenseRes, l20Res] = await Promise.all([
+    const [sweetSpotsRes, mispricedRes, gameLogsRes, defenseRes, archetypesRes, teamDefenseRes, l20Res, streakRes] = await Promise.all([
       supabase
         .from('category_sweet_spots')
         .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l10_median, actual_line, category, confidence_score')
@@ -404,6 +404,12 @@ serve(async (req) => {
         .select('player_name, prop_type, player_avg')
         .eq('analysis_date', today)
         .not('player_avg', 'is', null),
+      // Hot streak data from bot_player_performance
+      supabase
+        .from('bot_player_performance')
+        .select('player_name, prop_type, side, streak, legs_played')
+        .gte('streak', 3)
+        .gte('legs_played', 5),
     ]);
 
     const sweetSpots = sweetSpotsRes.data || [];
@@ -413,8 +419,16 @@ serve(async (req) => {
     const playerPositions = archetypesRes.data || [];
     const teamDefenseRankings = teamDefenseRes.data || [];
     const l20Data = l20Res.data || [];
+    const streakData = streakRes.data || [];
 
-    console.log(`[MegaParlay] DB: ${sweetSpots.length} sweet spots, ${mispricedLines.length} mispriced, ${gameLogs.length} game logs, ${defenseStats.length} defense, ${l20Data.length} L20 records`);
+    console.log(`[MegaParlay] DB: ${sweetSpots.length} sweet spots, ${mispricedLines.length} mispriced, ${gameLogs.length} game logs, ${defenseStats.length} defense, ${l20Data.length} L20 records, ${streakData.length} hot streaks`);
+
+    // Build hot streak lookup map
+    const streakMap = new Map<string, { streak: number; legs_played: number }>();
+    for (const s of streakData) {
+      const key = `${normalizeName(s.player_name)}|${normalizePropType(s.prop_type)}|${(s.side || 'over').toLowerCase()}`;
+      streakMap.set(key, { streak: s.streak, legs_played: s.legs_played });
+    }
 
     // Build lookup maps
     const sweetSpotMap = new Map<string, any>();
@@ -487,6 +501,8 @@ serve(async (req) => {
       defenseRank: number | null;
       defenseBonus: number;
       volumeCandidate: boolean;
+      streakLength: number;
+      streakBonus: number;
     }
 
     const scoredProps: ScoredProp[] = [];
@@ -602,12 +618,25 @@ serve(async (req) => {
         edgePct >= 5
       );
 
+      // Hot streak bonus
+      const streakKey = `${nameNorm}|${ptNorm}|${prop.side.toLowerCase()}`;
+      const streakInfo = streakMap.get(streakKey);
+      let streakLength = 0;
+      let streakBonus = 0;
+      if (streakInfo && streakInfo.streak >= 3) {
+        streakLength = streakInfo.streak;
+        if (streakLength >= 8) streakBonus = 18;
+        else if (streakLength >= 5) streakBonus = 12;
+        else streakBonus = 8;
+      }
+
       const compositeScore =
         (hitRate * 0.35) +
         (edgePct * 0.20) +
         (medianGap * 0.10) +
         directionBonus +
         defenseBonus +
+        streakBonus +
         (oddsValue * 0.10) +
         (volumeCandidate ? 15 : 0);
 
@@ -626,11 +655,17 @@ serve(async (req) => {
         defenseRank,
         defenseBonus,
         volumeCandidate,
+        streakLength,
+        streakBonus,
       });
     }
 
     scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
     console.log(`[MegaParlay] ${scoredProps.length} scored props (${scoredProps.filter(p => p.market_type === 'exotic_player').length} exotic, ${scoredProps.filter(p => p.market_type === 'team_bet').length} team bets)`);
+    const streakBoosted = scoredProps.filter(p => p.streakBonus > 0);
+    if (streakBoosted.length > 0) {
+      console.log(`[MegaParlay] 🔥 ${streakBoosted.length} props with hot streak bonus: ${streakBoosted.slice(0, 5).map(p => `${p.player_name} ${p.prop_type} ${p.side} (${p.streakLength}-game streak, +${p.streakBonus})`).join(', ')}`);
+    }
 
     // === ALT LINE HUNTING (same as before) ===
     const volumeCandidates = scoredProps.filter(p => p.volumeCandidate).slice(0, 10);
