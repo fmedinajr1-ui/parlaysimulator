@@ -1,59 +1,58 @@
 
 
-# Smart Stack Sweet Spot Parlays — Remove Redundant Filters
+# Fix Sweet Spot Pipeline: Only Filter by Today's Games + Injuries
 
 ## Problem
-The sweet spot engine already applies rigorous quality filtering (L10 hit rates, archetype scoring, confidence thresholds). But the parlay generator applies **3 additional layers of filtering** that kill the pool from ~500 picks down to ~6:
+Three gates are crushing the sweet spot pool from ~500 down to ~17:
 
-1. **`has_real_line` gate** (line 4290): Requires every sweet spot pick to have a matching entry in `unified_props` (live sportsbook odds). Only ~13 of 500 sweet spots match. This is the **primary bottleneck**.
-2. **Redundant hit rate gates** in profiles (65-75%): The sweet spot engine already filters for quality — re-filtering is unnecessary.
-3. **Odds range filter** (-200 to +200): Drops picks with heavy juice that may still be valid sweet spots.
+1. **AvailabilityGate (line 4545-4570)**: Requires player to exist in `unified_props` with active sportsbook lines today. This is the #1 killer -- only ~23 of 500 sweet spot players have active lines in `unified_props`. But the sweet spot engine already knows who's playing today.
 
-## Solution
+2. **`canUsePickGlobally` 70% hit-rate gate (line 3036-3039)**: Hard-coded `if (hitRatePercent < 70) return false`. This blocks sweet spot picks that the engine already vetted. The engine's own confidence is the quality gate.
 
-### Step 1: Remove `has_real_line` requirement for sweet spot picks
+3. **GameSchedule gate (line 4594-4613)**: Filters by `teamsPlayingToday` set -- this one is actually fine and should stay, since it checks if the team is actually playing today.
 
-In the enrichment filter at line 4290, stop requiring `has_real_line` for sweet spot picks. The sweet spot engine provides its own `recommended_line` and `actual_line` — these are sufficient. Use default odds (-110/-110) when sportsbook odds aren't available.
+## What Should Stay (per your direction)
+- **Game schedule gate** (line 4594): Keep -- confirms team is playing today
+- **Injury blocklist** (line 4556): Keep -- blocks OUT/DOUBTFUL players
+- **GTD/Questionable penalty** (line 4562): Keep -- reduces confidence but doesn't hard-block
 
-This alone should expand the pool from ~13 to ~200+ picks.
+## What Gets Removed/Changed
 
-### Step 2: Lower the `sweet_spot_core` profile hit rate to 55%
+### Change 1: Replace `activePlayersToday` gate with team-based check for sweet spots
+**Lines 4545-4570**
 
-Since the sweet spot engine already filters for quality (most picks are 60-100% L10), drop the profile `minHitRate` to 55% to stop redundantly filtering. The engine's own confidence scoring is the quality gate.
+Currently: If player is NOT in `unified_props` active lines, hard-block them.
+New behavior: For sweet spots, only check:
+- Is their team playing today? (use `teamsPlayingToday` set)
+- Are they on the injury blocklist (OUT/DOUBTFUL)?
 
-Update the 20 `sweet_spot_core` profile entries (lines 879-898) to use `minHitRate: 55` instead of 65/70/75. Keep sort variations (hit_rate, composite, shuffle) for diversity.
+Remove the `activePlayersToday.has(normalizedName)` check entirely for sweet spot picks. The game schedule gate at line 4594 already validates the team is playing.
 
-### Step 3: Increase sweet spot profile count for volume
+### Change 2: Bypass the 70% hit-rate gate in `canUsePickGlobally` for sweet spot profiles
+**Lines 3036-3039**
 
-Add more `sweet_spot_core` profiles with different sort strategies to generate 30-40+ unique parlays from the larger pool. Add profiles sorted by:
-- `env_cluster` (SHOOTOUT-first, then GRIND-first) for smart stacking
-- `composite` with different sport combos
+Currently: Hard `if (hitRatePercent < 70) return false` for ALL picks.
+New behavior: Accept a `profileType` parameter. For `sweet_spot_core` and `sweet_spot_plus` profiles, skip this gate entirely (the engine already pre-vetted quality). For other profiles, keep the 70% gate.
 
-Target: 30 sweet_spot_core + 10 sweet_spot_plus profiles.
+Update the call site at line 6612 to pass profile type info.
 
-### Step 4: Boost environment cluster coherence scoring for smart stacking
+### Change 3: Lower `sweet_spot_core` profile `minHitRate` to 55%
+**Lines 879-898 (profile definitions)**
 
-The cluster stacking logic already exists (SHOOTOUT/GRIND classification + coherence bonuses). Increase the coherence bonus from +12 to +20 for all-same-cluster parlays, and increase the mixed-cluster penalty from -15 to -25. This makes the parlay builder strongly prefer environment-coherent stacks without filtering — it just ranks them higher.
+Change all `sweet_spot_core` entries from `minHitRate: 65/70/75` to `minHitRate: 55`. The engine's own L10 hit rates are the real quality signal.
 
-### Step 5: Add a "sweet spot direct" assembly path
+## Expected Result
+- Pool goes from ~17 to ~300+ sweet spot picks (all players on teams playing today, minus injuries)
+- `canUsePickGlobally` stops redundantly blocking engine-vetted picks
+- The parlay builder works with the full pool, sorted by confidence, and smart-stacks by environment cluster
+- Volume target: 30-40 unique parlays from the expanded pool
 
-Add a new assembly mode for `sweet_spot_core` profiles that:
-1. Groups all sweet spot picks by environment cluster (SHOOTOUT / GRIND / NEUTRAL)
-2. Builds parlays from within each cluster first (smart stacking)
-3. Falls back to cross-cluster only if within-cluster combinations are exhausted
-4. Skips the global exposure cap for sweet spot picks (they're pre-vetted)
+## File Modified
+- `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-This ensures the 200+ pick pool generates 30-40 unique, environment-coherent parlays.
+## Sections touched
+- Lines 3014-3055: `canUsePickGlobally` -- add profile-aware bypass for 70% gate
+- Lines 4545-4587: AvailabilityGate -- remove `activePlayersToday` requirement, keep only injury + team schedule
+- Lines 879-898: Sweet spot profile definitions -- lower `minHitRate` to 55
+- Line 6612: Call site for `canUsePickGlobally` -- pass profile context
 
-## Technical Details
-
-**File modified:** `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-**Key changes:**
-- Line 4290: Split filter — sweet spots keep `has_real_line` as optional (use recommended_line fallback)
-- Lines 879-898: Lower `minHitRate` from 65-75 to 55 across all sweet_spot_core profiles
-- Add ~15 new sweet_spot_core profiles with env_cluster sorting
-- Lines 1541-1544: Boost coherence scoring multipliers
-- Lines 5981-6001: Add cluster-grouped assembly logic for sweet_spot_core
-
-**Expected outcome:** Pool expands from ~6 to ~200+ sweet spot picks, generating 30-40 environment-coherent parlays daily.
