@@ -1,83 +1,93 @@
 
 
-# Fix force_mispriced_conviction: Apply Flip Logic to Poison Legs
+# Apply Flip Logic Pipeline-Wide (With Smart Exceptions) + Admin Sweet Spots
 
-## The Problem
+## Key Insight: Not a Blanket Block Everywhere
 
-`force_mispriced_conviction` has a 21.5% hit rate across 184 parlays -- consistently losing money. This strategy runs through `bot-force-fresh-parlays/index.ts`, which is a **separate function** from the main parlay engine. It builds 3-leg parlays from ELITE/HIGH mispriced lines but has **zero flip logic** -- the same poison categories (REBOUNDS over, THREES over, etc.) that killed `cash_lock` are killing this strategy too.
+The Sharp Parlay Builder and Heat Prop Engine already have **per-player category-side enforcement** from sweet spots. This is smarter than a blanket flip -- if a specific player's rebounds-over is hitting at 80% L10, the sweet spot says "over" and it passes through. A blanket block would kill good picks.
 
-## The Fix: Add Flip Map to bot-force-fresh-parlays
+So the approach is **tiered**:
+- Engines WITH sweet-spot intelligence: keep the smart per-player filter, no blanket flip needed
+- Engines WITHOUT sweet-spot intelligence: add the blanket flip map as a safety net
 
-Rather than disabling the strategy entirely (it still has edge from mispriced detection), we'll apply the same proven flip logic from `cash_lock` to filter out poison-side legs.
+## Which Engines Get What
 
-**File:** `supabase/functions/bot-force-fresh-parlays/index.ts`
+| Engine | Has Sweet Spot Enforcement? | Action |
+|--------|---------------------------|--------|
+| `sharp-parlay-builder` | YES (category-side enforcement, line 849-870) | No blanket flip -- sweet spots already handle it per-player |
+| `heat-prop-engine` | YES (category-side enforcement, line 1007+) | No blanket flip -- sweet spots already handle it per-player |
+| `bot-generate-daily-parlays` | YES but flip only on `cash_lock` | Expand flip to ALL strategies |
+| `nba-mega-parlay-scanner` | NO | Add POISON_FLIP_MAP |
+| `bot-force-fresh-parlays` | YES (just added) | Already done |
 
-### Change 1: Add MISPRICED_FLIP_MAP constant (after line 32)
+## Changes
 
-Add a flip map identical to the cash_lock version, plus add global blocked categories:
+### File 1: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Expand CASH_LOCK_FLIP_MAP to apply globally** (line 3031-3041)
+
+Remove the `if (strategyName && strategyName.includes('cash_lock'))` condition so the flip map applies to ALL strategies built through the main engine, not just cash_lock. The map already only contains categories with proven 0% hit rates on one side, so it's safe globally.
+
+Change:
+```text
+if (strategyName && strategyName.includes('cash_lock')) {
+```
+To:
+```text
+if (strategyName) {  // Apply flip map to ALL strategies
+```
+
+This means rebounds-over and threes-over still get blocked in the main engine's category-level builds, but...
+
+### File 2: `supabase/functions/sharp-parlay-builder/index.ts` -- NO CHANGE
+
+This engine already has per-player category-side enforcement (lines 849-870). If a player's sweet spot says rebounds-over is hitting, it passes. If it says under, it blocks. This is the most efficient engine for allowing threes-over and rebounds-over when the data supports it for a specific player.
+
+### File 3: `supabase/functions/heat-prop-engine/index.ts` -- NO CHANGE
+
+Same as Sharp Builder -- already has per-player category-side enforcement (lines 1007+). Rebounds-over and threes-over pass through when a player's sweet spot data confirms they're hitting.
+
+### File 4: `supabase/functions/nba-mega-parlay-scanner/index.ts`
+
+**Add POISON_FLIP_MAP** (after normalizePropType, around line 36):
 
 ```text
-const BLOCKED_CATEGORIES_FORCE = new Set([
-  'VOLUME_SCORER',
-  'ROLE_PLAYER_REB',
-]);
-
-const MISPRICED_FLIP_MAP: Record<string, 'over' | 'under'> = {
+const POISON_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'rebounds': 'under',
   'threes': 'under',
   'three_pointers': 'under',
-  'player_rebounds': 'under',
-  'player_threes': 'under',
-  'player_three_pointers': 'under',
   'steals': 'under',
-  'player_steals': 'under',
 };
 ```
 
-Since `force_mispriced_conviction` doesn't use category labels (it works directly with prop types from `mispriced_lines`), the flip map keys will be **prop type names** (normalized) rather than category names.
-
-### Change 2: Apply flip filter during pick scoring (lines 244-296)
-
-In the scoring loop where picks are built from mispriced lines, add a check: if the prop type is in `MISPRICED_FLIP_MAP` and the signal (side) doesn't match the forced direction, skip the pick entirely.
-
-After the sweet spot conflict check (line 259), add:
+**Apply in scoring loop** (around line 596, inside the `for (const prop of uniqueProps)` loop):
 
 ```text
-// === FLIP MAP GATE: skip poison-side legs ===
-const normProp = normalizePropType(ml.prop_type);
-const forcedSide = MISPRICED_FLIP_MAP[normProp];
-if (forcedSide && ml.signal.toLowerCase() !== forcedSide) {
-  console.log(`[ForceFresh] FLIP BLOCKED: ${ml.player_name} ${ml.prop_type} ${ml.signal} (forced: ${forcedSide})`);
+const normPropFlip = normalizePropType(prop.prop_type);
+const forcedSide = POISON_FLIP_MAP[normPropFlip];
+if (forcedSide && prop.side?.toLowerCase() !== forcedSide) {
   continue;
 }
 ```
 
-### Change 3: Block globally-terrible prop types
+The lottery scanner has no sweet spot enforcement, so the blanket flip is needed here.
 
-In the existing `filteredLines` filter (line 221-235), add a check against the normalized prop type for blocked categories. Since this function doesn't have category labels, we'll block by prop type pattern:
+### File 5: `supabase/functions/telegram-webhook/index.ts`
 
-```text
-// Block prop types tied to 0% hit rate categories
-const normPropCheck = normalizePropType(propType);
-if (normPropCheck === 'double_double' || normPropCheck === 'triple_double') {
-  // These are exotic props with very low base rates -- keep only if risk-confirmed
-}
-```
+**Add `/sweetspots` admin command** that shows today's active sweet spot picks:
 
-This is lighter since `VOLUME_SCORER` and `ROLE_PLAYER_REB` are category labels from the main engine that don't exist in this function. The prop-type-level flip map covers the same ground.
+1. Query `category_sweet_spots` where `analysis_date = today` and `is_active = true`
+2. Cross-reference with `unified_props` to show only picks with active lines
+3. Format output: player, prop type, side, line, L10 hit rate, confidence
+4. Register in admin command routing and help text
 
-## Summary of Changes
+## Summary
 
-| # | What | Where | Effect |
-|---|------|-------|--------|
-| 1 | Add `MISPRICED_FLIP_MAP` constant | After line 32 | Maps poison prop types to forced winning side |
-| 2 | Apply flip gate in pick scoring | After line 259 | Skips picks where signal conflicts with forced side |
-| 3 | Add logging | Same location | Tracks how many picks get flipped out for monitoring |
+- Sharp Builder and Heat Engine: threes-over and rebounds-over CAN still pass when per-player sweet spot data confirms they're hitting (the most efficient path)
+- Main Engine, Mega Scanner, Force Fresh: blanket flip blocks poison sides where no per-player intelligence exists
+- New `/sweetspots` Telegram command gives admin visibility into active sweet spot picks with live lines
 
-## Expected Result
+## Deployment
 
-- Rebounds-over, threes-over, and steals-over legs get filtered out of `force_mispriced_conviction` parlays
-- Only legs on historically-winning sides survive into the 3-leg builds
-- The 21.5% hit rate should improve significantly as the poison legs are removed
-- No need to disable the strategy -- the edge detection is sound, just the side selection was wrong on specific prop types
+Deploy 3 updated edge functions: `bot-generate-daily-parlays`, `nba-mega-parlay-scanner`, `telegram-webhook`
 
