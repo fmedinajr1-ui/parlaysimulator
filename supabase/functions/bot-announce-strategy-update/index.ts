@@ -12,24 +12,24 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const ANNOUNCEMENT_MESSAGE = `📢 *STRATEGY UPDATE — March 2026*
+const ANNOUNCEMENT_MESSAGE = `🆕 *NEW FEATURE — /lookup Command*
 
-Hey\\! Quick update on how your picks are delivered:
+You can now look up any NBA player directly in chat\\!
 
-🔄 *More Parlays, More Coverage*
-We've significantly increased daily parlay volume\\. Instead of \\~80 parlays, we now generate *200\\-300\\+ unique combinations per day*\\. This means more chances to hit\\.
+\`/lookup \\[player name\\]\`
 
-💰 *Adjusted Stake Sizing*
-With more parlays in play, individual stake sizes are lower to manage total exposure \\— but your overall profit potential increases because we're casting a wider net\\.
+What you'll get:
+• L10 game log \\(last 10 games\\)
+• L10 stat averages \\(PTS, REB, AST, 3PT, STL, BLK\\)
+• Tonight's defensive matchup ranking
+• Today's prop lines with L10 hit rates
 
-🔗 *Every Pick Cross\\-Referenced*
-Every single pick is cross\\-referenced across multiple engines \\(conviction analyzer, bot parlay validator, double\\-confirmed scanner\\) before making it into a slip\\.
+Example: \`/lookup LeBron James\`
 
-📊 *\\~70% Pick Accuracy*
-Our individual picks are hitting at \\~70%\\. The challenge has been combining them into parlays where 1 miss kills the slip\\. More unique combinations with strict player caps means when 1 leg misses, only 2 parlays are affected instead of 5\\+\\.
-
-🚫 *Strict Player Caps*
-No player appears in more than 2 parlays across the entire daily slate\\. This eliminates correlated losses \\— if one player busts, it doesn't sink your whole day\\.
+📊 *New Data in the Pipeline:*
+• Double Doubles and Triple Doubles are now tracked and analyzed
+• Team Moneylines scraped across NBA, MLB, NHL, NFL
+• All new prop types run through the mispriced \\+ correct\\-priced detection engine
 
 Questions\\? Just type your question here and the bot will answer\\.
 
