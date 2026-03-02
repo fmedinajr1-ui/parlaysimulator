@@ -2717,6 +2717,8 @@ interface PropPool {
   totalPool: number;
   goldenCategories: Set<string>;
   defenseDetailMap: Map<string, any>;
+  oddsMap: Map<string, any>;
+  playerProps: any[];
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -5184,6 +5186,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Apply soft bonuses/penalties based on today's opponent defensive ranking.
   // This enriches ALL picks before parlay assembly — the master parlay will hard-filter on top of this.
   let savedDefOpponentMap = new Map<string, string>();
+  let defMapPool = new Map<string, Map<string, number>>();
   try {
     const { startUtc: defStartUtc, endUtc: defEndUtc } = getEasternDateRange();
     const { data: todayNbaGames } = await supabase
@@ -5206,7 +5209,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       .from('nba_opponent_defense_stats')
       .select('team_name, stat_category, defense_rank');
 
-    const defMapPool = new Map<string, Map<string, number>>();
+    defMapPool = new Map<string, Map<string, number>>();
     if (defRankData && defRankData.length > 0) {
       for (const row of defRankData) {
         const key = (row.team_name || '').toLowerCase().trim();
@@ -5796,6 +5799,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length + filteredCorrectPricedPicks.length,
     goldenCategories,
     defenseDetailMap,
+    oddsMap,
+    playerProps: playerProps || [],
   };
 }
 
@@ -5869,6 +5874,8 @@ async function generateTierParlays(
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
   const defenseDetailMap = pool.defenseDetailMap;
+  const oddsMap = pool.oddsMap;
+  const playerProps = pool.playerProps;
 
   // Thin-slate relaxation: loosen validation AND exploration tier gates (execution stays strict)
   if (isThinSlate && tier === 'validation') {
