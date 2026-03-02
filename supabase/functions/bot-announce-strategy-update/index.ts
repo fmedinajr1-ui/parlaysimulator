@@ -1,8 +1,8 @@
 /**
  * bot-announce-strategy-update
  * 
- * One-time invocable function that broadcasts a strategy update
- * announcement to all active Telegram customers.
+ * Broadcasts a strategy update announcement to all active Telegram customers.
+ * Pulls live accuracy stats from category_sweet_spots at broadcast time.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -11,29 +11,6 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-
-const ANNOUNCEMENT_MESSAGE = `🆕 *NEW FEATURE — /lookup Command*
-
-You can now look up any NBA player directly in chat\\!
-
-\`/lookup \\[player name\\]\`
-
-What you'll get:
-• L10 game log \\(last 10 games\\)
-• L10 stat averages \\(PTS, REB, AST, 3PT, STL, BLK\\)
-• Tonight's defensive matchup ranking
-• Today's prop lines with L10 hit rates
-
-Example: \`/lookup LeBron James\`
-
-📊 *New Data in the Pipeline:*
-• Double Doubles and Triple Doubles are now tracked and analyzed
-• Team Moneylines scraped across NBA, MLB, NHL, NFL
-• All new prop types run through the mispriced \\+ correct\\-priced detection engine
-
-Questions\\? Just type your question here and the bot will answer\\.
-
-\\— Parlay Bot Team`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -49,6 +26,32 @@ Deno.serve(async (req) => {
     if (!botToken) {
       throw new Error('TELEGRAM_BOT_TOKEN not configured');
     }
+
+    // Pull live accuracy stats
+    const { data: settled } = await supabase
+      .from('category_sweet_spots')
+      .select('outcome')
+      .in('outcome', ['hit', 'miss', 'push']);
+
+    const hits = (settled || []).filter(p => p.outcome === 'hit').length;
+    const misses = (settled || []).filter(p => p.outcome === 'miss').length;
+    const total = hits + misses;
+    const rate = total > 0 ? ((hits / total) * 100).toFixed(1) : 'N/A';
+
+    const ANNOUNCEMENT_MESSAGE = `🚀 *STRATEGY UPDATE — Sweet Spot Engine*
+
+We've upgraded our parlay system\\. Every execution parlay now uses our *Sweet Spot Engine* as the foundation — all 3 core legs come from picks with 70%\\+ historical hit rates\\.
+
+📊 *Current accuracy:* ${rate}% \\(${hits}W \\- ${misses}L\\)
+
+*What changed:*
+• All 3 legs in your parlays come from the Sweet Spot engine
+• Optional 4th leg only added if it passes strict quality gates
+• Mispriced\\-only parlays are now a backup, not the default
+
+Type /accuracy to see live engine stats anytime\\.
+
+\\— Parlay Farm Team`;
 
     // Fetch all active customers
     const { data: users, error } = await supabase
@@ -91,7 +94,6 @@ Deno.serve(async (req) => {
           console.log(`[Announce] ❌ Failed for ${user.chat_id}: ${result.description}`);
         }
 
-        // Rate limit: 100ms delay between messages
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (err) {
         failed++;
@@ -106,6 +108,7 @@ Deno.serve(async (req) => {
       total: users.length,
       sent,
       failed,
+      accuracy: { rate, hits, misses },
       errors: errors.slice(0, 10),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

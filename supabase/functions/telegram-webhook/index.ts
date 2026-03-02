@@ -1077,6 +1077,60 @@ async function handleCustomerCalendar(chatId: string) {
   return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n\n*Record:* ${winDays}W - ${lossDays}L (${winPct}%)\n*Total P&L:* ${fmtPnL(totalPnL)}\n*Parlays:* ${totalWon}W - ${totalLost}L\n*Best Day:* ${fmtDate(bestDay.pnl_date)} (${fmtPnL(bestDay.daily_profit_loss || 0)})\n*Worst Day:* ${fmtDate(worstDay.pnl_date)} (${fmtPnL(worstDay.daily_profit_loss || 0)})`;
 }
 
+// ==================== CUSTOMER ACCURACY COMMAND ====================
+
+async function handleCustomerAccuracy(chatId: string): Promise<string> {
+  await logActivity("telegram_customer_accuracy", "Customer requested accuracy stats", { chatId });
+
+  try {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    // Fetch all settled sweet spot picks
+    const { data: allSettled, error } = await supabase
+      .from('category_sweet_spots')
+      .select('outcome, analysis_date')
+      .in('outcome', ['hit', 'miss', 'push']);
+
+    if (error) throw error;
+    if (!allSettled || allSettled.length === 0) {
+      return "📊 *Sweet Spot Engine — Accuracy Report*\n\nNo settled picks yet. Check back after games settle!";
+    }
+
+    const calcStats = (picks: typeof allSettled) => {
+      const hits = picks.filter(p => p.outcome === 'hit').length;
+      const misses = picks.filter(p => p.outcome === 'miss').length;
+      const total = hits + misses; // exclude pushes from rate
+      const rate = total > 0 ? ((hits / total) * 100).toFixed(1) : '0.0';
+      return { hits, misses, total, rate };
+    };
+
+    const last7 = calcStats(allSettled.filter(p => p.analysis_date >= sevenDaysAgo));
+    const last30 = calcStats(allSettled.filter(p => p.analysis_date >= thirtyDaysAgo));
+    const allTime = calcStats(allSettled);
+
+    const gradeEmoji = (rate: string) => {
+      const r = parseFloat(rate);
+      if (r >= 75) return '🟢';
+      if (r >= 65) return '🟡';
+      return '🔴';
+    };
+
+    return `📊 *Sweet Spot Engine — Accuracy Report*
+
+${gradeEmoji(last7.rate)} *Last 7 Days:* ${last7.rate}% (${last7.hits}W - ${last7.misses}L)
+${gradeEmoji(last30.rate)} *Last 30 Days:* ${last30.rate}% (${last30.hits}W - ${last30.misses}L)
+${gradeEmoji(allTime.rate)} *All-Time:* ${allTime.rate}% (${allTime.hits}W - ${allTime.misses}L)
+
+This is the engine powering your parlays.
+Type /accuracy anytime to check live stats.`;
+  } catch (err) {
+    console.error('[Accuracy] Error:', err);
+    return "❌ Couldn't load accuracy stats right now. Try again shortly.";
+  }
+}
+
 async function handleCustomerRoi(chatId: string) {
   await logActivity("telegram_customer_roi", "Customer requested personal ROI", { chatId });
 
@@ -3066,6 +3120,7 @@ async function handleCustomerStart(chatId: string) {
 
 *Commands:*
 /parlays — Today's picks
+/accuracy — Sweet Spot engine accuracy
 /calendar — Your monthly P&L
 /roi — Your ROI breakdown
 /streaks — Hot & cold streaks
@@ -3717,6 +3772,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/calendar") return await handleCustomerCalendar(chatId);
   if (cmd === "/roi") return await handleCustomerRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
+  if (cmd === "/accuracy") return await handleCustomerAccuracy(chatId);
   if (cmd === "/cancel") return await handleCancelSubscription(chatId);
   if (cmd === "/lookup") { return await handleLookup(chatId, args); }
   if (cmd === "/help") {
@@ -3724,6 +3780,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 
 *Commands:*
 /parlays — Today's full pick list
+/accuracy — Sweet Spot engine accuracy
 /lookup [player] — Player cross-reference report
 /calendar — Your monthly P&L
 /roi — Your personal ROI
