@@ -28,6 +28,14 @@ function normalizePropType(raw: string): string {
   return s;
 }
 
+// === POISON FLIP MAP: block historically-losing sides ===
+const POISON_FLIP_MAP: Record<string, 'over' | 'under'> = {
+  'rebounds': 'under',
+  'threes': 'under',
+  'three_pointers': 'under',
+  'steals': 'under',
+};
+
 // ============= STRICT PROP OVERLAP PREVENTION =============
 const COMBO_BASES: Record<string, string[]> = {
   pra: ['points', 'rebounds', 'assists'],
@@ -594,6 +602,13 @@ serve(async (req) => {
 
       // Role-stat alignment (skip for exotic/team bets)
       if (prop.market_type === 'player_prop' && !roleStatAligned(position, prop.prop_type)) continue;
+
+      // === GLOBAL POISON FLIP GATE ===
+      const normPropFlip = normalizePropType(prop.prop_type);
+      const forcedSide = POISON_FLIP_MAP[normPropFlip];
+      if (forcedSide && prop.side?.toLowerCase() !== forcedSide) {
+        continue; // Skip poison-side lottery legs
+      }
 
       // Hit rate from sweet spots, with game-log fallback
       let hitRate = ss?.l10_hit_rate || 0;
