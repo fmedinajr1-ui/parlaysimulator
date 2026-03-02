@@ -1,137 +1,49 @@
 
 
-# DD/TD Pattern Detector — Pipeline Integration
+# Hot Streak Bonus for Lottery Scanner
 
-## Overview
-Add a new edge function that automatically detects Double-Double and Triple-Double candidates from game log patterns, runs as part of the daily pipeline, and broadcasts top candidates to all customers via Telegram.
+## What Changes
 
-## What Gets Built
+Add a "hot streak" bonus to the `nba-mega-parlay-scanner` that boosts the composite score of players who have hit their props 3+ games in a row, making them more likely to be selected for lottery tickets.
 
-### 1. New Edge Function: `dd-td-pattern-analyzer`
-**File:** `supabase/functions/dd-td-pattern-analyzer/index.ts`
+## Data Source
 
-Queries `nba_player_game_logs` and cross-references with tonight's schedule (`game_bets`) to produce ranked DD/TD candidates.
+The `bot_player_performance` table already tracks per-player streaks (the `streak` column, positive = consecutive hits). Current data shows strong candidates like:
+- Cason Wallace rebounds over: 11-game streak
+- Victor Wembanyama steals over: 5-game streak  
+- Paolo Banchero assists over: 5-game streak
+- Desmond Bane points over: 5-game streak
 
-**Per-player pattern analysis (minimum 10 games):**
-- Season DD rate (games with 10+ in 2 stat categories: PTS/REB/AST/STL/BLK)
-- Season TD rate (10+ in 3 categories)
-- Home vs Away DD split
-- L10 DD trend (hot/cold vs season)
-- Per-opponent DD rate (when 2+ matchups exist)
-- Near-miss frequency (8-9 in a secondary category)
-- Minutes context (starter status, avg minutes)
+## Implementation
 
-**Composite scoring:**
-```text
-DD probability = 0.40 * season_rate
-               + 0.25 * home_away_rate (context-adjusted)
-               + 0.20 * l10_rate
-               + 0.15 * vs_opponent_rate
-```
+**Single file change:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
 
-**Flow:**
-1. Fetch all players with 10+ games from `nba_player_game_logs`
-2. Compute DD/TD stats per player
-3. Cross-reference with tonight's `game_bets` schedule to get opponent + home/away
-4. Score and rank only players with a game tonight
-5. Send top candidates to Telegram via `bot-send-telegram`
+### 1. Fetch streak data alongside existing DB queries
 
-### 2. New Telegram Notification Type: `dd_td_candidates`
-**File:** `supabase/functions/bot-send-telegram/index.ts`
+Add `bot_player_performance` to the parallel `Promise.all` fetch block (around line 376). Query players with `streak >= 3` to build a lookup map keyed by `player_name|prop_type|side`.
 
-Add a new notification type that formats and broadcasts DD/TD candidates to all active customers. The message will look like:
+### 2. Add streak bonus to composite scoring
 
-```
-🔮 DD/TD Watch — Mar 2
+In the scoring loop (around line 605), apply a tiered bonus:
 
-🏀 Double-Double Candidates:
-1. Nikola Jokic vs POR (Home) — 88% | L10: 90%
-2. Karl-Anthony Towns vs BOS (Home) — 64% | L10: 70%
-3. Bam Adebayo vs CLE (Away) — 55% | L10: 50%
+| Streak Length | Bonus Points |
+|--------------|-------------|
+| 3-4 games | +8 |
+| 5-7 games | +12 |
+| 8+ games | +18 |
 
-🌟 Triple-Double Watch:
-1. Nikola Jokic vs POR — 44% season rate
-2. Jalen Johnson vs MIA — 12% (trending up L10)
+Additionally, require a minimum of 5 legs played to avoid small-sample flukes.
 
-📊 Based on season game logs, home/away splits, opponent history
-```
+### 3. Track streak info in scored props
 
-This notification type will bypass quiet hours (same as other customer-facing reports like `double_confirmed_report`).
+Add `streakLength` and `streakBonus` fields to the `ScoredProp` interface so the streak context carries through to ticket building and logging.
 
-### 3. Pipeline Integration
-**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
+### 4. Log streak-boosted picks
 
-Add the function call in **Phase 2 (Analysis)**, after the double-confirmed scanner — this is where pattern analysis engines run:
+Add a console log showing how many props received a hot streak bonus, helping with debugging and transparency.
 
-```text
-Phase 2: ANALYSIS
-  ...existing analyzers...
-  await runFunction('double-confirmed-scanner', {});
-  await runFunction('dd-td-pattern-analyzer', {});   // NEW
-  await runFunction('recurring-winners-detector', {});
-```
+## Expected Outcome
 
-### 4. Database Table: `dd_td_predictions`
-Stores nightly predictions for accuracy tracking and settlement.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | uuid (PK) | Auto-generated |
-| prediction_date | date | Game date |
-| player_name | text | Player name |
-| prediction_type | text | 'DD' or 'TD' |
-| season_rate | numeric | Overall season % |
-| home_away_rate | numeric | Context-adjusted % |
-| vs_opponent_rate | numeric | Opponent-specific % |
-| l10_rate | numeric | Last 10 games % |
-| composite_score | numeric | Final weighted probability |
-| opponent | text | Tonight's opponent |
-| is_home | boolean | Home game? |
-| near_miss_rate | numeric | How often they get 8-9 in a stat |
-| games_played | integer | Total games this season |
-| outcome | text | 'pending' / 'hit' / 'miss' |
-| created_at | timestamptz | Default now() |
-
-No RLS needed (backend-only table, no frontend access).
-
-## Technical Details
-
-**DD detection logic per game:**
-```typescript
-const cats = [
-  g.points >= 10,
-  g.rebounds >= 10,
-  g.assists >= 10,
-  g.steals >= 10,
-  g.blocks >= 10
-].filter(Boolean).length;
-
-const isDD = cats >= 2;
-const isTD = cats >= 3;
-```
-
-**Near-miss detection (signals "almost DD"):**
-```typescript
-// Count categories at 8-9 when player had exactly 1 category at 10+
-const nearMissCats = [
-  g.points >= 8 && g.points < 10,
-  g.rebounds >= 8 && g.rebounds < 10,
-  g.assists >= 8 && g.assists < 10,
-].filter(Boolean).length;
-```
-
-**Schedule matching:** Uses the same `game_bets` query pattern (noon-ET-to-noon-ET window, deduplication by `game_id`) already established in the `/lookup` fix.
-
-## Files Changed
-
-| File | Action |
-|------|--------|
-| `supabase/functions/dd-td-pattern-analyzer/index.ts` | Create |
-| `supabase/functions/bot-send-telegram/index.ts` | Modify (add `dd_td_candidates` type + formatter) |
-| `supabase/functions/data-pipeline-orchestrator/index.ts` | Modify (add to Phase 2) |
-| Database migration | Create `dd_td_predictions` table |
-
-## Validation
-1. Run the function manually and confirm it returns ranked DD/TD candidates
-2. Verify Telegram message is broadcast to all active customers
-3. Confirm predictions are persisted in `dd_td_predictions` for future settlement tracking
+- Players on 3+ game hit streaks get priority selection in all three lottery tiers (Standard, High Roller, Mega Jackpot)
+- The bonus stacks with existing boosts (defense matchup, sweet spot alignment, mispriced edge) so a streaking player against a weak defense becomes a top-tier pick
+- Small-sample streaks (under 5 legs played) are excluded to prevent noise
