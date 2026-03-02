@@ -3350,8 +3350,8 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
   const avgStl = avg(l10.map(g => Number(g.steals) || 0));
   const avgBlk = avg(l10.map(g => Number(g.blocks) || 0));
 
-  // 3. Build L10 game log lines
-  const logLines = l10.slice(0, 5).map(g => {
+  // 3. Build L10 game log lines (show all games)
+  const logLines = l10.map(g => {
     const d = String(g.game_date).slice(5); // MM-DD
     return `  ${d}: ${g.points} PTS | ${g.rebounds} REB | ${g.assists} AST | ${g.threes_made} 3PT`;
   });
@@ -3449,7 +3449,7 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
 ━━━━━━━━━━━━━━━━━━━━━
 
 📊 *L10 Game Log:*
-${logLines.join('\n')}${l10.length > 5 ? `\n  ... (${l10.length} games)` : ''}
+${logLines.join('\n')}
 
 📈 *L10 Averages:*
   PTS: ${avgPts.toFixed(1)} | REB: ${avgReb.toFixed(1)} | AST: ${avgAst.toFixed(1)} | 3PT: ${avg3pt.toFixed(1)}
@@ -3701,7 +3701,7 @@ Deno.serve(async (req) => {
       const username = update.message.from?.username || undefined;
 
       const response = await handleMessage(chatId, text, username);
-      if (response) await sendMessage(chatId, response);
+      if (response) await sendLongMessage(chatId, response);
     }
 
     // Handle weekly digest cron trigger
