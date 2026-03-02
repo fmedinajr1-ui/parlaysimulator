@@ -1,49 +1,54 @@
 
 
-# Hot Streak Bonus for Lottery Scanner
+# Lottery Winner Highlight in Daily Recap
 
-## What Changes
+## Overview
+Enhance the daily winners broadcast to specifically highlight winning lottery tickets with their payout amounts, tier, and odds in a dedicated "Lottery Hits" section of the next-day recap message.
 
-Add a "hot streak" bonus to the `nba-mega-parlay-scanner` that boosts the composite score of players who have hit their props 3+ games in a row, making them more likely to be selected for lottery tickets.
+## Changes
 
-## Data Source
+### 1. `supabase/functions/daily-winners-broadcast/index.ts`
+- When building `winnersData`, tag each winner with `isLottery: true` if `strategy_name === 'mega_lottery_scanner'`
+- Calculate the actual payout for each lottery winner using the `expected_odds` and `simulated_stake` (decimal odds conversion)
+- Pass a new `lotteryWinners` array in the Telegram payload containing: tier, odds, payout, profit, and legs
 
-The `bot_player_performance` table already tracks per-player streaks (the `streak` column, positive = consecutive hits). Current data shows strong candidates like:
-- Cason Wallace rebounds over: 11-game streak
-- Victor Wembanyama steals over: 5-game streak  
-- Paolo Banchero assists over: 5-game streak
-- Desmond Bane points over: 5-game streak
+### 2. `supabase/functions/bot-send-telegram/index.ts`
+- Update `formatDailyWinnersRecap` to render a highlighted "LOTTERY HITS" section at the top of the recap when lottery winners exist
+- Each lottery hit shows the tier emoji, odds, stake, and payout in a visually distinct format
+- Example output:
 
-## Implementation
+```
+🏆 YESTERDAY'S WINS — Mar 1
+━━━━━━━━━━━━━━━━━━━━
 
-**Single file change:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
+🎰 LOTTERY HITS! 🎰
+━━━━━━━━━━━━━━━━━━━━
+🎟️ STANDARD (+1041) — $500 stake → $5,705 payout (+$5,205)
+  ✅ Karl-Anthony Towns REB O8.5 (actual: 12)
+  ✅ Jalen Brunson AST O6.5 (actual: 9)
+  ✅ OG Anunoby STL O1.5 (actual: 2)
 
-### 1. Fetch streak data alongside existing DB queries
+Solid Day — 4 Winners
 
-Add `bot_player_performance` to the parallel `Promise.all` fetch block (around line 376). Query players with `streak >= 3` to build a lookup map keyed by `player_name|prop_type|side`.
+#1 | Execution | +245 | $1,225 profit
+  ✅ ...
 
-### 2. Add streak bonus to composite scoring
+💰 Total: +$8,430 profit across 4 winners
+```
 
-In the scoring loop (around line 605), apply a tiered bonus:
+## Technical Details
 
-| Streak Length | Bonus Points |
-|--------------|-------------|
-| 3-4 games | +8 |
-| 5-7 games | +12 |
-| 8+ games | +18 |
+**Payout calculation** (already used in `formatParlaySettledAlert`):
+```typescript
+const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+const payout = Math.round(stake * decimalOdds);
+```
 
-Additionally, require a minimum of 5 legs played to avoid small-sample flukes.
+**Lottery identification**: Filter winners where `strategy_name === 'mega_lottery_scanner'`
 
-### 3. Track streak info in scored props
+**Files changed:**
+| File | Action |
+|------|--------|
+| `supabase/functions/daily-winners-broadcast/index.ts` | Modify — tag lottery winners, add payout data |
+| `supabase/functions/bot-send-telegram/index.ts` | Modify — add lottery highlight section to recap formatter |
 
-Add `streakLength` and `streakBonus` fields to the `ScoredProp` interface so the streak context carries through to ticket building and logging.
-
-### 4. Log streak-boosted picks
-
-Add a console log showing how many props received a hot streak bonus, helping with debugging and transparency.
-
-## Expected Outcome
-
-- Players on 3+ game hit streaks get priority selection in all three lottery tiers (Standard, High Roller, Mega Jackpot)
-- The bonus stacks with existing boosts (defense matchup, sweet spot alignment, mispriced edge) so a streaking player against a weak defense becomes a top-tier pick
-- Small-sample streaks (under 5 legs played) are excluded to prevent noise
