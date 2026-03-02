@@ -211,8 +211,24 @@ serve(async (req) => {
     const eventsListUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${apiKey}`;
     const eventsListRes = await fetchWithTimeout(eventsListUrl);
     if (!eventsListRes.ok) throw new Error(`Events API returned ${eventsListRes.status}: ${await eventsListRes.text()}`);
-    const eventsList: any[] = await eventsListRes.json();
-    console.log(`[MegaParlay] Found ${eventsList.length} NBA events`);
+    const allEvents: any[] = await eventsListRes.json();
+    
+    // Filter to only today's games (Eastern Time) to prevent including future games
+    const toEasternDate = (iso: string): string =>
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date(iso));
+
+    const eventsList = allEvents.filter(evt => {
+      if (!evt.commence_time) return false;
+      return toEasternDate(evt.commence_time) === today;
+    });
+    
+    const filtered = allEvents.length - eventsList.length;
+    console.log(`[MegaParlay] Found ${allEvents.length} NBA events, kept ${eventsList.length} for today (${today}), filtered out ${filtered}`);
 
     // Standard + exotic markets
     const standardMarkets = STANDARD_PLAYER_MARKETS.join(',');
