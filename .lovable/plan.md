@@ -1,62 +1,45 @@
 
 
-# Track Lottery Tier Performance and Auto-Adjust Strategy
+# Fix Opponent Resolution in /lookup Command
 
-## Overview
-Query historical win/loss data per lottery tier (Standard, High Roller, Mega Jackpot) from `bot_daily_parlays`, then use the tier-level hit rates to dynamically adjust stake sizing and quality thresholds during ticket generation.
+## Problem
+The `/lookup` command shows "vs SAC" (Sacramento Kings) instead of "vs SAS" (San Antonio Spurs) for Knicks players. The root cause is fragile opponent resolution that depends on `bdl_player_cache` team data (which can be stale after trades) and then fuzzy-matching through `game_bets`.
+
+## Solution
+Add a more reliable opponent resolution chain using the `nba_player_game_logs.opponent` column, which comes directly from ESPN box scores.
 
 ## Changes
 
-### 1. Create `bot_lottery_tier_performance` table (new migration)
-A dedicated table to store aggregated tier-level stats, refreshed alongside other hit-rate tables.
+**Single file:** `supabase/functions/telegram-webhook/index.ts`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| tier | text (PK) | standard, high_roller, mega_jackpot |
-| total_tickets | int | Total tickets generated |
-| total_won | int | Tickets that hit |
-| total_lost | int | Tickets that missed |
-| win_rate | numeric | Win percentage |
-| avg_odds | numeric | Average combined odds |
-| avg_payout | numeric | Average payout when won |
-| total_profit | numeric | Cumulative P/L |
-| streak | int | Current consecutive W/L streak |
-| last_updated | timestamp | Last refresh time |
+### 1. Add game log opponent as the highest-priority source (new Priority A0)
+Before checking `unified_props` or `game_bets`, check if today's game log already exists for the player. If the game has started or finished, the `opponent` field gives us the exact opponent with zero ambiguity.
 
-### 2. Update `bot-update-engine-hit-rates/index.ts`
-Add a new section (E) that aggregates lottery tier performance:
-- Query all `bot_daily_parlays` where `strategy_name = 'mega_lottery_scanner'` grouped by `tier`
-- Calculate win rate, average odds, total profit, and current streak per tier
-- Upsert results into `bot_lottery_tier_performance`
-- Log which tiers are hot or cold
+```
+// Priority A0: Direct from today's game log (most reliable)
+const todayLog = playerLogs.find(g => String(g.game_date) === today);
+if (todayLog && todayLog.opponent) {
+  opponentAbbrev = resolveTeamAbbrev(todayLog.opponent);
+  opponentSource = 'game_log';
+}
+```
 
-### 3. Update `nba-mega-parlay-scanner/index.ts`
-- Fetch `bot_lottery_tier_performance` in the existing `Promise.all` block
-- Use tier win rates to dynamically adjust:
-  - **Stake sizing**: Hot tiers (win rate above 20%) get a stake bump (e.g., standard $5 to $7), cold tiers get reduced stakes
-  - **Quality floor**: Cold tiers (win rate below 5% over 20+ tickets) raise the minimum hit rate for leg selection by +5%, making picks more conservative
-  - **Logging**: Print tier performance context at the start of each ticket build section
+### 2. Add player team resolution from game logs as fallback
+If `bdl_player_cache` has stale data, resolve the player's team by checking who they played at home vs away in recent game logs. The `is_home` field combined with the opponent tells us the player's team indirectly.
 
-### 4. Update daily winners broadcast (minor)
-- Include tier win rate context in the recap payload so the Telegram message can optionally show "Standard tickets hitting at 18% this month"
+### 3. Add defensive logging for the full resolution chain
+Log which source resolved the opponent (`game_log`, `props`, `game_bets`) so future mismatches are easier to debug.
+
+### 4. Add cross-validation
+If both game_log and game_bets resolve an opponent, and they disagree, prefer the game_log source and log a warning.
 
 ## Technical Details
 
-**Stake adjustment formula:**
-```text
-baseStake = { standard: 5, high_roller: 3, mega_jackpot: 1 }
-if tierWinRate > 20% and totalTickets >= 10:
-  stake = baseStake * 1.4  (bump)
-if tierWinRate < 5% and totalTickets >= 20:
-  stake = baseStake * 0.6  (reduce)
-  minHitRate += 5  (tighten quality)
-```
+| Step | Source | Reliability | When Available |
+|------|--------|-------------|----------------|
+| A0 (new) | `nba_player_game_logs.opponent` for today | Highest | After game starts |
+| A | `unified_props.game_description` | High | When props are scraped |
+| B | `game_bets` schedule | Medium | Pre-game |
 
-**Files changed:**
-| File | Action |
-|------|--------|
-| New migration SQL | Create `bot_lottery_tier_performance` table |
-| `supabase/functions/bot-update-engine-hit-rates/index.ts` | Add section E for lottery tier aggregation |
-| `supabase/functions/nba-mega-parlay-scanner/index.ts` | Fetch tier stats, adjust stakes and quality floors |
-| `supabase/functions/daily-winners-broadcast/index.ts` | Pass tier performance context in payload |
+The game log approach also fixes the related issue where `bdl_player_cache` may have a stale team for traded players, since we no longer depend on knowing the player's team to find their opponent -- we get it directly.
 
