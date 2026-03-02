@@ -3394,30 +3394,53 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     if (opponentAbbrev) opponentSource = 'props';
   }
 
-  // Priority B: fallback to game_bets schedule
+  // Priority B: fallback to game_bets schedule (noon-ET-to-noon-ET window)
   if (!opponentAbbrev && playerTeamAbbrev) {
-    const { data: todayGames } = await supabase
-      .from('game_bets')
-      .select('home_team, away_team')
-      .eq('sport', 'basketball_nba')
-      .gte('commence_time', `${today}T00:00:00`)
-      .lte('commence_time', `${today}T23:59:59`)
-      .limit(50);
+    // Build ET-safe window: noon ET today → noon ET tomorrow
+    const [yr, mo, dy] = today.split('-').map(Number);
+    const noonUtcStart = new Date(Date.UTC(yr, mo - 1, dy, 17, 0, 0)); // noon ET ≈ 17:00 UTC (EST)
+    const noonUtcEnd = new Date(noonUtcStart.getTime() + 24 * 60 * 60 * 1000);
+    const startUtc = noonUtcStart.toISOString();
+    const endUtc = noonUtcEnd.toISOString();
 
-    if (todayGames && todayGames.length > 0) {
-      for (const game of todayGames) {
-        const home = resolveTeamAbbrev(game.home_team || '');
-        const away = resolveTeamAbbrev(game.away_team || '');
-        if (home === playerTeamAbbrev) {
-          opponentAbbrev = away;
-          opponentSource = 'game_bets';
-          break;
-        }
-        if (away === playerTeamAbbrev) {
-          opponentAbbrev = home;
-          opponentSource = 'game_bets';
-          break;
-        }
+    console.log(`[lookup] schedule window: ${startUtc} → ${endUtc}`);
+
+    const { data: todayGames, error: schedError } = await supabase
+      .from('game_bets')
+      .select('game_id, home_team, away_team, commence_time')
+      .eq('sport', 'basketball_nba')
+      .gte('commence_time', startUtc)
+      .lt('commence_time', endUtc)
+      .limit(500);
+
+    if (schedError) {
+      console.error(`[lookup] game_bets query error:`, schedError.message);
+    }
+
+    console.log(`[lookup] game_bets raw rows=${todayGames?.length || 0}`);
+
+    // Deduplicate by game_id
+    const seenIds = new Set<string>();
+    const uniqueGames = (todayGames || []).filter(g => {
+      if (!g.game_id || seenIds.has(g.game_id)) return false;
+      seenIds.add(g.game_id);
+      return true;
+    });
+
+    console.log(`[lookup] unique games=${uniqueGames.length}`);
+
+    for (const game of uniqueGames) {
+      const home = resolveTeamAbbrev(game.home_team || '');
+      const away = resolveTeamAbbrev(game.away_team || '');
+      if (home === playerTeamAbbrev) {
+        opponentAbbrev = away;
+        opponentSource = 'game_bets';
+        break;
+      }
+      if (away === playerTeamAbbrev) {
+        opponentAbbrev = home;
+        opponentSource = 'game_bets';
+        break;
       }
     }
   }
@@ -3436,9 +3459,13 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     if (defRank) {
       const or = defRank.overall_rank || 0;
       defenseSection = `\n🛡️ *Tonight's Matchup vs ${opponentAbbrev}:*
-  Opp Def Overall: #${or} (${getRankTier(or)})
+  *Defense (opp allows):*
+  Overall: #${or} (${getRankTier(or)})
   vs PTS: #${defRank.opp_points_rank || '?'} ${getRankEmoji(defRank.opp_points_rank || 15)} | vs 3PT: #${defRank.opp_threes_rank || '?'} ${getRankEmoji(defRank.opp_threes_rank || 15)}
-  vs REB: #${defRank.opp_rebounds_rank || '?'} ${getRankEmoji(defRank.opp_rebounds_rank || 15)} | vs AST: #${defRank.opp_assists_rank || '?'} ${getRankEmoji(defRank.opp_assists_rank || 15)}`;
+  vs REB: #${defRank.opp_rebounds_rank || '?'} ${getRankEmoji(defRank.opp_rebounds_rank || 15)} | vs AST: #${defRank.opp_assists_rank || '?'} ${getRankEmoji(defRank.opp_assists_rank || 15)}
+  *Offense (opp scores):*
+  PTS: #${defRank.off_points_rank || '?'} | 3PT: #${defRank.off_threes_rank || '?'}
+  REB: #${defRank.off_rebounds_rank || '?'} | AST: #${defRank.off_assists_rank || '?'} | Pace: #${defRank.off_pace_rank || '?'}`;
     }
   } else {
     defenseSection = '\n📭 No NBA matchup detected for today.';
