@@ -875,36 +875,48 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.65,
     profiles: [
-      // ============= SWEET SPOT CORE: 3-leg parlays from 80%+ Sweet Spot engine =============
+      // ============= SWEET SPOT CORE: 3-leg parlays from Sweet Spot engine (minHitRate=55, engine pre-vetted) =============
+      // --- Sorted by hit_rate ---
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 55, sortBy: 'hit_rate' },
+      // --- Sorted by composite ---
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
+      // --- Sorted by shuffle (combinatorial diversity) ---
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      // --- Sorted by env_cluster (SHOOTOUT-first smart stacking) ---
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
+      // --- Sorted by env_cluster (GRIND-first smart stacking) ---
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      // --- Higher hit rate tiers for premium picks ---
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 65, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 65, sortBy: 'composite' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'composite' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 75, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 75, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'env_cluster_shootout' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'env_cluster_grind' },
       // ============= SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus engine leg =============
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 65, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       // ============= PRIORITY: HIGH-CONVICTION STRATEGIES =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
@@ -1537,11 +1549,11 @@ function calculateParlayCoherence(legs: any[]): number {
   const shootoutCount = clusters.filter(c => c === 'SHOOTOUT').length;
   const grindCount = clusters.filter(c => c === 'GRIND').length;
 
-  // All same cluster = big bonus
-  if (shootoutCount === legs.length) coherenceScore += 12;
-  else if (grindCount === legs.length) coherenceScore += 12;
-  // Mixed shootout+grind = heavy penalty
-  else if (shootoutCount > 0 && grindCount > 0) coherenceScore -= 15;
+  // All same cluster = BIG bonus (smart stacking)
+  if (shootoutCount === legs.length) coherenceScore += 20;
+  else if (grindCount === legs.length) coherenceScore += 20;
+  // Mixed shootout+grind = heavy penalty (incoherent stack)
+  else if (shootoutCount > 0 && grindCount > 0) coherenceScore -= 25;
 
   // Positive correlation bonus: player OVER + same team ML/spread = correlated upside
   for (let i = 0; i < legs.length; i++) {
@@ -4287,7 +4299,17 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         return { ...gameCtx, envCluster: cluster, envClusterStrength: strength };
       })(),
     };
-  }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category) && p.has_real_line);
+  }).filter((p: EnrichedPick) => {
+    // ALL picks in this array are sweet spots (from category_sweet_spots) — engine already vetted them
+    // Only block if hit-rate blocked category
+    if (blockedByHitRate.has(p.category)) return false;
+    // Use default odds if no real line available — sweet spots have their own recommended_line
+    if (!p.has_real_line) {
+      p.americanOdds = -110;
+      p.line_source = 'engine_recommended';
+    }
+    return true;
+  });
 
   // Block NCAAB player props from ever entering the pick pool
   enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
@@ -5979,26 +6001,54 @@ async function generateTierParlays(
     const isMixedConvictionProfile = profile.strategy === 'mixed_conviction_stack';
     
     if (isSweetSpotCoreProfile) {
-      // === SWEET SPOT CORE: All legs from category_sweet_spots ===
-      candidatePicks = pool.sweetSpots.filter(p => {
+      // === SWEET SPOT CORE: All legs from category_sweet_spots — engine pre-vetted ===
+      const filteredSweets = pool.sweetSpots.filter(p => {
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
         const hr = p.l10_hit_rate || p.confidence_score || 0;
         const hrPct = hr <= 1 ? hr * 100 : hr;
-        return hrPct >= (profile.minHitRate || 70);
-      }).sort((a, b) => {
-        if (profile.sortBy === 'hit_rate') {
+        return hrPct >= (profile.minHitRate || 55);
+      });
+
+      // Smart Stacking: sort by environment cluster then by confidence
+      const sortBy = profile.sortBy || 'composite';
+      if (sortBy === 'env_cluster_shootout') {
+        // Group SHOOTOUT picks first, then GRIND, then NEUTRAL — within each group sort by confidence
+        candidatePicks = filteredSweets.sort((a, b) => {
+          const aCluster = (a._gameContext as any)?.envCluster || 'NEUTRAL';
+          const bCluster = (b._gameContext as any)?.envCluster || 'NEUTRAL';
+          const clusterOrder: Record<string, number> = { SHOOTOUT: 0, NEUTRAL: 1, GRIND: 2 };
+          const orderDiff = (clusterOrder[aCluster] ?? 1) - (clusterOrder[bCluster] ?? 1);
+          if (orderDiff !== 0) return orderDiff;
+          return (b.compositeScore || 0) - (a.compositeScore || 0);
+        });
+      } else if (sortBy === 'env_cluster_grind') {
+        // Group GRIND picks first, then NEUTRAL, then SHOOTOUT
+        candidatePicks = filteredSweets.sort((a, b) => {
+          const aCluster = (a._gameContext as any)?.envCluster || 'NEUTRAL';
+          const bCluster = (b._gameContext as any)?.envCluster || 'NEUTRAL';
+          const clusterOrder: Record<string, number> = { GRIND: 0, NEUTRAL: 1, SHOOTOUT: 2 };
+          const orderDiff = (clusterOrder[aCluster] ?? 1) - (clusterOrder[bCluster] ?? 1);
+          if (orderDiff !== 0) return orderDiff;
+          return (b.compositeScore || 0) - (a.compositeScore || 0);
+        });
+      } else if (sortBy === 'hit_rate') {
+        candidatePicks = filteredSweets.sort((a, b) => {
           const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
           const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
           return bHr - aHr;
-        }
-        return b.compositeScore - a.compositeScore;
-      });
+        });
+      } else if (sortBy === 'shuffle') {
+        candidatePicks = filteredSweets.sort(() => Math.random() - 0.5);
+      } else {
+        candidatePicks = filteredSweets.sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+      }
+
       if (candidatePicks.length < profile.legs) {
         console.log(`[Bot] ${tier}/sweet_spot_core: only ${candidatePicks.length} sweet spots with ${profile.minHitRate}%+ hit rate, need ${profile.legs}`);
         continue;
       }
-      console.log(`[Bot] ${tier}/sweet_spot_core: ${candidatePicks.length} sweet spot candidates (minHR=${profile.minHitRate}%, sort=${profile.sortBy})`);
+      console.log(`[Bot] ${tier}/sweet_spot_core: ${candidatePicks.length} sweet spot candidates (minHR=${profile.minHitRate}%, sort=${sortBy})`);
     } else if (isSweetSpotPlusProfile) {
       // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
       const sweetCandidates = pool.sweetSpots.filter(p => {
@@ -6006,14 +6056,29 @@ async function generateTierParlays(
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
         const hr = p.l10_hit_rate || p.confidence_score || 0;
         const hrPct = hr <= 1 ? hr * 100 : hr;
-        return hrPct >= (profile.minHitRate || 70);
+        return hrPct >= (profile.minHitRate || 55);
       }).sort((a, b) => {
-        if (profile.sortBy === 'hit_rate') {
+        const sortBy = profile.sortBy || 'composite';
+        if (sortBy === 'env_cluster_shootout') {
+          const aC = (a._gameContext as any)?.envCluster || 'NEUTRAL';
+          const bC = (b._gameContext as any)?.envCluster || 'NEUTRAL';
+          const o: Record<string, number> = { SHOOTOUT: 0, NEUTRAL: 1, GRIND: 2 };
+          const d = (o[aC] ?? 1) - (o[bC] ?? 1);
+          if (d !== 0) return d;
+        } else if (sortBy === 'env_cluster_grind') {
+          const aC = (a._gameContext as any)?.envCluster || 'NEUTRAL';
+          const bC = (b._gameContext as any)?.envCluster || 'NEUTRAL';
+          const o: Record<string, number> = { GRIND: 0, NEUTRAL: 1, SHOOTOUT: 2 };
+          const d = (o[aC] ?? 1) - (o[bC] ?? 1);
+          if (d !== 0) return d;
+        } else if (sortBy === 'hit_rate') {
           const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
           const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
           return bHr - aHr;
+        } else if (sortBy === 'shuffle') {
+          return Math.random() - 0.5;
         }
-        return b.compositeScore - a.compositeScore;
+        return (b.compositeScore || 0) - (a.compositeScore || 0);
       });
 
       if (sweetCandidates.length < 3) {
@@ -6545,7 +6610,9 @@ async function generateTierParlays(
         const pick = remainingCandidates[ci];
       
       if (!canUsePickGlobally(pick, tracker, config, tier)) continue;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, volumeMode)) continue;
+      // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
+      const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
       
       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
       if (tier === 'execution' && 'player_name' in pick) {
