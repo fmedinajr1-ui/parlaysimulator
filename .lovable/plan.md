@@ -1,76 +1,38 @@
 
 
-# Show Customers Sweet Spot Accuracy + Strategy Announcement
+# Fix: `defenseDetailMap is not defined` Runtime Error
 
-## What We're Doing
-Two things:
-1. Add a new `/accuracy` command for customers that shows the Sweet Spot engine's accuracy stats
-2. Update the announcement function with a new message announcing Sweet Spots as the main engine
+## Problem
+The function `calculateTeamCompositeScore` (line 1919) references `defenseDetailMap` at line 2020, but this variable is NOT passed as a parameter. It only exists inside the `serve()` handler scope (created at line 4063). Since the function is defined outside that scope, it throws `ReferenceError: defenseDetailMap is not defined` at runtime when scoring team total bets.
 
-## Changes
+This crash prevents the quality regen loop from generating any parlays, which is why the system falls back to `bot-force-fresh-parlays` and produces 0 Sweet Spot core parlays.
 
-### 1. Add `/accuracy` customer command
-**File:** `supabase/functions/telegram-webhook/index.ts`
+## Fix
 
-Add a new `handleCustomerAccuracy` function that:
-- Queries `category_sweet_spots` for settled picks (outcome = won/hit/lost/miss)
-- Groups by time period (last 7d, 30d, all-time)
-- Shows win rate, total settled, and a confidence grade
-- Formats it cleanly for customers (no internal engine jargon)
+### Step 1: Add `defenseDetailMap` parameter to `calculateTeamCompositeScore`
 
-Wire it up in the customer commands section and add it to the `/help` response.
+Add a new parameter `defenseDetailMap` (type `Map<string, any>`) to the function signature at line 1919, after the existing `defenseMap` parameter.
 
-### 2. Format the accuracy message for Telegram
-**File:** `supabase/functions/bot-send-telegram/index.ts`
+### Step 2: Update all 7 call sites to pass `defenseDetailMap`
 
-Not needed -- we'll format inline in the webhook handler like other customer commands (returns a string directly).
+There are 7 places where `calculateTeamCompositeScore` is called (lines 4650, 4664, 4680, 4750, 4794, 4808, and possibly the WNBA routing). Each call needs `defenseDetailMap` added as an argument. All call sites are inside `buildCandidatePool()` where `defenseDetailMap` is already in scope.
 
-### 3. Update the announcement message
-**File:** `supabase/functions/bot-announce-strategy-update/index.ts`
+### Step 3: Deploy the fixed function
 
-Replace the current `/lookup` announcement with a new message:
-- Announce Sweet Spots as the primary engine powering all parlays
-- Share the real-time accuracy stats (pulled live from the database at broadcast time)
-- Explain what this means for customers: every parlay now has 3 core legs from the highest-accuracy engine
-- Mention the `/accuracy` command so they can check it anytime
+Deploy `bot-generate-daily-parlays` so the fix takes effect.
 
-### 4. Deploy all 3 edge functions
+### Step 4: Re-trigger generation pipeline
+
+Invoke the quality regen loop and generation pipeline to produce today's Sweet Spot core parlays now that the crash is fixed.
 
 ## Technical Details
 
-**Customer accuracy message format:**
-```
-📊 Sweet Spot Engine — Accuracy Report
+**Root cause:** `defenseDetailMap` is a local variable inside `buildCandidatePool()` (line 4063). The function `calculateTeamCompositeScore` is declared at module scope (line 1919) so it cannot access that variable without it being passed as a parameter.
 
-🟢 Last 7 Days: 82.3% (51W - 11L)
-🟢 Last 30 Days: 79.1% (138W - 33L)  
-🟢 All-Time: 76.4% (412W - 128L)
+**Affected code path:** Only NBA/WNBA team total bets hit the `defenseDetailMap.get()` call at line 2020. Spread and moneyline bets use `defenseMap` (which IS passed correctly), so those work fine.
 
-This is the engine powering your parlays.
-Type /accuracy anytime to check live stats.
-```
+**Files modified:** 1 edge function
+- `supabase/functions/bot-generate-daily-parlays/index.ts` -- add parameter + update call sites
 
-**Announcement message format:**
-```
-🚀 STRATEGY UPDATE — Sweet Spot Engine
-
-We've upgraded our parlay system. Every execution 
-parlay now uses our Sweet Spot Engine as the 
-foundation — all 3 core legs come from picks with 
-70%+ historical hit rates.
-
-Current accuracy: [live stat]% ([W]W - [L]L)
-
-What changed:
-• All 3 legs in your parlays come from the Sweet Spot engine
-• Optional 4th leg only added if it passes strict quality gates  
-• Mispriced-only parlays are now a backup, not the default
-
-Type /accuracy to see live engine stats anytime.
-```
-
-**Files modified:** 3 edge functions
-- `telegram-webhook/index.ts` -- add `/accuracy` command + help text
-- `bot-announce-strategy-update/index.ts` -- new announcement with live stats
-- Deploy all updated functions
+**Post-fix:** Re-run `bot-quality-regen-loop` and verify parlays generate successfully.
 
