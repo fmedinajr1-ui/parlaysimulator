@@ -3218,6 +3218,246 @@ async function handleEngineAccuracy(chatId: string): Promise<string> {
   return null as any; // Already sent via bot-send-telegram
 }
 
+// ==================== PLAYER LOOKUP ====================
+
+const NBA_TEAM_ABBREV: Record<string, string> = {
+  'Atlanta Hawks': 'ATL', 'Boston Celtics': 'BOS', 'Brooklyn Nets': 'BKN',
+  'Charlotte Hornets': 'CHA', 'Chicago Bulls': 'CHI', 'Cleveland Cavaliers': 'CLE',
+  'Dallas Mavericks': 'DAL', 'Denver Nuggets': 'DEN', 'Detroit Pistons': 'DET',
+  'Golden State Warriors': 'GSW', 'Houston Rockets': 'HOU', 'Indiana Pacers': 'IND',
+  'Los Angeles Clippers': 'LAC', 'LA Clippers': 'LAC', 'Los Angeles Lakers': 'LAL',
+  'LA Lakers': 'LAL', 'Memphis Grizzlies': 'MEM', 'Miami Heat': 'MIA',
+  'Milwaukee Bucks': 'MIL', 'Minnesota Timberwolves': 'MIN', 'New Orleans Pelicans': 'NOP',
+  'New York Knicks': 'NYK', 'Oklahoma City Thunder': 'OKC', 'Orlando Magic': 'ORL',
+  'Philadelphia 76ers': 'PHI', 'Phoenix Suns': 'PHX', 'Portland Trail Blazers': 'POR',
+  'Sacramento Kings': 'SAC', 'San Antonio Spurs': 'SAS', 'Toronto Raptors': 'TOR',
+  'Utah Jazz': 'UTA', 'Washington Wizards': 'WAS',
+  'Hawks': 'ATL', 'Celtics': 'BOS', 'Nets': 'BKN', 'Hornets': 'CHA', 'Bulls': 'CHI',
+  'Cavaliers': 'CLE', 'Cavs': 'CLE', 'Mavericks': 'DAL', 'Mavs': 'DAL', 'Nuggets': 'DEN',
+  'Pistons': 'DET', 'Warriors': 'GSW', 'Rockets': 'HOU', 'Pacers': 'IND',
+  'Clippers': 'LAC', 'Lakers': 'LAL', 'Grizzlies': 'MEM', 'Heat': 'MIA', 'Bucks': 'MIL',
+  'Timberwolves': 'MIN', 'Wolves': 'MIN', 'Pelicans': 'NOP', 'Knicks': 'NYK',
+  'Thunder': 'OKC', 'Magic': 'ORL', '76ers': 'PHI', 'Sixers': 'PHI', 'Suns': 'PHX',
+  'Trail Blazers': 'POR', 'Blazers': 'POR', 'Kings': 'SAC', 'Spurs': 'SAS',
+  'Raptors': 'TOR', 'Jazz': 'UTA', 'Wizards': 'WAS',
+};
+
+function resolveTeamAbbrev(name: string): string {
+  if (!name) return '';
+  const trimmed = name.trim();
+  if (/^[A-Z]{2,4}$/.test(trimmed)) return trimmed;
+  if (NBA_TEAM_ABBREV[trimmed]) return NBA_TEAM_ABBREV[trimmed];
+  const lower = trimmed.toLowerCase();
+  for (const [k, v] of Object.entries(NBA_TEAM_ABBREV)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  for (const [k, v] of Object.entries(NBA_TEAM_ABBREV)) {
+    if (lower.includes(k.toLowerCase()) || k.toLowerCase().includes(lower)) return v;
+  }
+  return trimmed.substring(0, 3).toUpperCase();
+}
+
+function extractOpponentFromGameDesc(gameDesc: string, playerTeamAbbrev: string): string | null {
+  // game_description like "Team A @ Team B" or "Team A vs Team B"
+  const parts = gameDesc.split(/\s+(?:@|vs\.?|at)\s+/i);
+  if (parts.length < 2) return null;
+  const team1 = resolveTeamAbbrev(parts[0].trim());
+  const team2 = resolveTeamAbbrev(parts[1].trim());
+  if (team1 === playerTeamAbbrev) return team2;
+  if (team2 === playerTeamAbbrev) return team1;
+  // If we can't match, return the other team
+  return team1 || team2;
+}
+
+function getRankEmoji(rank: number): string {
+  if (rank <= 5) return '⚠️';
+  if (rank >= 20) return '🔥';
+  return '';
+}
+
+function getRankTier(rank: number): string {
+  if (rank <= 5) return 'Elite';
+  if (rank <= 10) return 'Strong';
+  if (rank <= 15) return 'Avg';
+  if (rank <= 20) return 'Weak';
+  return 'Poor';
+}
+
+const PROP_TO_STAT: Record<string, string> = {
+  'player_points': 'points',
+  'player_rebounds': 'rebounds',
+  'player_assists': 'assists',
+  'player_threes': 'threes_made',
+  'player_steals': 'steals',
+  'player_blocks': 'blocks',
+  'player_pts': 'points',
+  'player_reb': 'rebounds',
+  'player_ast': 'assists',
+};
+
+async function handleLookup(chatId: string, playerName: string): Promise<string> {
+  if (!playerName.trim()) {
+    return '❓ Usage: /lookup [player name]\n\nExample: /lookup LeBron James';
+  }
+
+  await sendMessage(chatId, `🔍 Looking up *${playerName}*...`, 'Markdown');
+
+  const today = getEasternDate();
+
+  // Fuzzy match: search by last name ilike
+  const nameParts = playerName.trim().split(/\s+/);
+  const searchTerm = nameParts.length > 1 ? nameParts[nameParts.length - 1] : nameParts[0];
+
+  // 1. Find player in game logs
+  const { data: gameLogs } = await supabase
+    .from('nba_player_game_logs')
+    .select('*')
+    .ilike('player_name', `%${searchTerm}%`)
+    .order('game_date', { ascending: false })
+    .limit(50);
+
+  if (!gameLogs || gameLogs.length === 0) {
+    return `❌ No game logs found for "*${playerName}*". Try the exact last name.`;
+  }
+
+  // If multiple players match, pick the one closest to full name
+  const uniquePlayers = [...new Set(gameLogs.map(g => g.player_name))];
+  let matchedPlayer = uniquePlayers[0];
+  if (uniquePlayers.length > 1) {
+    const lowerInput = playerName.toLowerCase();
+    const exact = uniquePlayers.find(p => p.toLowerCase() === lowerInput);
+    if (exact) {
+      matchedPlayer = exact;
+    } else {
+      const partial = uniquePlayers.find(p => p.toLowerCase().includes(lowerInput));
+      if (partial) matchedPlayer = partial;
+    }
+  }
+
+  const playerLogs = gameLogs.filter(g => g.player_name === matchedPlayer).slice(0, 10);
+
+  if (playerLogs.length === 0) {
+    return `❌ No recent games found for *${matchedPlayer}*.`;
+  }
+
+  // 2. Calculate L10 averages
+  const l10 = playerLogs;
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const avgPts = avg(l10.map(g => Number(g.points) || 0));
+  const avgReb = avg(l10.map(g => Number(g.rebounds) || 0));
+  const avgAst = avg(l10.map(g => Number(g.assists) || 0));
+  const avg3pt = avg(l10.map(g => Number(g.threes_made) || 0));
+  const avgStl = avg(l10.map(g => Number(g.steals) || 0));
+  const avgBlk = avg(l10.map(g => Number(g.blocks) || 0));
+
+  // 3. Build L10 game log lines
+  const logLines = l10.slice(0, 5).map(g => {
+    const d = String(g.game_date).slice(5); // MM-DD
+    return `  ${d}: ${g.points} PTS | ${g.rebounds} REB | ${g.assists} AST | ${g.threes_made} 3PT`;
+  });
+
+  // 4. Find today's opponent from unified_props
+  let opponentAbbrev: string | null = null;
+  let defenseSection = '';
+  const { data: todayProps } = await supabase
+    .from('unified_props')
+    .select('game_description, prop_type, current_line, over_price, under_price')
+    .ilike('player_name', `%${matchedPlayer}%`)
+    .gte('created_at', `${today}T00:00:00`)
+    .limit(20);
+
+  if (todayProps && todayProps.length > 0 && todayProps[0].game_description) {
+    // Derive player's team from most recent game log opponent
+    const mostRecentOpp = playerLogs[0]?.opponent;
+    const playerTeam = mostRecentOpp ? '' : ''; // We don't know player's team abbrev directly
+    // Try extracting both teams and picking the one that ISN'T the player's recent opponents
+    const gameDesc = todayProps[0].game_description;
+    const parts = gameDesc.split(/\s+(?:@|vs\.?|at)\s+/i);
+    if (parts.length >= 2) {
+      const t1 = resolveTeamAbbrev(parts[0].trim());
+      const t2 = resolveTeamAbbrev(parts[1].trim());
+      // Player's team: check if recent opponent matches one side
+      const recentOpps = new Set(playerLogs.slice(0, 3).map(g => resolveTeamAbbrev(g.opponent || '')));
+      if (recentOpps.has(t1)) {
+        opponentAbbrev = t1; // Wait, if t1 was opponent before, tonight t1 is opponent again? No.
+      }
+      // Simpler: the team that is NOT in their recent opponents is their team
+      if (!recentOpps.has(t1) && !recentOpps.has(t2)) {
+        // Can't determine, just pick both and show matchup
+        opponentAbbrev = t2; // assume player is away team (first)
+      } else if (recentOpps.has(t1)) {
+        // t1 was a past opponent, so player is likely on t2's side. Tonight's opp is t1? No...
+        // Actually player plays FOR one team. Their opponents list should NOT contain their own team.
+        // So if t1 appears in opponents, t1 is not their team. Player is on t2, opp tonight is t1.
+        opponentAbbrev = t1;
+      } else if (recentOpps.has(t2)) {
+        opponentAbbrev = t2;
+      } else {
+        opponentAbbrev = t2;
+      }
+    }
+  }
+
+  // 5. Fetch defense rankings if we have opponent
+  if (opponentAbbrev) {
+    const { data: defRank } = await supabase
+      .from('team_defense_rankings')
+      .select('*')
+      .eq('team_abbreviation', opponentAbbrev)
+      .eq('is_current', true)
+      .maybeSingle();
+
+    if (defRank) {
+      const or = defRank.overall_rank || 0;
+      defenseSection = `\n🛡️ *Tonight's Matchup vs ${opponentAbbrev}:*
+  Opp Def Overall: #${or} (${getRankTier(or)})
+  vs PTS: #${defRank.opp_points_rank || '?'} ${getRankEmoji(defRank.opp_points_rank || 15)} | vs 3PT: #${defRank.opp_threes_rank || '?'} ${getRankEmoji(defRank.opp_threes_rank || 15)}
+  vs REB: #${defRank.opp_rebounds_rank || '?'} ${getRankEmoji(defRank.opp_rebounds_rank || 15)} | vs AST: #${defRank.opp_assists_rank || '?'} ${getRankEmoji(defRank.opp_assists_rank || 15)}`;
+    }
+  }
+
+  // 6. Today's props with hit rates
+  let propsSection = '';
+  if (todayProps && todayProps.length > 0) {
+    const propLines: string[] = [];
+    const seen = new Set<string>();
+    for (const p of todayProps) {
+      if (!p.prop_type || !p.current_line) continue;
+      const key = p.prop_type;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const statField = PROP_TO_STAT[p.prop_type];
+      let hitCount = 0;
+      if (statField) {
+        hitCount = l10.filter(g => Number((g as any)[statField] || 0) > Number(p.current_line)).length;
+      }
+
+      const label = p.prop_type.replace('player_', '').toUpperCase();
+      const price = p.over_price ? `(${p.over_price > 0 ? '+' : ''}${p.over_price})` : '';
+      propLines.push(`  ${label} O${p.current_line} ${price} | L10 hit: ${hitCount}/${l10.length}`);
+
+      if (propLines.length >= 6) break;
+    }
+    if (propLines.length > 0) {
+      propsSection = `\n📋 *Today's Props:*\n${propLines.join('\n')}`;
+    }
+  }
+
+  // 7. Format final message
+  const msg = `🔍 *PLAYER LOOKUP — ${matchedPlayer}*
+━━━━━━━━━━━━━━━━━━━━━
+
+📊 *L10 Game Log:*
+${logLines.join('\n')}${l10.length > 5 ? `\n  ... (${l10.length} games)` : ''}
+
+📈 *L10 Averages:*
+  PTS: ${avgPts.toFixed(1)} | REB: ${avgReb.toFixed(1)} | AST: ${avgAst.toFixed(1)} | 3PT: ${avg3pt.toFixed(1)}
+  STL: ${avgStl.toFixed(1)} | BLK: ${avgBlk.toFixed(1)}${defenseSection}${propsSection}`;
+
+  return msg;
+}
+
 // ==================== MAIN ROUTER ====================
 
 async function handleMessage(chatId: string, text: string, username?: string) {
@@ -3249,6 +3489,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /sharp — Sharp signals
 /avoid — Avoid patterns
 /extras — Extra plays (not in parlays)
+/lookup [player] — Player cross-reference report
 /engineaccuracy — Engine standalone accuracy
 /backtest — Run backtest
 /watch — Watch picks
@@ -3325,6 +3566,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/broadcast") { await handleBroadcast(chatId); return null; }
     if (cmd === "/extras") { return await handleExtras(chatId); }
     if (cmd === "/engineaccuracy") { return await handleEngineAccuracy(chatId); }
+    if (cmd === "/lookup") { return await handleLookup(chatId, args); }
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
@@ -3390,11 +3632,13 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/roi") return await handleCustomerRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
   if (cmd === "/cancel") return await handleCancelSubscription(chatId);
+  if (cmd === "/lookup") { return await handleLookup(chatId, args); }
   if (cmd === "/help") {
     return `📋 *Parlay Farm — Help*
 
 *Commands:*
 /parlays — Today's full pick list
+/lookup [player] — Player cross-reference report
 /calendar — Your monthly P&L
 /roi — Your personal ROI
 /streaks — Hot & cold streaks
