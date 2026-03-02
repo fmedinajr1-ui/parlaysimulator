@@ -452,3 +452,6 @@ verify_jwt = false
 
 [functions.bot-announce-strategy-update]
 verify_jwt = false
+
+[functions.fetch-team-moneylines]
+verify_jwt = false

@@ -11153,6 +11153,54 @@ export type Database = {
         }
         Relationships: []
       }
+      team_moneyline_odds: {
+        Row: {
+          analysis_date: string
+          away_odds: number | null
+          away_team: string
+          bookmaker: string
+          commence_time: string | null
+          created_at: string
+          event_id: string
+          home_odds: number | null
+          home_team: string
+          id: string
+          implied_away_prob: number | null
+          implied_home_prob: number | null
+          sport: string
+        }
+        Insert: {
+          analysis_date?: string
+          away_odds?: number | null
+          away_team: string
+          bookmaker: string
+          commence_time?: string | null
+          created_at?: string
+          event_id: string
+          home_odds?: number | null
+          home_team: string
+          id?: string
+          implied_away_prob?: number | null
+          implied_home_prob?: number | null
+          sport: string
+        }
+        Update: {
+          analysis_date?: string
+          away_odds?: number | null
+          away_team?: string
+          bookmaker?: string
+          commence_time?: string | null
+          created_at?: string
+          event_id?: string
+          home_odds?: number | null
+          home_team?: string
+          id?: string
+          implied_away_prob?: number | null
+          implied_home_prob?: number | null
+          sport?: string
+        }
+        Relationships: []
+      }
       team_season_standings: {
         Row: {
           away_record: string | null

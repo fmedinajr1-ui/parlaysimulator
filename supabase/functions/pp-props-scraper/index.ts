@@ -144,6 +144,8 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'Total Bases': 'batter_total_bases',
   'Home Runs': 'batter_home_runs',
   'Stolen Bases': 'batter_stolen_bases',
+  'Double Doubles': 'player_double_double',
+  'Triple Doubles': 'player_triple_double',
 };
 
 // Process extracted projections into snapshot rows
