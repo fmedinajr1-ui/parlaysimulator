@@ -1,95 +1,83 @@
 
 
-# Fix Mega Jackpot First Basket Bug + Fine-Tune Lottery Selection
+# Fix force_mispriced_conviction: Apply Flip Logic to Poison Legs
 
-## The Bug
+## The Problem
 
-The `hasCorrelatedProp` function (line 40-78) blocks same-player duplicates and same-game team bet stacking, but does NOT block multiple `player_first_basket` props from the same game. Since `MAX_SAME_PROP = 2` and `MAX_PER_GAME = 2`, two first-basket picks from the same game (e.g., Jokic + Murray) slip through -- but only ONE player can score the first basket, so this parlay is mathematically dead on arrival.
+`force_mispriced_conviction` has a 21.5% hit rate across 184 parlays -- consistently losing money. This strategy runs through `bot-force-fresh-parlays/index.ts`, which is a **separate function** from the main parlay engine. It builds 3-leg parlays from ELITE/HIGH mispriced lines but has **zero flip logic** -- the same poison categories (REBOUNDS over, THREES over, etc.) that killed `cash_lock` are killing this strategy too.
 
-## How Lottery Selection Currently Works
+## The Fix: Add Flip Map to bot-force-fresh-parlays
 
-The scanner builds 3 tiered tickets from scored NBA props:
+Rather than disabling the strategy entirely (it still has edge from mispriced detection), we'll apply the same proven flip logic from `cash_lock` to filter out poison-side legs.
 
-1. **Standard** (+500 to +2000, $5 stake): 2-4 legs, player props only, strict filters (70%+ hit rate safe leg, 60%+ balanced, 55%+ great odds)
-2. **High Roller** (up to +8000, $3 stake): 3-6 legs, allows 1 exotic, per-leg cap +500, 35%+ hit rate
-3. **Mega Jackpot** (+10,000 to +50,000, $1 stake): 4-8 legs, round-robin from 3 pools (exotic/team bet/player prop), max 2 exotic, max 2 team bets, max 4 player props
+**File:** `supabase/functions/bot-force-fresh-parlays/index.ts`
 
-Each prop gets a composite score from: hit rate (35%), edge (20%), median gap (10%), direction bonus, defense matchup bonus, hot streak bonus, odds value, and volume candidate flag.
+### Change 1: Add MISPRICED_FLIP_MAP constant (after line 32)
 
-## The Fix (Change 1): Block Same-Game First Basket
-
-**File:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
-
-In `hasCorrelatedProp` (after line 56, before the player-level checks), add:
+Add a flip map identical to the cash_lock version, plus add global blocked categories:
 
 ```text
-// Block multiple first basket props from same game (mutually exclusive)
-if (normalizePropType(candidateProp) === 'player_first_basket' && candidateEventId) {
-  const sameGameFB = existingLegs.filter(
-    l => normalizePropType(l.prop_type) === 'player_first_basket' 
-      && l.event_id === candidateEventId
-  );
-  if (sameGameFB.length > 0) return true;
+const BLOCKED_CATEGORIES_FORCE = new Set([
+  'VOLUME_SCORER',
+  'ROLE_PLAYER_REB',
+]);
+
+const MISPRICED_FLIP_MAP: Record<string, 'over' | 'under'> = {
+  'rebounds': 'under',
+  'threes': 'under',
+  'three_pointers': 'under',
+  'player_rebounds': 'under',
+  'player_threes': 'under',
+  'player_three_pointers': 'under',
+  'steals': 'under',
+  'player_steals': 'under',
+};
+```
+
+Since `force_mispriced_conviction` doesn't use category labels (it works directly with prop types from `mispriced_lines`), the flip map keys will be **prop type names** (normalized) rather than category names.
+
+### Change 2: Apply flip filter during pick scoring (lines 244-296)
+
+In the scoring loop where picks are built from mispriced lines, add a check: if the prop type is in `MISPRICED_FLIP_MAP` and the signal (side) doesn't match the forced direction, skip the pick entirely.
+
+After the sweet spot conflict check (line 259), add:
+
+```text
+// === FLIP MAP GATE: skip poison-side legs ===
+const normProp = normalizePropType(ml.prop_type);
+const forcedSide = MISPRICED_FLIP_MAP[normProp];
+if (forcedSide && ml.signal.toLowerCase() !== forcedSide) {
+  console.log(`[ForceFresh] FLIP BLOCKED: ${ml.player_name} ${ml.prop_type} ${ml.signal} (forced: ${forcedSide})`);
+  continue;
 }
 ```
 
-This applies to all 3 ticket tiers since they all flow through `passesBasicChecks` which calls `hasCorrelatedProp`.
+### Change 3: Block globally-terrible prop types
 
-## Fine-Tuning (Change 2): Smarter Exotic Selection
-
-Currently exotic players get a flat baseline hit rate (first basket = 8%, double-double = 40%). This means a bench player's first basket scores the same as a star's. Add a star-player bonus:
-
-- If the player has a sweet spot entry with high confidence, boost composite score by +10
-- If the player averages 20+ points (from L10 data), boost first basket score by +5 (starters more likely to get first bucket)
-
-**In the scoring loop (around line 604-609)**, after the baseline exotic hit rate assignment:
+In the existing `filteredLines` filter (line 221-235), add a check against the normalized prop type for blocked categories. Since this function doesn't have category labels, we'll block by prop type pattern:
 
 ```text
-// Star player bonus for first basket
-if (prop.prop_type === 'player_first_basket') {
-  const playerL10 = gameLogMap.get(`${nameNorm}|points`);
-  if (playerL10?.l10_avg && playerL10.l10_avg >= 20) {
-    hitRate += 4; // Stars more likely to score first
-  }
-  if (playerL10?.l10_avg && playerL10.l10_avg >= 28) {
-    hitRate += 4; // Elite scorers even more likely
-  }
+// Block prop types tied to 0% hit rate categories
+const normPropCheck = normalizePropType(propType);
+if (normPropCheck === 'double_double' || normPropCheck === 'triple_double') {
+  // These are exotic props with very low base rates -- keep only if risk-confirmed
 }
 ```
 
-## Fine-Tuning (Change 3): L10 Stability Check for Mega Jackpot
+This is lighter since `VOLUME_SCORER` and `ROLE_PLAYER_REB` are category labels from the main engine that don't exist in this function. The prop-type-level flip map covers the same ground.
 
-Currently the Mega Jackpot only checks if L10 avg clears `line * 0.7` -- very loose. Tighten for player props to reduce variance:
+## Summary of Changes
 
-**In mega candidate filter (line 1036-1039)**, change the L10 floor from `0.7` to `0.85`:
+| # | What | Where | Effect |
+|---|------|-------|--------|
+| 1 | Add `MISPRICED_FLIP_MAP` constant | After line 32 | Maps poison prop types to forced winning side |
+| 2 | Apply flip gate in pick scoring | After line 259 | Skips picks where signal conflicts with forced side |
+| 3 | Add logging | Same location | Tracks how many picks get flipped out for monitoring |
 
-```text
-if (bestAvg !== null && bestAvg < p.line * 0.85) return false;
-```
+## Expected Result
 
-This filters out players who are significantly underperforming relative to their line, reducing "hope picks."
-
-## Fine-Tuning (Change 4): Prefer Different Games in Mega Jackpot
-
-The current `MAX_PER_GAME = 2` allows 2 legs from the same game in a lottery ticket. For the Mega Jackpot specifically, correlated outcomes from the same game increase variance. Lower the per-game cap to 1 for the Mega tier by adding a check in the round-robin builder.
-
-**In the mega round-robin loops (lines 1075-1101)**, add before `passesBasicChecks`:
-
-```text
-// Mega Jackpot: prefer game diversity (max 1 per game)
-if (gc.get(c.game) && gc.get(c.game)! >= 1) continue;
-```
-
-## Deployment Steps
-
-1. Apply all 4 changes to `nba-mega-parlay-scanner/index.ts`
-2. Deploy the edge function
-3. Invoke with `force: true` to void today's existing lottery tickets and regenerate with the fixes
-
-## Expected Results
-
-- No more mathematically impossible first-basket combos
-- Star players prioritized for first basket picks over bench players
-- Tighter L10 stability reduces low-quality filler legs
-- Game diversity in Mega Jackpot reduces correlated blow-ups
+- Rebounds-over, threes-over, and steals-over legs get filtered out of `force_mispriced_conviction` parlays
+- Only legs on historically-winning sides survive into the 3-leg builds
+- The 21.5% hit rate should improve significantly as the poison legs are removed
+- No need to disable the strategy -- the edge detection is sound, just the side selection was wrong on specific prop types
 
