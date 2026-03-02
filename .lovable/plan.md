@@ -1,54 +1,82 @@
 
 
-# Fix Lottery Scanner: Force-Regenerate with Date Filter
+# Fix Sweet Spot Pool: Real Lines Only + Prop Type & Name Matching
 
-## Problem
-The 3 existing lottery tickets were generated BEFORE the date filter fix was deployed. The standard ticket still includes **OG Anunoby (Knicks @ Raptors)** -- the Knicks aren't playing today. The scanner currently skips when it sees 3 tickets already exist (`existingLotteryParlays.length >= 3`).
+## Root Cause Analysis
 
-## Verified: Sweet Spots ARE Being Used
-The daily parlays do include sweet spot engine picks:
-- `sweet_spot_core` (3-leg) -- multiple parlays
-- `sweet_spot_plus` (4-leg) -- multiple parlays
-- Other profiles (`force_mispriced_conviction`, `cross_sport`, `grind_stack`) use different engines but that's expected
+Three issues are preventing sweet spot picks from matching to real sportsbook lines:
 
-## Fix: Add `force` Parameter to Lottery Scanner
+### Issue 1: Prop Type Mismatch
+- Sweet spots use: `threes`, `points`, `rebounds`, `assists`
+- Unified props use BOTH: `player_threes` AND `threes`, `player_points` AND `points`
+- The oddsMap key is built as `playerName_propType` -- but when the formats differ, lookups fail
+- Example: Sweet spot has `Moses Moody_threes`, but oddsMap only indexed `Moses Moody_player_threes`
 
-### Change 1: Add force mode to void + regenerate (lines 163-166)
+### Issue 2: Player Name Mismatch
+- Sweet spots: `Kelly Oubre Jr.` (with period)
+- Unified props: `Kelly Oubre Jr` (no period)
+- Exact string matching fails on suffixes like Jr./Jr, III/III., etc.
 
-In `supabase/functions/nba-mega-parlay-scanner/index.ts`, after parsing the request body, add handling for `body.force === true`:
+### Issue 3: Default -110 Fallback Keeps Bad Picks
+- When a sweet spot pick can't find a real line, the code falls back to -110 default odds and keeps the pick
+- User requirement: picks WITHOUT real sportsbook lines should be EXCLUDED, not given fake odds
+- The sweet spot engine's own hit rate is already high-confidence -- the line just needs to be real
 
-- When `force` is true, UPDATE all existing lottery tickets for today to `outcome: 'void'` with a `lesson_learned` note
-- Log how many were voided
-- This allows the scanner to proceed past the "already have 3" check since voided tickets are excluded (`neq('outcome', 'void')`)
+## Current Impact
+- 500 sweet spot picks today, only ~6-8 actually match to real unified_props lines
+- Most high-hit-rate picks (100% L10) are for players NOT playing today -- those correctly have 0 matches
+- Players who ARE playing today still fail to match due to prop type format or name punctuation
+
+## Fix Plan
+
+### Change 1: Normalize oddsMap keys (line 4212-4223)
+
+When building the oddsMap from unified_props, index each entry under BOTH the raw prop_type key AND the normalized form using PROP_TYPE_NORMALIZE. This way `player_threes` creates entries for both `moses moody_player_threes` AND `moses moody_threes`.
+
+Also normalize player names by stripping trailing periods from suffixes (Jr., Sr., III.).
+
+### Change 2: Normalize sweet spot lookup keys (line 4247)
+
+When looking up a sweet spot pick against the oddsMap, also strip trailing periods from the player name so `Kelly Oubre Jr.` matches `Kelly Oubre Jr`.
+
+### Change 3: Require real lines for sweet spot picks (lines 4306-4316)
+
+Replace the current fallback behavior. Instead of assigning -110 default odds when no real line exists, EXCLUDE the pick entirely. The filter at line 4306 should return `false` when `has_real_line` is false.
 
 ```text
-Current (line 163-166):
-  const body = await req.json();
-  replayMode = body?.replay === true;
-  excludePlayers = ...;
-
-New:
-  const body = await req.json();
-  replayMode = body?.replay === true;
-  excludePlayers = ...;
-  if (body?.force === true) {
-    void existing mega_lottery_scanner tickets for today
-    log count voided
+Before:
+  if (!p.has_real_line) {
+    p.americanOdds = -110;
+    p.line_source = 'engine_recommended';
   }
+  return true;
+
+After:
+  if (!p.has_real_line) return false;  // No real line = no parlay leg
+  return true;
 ```
 
-### Change 2: Deploy and invoke
+### Change 4: Relax bonus leg gate for sweet_spot_plus (lines 6084-6088)
 
-After deploying:
-- Call `nba-mega-parlay-scanner` with `{ "force": true }`
-- The date filter fix (already deployed) will exclude non-today games
-- New tickets will only include players from today's 3 games
+Lower the bonus leg quality gate from composite >= 75 / hit rate >= 60% to composite >= 65 / hit rate >= 55%. On thin slates with only 3 games, the current gate blocks all bonus candidates, forcing every sweet_spot_plus to fall back to 3 legs.
 
-## Files Modified
-- `supabase/functions/nba-mega-parlay-scanner/index.ts` (lines 163-166)
+## Technical Details
+
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Changes:**
+- Lines 4212-4223: Add normalized aliases when building oddsMap (dual-index by raw and PROP_TYPE_NORMALIZE'd key, strip trailing periods from player names)
+- Line 4247: Strip trailing periods from player name in sweet spot oddsKey lookup
+- Lines 4306-4316: Change `has_real_line` fallback to exclusion filter
+- Lines 6084-6088: Lower bonus gate thresholds (75 to 65 composite, 60% to 55% hit rate)
+
+**After deploying:**
+- Re-run `category-props-analyzer` to refresh active flags
+- Re-run `bot-generate-daily-parlays` with sweet spot source to generate fresh parlays
 
 ## Expected Result
-- Old tickets with OG Anunoby get voided
-- 3 fresh lottery tickets generated using only today's games
-- Date filter ensures no future-game players leak in
+- Many more sweet spot picks match to real sportsbook lines (prop type + name normalization)
+- Zero picks with fake -110 default odds enter the pool
+- sweet_spot_plus parlays can actually reach 4 legs
+- More sweet_spot_core parlays generated from the larger matched pool
 
