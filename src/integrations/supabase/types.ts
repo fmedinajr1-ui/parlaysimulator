@@ -1365,6 +1365,45 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_lottery_tier_performance: {
+        Row: {
+          avg_odds: number
+          avg_payout: number
+          last_updated: string
+          streak: number
+          tier: string
+          total_lost: number
+          total_profit: number
+          total_tickets: number
+          total_won: number
+          win_rate: number
+        }
+        Insert: {
+          avg_odds?: number
+          avg_payout?: number
+          last_updated?: string
+          streak?: number
+          tier: string
+          total_lost?: number
+          total_profit?: number
+          total_tickets?: number
+          total_won?: number
+          win_rate?: number
+        }
+        Update: {
+          avg_odds?: number
+          avg_payout?: number
+          last_updated?: string
+          streak?: number
+          tier?: string
+          total_lost?: number
+          total_profit?: number
+          total_tickets?: number
+          total_won?: number
+          win_rate?: number
+        }
+        Relationships: []
+      }
       bot_notification_settings: {
         Row: {
           created_at: string | null

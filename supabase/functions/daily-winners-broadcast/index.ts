@@ -121,6 +121,18 @@ Deno.serve(async (req) => {
     // Separate lottery winners for dedicated highlight section
     const lotteryWinners = winnersData.filter(w => w.isLottery);
 
+    // Fetch tier performance context
+    const { data: tierPerf } = await supabase
+      .from('bot_lottery_tier_performance')
+      .select('tier, win_rate, total_tickets');
+
+    const tierContext: Record<string, string> = {};
+    for (const tp of (tierPerf || [])) {
+      if (tp.total_tickets >= 5) {
+        tierContext[tp.tier] = `${tp.win_rate}% over ${tp.total_tickets} tickets`;
+      }
+    }
+
     // Extract key players (most frequent across winners)
     const playerCounts: Record<string, { count: number; prop: string }> = {};
     for (const w of winnersData) {
@@ -145,6 +157,7 @@ Deno.serve(async (req) => {
         totalProfit: Math.round(totalProfit),
         winners: winnersData,
         lotteryWinners,
+        tierContext,
         keyPlayers,
       },
     };
