@@ -1,43 +1,54 @@
 
 
-# Fix Lottery Scanner: Filter to Today's Games Only
+# Fix Lottery Scanner: Force-Regenerate with Date Filter
 
 ## Problem
-The `nba-mega-parlay-scanner` fetches ALL NBA events from The Odds API (line 211) without filtering by date. If the API returns tomorrow's games (e.g., Knicks), players from those games (like OG Anunoby) get included in today's lottery tickets even though they're not playing today.
+The 3 existing lottery tickets were generated BEFORE the date filter fix was deployed. The standard ticket still includes **OG Anunoby (Knicks @ Raptors)** -- the Knicks aren't playing today. The scanner currently skips when it sees 3 tickets already exist (`existingLotteryParlays.length >= 3`).
 
-There is no date/time filtering anywhere in the pipeline -- the scanner trusts whatever the API returns.
+## Verified: Sweet Spots ARE Being Used
+The daily parlays do include sweet spot engine picks:
+- `sweet_spot_core` (3-leg) -- multiple parlays
+- `sweet_spot_plus` (4-leg) -- multiple parlays
+- Other profiles (`force_mispriced_conviction`, `cross_sport`, `grind_stack`) use different engines but that's expected
 
-## Fix
+## Fix: Add `force` Parameter to Lottery Scanner
 
-### Filter events to today's games only (lines 211-215)
+### Change 1: Add force mode to void + regenerate (lines 163-166)
 
-After fetching the events list from The Odds API, filter out any event whose `commence_time` is not today (Eastern Time). The API returns `commence_time` as an ISO timestamp for each event.
+In `supabase/functions/nba-mega-parlay-scanner/index.ts`, after parsing the request body, add handling for `body.force === true`:
+
+- When `force` is true, UPDATE all existing lottery tickets for today to `outcome: 'void'` with a `lesson_learned` note
+- Log how many were voided
+- This allows the scanner to proceed past the "already have 3" check since voided tickets are excluded (`neq('outcome', 'void')`)
 
 ```text
-Before:
-  fetch all events -> use all of them
+Current (line 163-166):
+  const body = await req.json();
+  replayMode = body?.replay === true;
+  excludePlayers = ...;
 
-After:
-  fetch all events -> filter to only events starting today ET -> use those
+New:
+  const body = await req.json();
+  replayMode = body?.replay === true;
+  excludePlayers = ...;
+  if (body?.force === true) {
+    void existing mega_lottery_scanner tickets for today
+    log count voided
+  }
 ```
 
-Add a helper that checks if an event's `commence_time` falls on today's Eastern date. Then filter `eventsList` before processing props:
+### Change 2: Deploy and invoke
 
-1. Parse each event's `commence_time` (ISO string like `2026-03-02T23:00:00Z`)
-2. Convert to Eastern Time
-3. Compare the date portion to `today` (already computed as Eastern date)
-4. Drop events that don't match
+After deploying:
+- Call `nba-mega-parlay-scanner` with `{ "force": true }`
+- The date filter fix (already deployed) will exclude non-today games
+- New tickets will only include players from today's 3 games
 
-This is a ~10 line change in the event processing section (lines 211-215). No other changes needed -- once the events list only contains today's games, all downstream prop fetching, scoring, and ticket building automatically excludes players from non-today games.
+## Files Modified
+- `supabase/functions/nba-mega-parlay-scanner/index.ts` (lines 163-166)
 
-## Technical Details
-
-**File:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
-
-**Changes:**
-- Lines 211-215: After fetching `eventsList`, add a filter that keeps only events where `commence_time` converted to Eastern date matches `today`
-- Add a small helper function to convert ISO timestamp to Eastern date string (reuse the same `Intl.DateTimeFormat` pattern already used in `getEasternDate`)
-- Log how many events were filtered out for transparency
-
-**Expected result:** If the Knicks aren't playing today, their events get dropped, and no Knicks players (including OG Anunoby) appear in any lottery ticket.
+## Expected Result
+- Old tickets with OG Anunoby get voided
+- 3 fresh lottery tickets generated using only today's games
+- Date filter ensures no future-game players leak in
 
