@@ -1,106 +1,137 @@
 
-I investigated why you still don’t see matchup rankings and found a new root cause in the current `/lookup` fallback logic.
 
-## What I confirmed
+# DD/TD Pattern Detector — Pipeline Integration
 
-1. The webhook is receiving your requests and resolving player/team correctly:
-- Logs show entries like:
-  - `player=Jalen Suggs, playerTeam=ORL`
-  - `todayProps count=0`
-  - `opponentAbbrev=null, source=none`
+## Overview
+Add a new edge function that automatically detects Double-Double and Triple-Double candidates from game log patterns, runs as part of the daily pipeline, and broadcasts top candidates to all customers via Telegram.
 
-2. Defensive rank data exists and is current:
-- `team_defense_rankings` has valid rows (example: DET, ORL with current ranks).
+## What Gets Built
 
-3. Schedule data exists for the same date:
-- For ET date `2026-03-01`, `game_bets` has ORL vs DET.
-- But the table contains duplicate rows per game (about 9 rows per game / bookmaker).
-- In that same day window: ~90 rows but only 10 unique games.
+### 1. New Edge Function: `dd-td-pattern-analyzer`
+**File:** `supabase/functions/dd-td-pattern-analyzer/index.ts`
 
-## Why it still fails
+Queries `nba_player_game_logs` and cross-references with tonight's schedule (`game_bets`) to produce ranked DD/TD candidates.
 
-The current fallback query in `handleLookup` can still miss the player’s game because:
+**Per-player pattern analysis (minimum 10 games):**
+- Season DD rate (games with 10+ in 2 stat categories: PTS/REB/AST/STL/BLK)
+- Season TD rate (10+ in 3 categories)
+- Home vs Away DD split
+- L10 DD trend (hot/cold vs season)
+- Per-opponent DD rate (when 2+ matchups exist)
+- Near-miss frequency (8-9 in a secondary category)
+- Minutes context (starter status, avg minutes)
 
-- It fetches raw `game_bets` rows with duplicates and only `.limit(50)`.
-- It does not deduplicate by `game_id`.
-- It uses a UTC calendar-day window (`00:00–23:59`) which can miss late-night ET games that fall after midnight UTC.
-- If no row for the player’s game is present in that limited sample, `opponentAbbrev` stays null and matchup section is skipped.
+**Composite scoring:**
+```text
+DD probability = 0.40 * season_rate
+               + 0.25 * home_away_rate (context-adjusted)
+               + 0.20 * l10_rate
+               + 0.15 * vs_opponent_rate
+```
 
-## Implementation plan
+**Flow:**
+1. Fetch all players with 10+ games from `nba_player_game_logs`
+2. Compute DD/TD stats per player
+3. Cross-reference with tonight's `game_bets` schedule to get opponent + home/away
+4. Score and rank only players with a game tonight
+5. Send top candidates to Telegram via `bot-send-telegram`
 
-### 1) Make schedule window ET-safe (noon-to-noon)
-**File:** `supabase/functions/telegram-webhook/index.ts`
+### 2. New Telegram Notification Type: `dd_td_candidates`
+**File:** `supabase/functions/bot-send-telegram/index.ts`
 
-- Add a helper similar to the scanner function to produce:
-  - `startUtc` = noon ET today
-  - `endUtc` = noon ET tomorrow
-- Use this range for the `game_bets` fallback query.
+Add a new notification type that formats and broadcasts DD/TD candidates to all active customers. The message will look like:
 
-This avoids missing “tonight” games that are on next UTC date.
+```
+🔮 DD/TD Watch — Mar 2
 
-### 2) Fix fallback query to fetch unique games reliably
-In `handleLookup`, replace the current raw/limited fallback query logic with:
+🏀 Double-Double Candidates:
+1. Nikola Jokic vs POR (Home) — 88% | L10: 90%
+2. Karl-Anthony Towns vs BOS (Home) — 64% | L10: 70%
+3. Bam Adebayo vs CLE (Away) — 55% | L10: 50%
 
-- Select: `game_id, home_team, away_team, commence_time`
-- Filter:
-  - `.eq('sport', 'basketball_nba')`
-  - `.gte('commence_time', startUtc)`
-  - `.lt('commence_time', endUtc)`
-- Use a safer row cap (e.g. `limit(500)`) to avoid cutting off valid games.
-- Deduplicate rows in code by `game_id` before team matching.
+🌟 Triple-Double Watch:
+1. Nikola Jokic vs POR — 44% season rate
+2. Jalen Johnson vs MIA — 12% (trending up L10)
 
-Then match `home/away` team abbreviations against `playerTeamAbbrev` to resolve opponent.
+📊 Based on season game logs, home/away splits, opponent history
+```
 
-### 3) Add explicit query error + count logs
-Add logging in `/lookup` for:
-- schedule window values (`startUtc`, `endUtc`)
-- `todayGames` raw row count
-- unique game count after dedupe
-- query error messages (if any)
-- final `opponentAbbrev` + source
+This notification type will bypass quiet hours (same as other customer-facing reports like `double_confirmed_report`).
 
-This will prevent silent failures and make future debugging immediate.
+### 3. Pipeline Integration
+**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
 
-### 4) Ensure both defensive and offensive rankings appear (when opponent resolved)
-Because you asked about defensive/offensive ranking, update matchup rendering to include both from `team_defense_rankings`:
+Add the function call in **Phase 2 (Analysis)**, after the double-confirmed scanner — this is where pattern analysis engines run:
 
-- Defensive: existing lines (`overall`, `opp_points_rank`, `opp_threes_rank`, `opp_rebounds_rank`, `opp_assists_rank`)
-- Offensive: add lines from:
-  - `off_points_rank`
-  - `off_threes_rank`
-  - `off_rebounds_rank`
-  - `off_assists_rank`
-  - `off_pace_rank`
+```text
+Phase 2: ANALYSIS
+  ...existing analyzers...
+  await runFunction('double-confirmed-scanner', {});
+  await runFunction('dd-td-pattern-analyzer', {});   // NEW
+  await runFunction('recurring-winners-detector', {});
+```
 
-If opponent is unresolved, keep explicit fallback text:
-- `No NBA matchup detected for today.`
+### 4. Database Table: `dd_td_predictions`
+Stores nightly predictions for accuracy tracking and settlement.
 
-## Expected outcome
+| Column | Type | Description |
+|--------|------|-------------|
+| id | uuid (PK) | Auto-generated |
+| prediction_date | date | Game date |
+| player_name | text | Player name |
+| prediction_type | text | 'DD' or 'TD' |
+| season_rate | numeric | Overall season % |
+| home_away_rate | numeric | Context-adjusted % |
+| vs_opponent_rate | numeric | Opponent-specific % |
+| l10_rate | numeric | Last 10 games % |
+| composite_score | numeric | Final weighted probability |
+| opponent | text | Tonight's opponent |
+| is_home | boolean | Home game? |
+| near_miss_rate | numeric | How often they get 8-9 in a stat |
+| games_played | integer | Total games this season |
+| outcome | text | 'pending' / 'hit' / 'miss' |
+| created_at | timestamptz | Default now() |
 
-After this change:
-- `/lookup Jalen Suggs` should resolve ORL matchup from schedule and show rankings.
-- `/lookup Jonathan Kuminga` should show matchup only if GSW has a game in ET “today” window; otherwise clear no-matchup message.
-- Late ET games (post-midnight UTC) will still be detected correctly.
-- Rankings section becomes deterministic instead of intermittently missing.
+No RLS needed (backend-only table, no frontend access).
 
-## Technical patch scope
+## Technical Details
 
-Single file only:
-- `supabase/functions/telegram-webhook/index.ts`
+**DD detection logic per game:**
+```typescript
+const cats = [
+  g.points >= 10,
+  g.rebounds >= 10,
+  g.assists >= 10,
+  g.steals >= 10,
+  g.blocks >= 10
+].filter(Boolean).length;
 
-Primary edit areas:
-- Date/window helper near existing date utilities.
-- `/lookup` fallback block around current lines ~3398–3425.
-- Matchup output block around ~3436–3445 to include offensive ranks.
-- Additional logs in lookup path.
+const isDD = cats >= 2;
+const isTD = cats >= 3;
+```
 
-## Validation checklist
+**Near-miss detection (signals "almost DD"):**
+```typescript
+// Count categories at 8-9 when player had exactly 1 category at 10+
+const nearMissCats = [
+  g.points >= 8 && g.points < 10,
+  g.rebounds >= 8 && g.rebounds < 10,
+  g.assists >= 8 && g.assists < 10,
+].filter(Boolean).length;
+```
 
-1. `/lookup Jalen Suggs`
-   - Should show opponent (DET) and defensive/offensive ranking block.
-2. `/lookup LeBron James` (or another player with active props)
-   - Should still work with props path and show rankings.
-3. `/lookup` on a late-night ET game player
-   - Should resolve opponent despite UTC date rollover.
-4. Review logs
-   - Confirm non-zero schedule rows, unique game count, and resolved source (`game_bets` or `props`).
+**Schedule matching:** Uses the same `game_bets` query pattern (noon-ET-to-noon-ET window, deduplication by `game_id`) already established in the `/lookup` fix.
+
+## Files Changed
+
+| File | Action |
+|------|--------|
+| `supabase/functions/dd-td-pattern-analyzer/index.ts` | Create |
+| `supabase/functions/bot-send-telegram/index.ts` | Modify (add `dd_td_candidates` type + formatter) |
+| `supabase/functions/data-pipeline-orchestrator/index.ts` | Modify (add to Phase 2) |
+| Database migration | Create `dd_td_predictions` table |
+
+## Validation
+1. Run the function manually and confirm it returns ranked DD/TD candidates
+2. Verify Telegram message is broadcast to all active customers
+3. Confirm predictions are persisted in `dd_td_predictions` for future settlement tracking
