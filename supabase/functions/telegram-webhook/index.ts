@@ -3399,9 +3399,9 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     const { data: todayGames } = await supabase
       .from('game_bets')
       .select('home_team, away_team')
-      .eq('sport', 'NBA')
-      .gte('event_date', `${today}T00:00:00`)
-      .lte('event_date', `${today}T23:59:59`)
+      .eq('sport', 'basketball_nba')
+      .gte('commence_time', `${today}T00:00:00`)
+      .lte('commence_time', `${today}T23:59:59`)
       .limit(50);
 
     if (todayGames && todayGames.length > 0) {
