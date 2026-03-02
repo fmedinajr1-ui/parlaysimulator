@@ -3356,8 +3356,21 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     return `  ${d}: ${g.points} PTS | ${g.rebounds} REB | ${g.assists} AST | ${g.threes_made} 3PT`;
   });
 
-  // 4. Resolve player team from bdl_player_cache
+  // 4. Resolve opponent and player team
   let playerTeamAbbrev: string | null = null;
+  let opponentAbbrev: string | null = null;
+  let opponentSource = 'none';
+  let defenseSection = '';
+
+  // Priority A0: Direct from today's game log (most reliable — straight from ESPN box score)
+  const todayLog = playerLogs.find(g => String(g.game_date) === today);
+  if (todayLog && todayLog.opponent) {
+    opponentAbbrev = resolveTeamAbbrev(todayLog.opponent);
+    opponentSource = 'game_log';
+    console.log(`[lookup] A0 hit: opponent=${opponentAbbrev} from game_log (opponent=${todayLog.opponent})`);
+  }
+
+  // Resolve player team from bdl_player_cache
   const { data: playerCache } = await supabase
     .from('bdl_player_cache')
     .select('team_name, is_active')
@@ -3366,19 +3379,24 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     .limit(5);
 
   if (playerCache && playerCache.length > 0) {
-    // Prefer active player match
     const active = playerCache.find(p => p.is_active);
     const bestMatch = active || playerCache[0];
     if (bestMatch.team_name) {
       playerTeamAbbrev = resolveTeamAbbrev(bestMatch.team_name);
     }
   }
+
+  // Fallback team resolution from game logs if cache is stale/missing
+  if (!playerTeamAbbrev && playerLogs.length > 0) {
+    // Use the most recent game: if player was home, we can't directly get team name,
+    // but we know opponent. We need a different approach: check if any game log has team info.
+    // For now, log a warning — the A0 path above already resolves opponent without needing team.
+    console.log(`[lookup] bdl_player_cache has no team for ${matchedPlayer}, relying on game_log opponent`);
+  }
+
   console.log(`[lookup] player=${matchedPlayer}, playerTeam=${playerTeamAbbrev}`);
 
   // 5. Find today's props
-  let opponentAbbrev: string | null = null;
-  let opponentSource = 'none';
-  let defenseSection = '';
   const { data: todayProps } = await supabase
     .from('unified_props')
     .select('game_description, prop_type, current_line, over_price, under_price')
@@ -3388,17 +3406,16 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
 
   console.log(`[lookup] todayProps count=${todayProps?.length || 0}`);
 
-  // Priority A: resolve opponent from props game_description
-  if (todayProps && todayProps.length > 0 && todayProps[0].game_description && playerTeamAbbrev) {
+  // Priority A: resolve opponent from props game_description (only if A0 didn't resolve)
+  if (!opponentAbbrev && todayProps && todayProps.length > 0 && todayProps[0].game_description && playerTeamAbbrev) {
     opponentAbbrev = extractOpponentFromGameDesc(todayProps[0].game_description, playerTeamAbbrev);
     if (opponentAbbrev) opponentSource = 'props';
   }
 
   // Priority B: fallback to game_bets schedule (noon-ET-to-noon-ET window)
   if (!opponentAbbrev && playerTeamAbbrev) {
-    // Build ET-safe window: noon ET today → noon ET tomorrow
     const [yr, mo, dy] = today.split('-').map(Number);
-    const noonUtcStart = new Date(Date.UTC(yr, mo - 1, dy, 17, 0, 0)); // noon ET ≈ 17:00 UTC (EST)
+    const noonUtcStart = new Date(Date.UTC(yr, mo - 1, dy, 17, 0, 0));
     const noonUtcEnd = new Date(noonUtcStart.getTime() + 24 * 60 * 60 * 1000);
     const startUtc = noonUtcStart.toISOString();
     const endUtc = noonUtcEnd.toISOString();
@@ -3419,7 +3436,6 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
 
     console.log(`[lookup] game_bets raw rows=${todayGames?.length || 0}`);
 
-    // Deduplicate by game_id
     const seenIds = new Set<string>();
     const uniqueGames = (todayGames || []).filter(g => {
       if (!g.game_id || seenIds.has(g.game_id)) return false;
@@ -3429,23 +3445,38 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
 
     console.log(`[lookup] unique games=${uniqueGames.length}`);
 
+    let gameBetsOpponent: string | null = null;
     for (const game of uniqueGames) {
       const home = resolveTeamAbbrev(game.home_team || '');
       const away = resolveTeamAbbrev(game.away_team || '');
       if (home === playerTeamAbbrev) {
-        opponentAbbrev = away;
-        opponentSource = 'game_bets';
+        gameBetsOpponent = away;
         break;
       }
       if (away === playerTeamAbbrev) {
-        opponentAbbrev = home;
-        opponentSource = 'game_bets';
+        gameBetsOpponent = home;
         break;
+      }
+    }
+
+    if (gameBetsOpponent) {
+      opponentAbbrev = gameBetsOpponent;
+      opponentSource = 'game_bets';
+    }
+  }
+
+  // Cross-validation: if A0 resolved and game_bets also has data, check for mismatch
+  if (opponentSource === 'game_log' && playerTeamAbbrev) {
+    // Quick cross-check against props if available
+    if (todayProps && todayProps.length > 0 && todayProps[0].game_description) {
+      const propsOpponent = extractOpponentFromGameDesc(todayProps[0].game_description, playerTeamAbbrev);
+      if (propsOpponent && propsOpponent !== opponentAbbrev) {
+        console.warn(`[lookup] CROSS-VALIDATION MISMATCH: game_log says ${opponentAbbrev}, props says ${propsOpponent}. Keeping game_log.`);
       }
     }
   }
 
-  console.log(`[lookup] opponentAbbrev=${opponentAbbrev}, source=${opponentSource}`);
+  console.log(`[lookup] FINAL opponentAbbrev=${opponentAbbrev}, source=${opponentSource}`);
 
   // 6. Fetch defense rankings (independent of props)
   if (opponentAbbrev) {
