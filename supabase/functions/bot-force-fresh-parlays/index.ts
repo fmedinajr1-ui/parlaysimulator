@@ -31,6 +31,18 @@ const COMBO_BASES: Record<string, string[]> = {
   ra: ['rebounds', 'assists'],
 };
 
+// === FLIP MAP: force poison prop types to their winning side ===
+const MISPRICED_FLIP_MAP: Record<string, 'over' | 'under'> = {
+  'rebounds': 'under',
+  'threes': 'under',
+  'three_pointers': 'under',
+  'player_rebounds': 'under',
+  'player_threes': 'under',
+  'player_three_pointers': 'under',
+  'steals': 'under',
+  'player_steals': 'under',
+};
+
 function hasCorrelatedProp(
   existingLegs: Array<{ player_name: string; prop_type: string }>,
   candidatePlayer: string,
@@ -224,6 +236,12 @@ serve(async (req) => {
         console.log(`[BlockedPropType] Filtered ${propType} pick for ${ml.player_name}`);
         return false;
       }
+      // Block exotic props with very low base rates
+      const normPropCheck = normalizePropType(propType);
+      if (normPropCheck === 'double_double' || normPropCheck === 'triple_double') {
+        console.log(`[BlockedExotic] Filtered ${propType} pick for ${ml.player_name} (exotic prop)`);
+        return false;
+      }
       // Reject lines below minimum thresholds
       const line = Number(ml.book_line || 0);
       const minLine = MIN_LINES[propType] ?? 0.5;
@@ -245,6 +263,14 @@ serve(async (req) => {
       const key = `${ml.player_name.toLowerCase()}|${normalizePropType(ml.prop_type)}`;
       const riskMatch = riskMap.get(key);
       const riskConfirmed = riskMatch ? riskMatch.side.toLowerCase() === ml.signal.toLowerCase() : false;
+
+      // === FLIP MAP GATE: skip poison-side legs ===
+      const normProp = normalizePropType(ml.prop_type);
+      const forcedSide = MISPRICED_FLIP_MAP[normProp];
+      if (forcedSide && ml.signal.toLowerCase() !== forcedSide) {
+        console.log(`[ForceFresh] 🔄 FLIP BLOCKED: ${ml.player_name} ${ml.prop_type} ${ml.signal} (forced: ${forcedSide})`);
+        continue;
+      }
 
       // === SWEET SPOT CONFLICT CHECK ===
       const ssMatch = sweetSpotLookup.get(key);
