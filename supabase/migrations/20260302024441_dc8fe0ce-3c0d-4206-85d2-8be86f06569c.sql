@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX idx_dd_td_predictions_unique ON public.dd_td_predictions (prediction_date, player_name, prediction_type);

@@ -2384,6 +2384,60 @@ export type Database = {
         }
         Relationships: []
       }
+      dd_td_predictions: {
+        Row: {
+          composite_score: number | null
+          created_at: string
+          games_played: number | null
+          home_away_rate: number | null
+          id: string
+          is_home: boolean | null
+          l10_rate: number | null
+          near_miss_rate: number | null
+          opponent: string | null
+          outcome: string
+          player_name: string
+          prediction_date: string
+          prediction_type: string
+          season_rate: number | null
+          vs_opponent_rate: number | null
+        }
+        Insert: {
+          composite_score?: number | null
+          created_at?: string
+          games_played?: number | null
+          home_away_rate?: number | null
+          id?: string
+          is_home?: boolean | null
+          l10_rate?: number | null
+          near_miss_rate?: number | null
+          opponent?: string | null
+          outcome?: string
+          player_name: string
+          prediction_date: string
+          prediction_type?: string
+          season_rate?: number | null
+          vs_opponent_rate?: number | null
+        }
+        Update: {
+          composite_score?: number | null
+          created_at?: string
+          games_played?: number | null
+          home_away_rate?: number | null
+          id?: string
+          is_home?: boolean | null
+          l10_rate?: number | null
+          near_miss_rate?: number | null
+          opponent?: string | null
+          outcome?: string
+          player_name?: string
+          prediction_date?: string
+          prediction_type?: string
+          season_rate?: number | null
+          vs_opponent_rate?: number | null
+        }
+        Relationships: []
+      }
       device_limits: {
         Row: {
           created_at: string | null

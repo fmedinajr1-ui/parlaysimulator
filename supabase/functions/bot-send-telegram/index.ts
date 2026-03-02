@@ -49,6 +49,7 @@ type NotificationType =
   | 'engine_accuracy_report'
   | 'leg_settled_alert'
   | 'parlay_settled_alert'
+  | 'dd_td_candidates'
   | 'test';
 
 interface NotificationData {
@@ -123,11 +124,49 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatLegSettledAlert(data, dateStr);
     case 'parlay_settled_alert':
       return formatParlaySettledAlert(data, dateStr);
+    case 'dd_td_candidates':
+      return formatDDTDCandidates(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatDDTDCandidates(data: Record<string, any>, dateStr: string): string {
+  const ddCandidates = data.ddCandidates || [];
+  const tdCandidates = data.tdCandidates || [];
+
+  let msg = `🔮 *DD/TD WATCH — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  if (ddCandidates.length > 0) {
+    msg += `🏀 *Double-Double Candidates:*\n`;
+    for (let i = 0; i < Math.min(ddCandidates.length, 10); i++) {
+      const c = ddCandidates[i];
+      const pct = Math.round(c.composite_score * 100);
+      const l10 = Math.round(c.l10_rate * 100);
+      const loc = c.is_home ? 'Home' : 'Away';
+      const nm = c.near_miss_rate > 0.15 ? ' 👀' : '';
+      msg += `${i + 1}. *${c.player_name}* vs ${c.opponent} (${loc}) — ${pct}% | L10: ${l10}%${nm}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (tdCandidates.length > 0) {
+    msg += `🌟 *Triple-Double Watch:*\n`;
+    for (let i = 0; i < Math.min(tdCandidates.length, 5); i++) {
+      const c = tdCandidates[i];
+      const pct = Math.round(c.season_rate * 100);
+      const l10 = Math.round(c.l10_rate * 100);
+      const trend = l10 > pct ? '📈' : l10 < pct ? '📉' : '➡️';
+      msg += `${i + 1}. *${c.player_name}* vs ${c.opponent} — ${pct}% season | L10: ${l10}% ${trend}\n`;
+    }
+    msg += `\n`;
+  }
+
+  msg += `📊 Based on ${data.totalPlayersAnalyzed || '?'} players, ${data.totalGamesLogged || '?'} game logs`;
+  return msg;
 }
 
 function formatExtraPlaysReport(data: Record<string, any>, dateStr: string): string {
@@ -1513,7 +1552,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement') {
+    if (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement' || type === 'dd_td_candidates' || type === 'double_confirmed_report') {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
