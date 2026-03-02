@@ -4209,18 +4209,32 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(rawTeamProps || []).length} raw team bets → ${teamProps.length} deduped (${staleCount} stale removed)`);
 
-  // Build odds map
+  // Build odds map with normalized aliases for prop type + player name matching
   const oddsMap = new Map<string, { overOdds: number; underOdds: number; line: number; sport: string; event_id?: string }>();
+  const stripTrailingPeriods = (name: string) => name.replace(/\.(\s|$)/g, '$1').trim();
   (playerProps || []).forEach((od: any) => {
-    const key = `${od.player_name}_${od.prop_type}`.toLowerCase();
-    oddsMap.set(key, {
+    const rawName = (od.player_name || '').toLowerCase();
+    const normName = stripTrailingPeriods(rawName);
+    const rawProp = (od.prop_type || '').toLowerCase();
+    const normProp = PROP_TYPE_NORMALIZE[rawProp] || rawProp;
+    const entry = {
       overOdds: od.over_price || -110,
       underOdds: od.under_price || -110,
       line: od.current_line,
       sport: od.sport,
       event_id: od.event_id || undefined,
-    });
+    };
+    // Index under raw key
+    oddsMap.set(`${rawName}_${rawProp}`, entry);
+    // Index under normalized prop type (e.g., player_threes → threes)
+    if (normProp !== rawProp) oddsMap.set(`${rawName}_${normProp}`, entry);
+    // Index under normalized name (strip trailing periods: Jr. → Jr)
+    if (normName !== rawName) {
+      oddsMap.set(`${normName}_${rawProp}`, entry);
+      if (normProp !== rawProp) oddsMap.set(`${normName}_${normProp}`, entry);
+    }
   });
+  console.log(`[OddsMap] Built ${oddsMap.size} entries (with normalized aliases)`);
 
   // === PLAYER TEAM MAP: Resolve team_name for each player from most recent game log ===
   // category_sweet_spots has no team_name column — we must look it up from nba_player_game_logs
@@ -4244,8 +4258,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     // Resolve oddsKey FIRST — used for both line override and odds lookup
-    const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-    const oddsEntry = oddsMap.get(oddsKey);
+    const rawOddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
+    const normOddsKey = stripTrailingPeriods(rawOddsKey);
+    const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey);
 
     // CRITICAL: Use the real sportsbook line from unified_props when available.
     // category_sweet_spots stores recommended_line=0.5 for THREE_POINT_SHOOTER (historical sweet spot)
@@ -4307,11 +4322,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     // ALL picks in this array are sweet spots (from category_sweet_spots) — engine already vetted them
     // Only block if hit-rate blocked category
     if (blockedByHitRate.has(p.category)) return false;
-    // Use default odds if no real line available — sweet spots have their own recommended_line
-    if (!p.has_real_line) {
-      p.americanOdds = -110;
-      p.line_source = 'engine_recommended';
-    }
+    // REQUIRE real sportsbook line — no fake -110 defaults
+    if (!p.has_real_line) return false;
     return true;
   });
 
@@ -6081,11 +6093,11 @@ async function generateTierParlays(
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
         if (usedNames.has((p.player_name || '').toLowerCase())) return false;
-        // Quality gate: composite >= 75 and hit rate >= 60%
-        if (p.compositeScore < 75) return false;
+        // Quality gate: composite >= 65 and hit rate >= 55% (relaxed for thin slates)
+        if (p.compositeScore < 65) return false;
         const hr = (p as any).l10_hit_rate || p.confidence_score || 0;
         const hrPct = hr <= 1 ? hr * 100 : hr;
-        if (hrPct < 60) return false;
+        if (hrPct < 55) return false;
         return true;
       }).sort((a, b) => b.compositeScore - a.compositeScore);
 
