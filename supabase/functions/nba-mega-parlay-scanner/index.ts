@@ -176,11 +176,13 @@ serve(async (req) => {
     let replayMode = false;
     let excludePlayers: string[] = [];
     let forceMode = false;
+    let voidTier: string | null = null;
     try {
       const body = await req.json();
       replayMode = body?.replay === true;
       excludePlayers = Array.isArray(body?.exclude_players) ? body.exclude_players : [];
       forceMode = body?.force === true;
+      voidTier = body?.void_tier ?? null;
     } catch { /* no body */ }
 
     if (!apiKey) throw new Error('THE_ODDS_API_KEY not configured');
@@ -189,15 +191,20 @@ serve(async (req) => {
 
     // === FORCE MODE: void existing lottery tickets so they get regenerated ===
     if (forceMode) {
-      const { data: voidedRows, error: voidErr } = await supabase
+      let voidQuery = supabase
         .from('bot_daily_parlays')
-        .update({ outcome: 'void', lesson_learned: 'force_regen_lottery_date_filter_fix' })
+        .update({ outcome: 'void', lesson_learned: 'force_regen_lottery' })
         .eq('parlay_date', today)
         .eq('strategy_name', 'mega_lottery_scanner')
-        .neq('outcome', 'void')
-        .select('id');
+        .neq('outcome', 'void');
+      
+      if (voidTier) {
+        voidQuery = voidQuery.eq('tier', voidTier);
+      }
+      
+      const { data: voidedRows, error: voidErr } = await voidQuery.select('id');
       const voidCount = voidedRows?.length ?? 0;
-      console.log(`[MegaParlay] FORCE MODE: voided ${voidCount} existing lottery tickets for ${today}${voidErr ? ` (error: ${voidErr.message})` : ''}`);
+      console.log(`[MegaParlay] FORCE MODE: voided ${voidCount} existing lottery tickets for ${today}${voidTier ? ` (tier: ${voidTier})` : ' (all tiers)'}${voidErr ? ` (error: ${voidErr.message})` : ''}`);
     }
 
     // === AUTO-DEDUP: Query existing lottery parlays for today ===
