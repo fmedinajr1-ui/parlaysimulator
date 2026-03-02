@@ -19,6 +19,8 @@ const NBA_PROP_TO_STAT: Record<string, string> = {
   'player_points_rebounds': 'pr',
   'player_points_assists': 'pa',
   'player_rebounds_assists': 'ra',
+  'player_double_double': 'double_double',
+  'player_triple_double': 'triple_double',
 };
 
 // MLB prop-to-stat mapping
@@ -40,6 +42,16 @@ function getNbaStatValue(log: any, statKey: string): number | null {
     case 'pr': return (log.points || 0) + (log.rebounds || 0);
     case 'pa': return (log.points || 0) + (log.assists || 0);
     case 'ra': return (log.rebounds || 0) + (log.assists || 0);
+    case 'double_double': {
+      const cats = [log.points || 0, log.rebounds || 0, log.assists || 0, log.steals || 0, log.blocks || 0];
+      const tens = cats.filter(v => v >= 10).length;
+      return tens >= 2 ? 1 : 0;
+    }
+    case 'triple_double': {
+      const cats = [log.points || 0, log.rebounds || 0, log.assists || 0, log.steals || 0, log.blocks || 0];
+      const tens = cats.filter(v => v >= 10).length;
+      return tens >= 3 ? 1 : 0;
+    }
     default: return log[statKey] ?? null;
   }
 }
@@ -132,6 +144,8 @@ const PROP_TO_DEFENSE_CATEGORY: Record<string, string> = {
   'player_points_rebounds': 'overall',
   'player_points_assists': 'overall',
   'player_rebounds_assists': 'overall',
+  'player_double_double': 'overall',
+  'player_triple_double': 'overall',
 };
 
 // Defense-adjusted multiplier based on opponent rank and signal direction
@@ -293,6 +307,50 @@ serve(async (req) => {
         const line = Number(prop.current_line);
         if (line === 0) continue;
 
+        // ===== BINARY PROP HANDLING (DD/TD) =====
+        const isBinaryProp = statKey === 'double_double' || statKey === 'triple_double';
+        
+        if (isBinaryProp) {
+          // For DD/TD: avgL10 = frequency (0-1), line = 0.5, implied prob = ~50%
+          const frequency = avgL10; // e.g. 0.7 = 70% of games
+          const impliedProb = 0.5; // 0.5 line implies ~50%
+          let edgePct = (frequency - impliedProb) * 100; // e.g. 70% - 50% = 20%
+          edgePct = Math.max(-75, Math.min(75, edgePct));
+          if (Math.abs(edgePct) < 3) continue;
+
+          const signal = edgePct > 0 ? 'OVER' : 'UNDER';
+          const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
+
+          const resultEntry = {
+            player_name: prop.player_name,
+            prop_type: prop.prop_type,
+            book_line: line,
+            player_avg_l10: Math.round(frequency * 100) / 100,
+            player_avg_l20: Math.round(avgL20 * 100) / 100,
+            edge_pct: Math.round(edgePct * 100) / 100,
+            signal,
+            shooting_context: {
+              frequency_l10: Math.round(frequency * 1000) / 10,
+              frequency_l20: Math.round(avgL20 * 1000) / 10,
+              frequency_l5: Math.round(avgL5 * 1000) / 10,
+              games_analyzed: l20Values.length,
+              is_binary: true,
+            },
+            confidence_tier: confidenceTier,
+            analysis_date: today,
+            sport: 'basketball_nba',
+          };
+
+          if (Math.abs(edgePct) >= 15) {
+            mispricedResults.push(resultEntry);
+          } else {
+            correctPricedResults.push(resultEntry);
+          }
+          console.log(`[Mispriced] ${prop.player_name} ${prop.prop_type}: freq=${Math.round(frequency*100)}% edge=${Math.round(edgePct)}% → ${signal}`);
+          continue;
+        }
+
+        // ===== CONTINUOUS PROP HANDLING =====
         // Minimum line filter: skip phantom/alternate lines not available on standard books
         const MIN_LINES: Record<string, number> = {
           player_points: 5.5, player_rebounds: 2.5, player_assists: 1.5,
@@ -513,11 +571,112 @@ serve(async (req) => {
       }
     }
 
+    // ==================== TEAM MONEYLINE MISPRICING ====================
+    try {
+      const { data: moneylineOdds } = await supabase
+        .from('team_moneyline_odds')
+        .select('*')
+        .eq('analysis_date', today);
+
+      const { data: teamScores } = await supabase
+        .from('game_bets')
+        .select('home_team, away_team, composite_score, sport, commence_time')
+        .eq('bet_type', 'moneyline')
+        .eq('is_active', true)
+        .gt('commence_time', now.toISOString());
+
+      if (moneylineOdds && moneylineOdds.length > 0 && teamScores && teamScores.length > 0) {
+        // Build composite score map: team_lower → score
+        const teamScoreMap = new Map<string, { score: number; sport: string }>();
+        for (const ts of teamScores) {
+          if (ts.composite_score) {
+            if (ts.home_team) teamScoreMap.set(ts.home_team.toLowerCase(), { score: Number(ts.composite_score), sport: ts.sport || '' });
+            if (ts.away_team) teamScoreMap.set(ts.away_team.toLowerCase(), { score: Number(ts.composite_score), sport: ts.sport || '' });
+          }
+        }
+
+        // Group moneyline odds by event to get consensus
+        const eventOdds = new Map<string, any[]>();
+        for (const odds of moneylineOdds) {
+          if (!eventOdds.has(odds.event_id)) eventOdds.set(odds.event_id, []);
+          eventOdds.get(odds.event_id)!.push(odds);
+        }
+
+        const mlProcessedTeams = new Set<string>();
+        for (const [eventId, oddsArr] of eventOdds) {
+          const first = oddsArr[0];
+          // Check both home and away teams
+          for (const side of ['home', 'away'] as const) {
+            const teamName = side === 'home' ? first.home_team : first.away_team;
+            if (!teamName) continue;
+            const teamKey = `ml_${teamName.toLowerCase()}`;
+            if (mlProcessedTeams.has(teamKey)) continue;
+
+            const scoreEntry = teamScoreMap.get(teamName.toLowerCase());
+            if (!scoreEntry || scoreEntry.score < 60) continue;
+
+            // Average implied probability across bookmakers
+            const probKey = side === 'home' ? 'implied_home_prob' : 'implied_away_prob';
+            const oddsKey = side === 'home' ? 'home_odds' : 'away_odds';
+            const impliedProbs = oddsArr.map(o => Number(o[probKey])).filter(p => p > 0);
+            if (impliedProbs.length === 0) continue;
+            const avgImpliedProb = impliedProbs.reduce((a, b) => a + b, 0) / impliedProbs.length;
+
+            // Model probability estimate based on composite score (rough mapping)
+            // Score 60 = ~55%, Score 70 = ~62%, Score 80 = ~70%, Score 90 = ~80%
+            const modelProb = Math.min(0.85, 0.35 + (scoreEntry.score / 100) * 0.5);
+
+            const edgePct = (modelProb - avgImpliedProb) * 100;
+            if (Math.abs(edgePct) < 3) continue;
+
+            const avgOdds = oddsArr.map(o => Number(o[oddsKey])).filter(v => v !== 0);
+            const consensusOdds = avgOdds.length > 0 ? Math.round(avgOdds.reduce((a, b) => a + b, 0) / avgOdds.length) : 0;
+
+            mlProcessedTeams.add(teamKey);
+            const signal = edgePct > 0 ? 'OVER' : 'UNDER'; // OVER = model says team wins more often
+            const confidenceTier = getConfidenceTier(edgePct, 20);
+
+            const mlEntry = {
+              player_name: teamName,
+              prop_type: 'team_moneyline',
+              book_line: consensusOdds,
+              player_avg_l10: Math.round(modelProb * 100) / 100,
+              player_avg_l20: Math.round(avgImpliedProb * 100) / 100,
+              edge_pct: Math.round(edgePct * 100) / 100,
+              signal,
+              shooting_context: {
+                composite_score: scoreEntry.score,
+                implied_prob: Math.round(avgImpliedProb * 1000) / 10,
+                model_prob: Math.round(modelProb * 1000) / 10,
+                bookmakers_sampled: impliedProbs.length,
+                is_moneyline: true,
+              },
+              confidence_tier: confidenceTier,
+              analysis_date: today,
+              sport: first.sport || scoreEntry.sport,
+            };
+
+            if (Math.abs(edgePct) >= 15) {
+              mispricedResults.push(mlEntry);
+            } else {
+              correctPricedResults.push(mlEntry);
+            }
+            console.log(`[Mispriced] ML ${teamName}: model=${Math.round(modelProb*100)}% vs market=${Math.round(avgImpliedProb*100)}% → edge=${Math.round(edgePct)}%`);
+          }
+        }
+      }
+      console.log(`[Mispriced] Moneyline analysis complete`);
+    } catch (mlErr) {
+      console.error(`[Mispriced] Moneyline analysis error:`, mlErr);
+    }
+
     const nbaCount = mispricedResults.filter(r => r.sport === 'basketball_nba').length;
     const mlbCount = mispricedResults.filter(r => r.sport === 'baseball_mlb').length;
+    const mlCount = mispricedResults.filter(r => r.prop_type === 'team_moneyline').length;
     const correctNbaCount = correctPricedResults.filter(r => r.sport === 'basketball_nba').length;
     const correctMlbCount = correctPricedResults.filter(r => r.sport === 'baseball_mlb').length;
-    console.log(`[Mispriced] MLB: ${mlbCount} mispriced | Total: ${mispricedResults.length} | Correct-priced: ${correctPricedResults.length} (NBA: ${correctNbaCount}, MLB: ${correctMlbCount})`);
+    const correctMlCount = correctPricedResults.filter(r => r.prop_type === 'team_moneyline').length;
+    console.log(`[Mispriced] MLB: ${mlbCount} mispriced | ML: ${mlCount} mispriced | Total: ${mispricedResults.length} | Correct-priced: ${correctPricedResults.length} (NBA: ${correctNbaCount}, MLB: ${correctMlbCount}, ML: ${correctMlCount})`);
 
     // ==================== PERSIST CORRECT-PRICED RESULTS ====================
     if (correctPricedResults.length > 0) {

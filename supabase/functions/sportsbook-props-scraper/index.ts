@@ -53,6 +53,10 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'pts+rebs': 'player_points_rebounds',
   'pts+asts': 'player_points_assists',
   'rebs+asts': 'player_rebounds_assists',
+  'double doubles': 'player_double_double',
+  'double double': 'player_double_double',
+  'triple doubles': 'player_triple_double',
+  'triple double': 'player_triple_double',
 };
 
 function normalizeStatType(raw: string): string {
