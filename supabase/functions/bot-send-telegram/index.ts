@@ -1242,15 +1242,33 @@ function formatMegaLotteryV2(data: Record<string, any>, dateStr: string): string
 }
 
 function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
-  const { date, rating, winnerCount, totalProfit, winners, keyPlayers } = data;
+  const { date, rating, winnerCount, totalProfit, winners, lotteryWinners, keyPlayers } = data;
   const displayDate = date || dateStr;
 
   let msg = `🏆 YESTERDAY'S WINS — ${displayDate}\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Lottery Hits section (shown first when present)
+  if (lotteryWinners && Array.isArray(lotteryWinners) && lotteryWinners.length > 0) {
+    msg += `🎰 LOTTERY HITS! 🎰\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    for (const lw of lotteryWinners) {
+      const profit = lw.payout - lw.stake;
+      msg += `🎟️ ${(lw.tier || 'STANDARD').toUpperCase()} (${lw.odds}) — $${lw.stake.toLocaleString()} stake → $${lw.payout.toLocaleString()} payout (+$${profit.toLocaleString()})\n`;
+      for (const leg of (lw.legs || [])) {
+        const actualStr = leg.actual !== null && leg.actual !== undefined ? ` (actual: ${leg.actual})` : '';
+        msg += `  ✅ ${leg.player} ${leg.prop} ${leg.side}${leg.line}${actualStr}\n`;
+      }
+      msg += `\n`;
+    }
+  }
+
   msg += `${rating || 'Solid Day'} — ${winnerCount || 0} Winner${winnerCount !== 1 ? 's' : ''}\n\n`;
 
+  // Regular winners (exclude lottery since they're shown above)
   if (winners && Array.isArray(winners)) {
-    for (const w of winners) {
+    const regularWinners = winners.filter((w: any) => !w.isLottery);
+    for (const w of regularWinners) {
       msg += `#${w.rank} | ${w.tier} | ${w.odds} | $${w.profit?.toLocaleString()} profit\n`;
       for (const leg of (w.legs || [])) {
         const actualStr = leg.actual !== null && leg.actual !== undefined ? ` (actual: ${leg.actual})` : '';

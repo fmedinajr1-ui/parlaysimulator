@@ -68,6 +68,12 @@ Deno.serve(async (req) => {
       .eq('outcome', 'won')
       .order('profit_loss', { ascending: false });
 
+    // Helper for payout calculation
+    function calculatePayout(odds: number, stake: number): number {
+      const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+      return Math.round(stake * decimalOdds);
+    }
+
     if (error) throw error;
 
     if (!winners || winners.length === 0) {
@@ -88,12 +94,19 @@ Deno.serve(async (req) => {
     const winnersData = winners.slice(0, 10).map((w, idx) => {
       const legs = Array.isArray(w.legs) ? w.legs : [];
       const tierLabel = (w.tier || 'exploration').charAt(0).toUpperCase() + (w.tier || 'exploration').slice(1);
+      const isLottery = w.strategy_name === 'mega_lottery_scanner';
+      const odds = Math.round(w.expected_odds || 0);
+      const stake = Math.round(w.simulated_stake || 0);
+      const payout = calculatePayout(odds, stake);
       
       return {
         rank: idx + 1,
         tier: tierLabel,
-        odds: formatOdds(Math.round(w.expected_odds || 0)),
+        odds: formatOdds(odds),
         profit: Math.round(w.profit_loss || 0),
+        isLottery,
+        stake,
+        payout,
         legs: legs.map((leg: any) => ({
           player: leg.player_name || leg.player || 'Unknown',
           prop: (leg.prop_type || '').toUpperCase().replace('PLAYER_', '').replace(/_/g, ' '),
@@ -104,6 +117,9 @@ Deno.serve(async (req) => {
         })),
       };
     });
+
+    // Separate lottery winners for dedicated highlight section
+    const lotteryWinners = winnersData.filter(w => w.isLottery);
 
     // Extract key players (most frequent across winners)
     const playerCounts: Record<string, { count: number; prop: string }> = {};
@@ -128,6 +144,7 @@ Deno.serve(async (req) => {
         winnerCount: winners.length,
         totalProfit: Math.round(totalProfit),
         winners: winnersData,
+        lotteryWinners,
         keyPlayers,
       },
     };
