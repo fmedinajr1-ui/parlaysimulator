@@ -1,45 +1,132 @@
 
 
-# Fix Opponent Resolution in /lookup Command
+# Sweet Spot-First Parlay Architecture
 
 ## Problem
-The `/lookup` command shows "vs SAC" (Sacramento Kings) instead of "vs SAS" (San Antonio Spurs) for Knicks players. The root cause is fragile opponent resolution that depends on `bdl_player_cache` team data (which can be stale after trades) and then fuzzy-matching through `game_bets`.
+The parlay engine generates execution parlays from many different pools (mispriced, whale, team, etc.), but the Sweet Spot engine has an ~80% hit rate and is underutilized. Most execution parlays end up being `force_mispriced_conviction` or other mispriced-heavy strategies that don't leverage the Sweet Spot accuracy.
 
-## Solution
-Add a more reliable opponent resolution chain using the `nba_player_game_logs.opponent` column, which comes directly from ESPN box scores.
+## Strategy
+Make Sweet Spots the mandatory foundation of every execution parlay: **all 3 core legs must come from `category_sweet_spots`**. If any pick also passes thresholds on other engines (mispriced edge, risk engine, whale signal), it can earn a 4th bonus leg. Force-fresh mispriced-only generation becomes a conditional fallback, not a default.
 
 ## Changes
 
-**Single file:** `supabase/functions/telegram-webhook/index.ts`
+### 1. Add `sweet_spot_core` strategy profiles to execution tier
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-### 1. Add game log opponent as the highest-priority source (new Priority A0)
-Before checking `unified_props` or `game_bets`, check if today's game log already exists for the player. If the game has started or finished, the `opponent` field gives us the exact opponent with zero ambiguity.
+Replace the majority of execution profiles with new `sweet_spot_core` profiles that:
+- Draw exclusively from `pool.sweetSpots` (which is `enrichedSweetSpots` from `category_sweet_spots`)
+- Require 3 legs minimum, all from sweet spots
+- Sort by `hit_rate` primarily (the 80% accuracy signal)
+- Minimum L10 hit rate of 70% for execution tier
 
+New profiles (replacing ~20 mispriced/generic slots):
 ```
-// Priority A0: Direct from today's game log (most reliable)
-const todayLog = playerLogs.find(g => String(g.game_date) === today);
-if (todayLog && todayLog.opponent) {
-  opponentAbbrev = resolveTeamAbbrev(todayLog.opponent);
-  opponentSource = 'game_log';
+{ legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' }
+{ legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' }
+{ legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' }
+{ legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' }
+// shuffle variants for diversity
+{ legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' }
+```
+
+### 2. Add `sweet_spot_plus` 4-leg strategy with bonus engine leg
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+New strategy `sweet_spot_plus` that builds 4-leg parlays:
+- Legs 1-3: Top sweet spots (same as `sweet_spot_core`)
+- Leg 4: Best available pick from ANY other engine (mispriced, whale, risk, double-confirmed) that:
+  - Is NOT already in the parlay (different player)
+  - Passes a quality threshold (composite score >= 75, hit rate >= 60%)
+  - Has cross-engine confirmation (appears in at least 1 other engine besides sweet spots)
+
+This ensures the 4th leg adds value without diluting the sweet spot foundation.
+
+### 3. Wire up `sweet_spot_core` and `sweet_spot_plus` in the candidate selection logic
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+In the strategy routing section (around line 5980-6384), add handling for the new strategies:
+
+```typescript
+const isSweetSpotCoreProfile = profile.strategy === 'sweet_spot_core';
+const isSweetSpotPlusProfile = profile.strategy === 'sweet_spot_plus';
+
+if (isSweetSpotCoreProfile) {
+  // Draw ONLY from sweet spots, filter by hit rate, sort by hit_rate or composite
+  candidatePicks = pool.sweetSpots.filter(p => {
+    if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+    if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+    const hr = p.l10_hit_rate || p.confidence_score || 0;
+    const hrPct = hr <= 1 ? hr * 100 : hr;
+    return hrPct >= (profile.minHitRate || 70);
+  }).sort((a, b) => {
+    if (profile.sortBy === 'hit_rate') {
+      const aHr = a.l10_hit_rate || 0;
+      const bHr = b.l10_hit_rate || 0;
+      return bHr - aHr;
+    }
+    return b.compositeScore - a.compositeScore;
+  });
 }
 ```
 
-### 2. Add player team resolution from game logs as fallback
-If `bdl_player_cache` has stale data, resolve the player's team by checking who they played at home vs away in recent game logs. The `is_home` field combined with the opponent tells us the player's team indirectly.
+For `sweet_spot_plus`, build the first 3 legs from sweet spots, then append bonus candidates from other pools (mispriced, whale, multi-engine) with quality gates.
 
-### 3. Add defensive logging for the full resolution chain
-Log which source resolved the opponent (`game_log`, `props`, `game_bets`) so future mismatches are easier to debug.
+### 4. Make `bot-force-fresh-parlays` conditional in the orchestrator
+**File:** `supabase/functions/data-pipeline-orchestrator/index.ts`
 
-### 4. Add cross-validation
-If both game_log and game_bets resolve an opponent, and they disagree, prefer the game_log source and log a warning.
+Change force-fresh from unconditional to conditional:
+- After `bot-quality-regen-loop` completes, count execution-tier parlays
+- Only run `bot-force-fresh-parlays` if execution count is below 8
+- In mid-day regen (Phase 3B), also make force-fresh conditional
 
-## Technical Details
+```typescript
+// Count execution parlays after quality loop
+const { count: execCount } = await supabase
+  .from('bot_daily_parlays')
+  .select('*', { count: 'exact', head: true })
+  .eq('parlay_date', today)
+  .eq('outcome', 'pending')
+  .not('strategy_name', 'ilike', '%force_mispriced%');
 
-| Step | Source | Reliability | When Available |
-|------|--------|-------------|----------------|
-| A0 (new) | `nba_player_game_logs.opponent` for today | Highest | After game starts |
-| A | `unified_props.game_description` | High | When props are scraped |
-| B | `game_bets` schedule | Medium | Pre-game |
+if ((execCount || 0) < 8) {
+  console.log(`[Pipeline] Only ${execCount} non-mispriced parlays, running force-fresh as fallback`);
+  await runFunction('bot-force-fresh-parlays', {});
+} else {
+  console.log(`[Pipeline] ${execCount} quality parlays generated, skipping force-fresh`);
+}
+```
 
-The game log approach also fixes the related issue where `bdl_player_cache` may have a stale team for traded players, since we no longer depend on knowing the player's team to find their opponent -- we get it directly.
+### 5. Add Sweet Spot alignment gate to `bot-force-fresh-parlays`
+**File:** `supabase/functions/bot-force-fresh-parlays/index.ts`
+
+For any force-fresh parlays that do get generated, add a Sweet Spot cross-check:
+- Fetch today's sweet spot lookup (player + prop + side)
+- Reject any leg that conflicts with a sweet spot recommendation (opposite side)
+- Prefer legs that ARE in the sweet spot pool
+- Log alignment rate
+
+### 6. Rebalance execution tier profile counts
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+Current execution profiles (~70 slots): heavy on mispriced_edge, god_mode_lock, golden_lock, etc.
+
+New distribution:
+| Strategy | Slots | Purpose |
+|----------|-------|---------|
+| sweet_spot_core | 20 | Primary 3-leg sweet spot parlays |
+| sweet_spot_plus | 8 | 4-leg with bonus engine leg |
+| double_confirmed_conviction | 6 | Keep (already sweet spot + mispriced cross) |
+| triple_confirmed_conviction | 2 | Keep (highest conviction) |
+| god_mode_lock | 6 | Keep (intersection of all signals) |
+| role_stacked_3leg | 2 | Keep |
+| mixed_conviction_stack | 3 | Keep |
+| Other (cash_lock, boosted, golden, team, etc.) | ~20 | Reduced from current |
+
+This ensures 28 of ~67 execution profiles (42%) are sweet-spot-first, up from 0% currently.
+
+## Summary
+- All 3 core legs in most execution parlays will come from the 80%-accurate Sweet Spot engine
+- Optional 4th leg from other engines only if it passes quality gates
+- Force-fresh mispriced becomes a fallback, not the default
+- No sweet spot accuracy is wasted on the bench
 
