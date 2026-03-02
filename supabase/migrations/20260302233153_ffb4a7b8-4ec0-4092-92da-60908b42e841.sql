@@ -1,0 +1,1 @@
+ALTER TABLE public.bot_access_passwords ADD COLUMN email text;
