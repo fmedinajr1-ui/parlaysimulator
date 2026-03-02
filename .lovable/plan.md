@@ -1,58 +1,43 @@
 
 
-# Fix Sweet Spot Pipeline: Only Filter by Today's Games + Injuries
+# Fix Lottery Scanner: Filter to Today's Games Only
 
 ## Problem
-Three gates are crushing the sweet spot pool from ~500 down to ~17:
+The `nba-mega-parlay-scanner` fetches ALL NBA events from The Odds API (line 211) without filtering by date. If the API returns tomorrow's games (e.g., Knicks), players from those games (like OG Anunoby) get included in today's lottery tickets even though they're not playing today.
 
-1. **AvailabilityGate (line 4545-4570)**: Requires player to exist in `unified_props` with active sportsbook lines today. This is the #1 killer -- only ~23 of 500 sweet spot players have active lines in `unified_props`. But the sweet spot engine already knows who's playing today.
+There is no date/time filtering anywhere in the pipeline -- the scanner trusts whatever the API returns.
 
-2. **`canUsePickGlobally` 70% hit-rate gate (line 3036-3039)**: Hard-coded `if (hitRatePercent < 70) return false`. This blocks sweet spot picks that the engine already vetted. The engine's own confidence is the quality gate.
+## Fix
 
-3. **GameSchedule gate (line 4594-4613)**: Filters by `teamsPlayingToday` set -- this one is actually fine and should stay, since it checks if the team is actually playing today.
+### Filter events to today's games only (lines 211-215)
 
-## What Should Stay (per your direction)
-- **Game schedule gate** (line 4594): Keep -- confirms team is playing today
-- **Injury blocklist** (line 4556): Keep -- blocks OUT/DOUBTFUL players
-- **GTD/Questionable penalty** (line 4562): Keep -- reduces confidence but doesn't hard-block
+After fetching the events list from The Odds API, filter out any event whose `commence_time` is not today (Eastern Time). The API returns `commence_time` as an ISO timestamp for each event.
 
-## What Gets Removed/Changed
+```text
+Before:
+  fetch all events -> use all of them
 
-### Change 1: Replace `activePlayersToday` gate with team-based check for sweet spots
-**Lines 4545-4570**
+After:
+  fetch all events -> filter to only events starting today ET -> use those
+```
 
-Currently: If player is NOT in `unified_props` active lines, hard-block them.
-New behavior: For sweet spots, only check:
-- Is their team playing today? (use `teamsPlayingToday` set)
-- Are they on the injury blocklist (OUT/DOUBTFUL)?
+Add a helper that checks if an event's `commence_time` falls on today's Eastern date. Then filter `eventsList` before processing props:
 
-Remove the `activePlayersToday.has(normalizedName)` check entirely for sweet spot picks. The game schedule gate at line 4594 already validates the team is playing.
+1. Parse each event's `commence_time` (ISO string like `2026-03-02T23:00:00Z`)
+2. Convert to Eastern Time
+3. Compare the date portion to `today` (already computed as Eastern date)
+4. Drop events that don't match
 
-### Change 2: Bypass the 70% hit-rate gate in `canUsePickGlobally` for sweet spot profiles
-**Lines 3036-3039**
+This is a ~10 line change in the event processing section (lines 211-215). No other changes needed -- once the events list only contains today's games, all downstream prop fetching, scoring, and ticket building automatically excludes players from non-today games.
 
-Currently: Hard `if (hitRatePercent < 70) return false` for ALL picks.
-New behavior: Accept a `profileType` parameter. For `sweet_spot_core` and `sweet_spot_plus` profiles, skip this gate entirely (the engine already pre-vetted quality). For other profiles, keep the 70% gate.
+## Technical Details
 
-Update the call site at line 6612 to pass profile type info.
+**File:** `supabase/functions/nba-mega-parlay-scanner/index.ts`
 
-### Change 3: Lower `sweet_spot_core` profile `minHitRate` to 55%
-**Lines 879-898 (profile definitions)**
+**Changes:**
+- Lines 211-215: After fetching `eventsList`, add a filter that keeps only events where `commence_time` converted to Eastern date matches `today`
+- Add a small helper function to convert ISO timestamp to Eastern date string (reuse the same `Intl.DateTimeFormat` pattern already used in `getEasternDate`)
+- Log how many events were filtered out for transparency
 
-Change all `sweet_spot_core` entries from `minHitRate: 65/70/75` to `minHitRate: 55`. The engine's own L10 hit rates are the real quality signal.
-
-## Expected Result
-- Pool goes from ~17 to ~300+ sweet spot picks (all players on teams playing today, minus injuries)
-- `canUsePickGlobally` stops redundantly blocking engine-vetted picks
-- The parlay builder works with the full pool, sorted by confidence, and smart-stacks by environment cluster
-- Volume target: 30-40 unique parlays from the expanded pool
-
-## File Modified
-- `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-## Sections touched
-- Lines 3014-3055: `canUsePickGlobally` -- add profile-aware bypass for 70% gate
-- Lines 4545-4587: AvailabilityGate -- remove `activePlayersToday` requirement, keep only injury + team schedule
-- Lines 879-898: Sweet spot profile definitions -- lower `minHitRate` to 55
-- Line 6612: Call site for `canUsePickGlobally` -- pass profile context
+**Expected result:** If the Knicks aren't playing today, their events get dropped, and no Knicks players (including OG Anunoby) appear in any lottery ticket.
 
