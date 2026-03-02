@@ -964,7 +964,18 @@ const BLOCKED_CATEGORIES = new Set([
   'UNDER_TOTAL',     // 18.2% hit rate
   'ML_FAVORITE',     // 20% hit rate
   'BIG_ASSIST_OVER', // 10.3% hit rate
+  'VOLUME_SCORER',   // 0% hit rate across ALL strategies
+  'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
 ]);
+
+// ============= CASH LOCK FLIP MAP (force historically-losing categories to winning side) =============
+const CASH_LOCK_FLIP_MAP: Record<string, 'over' | 'under'> = {
+  'REBOUNDS': 'under',             // 0% as over -> force under
+  'THREES': 'under',              // 0% as over -> force under
+  'THREE_POINT_SHOOTER': 'under', // 34.5% as over -> force under
+  'HIGH_ASSIST': 'over',          // 0% as under, 62.5% as over -> force over
+  'MID_SCORER_UNDER': 'over',    // 25% as under -> force over
+};
 
 // ============= BLOCKED PROP TYPES (static fallback + dynamic from bot_prop_type_performance) =============
 const STATIC_BLOCKED_PROP_TYPES = new Set([
@@ -3011,10 +3022,22 @@ function normalizePropTypeCategory(propType: string): string {
   return 'other';
 }
 
-function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig, currentTier?: TierName, isSweetSpotProfile?: boolean): boolean {
+function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig, currentTier?: TierName, isSweetSpotProfile?: boolean, strategyName?: string): boolean {
   // === BLOCKED CATEGORIES GATE ===
   if (BLOCKED_CATEGORIES.has(pick.category)) {
     return false;
+  }
+
+  // === CASH LOCK FLIP GATE ===
+  // For cash_lock strategies, force historically-losing categories to their winning side
+  if (strategyName && strategyName.includes('cash_lock')) {
+    const forcedSide = CASH_LOCK_FLIP_MAP[pick.category];
+    if (forcedSide && 'recommended_side' in pick) {
+      const pickSide = (pick as EnrichedPick).recommended_side?.toLowerCase();
+      if (pickSide && pickSide !== forcedSide) {
+        return false; // Skip pick - wrong side for this category in cash_lock
+      }
+    }
   }
   
   let key: string;
@@ -6603,7 +6626,7 @@ async function generateTierParlays(
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
-      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile)) continue;
+      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile, profile.strategy)) continue;
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
       const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
