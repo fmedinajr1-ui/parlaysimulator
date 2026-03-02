@@ -3350,6 +3350,69 @@ const PROP_TO_STAT: Record<string, string> = {
   'player_ast': 'assists',
 };
 
+// === /sweetspots — Show today's active sweet spot picks with live lines ===
+async function handleSweetSpots(chatId: string): Promise<string> {
+  try {
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+
+    // Get today's active sweet spots
+    const { data: spots, error: ssErr } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, prop_type, recommended_side, actual_line, recommended_line, l10_hit_rate, confidence_score, category')
+      .eq('analysis_date', today)
+      .eq('is_active', true)
+      .gte('l10_hit_rate', 0.70)
+      .gte('confidence_score', 0.75)
+      .order('l10_hit_rate', { ascending: false })
+      .limit(50);
+
+    if (ssErr) return `❌ Error fetching sweet spots: ${ssErr.message}`;
+    if (!spots || spots.length === 0) return '📭 No active sweet spot picks found for today.';
+
+    // Get active unified props to cross-reference
+    const { data: activeProps } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type')
+      .eq('is_active', true);
+
+    const activePropSet = new Set(
+      (activeProps || []).map(p => `${p.player_name?.toLowerCase().trim()}|${p.prop_type?.toLowerCase().trim()}`)
+    );
+
+    // Filter to only picks with active lines
+    const withActiveLines = spots.filter(s => {
+      const key = `${s.player_name?.toLowerCase().trim()}|${s.prop_type?.toLowerCase().trim()}`;
+      return activePropSet.has(key);
+    });
+
+    if (withActiveLines.length === 0) {
+      return `📊 *Sweet Spots* (${today})\n\n${spots.length} picks analyzed but none have active lines right now.`;
+    }
+
+    // Format output
+    const lines: string[] = [`🎯 *Sweet Spots* — ${today}\n${withActiveLines.length} picks with active lines:\n`];
+
+    for (const s of withActiveLines.slice(0, 25)) {
+      const line = s.actual_line ?? s.recommended_line ?? '?';
+      const hitPct = s.l10_hit_rate ? `${(s.l10_hit_rate * 100).toFixed(0)}%` : '?';
+      const conf = s.confidence_score ? `${(s.confidence_score * 10).toFixed(1)}` : '?';
+      const side = (s.recommended_side || '?').toUpperCase();
+      const cat = s.category || '';
+      lines.push(`• *${s.player_name}* ${s.prop_type.replace(/_/g, ' ')} ${side} ${line}\n  💎${hitPct} L10 | 🎯${conf} conf | ${cat}`);
+    }
+
+    if (withActiveLines.length > 25) {
+      lines.push(`\n_...and ${withActiveLines.length - 25} more_`);
+    }
+
+    return lines.join('\n');
+  } catch (err) {
+    return `❌ Sweet spots error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function handleLookup(chatId: string, playerName: string): Promise<string> {
   if (!playerName.trim()) {
     return '❓ Usage: /lookup [player name]\n\nExample: /lookup LeBron James';
@@ -3653,6 +3716,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /fixleg [id] [idx] [field] [val] — Fix leg
 /deletesweep — Void sweep parlays
 /deletebystrat [name] — Void by strategy
+/sweetspots — Active sweet spot picks
 /fixpipeline — Run full pipeline
 /regenparlay — Void & regenerate
 /fixprops — Refresh props + regen
@@ -3708,6 +3772,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/extras") { return await handleExtras(chatId); }
     if (cmd === "/engineaccuracy") { return await handleEngineAccuracy(chatId); }
     if (cmd === "/lookup") { return await handleLookup(chatId, args); }
+    if (cmd === "/sweetspots") { return await handleSweetSpots(chatId); }
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {

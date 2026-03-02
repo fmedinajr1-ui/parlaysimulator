@@ -3028,9 +3028,9 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     return false;
   }
 
-  // === CASH LOCK FLIP GATE ===
-  // For cash_lock strategies, force historically-losing categories to their winning side
-  if (strategyName && strategyName.includes('cash_lock')) {
+  // === GLOBAL FLIP GATE ===
+  // Force historically-losing categories to their winning side for ALL strategies
+  if (strategyName) {
     const forcedSide = CASH_LOCK_FLIP_MAP[pick.category];
     if (forcedSide && 'recommended_side' in pick) {
       const pickSide = (pick as EnrichedPick).recommended_side?.toLowerCase();
