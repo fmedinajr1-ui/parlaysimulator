@@ -58,6 +58,19 @@ async function tryPasswordAuth(chatId: string, password: string, username?: stri
     is_active: true,
   }, { onConflict: "chat_id" });
 
+  // Map email to chat_id for auto-deactivation on subscription cancellation
+  if (pwRecord.email) {
+    await supabase.from("email_subscribers").upsert({
+      email: pwRecord.email,
+      telegram_chat_id: chatId,
+      telegram_username: username || null,
+      is_subscribed: true,
+      source: "bot_activation",
+      subscribed_at: new Date().toISOString(),
+    }, { onConflict: "email" });
+    await logActivity("email_mapped", `Mapped email ${pwRecord.email} to chat_id ${chatId}`, { chatId, email: pwRecord.email });
+  }
+
   await logActivity("user_authorized", `User ${chatId} authorized via password`, { chatId, username });
 
   return { success: true, message: `✅ *Access Granted!*\n\nWelcome to Parlay Farm! 🌾\n\nUse /start to see your commands.` };
