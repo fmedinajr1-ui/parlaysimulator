@@ -1,38 +1,59 @@
 
 
-# Fix: `defenseDetailMap is not defined` Runtime Error
+# Smart Stack Sweet Spot Parlays — Remove Redundant Filters
 
 ## Problem
-The function `calculateTeamCompositeScore` (line 1919) references `defenseDetailMap` at line 2020, but this variable is NOT passed as a parameter. It only exists inside the `serve()` handler scope (created at line 4063). Since the function is defined outside that scope, it throws `ReferenceError: defenseDetailMap is not defined` at runtime when scoring team total bets.
+The sweet spot engine already applies rigorous quality filtering (L10 hit rates, archetype scoring, confidence thresholds). But the parlay generator applies **3 additional layers of filtering** that kill the pool from ~500 picks down to ~6:
 
-This crash prevents the quality regen loop from generating any parlays, which is why the system falls back to `bot-force-fresh-parlays` and produces 0 Sweet Spot core parlays.
+1. **`has_real_line` gate** (line 4290): Requires every sweet spot pick to have a matching entry in `unified_props` (live sportsbook odds). Only ~13 of 500 sweet spots match. This is the **primary bottleneck**.
+2. **Redundant hit rate gates** in profiles (65-75%): The sweet spot engine already filters for quality — re-filtering is unnecessary.
+3. **Odds range filter** (-200 to +200): Drops picks with heavy juice that may still be valid sweet spots.
 
-## Fix
+## Solution
 
-### Step 1: Add `defenseDetailMap` parameter to `calculateTeamCompositeScore`
+### Step 1: Remove `has_real_line` requirement for sweet spot picks
 
-Add a new parameter `defenseDetailMap` (type `Map<string, any>`) to the function signature at line 1919, after the existing `defenseMap` parameter.
+In the enrichment filter at line 4290, stop requiring `has_real_line` for sweet spot picks. The sweet spot engine provides its own `recommended_line` and `actual_line` — these are sufficient. Use default odds (-110/-110) when sportsbook odds aren't available.
 
-### Step 2: Update all 7 call sites to pass `defenseDetailMap`
+This alone should expand the pool from ~13 to ~200+ picks.
 
-There are 7 places where `calculateTeamCompositeScore` is called (lines 4650, 4664, 4680, 4750, 4794, 4808, and possibly the WNBA routing). Each call needs `defenseDetailMap` added as an argument. All call sites are inside `buildCandidatePool()` where `defenseDetailMap` is already in scope.
+### Step 2: Lower the `sweet_spot_core` profile hit rate to 55%
 
-### Step 3: Deploy the fixed function
+Since the sweet spot engine already filters for quality (most picks are 60-100% L10), drop the profile `minHitRate` to 55% to stop redundantly filtering. The engine's own confidence scoring is the quality gate.
 
-Deploy `bot-generate-daily-parlays` so the fix takes effect.
+Update the 20 `sweet_spot_core` profile entries (lines 879-898) to use `minHitRate: 55` instead of 65/70/75. Keep sort variations (hit_rate, composite, shuffle) for diversity.
 
-### Step 4: Re-trigger generation pipeline
+### Step 3: Increase sweet spot profile count for volume
 
-Invoke the quality regen loop and generation pipeline to produce today's Sweet Spot core parlays now that the crash is fixed.
+Add more `sweet_spot_core` profiles with different sort strategies to generate 30-40+ unique parlays from the larger pool. Add profiles sorted by:
+- `env_cluster` (SHOOTOUT-first, then GRIND-first) for smart stacking
+- `composite` with different sport combos
+
+Target: 30 sweet_spot_core + 10 sweet_spot_plus profiles.
+
+### Step 4: Boost environment cluster coherence scoring for smart stacking
+
+The cluster stacking logic already exists (SHOOTOUT/GRIND classification + coherence bonuses). Increase the coherence bonus from +12 to +20 for all-same-cluster parlays, and increase the mixed-cluster penalty from -15 to -25. This makes the parlay builder strongly prefer environment-coherent stacks without filtering — it just ranks them higher.
+
+### Step 5: Add a "sweet spot direct" assembly path
+
+Add a new assembly mode for `sweet_spot_core` profiles that:
+1. Groups all sweet spot picks by environment cluster (SHOOTOUT / GRIND / NEUTRAL)
+2. Builds parlays from within each cluster first (smart stacking)
+3. Falls back to cross-cluster only if within-cluster combinations are exhausted
+4. Skips the global exposure cap for sweet spot picks (they're pre-vetted)
+
+This ensures the 200+ pick pool generates 30-40 unique, environment-coherent parlays.
 
 ## Technical Details
 
-**Root cause:** `defenseDetailMap` is a local variable inside `buildCandidatePool()` (line 4063). The function `calculateTeamCompositeScore` is declared at module scope (line 1919) so it cannot access that variable without it being passed as a parameter.
+**File modified:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**Affected code path:** Only NBA/WNBA team total bets hit the `defenseDetailMap.get()` call at line 2020. Spread and moneyline bets use `defenseMap` (which IS passed correctly), so those work fine.
+**Key changes:**
+- Line 4290: Split filter — sweet spots keep `has_real_line` as optional (use recommended_line fallback)
+- Lines 879-898: Lower `minHitRate` from 65-75 to 55 across all sweet_spot_core profiles
+- Add ~15 new sweet_spot_core profiles with env_cluster sorting
+- Lines 1541-1544: Boost coherence scoring multipliers
+- Lines 5981-6001: Add cluster-grouped assembly logic for sweet_spot_core
 
-**Files modified:** 1 edge function
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- add parameter + update call sites
-
-**Post-fix:** Re-run `bot-quality-regen-loop` and verify parlays generate successfully.
-
+**Expected outcome:** Pool expands from ~6 to ~200+ sweet spot picks, generating 30-40 environment-coherent parlays daily.
