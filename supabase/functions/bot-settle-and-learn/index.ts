@@ -731,6 +731,12 @@ Deno.serve(async (req) => {
       odds: number;
       legs: Array<{ player_name: string; prop_type: string; line: number; side: string; outcome: string; actual_value: number | null }>;
     }> = [];
+    // Collect settled leg outcomes for batched Telegram alert
+    const settledLegAlerts: Array<{
+      player_name: string; prop_type: string; line: number; side: string;
+      outcome: string; actual_value: number | null;
+      strategy: string; parlay_odds: number; legs_settled: number; total_legs: number;
+    }> = [];
 
     for (const parlay of allParlaysToProcess) {
       const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
@@ -868,6 +874,22 @@ Deno.serve(async (req) => {
         const legHit = legOutcome === 'hit' ? true : legOutcome === 'miss' ? false : undefined;
         updatedLegs.push({ ...leg, outcome: legOutcome, actual_value: actualValue ?? undefined, hit: legHit });
 
+        // Collect settled legs for batched Telegram alert
+        if (legOutcome === 'hit' || legOutcome === 'miss') {
+          settledLegAlerts.push({
+            player_name: leg.player_name,
+            prop_type: leg.prop_type,
+            line: leg.line,
+            side: leg.side,
+            outcome: legOutcome,
+            actual_value: actualValue,
+            strategy: parlay.strategy_name || 'Unknown',
+            parlay_odds: parlay.expected_odds || 0,
+            legs_settled: legsHit + legsMissed,
+            total_legs: legs.length - legsVoided,
+          });
+        }
+
         if ((legOutcome === 'hit' || legOutcome === 'miss') && leg.category) {
           const existing = categoryUpdates.get(leg.category) || { hits: 0, misses: 0 };
           if (legOutcome === 'hit') existing.hits++;
@@ -942,11 +964,58 @@ Deno.serve(async (req) => {
           settled_at: outcome !== 'pending' ? new Date().toISOString() : null,
         })
         .eq('id', parlay.id);
+
+      // Fire per-parlay Telegram alert (non-blocking)
+      if (outcome === 'won' || outcome === 'lost') {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const dateKey = parlay.parlay_date;
+        const dayStats = pnlByDate.get(dateKey) || { won: 0, lost: 0, profitLoss: 0 };
+        fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'parlay_settled_alert',
+            data: {
+              outcome,
+              strategy: parlay.strategy_name || 'Unknown',
+              odds: parlay.expected_odds || 0,
+              stake: parlay.simulated_stake || 500,
+              profitLoss,
+              dailyWon: dayStats.won,
+              dailyLost: dayStats.lost,
+              dailyPnl: dayStats.profitLoss,
+              legs: updatedLegs.map(l => ({
+                player_name: l.player_name,
+                prop_type: l.prop_type,
+                line: l.line,
+                side: l.side,
+                outcome: l.outcome || 'pending',
+                actual_value: l.actual_value ?? null,
+              })),
+            },
+          }),
+        }).catch(e => console.warn('[Bot Settle] Parlay alert failed:', e));
+      }
     }
 
     console.log(`[Bot Settle] Settled ${parlaysSettled} parlays (${parlaysWon}W ${parlaysLost}L)`);
     console.log(`[Bot Settle] P&L by date: ${JSON.stringify(Object.fromEntries(pnlByDate))}`);
 
+    // Fire batched leg settlement alert (non-blocking)
+    if (settledLegAlerts.length > 0) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'leg_settled_alert',
+          data: { legs: settledLegAlerts },
+        }),
+      }).catch(e => console.warn('[Bot Settle] Leg alert failed:', e));
+      console.log(`[Bot Settle] Sent batched leg alert for ${settledLegAlerts.length} legs`);
+    }
     // 4b. Update player performance and prop type performance tables
     try {
       // Collect all settled leg outcomes across all parlays

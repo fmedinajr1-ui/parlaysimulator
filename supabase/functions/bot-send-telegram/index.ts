@@ -47,6 +47,8 @@ type NotificationType =
   | 'parlay_approval_request'
   | 'extra_plays_report'
   | 'engine_accuracy_report'
+  | 'leg_settled_alert'
+  | 'parlay_settled_alert'
   | 'test';
 
 interface NotificationData {
@@ -117,6 +119,10 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatExtraPlaysReport(data, dateStr);
     case 'engine_accuracy_report':
       return formatEngineAccuracyReport(data, dateStr);
+    case 'leg_settled_alert':
+      return formatLegSettledAlert(data, dateStr);
+    case 'parlay_settled_alert':
+      return formatParlaySettledAlert(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -1245,6 +1251,89 @@ function formatOdds(odds?: number): string {
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
+function formatLegSettledAlert(data: Record<string, any>, dateStr: string): string {
+  const legs = data.legs || [];
+  if (legs.length === 0) return '';
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA', player_points: 'PTS',
+    player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
+  };
+
+  let msg = `📊 *LEG UPDATES — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  for (const leg of legs.slice(0, 30)) {
+    const icon = leg.outcome === 'hit' ? '✅' : '❌';
+    const label = leg.outcome === 'hit' ? 'HIT' : 'MISS';
+    const prop = propLabels[(leg.prop_type || '').toLowerCase()] || (leg.prop_type || '').toUpperCase();
+    const side = (leg.side || 'over').charAt(0).toUpperCase();
+    const actual = leg.actual_value !== null && leg.actual_value !== undefined ? ` — Actual: ${leg.actual_value}` : '';
+    msg += `${icon} *LEG ${label}*\n`;
+    msg += `${leg.player_name} ${prop} ${side}${leg.line}${actual}\n`;
+    if (leg.strategy) {
+      const oddsStr = leg.parlay_odds ? ` (${formatOdds(leg.parlay_odds)})` : '';
+      const progress = leg.legs_settled && leg.total_legs ? ` | ${leg.legs_settled}/${leg.total_legs} settled` : '';
+      msg += `Parlay: ${leg.strategy.replace(/_/g, ' ')}${oddsStr}${progress}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (legs.length > 30) {
+    msg += `... and ${legs.length - 30} more legs\n`;
+  }
+
+  return msg;
+}
+
+function formatParlaySettledAlert(data: Record<string, any>, dateStr: string): string {
+  const { outcome, strategy, odds, legs, stake, profitLoss, dailyWon, dailyLost, dailyPnl } = data;
+
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', pra: 'PRA', player_points: 'PTS',
+    player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
+  };
+
+  const won = outcome === 'won';
+  const icon = won ? '🟢' : '🔴';
+  const label = won ? 'WON' : 'LOST';
+  const oddsStr = formatOdds(odds);
+  const strat = (strategy || 'unknown').replace(/_/g, ' ');
+
+  let msg = `${icon} *PARLAY ${label}* — ${strat} (${oddsStr})\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+
+  const parlayLegs = legs || [];
+  for (let i = 0; i < parlayLegs.length; i++) {
+    const leg = parlayLegs[i];
+    const prop = propLabels[(leg.prop_type || '').toLowerCase()] || (leg.prop_type || '').toUpperCase();
+    const side = (leg.side || 'over').charAt(0).toUpperCase();
+    const actualStr = leg.actual_value !== null && leg.actual_value !== undefined ? `${leg.actual_value}` : '?';
+    const legIcon = leg.outcome === 'hit' ? '✅' : leg.outcome === 'miss' ? '❌' : '⏳';
+    msg += `${i + 1}. ${leg.player_name} ${prop} ${side}${leg.line} — ${actualStr} ${legIcon}\n`;
+  }
+
+  msg += `\n`;
+  const stakeVal = stake || 500;
+  if (won) {
+    const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+    const payout = Math.round(stakeVal * decimalOdds);
+    const profit = payout - stakeVal;
+    msg += `💰 Stake: $${stakeVal} | Payout: $${payout.toLocaleString()} | Profit: +$${profit.toLocaleString()}\n`;
+  } else {
+    msg += `💸 Stake: $${stakeVal} | Lost: -$${stakeVal}\n`;
+  }
+
+  if (dailyWon !== undefined && dailyLost !== undefined) {
+    const pnlStr = (dailyPnl || 0) >= 0 ? `+$${Math.round(dailyPnl || 0).toLocaleString()}` : `-$${Math.abs(Math.round(dailyPnl || 0)).toLocaleString()}`;
+    msg += `📊 Today: ${dailyWon}W-${dailyLost}L | ${pnlStr}\n`;
+  }
+
+  return msg;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -1286,7 +1375,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner' && type !== 'mega_lottery_v2' && type !== 'daily_winners_recap') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner' && type !== 'mega_lottery_v2' && type !== 'daily_winners_recap' && type !== 'leg_settled_alert' && type !== 'parlay_settled_alert') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
