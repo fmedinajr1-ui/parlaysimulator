@@ -884,8 +884,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      // ============= MIXED CONVICTION STACK (mispriced + correct-priced + conviction) =============
+      { legs: 3, strategy: 'mixed_conviction_stack', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'mixed_conviction_stack', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'mixed_conviction_stack', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
       // ============= STANDARD EXECUTION STRATEGIES =============
-      // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 2.0 },
@@ -4052,7 +4055,16 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .order('edge_pct', { ascending: false })
     .limit(100);
 
-  console.log(`[Bot] Fetched ${(rawMispricedLines || []).length} mispriced lines for ${targetDate}`);
+  // 5b. Correct-priced lines — stable anchor picks (3-14% edge)
+  const { data: rawCorrectPricedLines } = await supabase
+    .from('correct_priced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, defense_adjusted_avg, opponent_defense_rank')
+    .eq('analysis_date', targetDate)
+    .gte('edge_pct', 3)
+    .order('edge_pct', { ascending: false })
+    .limit(100);
+
+  console.log(`[Bot] Fetched ${(rawMispricedLines || []).length} mispriced lines, ${(rawCorrectPricedLines || []).length} correct-priced lines for ${targetDate}`);
 
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult, nhlStatsResult, baseballStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
@@ -5600,6 +5612,78 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] 🔥 Double-confirmed picks: ${doubleConfirmedCount} out of ${enrichedMispricedPicks.length} mispriced lines`);
 
+  // === STEP 2b: ENRICH CORRECT-PRICED LINES (3-14% edge, stable anchors) ===
+  const enrichedCorrectPricedPicks: EnrichedPick[] = (rawCorrectPricedLines || []).map((cl: any) => {
+    const side = (cl.signal || 'OVER').toLowerCase();
+    const category = mapPropTypeToCategory(cl.prop_type);
+    const absEdge = cl.edge_pct || 0;
+
+    // Cross-reference with sweet spots for real hit rate
+    const normProp = PROP_TYPE_NORMALIZE[(cl.prop_type || '').toLowerCase()] || (cl.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+    const sweetSpotKey = `${(cl.player_name || '').toLowerCase().trim()}|${normProp}`;
+    const sweetSpotMatch = sweetSpotLookup.get(sweetSpotKey);
+
+    let realHitRate = absEdge >= 10 ? 0.60 : 0.55;
+    let matchedCategory = category;
+    
+    if (sweetSpotMatch && sweetSpotMatch.l10_hit_rate > 0) {
+      const sweetSpotSide = (sweetSpotMatch.recommended_side || '').toLowerCase().trim();
+      if (sweetSpotSide === side) {
+        realHitRate = sweetSpotMatch.l10_hit_rate / 100;
+        if (realHitRate > 1) realHitRate = sweetSpotMatch.l10_hit_rate / 100;
+        if (realHitRate <= 0.01) realHitRate = sweetSpotMatch.l10_hit_rate;
+        matchedCategory = sweetSpotMatch.category || category;
+      }
+    }
+
+    const compositeScore = Math.min(85, 40 + (absEdge * 0.5) + (realHitRate * 30));
+
+    const oddsKey = `${cl.player_name}_${cl.prop_type}`.toLowerCase();
+    const oddsEntry = oddsMap.get(oddsKey);
+    const americanOdds = side === 'over'
+      ? (oddsEntry?.overOdds || -110)
+      : (oddsEntry?.underOdds || -110);
+
+    return {
+      id: `correct_priced_${cl.player_name}_${cl.prop_type}`,
+      player_name: cl.player_name,
+      prop_type: cl.prop_type,
+      line: cl.book_line || 0,
+      recommended_side: side,
+      category: matchedCategory,
+      confidence_score: realHitRate,
+      l10_hit_rate: realHitRate,
+      projected_value: cl.defense_adjusted_avg || cl.player_avg_l10 || 0,
+      sport: cl.sport || 'basketball_nba',
+      americanOdds,
+      oddsValueScore: calculateOddsValueScore(americanOdds, realHitRate),
+      compositeScore,
+      has_real_line: true,
+      line_source: 'correct_priced',
+      isDoubleConfirmed: false,
+      isTripleConfirmed: false,
+      engineCount: 0,
+      archetype: '',
+      edge_pct: cl.edge_pct || 0,
+    } as EnrichedPick;
+  }).filter((p: any) => Math.abs(p.line) > 0 && p.player_name && (p.edge_pct >= 3));
+
+  // Filter correct-priced picks through same gates as mispriced
+  const filteredCorrectPricedPicks = enrichedCorrectPricedPicks.filter(pick => {
+    const propType = (pick.prop_type || '').toLowerCase();
+    const normProp = PROP_TYPE_NORMALIZE[propType] || propType;
+    if (isPropTypeBlocked(propType) || isPropTypeBlocked(normProp)) return false;
+    const playerBonus = getPlayerBonus(pick.player_name, normProp);
+    if (playerBonus <= -999) return false;
+    if (activePlayersToday.size > 0) {
+      const normalizedName = pick.player_name.toLowerCase().trim();
+      return activePlayersToday.has(normalizedName) && !blocklist.has(normalizedName);
+    }
+    return !blocklist.has(pick.player_name.toLowerCase().trim());
+  });
+
+  console.log(`[Bot] ✅ Correct-priced picks: ${filteredCorrectPricedPicks.length} (from ${enrichedCorrectPricedPicks.length} raw)`);
+
   // Filter blocked prop types from mispriced picks (steals, blocks, etc.)
   const preBlockedMispricedCount = enrichedMispricedPicks.length;
   const unblockedMispricedPicks = enrichedMispricedPicks.filter(pick => {
@@ -5724,7 +5808,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const multiEnginePicks = filteredMispricedPicks
     .filter((p: any) => (p.engineCount || 0) >= 3)
     .sort((a: any, b: any) => (b.compositeScore || 0) - (a.compositeScore || 0));
-  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks, ${doubleConfirmedPicks.length} double-confirmed, ${tripleConfirmedPicks.length} triple-confirmed, ${multiEnginePicks.length} multi-engine(3+)`);
+  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks, ${filteredMispricedPicks.length} mispriced picks, ${filteredCorrectPricedPicks.length} correct-priced, ${doubleConfirmedPicks.length} double-confirmed, ${tripleConfirmedPicks.length} triple-confirmed, ${multiEnginePicks.length} multi-engine(3+)`);
 
   return {
     playerPicks: enrichedSweetSpots,
@@ -5732,10 +5816,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     sweetSpots: enrichedSweetSpots,
     whalePicks: enrichedWhalePicks,
     mispricedPicks: filteredMispricedPicks,
+    correctPricedPicks: filteredCorrectPricedPicks,
     doubleConfirmedPicks,
     tripleConfirmedPicks,
     multiEnginePicks,
-    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length,
+    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length + filteredMispricedPicks.length + filteredCorrectPricedPicks.length,
     goldenCategories,
     defenseDetailMap,
   };
@@ -5866,7 +5951,7 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction']);
+    const PRIORITY_STRATEGIES = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack']);
     
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
@@ -5906,8 +5991,78 @@ async function generateTierParlays(
     const isGodModeLockProfile = profile.strategy === 'god_mode_lock';
     // ROLE-STACKED 3-LEG: intentional SAFE/BALANCED/GREAT_ODDS stacking
     const isRoleStackedProfile = profile.strategy === 'role_stacked_3leg';
+    // MIXED CONVICTION STACK: mispriced + correct-priced + conviction
+    const isMixedConvictionProfile = profile.strategy === 'mixed_conviction_stack';
     
-    if (isRoleStackedProfile) {
+    if (isMixedConvictionProfile) {
+      // === MIXED CONVICTION STACK: 3-leg with one from each conviction source ===
+      const usedNames = new Set<string>();
+      const minHitRate = (profile.minHitRate || 65) / 100;
+
+      // LEG 1: Best conviction leg (triple > double confirmed, highest composite)
+      const convictionPool = [
+        ...(pool.tripleConfirmedPicks || []),
+        ...(pool.doubleConfirmedPicks || []),
+      ].filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        return true;
+      }).sort((a, b) => {
+        // Triple > double, then by composite
+        const aTriple = (a as any).isTripleConfirmed ? 1 : 0;
+        const bTriple = (b as any).isTripleConfirmed ? 1 : 0;
+        if (bTriple !== aTriple) return bTriple - aTriple;
+        return b.compositeScore - a.compositeScore;
+      });
+
+      const convictionLeg = convictionPool[0];
+      if (convictionLeg) usedNames.add((convictionLeg.player_name || '').toLowerCase());
+
+      // LEG 2: Best mispriced leg (different player, highest edge)
+      const mispricedPool = [...(pool.mispricedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          if (usedNames.has((p.player_name || '').toLowerCase())) return false;
+          return true;
+        })
+        .sort((a: any, b: any) => (b.edge_pct || 0) - (a.edge_pct || 0));
+
+      const mispricedLeg = mispricedPool[0];
+      if (mispricedLeg) usedNames.add((mispricedLeg.player_name || '').toLowerCase());
+
+      // LEG 3: Best correct-priced leg (different player, highest hit rate, 65%+ required)
+      const correctPricedPool = [...(pool.correctPricedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          if (usedNames.has((p.player_name || '').toLowerCase())) return false;
+          const hr = p.l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          return hrPct >= (minHitRate * 100);
+        })
+        .sort((a, b) => {
+          const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+          const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+          return bHr - aHr;
+        });
+
+      const correctPricedLeg = correctPricedPool[0];
+
+      const mixedLegs = [convictionLeg, mispricedLeg, correctPricedLeg].filter(Boolean);
+      if (mixedLegs.length < 3) {
+        console.log(`[Bot] ${tier}/mixed_conviction_stack: insufficient picks (conviction=${convictionLeg ? 1 : 0}, mispriced=${mispricedLeg ? 1 : 0}, correct_priced=${correctPricedLeg ? 1 : 0}), skipping`);
+        continue;
+      }
+
+      // Tag leg roles
+      (mixedLegs[0] as any)._legRole = 'conviction';
+      (mixedLegs[1] as any)._legRole = 'mispriced';
+      (mixedLegs[2] as any)._legRole = 'correct_priced';
+
+      candidatePicks = mixedLegs as EnrichedPick[];
+      console.log(`[Bot] ${tier}/mixed_conviction_stack: conviction=${convictionLeg!.player_name}, mispriced=${mispricedLeg!.player_name}, correct_priced=${correctPricedLeg!.player_name}`);
+    } else if (isRoleStackedProfile) {
       // Build 3-pass role-based parlay from enrichedSweetSpots
       const nbaPlayerPicks = pool.sweetSpots.filter(p => {
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;

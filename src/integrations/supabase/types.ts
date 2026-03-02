@@ -2115,6 +2115,66 @@ export type Database = {
           },
         ]
       }
+      correct_priced_lines: {
+        Row: {
+          analysis_date: string
+          book_line: number
+          confidence_tier: string | null
+          created_at: string
+          defense_adjusted_avg: number | null
+          edge_pct: number | null
+          id: string
+          opponent_defense_rank: number | null
+          player_avg_l10: number | null
+          player_avg_l20: number | null
+          player_name: string
+          prop_type: string
+          shooting_context: Json | null
+          signal: string | null
+          sport: string | null
+          team_total_alignment: string | null
+          team_total_signal: string | null
+        }
+        Insert: {
+          analysis_date?: string
+          book_line: number
+          confidence_tier?: string | null
+          created_at?: string
+          defense_adjusted_avg?: number | null
+          edge_pct?: number | null
+          id?: string
+          opponent_defense_rank?: number | null
+          player_avg_l10?: number | null
+          player_avg_l20?: number | null
+          player_name: string
+          prop_type: string
+          shooting_context?: Json | null
+          signal?: string | null
+          sport?: string | null
+          team_total_alignment?: string | null
+          team_total_signal?: string | null
+        }
+        Update: {
+          analysis_date?: string
+          book_line?: number
+          confidence_tier?: string | null
+          created_at?: string
+          defense_adjusted_avg?: number | null
+          edge_pct?: number | null
+          id?: string
+          opponent_defense_rank?: number | null
+          player_avg_l10?: number | null
+          player_avg_l20?: number | null
+          player_name?: string
+          prop_type?: string
+          shooting_context?: Json | null
+          signal?: string | null
+          sport?: string | null
+          team_total_alignment?: string | null
+          team_total_signal?: string | null
+        }
+        Relationships: []
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null
