@@ -373,7 +373,7 @@ serve(async (req) => {
     console.log(`[MegaParlay] ${uniqueProps.length} unique props after dedup`);
 
     // Step 3: Cross-reference with database (include L20)
-    const [sweetSpotsRes, mispricedRes, gameLogsRes, defenseRes, archetypesRes, teamDefenseRes, l20Res, streakRes] = await Promise.all([
+    const [sweetSpotsRes, mispricedRes, gameLogsRes, defenseRes, archetypesRes, teamDefenseRes, l20Res, streakRes, tierPerfRes] = await Promise.all([
       supabase
         .from('category_sweet_spots')
         .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l10_median, actual_line, category, confidence_score')
@@ -410,6 +410,10 @@ serve(async (req) => {
         .select('player_name, prop_type, side, streak, legs_played')
         .gte('streak', 3)
         .gte('legs_played', 5),
+      // Lottery tier performance for dynamic adjustments
+      supabase
+        .from('bot_lottery_tier_performance')
+        .select('tier, win_rate, total_tickets, total_profit, streak'),
     ]);
 
     const sweetSpots = sweetSpotsRes.data || [];
@@ -420,6 +424,37 @@ serve(async (req) => {
     const teamDefenseRankings = teamDefenseRes.data || [];
     const l20Data = l20Res.data || [];
     const streakData = streakRes.data || [];
+    const tierPerfData = tierPerfRes.data || [];
+
+    // Build tier performance map for dynamic adjustments
+    const tierPerfMap = new Map<string, { win_rate: number; total_tickets: number; total_profit: number; streak: number }>();
+    for (const tp of tierPerfData) {
+      tierPerfMap.set(tp.tier, { win_rate: tp.win_rate, total_tickets: tp.total_tickets, total_profit: tp.total_profit, streak: tp.streak });
+    }
+
+    // Log tier performance context
+    for (const [tier, perf] of tierPerfMap) {
+      const label = perf.win_rate > 20 && perf.total_tickets >= 10 ? '🔥 HOT' : perf.win_rate < 5 && perf.total_tickets >= 20 ? '❄️ COLD' : '➡️';
+      console.log(`[MegaParlay] Tier perf: ${tier} ${label} ${perf.win_rate}% (${perf.total_tickets} tickets, $${perf.total_profit} P/L, streak: ${perf.streak})`);
+    }
+
+    // Dynamic stake/quality adjustments per tier
+    function getTierAdjustments(tier: string, baseStake: number, baseMinHitRate: number): { stake: number; minHitRate: number } {
+      const perf = tierPerfMap.get(tier);
+      let stake = baseStake;
+      let minHitRate = baseMinHitRate;
+      if (perf) {
+        if (perf.win_rate > 20 && perf.total_tickets >= 10) {
+          stake = Math.round(baseStake * 1.4);
+          console.log(`[MegaParlay] ${tier}: HOT tier bump $${baseStake} → $${stake}`);
+        } else if (perf.win_rate < 5 && perf.total_tickets >= 20) {
+          stake = Math.round(baseStake * 0.6);
+          minHitRate += 5;
+          console.log(`[MegaParlay] ${tier}: COLD tier reduce $${baseStake} → $${stake}, minHitRate +5% → ${minHitRate}%`);
+        }
+      }
+      return { stake, minHitRate };
+    }
 
     console.log(`[MegaParlay] DB: ${sweetSpots.length} sweet spots, ${mispricedLines.length} mispriced, ${gameLogs.length} game logs, ${defenseStats.length} defense, ${l20Data.length} L20 records, ${streakData.length} hot streaks`);
 
@@ -777,8 +812,9 @@ serve(async (req) => {
       combinedOdds: number;
     }[] = [];
 
-    // ============= TICKET 1: STANDARD LOTTERY (2-4 legs, +500 to +2000, $5) =============
-    console.log(`\n[MegaParlay] === TICKET 1: STANDARD LOTTERY ===`);
+    // ============= TICKET 1: STANDARD LOTTERY (2-4 legs, +500 to +2000) =============
+    const stdAdj = getTierAdjustments('standard', 5, 45);
+    console.log(`\n[MegaParlay] === TICKET 1: STANDARD LOTTERY ($${stdAdj.stake}) ===`);
     {
       const legs: (ScoredProp & { leg_role: string; ticket_tier: string })[] = [];
       const gc = new Map<string, number>();
@@ -847,7 +883,7 @@ serve(async (req) => {
       if (legs.length < 2) {
         for (const p of scoredProps) {
           if (legs.length >= 2) break;
-          if (p.hitRate < 45) continue;
+          if (p.hitRate < stdAdj.minHitRate) continue;
           if (allUsedPlayers.has(normalizeName(p.player_name))) continue;
           if (!passesBasicChecks(p, legs, gc)) continue;
           addLeg(p, legs, gc, used, 'fallback', 'standard');
@@ -856,7 +892,7 @@ serve(async (req) => {
 
       if (legs.length >= 2) {
         const odds = calcCombinedOdds(legs);
-        allTickets.push({ tier: 'standard', legs, stake: 5, combinedOdds: odds });
+        allTickets.push({ tier: 'standard', legs, stake: stdAdj.stake, combinedOdds: odds });
         for (const n of used) allUsedPlayers.add(n);
         console.log(`[MegaParlay] STANDARD: ${legs.length} legs at +${odds}`);
       } else {
@@ -864,8 +900,9 @@ serve(async (req) => {
       }
     }
 
-    // ============= TICKET 2: HIGH ROLLER (3-6 legs, +2000 to +8000, $3) =============
-    console.log(`\n[MegaParlay] === TICKET 2: HIGH ROLLER ===`);
+    // ============= TICKET 2: HIGH ROLLER (3-6 legs, +2000 to +8000) =============
+    const hrAdj = getTierAdjustments('high_roller', 3, 30);
+    console.log(`\n[MegaParlay] === TICKET 2: HIGH ROLLER ($${hrAdj.stake}) ===`);
     {
       const legs: (ScoredProp & { leg_role: string; ticket_tier: string })[] = [];
       const gc = new Map<string, number>();
@@ -876,7 +913,7 @@ serve(async (req) => {
       const hrCandidates = scoredProps.filter(p => {
         if (p.odds < 200) return false;
         if (p.odds > 500) return false; // Cap per-leg odds for HR
-        if (p.hitRate < 35) return false;
+        if (p.hitRate < hrAdj.minHitRate) return false;
         if (p.defenseRank !== null && p.defenseRank < 12) return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
         // L10 or L20 must meet the line (1.0x) for player props OVER bets
@@ -921,7 +958,7 @@ serve(async (req) => {
 
       if (legs.length >= 3) {
         const odds = calcCombinedOdds(legs);
-        allTickets.push({ tier: 'high_roller', legs, stake: 3, combinedOdds: odds });
+        allTickets.push({ tier: 'high_roller', legs, stake: hrAdj.stake, combinedOdds: odds });
         for (const n of used) allUsedPlayers.add(n);
         console.log(`[MegaParlay] HIGH ROLLER: ${legs.length} legs at +${odds}`);
       } else {
@@ -929,11 +966,12 @@ serve(async (req) => {
       }
     }
 
-    // ============= TICKET 3: MEGA JACKPOT (4-8 legs, +10000 to +50000, $1) =============
+    // ============= TICKET 3: MEGA JACKPOT (4-8 legs, +10000 to +50000) =============
     // Market diversification: max 2 exotic, max 2 team_bet, max 4 player_prop
     // Sort by "sweet spot" odds band (+300-800) instead of raw odds descending
     // Cap combined odds at 50,000
-    console.log(`\n[MegaParlay] === TICKET 3: MEGA JACKPOT ===`);
+    const megaAdj = getTierAdjustments('mega_jackpot', 1, 25);
+    console.log(`\n[MegaParlay] === TICKET 3: MEGA JACKPOT ($${megaAdj.stake}) ===`);
     {
       const legs: (ScoredProp & { leg_role: string; ticket_tier: string })[] = [];
       const gc = new Map<string, number>();
@@ -959,7 +997,7 @@ serve(async (req) => {
         const minOdds = p.market_type === 'team_bet' ? 130 : p.market_type === 'player_prop' ? 150 : 200;
         if (p.odds < minOdds) return false;
         if (p.odds > maxOdds) return false;
-        if (p.hitRate < 25 && p.market_type !== 'exotic_player') return false;
+        if (p.hitRate < megaAdj.minHitRate && p.market_type !== 'exotic_player') return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
 
         if (p.market_type === 'player_prop') {
@@ -1054,7 +1092,7 @@ serve(async (req) => {
 
       if (legs.length >= 3) {
         const odds = calcCombinedOdds(legs);
-        allTickets.push({ tier: 'mega_jackpot', legs, stake: 1, combinedOdds: odds });
+        allTickets.push({ tier: 'mega_jackpot', legs, stake: megaAdj.stake, combinedOdds: odds });
         for (const n of used) allUsedPlayers.add(n);
         console.log(`[MegaParlay] MEGA JACKPOT: ${legs.length} legs at +${odds} ${odds >= 10000 ? '🎰 TARGET HIT!' : '⚠️ Below 10k target'}`);
       } else {

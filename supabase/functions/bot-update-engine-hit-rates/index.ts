@@ -325,6 +325,85 @@ Deno.serve(async (req) => {
     console.log(`[Hit Rates] Strategy performance: ${stratPerfUpdated} rows updated`);
 
     // ========================================
+    // E) REFRESH bot_lottery_tier_performance
+    // ========================================
+    const { data: lotteryParlays } = await supabase
+      .from('bot_daily_parlays')
+      .select('tier, outcome, expected_odds, simulated_stake, simulated_payout, profit_loss, parlay_date')
+      .eq('strategy_name', 'mega_lottery_scanner')
+      .in('outcome', ['won', 'lost']);
+
+    const { data: pendingLottery } = await supabase
+      .from('bot_daily_parlays')
+      .select('tier')
+      .eq('strategy_name', 'mega_lottery_scanner')
+      .is('outcome', null);
+
+    const tierStats: Record<string, {
+      total: number; won: number; lost: number;
+      odds: number[]; payouts: number[]; profit: number;
+      outcomes: { date: string; won: boolean }[];
+    }> = {};
+
+    for (const p of (lotteryParlays || [])) {
+      const tier = p.tier || 'standard';
+      if (!tierStats[tier]) tierStats[tier] = { total: 0, won: 0, lost: 0, odds: [], payouts: [], profit: 0, outcomes: [] };
+      const ts = tierStats[tier];
+      ts.total++;
+      const isWon = p.outcome === 'won';
+      if (isWon) { ts.won++; } else { ts.lost++; }
+      if (p.expected_odds) ts.odds.push(p.expected_odds);
+      if (isWon && p.simulated_payout) ts.payouts.push(p.simulated_payout);
+      ts.profit += (p.profit_loss || 0);
+      ts.outcomes.push({ date: p.parlay_date, won: isWon });
+    }
+
+    let tiersUpdated = 0;
+    for (const [tier, ts] of Object.entries(tierStats)) {
+      const winRate = ts.total > 0 ? (ts.won / ts.total) * 100 : 0;
+      const avgOdds = ts.odds.length > 0 ? ts.odds.reduce((a, b) => a + b, 0) / ts.odds.length : 0;
+      const avgPayout = ts.payouts.length > 0 ? ts.payouts.reduce((a, b) => a + b, 0) / ts.payouts.length : 0;
+
+      // Calculate streak from chronological outcomes
+      const sorted = ts.outcomes.sort((a, b) => a.date.localeCompare(b.date));
+      let streak = 0;
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        if (i === sorted.length - 1) {
+          streak = sorted[i].won ? 1 : -1;
+        } else {
+          if (sorted[i].won && streak > 0) streak++;
+          else if (!sorted[i].won && streak < 0) streak--;
+          else break;
+        }
+      }
+
+      const tierLabel = winRate > 20 && ts.total >= 10 ? '🔥 HOT' : winRate < 5 && ts.total >= 20 ? '❄️ COLD' : '➡️';
+
+      const { error: upsertErr } = await supabase
+        .from('bot_lottery_tier_performance')
+        .upsert({
+          tier,
+          total_tickets: ts.total,
+          total_won: ts.won,
+          total_lost: ts.lost,
+          win_rate: Math.round(winRate * 10) / 10,
+          avg_odds: Math.round(avgOdds),
+          avg_payout: Math.round(avgPayout * 100) / 100,
+          total_profit: Math.round(ts.profit * 100) / 100,
+          streak,
+          last_updated: new Date().toISOString(),
+        }, { onConflict: 'tier' });
+
+      if (!upsertErr) {
+        tiersUpdated++;
+        console.log(`[Hit Rates] Lottery tier "${tier}": ${ts.won}/${ts.total} (${winRate.toFixed(1)}%) ${tierLabel} streak:${streak}`);
+      }
+    }
+
+    results.lotteryTiersUpdated = tiersUpdated;
+    console.log(`[Hit Rates] Lottery tiers: ${tiersUpdated} updated`);
+
+    // ========================================
     // LOG RESULTS
     // ========================================
     await supabase.from('bot_activity_log').insert({

@@ -1242,7 +1242,7 @@ function formatMegaLotteryV2(data: Record<string, any>, dateStr: string): string
 }
 
 function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
-  const { date, rating, winnerCount, totalProfit, winners, lotteryWinners, keyPlayers } = data;
+  const { date, rating, winnerCount, totalProfit, winners, lotteryWinners, tierContext, keyPlayers } = data;
   const displayDate = date || dateStr;
 
   let msg = `🏆 YESTERDAY'S WINS — ${displayDate}\n`;
@@ -1282,6 +1282,16 @@ function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): st
 
   if (keyPlayers && keyPlayers.length > 0) {
     msg += `🔑 Key Players: ${keyPlayers.join(', ')}\n\n`;
+  }
+
+  // Tier performance context
+  if (tierContext && typeof tierContext === 'object' && Object.keys(tierContext).length > 0) {
+    msg += `📈 Lottery Tier Trends:\n`;
+    for (const [tier, context] of Object.entries(tierContext)) {
+      const label = tier.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      msg += `  ${label}: ${context}\n`;
+    }
+    msg += `\n`;
   }
 
   msg += `📊 Powered by ParlayIQ Engine`;
