@@ -2417,6 +2417,10 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     const page = parseInt(data.split(':')[1], 10) || 1;
     await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
     await handlePitcherK(chatId, page);
+  } else if (data.startsWith('sweetspots_page:')) {
+    const page = parseInt(data.split(':')[1], 10) || 1;
+    await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
+    await handleSweetSpots(chatId, page);
   } else if (data === 'fix:void_today_confirm') {
     await answerCallbackQuery(callbackQueryId, 'Voiding all pending parlays...');
     const today = getEasternDate();
@@ -3351,27 +3355,25 @@ const PROP_TO_STAT: Record<string, string> = {
 };
 
 // === /sweetspots — Show today's active sweet spot picks with live lines ===
-async function handleSweetSpots(chatId: string): Promise<string> {
+async function handleSweetSpots(chatId: string, page = 1): Promise<void> {
+  const PER_PAGE = 10;
   try {
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date());
 
-    // Get today's active sweet spots
+    // Fetch ALL of today's sweet spots — no hard filters
     const { data: spots, error: ssErr } = await supabase
       .from('category_sweet_spots')
-      .select('player_name, prop_type, recommended_side, actual_line, recommended_line, l10_hit_rate, confidence_score, category')
+      .select('player_name, prop_type, recommended_side, actual_line, recommended_line, l10_hit_rate, confidence_score, category, is_active')
       .eq('analysis_date', today)
-      .eq('is_active', true)
-      .gte('l10_hit_rate', 0.70)
-      .gte('confidence_score', 0.75)
       .order('l10_hit_rate', { ascending: false })
-      .limit(50);
+      .limit(200);
 
-    if (ssErr) return `❌ Error fetching sweet spots: ${ssErr.message}`;
-    if (!spots || spots.length === 0) return '📭 No active sweet spot picks found for today.';
+    if (ssErr) { await sendMessage(chatId, `❌ Error fetching sweet spots: ${ssErr.message}`); return; }
+    if (!spots || spots.length === 0) { await sendMessage(chatId, '📭 No sweet spot picks analyzed for today.'); return; }
 
-    // Get active unified props to cross-reference
+    // Cross-reference with unified_props for LIVE tags
     const { data: activeProps } = await supabase
       .from('unified_props')
       .select('player_name, prop_type')
@@ -3381,35 +3383,47 @@ async function handleSweetSpots(chatId: string): Promise<string> {
       (activeProps || []).map(p => `${p.player_name?.toLowerCase().trim()}|${p.prop_type?.toLowerCase().trim()}`)
     );
 
-    // Filter to only picks with active lines
-    const withActiveLines = spots.filter(s => {
+    const total = spots.length;
+    const totalPages = Math.ceil(total / PER_PAGE);
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    const start = (safePage - 1) * PER_PAGE;
+    const pageSpots = spots.slice(start, start + PER_PAGE);
+    const liveCount = spots.filter(s => {
       const key = `${s.player_name?.toLowerCase().trim()}|${s.prop_type?.toLowerCase().trim()}`;
       return activePropSet.has(key);
-    });
+    }).length;
 
-    if (withActiveLines.length === 0) {
-      return `📊 *Sweet Spots* (${today})\n\n${spots.length} picks analyzed but none have active lines right now.`;
-    }
+    const lines: string[] = [
+      `🎯 *Sweet Spots* — ${today}`,
+      `${total} picks analyzed | ${liveCount} with live lines`,
+      `Page ${safePage}/${totalPages}\n`,
+    ];
 
-    // Format output
-    const lines: string[] = [`🎯 *Sweet Spots* — ${today}\n${withActiveLines.length} picks with active lines:\n`];
-
-    for (const s of withActiveLines.slice(0, 25)) {
+    for (const s of pageSpots) {
+      const key = `${s.player_name?.toLowerCase().trim()}|${s.prop_type?.toLowerCase().trim()}`;
+      const isLive = activePropSet.has(key);
+      const tag = isLive ? '🟢LIVE' : '⚫--';
       const line = s.actual_line ?? s.recommended_line ?? '?';
       const hitPct = s.l10_hit_rate ? `${(s.l10_hit_rate * 100).toFixed(0)}%` : '?';
       const conf = s.confidence_score ? `${(s.confidence_score * 10).toFixed(1)}` : '?';
       const side = (s.recommended_side || '?').toUpperCase();
       const cat = s.category || '';
-      lines.push(`• *${s.player_name}* ${s.prop_type.replace(/_/g, ' ')} ${side} ${line}\n  💎${hitPct} L10 | 🎯${conf} conf | ${cat}`);
+      lines.push(`[${tag}] *${s.player_name}* ${s.prop_type.replace(/_/g, ' ')} ${side} ${line}\n  💎${hitPct} L10 | 🎯${conf} conf | ${cat}`);
     }
 
-    if (withActiveLines.length > 25) {
-      lines.push(`\n_...and ${withActiveLines.length - 25} more_`);
-    }
+    await sendLongMessage(chatId, lines.join('\n'));
 
-    return lines.join('\n');
+    // Pagination buttons
+    if (totalPages > 1) {
+      const buttons: Array<{ text: string; callback_data: string }> = [];
+      if (safePage > 1) buttons.push({ text: `⬅️ Prev`, callback_data: `sweetspots_page:${safePage - 1}` });
+      if (safePage < totalPages) buttons.push({ text: `Next ➡️`, callback_data: `sweetspots_page:${safePage + 1}` });
+      await sendMessage(chatId, `📄 Page ${safePage}/${totalPages}`, undefined, {
+        inline_keyboard: [buttons],
+      });
+    }
   } catch (err) {
-    return `❌ Sweet spots error: ${err instanceof Error ? err.message : String(err)}`;
+    await sendMessage(chatId, `❌ Sweet spots error: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -3772,7 +3786,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/extras") { return await handleExtras(chatId); }
     if (cmd === "/engineaccuracy") { return await handleEngineAccuracy(chatId); }
     if (cmd === "/lookup") { return await handleLookup(chatId, args); }
-    if (cmd === "/sweetspots") { return await handleSweetSpots(chatId); }
+    if (cmd === "/sweetspots") { await handleSweetSpots(chatId); return null; }
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
