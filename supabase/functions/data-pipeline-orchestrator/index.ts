@@ -136,6 +136,9 @@ serve(async (req) => {
       // Double-confirmed scanner: cross-references sweet spots + mispriced lines
       await runFunction('double-confirmed-scanner', {});
       
+      // DD/TD pattern analyzer: detects double-double and triple-double candidates
+      await runFunction('dd-td-pattern-analyzer', {});
+      
       // Recurring winners: flags players who hit yesterday and appear again today with 80%+ L10
       await runFunction('recurring-winners-detector', {});
       
