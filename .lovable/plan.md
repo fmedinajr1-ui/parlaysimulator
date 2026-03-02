@@ -1,48 +1,62 @@
 
 
-# Fix `/sweetspots` Command: Show Full Pool with Pagination
+# Void Standard Lottery Ticket (Jaylen Brown Out) and Regenerate
+
+## Current Situation
+- Standard lottery ticket `f649e91b` has Jaylen Brown Under 1.5 Threes as leg 1
+- Jaylen Brown is OUT today -- this ticket is dead
+- The other 2 tickets (High Roller, Mega Jackpot) are fine and should NOT be touched
 
 ## Problem
-The current `handleSweetSpots` function hard-filters on `is_active = true`, `l10_hit_rate >= 0.70`, and `confidence_score >= 0.75`, which eliminates most picks. It also caps display at 25 with no pagination -- you can't see everything.
+The scanner's `force` mode voids ALL tiers. There's no way to void just one tier and regenerate only that tier.
 
 ## Changes
 
-### File: `supabase/functions/telegram-webhook/index.ts`
+### File: `supabase/functions/nba-mega-parlay-scanner/index.ts`
 
-#### 1. Rewrite `handleSweetSpots` with pagination (lines 3354-3414)
-
-- Change signature to `handleSweetSpots(chatId: string, page = 1)`
-- Remove all hard filters (`is_active`, `l10_hit_rate`, `confidence_score`) from the query
-- Fetch ALL of today's sweet spots ordered by `l10_hit_rate DESC`, limit 200
-- Add `PER_PAGE = 10` pagination matching the existing pattern (mispriced, highconv, etc.)
-- Cross-reference with `unified_props` to tag picks as `[LIVE]` or `[--]`
-- Show per pick: player, prop type, side, line, L10 hit rate, confidence, category, live status
-- Add `sweetspots_page:N` pagination buttons (Prev/Next)
-- Use `sendLongMessage` + separate pagination button message
-
-#### 2. Wire up pagination callback (around line 2416)
-
-Add after the `pitcherk_page` handler:
+**Add `void_tier` parameter** (around lines 178-184):
 
 ```text
-} else if (data.startsWith('sweetspots_page:')) {
-  const page = parseInt(data.split(':')[1], 10) || 1;
-  await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
-  await handleSweetSpots(chatId, page);
+let voidTier: string | null = null;
+// in body parsing:
+voidTier = body?.void_tier ?? null;  // e.g. "standard", "high_roller", "mega_jackpot"
+```
+
+**Update force mode block** (lines 191-201) to filter by tier when `void_tier` is provided:
+
+```text
+if (forceMode) {
+  let query = supabase
+    .from('bot_daily_parlays')
+    .update({ outcome: 'void', lesson_learned: 'force_regen_lottery' })
+    .eq('parlay_date', today)
+    .eq('strategy_name', 'mega_lottery_scanner')
+    .neq('outcome', 'void');
+  
+  if (voidTier) {
+    query = query.eq('tier', voidTier);
+  }
+  
+  const { data: voidedRows, error: voidErr } = await query.select('id');
+  // ... existing logging
 }
 ```
 
-#### 3. Update `/sweetspots` call site (line 3775)
+This way, calling with `{ force: true, void_tier: "standard", exclude_players: ["Jaylen Brown"] }` will:
+1. Void ONLY the standard tier ticket
+2. Leave high roller and mega jackpot untouched
+3. Regenerate a new standard ticket excluding Jaylen Brown
 
-The command already calls `handleSweetSpots(chatId)` which returns a string. Since the new version uses `sendLongMessage` directly (like `handleMispriced`), change it to:
+### Immediate Action After Deploy
 
-```text
-if (cmd === "/sweetspots") { await handleSweetSpots(chatId); return null; }
+Call the scanner with:
+```json
+{
+  "force": true,
+  "void_tier": "standard",
+  "exclude_players": ["Jaylen Brown"]
+}
 ```
 
-This matches how other paginated commands work -- they send messages directly and return `null`.
-
 ## Deployment
-
-Deploy updated `telegram-webhook` edge function.
-
+Deploy updated `nba-mega-parlay-scanner` edge function, then invoke it with the targeted parameters.
