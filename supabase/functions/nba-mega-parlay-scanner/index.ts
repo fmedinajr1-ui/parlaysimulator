@@ -55,6 +55,14 @@ function hasCorrelatedProp(
     if (sameGameTeamBets.length > 0) return true;
   }
 
+  // Block multiple first basket props from same game (mutually exclusive outcomes)
+  if (normalizePropType(candidateProp) === 'first_basket' && candidateEventId) {
+    const sameGameFirstBasket = existingLegs.filter(
+      l => normalizePropType(l.prop_type) === 'first_basket' && l.event_id === candidateEventId
+    );
+    if (sameGameFirstBasket.length > 0) return true;
+  }
+
   const playerLegs = existingLegs
     .filter(l => l.player_name.toLowerCase().trim() === player)
     .map(l => normalizePropType(l.prop_type));
@@ -607,6 +615,17 @@ serve(async (req) => {
         else if (prop.prop_type === 'player_double_double') hitRate = 40;
         else if (prop.prop_type === 'player_triple_double') hitRate = 5;
       }
+
+      // Star player bonus for first basket (stars more likely to score first)
+      if (prop.prop_type === 'player_first_basket') {
+        const playerL10 = gameLogMap.get(`${nameNorm}|points`);
+        if (playerL10?.l10_avg && playerL10.l10_avg >= 20) {
+          hitRate += 4; // Stars more likely to score first
+        }
+        if (playerL10?.l10_avg && playerL10.l10_avg >= 28) {
+          hitRate += 4; // Elite scorers even more likely
+        }
+      }
       if (hitRate === 0 && prop.market_type === 'team_bet') {
         // Underdog ML implied from odds
         hitRate = americanToImpliedProb(prop.odds) * 100;
@@ -1035,7 +1054,7 @@ serve(async (req) => {
           if (p.defenseRank !== null && p.defenseRank < 12) return false;
           if (p.side === 'OVER') {
             const bestAvg = p.l10Avg || p.l20Avg;
-            if (bestAvg !== null && bestAvg < p.line * 0.7) return false;
+            if (bestAvg !== null && bestAvg < p.line * 0.85) return false;
           }
         }
         if (p.market_type === 'team_bet') {
@@ -1075,6 +1094,8 @@ serve(async (req) => {
       for (const { pool, type } of pools) {
         if (marketTypeCounts[type] >= getMaxForType(type)) continue;
         for (const c of pool) {
+          // Mega Jackpot: prefer game diversity (max 1 per game)
+          if (gc.get(c.game) && gc.get(c.game)! >= 1) continue;
           if (!passesBasicChecks(c, legs, gc)) continue;
           if (used.has(normalizeName(c.player_name))) continue;
           addLeg(c, legs, gc, used, `mega_${type}`, 'mega_jackpot');
@@ -1091,6 +1112,8 @@ serve(async (req) => {
         const currentOdds = calcCombinedOdds(legs);
         if (legs.length >= 4 && currentOdds >= 10000) break;
         if (currentOdds >= MAX_COMBINED_ODDS) break;
+        // Mega Jackpot: prefer game diversity (max 1 per game)
+        if (gc.get(c.game) && gc.get(c.game)! >= 1) continue;
         if (marketTypeCounts[c.market_type] >= getMaxForType(c.market_type)) continue;
         if (used.has(normalizeName(c.player_name))) continue;
         if (!passesBasicChecks(c, legs, gc)) continue;
