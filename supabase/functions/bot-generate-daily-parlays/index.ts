@@ -1924,6 +1924,7 @@ function calculateTeamCompositeScore(
   defenseMap: Map<string, number>,
   envMap: Map<string, GameEnvData>,
   homeCourtMap: Map<string, HomeCourtData>,
+  defenseDetailMap: Map<string, any>,
   ncaabStatsMap?: Map<string, NcaabTeamStats>,
   nhlStatsMap?: Map<string, NhlTeamStats>,
   baseballStatsMap?: Map<string, BaseballTeamStats>
@@ -4647,7 +4648,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap, defenseDetailMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_spread_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -4661,7 +4662,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap, defenseDetailMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_spread_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -4677,7 +4678,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     // Total picks
     if (game.bet_type === 'total' && game.over_odds && game.under_odds) {
-      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap, defenseDetailMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
       const overPlusBonus = isPlusMoney(game.over_odds) ? 5 : 0;
       
       // Weather/pitching research bias adjustment for totals
@@ -4747,7 +4748,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
 
       // Calculate under score up front (needed below for effective score logic)
-      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, defenseDetailMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
       const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
 
       // For NCAAB totals: prefer the pre-computed composite_score from the DB (KenPom-based scorer)
@@ -4791,7 +4792,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     if (game.bet_type === 'h2h') {
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap, defenseDetailMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_ml_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -4805,7 +4806,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap, defenseDetailMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_ml_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
