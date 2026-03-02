@@ -165,6 +165,7 @@ serve(async (req) => {
     console.log(`[Mispriced] Starting analysis for ${today}`);
 
     const mispricedResults: any[] = [];
+    const correctPricedResults: any[] = [];
     const processedKeys = new Set<string>();
 
     // ==================== LOAD TEAM TOTAL SIGNALS ====================
@@ -328,7 +329,7 @@ serve(async (req) => {
         // Cap edge inflation: prevents 0.5-line props from producing 240% edges
         edgePct = Math.max(-75, Math.min(75, edgePct));
         const trendEdge = ((avgL5 - avgL20) / (avgL20 || 1)) * 100;
-        if (Math.abs(edgePct) < 15) continue;
+        if (Math.abs(edgePct) < 3) continue; // too small, skip entirely
 
         const signal = edgePct > 0 ? 'OVER' : 'UNDER';
         const shootingContext = calcShootingContext(l20Logs);
@@ -377,7 +378,7 @@ serve(async (req) => {
           }
         }
 
-        mispricedResults.push({
+        const resultEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
           book_line: line,
@@ -401,7 +402,14 @@ serve(async (req) => {
           opponent_defense_rank: opponentDefRank,
           team_total_signal: teamTotalSignal,
           team_total_alignment: teamTotalAlignment,
-        });
+        };
+
+        // Fork: 3-14.99% → correct_priced_lines, 15%+ → mispriced_lines
+        if (Math.abs(alignedEdgePct) >= 15) {
+          mispricedResults.push(resultEntry);
+        } else {
+          correctPricedResults.push(resultEntry);
+        }
       }
     }
 
@@ -470,18 +478,18 @@ serve(async (req) => {
         // Cap edge inflation for MLB too
         edgePct = Math.max(-75, Math.min(75, edgePct));
         const trendEdge = ((avgL20 - avgSeason) / (avgSeason || 1)) * 100;
-        if (Math.abs(edgePct) < 15) continue;
+        if (Math.abs(edgePct) < 3) continue; // too small, skip entirely
 
         const signal = edgePct > 0 ? 'OVER' : 'UNDER';
         const baseballContext = calcBaseballContext(seasonLogs);
         const confidenceTier = getConfidenceTier(edgePct, seasonValues.length);
 
-        mispricedResults.push({
+        const mlbEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
           book_line: line,
-          player_avg_l10: Math.round(avgL20 * 100) / 100, // L20 for MLB (most recent from last year)
-          player_avg_l20: Math.round(avgSeason * 100) / 100, // season avg stored in l20 field
+          player_avg_l10: Math.round(avgL20 * 100) / 100,
+          player_avg_l20: Math.round(avgSeason * 100) / 100,
           edge_pct: Math.round(edgePct * 100) / 100,
           signal,
           shooting_context: {
@@ -494,13 +502,43 @@ serve(async (req) => {
           confidence_tier: confidenceTier,
           analysis_date: today,
           sport: 'baseball_mlb',
-        });
+        };
+
+        // Fork: 3-14.99% → correct_priced_lines, 15%+ → mispriced_lines
+        if (Math.abs(edgePct) >= 15) {
+          mispricedResults.push(mlbEntry);
+        } else {
+          correctPricedResults.push(mlbEntry);
+        }
       }
     }
 
     const nbaCount = mispricedResults.filter(r => r.sport === 'basketball_nba').length;
     const mlbCount = mispricedResults.filter(r => r.sport === 'baseball_mlb').length;
-    console.log(`[Mispriced] MLB: ${mlbCount} mispriced | Total: ${mispricedResults.length}`);
+    const correctNbaCount = correctPricedResults.filter(r => r.sport === 'basketball_nba').length;
+    const correctMlbCount = correctPricedResults.filter(r => r.sport === 'baseball_mlb').length;
+    console.log(`[Mispriced] MLB: ${mlbCount} mispriced | Total: ${mispricedResults.length} | Correct-priced: ${correctPricedResults.length} (NBA: ${correctNbaCount}, MLB: ${correctMlbCount})`);
+
+    // ==================== PERSIST CORRECT-PRICED RESULTS ====================
+    if (correctPricedResults.length > 0) {
+      await supabase.from('correct_priced_lines').delete().eq('analysis_date', today);
+
+      const chunkSize = 50;
+      let cpInserted = 0;
+      for (let i = 0; i < correctPricedResults.length; i += chunkSize) {
+        const chunk = correctPricedResults.slice(i, i + chunkSize);
+        const { error } = await supabase
+          .from('correct_priced_lines')
+          .upsert(chunk, { onConflict: 'player_name,prop_type,analysis_date,sport' });
+
+        if (error) {
+          console.error(`[CorrectPriced] Insert error:`, error.message);
+        } else {
+          cpInserted += chunk.length;
+        }
+      }
+      console.log(`[CorrectPriced] Inserted ${cpInserted} correct-priced lines`);
+    }
 
     // ==================== PERSIST RESULTS ====================
     if (mispricedResults.length > 0) {
@@ -625,9 +663,11 @@ serve(async (req) => {
       duration_ms: duration,
       props_analyzed: processedKeys.size,
       mispriced_found: mispricedResults.length,
+      correct_priced_found: correctPricedResults.length,
       nba_count: nbaCount,
       mlb_count: mlbCount,
       results: mispricedResults,
+      correct_priced_results: correctPricedResults,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
