@@ -3356,8 +3356,28 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     return `  ${d}: ${g.points} PTS | ${g.rebounds} REB | ${g.assists} AST | ${g.threes_made} 3PT`;
   });
 
-  // 4. Find today's opponent from unified_props
+  // 4. Resolve player team from bdl_player_cache
+  let playerTeamAbbrev: string | null = null;
+  const { data: playerCache } = await supabase
+    .from('bdl_player_cache')
+    .select('team_name, is_active')
+    .ilike('player_name', `%${matchedPlayer}%`)
+    .order('is_active', { ascending: false })
+    .limit(5);
+
+  if (playerCache && playerCache.length > 0) {
+    // Prefer active player match
+    const active = playerCache.find(p => p.is_active);
+    const bestMatch = active || playerCache[0];
+    if (bestMatch.team_name) {
+      playerTeamAbbrev = resolveTeamAbbrev(bestMatch.team_name);
+    }
+  }
+  console.log(`[lookup] player=${matchedPlayer}, playerTeam=${playerTeamAbbrev}`);
+
+  // 5. Find today's props
   let opponentAbbrev: string | null = null;
+  let opponentSource = 'none';
   let defenseSection = '';
   const { data: todayProps } = await supabase
     .from('unified_props')
@@ -3366,39 +3386,45 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     .gte('created_at', `${today}T00:00:00`)
     .limit(20);
 
-  if (todayProps && todayProps.length > 0 && todayProps[0].game_description) {
-    // Derive player's team from most recent game log opponent
-    const mostRecentOpp = playerLogs[0]?.opponent;
-    const playerTeam = mostRecentOpp ? '' : ''; // We don't know player's team abbrev directly
-    // Try extracting both teams and picking the one that ISN'T the player's recent opponents
-    const gameDesc = todayProps[0].game_description;
-    const parts = gameDesc.split(/\s+(?:@|vs\.?|at)\s+/i);
-    if (parts.length >= 2) {
-      const t1 = resolveTeamAbbrev(parts[0].trim());
-      const t2 = resolveTeamAbbrev(parts[1].trim());
-      // Player's team: check if recent opponent matches one side
-      const recentOpps = new Set(playerLogs.slice(0, 3).map(g => resolveTeamAbbrev(g.opponent || '')));
-      if (recentOpps.has(t1)) {
-        opponentAbbrev = t1; // Wait, if t1 was opponent before, tonight t1 is opponent again? No.
-      }
-      // Simpler: the team that is NOT in their recent opponents is their team
-      if (!recentOpps.has(t1) && !recentOpps.has(t2)) {
-        // Can't determine, just pick both and show matchup
-        opponentAbbrev = t2; // assume player is away team (first)
-      } else if (recentOpps.has(t1)) {
-        // t1 was a past opponent, so player is likely on t2's side. Tonight's opp is t1? No...
-        // Actually player plays FOR one team. Their opponents list should NOT contain their own team.
-        // So if t1 appears in opponents, t1 is not their team. Player is on t2, opp tonight is t1.
-        opponentAbbrev = t1;
-      } else if (recentOpps.has(t2)) {
-        opponentAbbrev = t2;
-      } else {
-        opponentAbbrev = t2;
+  console.log(`[lookup] todayProps count=${todayProps?.length || 0}`);
+
+  // Priority A: resolve opponent from props game_description
+  if (todayProps && todayProps.length > 0 && todayProps[0].game_description && playerTeamAbbrev) {
+    opponentAbbrev = extractOpponentFromGameDesc(todayProps[0].game_description, playerTeamAbbrev);
+    if (opponentAbbrev) opponentSource = 'props';
+  }
+
+  // Priority B: fallback to game_bets schedule
+  if (!opponentAbbrev && playerTeamAbbrev) {
+    const { data: todayGames } = await supabase
+      .from('game_bets')
+      .select('home_team, away_team')
+      .eq('sport', 'NBA')
+      .gte('event_date', `${today}T00:00:00`)
+      .lte('event_date', `${today}T23:59:59`)
+      .limit(50);
+
+    if (todayGames && todayGames.length > 0) {
+      for (const game of todayGames) {
+        const home = resolveTeamAbbrev(game.home_team || '');
+        const away = resolveTeamAbbrev(game.away_team || '');
+        if (home === playerTeamAbbrev) {
+          opponentAbbrev = away;
+          opponentSource = 'game_bets';
+          break;
+        }
+        if (away === playerTeamAbbrev) {
+          opponentAbbrev = home;
+          opponentSource = 'game_bets';
+          break;
+        }
       }
     }
   }
 
-  // 5. Fetch defense rankings if we have opponent
+  console.log(`[lookup] opponentAbbrev=${opponentAbbrev}, source=${opponentSource}`);
+
+  // 6. Fetch defense rankings (independent of props)
   if (opponentAbbrev) {
     const { data: defRank } = await supabase
       .from('team_defense_rankings')
@@ -3414,9 +3440,11 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
   vs PTS: #${defRank.opp_points_rank || '?'} ${getRankEmoji(defRank.opp_points_rank || 15)} | vs 3PT: #${defRank.opp_threes_rank || '?'} ${getRankEmoji(defRank.opp_threes_rank || 15)}
   vs REB: #${defRank.opp_rebounds_rank || '?'} ${getRankEmoji(defRank.opp_rebounds_rank || 15)} | vs AST: #${defRank.opp_assists_rank || '?'} ${getRankEmoji(defRank.opp_assists_rank || 15)}`;
     }
+  } else {
+    defenseSection = '\n📭 No NBA matchup detected for today.';
   }
 
-  // 6. Today's props with hit rates
+  // 7. Today's props with hit rates
   let propsSection = '';
   if (todayProps && todayProps.length > 0) {
     const propLines: string[] = [];
@@ -3444,7 +3472,7 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
     }
   }
 
-  // 7. Format final message
+  // 8. Format final message
   const msg = `🔍 *PLAYER LOOKUP — ${matchedPlayer}*
 ━━━━━━━━━━━━━━━━━━━━━
 
