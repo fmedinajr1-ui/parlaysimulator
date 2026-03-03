@@ -1,66 +1,49 @@
 
 
-## Plan: Add Matchup-First Exploration Tier Profiles
+## Plan: Enable Alt Lines on Matchup-First Exploration Profiles + Fix Generation Blockers
 
-### Problem
-The exploration tier currently has ~80 profiles but none specifically target soft-defense matchups or same-team stacking. The matchup defense scan data is loaded and boosts individual picks (+12 prime, +6 favorable), but no strategy profile explicitly **requires** all legs to attack weak defenses or stack players from the same team exploiting a defensive gap.
+### Two Issues Found
 
-### What Changes
+**1. Alt lines are NOT enabled on any matchup profile.**
+All 20 matchup exploration profiles (`matchup_exploit`, `matchup_team_stack`, `matchup_mispriced`) have no `useAltLines` property — they default to `false`. Meanwhile, other strategies like `double_confirmed_conviction`, `mispriced_edge`, and `boosted_cash` already use `useAltLines: true` with `boostLegs: 1` and `minBufferMultiplier: 1.5`.
+
+**2. Zero exploration parlays generated on thin slates.**
+The last run produced 0 exploration parlays because the matchup-boosted pick pool was too small after diversity caps and dedup filtering. The `minHitRate` floors (48-55%) combined with fingerprint dedup and team/player caps choke the output when only 14 matchup-boosted picks exist.
+
+### Changes
 
 **File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-#### 1. Add new strategy types to profile routing (~line 6098)
-Add handling for two new strategies:
-- `matchup_exploit` — All legs must have `matchupPriority === 'prime'` or `matchupPriority === 'favorable'` (defense rank 20+). Draws from `enrichedSweetSpots` filtered to only picks with `matchupBoost > 0`.
-- `matchup_team_stack` — Same as `matchup_exploit` but additionally requires all legs share the same team. Targets WAS (#30), DET (#25-27), etc. by grouping matchup-boosted picks by team and building 3-leg same-team stacks.
+#### A. Add alt lines to matchup profiles (~lines 789-810)
+Update all 20 matchup exploration profiles to include alt line shopping:
+- `matchup_exploit` profiles: add `useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5`
+- `matchup_team_stack` profiles: add `useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3` (slightly lower buffer since same-team correlation provides natural edge)
+- `matchup_mispriced` profiles: add `useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5`
 
-#### 2. Add ~20 new exploration profiles (~line 675)
-Insert into `TIER_CONFIG.exploration.profiles`:
-```text
-// MATCHUP-FIRST EXPLORATION: all legs attack weak defenses (rank 20+)
-matchup_exploit × 6 profiles (3-leg NBA, sort by composite/hit_rate/shuffle)
-matchup_exploit × 4 profiles (4-leg NBA, sort by composite/shuffle)
+This means the system will fetch safer alternate lines for the strongest candidate leg in each parlay — dropping a line by 0.5-1.0 to boost hit probability while keeping odds above -200.
 
-// SAME-TEAM STACKING: 3 players from same team vs soft defense
-matchup_team_stack × 6 profiles (3-leg NBA, sort by composite/hit_rate/shuffle)
+#### B. Lower hit rate floors for thin-slate resilience (~lines 789-810)
+Reduce `minHitRate` on matchup profiles to prevent zero-output on small slates:
+- 3-leg `matchup_exploit`: lower from 50-55% → 45-50%
+- 4-leg `matchup_exploit`: lower from 48-50% → 42-45%
+- `matchup_team_stack`: lower from 48-50% → 42-48%
+- `matchup_mispriced`: keep at 50% (already filtered by mispriced edge)
 
-// MISPRICED + MATCHUP COMBO: mispriced edge AND defense rank 20+
-matchup_mispriced × 4 profiles (3-leg NBA, sort by composite/shuffle)
-```
+The matchup boost itself (+18/+22 composite) already filters for quality — the hit rate floor is redundant gatekeeping.
 
-#### 3. Strategy routing logic (~line 6098)
-For `matchup_exploit`:
-- Filter `enrichedSweetSpots` to only picks where `(pick as any).matchupBoost > 0` (i.e., picks that received the +12 or +6 matchup boost)
-- Also include mispriced picks that have matchup boosts
-- Sort by composite/hit_rate/shuffle per profile
-- No additional composite gate beyond the existing tier minHitRate (45%)
-
-For `matchup_team_stack`:
-- Same matchup filter, then group by team abbreviation
-- Only consider teams with 3+ matchup-boosted picks available
-- Build parlay from the highest-scoring team group
-- Ensures same-team stacking (e.g., 3 ORL players vs WAS)
-
-For `matchup_mispriced`:
-- Intersection of `mispricedPicks` pool AND `matchupBoost > 0`
-- Combines the 0.5-line edge detection with defensive weakness targeting
-
-#### 4. Add composite boost for elite defense rank (lines ~5452-5470)
-Currently: +12 for prime (rank 20+), +6 for favorable
-Change to: +22 for elite (rank 28+), +18 for prime (rank 25+), +12 for favorable (rank 20+)
-This matches the memory spec and prioritizes the softest defenses (WAS #30, DET #25-27).
+#### C. Relax diversity constraints for matchup exploration (~line 6560-6604)
+In the `matchup_exploit` routing branch, set `maxPlayerUsage` to 4 (from 3) and skip the golden gate check for exploration-tier matchup profiles. This allows the same high-value player to appear in multiple matchup parlays when they have an elite defensive matchup.
 
 ### Technical Details
 
-- These profiles use the **existing** `matchupDefenseScan` data already loaded at line 3889
-- The matchup boost tags (`matchupBoost`, `matchupPriority`) are already set on picks at lines 5443-5470
-- No new database tables, edge functions, or API calls needed
-- Same-team stacking uses the existing `team_name` / `team_abbrev` fields on enriched picks
-- The exploration tier's existing diversity caps (maxPlayerUsage: 3, maxTeamUsage: 3) will be relaxed for `matchup_team_stack` profiles to `maxTeamUsage: 6` to allow same-team stacking
+- Alt line fetching already works — the engine calls `fetch-alternate-lines` for top 15 candidates when any profile has `useAltLines: true`
+- The `boostLegs: 1` cap ensures only one leg per parlay gets an alt line substitution
+- The `minBufferMultiplier: 1.5` requires the player's projection to be 1.5x above the line before alt line activation (safety gate)
+- No new edge functions or database changes needed
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Add ~20 matchup-first exploration profiles, add 3 new strategy routing branches, upgrade matchup boost tiers to elite/prime/favorable |
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | Enable `useAltLines` on all 20 matchup profiles, lower minHitRate floors, relax diversity caps for matchup strategies |
 
