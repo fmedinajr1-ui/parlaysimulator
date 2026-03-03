@@ -1,35 +1,19 @@
 
 
-## Plan: Void Today's Parlays & Regenerate with Defense Mapping
+## Plan: Fix Branding in Lottery Card Generation
 
-### Current State
-Today (2026-03-03) has **18 pending parlays** in `bot_daily_parlays`:
-- 3 lottery tiers (standard, high_roller, mega_jackpot)
-- 5 execution (elite_categories_v1)
-- 10 execution (force_mispriced_conviction)
+The previous plan referenced "PARLAY BOT" and "parlaysimulator.com" branding. This update ensures the new `generate-lottery-cards` edge function uses:
 
-No sharp or heat parlays exist yet for today.
+- **Logo/Brand**: "PARLAY FARM" with the 🔥 emoji (matching `ShareableImageCard` footer)
+- **URL**: `parlayfarm.com` (not parlaysimulator)
+- **Logo asset**: Reference `ParlayFarmLogo` / `/parlay-farm-logo.png` in the image prompt
 
-### What We'll Do
+### File: `supabase/functions/generate-lottery-cards/index.ts` (new)
 
-This is a **data operation only** -- no code changes needed. The matchup-first logic was already deployed in the previous message. We just need to:
+When constructing the AI image generation prompt for each lottery card:
+- Footer text: `🔥 PARLAY FARM` on the left, `parlayfarm.com` on the right
+- Card header badge: "PARLAY FARM" branding instead of "PARLAY BOT"
+- Caption text sent with Telegram photo: include "parlayfarm.com"
 
-1. **Void & delete today's parlays** -- Update all 18 `bot_daily_parlays` rows for today to `outcome = 'void'` with a lesson learned note, then delete them
-2. **Trigger the Clean & Rebuild pipeline** via the `SlateRefreshControls` UI button, which runs the full 14-step pipeline including:
-   - Clean stale props
-   - Scan defensive matchups (feeds the matchup opportunity map)
-   - Category analysis
-   - Detect mispriced lines
-   - Risk engine
-   - Quality-gated generation (now with matchup-first scoring)
-   - Sharp parlay builder (now with defense awareness)
-   - Heat scan + build
-   - Lottery scanner (with DD rules)
-   - Diversity rebalance
-
-### Execution
-- Use the database insert tool to void + delete today's rows
-- Invoke the pipeline edge functions sequentially to regenerate everything fresh with the new matchup-first intelligence
-
-No file changes required -- just database operations and edge function invocations.
+This is a single branding correction applied during implementation of the lottery card generator — no additional files or logic changes needed beyond what was already planned.
 
