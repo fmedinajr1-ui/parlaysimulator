@@ -3641,7 +3641,11 @@ async function handleLookup(chatId: string, playerName: string): Promise<string>
   vs REB: #${defRank.opp_rebounds_rank || '?'} ${getRankEmoji(defRank.opp_rebounds_rank || 15)} | vs AST: #${defRank.opp_assists_rank || '?'} ${getRankEmoji(defRank.opp_assists_rank || 15)}
   *Offense (opp scores):*
   PTS: #${defRank.off_points_rank || '?'} | 3PT: #${defRank.off_threes_rank || '?'}
-  REB: #${defRank.off_rebounds_rank || '?'} | AST: #${defRank.off_assists_rank || '?'} | Pace: #${defRank.off_pace_rank || '?'}`;
+  REB: #${defRank.off_rebounds_rank || '?'} | AST: #${defRank.off_assists_rank || '?'} | Pace: #${defRank.off_pace_rank || '?'}
+
+ℹ️ _Defense = what opp ALLOWS (high rank = easy matchup)_
+ℹ️ _Offense = opp's own scoring strength_
+⚠️ _= Top 5 (tough)_ | 🔥 _= Rank 20+ (favorable)_`;
     }
   } else {
     defenseSection = '\n📭 No NBA matchup detected for today.';
