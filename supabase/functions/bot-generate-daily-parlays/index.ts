@@ -786,28 +786,28 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
       // === MATCHUP-FIRST EXPLORATION: all legs attack weak defenses (rank 20+) ===
-      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
-      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite' },
-      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'shuffle' },
-      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
-      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       // === SAME-TEAM STACKING: 3 players from same team vs soft defense ===
-      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite' },
-      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
-      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3 },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3 },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3 },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3 },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3 },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.3 },
       // === MISPRICED + MATCHUP COMBO: mispriced edge AND defense rank 20+ ===
-      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
-      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
-      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
     ],
   },
   validation: {
@@ -6602,6 +6602,8 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/matchup_exploit: ${candidatePicks.length} matchup-boosted picks (sort=${sortBy}, minHR=${profile.minHitRate}%)`);
+      // Relax diversity for matchup exploration — allow elite matchup players in more parlays
+      if (tierConfig.maxPlayerUsage < 4) tierConfig.maxPlayerUsage = 4;
     } else if (isMatchupTeamStackProfile) {
       // === MATCHUP TEAM STACK: same-team stacking against soft defense ===
       const matchupTeamPool = [...pool.sweetSpots, ...(pool.mispricedPicks || [])]
