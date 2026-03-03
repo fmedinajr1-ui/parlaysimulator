@@ -455,3 +455,6 @@ verify_jwt = false
 
 [functions.fetch-team-moneylines]
 verify_jwt = false
+
+[functions.generate-lottery-cards]
+verify_jwt = false
