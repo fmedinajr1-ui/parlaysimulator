@@ -785,6 +785,29 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_ncaab', 'icehockey_nhl'], sortBy: 'shuffle' },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
+      // === MATCHUP-FIRST EXPLORATION: all legs attack weak defenses (rank 20+) ===
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite' },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
+      { legs: 4, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
+      // === SAME-TEAM STACKING: 3 players from same team vs soft defense ===
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite' },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_team_stack', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'hit_rate' },
+      // === MISPRICED + MATCHUP COMBO: mispriced edge AND defense rank 20+ ===
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite' },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite' },
+      { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle' },
     ],
   },
   validation: {
@@ -5450,22 +5473,31 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const matchupKey = `${pickTeamAbbrev}|${matchupPropKey}`;
       const matchupSignal = matchupDefenseScan.get(matchupKey);
       if (matchupSignal) {
-        if (matchupSignal.priority === 'prime' && sideGate === 'over') {
+        const defRank = matchupSignal.defense_rank || 0;
+        if (sideGate === 'over' && defRank >= 28) {
+          // ELITE: rank 28+ (e.g., WAS #30)
+          pick.compositeScore = Math.min(95, pick.compositeScore + 22);
+          (pick as any).matchupBoost = 22;
+          (pick as any).matchupPriority = 'elite';
+          console.log(`[MatchupBoost] +22 ELITE boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${defRank})`);
+        } else if (matchupSignal.priority === 'prime' && sideGate === 'over') {
+          // PRIME: rank 25-27 (e.g., DET #25-27)
+          pick.compositeScore = Math.min(95, pick.compositeScore + 18);
+          (pick as any).matchupBoost = 18;
+          (pick as any).matchupPriority = 'prime';
+          console.log(`[MatchupBoost] +18 PRIME boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${defRank})`);
+        } else if (matchupSignal.priority === 'favorable' && sideGate === 'over') {
+          // FAVORABLE: rank 20-24
           pick.compositeScore = Math.min(95, pick.compositeScore + 12);
           (pick as any).matchupBoost = 12;
-          (pick as any).matchupPriority = 'prime';
-          console.log(`[MatchupBoost] +12 PRIME boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${matchupSignal.defense_rank})`);
-        } else if (matchupSignal.priority === 'favorable' && sideGate === 'over') {
-          pick.compositeScore = Math.min(95, pick.compositeScore + 6);
-          (pick as any).matchupBoost = 6;
           (pick as any).matchupPriority = 'favorable';
-          console.log(`[MatchupBoost] +6 FAVORABLE boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${matchupSignal.defense_rank})`);
+          console.log(`[MatchupBoost] +12 FAVORABLE boost ${pick.player_name} ${matchupPropKey} OVER (opp rank ${defRank})`);
         } else if (matchupSignal.priority === 'avoid' && sideGate === 'over') {
           pick.compositeScore = Math.max(0, pick.compositeScore - 20);
           (pick as any).matchupBoost = -20;
           (pick as any).matchupPriority = 'avoid';
           (pick as any).defenseHardBlocked = true;
-          console.log(`[MatchupBoost] -20 AVOID block ${pick.player_name} ${matchupPropKey} OVER (opp rank ${matchupSignal.defense_rank})`);
+          console.log(`[MatchupBoost] -20 AVOID block ${pick.player_name} ${matchupPropKey} OVER (opp rank ${defRank})`);
         }
       }
     }
@@ -6109,6 +6141,12 @@ async function generateTierParlays(
     const isRoleStackedProfile = profile.strategy === 'role_stacked_3leg';
     // MIXED CONVICTION STACK: mispriced + correct-priced + conviction
     const isMixedConvictionProfile = profile.strategy === 'mixed_conviction_stack';
+    // MATCHUP EXPLOIT: all legs must attack weak defenses (matchupBoost > 0)
+    const isMatchupExploitProfile = profile.strategy === 'matchup_exploit';
+    // MATCHUP TEAM STACK: same team stacking against soft defense
+    const isMatchupTeamStackProfile = profile.strategy === 'matchup_team_stack';
+    // MATCHUP MISPRICED: intersection of mispriced edge AND matchup boost
+    const isMatchupMispricedProfile = profile.strategy === 'matchup_mispriced';
     
     if (isSweetSpotCoreProfile) {
       // === SWEET SPOT CORE: All legs from category_sweet_spots — engine pre-vetted ===
@@ -6528,6 +6566,120 @@ async function generateTierParlays(
       } else {
         console.log(`[Bot] ${tier}/double_confirmed: using ${candidatePicks.length} double-confirmed picks for ${profile.legs}-leg parlay`);
       }
+    } else if (isMatchupExploitProfile) {
+      // === MATCHUP EXPLOIT: all legs must attack weak defenses (matchupBoost > 0) ===
+      const matchupPool = [...pool.sweetSpots, ...(pool.mispricedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          if (!((p as any).matchupBoost > 0)) return false;
+          const hr = (p as any).l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          return hrPct >= (profile.minHitRate || 45);
+        });
+      // Deduplicate by player+prop
+      const seenMatchup = new Set<string>();
+      const dedupedMatchup = matchupPool.filter(p => {
+        const key = `${(p.player_name || '').toLowerCase()}|${((p as any).prop_type || p.category || '').toLowerCase()}`;
+        if (seenMatchup.has(key)) return false;
+        seenMatchup.add(key);
+        return true;
+      });
+      const sortBy = profile.sortBy || 'composite';
+      if (sortBy === 'hit_rate') {
+        candidatePicks = dedupedMatchup.sort((a, b) => {
+          const aHr = ((a as any).l10_hit_rate || 0) <= 1 ? ((a as any).l10_hit_rate || 0) * 100 : ((a as any).l10_hit_rate || 0);
+          const bHr = ((b as any).l10_hit_rate || 0) <= 1 ? ((b as any).l10_hit_rate || 0) * 100 : ((b as any).l10_hit_rate || 0);
+          return bHr - aHr;
+        });
+      } else if (sortBy === 'shuffle') {
+        candidatePicks = dedupedMatchup.sort(() => Math.random() - 0.5);
+      } else {
+        candidatePicks = dedupedMatchup.sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+      }
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/matchup_exploit: only ${candidatePicks.length} matchup-boosted picks, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/matchup_exploit: ${candidatePicks.length} matchup-boosted picks (sort=${sortBy}, minHR=${profile.minHitRate}%)`);
+    } else if (isMatchupTeamStackProfile) {
+      // === MATCHUP TEAM STACK: same-team stacking against soft defense ===
+      const matchupTeamPool = [...pool.sweetSpots, ...(pool.mispricedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          if (!((p as any).matchupBoost > 0)) return false;
+          const hr = (p as any).l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          return hrPct >= (profile.minHitRate || 45);
+        });
+      // Deduplicate
+      const seenTS = new Set<string>();
+      const dedupedTS = matchupTeamPool.filter(p => {
+        const key = `${(p.player_name || '').toLowerCase()}|${((p as any).prop_type || p.category || '').toLowerCase()}`;
+        if (seenTS.has(key)) return false;
+        seenTS.add(key);
+        return true;
+      });
+      // Group by team abbreviation
+      const teamGroups = new Map<string, typeof dedupedTS>();
+      for (const p of dedupedTS) {
+        const team = ((p as any).team_abbrev || (p as any).team_name || '').toUpperCase().slice(0, 3);
+        if (!team) continue;
+        if (!teamGroups.has(team)) teamGroups.set(team, []);
+        teamGroups.get(team)!.push(p);
+      }
+      // Find best team with enough picks
+      let bestTeam = '';
+      let bestTeamScore = -1;
+      for (const [team, picks] of teamGroups) {
+        if (picks.length < profile.legs) continue;
+        const avgScore = picks.reduce((s, p) => s + (p.compositeScore || 0), 0) / picks.length;
+        if (avgScore > bestTeamScore) {
+          bestTeamScore = avgScore;
+          bestTeam = team;
+        }
+      }
+      if (!bestTeam || !teamGroups.has(bestTeam)) {
+        console.log(`[Bot] ${tier}/matchup_team_stack: no team has ${profile.legs}+ matchup-boosted picks (teams: ${[...teamGroups.entries()].map(([t, p]) => `${t}:${p.length}`).join(', ')})`);
+        continue;
+      }
+      const teamPicks = teamGroups.get(bestTeam)!;
+      const sortBy = profile.sortBy || 'composite';
+      if (sortBy === 'hit_rate') {
+        candidatePicks = teamPicks.sort((a, b) => {
+          const aHr = ((a as any).l10_hit_rate || 0) <= 1 ? ((a as any).l10_hit_rate || 0) * 100 : ((a as any).l10_hit_rate || 0);
+          const bHr = ((b as any).l10_hit_rate || 0) <= 1 ? ((b as any).l10_hit_rate || 0) * 100 : ((b as any).l10_hit_rate || 0);
+          return bHr - aHr;
+        });
+      } else if (sortBy === 'shuffle') {
+        candidatePicks = teamPicks.sort(() => Math.random() - 0.5);
+      } else {
+        candidatePicks = teamPicks.sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+      }
+      console.log(`[Bot] ${tier}/matchup_team_stack: stacking ${bestTeam} with ${candidatePicks.length} matchup picks (avg score ${bestTeamScore.toFixed(1)})`);
+    } else if (isMatchupMispricedProfile) {
+      // === MATCHUP MISPRICED: intersection of mispriced edge AND matchup boost ===
+      const matchupMispricedPool = [...(pool.mispricedPicks || [])]
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+          if (!((p as any).matchupBoost > 0)) return false;
+          const hr = (p as any).l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          return hrPct >= (profile.minHitRate || 45);
+        });
+      const sortBy = profile.sortBy || 'composite';
+      if (sortBy === 'shuffle') {
+        candidatePicks = matchupMispricedPool.sort(() => Math.random() - 0.5);
+      } else {
+        candidatePicks = matchupMispricedPool.sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+      }
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/matchup_mispriced: only ${candidatePicks.length} mispriced+matchup picks, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/matchup_mispriced: ${candidatePicks.length} mispriced+matchup picks (sort=${sortBy})`);
     } else if (isMispricedProfile) {
       candidatePicks = [...pool.mispricedPicks]
         .filter(p => {
@@ -6722,7 +6874,9 @@ async function generateTierParlays(
       if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile, profile.strategy)) continue;
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
       const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
+      // Relax team usage cap for matchup_team_stack profiles (allow same-team stacking)
+      const effectiveConfig = isMatchupTeamStackProfile ? { ...config, maxTeamUsage: 6 } : config;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
       
       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
       if (tier === 'execution' && 'player_name' in pick) {
