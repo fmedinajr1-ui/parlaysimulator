@@ -638,6 +638,23 @@ serve(async (req) => {
         else if (prop.prop_type === 'player_triple_double') hitRate = 5;
       }
 
+      // DD Defense Gate: only allow double-double if opponent is weak in 2+ categories
+      if (prop.prop_type === 'player_double_double') {
+        const homeOppPts = getDefenseRank(prop.home_team, 'player_points');
+        const homeOppReb = getDefenseRank(prop.home_team, 'player_rebounds');
+        const homeOppAst = getDefenseRank(prop.home_team, 'player_assists');
+        const awayOppPts = getDefenseRank(prop.away_team, 'player_points');
+        const awayOppReb = getDefenseRank(prop.away_team, 'player_rebounds');
+        const awayOppAst = getDefenseRank(prop.away_team, 'player_assists');
+        // Check if either team's defense is weak in 2+ categories (rank >= 18)
+        const homeWeakCount = [homeOppPts, homeOppReb, homeOppAst].filter(r => r !== null && r >= 18).length;
+        const awayWeakCount = [awayOppPts, awayOppReb, awayOppAst].filter(r => r !== null && r >= 18).length;
+        const bestWeakCount = Math.max(homeWeakCount, awayWeakCount);
+        if (bestWeakCount < 2) {
+          continue; // Skip DD against defensively strong opponents
+        }
+      }
+
       // Star player bonus for first basket (stars more likely to score first)
       if (prop.prop_type === 'player_first_basket') {
         const playerL10 = gameLogMap.get(`${nameNorm}|points`);
@@ -853,6 +870,13 @@ serve(async (req) => {
       const propNorm = normalizePropType(prop.prop_type);
       const sameTypeCount = existingLegs.filter(l => normalizePropType(l.prop_type) === propNorm).length;
       if (sameTypeCount >= MAX_SAME_PROP) return false;
+      // Block same-game double-double picks (no two DD from same game)
+      if (prop.prop_type === 'player_double_double') {
+        const existingDD = existingLegs.filter(
+          l => l.prop_type === 'player_double_double' && l.game === prop.game
+        );
+        if (existingDD.length > 0) return false;
+      }
       return true;
     }
 
