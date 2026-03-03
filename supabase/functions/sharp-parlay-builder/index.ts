@@ -688,6 +688,70 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   await loadCategoryRecommendations(supabase);
   await loadProjections(supabase); // v4.0: Load projections for parlay legs
 
+  // === MATCHUP-FIRST: Load defense rankings ===
+  const defenseRankMap = new Map<string, { ptsRank: number | null; rebRank: number | null; astRank: number | null; threesRank: number | null }>();
+  try {
+    const { data: defData } = await supabase
+      .from("team_defense_rankings")
+      .select("team_abbreviation, team_name, opp_points_rank, opp_rebounds_rank, opp_assists_rank, opp_threes_rank")
+      .eq("is_current", true);
+    for (const d of defData || []) {
+      const entry = { ptsRank: d.opp_points_rank, rebRank: d.opp_rebounds_rank, astRank: d.opp_assists_rank, threesRank: d.opp_threes_rank };
+      if (d.team_abbreviation) defenseRankMap.set(d.team_abbreviation.toUpperCase(), entry);
+      if (d.team_name) defenseRankMap.set(d.team_name.toLowerCase(), entry);
+    }
+    console.log(`[Sharp Builder] Loaded ${defenseRankMap.size} defense rank entries for matchup-first scoring`);
+  } catch (defErr) {
+    console.warn(`[Sharp Builder] Failed to load defense rankings:`, defErr);
+  }
+
+  // === MATCHUP-FIRST: Build opponent map from today's games ===
+  const opponentMap = new Map<string, string>(); // teamAbbrev -> opponentAbbrev
+  try {
+    const todayStart = `${today}T00:00:00`;
+    const todayEnd = `${today}T23:59:59`;
+    const { data: todayGames } = await supabase
+      .from("game_bets")
+      .select("home_team, away_team")
+      .in("sport", ["basketball_nba"])
+      .gte("commence_time", todayStart)
+      .lte("commence_time", todayEnd);
+    const seenGames = new Set<string>();
+    for (const g of todayGames || []) {
+      const key = `${g.home_team}_${g.away_team}`;
+      if (seenGames.has(key)) continue;
+      seenGames.add(key);
+      const homeAbbrev = (g.home_team || "").toUpperCase();
+      const awayAbbrev = (g.away_team || "").toUpperCase();
+      if (homeAbbrev && awayAbbrev) {
+        opponentMap.set(homeAbbrev, awayAbbrev);
+        opponentMap.set(awayAbbrev, homeAbbrev);
+        // Also map lowercase team names
+        opponentMap.set(homeAbbrev.toLowerCase(), awayAbbrev);
+        opponentMap.set(awayAbbrev.toLowerCase(), homeAbbrev);
+      }
+    }
+    console.log(`[Sharp Builder] Built opponent map: ${opponentMap.size} entries from ${seenGames.size} games`);
+  } catch (oppErr) {
+    console.warn(`[Sharp Builder] Failed to build opponent map:`, oppErr);
+  }
+
+  // Helper: get opponent defense rank for a specific stat category
+  function getMatchupDefenseRank(playerTeam: string, propType: string): number | null {
+    const teamKey = (playerTeam || "").toUpperCase();
+    const teamKeyLower = (playerTeam || "").toLowerCase();
+    const opponent = opponentMap.get(teamKey) || opponentMap.get(teamKeyLower);
+    if (!opponent) return null;
+    const oppDef = defenseRankMap.get(opponent.toUpperCase()) || defenseRankMap.get(opponent.toLowerCase());
+    if (!oppDef) return null;
+    const propLower = (propType || "").toLowerCase();
+    if (propLower.includes("rebound")) return oppDef.rebRank;
+    if (propLower.includes("assist")) return oppDef.astRank;
+    if (propLower.includes("three") || propLower.includes("3pt")) return oppDef.threesRank;
+    if (propLower.includes("point")) return oppDef.ptsRank;
+    return null;
+  }
+
   // Fetch today's props from unified_props or nba_risk_engine_picks
   const today = getEasternDate();
 
@@ -988,6 +1052,25 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       else if (fadeEdgeTag === "FADE_COMBO") adjustedConfidence += 0.06;
     }
 
+    // === MATCHUP-FIRST: Defense alignment scoring ===
+    let isMatchupAligned = false;
+    const playerTeam = getPlayerTeam(prop.player_name);
+    const matchupDefRank = getMatchupDefenseRank(playerTeam, prop.prop_type);
+    if (matchupDefRank !== null) {
+      if (matchupDefRank >= 25) {
+        adjustedConfidence += 0.20; // Very weak defense = strong matchup
+        isMatchupAligned = true;
+        console.log(`[Sharp Matchup] 🎯 ${prop.player_name} ${prop.prop_type} +0.20 (opp defense rank ${matchupDefRank} VERY WEAK)`);
+      } else if (matchupDefRank >= 20) {
+        adjustedConfidence += 0.15; // Weak defense = favorable matchup
+        isMatchupAligned = true;
+        console.log(`[Sharp Matchup] ✅ ${prop.player_name} ${prop.prop_type} +0.15 (opp defense rank ${matchupDefRank} WEAK)`);
+      } else if (matchupDefRank <= 8) {
+        adjustedConfidence -= 0.10; // Strong defense = penalty
+        console.log(`[Sharp Matchup] ⛔ ${prop.player_name} ${prop.prop_type} -0.10 (opp defense rank ${matchupDefRank} STRONG)`);
+      }
+    }
+
     // CLAMP to 0-1 range
     adjustedConfidence = Math.max(0.1, Math.min(0.95, adjustedConfidence));
 
@@ -995,7 +1078,8 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     const playerRole = prop.player_role || "WING";
     const statType = statPriority >= 9 ? "(preferred)" : statPriority <= 2 ? "(low priority)" : "";
     const fadeTag = isFadeSpecialist ? ` [${fadeEdgeTag}]` : "";
-    const rationale = `${playerRole} ${position || ""}, L5: ${medianResult.median5.toFixed(1)}, L10: ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? "+" : ""}${medianResult.edge.toFixed(1)}% edge ${statType}${fadeTag}`;
+    const matchupTag = isMatchupAligned ? ` [MATCHUP🎯]` : (matchupDefRank !== null && matchupDefRank <= 8 ? ` [DEF⛔]` : "");
+    const rationale = `${playerRole} ${position || ""}, L5: ${medianResult.median5.toFixed(1)}, L10: ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? "+" : ""}${medianResult.edge.toFixed(1)}% edge ${statType}${fadeTag}${matchupTag}`;
 
     candidates.push({
       player_name: prop.player_name,
@@ -1197,7 +1281,7 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
       ? candidates.filter((c) => c.confidence_score >= 0.35)
       : dreamTeamCandidates;
 
-  // Sort by: fade specialists > stat priority > edge > confidence
+  // Sort by: fade specialists > MATCHUP ALIGNMENT > stat priority > edge > confidence
   // CRITICAL FIX: Added stable tie-breakers (player_name, prop_type) to ensure deterministic ordering
   pool.sort((a, b) => {
     // First: Prioritize fade specialists in SAFE parlays
@@ -1206,6 +1290,11 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
       const bFade = b.is_fade_specialist ? 1 : 0;
       if (bFade !== aFade) return bFade - aFade;
     }
+
+    // MATCHUP-FIRST: Matchup-aligned picks sort higher
+    const aMatchup = (a as any).matchupAligned ? 1 : 0;
+    const bMatchup = (b as any).matchupAligned ? 1 : 0;
+    if (bMatchup !== aMatchup) return bMatchup - aMatchup;
 
     // Second: by stat priority (higher = better) - rebounds/assists first
     const aPriority = a.stat_priority || getStatPriority(a.prop_type);

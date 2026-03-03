@@ -4436,6 +4436,99 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[Bot] Applied ${contextAdjustments} game context adjustments (incl. team total alignment)`);
   }
 
+  // === MATCHUP-FIRST: Build Matchup Opportunity Map ===
+  // For each game today, check opponent defense weaknesses and tag attacking teams
+  const matchupOpportunityMap = new Map<string, { stat: string; oppDefRank: number }[]>();
+  try {
+    const STAT_DEF_FIELDS = [
+      { stat: 'points', field: 'opp_points_rank' },
+      { stat: 'rebounds', field: 'opp_rebounds_rank' },
+      { stat: 'assists', field: 'opp_assists_rank' },
+      { stat: 'threes', field: 'opp_threes_rank' },
+    ];
+    // Use envMap to get game pairings (home_team_abbrev vs away_team_abbrev)
+    for (const [envKey] of envMap.entries()) {
+      const [homeAbbrev, awayAbbrev] = envKey.split('_');
+      if (!homeAbbrev || !awayAbbrev) continue;
+      
+      // Check home team's defense weaknesses (away team attacks)
+      const homeDef = defenseDetailMap.get(homeAbbrev);
+      if (homeDef) {
+        const awayOpps: { stat: string; oppDefRank: number }[] = [];
+        for (const sf of STAT_DEF_FIELDS) {
+          const rank = (homeDef as any)[sf.field];
+          if (rank != null && rank >= 20) {
+            awayOpps.push({ stat: sf.stat, oppDefRank: rank });
+          }
+        }
+        if (awayOpps.length > 0) {
+          const existing = matchupOpportunityMap.get(awayAbbrev) || [];
+          matchupOpportunityMap.set(awayAbbrev, [...existing, ...awayOpps]);
+        }
+      }
+      
+      // Check away team's defense weaknesses (home team attacks)
+      const awayDef = defenseDetailMap.get(awayAbbrev);
+      if (awayDef) {
+        const homeOpps: { stat: string; oppDefRank: number }[] = [];
+        for (const sf of STAT_DEF_FIELDS) {
+          const rank = (awayDef as any)[sf.field];
+          if (rank != null && rank >= 20) {
+            homeOpps.push({ stat: sf.stat, oppDefRank: rank });
+          }
+        }
+        if (homeOpps.length > 0) {
+          const existing = matchupOpportunityMap.get(homeAbbrev) || [];
+          matchupOpportunityMap.set(homeAbbrev, [...existing, ...homeOpps]);
+        }
+      }
+    }
+    console.log(`[MatchupFirst] Built matchup opportunity map: ${matchupOpportunityMap.size} teams with exploitable weaknesses`);
+    for (const [team, opps] of matchupOpportunityMap.entries()) {
+      console.log(`[MatchupFirst]   ${team}: ${opps.map(o => `${o.stat}(rank ${o.oppDefRank})`).join(', ')}`);
+    }
+  } catch (moErr) {
+    console.log(`[MatchupFirst] ⚠️ Failed to build matchup opportunity map: ${(moErr as any).message}`);
+  }
+
+  // === MATCHUP-FIRST: Apply Alignment Boosts to enriched sweet spots ===
+  let matchupAlignedCount = 0;
+  for (const pick of enrichedSweetSpots) {
+    const teamName = (pick.team_name || '').toLowerCase().trim();
+    const teamAbbrev = nameToAbbrev.get(teamName) || nameToAbbrev.get(pick.team_name || '') || '';
+    if (!teamAbbrev) continue;
+    
+    const opportunities = matchupOpportunityMap.get(teamAbbrev);
+    if (!opportunities || opportunities.length === 0) continue;
+    
+    // Check if pick's prop type aligns with any opponent weakness
+    const propLower = (pick.prop_type || '').toLowerCase();
+    let pickStat = '';
+    if (propLower.includes('rebound')) pickStat = 'rebounds';
+    else if (propLower.includes('assist')) pickStat = 'assists';
+    else if (propLower.includes('three') || propLower.includes('3pt')) pickStat = 'threes';
+    else if (propLower.includes('point') && !propLower.includes('rebound') && !propLower.includes('assist')) pickStat = 'points';
+    
+    if (!pickStat) continue;
+    
+    const matchingOpp = opportunities.find(o => o.stat === pickStat);
+    if (!matchingOpp) continue;
+    
+    // Apply tiered boost based on how weak the defense is
+    let boost = 0;
+    if (matchingOpp.oppDefRank >= 28) boost = 22;       // Elite matchup exploitation
+    else if (matchingOpp.oppDefRank >= 25) boost = 18;   // Prime matchup
+    else if (matchingOpp.oppDefRank >= 20) boost = 12;   // Favorable matchup
+    
+    pick.compositeScore = Math.min(98, pick.compositeScore + boost);
+    (pick as any).matchupAligned = true;
+    (pick as any).matchupBoost = boost;
+    (pick as any).matchupDefRank = matchingOpp.oppDefRank;
+    matchupAlignedCount++;
+    console.log(`[MatchupFirst] 🎯 ${pick.player_name} ${pick.prop_type} +${boost} (opp ${pickStat} defense rank ${matchingOpp.oppDefRank})`);
+  }
+  console.log(`[MatchupFirst] Tagged ${matchupAlignedCount} picks as matchup-aligned out of ${enrichedSweetSpots.length} total`);
+
   // === FETCH PLAYER PROP ALTERNATE LINES ===
   // Check if any execution profile uses alt lines
   const allProfiles = Object.values(TIER_CONFIG).flatMap((tc: any) => tc.profiles || []);
