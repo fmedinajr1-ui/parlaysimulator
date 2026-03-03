@@ -17,21 +17,20 @@ function getEasternDate(): string {
 
 interface GameLog {
   player_name: string;
-  team: string;
   opponent: string;
   points: number;
   rebounds: number;
   assists: number;
   steals: number;
   blocks: number;
-  minutes: number;
+  minutes_played: number | null;
+  min: number | null;
   game_date: string;
   is_home: boolean;
 }
 
 interface PlayerStats {
   player_name: string;
-  team: string;
   games_played: number;
   dd_count: number;
   td_count: number;
@@ -70,7 +69,6 @@ function isNearMiss(g: GameLog): boolean {
 function analyzePlayer(playerName: string, games: GameLog[]): PlayerStats | null {
   if (games.length < 10) return null;
 
-  const team = games[0].team || '';
   let ddCount = 0, tdCount = 0, nearMissCount = 0;
   let homeDd = 0, homeTotal = 0, awayDd = 0, awayTotal = 0;
   let totalMinutes = 0;
@@ -83,7 +81,7 @@ function analyzePlayer(playerName: string, games: GameLog[]): PlayerStats | null
     if (isDD) ddCount++;
     if (isTD) tdCount++;
     if (isNearMiss(g)) nearMissCount++;
-    totalMinutes += g.minutes || 0;
+    totalMinutes += g.minutes_played || g.min || 0;
 
     if (g.is_home) {
       homeTotal++;
@@ -117,7 +115,6 @@ function analyzePlayer(playerName: string, games: GameLog[]): PlayerStats | null
 
   return {
     player_name: playerName,
-    team,
     games_played: games.length,
     dd_count: ddCount,
     td_count: tdCount,
@@ -194,7 +191,7 @@ serve(async (req) => {
     while (true) {
       const { data, error } = await supabase
         .from('nba_player_game_logs')
-        .select('player_name, team, opponent, points, rebounds, assists, steals, blocks, minutes, game_date, is_home')
+        .select('player_name, opponent, points, rebounds, assists, steals, blocks, minutes_played, min, game_date, is_home')
         .order('game_date', { ascending: false })
         .range(offset, offset + pageSize - 1);
       if (error) { console.error('[DD/TD] fetch error:', error.message); break; }
@@ -214,12 +211,31 @@ serve(async (req) => {
       playerGames.get(name)!.push(g);
     }
 
+    // 2b. Build player→team map from bdl_player_cache
+    const playerTeamMap = new Map<string, string>();
+    let ptOffset = 0;
+    while (true) {
+      const { data: ptData } = await supabase
+        .from('bdl_player_cache')
+        .select('player_name, team_name')
+        .not('team_name', 'is', null)
+        .range(ptOffset, ptOffset + 999);
+      if (!ptData || ptData.length === 0) break;
+      for (const p of ptData) {
+        playerTeamMap.set(p.player_name, p.team_name);
+      }
+      if (ptData.length < 1000) break;
+      ptOffset += 1000;
+    }
+    console.log(`[DD/TD] Player→team mappings loaded: ${playerTeamMap.size}`);
+
     // 3. Analyze each player
-    const allStats: PlayerStats[] = [];
+    const allStats: (PlayerStats & { team: string })[] = [];
     for (const [name, games] of playerGames) {
       const stats = analyzePlayer(name, games);
       if (stats && stats.season_dd_rate >= 0.15) {
-        allStats.push(stats);
+        const team = playerTeamMap.get(name) || '';
+        allStats.push({ ...stats, team });
       }
     }
     console.log(`[DD/TD] Players with 15%+ DD rate: ${allStats.length}`);
@@ -257,6 +273,26 @@ serve(async (req) => {
       teamSchedule.set(away, { opponent: home, isHome: false });
     }
 
+    // 4b. Load defense rankings for matchup context
+    const { data: defenseData } = await supabase
+      .from('team_defense_rankings')
+      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank')
+      .eq('is_current', true);
+
+    const defenseMap = new Map<string, { overall_rank: number; opp_points_rank: number; opp_rebounds_rank: number; opp_assists_rank: number; opp_threes_rank: number }>();
+    if (defenseData) {
+      for (const r of defenseData) {
+        defenseMap.set((r.team_abbreviation || '').toUpperCase(), {
+          overall_rank: r.overall_rank ?? 15,
+          opp_points_rank: r.opp_points_rank ?? 15,
+          opp_rebounds_rank: r.opp_rebounds_rank ?? 15,
+          opp_assists_rank: r.opp_assists_rank ?? 15,
+          opp_threes_rank: r.opp_threes_rank ?? 15,
+        });
+      }
+    }
+    console.log(`[DD/TD] Loaded ${defenseMap.size} team defense profiles`);
+
     // 5. Score candidates who play tonight
     interface Candidate {
       player_name: string;
@@ -270,6 +306,11 @@ serve(async (req) => {
       is_home: boolean;
       near_miss_rate: number;
       games_played: number;
+      defense_overall_rank: number | null;
+      defense_pts_rank: number | null;
+      defense_reb_rank: number | null;
+      defense_ast_rank: number | null;
+      matchup_label: string;
     }
 
     const candidates: Candidate[] = [];
@@ -283,10 +324,28 @@ serve(async (req) => {
       const contextRate = isHome ? stats.home_dd_rate : stats.away_dd_rate;
       const oppRate = stats.opponent_dd_rates[opponent]?.rate ?? stats.season_dd_rate;
 
+      // Defense matchup boost
+      const oppDef = defenseMap.get(opponent);
+      let matchupBoost = 0;
+      let matchupLabel = '';
+      if (oppDef) {
+        if (oppDef.opp_points_rank >= 25) matchupBoost += 0.08;
+        if (oppDef.opp_rebounds_rank >= 25) matchupBoost += 0.06;
+        if (oppDef.opp_assists_rank >= 25) matchupBoost += 0.04;
+        if (oppDef.overall_rank >= 25) matchupBoost += 0.05;
+        if (oppDef.overall_rank <= 5) matchupBoost -= 0.05;
+
+        if (oppDef.overall_rank >= 25) matchupLabel = '🔥 Elite matchup';
+        else if (oppDef.overall_rank >= 18) matchupLabel = '✅ Favorable';
+        else if (oppDef.overall_rank <= 5) matchupLabel = '⚠️ Tough defense';
+        else matchupLabel = '';
+      }
+
       const ddComposite = 0.40 * stats.season_dd_rate
         + 0.25 * contextRate
         + 0.20 * stats.l10_dd_rate
-        + 0.15 * oppRate;
+        + 0.15 * oppRate
+        + matchupBoost;
 
       candidates.push({
         player_name: stats.player_name,
@@ -300,6 +359,11 @@ serve(async (req) => {
         is_home: isHome,
         near_miss_rate: stats.near_miss_rate,
         games_played: stats.games_played,
+        defense_overall_rank: oppDef?.overall_rank ?? null,
+        defense_pts_rank: oppDef?.opp_points_rank ?? null,
+        defense_reb_rank: oppDef?.opp_rebounds_rank ?? null,
+        defense_ast_rank: oppDef?.opp_assists_rank ?? null,
+        matchup_label: matchupLabel,
       });
 
       // TD candidate if meaningful TD rate
@@ -307,7 +371,8 @@ serve(async (req) => {
         const tdComposite = 0.40 * stats.season_td_rate
           + 0.25 * (isHome ? stats.home_dd_rate * (stats.season_td_rate / Math.max(stats.season_dd_rate, 0.01)) : stats.away_dd_rate * (stats.season_td_rate / Math.max(stats.season_dd_rate, 0.01)))
           + 0.20 * stats.l10_td_rate
-          + 0.15 * stats.season_td_rate;
+          + 0.15 * stats.season_td_rate
+          + matchupBoost;
 
         candidates.push({
           player_name: stats.player_name,
@@ -321,6 +386,11 @@ serve(async (req) => {
           is_home: isHome,
           near_miss_rate: stats.near_miss_rate,
           games_played: stats.games_played,
+          defense_overall_rank: oppDef?.overall_rank ?? null,
+          defense_pts_rank: oppDef?.opp_points_rank ?? null,
+          defense_reb_rank: oppDef?.opp_rebounds_rank ?? null,
+          defense_ast_rank: oppDef?.opp_assists_rank ?? null,
+          matchup_label: matchupLabel,
         });
       }
     }
@@ -328,8 +398,9 @@ serve(async (req) => {
     // Sort by composite descending
     candidates.sort((a, b) => b.composite_score - a.composite_score);
 
-    const ddCandidates = candidates.filter(c => c.prediction_type === 'DD').slice(0, 15);
-    const tdCandidates = candidates.filter(c => c.prediction_type === 'TD').slice(0, 10);
+    // No limits - show ALL candidates
+    const ddCandidates = candidates.filter(c => c.prediction_type === 'DD');
+    const tdCandidates = candidates.filter(c => c.prediction_type === 'TD');
 
     console.log(`[DD/TD] DD candidates: ${ddCandidates.length}, TD candidates: ${tdCandidates.length}`);
 
