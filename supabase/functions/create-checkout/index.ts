@@ -55,6 +55,7 @@ serve(async (req) => {
         created_by: "stripe_checkout",
         is_active: true,
         max_uses: 1,
+        email: user.email,
       })
       .select("id")
       .single();
