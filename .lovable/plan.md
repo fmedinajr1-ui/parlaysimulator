@@ -1,97 +1,39 @@
 
-# Cancel Past-Due Subscriptions and Build Email-to-Chat-ID Mapping
 
-## Part 1: Cancel 5 Past-Due Stripe Subscriptions
+## Plan: Email Mapping Fix + Lookup Explainer
 
-Use the Stripe `cancel_subscription` tool to cancel all 5 subscriptions:
+### Part 1: Fix Email Mapping in `create-checkout`
 
-| Subscription ID | Customer ID |
-|---|---|
-| `sub_1T4piq9D6r1PTCBB1T9i7KhR` | `cus_U2vGsCpYLHVtUh` |
-| `sub_1T4pQw9D6r1PTCBBUM6YZxu2` | `cus_U2vGsCpYLHVtUh` |
-| `sub_1T4pPz9D6r1PTCBBNBNVolY5` | `cus_U2vGsCpYLHVtUh` |
-| `sub_1T4Ozz9D6r1PTCBBKQygnJ0q` | `cus_U2TxE5KnFpgMgR` |
-| `sub_1T46Hg9D6r1PTCBBz6eaCnMd` | `cus_U2AcL9SybwXXHt` |
+**Problem:** The `create-checkout` edge function (the original checkout flow) does NOT save the customer's email to `bot_access_passwords`, so when users activate via `/start`, the email-to-chat_id mapping never happens. The newer `create-bot-checkout` already does this correctly.
 
-Note: 3 of the 5 belong to the same customer (`cus_U2vGsCpYLHVtUh`). Since there's no email-to-chat_id mapping yet, we cannot automatically deactivate the corresponding bot users. After Part 2 is built, the webhook will handle future cancellations automatically.
-
-For now, if you can identify which chat_ids belong to these customers, I can manually deactivate them.
+**Fix:** In `supabase/functions/create-checkout/index.ts`, add `email: user.email` to the password insert (line ~53-58), matching how `create-bot-checkout` does it.
 
 ---
 
-## Part 2: Build Email-to-Chat-ID Mapping
+### Part 2: Add Matchup Explainer to `/lookup` Output
 
-### The Problem
-The `email_subscribers` table exists with `telegram_chat_id` and `email` columns but is empty. The Stripe webhook's auto-deactivation logic looks up `email_subscribers` to find the chat_id for a cancelled customer -- so it always fails.
+**What it does:** Add a brief legend below the matchup section in the `/lookup` command output so customers understand what the defense and offense rankings mean.
 
-The missing link: during checkout, the customer provides their email. During bot activation (`/start <password>`), the bot knows the chat_id. But nothing connects the two.
+**Changes in `supabase/functions/telegram-webhook/index.ts`** (around line 3637-3644):
 
-### The Solution
+After the existing defense/offense section, append a short explainer block:
 
-**Add `email` column to `bot_access_passwords` table** so the checkout email is stored alongside the password. When the user activates via `/start <password>`, the bot can read the email from the password record and insert into `email_subscribers`.
-
-### Database Migration
-
-Add an `email` column to `bot_access_passwords`:
-
-```sql
-ALTER TABLE public.bot_access_passwords ADD COLUMN email text;
+```
+ℹ️ Defense = what opponent ALLOWS (higher rank = easier matchup)
+ℹ️ Offense = opponent's own scoring strength
+⚠️ = Top 5 (tough) | 🔥 = Rank 20+ (favorable)
 ```
 
-### Edge Function Changes
+This will be appended to the `defenseSection` string so it appears right after the matchup data.
 
-**1. `create-bot-checkout/index.ts`** -- Store email on the password record
+---
 
-When inserting into `bot_access_passwords`, include the customer's email:
+### Technical Details
 
-```typescript
-.insert({
-  password,
-  created_by: "stripe_checkout",
-  is_active: true,
-  max_uses: 1,
-  email: email,  // <-- NEW: store checkout email
-})
-```
+**File changes:**
 
-**2. `telegram-webhook/index.ts`** -- Map email to chat_id during `/start` activation
+1. **`supabase/functions/create-checkout/index.ts`** -- Add `email: user.email` to the `bot_access_passwords` insert object
+2. **`supabase/functions/telegram-webhook/index.ts`** -- Append 3-line explainer to the `defenseSection` string after the offense stats (around line 3644)
 
-In `tryPasswordAuth()`, after successfully authorizing the user, check if the password record has an email. If so, upsert into `email_subscribers`:
+Both edge functions will be redeployed automatically.
 
-```typescript
-// After successful authorization upsert...
-if (pwRecord.email) {
-  await supabase.from("email_subscribers").upsert({
-    email: pwRecord.email,
-    telegram_chat_id: chatId,
-    telegram_username: username || null,
-    is_subscribed: true,
-    source: "bot_activation",
-    subscribed_at: new Date().toISOString(),
-  }, { onConflict: "email" });
-}
-```
-
-**3. `stripe-webhook/index.ts`** -- Already handles deactivation
-
-The existing `customer.subscription.deleted` handler already:
-1. Looks up customer email from Stripe
-2. Finds `telegram_chat_id` via `email_subscribers`
-3. Sets `is_active = false` in `bot_authorized_users`
-
-No changes needed here -- it will start working once `email_subscribers` has data.
-
-### Flow After Implementation
-
-```text
-Checkout:  email --> bot_access_passwords.email
-Activation: /start <pw> --> reads pw.email --> inserts email_subscribers(email, chat_id)
-Cancellation: webhook --> Stripe customer email --> email_subscribers.chat_id --> deactivate bot_authorized_users
-```
-
-### Deployment
-
-1. Run database migration (add `email` column)
-2. Deploy `create-bot-checkout` (stores email on password)
-3. Deploy `telegram-webhook` (maps email to chat_id on activation)
-4. Cancel all 5 past_due subscriptions via Stripe tools
