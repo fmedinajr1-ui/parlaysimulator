@@ -141,26 +141,37 @@ function formatDDTDCandidates(data: Record<string, any>, dateStr: string): strin
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   if (ddCandidates.length > 0) {
-    msg += `🏀 *Double-Double Candidates:*\n`;
-    for (let i = 0; i < Math.min(ddCandidates.length, 10); i++) {
+    msg += `🏀 *Double-Double Candidates (${ddCandidates.length}):*\n`;
+    for (let i = 0; i < ddCandidates.length; i++) {
       const c = ddCandidates[i];
       const pct = Math.round(c.composite_score * 100);
       const l10 = Math.round(c.l10_rate * 100);
       const loc = c.is_home ? 'Home' : 'Away';
       const nm = c.near_miss_rate > 0.15 ? ' 👀' : '';
-      msg += `${i + 1}. *${c.player_name}* vs ${c.opponent} (${loc}) — ${pct}% | L10: ${l10}%${nm}\n`;
+      const matchup = c.matchup_label ? ` ${c.matchup_label}` : '';
+
+      // Defense rank details
+      let defLine = '';
+      const weakStats: string[] = [];
+      if (c.defense_pts_rank && c.defense_pts_rank >= 20) weakStats.push(`PTS ${c.defense_pts_rank}th`);
+      if (c.defense_reb_rank && c.defense_reb_rank >= 20) weakStats.push(`REB ${c.defense_reb_rank}th`);
+      if (c.defense_ast_rank && c.defense_ast_rank >= 20) weakStats.push(`AST ${c.defense_ast_rank}th`);
+      if (weakStats.length > 0) defLine = `\n   DEF: ${weakStats.join(' | ')}`;
+
+      msg += `${i + 1}. *${c.player_name}* vs ${c.opponent} (${loc}) — ${pct}% | L10: ${l10}%${nm}${matchup}${defLine}\n`;
     }
     msg += `\n`;
   }
 
   if (tdCandidates.length > 0) {
-    msg += `🌟 *Triple-Double Watch:*\n`;
-    for (let i = 0; i < Math.min(tdCandidates.length, 5); i++) {
+    msg += `🌟 *Triple-Double Watch (${tdCandidates.length}):*\n`;
+    for (let i = 0; i < tdCandidates.length; i++) {
       const c = tdCandidates[i];
       const pct = Math.round(c.season_rate * 100);
       const l10 = Math.round(c.l10_rate * 100);
       const trend = l10 > pct ? '📈' : l10 < pct ? '📉' : '➡️';
-      msg += `${i + 1}. *${c.player_name}* vs ${c.opponent} — ${pct}% season | L10: ${l10}% ${trend}\n`;
+      const matchup = c.matchup_label ? ` ${c.matchup_label}` : '';
+      msg += `${i + 1}. *${c.player_name}* vs ${c.opponent} — ${pct}% season | L10: ${l10}% ${trend}${matchup}\n`;
     }
     msg += `\n`;
   }
