@@ -6070,6 +6070,7 @@ async function generateTierParlays(
   const tracker = createUsageTracker();
   const parlaysToCreate: any[] = [];
   const loggedNegEdgeKeys = new Set<string>(); // dedup NegEdgeBlock log spam across all profiles
+  const rejectionCounters: Record<string, number> = { notEnoughLegs: 0, prob: 0, edge: 0, sharpe: 0, scoreFloor: 0, coherence: 0, duplicate: 0, mirror: 0, gameUsage: 0, teamUsage: 0, matchupUsage: 0, profileSkipped: 0, strategyCap: 0, crossSport: 0, envCluster: 0, godMode: 0 };
 
   console.log(`[Bot] Generating ${tier} tier (${config.count} target)`);
 
@@ -6603,7 +6604,7 @@ async function generateTierParlays(
       }
       console.log(`[Bot] ${tier}/matchup_exploit: ${candidatePicks.length} matchup-boosted picks (sort=${sortBy}, minHR=${profile.minHitRate}%)`);
       // Relax diversity for matchup exploration — allow elite matchup players in more parlays
-      if (tierConfig.maxPlayerUsage < 4) tierConfig.maxPlayerUsage = 4;
+      if (config.maxPlayerUsage < 4) config.maxPlayerUsage = 4;
     } else if (isMatchupTeamStackProfile) {
       // === MATCHUP TEAM STACK: same-team stacking against soft defense ===
       const matchupTeamPool = [...pool.sweetSpots, ...(pool.mispricedPicks || [])]
@@ -7200,6 +7201,7 @@ async function generateTierParlays(
         // Accept as 3-leg fallback when pool is too small for requested leg count
         console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool too small for ${profile.legs})`);
       } else {
+        rejectionCounters.notEnoughLegs++;
         console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
         continue;
       }
@@ -7237,13 +7239,13 @@ async function generateTierParlays(
       const fpStrategy = tier === 'exploration' ? profile.strategy : '';
       const fingerprint = createParlayFingerprint(legs) + (fpStrategy ? `||S:${fpStrategy}` : '');
       if (globalFingerprints.has(fingerprint)) {
-        console.log(`[Bot] Skipping duplicate ${tier}/${profile.strategy} parlay (fingerprint match)`);
+        rejectionCounters.duplicate++;
         continue;
       }
       // Mirror dedup: skip if same matchups exist with flipped sides
       const mirrorPrint = createMirrorFingerprint(legs);
       if (globalMirrorPrints.has(mirrorPrint)) {
-        console.log(`[Bot] Skipping mirror duplicate ${tier}/${profile.strategy} parlay (same games, flipped sides)`);
+        rejectionCounters.mirror++;
         continue;
       }
 
@@ -7383,17 +7385,18 @@ async function generateTierParlays(
 
       // Check tier thresholds
       const probFloor = (isThinSlate && tier !== 'execution') ? 0.0005 : 0.001;
-      if (combinedProbability < probFloor) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed prob (${combinedProbability.toFixed(4)})`); continue; }
+      if (combinedProbability < probFloor) { rejectionCounters.prob++; if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed prob (${combinedProbability.toFixed(4)})`); continue; }
       const effectiveMinEdge = (isHybridProfile || isTeamProfile) ? Math.min(config.minEdge, 0.008) : config.minEdge;
-      if (effectiveEdge < effectiveMinEdge) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed edge (${effectiveEdge.toFixed(4)} < ${effectiveMinEdge})`); continue; }
-      if (sharpe < config.minSharpe) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed sharpe (${sharpe.toFixed(4)} < ${config.minSharpe})`); continue; }
+      if (effectiveEdge < effectiveMinEdge) { rejectionCounters.edge++; if (tier !== 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed edge (${effectiveEdge.toFixed(4)} < ${effectiveMinEdge})`); continue; }
+      if (sharpe < config.minSharpe) { rejectionCounters.sharpe++; if (tier !== 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed sharpe (${sharpe.toFixed(4)} < ${config.minSharpe})`); continue; }
 
       // === GAP 5: Parlay-level composite score floor ===
       const avgLegCompositeScore = legs.reduce((sum, l) => sum + (l.composite_score || l.sharp_score || 0), 0) / legs.length;
       const adjustedAvgScore = avgLegCompositeScore * penaltyMultiplier;
       const scoreFloor = parlayScoreFloor(tier);
       if (adjustedAvgScore < scoreFloor) {
-        if (tier === 'execution') console.log(`[ParlayFloor] Rejected ${tier}/${profile.strategy} parlay (avg score ${adjustedAvgScore.toFixed(1)} < ${scoreFloor} floor)`);
+        rejectionCounters.scoreFloor++;
+        if (tier !== 'execution') console.log(`[ParlayFloor] Rejected ${tier}/${profile.strategy} parlay (avg score ${adjustedAvgScore.toFixed(1)} < ${scoreFloor} floor)`);
         continue;
       }
 
@@ -7402,7 +7405,8 @@ async function generateTierParlays(
       const isGodModeParlay = profile.strategy === 'god_mode_lock';
       const coherenceFloor = isGodModeParlay ? 85 : (tier === 'execution' ? 80 : (tier === 'validation' ? 70 : 60));
       if (coherence < coherenceFloor) {
-        if (tier === 'execution') console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < ${coherenceFloor}${isGodModeParlay ? ' GOD MODE' : ''})`);
+        rejectionCounters.coherence++;
+        if (tier !== 'execution') console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < ${coherenceFloor}${isGodModeParlay ? ' GOD MODE' : ''})`);
         continue;
       }
 
@@ -7493,6 +7497,10 @@ async function generateTierParlays(
   if (trimmedParlays.length < actualCount) {
     console.log(`[Bot] Post-generation diversity trim: ${actualCount} → ${trimmedParlays.length} parlays (removed ${actualCount - trimmedParlays.length} excess)`);
   }
+
+  // Diagnostic summary
+  const nonZero = Object.entries(rejectionCounters).filter(([_, v]) => v > 0).map(([k, v]) => `${k}=${v}`).join(', ');
+  console.log(`[Bot] ${tier} DIAGNOSTIC: ${trimmedParlays.length} created | rejections: ${nonZero || 'none'} | profiles=${config.profiles.length} pool=${pool.playerPicks.length}`);
 
   return { count: trimmedParlays.length, parlays: trimmedParlays };
 }
