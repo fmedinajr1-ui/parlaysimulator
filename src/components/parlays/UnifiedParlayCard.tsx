@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   Trophy, Shield, Target, Rocket, Flame, TrendingUp,
-  ChevronDown, ChevronUp, Plus, Check
+  ChevronDown, ChevronUp, Plus, Check, Ticket, Star
 } from "lucide-react";
 import { DailyParlay, UnifiedParlayLeg } from "@/hooks/useDailyParlays";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
@@ -65,6 +65,20 @@ const CARD_STYLES: Record<DailyParlay['type'], {
     borderColor: 'border-orange-500/30',
     bgGradient: 'bg-gradient-to-br from-orange-500/10 to-background',
     label: 'Heat Upside',
+  },
+  LOTTERY: {
+    icon: Ticket,
+    iconColor: 'text-yellow-400',
+    borderColor: 'border-yellow-400/30',
+    bgGradient: 'bg-gradient-to-br from-yellow-400/10 to-background',
+    label: 'Lottery',
+  },
+  CURATED: {
+    icon: Star,
+    iconColor: 'text-cyan-400',
+    borderColor: 'border-cyan-400/30',
+    bgGradient: 'bg-gradient-to-br from-cyan-400/10 to-background',
+    label: 'Curated',
   },
 };
 
@@ -131,7 +145,14 @@ export function UnifiedParlayCard({ parlay }: UnifiedParlayCardProps) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Icon className={cn("h-5 w-5", style.iconColor)} />
-            <CardTitle className="text-sm font-semibold">{style.label}</CardTitle>
+            <CardTitle className="text-sm font-semibold">
+              {style.label}
+              {parlay.tier && parlay.type === 'LOTTERY' && (
+                <span className="text-[10px] text-muted-foreground ml-1">
+                  ({parlay.tier.replace(/_/g, ' ')})
+                </span>
+              )}
+            </CardTitle>
           </div>
           <Badge variant="outline" className="text-xs">
             {parlay.legCount} Legs

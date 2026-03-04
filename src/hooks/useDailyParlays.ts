@@ -28,8 +28,8 @@ export interface UnifiedParlayLeg {
 // Unified parlay structure
 export interface DailyParlay {
   id: string;
-  type: 'OPTIMAL' | 'SAFE' | 'BALANCED' | 'UPSIDE' | 'CORE' | 'HEAT_UPSIDE';
-  source: 'sweet-spot' | 'sharp' | 'heat';
+  type: 'OPTIMAL' | 'SAFE' | 'BALANCED' | 'UPSIDE' | 'CORE' | 'HEAT_UPSIDE' | 'LOTTERY' | 'CURATED';
+  source: 'sweet-spot' | 'sharp' | 'heat' | 'bot';
   legCount: number;
   legs: UnifiedParlayLeg[];
   combinedOdds: number;
@@ -38,6 +38,8 @@ export interface DailyParlay {
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
   parlayDate: string;
   outcome: 'pending' | 'won' | 'lost';
+  tier?: string;
+  strategyName?: string;
 }
 
 // Type guard for JSONB leg data - supports both naming conventions
@@ -58,6 +60,26 @@ interface SharpLegJson {
   l10_hit_rate?: number;
   archetype?: string;
   // v4.0: Projection fields
+  projected_value?: number;
+  actual_line?: number;
+  edge?: number;
+}
+
+// Parse bot_daily_parlays legs from JSONB
+interface BotDailyLegJson {
+  player_name?: string;
+  prop_type?: string;
+  line?: number;
+  side?: string;
+  team?: string;
+  category?: string;
+  hit_rate?: number;
+  l10_hit_rate?: number;
+  l10_avg?: number;
+  odds?: number;
+  game?: string;
+  leg_role?: string;
+  market_type?: string;
   projected_value?: number;
   actual_line?: number;
   edge?: number;
@@ -150,6 +172,25 @@ function parseHeatLeg(leg: Json): UnifiedParlayLeg | null {
   return isLegArchetypeAligned(parsed) ? parsed : null; // v3.0: Filter misaligned
 }
 
+// Parse bot daily parlay legs from JSONB
+function parseBotDailyLegs(legs: Json): UnifiedParlayLeg[] {
+  if (!Array.isArray(legs)) return [];
+  
+  return (legs as BotDailyLegJson[]).map(leg => ({
+    playerName: leg.player_name || '',
+    propType: leg.prop_type || leg.market_type || '',
+    line: leg.line || 0,
+    side: (leg.side?.toLowerCase() === 'under' ? 'under' : 'over') as 'over' | 'under',
+    team: leg.team,
+    category: leg.category || leg.leg_role,
+    confidence: leg.hit_rate ? leg.hit_rate / 100 : undefined,
+    l10HitRate: leg.l10_hit_rate ? leg.l10_hit_rate / 100 : undefined,
+    projectedValue: leg.projected_value || leg.l10_avg,
+    actualLine: leg.actual_line,
+    edge: leg.edge,
+  })).filter(leg => leg.playerName !== '');
+}
+
 // Extract patterns from legs
 function extractPatterns(legs: UnifiedParlayLeg[]): string[] {
   const patterns = new Set<string>();
@@ -158,7 +199,6 @@ function extractPatterns(legs: UnifiedParlayLeg[]): string[] {
     if (leg.category) {
       patterns.add(leg.category);
     }
-    // Add prop type patterns
     const propLower = leg.propType.toLowerCase();
     if (propLower.includes('rebound')) {
       patterns.add(leg.side === 'over' ? 'REB_OVER' : 'REB_UNDER');
@@ -211,6 +251,26 @@ export function useDailyParlays() {
       
       if (error) {
         console.error('Error fetching heat parlays:', error);
+        return [];
+      }
+      return data || [];
+    },
+    staleTime: 60000,
+  });
+  
+  // Fetch Bot Daily Parlays (curated pipeline + lottery scanner)
+  const { data: botParlays, isLoading: botLoading } = useQuery({
+    queryKey: ['bot-daily-parlays', today],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('*')
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending')
+        .order('combined_probability', { ascending: false });
+      
+      if (error) {
+        console.error('Error fetching bot daily parlays:', error);
         return [];
       }
       return data || [];
@@ -316,15 +376,43 @@ export function useDailyParlays() {
     });
   });
   
+  // Add Bot Daily Parlays (curated + lottery)
+  botParlays?.forEach(parlay => {
+    const legs = parseBotDailyLegs(parlay.legs);
+    if (legs.length === 0) return;
+    
+    const strategyName = (parlay.strategy_name || '').toLowerCase();
+    const isLottery = strategyName.includes('lottery') || strategyName.includes('mega');
+    const type: DailyParlay['type'] = isLottery ? 'LOTTERY' : 'CURATED';
+    
+    dailyParlays.push({
+      id: parlay.id,
+      type,
+      source: 'bot',
+      legCount: legs.length,
+      legs,
+      combinedOdds: parlay.expected_odds || 300,
+      winProbability: parlay.combined_probability || 0.50,
+      patterns: extractPatterns(legs),
+      riskLevel: isLottery ? 'HIGH' : 'LOW',
+      parlayDate: parlay.parlay_date,
+      outcome: (parlay.outcome as 'pending' | 'won' | 'lost') || 'pending',
+      tier: parlay.tier || undefined,
+      strategyName: parlay.strategy_name,
+    });
+  });
+  
   // Sort by priority: OPTIMAL first, then by leg count descending
   const sortedParlays = dailyParlays.sort((a, b) => {
     const typePriority: Record<DailyParlay['type'], number> = {
       'OPTIMAL': 0,
       'SAFE': 1,
-      'CORE': 2,
-      'BALANCED': 3,
-      'UPSIDE': 4,
-      'HEAT_UPSIDE': 5,
+      'CURATED': 2,
+      'CORE': 3,
+      'BALANCED': 4,
+      'UPSIDE': 5,
+      'HEAT_UPSIDE': 6,
+      'LOTTERY': 7,
     };
     
     const priorityDiff = typePriority[a.type] - typePriority[b.type];
@@ -335,7 +423,7 @@ export function useDailyParlays() {
   
   return {
     parlays: sortedParlays,
-    isLoading: sweetSpotLoading || sharpLoading || heatLoading,
+    isLoading: sweetSpotLoading || sharpLoading || heatLoading || botLoading,
     parlayCount: sortedParlays.length,
     today,
   };
