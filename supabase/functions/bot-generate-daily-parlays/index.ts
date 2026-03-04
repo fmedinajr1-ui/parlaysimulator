@@ -806,6 +806,13 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      // ============= GRIND UNDER EXPLORATION: NBA under plays =============
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'env_cluster_grind', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
     ],
   },
   validation: {
