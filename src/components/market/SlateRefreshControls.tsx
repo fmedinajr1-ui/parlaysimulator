@@ -118,6 +118,7 @@ export function SlateRefreshControls() {
       { name: 'Detecting mispriced lines', function: 'detect-mispriced-lines' },
       { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
       { name: 'Quality-gated generation', function: 'bot-quality-regen-loop', body: { target_hit_rate: 35, max_attempts: 3, skip_void: true, adaptive_target: true } },
+      { name: 'Running curated pipeline', function: 'bot-curated-pipeline' },
       { name: 'Force fresh mispriced parlays', function: 'bot-force-fresh-parlays' },
       { name: 'Building sharp parlays', function: 'sharp-parlay-builder', body: { action: 'build' } },
       { name: 'Scanning heat tracker', function: 'heat-prop-engine', body: { action: 'scan' } },
