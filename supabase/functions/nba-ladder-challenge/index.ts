@@ -33,8 +33,33 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   }
 }
 
+// All prop markets we scan
+const PROP_MARKETS = ['player_points', 'player_rebounds', 'player_assists', 'player_threes'];
+
+const PROP_LABELS: Record<string, string> = {
+  player_points: 'PTS',
+  player_rebounds: 'REB',
+  player_assists: 'AST',
+  player_threes: '3PT',
+};
+
+const PROP_GAME_LOG_FIELD: Record<string, string> = {
+  player_points: 'points',
+  player_rebounds: 'rebounds',
+  player_assists: 'assists',
+  player_threes: 'threes_made',
+};
+
+const PROP_SWEET_SPOT_TYPES: Record<string, string[]> = {
+  player_points: ['points', 'player_points'],
+  player_rebounds: ['rebounds', 'player_rebounds'],
+  player_assists: ['assists', 'player_assists'],
+  player_threes: ['threes', 'player_threes'],
+};
+
 interface PlayerLine {
   player_name: string;
+  prop_type: string;
   line: number;
   over_odds: number;
   bookmaker: string;
@@ -43,25 +68,27 @@ interface PlayerLine {
   away_team: string;
 }
 
-interface PlayerLadderCandidate {
+interface LockCandidate {
   player_name: string;
-  lines: PlayerLine[];
+  prop_type: string;
+  prop_label: string;
+  line: number;
+  over_odds: number;
+  bookmaker: string;
   game: string;
   home_team: string;
   away_team: string;
   opponent: string;
-  // Sweet spot data
+  player_team: string;
+  // L10 stats
   l10_avg: number;
-  l10_median: number;
   l10_min: number;
   l10_max: number;
-  l10_hit_rate: number;
-  // Defense data
-  opp_threes_rank: number;
-  // Pace data
-  off_pace_rank: number;
-  // Ceiling analysis
-  ceiling_games: number; // games with 4+ threes in L10
+  l10_median: number;
+  l10_hit_rate: number; // % of L10 games that hit this line (OVER)
+  l10_games: number;
+  // Defense
+  opp_defense_rank: number;
   // Scoring
   composite_score: number;
 }
@@ -80,9 +107,9 @@ Deno.serve(async (req) => {
     if (!apiKey) throw new Error('THE_ODDS_API_KEY not configured');
 
     const today = getEasternDate();
-    console.log(`[LadderChallenge] Starting scan for ${today}`);
+    console.log(`[LadderLock] Starting scan for ${today}`);
 
-    // === DEDUP CHECK: Skip if we already have 3 ladders for today ===
+    // === DEDUP CHECK: Skip if we already have 1 ladder for today ===
     const { data: existingLadders } = await supabase
       .from('bot_daily_parlays')
       .select('id')
@@ -90,19 +117,19 @@ Deno.serve(async (req) => {
       .eq('strategy_name', 'ladder_challenge')
       .neq('outcome', 'void');
 
-    if (existingLadders && existingLadders.length >= 3) {
-      console.log(`[LadderChallenge] Already have ${existingLadders.length} ladder(s) for today, skipping`);
+    if (existingLadders && existingLadders.length >= 1) {
+      console.log(`[LadderLock] Already have lock for today, skipping`);
       return new Response(JSON.stringify({ success: true, skipped: true, reason: 'already_exists' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // === STEP 1: Fetch NBA 3PT props from The Odds API ===
+    // === STEP 1: Fetch NBA events ===
     const eventsUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${apiKey}`;
     const eventsRes = await fetchWithTimeout(eventsUrl);
     if (!eventsRes.ok) throw new Error(`Events API returned ${eventsRes.status}`);
     const events: any[] = await eventsRes.json();
-    console.log(`[LadderChallenge] Found ${events.length} NBA events`);
+    console.log(`[LadderLock] Found ${events.length} NBA events`);
 
     if (events.length === 0) {
       return new Response(JSON.stringify({ success: false, error: 'No NBA events today' }), {
@@ -110,22 +137,24 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch player_threes props for each event
+    // === STEP 2: Fetch ALL prop markets for each event ===
     const allLines: PlayerLine[] = [];
     for (const evt of events) {
       try {
-        const url = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${evt.id}/odds?apiKey=${apiKey}&regions=us&markets=player_threes&oddsFormat=american&bookmakers=fanduel,draftkings,hardrockbet`;
+        const marketsParam = PROP_MARKETS.join(',');
+        const url = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${evt.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american&bookmakers=fanduel,draftkings,hardrockbet`;
         const res = await fetchWithTimeout(url);
         if (!res.ok) { await res.text(); continue; }
         const data = await res.json();
 
         for (const bk of data.bookmakers || []) {
           for (const mkt of bk.markets || []) {
-            if (mkt.key !== 'player_threes') continue;
+            if (!PROP_MARKETS.includes(mkt.key)) continue;
             for (const outcome of mkt.outcomes || []) {
               if (outcome.name === 'Over') {
                 allLines.push({
                   player_name: outcome.description,
+                  prop_type: mkt.key,
                   line: outcome.point,
                   over_odds: outcome.price,
                   bookmaker: bk.key,
@@ -138,102 +167,77 @@ Deno.serve(async (req) => {
           }
         }
       } catch (e) {
-        console.warn(`[LadderChallenge] Error fetching event ${evt.id}:`, e.message);
+        console.warn(`[LadderLock] Error fetching event ${evt.id}:`, e.message);
       }
     }
 
-    console.log(`[LadderChallenge] Collected ${allLines.length} 3PT over lines`);
+    console.log(`[LadderLock] Collected ${allLines.length} total over lines across ${PROP_MARKETS.length} markets`);
 
-    // === STEP 2: Group lines by player ===
-    const playerLinesMap = new Map<string, PlayerLine[]>();
+    // === STEP 3: For each unique player+prop combo, keep the best odds line ===
+    const bestLineMap = new Map<string, PlayerLine>();
     for (const line of allLines) {
-      const key = normalizeName(line.player_name);
-      if (!playerLinesMap.has(key)) playerLinesMap.set(key, []);
-      playerLinesMap.get(key)!.push(line);
-    }
-
-    // Deduplicate lines per player: keep best odds per line value
-    const playerBestLines = new Map<string, PlayerLine[]>();
-    for (const [key, lines] of playerLinesMap) {
-      const byLine = new Map<number, PlayerLine>();
-      for (const l of lines) {
-        const existing = byLine.get(l.line);
-        if (!existing || l.over_odds > existing.over_odds) {
-          byLine.set(l.line, l);
-        }
-      }
-      const sorted = Array.from(byLine.values()).sort((a, b) => a.line - b.line);
-      // Only keep players with 2+ distinct lines (we need at least a 2-rung ladder, ideally 3)
-      if (sorted.length >= 2) {
-        playerBestLines.set(key, sorted);
+      const key = `${normalizeName(line.player_name)}|${line.prop_type}|${line.line}`;
+      const existing = bestLineMap.get(key);
+      if (!existing || line.over_odds > existing.over_odds) {
+        bestLineMap.set(key, line);
       }
     }
 
-    console.log(`[LadderChallenge] ${playerBestLines.size} players with 2+ distinct 3PT lines`);
-
-    if (playerBestLines.size === 0) {
-      return new Response(JSON.stringify({ success: false, error: 'No players with sufficient line depth' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    // Group by player+prop to find distinct lines
+    const playerPropLines = new Map<string, PlayerLine[]>();
+    for (const line of bestLineMap.values()) {
+      const key = `${normalizeName(line.player_name)}|${line.prop_type}`;
+      if (!playerPropLines.has(key)) playerPropLines.set(key, []);
+      playerPropLines.get(key)!.push(line);
     }
 
-    // === STEP 3: Fetch intelligence data ===
-    const playerNames = Array.from(playerBestLines.values()).map(lines => lines[0].player_name);
-
-    const [sweetSpotRes, defenseRes, paceRes] = await Promise.all([
+    // === STEP 4: Fetch intelligence data ===
+    const [sweetSpotRes, defenseRes, playerCacheRes] = await Promise.all([
       supabase
         .from('category_sweet_spots')
         .select('player_name, l10_avg, l10_median, l10_min, l10_max, l10_hit_rate, confidence_score, prop_type')
-        .in('prop_type', ['threes', 'player_threes'])
         .eq('is_active', true),
       supabase
         .from('team_defense_rankings')
         .select('team_abbreviation, team_name, opp_threes_rank, off_pace_rank')
         .eq('is_current', true),
       supabase
-        .from('nba_team_pace_projections')
-        .select('team_name, pace_rating, pace_rank'),
+        .from('bdl_player_cache')
+        .select('player_name, team_name')
+        .not('team_name', 'is', null),
     ]);
 
-    // Build sweet spot lookup
+    // Build sweet spot lookup: key = normalizedName|propType
     const sweetSpotMap = new Map<string, any>();
     for (const ss of sweetSpotRes.data || []) {
-      sweetSpotMap.set(normalizeName(ss.player_name), ss);
+      const key = `${normalizeName(ss.player_name)}|${ss.prop_type}`;
+      sweetSpotMap.set(key, ss);
     }
 
-    // Build defense lookup by team name (full names from events)
+    // Defense lookup
     const defenseMap = new Map<string, any>();
     for (const d of defenseRes.data || []) {
       if (d.team_name) defenseMap.set(d.team_name.toLowerCase(), d);
       if (d.team_abbreviation) defenseMap.set(d.team_abbreviation.toLowerCase(), d);
     }
 
-    // Build pace lookup
-    const paceMap = new Map<string, any>();
-    for (const p of paceRes.data || []) {
-      if (p.team_name) paceMap.set(p.team_name.toLowerCase(), p);
-    }
-
-    // === Build player-to-team map from bdl_player_cache ===
-    const { data: playerCacheData } = await supabase
-      .from('bdl_player_cache')
-      .select('player_name, team_name')
-      .not('team_name', 'is', null);
-
+    // Player team lookup
     const playerTeamMap = new Map<string, string>();
-    for (const p of playerCacheData || []) {
-      if (p.team_name) {
-        playerTeamMap.set(normalizeName(p.player_name), p.team_name);
-      }
+    for (const p of playerCacheRes.data || []) {
+      if (p.team_name) playerTeamMap.set(normalizeName(p.player_name), p.team_name);
     }
-    console.log(`[LadderChallenge] Loaded ${playerTeamMap.size} player-team mappings`);
 
-    // === STEP 4: Fetch L10 game logs for ceiling analysis ===
-    // Get threes_made from last 10 games for each candidate player
-    const gameLogPromises = playerNames.slice(0, 30).map(async (name) => {
+    // === STEP 5: Fetch L10 game logs for all candidate players (up to 50) ===
+    const uniquePlayers = new Set<string>();
+    for (const line of bestLineMap.values()) {
+      uniquePlayers.add(line.player_name);
+    }
+    const playerList = Array.from(uniquePlayers).slice(0, 50);
+
+    const gameLogPromises = playerList.map(async (name) => {
       const { data } = await supabase
         .from('nba_player_game_logs')
-        .select('player_name, threes_made, game_date')
+        .select('player_name, points, rebounds, assists, threes_made, game_date')
         .ilike('player_name', `%${name.split(' ').pop()}%`)
         .order('game_date', { ascending: false })
         .limit(10);
@@ -246,246 +250,183 @@ Deno.serve(async (req) => {
       gameLogMap.set(name, logs);
     }
 
-    // === STEP 5: Score each player ===
-    const candidates: PlayerLadderCandidate[] = [];
+    // === STEP 6: Score every player+prop+line combination ===
+    const candidates: LockCandidate[] = [];
 
-    for (const [key, lines] of playerBestLines) {
-      let ss = sweetSpotMap.get(key);
-      
-      // Fallback: compute L10 stats from game logs if no sweet spot data
-      const logs = gameLogMap.get(key) || [];
-      if ((!ss || !ss.l10_avg) && logs.length >= 5) {
-        const values = logs.map((g: any) => g.threes_made || 0);
+    for (const [ppKey, lines] of playerPropLines) {
+      const [normalizedPlayer, propType] = ppKey.split('|');
+      const firstLine = lines[0];
+      const logs = gameLogMap.get(normalizedPlayer) || [];
+      if (logs.length < 5) continue; // Need at least 5 games
+
+      const gameLogField = PROP_GAME_LOG_FIELD[propType];
+      if (!gameLogField) continue;
+
+      const values = logs.map((g: any) => g[gameLogField] ?? 0);
+
+      // Try each distinct line for this player+prop — pick the SAFEST (highest hit rate)
+      for (const lineObj of lines) {
+        const hitCount = values.filter((v: number) => v > lineObj.line).length;
+        const hitRate = hitCount / values.length;
+
+        // SAFETY FILTER: Must have at least 80% L10 hit rate
+        if (hitRate < 0.8) continue;
+
         const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
         const sorted = [...values].sort((a: number, b: number) => a - b);
         const median = sorted[Math.floor(sorted.length / 2)];
-        ss = {
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+
+        // Floor protection: L10 min must be >= line
+        const floorProtection = min / lineObj.line;
+
+        // Try sweet spot data for extra context
+        let ssMatch: any = null;
+        const ssTypes = PROP_SWEET_SPOT_TYPES[propType] || [];
+        for (const st of ssTypes) {
+          const ssKey = `${normalizedPlayer}|${st}`;
+          if (sweetSpotMap.has(ssKey)) { ssMatch = sweetSpotMap.get(ssKey); break; }
+        }
+
+        // Resolve opponent
+        const playerTeam = playerTeamMap.get(normalizedPlayer);
+        let opponent = '';
+        let playerTeamName = '';
+        const homeLower = firstLine.home_team.toLowerCase();
+        const awayLower = firstLine.away_team.toLowerCase();
+
+        if (playerTeam) {
+          const ptLower = playerTeam.toLowerCase();
+          if (homeLower.includes(ptLower) || ptLower.includes(homeLower)) {
+            opponent = firstLine.away_team; playerTeamName = firstLine.home_team;
+          } else if (awayLower.includes(ptLower) || ptLower.includes(awayLower)) {
+            opponent = firstLine.home_team; playerTeamName = firstLine.away_team;
+          } else {
+            const ptWords = ptLower.split(' ');
+            if (ptWords.some((w: string) => homeLower.includes(w) && w.length > 3)) {
+              opponent = firstLine.away_team; playerTeamName = firstLine.home_team;
+            } else {
+              opponent = firstLine.home_team; playerTeamName = firstLine.away_team;
+            }
+          }
+        } else {
+          opponent = firstLine.away_team; playerTeamName = firstLine.home_team;
+        }
+
+        const oppDef = defenseMap.get(opponent.toLowerCase());
+        const oppDefRank = oppDef?.opp_threes_rank || 15;
+
+        // === COMPOSITE SCORE: Prioritize safety ===
+        const hitRateScore = hitRate * 40;                          // 40% weight — hit rate is king
+        const floorScore = Math.min(floorProtection * 15, 20);     // 20% weight — floor protection
+        const edgeScore = Math.min(((avg - lineObj.line) / lineObj.line) * 30, 20); // 20% weight — edge over line
+        const consistencyScore = (1 - (max - min) / (avg || 1)) * 10; // 10% weight — low variance
+        const ssBonus = ssMatch?.confidence_score ? Math.min(ssMatch.confidence_score / 10, 10) : 0; // 10% bonus
+
+        const compositeScore = hitRateScore + floorScore + edgeScore + consistencyScore + ssBonus;
+
+        candidates.push({
+          player_name: firstLine.player_name,
+          prop_type: propType,
+          prop_label: PROP_LABELS[propType] || propType,
+          line: lineObj.line,
+          over_odds: lineObj.over_odds,
+          bookmaker: lineObj.bookmaker,
+          game: firstLine.game,
+          home_team: firstLine.home_team,
+          away_team: firstLine.away_team,
+          opponent,
+          player_team: playerTeamName,
           l10_avg: Math.round(avg * 10) / 10,
+          l10_min: min,
+          l10_max: max,
           l10_median: median,
-          l10_min: Math.min(...values),
-          l10_max: Math.max(...values),
-          l10_hit_rate: null,
-        };
-        console.log(`[LadderChallenge] Computed L10 from game logs for ${lines[0].player_name}: avg=${ss.l10_avg}, min=${ss.l10_min}, max=${ss.l10_max}`);
+          l10_hit_rate: hitRate,
+          l10_games: values.length,
+          opp_defense_rank: oppDefRank,
+          composite_score: compositeScore,
+        });
       }
-      
-      if (!ss || !ss.l10_avg) continue;
-
-      const firstLine = lines[0];
-      const homeTeamLower = firstLine.home_team.toLowerCase();
-      const awayTeamLower = firstLine.away_team.toLowerCase();
-
-      // === Resolve player's actual team from bdl_player_cache ===
-      const playerTeam = playerTeamMap.get(key);
-      let oppTeamName = '';
-      let playerTeamName = '';
-
-      if (playerTeam) {
-        const playerTeamLower = playerTeam.toLowerCase();
-        // Match player's team to home or away
-        if (homeTeamLower.includes(playerTeamLower) || playerTeamLower.includes(homeTeamLower)) {
-          oppTeamName = firstLine.away_team;
-          playerTeamName = firstLine.home_team;
-        } else if (awayTeamLower.includes(playerTeamLower) || playerTeamLower.includes(awayTeamLower)) {
-          oppTeamName = firstLine.home_team;
-          playerTeamName = firstLine.away_team;
-        } else {
-          // Fuzzy: check if any word matches
-          const ptWords = playerTeamLower.split(' ');
-          if (ptWords.some(w => homeTeamLower.includes(w) && w.length > 3)) {
-            oppTeamName = firstLine.away_team;
-            playerTeamName = firstLine.home_team;
-          } else {
-            oppTeamName = firstLine.home_team;
-            playerTeamName = firstLine.away_team;
-          }
-        }
-        console.log(`[LadderChallenge] ${firstLine.player_name}: team=${playerTeam}, opponent=${oppTeamName}`);
-      } else {
-        // Fallback: guess using worse 3PT defense (old behavior)
-        const homeDef = defenseMap.get(homeTeamLower);
-        const awayDef = defenseMap.get(awayTeamLower);
-        if (homeDef && awayDef) {
-          if ((homeDef.opp_threes_rank || 0) > (awayDef.opp_threes_rank || 0)) {
-            oppTeamName = firstLine.home_team;
-            playerTeamName = firstLine.away_team;
-          } else {
-            oppTeamName = firstLine.away_team;
-            playerTeamName = firstLine.home_team;
-          }
-        } else {
-          oppTeamName = firstLine.away_team;
-          playerTeamName = firstLine.home_team;
-        }
-        console.log(`[LadderChallenge] ${firstLine.player_name}: NO team mapping, guessed opponent=${oppTeamName}`);
-      }
-
-      const oppDef = defenseMap.get(oppTeamName.toLowerCase());
-      let oppThreesRank = oppDef?.opp_threes_rank || 15;
-      const playerDef = defenseMap.get(playerTeamName.toLowerCase());
-      let offPaceRank = playerDef?.off_pace_rank || 15;
-
-      // Filter: no ladders against top-15 3PT defense
-      if (oppThreesRank < 15) continue;
-
-      // Determine middle rung line
-      const middleIdx = Math.min(1, lines.length - 1);
-      const middleLine = lines[middleIdx].line;
-
-      // Safety check: L10 avg must be >= middle rung
-      if (ss.l10_avg < middleLine) continue;
-
-      // Ceiling analysis from game logs (reuse logs from above)
-      const ceilingGames = logs.filter((g: any) => (g.threes_made || 0) >= 4).length;
-
-      // Calculate L10 hit rate at middle rung from game logs
-      const middleHits = logs.filter((g: any) => (g.threes_made || 0) > middleLine).length;
-      const middleHitRate = logs.length > 0 ? middleHits / logs.length : 0;
-
-      // === WEIGHTED COMPOSITE SCORE ===
-      const l10AvgDelta = (ss.l10_avg - lines[0].line); // How far above lowest line
-      const l10Floor = ss.l10_min || 0;
-      
-      // Normalize each component to 0-10 scale
-      const avgScore = Math.min(l10AvgDelta * 2, 10); // 5 above line = 10
-      const floorScore = Math.min(l10Floor * 2.5, 10); // floor of 4 = 10
-      const defScore = Math.min((oppThreesRank - 14) * 0.625, 10); // rank 30 = 10
-      const paceScore = Math.min((30 - (offPaceRank || 15)) * 0.5, 10); // rank 1 = ~15 but capped
-      const hitRateScore = middleHitRate * 10; // 100% = 10
-      const ceilingScore = Math.min(ceilingGames * 2.5, 10); // 4 ceiling games = 10
-
-      const compositeScore =
-        avgScore * 0.25 +
-        floorScore * 0.15 +
-        defScore * 0.20 +
-        paceScore * 0.10 +
-        hitRateScore * 0.15 +
-        ceilingScore * 0.15;
-
-      candidates.push({
-        player_name: firstLine.player_name,
-        lines,
-        game: firstLine.game,
-        home_team: firstLine.home_team,
-        away_team: firstLine.away_team,
-        opponent: oppTeamName,
-        l10_avg: ss.l10_avg,
-        l10_median: ss.l10_median || 0,
-        l10_min: ss.l10_min || 0,
-        l10_max: ss.l10_max || 0,
-        l10_hit_rate: ss.l10_hit_rate || 0,
-        opp_threes_rank: oppThreesRank,
-        off_pace_rank: offPaceRank,
-        ceiling_games: ceilingGames,
-        composite_score: compositeScore,
-      });
     }
 
-    // Sort by composite score descending
+    // Sort by composite score descending — top 1 is our LOCK
     candidates.sort((a, b) => b.composite_score - a.composite_score);
 
-    console.log(`[LadderChallenge] ${candidates.length} eligible candidates after filtering`);
+    console.log(`[LadderLock] ${candidates.length} eligible candidates after filtering (80%+ hit rate)`);
     if (candidates.length > 0) {
-      console.log(`[LadderChallenge] Top 5:`, candidates.slice(0, 5).map(c => 
-        `${c.player_name} (score: ${c.composite_score.toFixed(2)}, L10avg: ${c.l10_avg}, opp3rank: ${c.opp_threes_rank})`
+      console.log(`[LadderLock] Top 5:`, candidates.slice(0, 5).map(c =>
+        `${c.player_name} ${c.prop_label} O${c.line} (score: ${c.composite_score.toFixed(2)}, hitRate: ${(c.l10_hit_rate * 100).toFixed(0)}%, avg: ${c.l10_avg}, floor: ${c.l10_min})`
       ));
     }
 
     if (candidates.length === 0) {
-      return new Response(JSON.stringify({ success: false, error: 'No eligible ladder candidates found' }), {
+      return new Response(JSON.stringify({ success: false, error: 'No eligible lock candidates found' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // === STEP 6: Build single boom pick for top 3 candidates ===
-    const topPicks = candidates.slice(0, 3);
-    const savedPicks: any[] = [];
-    const telegramLines: string[] = [];
+    // === STEP 7: Take the #1 candidate — the single Lock of the Day ===
+    const lock = candidates[0];
+    const logs = gameLogMap.get(normalizeName(lock.player_name)) || [];
+    const gameLogField = PROP_GAME_LOG_FIELD[lock.prop_type];
+    const recentValues = logs.slice(0, 5).map((g: any) => g[gameLogField] ?? 0);
+    const l5Str = recentValues.join(', ');
 
-    for (let i = 0; i < topPicks.length; i++) {
-      const pick = topPicks[i];
-      const logs = gameLogMap.get(normalizeName(pick.player_name)) || [];
+    const oddsStr = lock.over_odds > 0 ? `+${lock.over_odds}` : `${lock.over_odds}`;
+    const decimalOdds = americanToDecimal(lock.over_odds);
+    const impliedProb = lock.over_odds >= 100
+      ? 100 / (lock.over_odds + 100)
+      : Math.abs(lock.over_odds) / (Math.abs(lock.over_odds) + 100);
 
-      // Find the boom line: highest line where L10 avg >= line value
-      let boomLine: PlayerLine | null = null;
-      for (let j = pick.lines.length - 1; j >= 0; j--) {
-        if (pick.l10_avg >= pick.lines[j].line) {
-          boomLine = pick.lines[j];
-          break;
-        }
-      }
-      // Fallback to highest available line if none qualifies
-      if (!boomLine) boomLine = pick.lines[pick.lines.length - 1];
+    const hitPct = `${(lock.l10_hit_rate * 100).toFixed(0)}%`;
+    const rationale = `Lock of the Day: ${lock.player_name} ${lock.prop_label} Over ${lock.line} (${oddsStr}) vs ${lock.opponent}. L10: ${hitPct} hit rate (${Math.round(lock.l10_hit_rate * lock.l10_games)}/${lock.l10_games}), Avg: ${lock.l10_avg}, Floor: ${lock.l10_min}, Ceiling: ${lock.l10_max}. Score: ${lock.composite_score.toFixed(2)}.`;
 
-      const boomHits = logs.filter((g: any) => (g.threes_made || 0) > boomLine!.line).length;
-      const boomHitRate = logs.length > 0 ? `${boomHits}/${logs.length}` : 'N/A';
+    const leg = {
+      player_name: lock.player_name,
+      prop_type: lock.prop_type,
+      line: lock.line,
+      side: 'OVER',
+      odds: lock.over_odds,
+      bookmaker: lock.bookmaker,
+      rung_label: 'Lock',
+      l10_hit_rate: hitPct,
+    };
 
-      // Matchup grade
-      let matchupGrade = 'NEUTRAL';
-      if (pick.opp_threes_rank >= 25) matchupGrade = 'ELITE';
-      else if (pick.opp_threes_rank >= 20) matchupGrade = 'GOOD';
-      else matchupGrade = 'FAIR';
+    // Save to bot_daily_parlays as single-leg entry
+    const { error: insertError } = await supabase
+      .from('bot_daily_parlays')
+      .insert({
+        parlay_date: today,
+        strategy_name: 'ladder_challenge',
+        tier: 'execution',
+        legs: [leg],
+        leg_count: 1,
+        combined_probability: Math.round(impliedProb * 10000) / 10000,
+        expected_odds: Math.round(decimalOdds),
+        selection_rationale: rationale,
+        is_simulated: false,
+      });
 
-      const oddsStr = boomLine.over_odds > 0 ? `+${boomLine.over_odds}` : `${boomLine.over_odds}`;
-      const decimalOdds = americanToDecimal(boomLine.over_odds);
-      const impliedProb = boomLine.over_odds >= 100
-        ? 100 / (boomLine.over_odds + 100)
-        : Math.abs(boomLine.over_odds) / (Math.abs(boomLine.over_odds) + 100);
-
-      // All available lines for rationale context
-      const allLinesStr = pick.lines.map(l => {
-        const hits = logs.filter((g: any) => (g.threes_made || 0) > l.line).length;
-        const os = l.over_odds > 0 ? `+${l.over_odds}` : `${l.over_odds}`;
-        return `Over ${l.line} (${os}) ${hits}/${logs.length}`;
-      }).join(' | ');
-
-      const rationale = `Ladder Challenge #${i + 1}: ${pick.player_name} 3PT Over ${boomLine.line} (${oddsStr}) vs ${pick.opponent} (Rank ${pick.opp_threes_rank} 3PT D). L10 Avg: ${pick.l10_avg}, Floor: ${pick.l10_min}, Ceiling: ${pick.l10_max}. Boom hit rate: ${boomHitRate}. All lines: ${allLinesStr}. Score: ${pick.composite_score.toFixed(2)}. Matchup: ${matchupGrade}.`;
-
-      const leg = {
-        player_name: pick.player_name,
-        prop_type: 'player_threes',
-        line: boomLine.line,
-        side: 'OVER',
-        odds: boomLine.over_odds,
-        bookmaker: boomLine.bookmaker,
-        rung_label: 'Boom',
-        l10_hit_rate: boomHitRate,
-      };
-
-      // Save to bot_daily_parlays as single-leg entry
-      const { error: insertError } = await supabase
-        .from('bot_daily_parlays')
-        .insert({
-          parlay_date: today,
-          strategy_name: 'ladder_challenge',
-          tier: 'execution',
-          legs: [leg],
-          leg_count: 1,
-          combined_probability: Math.round(impliedProb * 10000) / 10000,
-          expected_odds: Math.round(decimalOdds),
-          selection_rationale: rationale,
-          is_simulated: false,
-        });
-
-      if (insertError) {
-        console.error(`[LadderChallenge] Insert error for ${pick.player_name}:`, insertError);
-      } else {
-        console.log(`[LadderChallenge] Saved boom pick for ${pick.player_name}: Over ${boomLine.line} (${oddsStr})`);
-        savedPicks.push({ player: pick.player_name, line: boomLine.line, odds: oddsStr });
-      }
-
-      // Build Telegram line
-      const matchIcon = matchupGrade === 'ELITE' ? '🔥' : matchupGrade === 'GOOD' ? '✅' : '⚠️';
-      telegramLines.push(
-        `${i + 1}. ${pick.player_name} | 3PT Over ${boomLine.line} (${oddsStr})\n` +
-        `   vs ${pick.opponent} (Rank ${pick.opp_threes_rank} 3PT D)\n` +
-        `   L10 Avg: ${pick.l10_avg} | Floor: ${pick.l10_min} | Ceiling: ${pick.l10_max}\n` +
-        `   Matchup: ${matchupGrade} ${matchIcon}`
-      );
+    if (insertError) {
+      console.error(`[LadderLock] Insert error:`, insertError);
+    } else {
+      console.log(`[LadderLock] Saved lock: ${lock.player_name} ${lock.prop_label} O${lock.line} (${oddsStr})`);
     }
 
-    // === STEP 7: Send combined Telegram notification ===
-    const telegramMessage = `🪜 LADDER CHALLENGE (${savedPicks.length} Picks) 🪜\n\n${telegramLines.join('\n\n')}`;
+    // === STEP 8: Send Telegram notification ===
+    const floorIcon = lock.l10_min >= lock.line ? '🟢' : '🟡';
+    const telegramMessage =
+      `🔒 LADDER LOCK OF THE DAY 🔒\n\n` +
+      `${lock.player_name}\n` +
+      `${lock.prop_label} Over ${lock.line} (${oddsStr})\n` +
+      `${lock.game}\n\n` +
+      `📊 L10 Hit Rate: ${hitPct} (${Math.round(lock.l10_hit_rate * lock.l10_games)}/${lock.l10_games})\n` +
+      `📈 L10 Avg: ${lock.l10_avg} | Median: ${lock.l10_median}\n` +
+      `${floorIcon} Floor: ${lock.l10_min} | Ceiling: ${lock.l10_max}\n` +
+      `📋 Last 5: ${l5Str}\n` +
+      `🎯 Composite Score: ${lock.composite_score.toFixed(1)}\n` +
+      `vs ${lock.opponent}`;
 
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
@@ -498,35 +439,40 @@ Deno.serve(async (req) => {
           type: 'ladder_challenge',
           data: {
             message: telegramMessage,
-            picks: savedPicks,
+            picks: [{ player: lock.player_name, line: lock.line, odds: oddsStr, prop: lock.prop_label }],
           },
         }),
       });
-      console.log(`[LadderChallenge] Telegram notification sent with ${savedPicks.length} picks`);
+      console.log(`[LadderLock] Telegram notification sent`);
     } catch (e) {
-      console.warn(`[LadderChallenge] Telegram send failed:`, e.message);
+      console.warn(`[LadderLock] Telegram send failed:`, e.message);
     }
 
     return new Response(JSON.stringify({
       success: true,
-      picks: topPicks.map((p, i) => ({
-        player: p.player_name,
-        opponent: p.opponent,
-        composite_score: p.composite_score,
-        boom_line: savedPicks[i]?.line,
-        boom_odds: savedPicks[i]?.odds,
-        l10: { avg: p.l10_avg, min: p.l10_min, max: p.l10_max },
-      })),
+      lock: {
+        player: lock.player_name,
+        prop: lock.prop_label,
+        line: lock.line,
+        odds: oddsStr,
+        hit_rate: hitPct,
+        l10_avg: lock.l10_avg,
+        l10_min: lock.l10_min,
+        l10_max: lock.l10_max,
+        composite_score: lock.composite_score,
+        opponent: lock.opponent,
+        game: lock.game,
+      },
+      candidates_evaluated: candidates.length,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error(`[LadderChallenge] Fatal error:`, error);
+    console.error(`[LadderLock] Fatal error:`, error);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });
-
