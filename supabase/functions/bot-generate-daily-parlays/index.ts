@@ -9848,15 +9848,54 @@ Deno.serve(async (req) => {
       p.selection_rationale = `${p.selection_rationale || ''} [source:${generationSource}]`.trim();
     }
 
-    // Append new parlays (no longer deletes previous runs so multiple generations accumulate)
+    // Append new parlays with fingerprint dedup — skip any parlay whose legs already exist today
     console.log(`[Bot v2] Appending ${allParlays.length} new parlays for ${targetDate} (source: ${generationSource})`);
 
     if (allParlays.length > 0) {
-      const { error: insertError } = await supabase
+      // Fetch existing leg fingerprints for today to prevent duplicates at source
+      const { data: existingParlays } = await supabase
         .from('bot_daily_parlays')
-        .insert(allParlays);
+        .select('legs')
+        .eq('parlay_date', targetDate)
+        .in('outcome', ['pending', 'won', 'lost']);
 
-      if (insertError) throw insertError;
+      const existingFingerprints = new Set<string>();
+      if (existingParlays) {
+        for (const ep of existingParlays) {
+          const legs = Array.isArray(ep.legs) ? ep.legs : [];
+          const fp = JSON.stringify(
+            legs.map((l: any) => `${(l.player_name || '').toLowerCase()}_${(l.prop_type || '').toLowerCase()}_${(l.side || '').toLowerCase()}`)
+              .sort()
+          );
+          existingFingerprints.add(fp);
+        }
+      }
+
+      const dedupedParlays = allParlays.filter((p: any) => {
+        const legs = Array.isArray(p.legs) ? p.legs : [];
+        const fp = JSON.stringify(
+          legs.map((l: any) => `${(l.player_name || '').toLowerCase()}_${(l.prop_type || '').toLowerCase()}_${(l.side || '').toLowerCase()}`)
+            .sort()
+        );
+        if (existingFingerprints.has(fp)) return false;
+        existingFingerprints.add(fp); // also dedup within this batch
+        return true;
+      });
+
+      const skippedDupes = allParlays.length - dedupedParlays.length;
+      if (skippedDupes > 0) {
+        console.log(`[Bot v2] 🧹 Dedup: skipped ${skippedDupes} duplicate parlays at insert time`);
+      }
+
+      if (dedupedParlays.length === 0) {
+        console.log(`[Bot v2] All ${allParlays.length} parlays were duplicates — nothing to insert`);
+      } else {
+        const { error: insertError } = await supabase
+          .from('bot_daily_parlays')
+          .insert(dedupedParlays);
+
+        if (insertError) throw insertError;
+      }
 
       // Set ALL parlays to pending_approval for admin review
       await supabase

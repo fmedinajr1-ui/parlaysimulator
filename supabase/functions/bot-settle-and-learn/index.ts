@@ -639,13 +639,14 @@ Deno.serve(async (req) => {
 
     if (parlaysError) throw parlaysError;
 
-    // 1b. Also re-process previously voided parlays that may have had premature voids
-    // These are parlays marked 'void' but with legs still 'pending' that can now be resolved
+    // 1b. Only recover parlays voided due to missing data (NOT intentional voids like
+    // defense-aware rebuild, protocol upgrade, diversity rebalance, quality_regen, etc.)
     const { data: voidedParlays } = await supabase
       .from('bot_daily_parlays')
       .select('*')
       .in('parlay_date', targetDates)
-      .eq('outcome', 'void');
+      .eq('outcome', 'void')
+      .or('lesson_learned.is.null,lesson_learned.eq.no_data,lesson_learned.eq.settlement_no_data');
 
     const recoveredVoided = (voidedParlays || []).filter((p: any) => {
       const legs = Array.isArray(p.legs) ? p.legs : [];
@@ -1560,7 +1561,8 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Strategy/blocked query error:', stratError);
     }
 
-    // === AUTO-DOUBLE STAKES AFTER PROFITABLE DAY ===
+    // === STAKE MULTIPLIER DISABLED — always 1.0x ===
+    // Auto-double was amplifying losses with 16% win rate. Flat stakes only.
     try {
       const { data: stakeConfig } = await supabase
         .from('bot_stake_config')
@@ -1568,48 +1570,23 @@ Deno.serve(async (req) => {
         .limit(1)
         .single();
 
-      if (stakeConfig) {
-        const alreadyProcessed = stakeConfig.last_streak_date === todayET;
-        if (!alreadyProcessed) {
-          if (isProfitableDay && totalProfitLoss > 0) {
-            // Double all stakes from baseline (capped at 2x, no compounding)
-            const { error: doubleErr } = await supabase
-              .from('bot_stake_config')
-              .update({
-                streak_multiplier: 2.0,
-                execution_stake: (stakeConfig.baseline_execution_stake ?? stakeConfig.execution_stake) * 2,
-                validation_stake: (stakeConfig.baseline_validation_stake ?? stakeConfig.validation_stake) * 2,
-                exploration_stake: (stakeConfig.baseline_exploration_stake ?? stakeConfig.exploration_stake) * 2,
-                bankroll_doubler_stake: (stakeConfig.baseline_bankroll_doubler_stake ?? stakeConfig.bankroll_doubler_stake) * 2,
-                last_streak_date: todayET,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', stakeConfig.id);
-            if (doubleErr) console.error('[Bot Settle] Stake doubling error:', doubleErr);
-            else console.log('[Bot Settle] Profitable day detected — stakes DOUBLED for tomorrow');
-          } else {
-            // Reset to baseline
-            const { error: resetErr } = await supabase
-              .from('bot_stake_config')
-              .update({
-                streak_multiplier: 1.0,
-                execution_stake: stakeConfig.baseline_execution_stake ?? stakeConfig.execution_stake,
-                validation_stake: stakeConfig.baseline_validation_stake ?? stakeConfig.validation_stake,
-                exploration_stake: stakeConfig.baseline_exploration_stake ?? stakeConfig.exploration_stake,
-                bankroll_doubler_stake: stakeConfig.baseline_bankroll_doubler_stake ?? stakeConfig.bankroll_doubler_stake,
-                last_streak_date: todayET,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', stakeConfig.id);
-            if (resetErr) console.error('[Bot Settle] Stake reset error:', resetErr);
-            else console.log('[Bot Settle] Loss day — stakes reset to baseline');
-          }
-        } else {
-          console.log('[Bot Settle] Stake adjustment already processed for today');
-        }
+      if (stakeConfig && stakeConfig.streak_multiplier !== 1.0) {
+        await supabase
+          .from('bot_stake_config')
+          .update({
+            streak_multiplier: 1.0,
+            execution_stake: stakeConfig.baseline_execution_stake ?? stakeConfig.execution_stake,
+            validation_stake: stakeConfig.baseline_validation_stake ?? stakeConfig.validation_stake,
+            exploration_stake: stakeConfig.baseline_exploration_stake ?? stakeConfig.exploration_stake,
+            bankroll_doubler_stake: stakeConfig.baseline_bankroll_doubler_stake ?? stakeConfig.bankroll_doubler_stake,
+            last_streak_date: todayET,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', stakeConfig.id);
+        console.log('[Bot Settle] Streak multiplier was not 1.0 — reset to baseline');
       }
     } catch (stakeErr) {
-      console.error('[Bot Settle] Auto-double stakes error:', stakeErr);
+      console.error('[Bot Settle] Stake reset error:', stakeErr);
     }
 
     try {
