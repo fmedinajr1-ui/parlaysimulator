@@ -1,38 +1,44 @@
 
 
-# Redesign Ladder Challenge: Single Best Pick of the Day
+# Track 7-Day Ladder Challenge with $100 Stakes + Telegram Updates
 
-## Current Problem
-The ladder challenge currently picks the **top 3** candidates (line 401: `candidates.slice(0, 3)`) and saves each as a separate single-leg entry. It was meant to be **one** pick — the single most accurate, highest-conviction play across the entire slate. It's also limited to 3PT props only.
+## What's Missing Today
+1. The ladder challenge insert **doesn't set `simulated_stake`** — settlement defaults to $100 (which is correct), but it should be explicit.
+2. When a ladder pick settles (won/lost), the existing `parlay_settled_alert` fires but it looks like any other parlay — no special "Ladder Challenge" branding or running tally.
+3. No 7-day running scoreboard showing the ladder challenge streak, cumulative profit, and record.
 
-## What It Should Be
-The Ladder Challenge = **1 pick per day**. The single most data-backed, highest-confidence prop on the slate — any prop type (points, rebounds, assists, 3PT, etc.), not just threes. It should be the "lock of the day."
+## Plan
 
-## Changes
+### 1. `nba-ladder-challenge/index.ts` — Set explicit $100 stake
+- Add `simulated_stake: 100` to the insert at line 399 so it's tracked explicitly.
 
-### 1. Expand prop types beyond 3PT
-- Fetch all player prop markets from The Odds API (points, rebounds, assists, threes, etc.)
-- Cross-reference each with `category_sweet_spots` data for L10 stats across all categories
-- Score candidates using the same composite formula but across all prop types
+### 2. `bot-settle-and-learn/index.ts` — Add ladder-specific Telegram alert
+- After a ladder pick settles (detect via `strategy_name === 'ladder_challenge'`), query the last 7 days of ladder picks from `bot_daily_parlays` to build a running scoreboard.
+- Send a dedicated Telegram notification type `ladder_challenge_result` with:
+  - The pick result (won/lost)
+  - Running 7-day record (e.g., "3W-1L")
+  - Cumulative P&L (e.g., "+$420")
+  - Day number in the challenge (e.g., "Day 4 of 7")
 
-### 2. Pick only the #1 candidate
-- Change `candidates.slice(0, 3)` → `candidates.slice(0, 1)` (line 401)
-- Change dedup cap from 3 → 1 (line 93: `>= 3` → `>= 1`)
+### 3. `bot-send-telegram/index.ts` — New `ladder_challenge_result` formatter
+- Add a new message type and formatter that produces:
 
-### 3. Select the safest line, not the boom line
-- Instead of picking the highest line where L10 avg ≥ line (boom), pick the line with the **highest L10 hit rate** — the most likely to hit
-- Prioritize 100% L10 hit rate picks, then 90%+, with floor protection
+```
+🔒 LADDER LOCK RESULT — Day 4 of 7
+━━━━━━━━━━━━━━━━━━━━━
+🟢 WON — Jose Alvarado AST O2.5
+Actual: 4 ✅
 
-### 4. Update Telegram message format
-- Single pick announcement: "🔒 LADDER LOCK OF THE DAY" instead of "🪜 LADDER CHALLENGE (3 Picks)"
-- Show full supporting data: L10 hit rate, avg, floor, matchup grade
+💰 Stake: $100 | Profit: +$173
 
-### 5. Keep the daily cron
-The cron job already set up (daily at 18:00 UTC) stays — it'll just generate 1 pick instead of 3.
+📊 7-Day Challenge: 3W-1L
+💵 Running P&L: +$420
+🎯 Win Rate: 75%
+━━━━━━━━━━━━━━━━━━━━━
+```
 
-## Summary of Code Changes in `nba-ladder-challenge/index.ts`
-1. **Line 93**: Change `>= 3` to `>= 1`
-2. **Lines 100-170**: Expand Odds API fetch to include all prop markets (player_points, player_rebounds, player_assists, player_threes)
-3. **Lines 400-485**: Take only top 1 candidate, pick the safest line (highest hit rate), update Telegram format to "Lock of the Day"
-4. **Line 488**: Update message header
+### Files Changed
+1. `supabase/functions/nba-ladder-challenge/index.ts` — add `simulated_stake: 100`
+2. `supabase/functions/bot-settle-and-learn/index.ts` — detect ladder settlements, query 7-day tally, fire dedicated alert
+3. `supabase/functions/bot-send-telegram/index.ts` — add `ladder_challenge_result` type + formatter
 
