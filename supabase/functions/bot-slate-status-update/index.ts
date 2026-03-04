@@ -18,44 +18,27 @@ Deno.serve(async (req) => {
     // Get today's date in ET
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
-    // Query all parlays for today
+    // Query only pending (active) parlays for today
     const { data: parlays, error } = await supabase
       .from('bot_daily_parlays')
       .select('*')
-      .eq('parlay_date', today);
+      .eq('parlay_date', today)
+      .eq('outcome', 'pending');
 
     if (error) throw error;
 
     if (!parlays || parlays.length === 0) {
       return new Response(
-        JSON.stringify({ success: false, message: 'No parlays found for today' }),
+        JSON.stringify({ success: false, message: 'No active parlays found for today' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Separate active (pending) vs voided
-    const activeParlays = parlays.filter(p => p.outcome === 'pending' || p.outcome === null);
-    const voidedParlays = parlays.filter(p => p.outcome === 'void' || p.outcome === 'voided');
-
-    // Build voided reasons from selection_rationale or lesson_learned
-    const reasonSet = new Set<string>();
-    for (const v of voidedParlays) {
-      if (v.selection_rationale) {
-        // Extract short reason keywords
-        const r = v.selection_rationale.toLowerCase();
-        if (r.includes('probability') || r.includes('low prob')) reasonSet.add('low probability');
-        if (r.includes('redundant') || r.includes('duplicate') || r.includes('exposure')) reasonSet.add('redundant legs');
-        if (r.includes('exposure') || r.includes('limit')) reasonSet.add('exposure limits');
-        if (r.includes('blocked') || r.includes('banned')) reasonSet.add('blocked category');
-        if (r.includes('quality') || r.includes('gate')) reasonSet.add('quality gate filter');
-      }
-    }
-    const voidedReasons = reasonSet.size > 0 
-      ? Array.from(reasonSet) 
-      : ['low probability', 'redundant legs', 'exposure limits'];
+    // Calculate total stake exposure
+    const totalStake = parlays.reduce((sum, p) => sum + (p.simulated_stake || 0), 0);
 
     // Format active parlays with leg details
-    const formattedActive = activeParlays.map(p => {
+    const formattedActive = parlays.map(p => {
       const legs = Array.isArray(p.legs) ? p.legs : [];
       return {
         strategy_name: p.strategy_name,
@@ -74,22 +57,21 @@ Deno.serve(async (req) => {
       body: {
         type: 'slate_status_update',
         data: {
-          voidedCount: voidedParlays.length,
-          voidedReasons,
           activeParlays: formattedActive,
+          totalStake,
         },
       },
     });
 
     if (sendError) throw sendError;
 
-    console.log(`[SlateStatus] Sent update: ${activeParlays.length} active, ${voidedParlays.length} voided`);
+    console.log(`[SlateStatus] Sent update: ${parlays.length} active, total risk $${totalStake}`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        active: activeParlays.length, 
-        voided: voidedParlays.length 
+        active: parlays.length, 
+        totalStake,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

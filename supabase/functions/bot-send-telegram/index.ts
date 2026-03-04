@@ -410,7 +410,7 @@ function formatHitRateEvaluation(data: Record<string, any>, dateStr: string): st
 }
 
 function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): string {
-  const { voidedCount, voidedReasons, activeParlays } = data;
+  const { activeParlays, totalStake } = data;
 
   const propLabels: Record<string, string> = {
     threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
@@ -418,22 +418,12 @@ function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): st
     shots: 'SOG', saves: 'SVS', aces: 'ACES',
   };
 
-  let msg = `📋 *DAILY SLATE STATUS — ${dateStr}*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-  // Voided summary
-  msg += `🚫 *VOIDED: ${voidedCount || 0} parlays* filtered by quality gates\n`;
-  if (voidedReasons && voidedReasons.length > 0) {
-    msg += `Reasons: ${voidedReasons.join(', ')}\n`;
-  } else {
-    msg += `Reasons: low probability, redundant legs, exposure limits\n`;
-  }
-  msg += `\n`;
-
-  // Active parlays
   const active = activeParlays || [];
-  msg += `✅ *ACTIVE PICKS: ${active.length} parlays locked in*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  const riskDisplay = totalStake ? `$${totalStake}` : 'N/A';
+
+  let msg = `📋 *DAILY SLATE STATUS — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `✅ *${active.length} ACTIVE PARLAYS* | Total Risk: ${riskDisplay}\n\n`;
 
   for (let i = 0; i < active.length; i++) {
     const p = active[i];
