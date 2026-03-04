@@ -547,7 +547,8 @@ async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: 
       const { data: todayParlays } = await sb
         .from('bot_daily_parlays')
         .select('strategy_name')
-        .eq('parlay_date', today);
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending');
       if (todayParlays && todayParlays.length > 0) {
         displayCount = todayParlays.length;
         countLabel = 'Active';
