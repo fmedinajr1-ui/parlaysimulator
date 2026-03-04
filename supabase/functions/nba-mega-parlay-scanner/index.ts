@@ -1135,8 +1135,8 @@ serve(async (req) => {
         const l10Candidate = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
           if (p.l10Avg === null) return false;
-          if (p.hitRate < 30) return false;
-          if (p.odds < 150) return false;
+          if (p.hitRate < 25) return false;
+          if (p.odds < 100) return false; // Relaxed: any plus-money or even
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           if (used.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
