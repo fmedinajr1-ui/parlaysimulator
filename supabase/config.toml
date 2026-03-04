@@ -464,3 +464,6 @@ verify_jwt = false
 
 [functions.bot-curated-pipeline]
 verify_jwt = false
+
+[functions.bot-daily-diversity-rebalance]
+verify_jwt = false
