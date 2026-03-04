@@ -125,6 +125,7 @@ export function SlateRefreshControls() {
       { name: 'Building heat parlays', function: 'heat-prop-engine', body: { action: 'build' } },
       { name: 'Scanning lottery parlays', function: 'nba-mega-parlay-scanner' },
       { name: 'Diversity rebalance', function: 'bot-daily-diversity-rebalance' },
+      { name: 'Sending slate status to customers', function: 'bot-slate-status-update' },
     ];
 
     setTotalSteps(CLEAN_REBUILD_STEPS.length);

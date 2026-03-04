@@ -1,5 +1,5 @@
 /**
- * bot-quality-regen-loop
+ * bot-quality-regen-loop v3 — 2026-03-04
  * 
  * Quality-gated regeneration loop that generates parlays up to 3 times
  * before 3PM ET. Each attempt is ADDITIVE (no voiding between attempts).
@@ -7,6 +7,8 @@
  * 
  * v2: Proper attribution via [source:quality_regen_attempt_X] tags.
  *     Adaptive target band instead of fixed threshold.
+ * v3: Unconditional cross-attempt dedup by legs JSON fingerprint.
+ *     Forced redeploy to ensure dedup logic is live.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
