@@ -630,11 +630,31 @@ serve(async (req) => {
         }
       }
 
+      // FIX #2: DD L10 gate — ALWAYS require L10 data for DD picks regardless of hit rate
+      if (prop.prop_type === 'player_double_double') {
+        const ddPlayerPts = gameLogMap.get(`${nameNorm}|points`);
+        const ddPlayerReb = gameLogMap.get(`${nameNorm}|rebounds`);
+        const ddPlayerAst = gameLogMap.get(`${nameNorm}|assists`);
+        const hasL10 = (ddPlayerPts?.l10_avg != null) || (ddPlayerReb?.l10_avg != null) || (ddPlayerAst?.l10_avg != null);
+        if (!hasL10) {
+          console.log(`[MegaParlay] DD SKIP (no L10): ${prop.player_name}`);
+          continue;
+        }
+        // Override hit rate with L10-based DD probability
+        const ptsAvg = ddPlayerPts?.l10_avg || 0;
+        const rebAvg = ddPlayerReb?.l10_avg || 0;
+        const astAvg = ddPlayerAst?.l10_avg || 0;
+        const cats = [ptsAvg >= 10, rebAvg >= 10, astAvg >= 10].filter(Boolean).length;
+        if (cats >= 2) hitRate = Math.max(hitRate, 45);
+        else if (cats === 1) {
+          const nearDD = [ptsAvg >= 8, rebAvg >= 8, astAvg >= 8].filter(Boolean).length;
+          hitRate = Math.max(hitRate, nearDD >= 2 ? 30 : 15);
+        } else hitRate = Math.max(hitRate, 10);
+      }
+
       // For exotic/team bets without data, assign baseline hit rates
       if (hitRate === 0 && prop.market_type === 'exotic_player') {
-        // First basket ~4-8% chance, double double ~30-50%, triple double ~2-10%
         if (prop.prop_type === 'player_first_basket') hitRate = 8;
-        else if (prop.prop_type === 'player_double_double') hitRate = 40;
         else if (prop.prop_type === 'player_triple_double') hitRate = 5;
       }
 
@@ -1058,6 +1078,8 @@ serve(async (req) => {
       // High roller: 35%+ hit rate, +200 min odds, defense 12+, L10 or L20 clears line by 1.0x
       // Allow all market types but cap per-leg odds at +500 to prevent extreme picks
       const hrCandidates = scoredProps.filter(p => {
+        // FIX #1: Block first basket from HR tier
+        if (p.prop_type === 'player_first_basket') return false;
         if (p.odds < 200) return false;
         if (p.odds > 500) return false; // Cap per-leg odds for HR
         if (p.hitRate < hrAdj.minHitRate) return false;
@@ -1074,10 +1096,11 @@ serve(async (req) => {
       for (const c of hrCandidates) {
         if (legs.length >= 6) break;
         const currentOddsBefore = calcCombinedOdds(legs);
-        if (legs.length >= 3 && currentOddsBefore >= 2000) break; // Hit min target
-        if (currentOddsBefore >= 8000) break; // Don't exceed upper bound
+        if (legs.length >= 3 && currentOddsBefore >= 2000) break;
+        if (currentOddsBefore >= 8000) break;
+        // FIX #3: Enforce global exposure cap in HR loop
+        if (allUsedPlayers.has(normalizeName(c.player_name))) continue;
         if (!passesBasicChecks(c, legs, gc)) continue;
-        // Limit exotic to 1 leg in HR to keep odds manageable
         if (c.market_type === 'exotic_player' && legs.filter(l => l.market_type === 'exotic_player').length >= 1) continue;
         addLeg(c, legs, gc, used, 'high_roller', 'high_roller');
         const currentOdds = calcCombinedOdds(legs);
@@ -1088,6 +1111,7 @@ serve(async (req) => {
       if (legs.length < 3) {
         console.log(`[MegaParlay] HR primary pass got ${legs.length} legs, trying relaxed pass...`);
         const relaxedHR = scoredProps.filter(p => {
+          if (p.prop_type === 'player_first_basket') return false; // FIX #1
           if (p.odds < 150) return false;
           if (p.hitRate < 30) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
@@ -1097,9 +1121,29 @@ serve(async (req) => {
 
         for (const c of relaxedHR) {
           if (legs.length >= 4) break;
+          if (allUsedPlayers.has(normalizeName(c.player_name))) continue; // FIX #3
           if (!passesBasicChecks(c, legs, gc)) continue;
           addLeg(c, legs, gc, used, 'high_roller_relaxed', 'high_roller');
           console.log(`[MegaParlay] HR relaxed leg ${legs.length}: ${c.player_name} +${c.odds}`);
+        }
+      }
+
+      // FIX #4: Require at least 1 L10-backed player prop per HR ticket
+      const hasL10PlayerProp = legs.some(l => l.market_type === 'player_prop' && l.l10Avg !== null);
+      if (!hasL10PlayerProp && legs.length > 0) {
+        console.log(`[MegaParlay] HR: No L10-backed player prop found, force-adding one...`);
+        const l10Candidate = scoredProps.find(p => {
+          if (p.market_type !== 'player_prop') return false;
+          if (p.l10Avg === null) return false;
+          if (p.hitRate < 25) return false;
+          if (p.odds < 100) return false; // Relaxed: any plus-money or even
+          if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
+          if (used.has(normalizeName(p.player_name))) return false;
+          return passesBasicChecks(p, legs, gc);
+        });
+        if (l10Candidate) {
+          addLeg(l10Candidate, legs, gc, used, 'hr_l10_anchor', 'high_roller');
+          console.log(`[MegaParlay] HR L10 anchor: ${l10Candidate.player_name} ${l10Candidate.prop_type} +${l10Candidate.odds} (L10: ${l10Candidate.l10Avg})`);
         }
       }
 
@@ -1139,8 +1183,9 @@ serve(async (req) => {
 
       // Filter mega candidates - relaxed filters to ensure diversity
       const megaCandidates = scoredProps.filter(p => {
+        // FIX #1: Block first basket from Mega tier
+        if (p.prop_type === 'player_first_basket') return false;
         const maxOdds = PER_LEG_CAPS[p.market_type] || 800;
-        // Lower floor for player props (+150) and team bets (+130) to get more diversity
         const minOdds = p.market_type === 'team_bet' ? 130 : p.market_type === 'player_prop' ? 150 : 200;
         if (p.odds < minOdds) return false;
         if (p.odds > maxOdds) return false;
@@ -1191,8 +1236,9 @@ serve(async (req) => {
       for (const { pool, type } of pools) {
         if (marketTypeCounts[type] >= getMaxForType(type)) continue;
         for (const c of pool) {
-          // Mega Jackpot: prefer game diversity (max 1 per game)
           if (gc.get(c.game) && gc.get(c.game)! >= 1) continue;
+          // FIX #3: Enforce global exposure cap in Mega R1 loop
+          if (allUsedPlayers.has(normalizeName(c.player_name))) continue;
           if (!passesBasicChecks(c, legs, gc)) continue;
           if (used.has(normalizeName(c.player_name))) continue;
           addLeg(c, legs, gc, used, `mega_${type}`, 'mega_jackpot');
@@ -1209,9 +1255,10 @@ serve(async (req) => {
         const currentOdds = calcCombinedOdds(legs);
         if (legs.length >= 4 && currentOdds >= 10000) break;
         if (currentOdds >= MAX_COMBINED_ODDS) break;
-        // Mega Jackpot: prefer game diversity (max 1 per game)
         if (gc.get(c.game) && gc.get(c.game)! >= 1) continue;
         if (marketTypeCounts[c.market_type] >= getMaxForType(c.market_type)) continue;
+        // FIX #3: Enforce global exposure cap in Mega R2 loop
+        if (allUsedPlayers.has(normalizeName(c.player_name))) continue;
         if (used.has(normalizeName(c.player_name))) continue;
         if (!passesBasicChecks(c, legs, gc)) continue;
         addLeg(c, legs, gc, used, `mega_${c.market_type}`, 'mega_jackpot');
@@ -1223,6 +1270,7 @@ serve(async (req) => {
       // Relaxed filler if still below 10k and < 8 legs (still respect per-leg cap and type caps)
       if (legs.length < 8 && calcCombinedOdds(legs) < 10000) {
         const relaxedCandidates = scoredProps.filter(p => {
+          if (p.prop_type === 'player_first_basket') return false; // FIX #1
           const maxOdds = PER_LEG_CAPS[p.market_type] || 800;
           if (p.odds < 150 || p.odds > maxOdds) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
@@ -1233,11 +1281,32 @@ serve(async (req) => {
         for (const c of relaxedCandidates) {
           if (legs.length >= 8) break;
           if (calcCombinedOdds(legs) >= MAX_COMBINED_ODDS) break;
+          // FIX #3: Enforce global exposure cap in Mega filler
+          if (allUsedPlayers.has(normalizeName(c.player_name))) continue;
           if (!passesBasicChecks(c, legs, gc)) continue;
           addLeg(c, legs, gc, used, 'mega_filler', 'mega_jackpot');
           const currentOdds = calcCombinedOdds(legs);
           console.log(`[MegaParlay] MEGA filler ${legs.length}: ${c.player_name} +${c.odds} (running: +${currentOdds})`);
           if (currentOdds >= 10000) break;
+        }
+      }
+
+      // FIX #4: Require at least 1 L10-backed player prop per Mega ticket
+      const hasMegaL10Prop = legs.some(l => l.market_type === 'player_prop' && l.l10Avg !== null);
+      if (!hasMegaL10Prop && legs.length > 0) {
+        console.log(`[MegaParlay] MEGA: No L10-backed player prop found, force-adding one...`);
+        const megaL10Candidate = scoredProps.find(p => {
+          if (p.market_type !== 'player_prop') return false;
+          if (p.l10Avg === null) return false;
+          if (p.hitRate < 25) return false;
+          if (p.odds < 100) return false; // Relaxed: any plus-money or even
+          if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
+          if (used.has(normalizeName(p.player_name))) return false;
+          return passesBasicChecks(p, legs, gc);
+        });
+        if (megaL10Candidate) {
+          addLeg(megaL10Candidate, legs, gc, used, 'mega_l10_anchor', 'mega_jackpot');
+          console.log(`[MegaParlay] MEGA L10 anchor: ${megaL10Candidate.player_name} ${megaL10Candidate.prop_type} +${megaL10Candidate.odds} (L10: ${megaL10Candidate.l10Avg})`);
         }
       }
 
