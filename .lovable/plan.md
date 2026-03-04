@@ -1,35 +1,36 @@
 
 
-## Plan: Build Parlay Tickets from 13 Locked Legs
+## Plan: Save 4 Tickets to `bot_daily_parlays` & Broadcast to All Customers
 
-### All 13 Locked Legs
+### What We'll Build
 
-**Original 8:**
-1. Ryan Rollins O 12.5 PTS (-108)
-2. Kevin Porter Jr. O 14.5 PTS (-126)
-3. Giannis Antetokounmpo O 4.5 AST (-114)
-4. Jaylen Wells O 12.5 PTS (-107)
-5. Deni Avdija U 19.5 PTS (-103)
-6. Ace Bailey O 4.5 REB (-156)
-7. Nickeil Alexander-Walker O 2.5 3PM (-151)
-8. Bobby Portis O 1.5 3PM (-101)
+An edge function (or use an existing one) to:
 
-**New 5 (from engine consensus):**
-9. Isaiah Joe O 2.5 3PM (43.6% edge, 100% L10)
-10. Jared McCain O 1.5 3PM (37.6% edge, 90% L10)
-11. Baylor Scheierman O 4.5 REB (36.0% edge, 90% L10)
-12. OG Anunoby O 1.5 3PM (50.4% edge, 89% L10)
-13. Isaiah Hartenstein O 3.5 AST (41.3% edge, 89% L10)
+1. **Insert 4 parlay tickets** into `bot_daily_parlays` with today's date, `approval_status = 'approved'`:
+   - **Standard (3-leg):** Ace Bailey O 4.5 REB, OG Anunoby O 1.5 3PM, Isaiah Hartenstein O 3.5 AST → +416
+   - **Mid-Tier (5-leg):** Above 3 + Baylor Scheierman O 4.5 REB, Giannis O 4.5 AST → +1,953  
+   - **High Roller (8-leg):** Above 5 + Isaiah Joe O 2.5 3PM, Jaylen Wells O 12.5 PTS, Bobby Portis O 1.5 3PM → +18,153
+   - **Mega Jackpot (13-leg):** All 13 legs → calculated combined odds
 
-### What I'll Do
+2. **Send via `bot-send-telegram`** using `mega_lottery_v2` type (which auto-broadcasts to all active customers per line 1594)
 
-1. **Verify live odds** for the 5 new picks via `unified_props` query
-2. **Build 3 parlay tickets** from the 13-leg pool using role-based stacking:
-   - **Standard (3-leg)** — Safest picks, highest L10 hit rates
-   - **Mid-Tier (5-leg)** — Balanced edge + hit rate mix
-   - **High Roller (8-leg)** — Full send with best composite scores
-3. **Calculate combined odds, win probability, and EV** for each ticket
-4. **Save all tickets** to `parlay_history` via the Parlay Builder context
+3. **Format each ticket** with the existing lottery format: tier label, combined odds, $10 stake, potential payout, and per-leg details (player, side, line, prop, odds)
 
-No code changes required — this uses existing edge functions and database queries.
+### Implementation
+
+**New edge function: `manual-parlay-broadcast`**
+- Accepts the 4 pre-built tickets with all leg data
+- Inserts into `bot_daily_parlays` (strategy_name: `manual_curated`, tier per ticket)
+- Calculates Mega Jackpot combined odds from all 13 legs
+- Calls `bot-send-telegram` with `mega_lottery_v2` type to broadcast to admin + all customers
+- Sets `approval_status = 'approved'` and `outcome = 'pending'`
+
+### 13-Leg Mega Jackpot Calculation
+All 13 legs combined using decimal odds multiplication, then converted back to American odds. Expected to be a massive longshot (~+150,000+ range).
+
+### Files to Create/Modify
+| File | Action |
+|------|--------|
+| `supabase/functions/manual-parlay-broadcast/index.ts` | Create — new edge function |
+| `supabase/config.toml` | Auto-updated with JWT config |
 
