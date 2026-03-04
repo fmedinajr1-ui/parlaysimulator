@@ -6789,6 +6789,11 @@ async function generateTierParlays(
           const source = (p as any).line_source || (p as any).verified_source || 'projected';
           if (source === 'projected' || source === 'synthetic_dry_run') return false;
         }
+        // SIDE FILTER: grind_under_core and similar profiles enforce recommended_side
+        if (profile.side) {
+          const pickSide = ((p as any).recommended_side || '').toLowerCase();
+          if (pickSide !== profile.side.toLowerCase()) return false;
+        }
         if (sportFilter.includes('all')) return true;
         return sportFilter.includes(p.sport || 'basketball_nba');
       });
