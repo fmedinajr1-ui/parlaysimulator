@@ -457,7 +457,8 @@ function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): st
 function formatLongshotAnnouncement(data: Record<string, any>, dateStr: string): string {
   const legs = data.legs || [];
   const expectedOdds = data.expected_odds || 4700;
-  const payout = Math.round((expectedOdds / 100) * 100 + 100);
+  const stakeAmount = data.stake || 20;
+  const payout = Math.round((expectedOdds / 100) * stakeAmount + stakeAmount);
 
   const propLabels: Record<string, string> = {
     threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
@@ -480,7 +481,7 @@ function formatLongshotAnnouncement(data: Record<string, any>, dateStr: string):
     msg += `  💎 ${leg.edge_note || ''}\n\n`;
   }
 
-  msg += `💰 $100 → ~$${payout.toLocaleString()}\n`;
+  msg += `💰 $${stakeAmount} → ~$${payout.toLocaleString()}\n`;
   msg += `⚠️ HIGH RISK / HIGH REWARD\n`;
   msg += `🎲 Good luck — let's eat!`;
   return msg;
@@ -1394,7 +1395,7 @@ function formatParlaySettledAlert(data: Record<string, any>, dateStr: string): s
   }
 
   msg += `\n`;
-  const stakeVal = stake || 500;
+  const stakeVal = stake || 100;
   if (won) {
     const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
     const payout = Math.round(stakeVal * decimalOdds);
