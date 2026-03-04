@@ -538,7 +538,7 @@ serve(async (req) => {
         selection_rationale: `Force-generated conviction parlay #${idx + 1}. Avg score: ${avgScore.toFixed(1)}. ${parlay.filter(p => p.riskConfirmed).length}/${parlay.length} risk-confirmed.`,
         tier: 'execution',
         is_simulated: true,
-        simulated_stake: stakeConfig?.execution_stake ?? 500,
+        simulated_stake: stakeConfig?.execution_stake ?? 100,
       };
     });
 

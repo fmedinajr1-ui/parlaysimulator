@@ -981,7 +981,7 @@ Deno.serve(async (req) => {
               outcome,
               strategy: parlay.strategy_name || 'Unknown',
               odds: parlay.expected_odds || 0,
-              stake: parlay.simulated_stake || 500,
+              stake: parlay.simulated_stake || 100,
               profitLoss,
               dailyWon: dayStats.won,
               dailyLost: dayStats.lost,
