@@ -791,8 +791,24 @@ serve(async (req) => {
       console.log(`[MegaParlay] 🔥 ${streakBoosted.length} props with hot streak bonus: ${streakBoosted.slice(0, 5).map(p => `${p.player_name} ${p.prop_type} ${p.side} (${p.streakLength}-game streak, +${p.streakBonus})`).join(', ')}`);
     }
 
-    // === ALT LINE HUNTING (same as before) ===
+    // === ALT LINE HUNTING (expanded to include under threes candidates) ===
+    const underThreesCandidates = scoredProps.filter(p => 
+      p.side === 'under' && 
+      ['threes', 'player_threes'].includes(normalizePropType(p.prop_type)) &&
+      p.l10Median != null && p.l10Median >= (p.line + 1) &&
+      p.event_id
+    ).slice(0, 5);
     const volumeCandidates = scoredProps.filter(p => p.volumeCandidate).slice(0, 10);
+    // Merge both candidate lists, dedup by player+prop
+    const altFetchSet = new Set<string>();
+    const altFetchCandidates: typeof scoredProps = [];
+    for (const c of [...volumeCandidates, ...underThreesCandidates]) {
+      const key = `${normalizeName(c.player_name)}|${normalizePropType(c.prop_type)}`;
+      if (!altFetchSet.has(key)) {
+        altFetchSet.add(key);
+        altFetchCandidates.push(c);
+      }
+    }
     const altLineResults = new Map<string, any>();
     if (volumeCandidates.length > 0) {
       const altLinePromises = volumeCandidates.map(async (vc) => {
