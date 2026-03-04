@@ -653,7 +653,8 @@ interface ParlayProfile {
   useAltLines?: boolean;
   minBufferMultiplier?: number;
   preferPlusMoney?: boolean;
-  sortBy?: 'composite' | 'hit_rate' | 'shuffle';
+  sortBy?: 'composite' | 'hit_rate' | 'shuffle' | 'env_cluster_shootout' | 'env_cluster_grind';
+  side?: 'over' | 'under';
   boostLegs?: number;
   allowTeamLegs?: number;
   maxMlLegs?: number;
@@ -664,7 +665,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   exploration: {
     count: 150,
     iterations: 2000,
-    maxPlayerUsage: 3,
+    maxPlayerUsage: 1,
     maxTeamUsage: 3,
     maxCategoryUsage: 6,
     minHitRate: 45,
@@ -755,10 +756,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'] },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
       // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
-      // WINNING ARCHETYPE: 3PT + SCORER combo (proven Feb 20-21 winners)
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
+      // WINNING ARCHETYPE: 3PT — REDUCED from 3 to 1 (3PM overs underperforming)
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
       // WINNING ARCHETYPE: REBOUNDER + ASSISTS combo
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
@@ -808,12 +807,19 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'matchup_mispriced', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      // ============= GRIND UNDER EXPLORATION: NBA under plays =============
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'env_cluster_grind', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
     ],
   },
   validation: {
     count: 50,
     iterations: 10000,
-    maxPlayerUsage: 3,
+    maxPlayerUsage: 1,
     maxTeamUsage: 2,
     maxCategoryUsage: 3,
     minHitRate: 52,
@@ -839,8 +845,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       // Multi-engine consensus validation
       { legs: 3, strategy: 'multi_engine_consensus', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
-      // WINNING ARCHETYPE VALIDATION: 3PT + SCORER
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['THREE_POINT_SHOOTER'] },
+      // WINNING ARCHETYPE VALIDATION: 3PT — REDUCED from 2 to 1
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
       // WINNING ARCHETYPE VALIDATION: REBOUNDER + ASSISTS
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
@@ -881,15 +886,19 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'shuffle' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['THREE_POINT_SHOOTER'] },
+      // WINNING ARCHETYPE shuffle — 3PT REDUCED from 2 to 0, kept reb_ast
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', preferCategories: ['THREE_POINT_SHOOTER'] },
+      // GRIND UNDER VALIDATION: NBA under plays
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'env_cluster_grind', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle', side: 'under' },
     ],
   },
   execution: {
     count: 40,
     iterations: 25000,
-    maxPlayerUsage: 2,
+    maxPlayerUsage: 1,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 65,
@@ -919,7 +928,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      // --- Sorted by env_cluster (GRIND-first smart stacking) ---
+      // --- Sorted by env_cluster (GRIND-first smart stacking) --- BOOSTED: 6 profiles (was 4)
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
@@ -974,6 +985,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
+      // ============= GRIND UNDER: NBA under plays — proven winners from March 3rd analysis =============
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', side: 'under' },
     ],
   },
 };
@@ -5458,6 +5474,22 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         console.log(`[DefenseGate] Boosted +10 OVER ${pick.player_name} ${propLowerGate} vs bottom-10 defense (rank ${propSpecificDefRank})`);
       }
 
+      // === 3PM OFFENSIVE RANKING GATE: block 3PM overs if team doesn't shoot well from three ===
+      if ((propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') && sideGate === 'over') {
+        const teamOffThreesRank = teamDetail?.off_threes_rank ?? null;
+        if (teamOffThreesRank != null) {
+          if (teamOffThreesRank >= 20) {
+            // Bottom third offensively at 3PM — hard-block
+            (pick as any).defenseHardBlocked = true;
+            console.log(`[3PMOffGate] Hard-blocked 3PM OVER ${pick.player_name} — team off_threes_rank ${teamOffThreesRank} (bottom third)`);
+          } else if (teamOffThreesRank >= 15) {
+            // Below average — heavy penalty
+            pick.compositeScore = Math.max(0, pick.compositeScore - 12);
+            console.log(`[3PMOffGate] Penalized -12 3PM OVER ${pick.player_name} — team off_threes_rank ${teamOffThreesRank} (below avg)`);
+          }
+        }
+      }
+
       // === THREES L10 FLOOR FOR EXECUTION ===
       if ((propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') && pick.l10_hit_rate != null && pick.l10_hit_rate < 0.70) {
         (pick as any).threesL10Blocked = true;
@@ -6016,7 +6048,7 @@ let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
 let globalTeamUsage: Map<string, number> | undefined;
 let globalSlatePlayerPropUsage: Map<string, number> = new Map();
-const MAX_GLOBAL_PLAYER_PROP_USAGE = 2;
+const MAX_GLOBAL_PLAYER_PROP_USAGE = 1;
 
 async function generateTierParlays(
   supabase: any,
@@ -6603,8 +6635,7 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/matchup_exploit: ${candidatePicks.length} matchup-boosted picks (sort=${sortBy}, minHR=${profile.minHitRate}%)`);
-      // Relax diversity for matchup exploration — allow elite matchup players in more parlays
-      if (config.maxPlayerUsage < 4) config.maxPlayerUsage = 4;
+      // Player exposure capped at 1 globally — no matchup override
     } else if (isMatchupTeamStackProfile) {
       // === MATCHUP TEAM STACK: same-team stacking against soft defense ===
       const matchupTeamPool = [...pool.sweetSpots, ...(pool.mispricedPicks || [])]
@@ -6765,6 +6796,11 @@ async function generateTierParlays(
         if (tier !== 'exploration') {
           const source = (p as any).line_source || (p as any).verified_source || 'projected';
           if (source === 'projected' || source === 'synthetic_dry_run') return false;
+        }
+        // SIDE FILTER: grind_under_core and similar profiles enforce recommended_side
+        if (profile.side) {
+          const pickSide = ((p as any).recommended_side || '').toLowerCase();
+          if (pickSide !== profile.side.toLowerCase()) return false;
         }
         if (sportFilter.includes('all')) return true;
         return sportFilter.includes(p.sport || 'basketball_nba');
