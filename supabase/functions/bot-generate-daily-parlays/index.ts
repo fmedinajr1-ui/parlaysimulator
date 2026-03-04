@@ -919,7 +919,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      // --- Sorted by env_cluster (GRIND-first smart stacking) ---
+      // --- Sorted by env_cluster (GRIND-first smart stacking) --- BOOSTED: 6 profiles (was 4)
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
