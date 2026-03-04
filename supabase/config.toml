@@ -458,3 +458,6 @@ verify_jwt = false
 
 [functions.generate-lottery-cards]
 verify_jwt = false
+
+[functions.manual-parlay-broadcast]
+verify_jwt = false
