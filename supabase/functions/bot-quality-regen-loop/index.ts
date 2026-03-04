@@ -209,49 +209,49 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === CROSS-ATTEMPT DEDUP: void identical parlays even within the best attempt ===
-    if (bestAttempt && bestAttempt.parlayIds.length > 0) {
-      const { data: bestParlays } = await supabase
+    // === CROSS-ATTEMPT DEDUP: void identical parlays across ALL pending for today ===
+    // This runs unconditionally — even if source tag attribution failed, we still dedup
+    {
+      const { data: allTodayPending } = await supabase
         .from('bot_daily_parlays')
-        .select('id, legs')
-        .in('id', bestAttempt.parlayIds)
-        .eq('outcome', 'pending');
+        .select('id, legs, created_at')
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending')
+        .order('created_at', { ascending: true });
 
-      if (bestParlays && bestParlays.length > 1) {
-        // Also check ALL pending parlays for today to catch cross-source dupes
-        const { data: allTodayPending } = await supabase
-          .from('bot_daily_parlays')
-          .select('id, legs')
-          .eq('parlay_date', today)
-          .eq('outcome', 'pending');
+      if (allTodayPending && allTodayPending.length > 1) {
+        const seenFingerprints = new Map<string, string>(); // fingerprint → first ID (kept)
+        const dupeIds: string[] = [];
 
-        if (allTodayPending) {
-          const seenFingerprints = new Map<string, string>(); // fingerprint → first ID
-          const dupeIds: string[] = [];
-
-          for (const p of allTodayPending) {
-            const fingerprint = JSON.stringify(
-              (Array.isArray(p.legs) ? p.legs : [])
-                .map((l: any) => `${(l.player_name || '').toLowerCase()}_${(l.prop_type || '').toLowerCase()}_${(l.side || '').toLowerCase()}`)
-                .sort()
-            );
-            if (seenFingerprints.has(fingerprint)) {
-              dupeIds.push(p.id);
-            } else {
-              seenFingerprints.set(fingerprint, p.id);
-            }
+        for (const p of allTodayPending) {
+          const fingerprint = JSON.stringify(
+            (Array.isArray(p.legs) ? p.legs : [])
+              .map((l: any) => `${(l.player_name || '').toLowerCase()}_${(l.prop_type || '').toLowerCase()}_${(l.side || '').toLowerCase()}`)
+              .sort()
+          );
+          if (seenFingerprints.has(fingerprint)) {
+            dupeIds.push(p.id);
+          } else {
+            seenFingerprints.set(fingerprint, p.id);
           }
+        }
 
-          if (dupeIds.length > 0) {
+        if (dupeIds.length > 0) {
+          // Batch void in chunks of 100 to avoid query limits
+          let totalDeduped = 0;
+          for (let i = 0; i < dupeIds.length; i += 100) {
+            const chunk = dupeIds.slice(i, i + 100);
             const { count: dedupCount } = await supabase
               .from('bot_daily_parlays')
               .update({ outcome: 'void', lesson_learned: 'quality_regen_dedup_identical' })
-              .in('id', dupeIds)
+              .in('id', chunk)
               .eq('outcome', 'pending')
               .select('*', { count: 'exact', head: true });
-
-            console.log(`[QualityRegen] 🧹 Deduped ${dedupCount || 0} identical parlays across all pending`);
+            totalDeduped += (dedupCount || 0);
           }
+          console.log(`[QualityRegen] 🧹 Deduped ${totalDeduped} identical parlays across ${allTodayPending.length} pending (${seenFingerprints.size} unique kept)`);
+        } else {
+          console.log(`[QualityRegen] ✅ No duplicates found across ${allTodayPending.length} pending parlays`);
         }
       }
     }
