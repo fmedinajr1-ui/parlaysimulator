@@ -1,47 +1,36 @@
 
 
-# Fix Slate Status Update — Only Show Active Parlays on Telegram
+# Fix "113 Parlays" Count in Telegram Notifications
 
 ## Problem
-The `bot-slate-status-update` queries ALL 107 parlays for today and sends the full count (101 voided + 6 active) to Telegram. The message prominently displays "🚫 VOIDED: 101 parlays" which is confusing — users only care about the active slate.
+The `formatTieredParlaysGenerated` function in `bot-send-telegram/index.ts` has a fallback DB lookup (lines 547-551) that queries ALL parlays for today without filtering by `outcome = 'pending'`. This counts voided parlays too, producing the inflated "113 parlays" message on Telegram.
 
-## Changes
-
-### 1. `bot-slate-status-update/index.ts` — Filter query to pending only
-Change the DB query (line 22-25) to only fetch `pending` parlays:
+## Root Cause
 ```typescript
-const { data: parlays } = await supabase
+// Line 547-550 — NO outcome filter
+const { data: todayParlays } = await sb
   .from('bot_daily_parlays')
-  .select('*')
+  .select('strategy_name')
+  .eq('parlay_date', today);
+```
+
+This fallback fires when the generation payload has `totalCount === 0` or all tier counts are zero — which happens during pipeline runs that suppress counts. It then pulls every record for the day (pending + voided) and reports that total.
+
+## Fix
+
+### `bot-send-telegram/index.ts` — Line 550
+Add `.eq('outcome', 'pending')` to the fallback query:
+
+```typescript
+const { data: todayParlays } = await sb
+  .from('bot_daily_parlays')
+  .select('strategy_name')
   .eq('parlay_date', today)
   .eq('outcome', 'pending');
 ```
 
-Remove the voided parlay logic entirely (lines 38-55) — no need to count or report voided parlays. The message should focus on what's live.
+This single-line change ensures the fallback only counts active parlays, matching the fix already applied to `bot-slate-status-update`.
 
-### 2. Simplify the Telegram payload
-Send only active parlays to `bot-send-telegram`:
-```typescript
-body: {
-  type: 'slate_status_update',
-  data: {
-    activeParlays: formattedActive,
-    totalStake: totalStakeSum,  // sum of simulated_stake for active parlays
-  },
-}
-```
-
-### 3. `bot-send-telegram/index.ts` — Clean up `formatSlateStatusUpdate`
-Remove the "🚫 VOIDED" section (lines 424-431). Update the header to show only active count and total daily risk:
-```
-📋 DAILY SLATE STATUS — Mar 04
-━━━━━━━━━━━━━━━━━━━━━━
-✅ 6 ACTIVE PARLAYS | Total Risk: $295
-
-Parlay #1 (elite categories v1 execution) — 3 legs
- Take Player OVER 5.5 3PT (80% L10)
- ...
-```
-
-This way Telegram shows exactly what's live and the total dollar exposure for the day.
+## Deployment
+Redeploy `bot-send-telegram` after the change.
 
