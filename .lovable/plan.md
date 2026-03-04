@@ -1,45 +1,47 @@
 
 
-# Make Stake Sizing Reflect in Telegram Messages
+# Fix Slate Status Update — Only Show Active Parlays on Telegram
 
 ## Problem
-The Telegram bot has hardcoded `$500` and `$100` fallback values in several places, so even though `bot_stake_config` was updated to $100/$50/$20/$10, the Telegram messages still show old stake amounts.
-
-## Locations to Fix
-
-### 1. Settlement Alert — `bot-send-telegram/index.ts` line 1397
-```typescript
-const stakeVal = stake || 500;  // ← hardcoded $500 fallback
-```
-**Fix**: Change fallback to `100` (new execution baseline). The `stake` value is already passed from `bot-settle-and-learn` (line 984: `parlay.simulated_stake || 500`), so also fix that fallback.
-
-### 2. Settlement Sender — `bot-settle-and-learn/index.ts` line 984
-```typescript
-stake: parlay.simulated_stake || 500,  // ← hardcoded $500 fallback
-```
-**Fix**: Change fallback to `100`.
-
-### 3. Explorer Format — `bot-send-telegram/index.ts` line 483
-```typescript
-msg += `💰 $100 → ~$${payout.toLocaleString()}\n`;  // ← hardcoded $100
-```
-This one already matches the new exploration-tier stake ($100 for execution context shown here). However, the payout calculation likely uses old values too — need to verify and make it dynamic using the passed stake value.
-
-### 4. Lottery Ticket Display — `bot-send-telegram/index.ts` line 1235
-Already uses `ticket.stake` dynamically — no change needed.
-
-### 5. Daily Winners Recap — line 1267
-Already uses `lw.stake` dynamically — no change needed.
+The `bot-slate-status-update` queries ALL 107 parlays for today and sends the full count (101 voided + 6 active) to Telegram. The message prominently displays "🚫 VOIDED: 101 parlays" which is confusing — users only care about the active slate.
 
 ## Changes
 
-| File | Line | Current | New |
-|------|------|---------|-----|
-| `bot-settle-and-learn/index.ts` | 984 | `parlay.simulated_stake \|\| 500` | `parlay.simulated_stake \|\| 100` |
-| `bot-send-telegram/index.ts` | 1397 | `stake \|\| 500` | `stake \|\| 100` |
-| `bot-send-telegram/index.ts` | 483 | Hardcoded `$100` | Use passed stake/payout values from payload |
-| `bot-force-fresh-parlays/index.ts` | 541 | `stakeConfig?.execution_stake ?? 500` | `stakeConfig?.execution_stake ?? 100` |
+### 1. `bot-slate-status-update/index.ts` — Filter query to pending only
+Change the DB query (line 22-25) to only fetch `pending` parlays:
+```typescript
+const { data: parlays } = await supabase
+  .from('bot_daily_parlays')
+  .select('*')
+  .eq('parlay_date', today)
+  .eq('outcome', 'pending');
+```
 
-## Deployment
-Redeploy `bot-send-telegram`, `bot-settle-and-learn`, and `bot-force-fresh-parlays` after changes.
+Remove the voided parlay logic entirely (lines 38-55) — no need to count or report voided parlays. The message should focus on what's live.
+
+### 2. Simplify the Telegram payload
+Send only active parlays to `bot-send-telegram`:
+```typescript
+body: {
+  type: 'slate_status_update',
+  data: {
+    activeParlays: formattedActive,
+    totalStake: totalStakeSum,  // sum of simulated_stake for active parlays
+  },
+}
+```
+
+### 3. `bot-send-telegram/index.ts` — Clean up `formatSlateStatusUpdate`
+Remove the "🚫 VOIDED" section (lines 424-431). Update the header to show only active count and total daily risk:
+```
+📋 DAILY SLATE STATUS — Mar 04
+━━━━━━━━━━━━━━━━━━━━━━
+✅ 6 ACTIVE PARLAYS | Total Risk: $295
+
+Parlay #1 (elite categories v1 execution) — 3 legs
+ Take Player OVER 5.5 3PT (80% L10)
+ ...
+```
+
+This way Telegram shows exactly what's live and the total dollar exposure for the day.
 
