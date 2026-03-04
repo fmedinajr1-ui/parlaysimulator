@@ -630,31 +630,31 @@ serve(async (req) => {
         }
       }
 
+      // FIX #2: DD L10 gate — ALWAYS require L10 data for DD picks regardless of hit rate
+      if (prop.prop_type === 'player_double_double') {
+        const ddPlayerPts = gameLogMap.get(`${nameNorm}|points`);
+        const ddPlayerReb = gameLogMap.get(`${nameNorm}|rebounds`);
+        const ddPlayerAst = gameLogMap.get(`${nameNorm}|assists`);
+        const hasL10 = (ddPlayerPts?.l10_avg != null) || (ddPlayerReb?.l10_avg != null) || (ddPlayerAst?.l10_avg != null);
+        if (!hasL10) {
+          console.log(`[MegaParlay] DD SKIP (no L10): ${prop.player_name}`);
+          continue;
+        }
+        // Override hit rate with L10-based DD probability
+        const ptsAvg = ddPlayerPts?.l10_avg || 0;
+        const rebAvg = ddPlayerReb?.l10_avg || 0;
+        const astAvg = ddPlayerAst?.l10_avg || 0;
+        const cats = [ptsAvg >= 10, rebAvg >= 10, astAvg >= 10].filter(Boolean).length;
+        if (cats >= 2) hitRate = Math.max(hitRate, 45);
+        else if (cats === 1) {
+          const nearDD = [ptsAvg >= 8, rebAvg >= 8, astAvg >= 8].filter(Boolean).length;
+          hitRate = Math.max(hitRate, nearDD >= 2 ? 30 : 15);
+        } else hitRate = Math.max(hitRate, 10);
+      }
+
       // For exotic/team bets without data, assign baseline hit rates
       if (hitRate === 0 && prop.market_type === 'exotic_player') {
         if (prop.prop_type === 'player_first_basket') hitRate = 8;
-        else if (prop.prop_type === 'player_double_double') {
-          // FIX #2: Require L10 data for DD — skip if player has no recent performance data
-          const ddPlayerPts = gameLogMap.get(`${nameNorm}|points`);
-          const ddPlayerReb = gameLogMap.get(`${nameNorm}|rebounds`);
-          const ddPlayerAst = gameLogMap.get(`${nameNorm}|assists`);
-          const hasL10 = (ddPlayerPts?.l10_avg != null) || (ddPlayerReb?.l10_avg != null) || (ddPlayerAst?.l10_avg != null);
-          if (!hasL10) {
-            console.log(`[MegaParlay] DD SKIP (no L10): ${prop.player_name}`);
-            continue; // Skip DD picks without L10 validation
-          }
-          // Calculate DD hit rate from actual L10 averages
-          const ptsAvg = ddPlayerPts?.l10_avg || 0;
-          const rebAvg = ddPlayerReb?.l10_avg || 0;
-          const astAvg = ddPlayerAst?.l10_avg || 0;
-          const cats = [ptsAvg >= 10, rebAvg >= 10, astAvg >= 10].filter(Boolean).length;
-          if (cats >= 2) hitRate = 45;
-          else if (cats === 1) {
-            // One category near DD threshold — moderate chance
-            const nearDD = [ptsAvg >= 8, rebAvg >= 8, astAvg >= 8].filter(Boolean).length;
-            hitRate = nearDD >= 2 ? 30 : 15;
-          } else hitRate = 10;
-        }
         else if (prop.prop_type === 'player_triple_double') hitRate = 5;
       }
 
