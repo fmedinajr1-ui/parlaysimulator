@@ -664,7 +664,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   exploration: {
     count: 150,
     iterations: 2000,
-    maxPlayerUsage: 3,
+    maxPlayerUsage: 1,
     maxTeamUsage: 3,
     maxCategoryUsage: 6,
     minHitRate: 45,
@@ -813,7 +813,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   validation: {
     count: 50,
     iterations: 10000,
-    maxPlayerUsage: 3,
+    maxPlayerUsage: 1,
     maxTeamUsage: 2,
     maxCategoryUsage: 3,
     minHitRate: 52,
@@ -889,7 +889,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   execution: {
     count: 40,
     iterations: 25000,
-    maxPlayerUsage: 2,
+    maxPlayerUsage: 1,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 65,
@@ -6016,7 +6016,7 @@ let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
 let globalTeamUsage: Map<string, number> | undefined;
 let globalSlatePlayerPropUsage: Map<string, number> = new Map();
-const MAX_GLOBAL_PLAYER_PROP_USAGE = 2;
+const MAX_GLOBAL_PLAYER_PROP_USAGE = 1;
 
 async function generateTierParlays(
   supabase: any,
@@ -6603,8 +6603,7 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/matchup_exploit: ${candidatePicks.length} matchup-boosted picks (sort=${sortBy}, minHR=${profile.minHitRate}%)`);
-      // Relax diversity for matchup exploration — allow elite matchup players in more parlays
-      if (config.maxPlayerUsage < 4) config.maxPlayerUsage = 4;
+      // Player exposure capped at 1 globally — no matchup override
     } else if (isMatchupTeamStackProfile) {
       // === MATCHUP TEAM STACK: same-team stacking against soft defense ===
       const matchupTeamPool = [...pool.sweetSpots, ...(pool.mispricedPicks || [])]
