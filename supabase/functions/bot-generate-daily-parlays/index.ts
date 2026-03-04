@@ -9073,9 +9073,10 @@ Deno.serve(async (req) => {
             if (usedPlayers.has(pName)) continue;
             
             // === 80% L10 HIT RATE GATE for cluster builder ===
-            const clusterHitPct = (pick.confidence_score || 0) > 1 ? (pick.confidence_score || 0) : (pick.confidence_score || 0) * 100;
-            if (clusterHitPct < 80) {
-              console.log(`[EnvCluster] ❌ L10 GATE: ${pick.player_name} ${pick.prop_type} L10=${clusterHitPct.toFixed(0)}% < 80%`);
+            const clusterL10Hr = (pick as any).l10_hit_rate || 0;
+            const clusterL10HrPct = clusterL10Hr <= 1 ? clusterL10Hr * 100 : clusterL10Hr;
+            if (clusterL10HrPct < 80) {
+              console.log(`[EnvCluster] ❌ L10 GATE: ${pick.player_name} ${pick.prop_type} L10=${clusterL10HrPct.toFixed(0)}% < 80%`);
               continue;
             }
 
