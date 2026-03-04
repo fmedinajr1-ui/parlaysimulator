@@ -5458,6 +5458,22 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         console.log(`[DefenseGate] Boosted +10 OVER ${pick.player_name} ${propLowerGate} vs bottom-10 defense (rank ${propSpecificDefRank})`);
       }
 
+      // === 3PM OFFENSIVE RANKING GATE: block 3PM overs if team doesn't shoot well from three ===
+      if ((propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') && sideGate === 'over') {
+        const teamOffThreesRank = teamDetail?.off_threes_rank ?? null;
+        if (teamOffThreesRank != null) {
+          if (teamOffThreesRank >= 20) {
+            // Bottom third offensively at 3PM — hard-block
+            (pick as any).defenseHardBlocked = true;
+            console.log(`[3PMOffGate] Hard-blocked 3PM OVER ${pick.player_name} — team off_threes_rank ${teamOffThreesRank} (bottom third)`);
+          } else if (teamOffThreesRank >= 15) {
+            // Below average — heavy penalty
+            pick.compositeScore = Math.max(0, pick.compositeScore - 12);
+            console.log(`[3PMOffGate] Penalized -12 3PM OVER ${pick.player_name} — team off_threes_rank ${teamOffThreesRank} (below avg)`);
+          }
+        }
+      }
+
       // === THREES L10 FLOOR FOR EXECUTION ===
       if ((propLowerGate.includes('three') || propLowerGate === '3pm' || propLowerGate === 'threes') && pick.l10_hit_rate != null && pick.l10_hit_rate < 0.70) {
         (pick as any).threesL10Blocked = true;
