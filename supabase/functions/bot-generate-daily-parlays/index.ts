@@ -1,5 +1,6 @@
+// v2.1 — forced redeploy for cluster L10 gate 2026-03-04
 /**
- * bot-generate-daily-parlays (v2 - Tiered System)
+ * bot-generate-daily-parlays (v2.1 - Tiered System)
  * 
  * Generates 240+ daily parlays across three tiers:
  * - Exploration (150/day): Edge discovery, $0 stake, 2K iterations
