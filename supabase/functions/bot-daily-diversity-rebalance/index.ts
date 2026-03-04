@@ -1,5 +1,5 @@
 /**
- * bot-daily-diversity-rebalance
+ * bot-daily-diversity-rebalance v2.0
  * 
  * Post-rebuild pass that:
  * 1. Caps any single strategy family at 30% of the total pending daily slate
@@ -7,6 +7,8 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const VERSION = 'diversity-rebalance-v2.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,7 +24,6 @@ function getEasternDate(): string {
   }).format(new Date());
 }
 
-/** Extract base strategy family from full strategy_name */
 function getStrategyFamily(strategyName: string): string {
   const name = (strategyName || 'unknown').toLowerCase();
   const families = [
@@ -37,17 +38,14 @@ function getStrategyFamily(strategyName: string): string {
   return parts.length >= 2 ? `${parts[0]}_${parts[1]}` : name;
 }
 
-/** Normalize prop type: strip "player_" prefix for consistent matching */
 function normalizePropType(propType: string): string {
   return (propType || '').replace(/^player_/i, '').toLowerCase().trim();
 }
 
-/** Normalize player name for consistent matching */
 function normalizePlayerName(name: string): string {
   return (name || '').toLowerCase().trim();
 }
 
-/** Extract player-prop keys from a parlay's legs JSONB */
 function extractPlayerPropKeys(legs: any): string[] {
   const keys: string[] = [];
   if (!Array.isArray(legs)) return keys;
@@ -73,8 +71,10 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const maxPct = body.max_strategy_pct ?? 0.30;
-    const maxPlayerPropUsage = body.max_player_prop_usage ?? 1; // Global cap: 1 parlay per player-prop
+    const maxPlayerPropUsage = body.max_player_prop_usage ?? 1;
     const today = body.date || getEasternDate();
+
+    console.log(`[DiversityRebalance] ${VERSION} | date=${today}`);
 
     // ═══════════════════════════════════════════════════════════════
     // PASS 1: Strategy Family Cap (30%)
@@ -91,7 +91,7 @@ Deno.serve(async (req) => {
 
     const totalCount = (pending || []).length;
     if (totalCount === 0) {
-      return new Response(JSON.stringify({ success: true, message: 'No pending parlays to rebalance', voided: 0, exposureVoided: 0 }), {
+      return new Response(JSON.stringify({ success: true, version: VERSION, message: 'No pending parlays to rebalance', strategyVoided: 0, exposureVoided: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -114,25 +114,27 @@ Deno.serve(async (req) => {
       familyCounts.set(family, entry);
     }
 
-    // Void excess from strategy cap
-    let totalVoided = 0;
+    // Void excess from strategy cap — collect actually voided IDs
+    let totalStrategyVoided = 0;
     const voidDetails: Record<string, number> = {};
     const strategyVoidedIds = new Set<string>();
 
     for (const [family, entry] of familyCounts) {
       if (entry.toVoid.length === 0) continue;
       
-      const { count } = await supabase
+      const { data: voidedRows } = await supabase
         .from('bot_daily_parlays')
         .update({ outcome: 'void', lesson_learned: `diversity_rebalance_cap_${maxPerFamily}` })
         .in('id', entry.toVoid)
         .eq('outcome', 'pending')
-        .select('*', { count: 'exact', head: true });
+        .select('id');
 
-      const voided = count || 0;
-      totalVoided += voided;
+      const voided = (voidedRows || []).length;
+      totalStrategyVoided += voided;
       voidDetails[family] = voided;
-      entry.toVoid.forEach(id => strategyVoidedIds.add(id));
+      for (const row of (voidedRows || [])) {
+        strategyVoidedIds.add(row.id);
+      }
       console.log(`[DiversityRebalance] ${family}: kept ${entry.kept}, voided ${voided}`);
     }
 
@@ -148,11 +150,11 @@ Deno.serve(async (req) => {
       .select('id, legs, combined_probability, strategy_name, tier')
       .eq('parlay_date', today)
       .eq('outcome', 'pending')
-      .order('combined_probability', { ascending: false }); // Highest prob first = kept
+      .order('combined_probability', { ascending: false });
 
     if (err2) throw err2;
 
-    // Build map: player|prop → list of parlay IDs (already sorted by probability desc)
+    // Build map: player|prop → list of parlay IDs (sorted by probability desc)
     const playerPropMap = new Map<string, string[]>();
 
     for (const parlay of (remainingParlays || [])) {
@@ -166,8 +168,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Find parlays to void: for each player-prop, keep first N (highest prob), void rest
+    // Find parlays to void: for each player-prop, keep first N, void rest
+    // Explicitly exclude IDs already voided by strategy pass
     const exposureVoidSet = new Set<string>();
+    const exposureCandidatesRaw = new Set<string>();
     const exposureDetails: Record<string, { kept: number; voided: number }> = {};
 
     for (const [key, parlayIds] of playerPropMap) {
@@ -175,25 +179,30 @@ Deno.serve(async (req) => {
       
       const toVoid = parlayIds.slice(maxPlayerPropUsage);
       for (const id of toVoid) {
-        exposureVoidSet.add(id);
+        exposureCandidatesRaw.add(id);
+        // Only add if NOT already voided by strategy pass
+        if (!strategyVoidedIds.has(id)) {
+          exposureVoidSet.add(id);
+        }
       }
       exposureDetails[key] = { kept: maxPlayerPropUsage, voided: toVoid.length };
     }
 
+    const exposureAlreadyVoidedByStrategy = exposureCandidatesRaw.size - exposureVoidSet.size;
     let exposureVoided = 0;
+
     if (exposureVoidSet.size > 0) {
       const idsToVoid = Array.from(exposureVoidSet);
       
-      // Batch void in chunks of 50
       for (let i = 0; i < idsToVoid.length; i += 50) {
         const chunk = idsToVoid.slice(i, i + 50);
-        const { count } = await supabase
+        const { data: voidedRows } = await supabase
           .from('bot_daily_parlays')
           .update({ outcome: 'void', lesson_learned: 'exposure_cap_player_prop' })
           .in('id', chunk)
           .eq('outcome', 'pending')
-          .select('*', { count: 'exact', head: true });
-        exposureVoided += (count || 0);
+          .select('id');
+        exposureVoided += (voidedRows || []).length;
       }
 
       // Log top offenders
@@ -205,13 +214,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[DiversityRebalance] Exposure pass: voided ${exposureVoided} parlays from ${exposureVoidSet.size} candidates`);
+    console.log(`[DiversityRebalance] Exposure pass: raw candidates=${exposureCandidatesRaw.size}, already voided by strategy=${exposureAlreadyVoidedByStrategy}, actually voided=${exposureVoided}`);
 
     // ═══════════════════════════════════════════════════════════════
-    // Final Summary
+    // Final Summary — recount from DB for accuracy
     // ═══════════════════════════════════════════════════════════════
 
-    const afterCount = totalCount - totalVoided - exposureVoided;
+    const { count: finalPendingCount } = await supabase
+      .from('bot_daily_parlays')
+      .select('*', { count: 'exact', head: true })
+      .eq('parlay_date', today)
+      .eq('outcome', 'pending');
+
+    const totalAfter = finalPendingCount ?? (totalCount - totalStrategyVoided - exposureVoided);
+
     const familySummary: Record<string, number> = {};
     for (const [family, entry] of familyCounts) {
       familySummary[family] = entry.kept;
@@ -219,29 +235,36 @@ Deno.serve(async (req) => {
 
     await supabase.from('bot_activity_log').insert({
       event_type: 'diversity_rebalance',
-      message: `Rebalanced: ${totalCount} → ${afterCount} parlays (strategy voided ${totalVoided}, exposure voided ${exposureVoided})`,
+      message: `Rebalanced: ${totalCount} → ${totalAfter} parlays (strategy voided ${totalStrategyVoided}, exposure voided ${exposureVoided})`,
       metadata: {
+        version: VERSION,
         date: today,
         maxPct,
         maxPerFamily,
         maxPlayerPropUsage,
         totalBefore: totalCount,
-        totalAfter: afterCount,
-        strategyVoided: totalVoided,
+        totalAfter,
+        strategyVoided: totalStrategyVoided,
+        exposureCandidatesRaw: exposureCandidatesRaw.size,
+        exposureAlreadyVoidedByStrategy,
+        exposureCandidatesAfterStrategyFilter: exposureVoidSet.size,
         exposureVoided,
         voidDetails,
         exposureDetails,
         familySummary,
       },
-      severity: (totalVoided + exposureVoided) > 0 ? 'info' : 'success',
+      severity: (totalStrategyVoided + exposureVoided) > 0 ? 'info' : 'success',
     });
 
     return new Response(JSON.stringify({
       success: true,
+      version: VERSION,
       date: today,
       totalBefore: totalCount,
-      totalAfter: afterCount,
-      strategyVoided: totalVoided,
+      totalAfter,
+      strategyVoided: totalStrategyVoided,
+      exposureCandidatesRaw: exposureCandidatesRaw.size,
+      exposureAlreadyVoidedByStrategy,
       exposureVoided,
       maxPerFamily,
       maxPlayerPropUsage,

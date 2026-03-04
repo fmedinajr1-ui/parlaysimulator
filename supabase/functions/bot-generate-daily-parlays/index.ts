@@ -1,4 +1,4 @@
-// v2.1 — forced redeploy for cluster L10 gate 2026-03-04
+// v3.0 — aligned hit_rate storage with L10 gate metric 2026-03-04
 /**
  * bot-generate-daily-parlays (v2.1 - Tiered System)
  * 
@@ -6987,6 +6987,10 @@ async function generateTierParlays(
       
       const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
       const hitRatePercent = pickConfidence * 100;
+      // Effective gate rate: use L10 hit rate (percent) for player props, fallback to confidence
+      const rawL10 = 'player_name' in pick ? ((pick as any).l10_hit_rate || 0) : 0;
+      const l10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
+      const effectiveHitRateForStorage = ('player_name' in pick && l10Pct > 0) ? l10Pct : hitRatePercent;
       
       // === EXECUTION TIER 80% L10 HIT RATE GATE ===
       // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
@@ -7161,7 +7165,9 @@ async function generateTierParlays(
           side: playerPick.recommended_side || 'over',
           category: playerPick.category,
           weight,
-          hit_rate: hitRatePercent,
+          hit_rate: effectiveHitRateForStorage,
+          l10_hit_rate: l10Pct,
+          confidence_score: pickConfidence,
           american_odds: selectedLine.odds,
           odds_value_score: playerPick.oddsValueScore,
           composite_score: playerPick.compositeScore,
@@ -9077,7 +9083,7 @@ Deno.serve(async (req) => {
             const clusterL10Hr = (pick as any).l10_hit_rate || 0;
             const clusterL10HrPct = clusterL10Hr <= 1 ? clusterL10Hr * 100 : clusterL10Hr;
             if (clusterL10HrPct < 80) {
-              console.log(`[EnvCluster] ❌ L10 GATE: ${pick.player_name} ${pick.prop_type} L10=${clusterL10HrPct.toFixed(0)}% < 80%`);
+              console.log(`[EnvCluster] ❌ L10 GATE: ${pick.player_name} ${pick.prop_type} L10=${clusterL10HrPct.toFixed(0)}% conf=${((pick.confidence_score || 0) * 100).toFixed(0)}% < 80%`);
               continue;
             }
 
@@ -9093,7 +9099,9 @@ Deno.serve(async (req) => {
               side: pick.recommended_side,
               category: pick.category,
               weight: pick.weight,
-              hit_rate: pick.confidence_score,
+              hit_rate: clusterL10HrPct,
+              l10_hit_rate: clusterL10HrPct,
+              confidence_score: pick.confidence_score,
               american_odds: pick.americanOdds,
               composite_score: pick.compositeScore,
               sport: pick.sport,
@@ -9113,7 +9121,7 @@ Deno.serve(async (req) => {
           }
 
           // Calculate combined probability and odds
-          const combinedProb = legs.reduce((p, l) => p * (l.hit_rate || 0.5), 1);
+          const combinedProb = legs.reduce((p, l) => p * ((l.hit_rate || 50) / 100), 1);
           const decimalOdds = legs.reduce((acc, l) => {
             const odds = l.american_odds || -110;
             return acc * (odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1);
