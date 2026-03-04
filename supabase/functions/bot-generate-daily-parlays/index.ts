@@ -951,13 +951,20 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
-      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES =============
+      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 80, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 80, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'shuffle' },
       // ============= MIXED CONVICTION STACK =============
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate' },
@@ -9042,7 +9049,9 @@ Deno.serve(async (req) => {
         
         // Build up to 3 parlays per cluster
         const usedPlayers = new Set<string>();
-        for (let pi = 0; pi < 3; pi++) {
+        // Shootout stack at 16% WR — cap at 1; grind stays at 3
+        const maxClusterParlays = clusterName === 'shootout' ? 1 : 3;
+        for (let pi = 0; pi < maxClusterParlays; pi++) {
           const legs: any[] = [];
           for (const pick of sorted) {
             if (legs.length >= 3) break;
@@ -9146,6 +9155,164 @@ Deno.serve(async (req) => {
     if (monsterParlays.length > 0) {
       allParlays.push(...monsterParlays);
       console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
+    }
+
+    // === MULTI-LEG ROLE-STACKED TICKET BUILDER (5-leg and 8-leg) ===
+    // Replicates the manual curation process: SAFE / BALANCED / GREAT_ODDS roles
+    try {
+      // Collect all execution-quality player picks with L10 data
+      const multiLegCandidates = pool.playerPicks
+        .filter(p => {
+          if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+          const hr = p.l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          return hrPct >= 65 && p.has_real_line;
+        })
+        .map(p => {
+          const hr = p.l10_hit_rate || p.confidence_score || 0;
+          const hrPct = hr <= 1 ? hr * 100 : hr;
+          const odds = p.americanOdds || -110;
+          // Assign role based on characteristics
+          let role: 'SAFE' | 'BALANCED' | 'GREAT_ODDS' = 'BALANCED';
+          if (hrPct >= 80) role = 'SAFE';
+          else if (odds >= 120) role = 'GREAT_ODDS';
+          else if (hrPct >= 70) role = 'SAFE';
+          return { ...p, hrPct, role, odds };
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+
+      const safePicks = multiLegCandidates.filter(p => p.role === 'SAFE');
+      const balancedPicks = multiLegCandidates.filter(p => p.role === 'BALANCED');
+      const greatOddsPicks = multiLegCandidates.filter(p => p.role === 'GREAT_ODDS');
+
+      console.log(`[MultiLeg] Candidates: ${multiLegCandidates.length} total (SAFE=${safePicks.length}, BALANCED=${balancedPicks.length}, GREAT_ODDS=${greatOddsPicks.length})`);
+
+      // Helper to build a multi-leg ticket
+      const buildMultiLegTicket = (legCount: number, tierLabel: string): any | null => {
+        const usedPlayers = new Set<string>();
+        const selectedLegs: any[] = [];
+        
+        // Role allocation: SAFE first, then BALANCED, then GREAT_ODDS
+        const roleTargets = legCount === 5
+          ? { SAFE: 2, BALANCED: 2, GREAT_ODDS: 1 }
+          : { SAFE: 3, BALANCED: 3, GREAT_ODDS: 2 }; // 8-leg
+
+        for (const [role, target] of Object.entries(roleTargets)) {
+          const rolePool = role === 'SAFE' ? safePicks : role === 'BALANCED' ? balancedPicks : greatOddsPicks;
+          let added = 0;
+          for (const pick of rolePool) {
+            if (added >= target) break;
+            const pName = (pick.player_name || '').toLowerCase();
+            if (usedPlayers.has(pName)) continue;
+            
+            // Check global fingerprint
+            const fp = `${pName}_${pick.prop_type}_${pick.recommended_side}`;
+            // Skip anti-correlation with existing legs
+            const antiCorr = hasAntiCorrelation(pick, selectedLegs);
+            if (antiCorr.blocked) continue;
+
+            selectedLegs.push({
+              player_name: pick.player_name,
+              team_name: pick.team_name,
+              prop_type: pick.prop_type,
+              line: pick.line,
+              side: pick.recommended_side || 'over',
+              category: pick.category,
+              weight: 1,
+              hit_rate: pick.hrPct,
+              american_odds: pick.odds,
+              composite_score: pick.compositeScore,
+              outcome: 'pending',
+              leg_role: role,
+              sport: pick.sport,
+              type: 'player',
+            });
+            usedPlayers.add(pName);
+            added++;
+          }
+        }
+
+        if (selectedLegs.length < legCount) {
+          // Fill remaining from any available candidate
+          for (const pick of multiLegCandidates) {
+            if (selectedLegs.length >= legCount) break;
+            const pName = (pick.player_name || '').toLowerCase();
+            if (usedPlayers.has(pName)) continue;
+            const antiCorr = hasAntiCorrelation(pick, selectedLegs);
+            if (antiCorr.blocked) continue;
+            selectedLegs.push({
+              player_name: pick.player_name,
+              team_name: pick.team_name,
+              prop_type: pick.prop_type,
+              line: pick.line,
+              side: pick.recommended_side || 'over',
+              category: pick.category,
+              weight: 1,
+              hit_rate: pick.hrPct,
+              american_odds: pick.odds,
+              composite_score: pick.compositeScore,
+              outcome: 'pending',
+              leg_role: 'FILLER',
+              sport: pick.sport,
+              type: 'player',
+            });
+            usedPlayers.add(pName);
+          }
+        }
+
+        if (selectedLegs.length < legCount) {
+          console.log(`[MultiLeg] Not enough picks for ${legCount}-leg ticket (got ${selectedLegs.length})`);
+          return null;
+        }
+
+        // Calculate combined odds
+        const combinedDecimal = selectedLegs.reduce((acc, leg) => {
+          const o = leg.american_odds || -110;
+          return acc * (o > 0 ? (o / 100) + 1 : (100 / Math.abs(o)) + 1);
+        }, 1);
+        const combinedAmerican = combinedDecimal >= 2 ? Math.round((combinedDecimal - 1) * 100) : Math.round(-100 / (combinedDecimal - 1));
+        const combinedProb = 1 / combinedDecimal;
+        const stake = legCount <= 5 ? 50 : 25;
+        const payout = Math.round(stake * combinedDecimal);
+
+        const fingerprint = selectedLegs.map(l => `${l.player_name}_${l.prop_type}_${l.side}`).sort().join('|');
+        if (globalFingerprints.has(fingerprint)) return null;
+        globalFingerprints.add(fingerprint);
+
+        const roleBreakdown = selectedLegs.map(l => l.leg_role).join('/');
+        console.log(`[MultiLeg] ✅ Built ${legCount}-leg ${tierLabel} ticket: +${combinedAmerican} odds | Roles: ${roleBreakdown} | $${stake} → $${payout}`);
+
+        return {
+          parlay_date: targetDate,
+          legs: selectedLegs,
+          leg_count: selectedLegs.length,
+          combined_probability: combinedProb,
+          expected_odds: combinedAmerican,
+          simulated_win_rate: combinedProb,
+          simulated_edge: 0,
+          simulated_sharpe: 0,
+          strategy_name: `role_stacked_${legCount}leg`,
+          selection_rationale: `${tierLabel}: ${legCount}-leg role-stacked (${roleBreakdown}) | +${combinedAmerican}`,
+          outcome: 'pending',
+          is_simulated: false,
+          simulated_stake: stake,
+          simulated_payout: payout,
+          tier: legCount <= 5 ? 'execution' : 'validation',
+          approval_status: 'pending_approval',
+        };
+      };
+
+      // Build one 5-leg and one 8-leg ticket if we have enough picks
+      if (multiLegCandidates.length >= 5) {
+        const fiveLeg = buildMultiLegTicket(5, 'Mid-Tier');
+        if (fiveLeg) allParlays.push(fiveLeg);
+      }
+      if (multiLegCandidates.length >= 8) {
+        const eightLeg = buildMultiLegTicket(8, 'High Roller');
+        if (eightLeg) allParlays.push(eightLeg);
+      }
+    } catch (multiLegErr) {
+      console.error(`[MultiLeg] Error building multi-leg tickets:`, multiLegErr);
     }
 
     // === MASTER PARLAY: DISABLED (0-15 record, -$650 P/L) ===
