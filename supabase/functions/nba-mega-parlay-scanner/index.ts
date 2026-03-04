@@ -791,11 +791,27 @@ serve(async (req) => {
       console.log(`[MegaParlay] 🔥 ${streakBoosted.length} props with hot streak bonus: ${streakBoosted.slice(0, 5).map(p => `${p.player_name} ${p.prop_type} ${p.side} (${p.streakLength}-game streak, +${p.streakBonus})`).join(', ')}`);
     }
 
-    // === ALT LINE HUNTING (same as before) ===
+    // === ALT LINE HUNTING (expanded to include under threes candidates) ===
+    const underThreesCandidates = scoredProps.filter(p => 
+      p.side === 'under' && 
+      ['threes', 'player_threes'].includes(normalizePropType(p.prop_type)) &&
+      p.l10Median != null && p.l10Median >= (p.line + 1) &&
+      p.event_id
+    ).slice(0, 5);
     const volumeCandidates = scoredProps.filter(p => p.volumeCandidate).slice(0, 10);
+    // Merge both candidate lists, dedup by player+prop
+    const altFetchSet = new Set<string>();
+    const altFetchCandidates: typeof scoredProps = [];
+    for (const c of [...volumeCandidates, ...underThreesCandidates]) {
+      const key = `${normalizeName(c.player_name)}|${normalizePropType(c.prop_type)}`;
+      if (!altFetchSet.has(key)) {
+        altFetchSet.add(key);
+        altFetchCandidates.push(c);
+      }
+    }
     const altLineResults = new Map<string, any>();
-    if (volumeCandidates.length > 0) {
-      const altLinePromises = volumeCandidates.map(async (vc) => {
+    if (altFetchCandidates.length > 0) {
+      const altLinePromises = altFetchCandidates.map(async (vc) => {
         try {
           const res = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
             method: 'POST',
@@ -839,6 +855,41 @@ serve(async (req) => {
         prop.compositeScore += 5;
       }
     }
+
+    // === UNDER-SIDE ALT LINE SWAP ===
+    for (const prop of scoredProps) {
+      if (prop.side !== 'under') continue;
+      const altKey = `${normalizeName(prop.player_name)}|${normalizePropType(prop.prop_type)}`;
+      const altLines = altLineResults.get(altKey);
+      if (altLines && altLines.length > 0) {
+        // Look for higher lines (safer for unders) with reasonable juice
+        const viableUnderAlts = altLines
+          .filter((al: any) => al.line > prop.line && al.underOdds <= -130 && al.underOdds >= -250)
+          .sort((a: any, b: any) => a.line - b.line); // lowest viable alt first (safest without excessive bump)
+        if (viableUnderAlts.length > 0) {
+          const bestAlt = viableUnderAlts[0];
+          console.log(`[MegaParlay] UNDER ALT SWAP: ${prop.player_name} ${prop.prop_type} U${prop.line} → U${bestAlt.line} (${bestAlt.underOdds})`);
+          prop.line = bestAlt.line;
+          prop.odds = bestAlt.underOdds;
+          prop.compositeScore += 3;
+          (prop as any).alt_swapped = true;
+          continue; // skip ghost line if real alt found
+        }
+      }
+
+      // === GHOST LINE FALLBACK (threes unders only) ===
+      const normalizedProp = normalizePropType(prop.prop_type);
+      if (['threes', 'player_threes'].includes(normalizedProp) && prop.l10Median != null && prop.l10Median >= prop.line + 1) {
+        const ghostLine = prop.line + 1.0;
+        const oddsPenalty = -40;
+        console.log(`[MegaParlay] 👻 GHOST LINE: ${prop.player_name} ${prop.prop_type} U${prop.line} → U${ghostLine} (L10 median=${prop.l10Median}, odds penalty ${oddsPenalty})`);
+        prop.line = ghostLine;
+        prop.odds = (prop.odds || -110) + oddsPenalty; // make odds worse to reflect safer line
+        prop.compositeScore += 2;
+        (prop as any).ghost_alt = true;
+      }
+    }
+
     scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
 
     // ============= 3-TICKET BUILDER =============
@@ -1220,7 +1271,9 @@ serve(async (req) => {
           l10_median: leg.l10Median,
           defense_rank: leg.defenseRank,
           defense_bonus: leg.defenseBonus,
-          volume_candidate: leg.volumeCandidate,
+           volume_candidate: leg.volumeCandidate,
+          alt_swapped: (leg as any).alt_swapped || false,
+          ghost_alt: (leg as any).ghost_alt || false,
           leg_role: leg.leg_role,
           ticket_tier: ticket.tier,
           market_type: leg.market_type,
