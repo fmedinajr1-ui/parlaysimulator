@@ -193,8 +193,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // After all attempts, void parlays from non-best attempts (only if not skipVoid)
-    if (!skipVoid && bestAttempt && attempts.length > 1) {
+    // After all attempts: keep BEST attempt only, void all others
+    if (bestAttempt && attempts.length > 1) {
       for (const att of attempts) {
         if (att.attempt === bestAttempt.attempt || att.parlayIds.length === 0) continue;
         
@@ -206,6 +206,53 @@ Deno.serve(async (req) => {
           .select('*', { count: 'exact', head: true });
 
         console.log(`[QualityRegen] Voided ${count || 0} parlays from attempt ${att.attempt} (keeping attempt ${bestAttempt.attempt})`);
+      }
+    }
+
+    // === CROSS-ATTEMPT DEDUP: void identical parlays even within the best attempt ===
+    if (bestAttempt && bestAttempt.parlayIds.length > 0) {
+      const { data: bestParlays } = await supabase
+        .from('bot_daily_parlays')
+        .select('id, legs')
+        .in('id', bestAttempt.parlayIds)
+        .eq('outcome', 'pending');
+
+      if (bestParlays && bestParlays.length > 1) {
+        // Also check ALL pending parlays for today to catch cross-source dupes
+        const { data: allTodayPending } = await supabase
+          .from('bot_daily_parlays')
+          .select('id, legs')
+          .eq('parlay_date', today)
+          .eq('outcome', 'pending');
+
+        if (allTodayPending) {
+          const seenFingerprints = new Map<string, string>(); // fingerprint → first ID
+          const dupeIds: string[] = [];
+
+          for (const p of allTodayPending) {
+            const fingerprint = JSON.stringify(
+              (Array.isArray(p.legs) ? p.legs : [])
+                .map((l: any) => `${(l.player_name || '').toLowerCase()}_${(l.prop_type || '').toLowerCase()}_${(l.side || '').toLowerCase()}`)
+                .sort()
+            );
+            if (seenFingerprints.has(fingerprint)) {
+              dupeIds.push(p.id);
+            } else {
+              seenFingerprints.set(fingerprint, p.id);
+            }
+          }
+
+          if (dupeIds.length > 0) {
+            const { count: dedupCount } = await supabase
+              .from('bot_daily_parlays')
+              .update({ outcome: 'void', lesson_learned: 'quality_regen_dedup_identical' })
+              .in('id', dupeIds)
+              .eq('outcome', 'pending')
+              .select('*', { count: 'exact', head: true });
+
+            console.log(`[QualityRegen] 🧹 Deduped ${dedupCount || 0} identical parlays across all pending`);
+          }
+        }
       }
     }
 

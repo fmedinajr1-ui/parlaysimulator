@@ -284,6 +284,14 @@ serve(async (req) => {
         ssAlignedCount++;
       }
 
+      // === 80% L10 HIT RATE GATE (strict execution filter) ===
+      const l10HitRateRaw = ssMatch?.hitRate ?? 0;
+      const l10HitPct = l10HitRateRaw > 1 ? l10HitRateRaw : l10HitRateRaw * 100;
+      if (l10HitPct < 80) {
+        console.log(`[ForceFresh] ❌ L10 GATE: ${ml.player_name} ${ml.prop_type} L10=${l10HitPct.toFixed(0)}% < 80% (no sweet spot data = 0%)`);
+        continue;
+      }
+
       // Conviction score: edge magnitude + tier bonus + risk confirmation
       const edgeMag = ml.edge_pct;
       const tierBonus = ml.confidence_tier === 'ELITE' ? 20 : 10;
