@@ -1,36 +1,24 @@
 
 
-# Fix "113 Parlays" Count in Telegram Notifications
+# Add 3 More Lottery Parlays (No Voiding)
 
 ## Problem
-The `formatTieredParlaysGenerated` function in `bot-send-telegram/index.ts` has a fallback DB lookup (lines 547-551) that queries ALL parlays for today without filtering by `outcome = 'pending'`. This counts voided parlays too, producing the inflated "113 parlays" message on Telegram.
+The `nba-mega-parlay-scanner` has two blockers:
+1. **Old import** — uses deprecated `serve` from `deno.land/std`, causing deployment failures (404s)
+2. **Cap at ≥3** — skips generation if 3+ lottery tickets already exist today (you have 4)
 
-## Root Cause
-```typescript
-// Line 547-550 — NO outcome filter
-const { data: todayParlays } = await sb
-  .from('bot_daily_parlays')
-  .select('strategy_name')
-  .eq('parlay_date', today);
-```
+## Changes
 
-This fallback fires when the generation payload has `totalCount === 0` or all tier counts are zero — which happens during pipeline runs that suppress counts. It then pulls every record for the day (pending + voided) and reports that total.
+### 1. `nba-mega-parlay-scanner/index.ts` — Fix serve pattern (line 1, 165)
+- Remove `import { serve } from "https://deno.land/std@0.168.0/http/server.ts";`
+- Change `serve(async (req) => {` → `Deno.serve(async (req) => {`
 
-## Fix
+### 2. Raise the auto-skip cap (lines 221-226)
+Change `existingLotteryParlays.length >= 3` to `>= 10` so the scanner can add tickets additively without hitting the cap. The existing dedup logic (lines 227-235) already prevents duplicate player overlap.
 
-### `bot-send-telegram/index.ts` — Line 550
-Add `.eq('outcome', 'pending')` to the fallback query:
+### 3. Deploy & invoke WITHOUT force mode
+Call the scanner with `{}` (no `force: true`) so existing tickets are preserved. The scanner will generate 1 Standard + 1 High Roller + 1 Mega Jackpot = 3 new tickets, deduping against existing player names.
 
-```typescript
-const { data: todayParlays } = await sb
-  .from('bot_daily_parlays')
-  .select('strategy_name')
-  .eq('parlay_date', today)
-  .eq('outcome', 'pending');
-```
-
-This single-line change ensures the fallback only counts active parlays, matching the fix already applied to `bot-slate-status-update`.
-
-## Deployment
-Redeploy `bot-send-telegram` after the change.
+### 4. Send slate status update
+Trigger `bot-slate-status-update` to push the updated count to Telegram.
 
