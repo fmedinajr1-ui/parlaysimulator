@@ -1,40 +1,67 @@
 
 
-## Root Cause: Why Parlays Look the Same
+## Pipeline Protocol Verification — March 4, 2026 Rebuild
 
-The new protocols ARE deployed and working — the role_stacked 5/8-leg tickets show 80-100% L10 hit rates, and the curated pipeline produced 3 tickets. However, the output is dominated by **two uncontrolled generators**:
+### Current Pending Slate (27 total parlays)
 
-| Generator | Pending | Has 80% Gate? | Problem |
-|-----------|---------|---------------|---------|
-| `force_mispriced_conviction` | 9 (33%) | No | Uses conviction scoring only, no L10 filter |
-| `elite_categories_v1_execution_shootout_stack` | 3 | No | Cluster builder bypasses tier profile L10 gate |
-| `role_stacked_5leg` | 3 (identical) | Yes (80%+) | Quality regen creates 3 duplicate copies |
-| `role_stacked_8leg` | 3 (identical) | Yes (80%+) | Quality regen creates 3 duplicate copies |
-| `curated_pipeline` | 3 | Yes (65%+) | Working correctly |
-| Other | 6 | Mixed | Lottery/exploration |
+| Strategy | Count | Status |
+|----------|-------|--------|
+| `force_mispriced_conviction` | 9 | **NO L10 gate** — still generating without 80% filter |
+| `elite_categories_v1_execution_shootout_stack` | 3 | **NOT CAPPED** — 3 copies (1 per regen attempt) |
+| `elite_categories_v1_exploration_mispriced_edge` | 3 | Working as expected |
+| `curated_pipeline` | 3 | **WORKING** — all legs 80%+ L10 |
+| `role_stacked_8leg` | 3 | **NOT DEDUPED** — 3 identical copies |
+| `role_stacked_5leg` | 3 | **NOT DEDUPED** — 3 identical copies |
+| `mega_lottery_scanner` | 3 | Working as expected |
 
-### Three specific fixes needed:
+---
 
-### Fix 1: Add 80% L10 gate to `bot-force-fresh-parlays`
-Currently at line ~260-320, picks are scored by conviction (edge + tier bonus + risk confirmation) but have **zero L10 hit rate filtering**. The function doesn't even load L10 hit rates for its picks.
+### Protocol-by-Protocol Verdict
 
-**Change**: After loading mispriced lines (step 2), cross-reference each pick with `unified_props` or `category_sweet_spots` to get L10 hit rate, and filter out picks below 80%.
+**1. Shootout capped (4 → 1): PARTIALLY WORKING**
+- The profile count IS 1 per generation run — only 1 shootout parlay per attempt
+- BUT quality regen ran 3 attempts, producing 3 identical shootout parlays (same legs: Scheierman threes, Derrick White threes, Jared McCain rebounds)
+- The dedup in `bot-quality-regen-loop` was supposed to void duplicates but **didn't work** — all 3 are still pending
+- Root cause: The dedup keeps "best attempt" parlays but the shootout parlays aren't part of the best attempt's `parlayIds` array (they're generated inside `bot-generate-daily-parlays`, not attributed to the quality regen source tag)
 
-### Fix 2: Add 80% L10 gate to cluster parlay builder
-In `bot-generate-daily-parlays`, lines 9038-9143, the environment cluster builder (SHOOTOUT/GRIND) selects picks by composite score and anti-correlation but **bypasses the L10 gate** that exists in `generateTierParlays`. The `hit_rate` field on these legs shows 0.67-0.74 (67-74%) — below the 80% threshold.
+**2. Conviction boosted to 13 profiles: NOT VERIFIABLE**
+- Zero `double_confirmed_conviction` parlays in pending output
+- The 80% L10 gate likely filtered out ALL conviction candidates since today's slate has very few props with 80%+ L10 hit rates
+- This is actually the gate working as intended — conviction profiles exist but no props pass the strict filter
 
-**Change**: Add `l10HrPct < 80 → continue` check inside the cluster builder loop (around line 9070).
+**3. 80% L10 gate on execution tier: WORKING**
+- `role_stacked_5leg` legs show: 100%, 90%, 80%, 80%, 80% L10 hit rates — all pass
+- `role_stacked_8leg` legs show: 100%, 90%, 80%, 100%, 90%, 100%, 90% — all pass
+- Shootout legs show: 74%, 67%, 67% — **FAILING** — these should have been blocked
 
-### Fix 3: Deduplicate quality regen outputs
-`bot-quality-regen-loop` runs 3 attempts with `skip_void: true`, but each attempt produces identical parlays (same fingerprint). The deduplication in `bot-generate-daily-parlays` only blocks exact fingerprints from the same run — cross-run fingerprints from regen attempts still pass.
+**4. Role-stacked 5/8-leg: WORKING but duplicated**
+- Both `role_stacked_5leg` (3 copies) and `role_stacked_8leg` (3 copies) are generated correctly
+- Legs have proper role assignments (SAFE, FILLER) and 80%+ hit rates
+- Problem: 3 identical copies each due to quality regen running 3 attempts
 
-**Change**: In `bot-quality-regen-loop`, after all attempts, add a dedup pass that finds parlays with identical `legs` JSON across attempts and voids duplicates (keeping only the first occurrence).
+**5. Curated pipeline in Clean & Rebuild: WORKING PERFECTLY**
+- 3 tickets created: 3-leg (+596), 5-leg (+2436), 7-leg (+9142)
+- All legs have 2+ engine consensus (sweet_spot + high_conviction)
+- All legs 70%+ L10 hit rates, top 5 legs are 80%+
 
-### Files to Modify
+---
 
-| File | Change |
-|------|--------|
-| `supabase/functions/bot-force-fresh-parlays/index.ts` | Add L10 hit rate lookup + 80% filter on all picks |
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Add 80% L10 gate in cluster builder (~line 9070) |
-| `supabase/functions/bot-quality-regen-loop/index.ts` | Add post-attempt dedup pass to void identical parlays |
+### Three Issues Still Not Fixed
+
+**Issue 1: Shootout cluster builder STILL bypasses 80% L10 gate**
+The shootout legs have hit rates of 67-74%. The L10 gate edit to `bot-generate-daily-parlays` either didn't land at the right line or the cluster builder code path is different from what was edited. Need to re-read the cluster builder section to find the exact loop.
+
+**Issue 2: Quality regen dedup is NOT voiding cross-attempt duplicates**
+The `bot-quality-regen-loop` response shows it kept attempt 1 as "best" (19.2% avg prob) and should have voided attempts 2 and 3. But all 3 shootout parlays, 3 role_stacked_5leg, and 3 role_stacked_8leg are still pending. The dedup only voids parlays matching the source tag `parlayIds` arrays, but these parlays are generated by the inner `bot-generate-daily-parlays` call — they get the source tag but the regen loop's dedup pass uses fingerprint matching which should catch them. The fingerprint dedup pass at the end of the loop needs debugging.
+
+**Issue 3: `force_mispriced_conviction` still has NO L10 gate**
+9 parlays generated with no L10 filtering. The previous edit to `bot-force-fresh-parlays` was supposed to cross-reference `category_sweet_spots` for L10 data, but the response shows zero `risk_confirmed` flags and no L10 data on any legs. The edit either didn't deploy or the sweet spot lookup is returning empty results.
+
+### Plan to Fix
+
+| File | Fix |
+|------|-----|
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | Re-locate cluster builder loop and add 80% gate at the correct insertion point |
+| `supabase/functions/bot-quality-regen-loop/index.ts` | Fix dedup: after all attempts complete, query ALL pending parlays for today and void duplicates by legs fingerprint (not just by attempt attribution) |
+| `supabase/functions/bot-force-fresh-parlays/index.ts` | Debug the L10 lookup — verify the `category_sweet_spots` query returns data and the filter is actually applied before parlay construction |
 
