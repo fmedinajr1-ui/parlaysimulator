@@ -810,8 +810,8 @@ serve(async (req) => {
       }
     }
     const altLineResults = new Map<string, any>();
-    if (volumeCandidates.length > 0) {
-      const altLinePromises = volumeCandidates.map(async (vc) => {
+    if (altFetchCandidates.length > 0) {
+      const altLinePromises = altFetchCandidates.map(async (vc) => {
         try {
           const res = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
             method: 'POST',
