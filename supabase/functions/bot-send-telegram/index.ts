@@ -44,6 +44,7 @@ type NotificationType =
   | 'quality_regen_report'
   | 'hit_rate_evaluation'
   | 'ladder_challenge'
+  | 'ladder_challenge_result'
   | 'parlay_approval_request'
   | 'extra_plays_report'
   | 'engine_accuracy_report'
@@ -114,6 +115,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatHitRateEvaluation(data, dateStr);
     case 'ladder_challenge':
       return data.message || `🪜 Ladder Challenge pick generated`;
+    case 'ladder_challenge_result':
+      return formatLadderChallengeResult(data);
     case 'parlay_approval_request':
       return formatParlayApprovalRequest(data, dateStr);
     case 'extra_plays_report':
@@ -131,6 +134,30 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
     default:
       return `📌 Bot Update: ${JSON.stringify(data)}`;
   }
+}
+
+function formatLadderChallengeResult(data: Record<string, any>): string {
+  const { outcome, playerName, propLabel, line, side, actualValue, stake, profitLoss, odds, dayNumber, wins, losses, runningPnl, winRate } = data;
+
+  const won = outcome === 'won';
+  const resultIcon = won ? '🟢' : '🔴';
+  const resultText = won ? 'WON' : 'LOST';
+  const sideStr = (side || 'OVER').toUpperCase().charAt(0);
+  const actualStr = actualValue !== null && actualValue !== undefined ? `\nActual: ${actualValue} ${won ? '✅' : '❌'}` : '';
+  const pnlSign = profitLoss >= 0 ? '+' : '';
+  const runningPnlSign = runningPnl >= 0 ? '+' : '';
+  const oddsStr = odds > 0 ? `+${odds}` : `${odds}`;
+
+  let msg = `🔒 *LADDER LOCK RESULT — Day ${dayNumber} of 7*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${resultIcon} *${resultText}* — ${playerName} ${propLabel} ${sideStr}${line} (${oddsStr})${actualStr}\n\n`;
+  msg += `💰 Stake: $${stake} | ${won ? 'Profit' : 'Loss'}: ${pnlSign}$${Math.abs(profitLoss).toFixed(0)}\n\n`;
+  msg += `📊 *7-Day Challenge:* ${wins}W-${losses}L\n`;
+  msg += `💵 Running P&L: ${runningPnlSign}$${Math.abs(runningPnl).toFixed(0)}\n`;
+  msg += `🎯 Win Rate: ${winRate}%\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━`;
+
+  return msg;
 }
 
 function formatDDTDCandidates(data: Record<string, any>, dateStr: string): string {
