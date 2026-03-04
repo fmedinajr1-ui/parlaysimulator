@@ -406,6 +406,7 @@ Deno.serve(async (req) => {
         expected_odds: Math.round(decimalOdds),
         selection_rationale: rationale,
         is_simulated: false,
+        simulated_stake: 100,
       });
 
     if (insertError) {

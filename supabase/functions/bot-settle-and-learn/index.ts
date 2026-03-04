@@ -972,6 +972,68 @@ Deno.serve(async (req) => {
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
         const dateKey = parlay.parlay_date;
         const dayStats = pnlByDate.get(dateKey) || { won: 0, lost: 0, profitLoss: 0 };
+
+        // === LADDER CHALLENGE: Send dedicated scoreboard alert ===
+        if (parlay.strategy_name === 'ladder_challenge') {
+          try {
+            // Query last 7 days of ladder picks for running tally
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+
+            const { data: ladderHistory } = await supabase
+              .from('bot_daily_parlays')
+              .select('parlay_date, outcome, profit_loss, simulated_stake, legs, expected_odds')
+              .eq('strategy_name', 'ladder_challenge')
+              .gte('parlay_date', sevenDaysAgoStr)
+              .neq('outcome', 'void')
+              .order('parlay_date', { ascending: true });
+
+            const settled = (ladderHistory || []).filter(p => p.outcome === 'won' || p.outcome === 'lost');
+            const wins = settled.filter(p => p.outcome === 'won').length;
+            const losses = settled.filter(p => p.outcome === 'lost').length;
+            const runningPnl = settled.reduce((sum, p) => sum + (p.profit_loss || 0), 0);
+            const dayNumber = settled.length;
+            const winRate = settled.length > 0 ? Math.round((wins / settled.length) * 100) : 0;
+
+            // Get current pick details from first leg
+            const currentLeg = updatedLegs[0] || {};
+            const propLabels: Record<string, string> = {
+              player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+              player_threes: '3PT', points: 'PTS', rebounds: 'REB', assists: 'AST', threes: '3PT',
+            };
+            const propLabel = propLabels[(currentLeg.prop_type || '').toLowerCase()] || (currentLeg.prop_type || '').toUpperCase();
+
+            fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'ladder_challenge_result',
+                data: {
+                  outcome,
+                  playerName: currentLeg.player_name || 'Unknown',
+                  propLabel,
+                  line: currentLeg.line || 0,
+                  side: currentLeg.side || 'OVER',
+                  actualValue: currentLeg.actual_value ?? null,
+                  stake: parlay.simulated_stake || 100,
+                  profitLoss,
+                  odds: parlay.expected_odds || 0,
+                  dayNumber,
+                  wins,
+                  losses,
+                  runningPnl,
+                  winRate,
+                },
+              }),
+            }).catch(e => console.warn('[Bot Settle] Ladder challenge alert failed:', e));
+            console.log(`[Bot Settle] Sent ladder challenge result: ${outcome}, Day ${dayNumber}/7, ${wins}W-${losses}L, P&L: $${runningPnl}`);
+          } catch (ladderErr) {
+            console.warn('[Bot Settle] Ladder challenge tally error:', ladderErr);
+          }
+        }
+
+        // Standard parlay settled alert (always fires)
         fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
