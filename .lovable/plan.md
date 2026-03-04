@@ -1,39 +1,63 @@
 
+Goal: fix two production behavior bugs in the pipeline:
+1) exposure pass metrics in `bot-daily-diversity-rebalance` are misleading, and
+2) `shootout_stack` is passing legs that show sub-80 hit rates because the gate uses a different metric than the one persisted to legs.
 
-## Problem: Same Player-Prop Appearing in 6-9 Parlays Despite "Max 1" Rule
+What I found:
+- In `bot-daily-diversity-rebalance/index.ts`, exposure candidates are computed correctly, but `exposureVoided` relies on `update(...).select('*', { count: 'exact', head: true })`, which is returning 0/null even when rows are actually updated.
+- In `bot-generate-daily-parlays/index.ts`, the 80% gate checks `pick.l10_hit_rate`, but generated shootout legs persist `hit_rate` from `confidence_score` (and for shootout specifically it is stored as decimal, e.g. 0.74). So gate metric and stored metric are inconsistent.
+- For the exact complained legs (Baylor/Derrick/Jared), raw L10 can be high while effective confidence/line-adjusted reliability is lower, which is why they still pass today.
 
-### Root Cause
+Implementation plan:
 
-The `MAX_GLOBAL_PLAYER_PROP_USAGE = 1` cap in `bot-generate-daily-parlays` only works **within a single function invocation**. Each engine resets its own tracking map:
+1) Fix exposure accounting to report only real exposure voids
+- File: `supabase/functions/bot-daily-diversity-rebalance/index.ts`
+- Changes:
+  - In strategy pass, collect actually updated IDs (not just attempted IDs) from `update(...).select('id')`.
+  - In exposure pass, explicitly exclude IDs already voided by strategy pass before counting/updating.
+  - Replace `head:true` count-based update tally with returned-row-length tally (`select('id')`) in chunk updates.
+  - Compute `totalAfter` from a final pending recount query (source of truth), not arithmetic subtraction.
+  - Keep `exposureDetails` for diagnostics, but add explicit metadata fields:
+    - `exposureCandidatesRaw`
+    - `exposureCandidatesAfterStrategyFilter`
+    - `exposureAlreadyVoidedByStrategy`
+    - `exposureVoided`
+- Result: each pass’s void count reflects only what that pass actually changed.
 
-- `bot-generate-daily-parlays` — tracks via `globalSlatePlayerPropUsage` (resets per call)
-- `bot-force-fresh-parlays` — uses `MAX_PLAYER_PROP_EXPOSURE = 5` (way too high)
-- `curated_pipeline` — separate invocation, separate tracking
-- `nba-mega-parlay-scanner` — separate `allUsedPlayers` set
+2) Make the 80% gate use the same effective metric users see in parlays
+- File: `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Changes:
+  - Introduce one helper to normalize any hit-rate input to percent consistently.
+  - Introduce one helper/field for “effective gate hit rate” per pick (line-adjusted and confidence-aware), and use this in BOTH:
+    - execution-tier gate (currently around line ~6991),
+    - shootout/grind cluster gate (currently around line ~9076).
+  - Align persisted leg fields for cluster parlays:
+    - store `hit_rate` in percent consistently (not decimal for cluster path),
+    - include explicit `l10_hit_rate` and `confidence_score` on leg object for transparency/debugging.
+  - Add clear rejection logs that print raw L10, confidence, and effective gate rate so future debugging is unambiguous.
+- Result: if a leg is shown below 80 in the stored `hit_rate` metric, it will no longer pass the 80 gate.
 
-Result: Baylor Scheierman threes shows up 9 times across pending parlays. The "1 per player-prop" rule is never enforced **across engines**.
+3) Deployment confidence marker (to eliminate “old code still running” ambiguity)
+- Files:
+  - `supabase/functions/bot-generate-daily-parlays/index.ts`
+  - `supabase/functions/bot-daily-diversity-rebalance/index.ts`
+- Changes:
+  - Add a small version marker constant/comment and include it in log output once per run.
+- Result: quick verification from logs/data that the new gate/accounting code path executed.
 
-### The Only Place to Fix This: `bot-daily-diversity-rebalance`
+Technical details (concise):
+- Root mismatch for L10 bug is metric drift:
+  - gate = `l10_hit_rate`
+  - persisted leg hit rate = `confidence_score` (and cluster path currently decimal format)
+- Exposure count bug is instrumentation drift:
+  - update count API usage is not reliably returning actual affected row count in current pattern.
 
-This is the **final post-generation pass** that runs after all engines. Currently it only caps by strategy family (30%). It needs a second pass that enforces max-1-per-player-prop across the entire pending slate.
-
-### Fix: Add Player-Prop Exposure Cap to Diversity Rebalance
-
-**File: `supabase/functions/bot-daily-diversity-rebalance/index.ts`**
-
-After the existing strategy-family cap, add a second pass:
-
-1. Fetch all pending parlays with their `legs` JSONB column
-2. Build a map of `player_name|prop_type` → list of parlay IDs (sorted by `combined_probability` descending)
-3. For each player-prop combo appearing in more than 1 parlay, keep only the highest-probability parlay and void the rest with `lesson_learned: 'exposure_cap_player_prop'`
-4. Log the total voided count
-
-This also requires fixing `bot-force-fresh-parlays` to lower `MAX_PLAYER_PROP_EXPOSURE` from 5 to 1, so it stops generating duplicates at the source.
-
-### Changes
-
-| File | Change |
-|------|--------|
-| `supabase/functions/bot-daily-diversity-rebalance/index.ts` | Add second pass after strategy cap: enforce max-1-per-player-prop across all pending parlays by voiding duplicates (keep highest probability) |
-| `supabase/functions/bot-force-fresh-parlays/index.ts` | Change `MAX_PLAYER_PROP_EXPOSURE` from `5` to `1` |
-
+Verification plan after implementation:
+1) Run `Clean & Rebuild`.
+2) Confirm latest `diversity_rebalance` activity log shows:
+   - non-misleading `exposureVoided`,
+   - explicit filtered candidate counters,
+   - `totalAfter` matches actual pending count query.
+3) Query latest `shootout_stack` (if any):
+   - every leg `hit_rate >= 80` (same unit), or no shootout parlay generated if pool is too weak.
+4) Confirm logs show new version marker and new gate diagnostic line format.
