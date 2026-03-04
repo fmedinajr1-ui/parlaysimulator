@@ -1128,15 +1128,17 @@ serve(async (req) => {
         }
       }
 
-      // FIX #4: Require at least 1 L10-backed player prop per HR ticket
-      const hasL10PlayerProp = legs.some(l => l.market_type === 'player_prop' && l.l10Avg !== null);
-      if (!hasL10PlayerProp && legs.length > 0) {
-        console.log(`[MegaParlay] HR: No L10-backed player prop found, force-adding one...`);
+      // FIX #4: Require at least 2 L10-backed player props per HR ticket
+      const l10PlayerPropCount = legs.filter(l => l.market_type === 'player_prop' && l.l10Avg !== null).length;
+      while (l10PlayerPropCount < 2 && legs.length > 0) {
+        const currentL10Count = legs.filter(l => l.market_type === 'player_prop' && l.l10Avg !== null).length;
+        if (currentL10Count >= 2) break;
+        console.log(`[MegaParlay] HR: Only ${currentL10Count} L10-backed player props, need 2. Force-adding...`);
         const l10Candidate = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
           if (p.l10Avg === null) return false;
           if (p.hitRate < 25) return false;
-          if (p.odds < 100) return false; // Relaxed: any plus-money or even
+          if (p.odds < 100) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           if (used.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
@@ -1144,7 +1146,18 @@ serve(async (req) => {
         if (l10Candidate) {
           addLeg(l10Candidate, legs, gc, used, 'hr_l10_anchor', 'high_roller');
           console.log(`[MegaParlay] HR L10 anchor: ${l10Candidate.player_name} ${l10Candidate.prop_type} +${l10Candidate.odds} (L10: ${l10Candidate.l10Avg})`);
+        } else {
+          console.log(`[MegaParlay] HR: No more L10 candidates available`);
+          break;
         }
+      }
+
+      // FIX #5: Block HR tickets where >60% of legs are team bets with <50% hit rate
+      const teamBetLegs = legs.filter(l => l.market_type === 'team_bet');
+      const lowQualityTeamBets = teamBetLegs.filter(l => l.hitRate < 50);
+      if (legs.length > 0 && lowQualityTeamBets.length / legs.length > 0.6) {
+        console.log(`[MegaParlay] HR: BLOCKED — ${lowQualityTeamBets.length}/${legs.length} legs are low-quality team bets (>60%)`);
+        legs.length = 0; // Clear legs to prevent ticket creation
       }
 
       if (legs.length >= 3) {
