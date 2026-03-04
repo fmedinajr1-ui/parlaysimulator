@@ -1,31 +1,32 @@
 
 
-## Problem: Old Parlays Polluting Telegram + Dedup Not Deploying
+## Fix: Force Deployment of Three Pipeline Gates
 
-### What's Happening
+### Root Cause
+All three code fixes (L10 gate in cluster builder, quality regen dedup, force-fresh L10 gate) are **already correct in the source files** but are not running in production. The deployed edge functions are still running old code. Evidence:
 
-1. **148 total records for today** — 121 voided + 27 pending. Clean & Rebuild correctly voids old parlays before regenerating, but the voided records stay in the database.
+- Shootout parlays have `hit_rate: 0.74` (74%) and `0.67` (67%) — should be blocked by 80% gate at line 9078
+- 3 identical shootout, role_stacked_5leg, and role_stacked_8leg parlays exist — dedup at lines 214-258 never ran
+- Zero `quality_regen_dedup_identical` or `quality_regen_kept_attempt_*` in `lesson_learned` — confirms old code
+- Force-fresh has correct L10 gate at lines 287-293, but 9 `force_mispriced_conviction` parlays have nil hit rates
 
-2. **Telegram "120 parlays" message** — The `bot-generate-daily-parlays` function sends a `parlays_generated` Telegram notification after each run reporting how many it created. Across 3 quality regen attempts, it reports the cumulative count. Customers see this as "120 parlays created" even though most are voided.
+### What Needs to Happen
 
-3. **Quality regen dedup NOT executing** — Zero records have `quality_regen_kept_attempt_X` or `quality_regen_dedup_identical` as `lesson_learned`. The deployed version of `bot-quality-regen-loop` doesn't have the latest dedup code — it's still running the old version. This means the 3 identical copies of `role_stacked_5leg`, `role_stacked_8leg`, and `shootout_stack` are never cleaned up.
+Each function needs a trivial change to force redeployment. The actual logic is already correct:
 
-### Fixes
+**1. `bot-generate-daily-parlays/index.ts`** — Add a version comment at top to trigger redeploy. The L10 gate at line 9075-9081 is correct (`l10_hit_rate` check with decimal-to-percent conversion, 80% threshold).
 
-**Fix 1: Suppress parlay count Telegram messages during regen loop**
-In `bot-generate-daily-parlays`, when called with a `source` parameter (from quality regen), skip sending the `parlays_generated` Telegram notification. This prevents customers from seeing "120 parlays created" messages during internal regeneration cycles.
+**2. `bot-quality-regen-loop/index.ts`** — Bump version marker (v3 → v4) to force redeploy. The unconditional dedup at lines 214-258 is correct (fingerprints all pending parlays by `player_name|prop_type|side`, voids duplicates keeping earliest).
 
-**Fix 2: Add a final Telegram summary after Clean & Rebuild completes**
-In `SlateRefreshControls.tsx`, after all steps complete, invoke `bot-slate-status-update` (already exists) to send customers a clean summary of only the ACTIVE parlays — not the voided ones.
+**3. `bot-force-fresh-parlays/index.ts`** — Add version comment to force redeploy. The sweet spot lookup at lines 103-125 and 80% L10 gate at lines 287-293 are correct. The issue is the deployed version predates these additions.
 
-**Fix 3: Redeploy quality regen with working dedup**
-The dedup code in `bot-quality-regen-loop` exists in the codebase but isn't deployed. Force a redeploy by adding a version comment to trigger the deploy pipeline.
-
-### Files to Modify
+### Changes Per File
 
 | File | Change |
 |------|--------|
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Skip `parlays_generated` Telegram notification when `source` param starts with `quality_regen` |
-| `src/components/market/SlateRefreshControls.tsx` | Add `bot-slate-status-update` as the final step after diversity rebalance |
-| `supabase/functions/bot-quality-regen-loop/index.ts` | Add version marker comment to force redeploy; ensure dedup runs after all attempts |
+| `bot-generate-daily-parlays/index.ts` | Add `// v2.1 — forced redeploy for cluster L10 gate 2026-03-04` at line 1 |
+| `bot-quality-regen-loop/index.ts` | Change `v3` → `v4` in header comment, add timestamp to force deploy |
+| `bot-force-fresh-parlays/index.ts` | Add `// v2 — forced redeploy for L10 gate 2026-03-04` at line 1 |
+
+All three are single-line version bumps to trigger the deploy pipeline. No logic changes needed — the logic is already correct.
 
