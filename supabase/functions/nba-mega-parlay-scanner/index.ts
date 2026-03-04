@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// Native Deno.serve used below
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
 const corsHeaders = {
@@ -162,7 +162,7 @@ function getMarketType(marketKey: string): 'player_prop' | 'exotic_player' | 'te
   return 'player_prop';
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -218,7 +218,7 @@ serve(async (req) => {
     const existingPlayerNames: string[] = [];
     if (existingLotteryParlays && existingLotteryParlays.length > 0) {
       // If we already have 3+ tickets today, skip
-      if (existingLotteryParlays.length >= 3) {
+      if (existingLotteryParlays.length >= 10) {
         console.log(`[MegaParlay] Already have ${existingLotteryParlays.length} lottery tickets today, skipping`);
         return new Response(JSON.stringify({ success: true, skipped: true, reason: '3 tickets already generated today' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
