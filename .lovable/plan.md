@@ -1,17 +1,18 @@
-## Plan: Fix High Roller & Mega Jackpot Lottery Tiers — IMPLEMENTED ✅
+## Plan: Pipeline Fine-Tuning — Hit Rate Optimization ✅
 
 ### Changes Applied
 
-1. **First Basket blocked** — `player_first_basket` filtered out of HR candidates, HR relaxed fallback, Mega candidates, and Mega relaxed filler. Kept in `EXOTIC_PLAYER_MARKETS` for future use.
+1. **Shootout stack capped** — Cluster parlays for `shootout_stack` (16% WR) capped at 1 per day (was 3). Grind stack unchanged at 3.
 
-2. **DD L10 validation** — DD picks now require L10 data in points/rebounds/assists. Hit rate calculated from actual averages (45% if 2+ categories ≥10, 30% if near-DD, 10% otherwise) instead of blanket 40%.
+2. **Double-confirmed conviction BOOSTED** — Added 7 new execution-tier profiles for `double_confirmed_conviction` (54.5% WR): 80%+ L10 hit rate profiles, hit_rate/shuffle sort variations, bringing total conviction profiles from 6 to 13.
 
-3. **Global exposure cap enforced** — `allUsedPlayers` check added in HR main loop, HR relaxed fallback, Mega R1 loop, Mega R2 loop, and Mega relaxed filler to prevent duplicate players across tickets.
+3. **Multi-leg role-stacked builder** — New section in `bot-generate-daily-parlays` auto-builds 5-leg and 8-leg tickets from execution-quality picks using SAFE/BALANCED/GREAT_ODDS role assignments. Requires 65%+ L10 hit rate with real lines.
 
-4. **L10 anchor leg required** — After building HR/Mega legs, system checks for at least 1 `player_prop` with `l10Avg !== null`. If missing, force-adds the best available L10-backed player prop as an anchor.
+4. **bot-curated-pipeline created** — New edge function that automates the manual curation workflow: loads defense rankings → cross-references sweet spots + mispriced + high conviction engines → filters to 2+ engine consensus with 65%+ L10 → builds 3/5/8/13-leg tickets → broadcasts via Telegram.
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `supabase/functions/nba-mega-parlay-scanner/index.ts` | All 4 fixes |
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | Shootout cap, conviction boost, multi-leg builder |
+| `supabase/functions/bot-curated-pipeline/index.ts` | Created — automated curation pipeline |
