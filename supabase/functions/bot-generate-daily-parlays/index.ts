@@ -653,7 +653,8 @@ interface ParlayProfile {
   useAltLines?: boolean;
   minBufferMultiplier?: number;
   preferPlusMoney?: boolean;
-  sortBy?: 'composite' | 'hit_rate' | 'shuffle';
+  sortBy?: 'composite' | 'hit_rate' | 'shuffle' | 'env_cluster_shootout' | 'env_cluster_grind';
+  side?: 'over' | 'under';
   boostLegs?: number;
   allowTeamLegs?: number;
   maxMlLegs?: number;
