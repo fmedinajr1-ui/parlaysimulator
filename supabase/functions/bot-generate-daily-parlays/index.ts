@@ -878,9 +878,13 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'shuffle' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['THREE_POINT_SHOOTER'] },
+      // WINNING ARCHETYPE shuffle — 3PT REDUCED from 2 to 0, kept reb_ast
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
-      { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', preferCategories: ['THREE_POINT_SHOOTER'] },
+      // GRIND UNDER VALIDATION: NBA under plays
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'env_cluster_grind', side: 'under' },
+      { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle', side: 'under' },
     ],
   },
   execution: {
