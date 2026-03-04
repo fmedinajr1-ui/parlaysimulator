@@ -923,11 +923,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
-      // --- Sorted by env_cluster (SHOOTOUT-first smart stacking) ---
+      // --- Sorted by env_cluster (SHOOTOUT-first smart stacking) --- CAPPED: 1 profile (was 4, 16% win rate)
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       // --- Sorted by env_cluster (GRIND-first smart stacking) --- BOOSTED: 6 profiles (was 4)
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
@@ -951,7 +948,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
-      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR) =============
+      // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR, 13 profiles) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
@@ -965,6 +962,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'shuffle' },
+      // NEW: Additional conviction profiles (boosted to 13 total)
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 75, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 75, sortBy: 'hit_rate' },
       // ============= MIXED CONVICTION STACK =============
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['all'], minHitRate: 65, sortBy: 'composite' },
       { legs: 3, strategy: 'mixed_conviction_stack', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate' },
@@ -976,9 +976,13 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'composite', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
       { legs: 3, strategy: 'god_mode_lock', sports: ['all'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
-      // ROLE-STACKED 3-LEG
+      // ROLE-STACKED 3/5/8-LEG: structural diversity with SAFE/BALANCED/GREAT_ODDS roles
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      { legs: 8, strategy: 'role_stacked_8leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, minBufferMultiplier: 1.5 },
+      { legs: 8, strategy: 'role_stacked_8leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, minBufferMultiplier: 1.5 },
       // ============= REDUCED: Standard execution (kept for diversity) =============
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: false },
@@ -6177,8 +6181,8 @@ async function generateTierParlays(
     const isMultiEngineProfile = profile.strategy.startsWith('multi_engine');
     // GOD MODE LOCK: intersection of triple-confirmed + proven winners + favorable matchup
     const isGodModeLockProfile = profile.strategy === 'god_mode_lock';
-    // ROLE-STACKED 3-LEG: intentional SAFE/BALANCED/GREAT_ODDS stacking
-    const isRoleStackedProfile = profile.strategy === 'role_stacked_3leg';
+    // ROLE-STACKED 3/5/8-LEG: intentional SAFE/BALANCED/GREAT_ODDS stacking
+    const isRoleStackedProfile = profile.strategy.startsWith('role_stacked');
     // MIXED CONVICTION STACK: mispriced + correct-priced + conviction
     const isMixedConvictionProfile = profile.strategy === 'mixed_conviction_stack';
     // MATCHUP EXPLOIT: all legs must attack weak defenses (matchupBoost > 0)
@@ -6982,6 +6986,16 @@ async function generateTierParlays(
       
       const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
       const hitRatePercent = pickConfidence * 100;
+      
+      // === EXECUTION TIER 80% L10 HIT RATE GATE ===
+      // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
+      if (tier === 'execution' && 'player_name' in pick) {
+        const l10Hr = (pick as any).l10_hit_rate || 0;
+        const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
+        if (l10HrPct < 80) {
+          continue;
+        }
+      }
       
       // For hybrid profiles, use a lower hit rate floor for team legs
       const effectiveMinHitRate = (isHybridProfile && 'type' in pick && pick.type === 'team') 

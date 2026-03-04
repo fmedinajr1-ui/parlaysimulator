@@ -461,3 +461,6 @@ verify_jwt = false
 
 [functions.manual-parlay-broadcast]
 verify_jwt = false
+
+[functions.bot-curated-pipeline]
+verify_jwt = false
