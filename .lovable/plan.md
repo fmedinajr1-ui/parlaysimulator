@@ -1,27 +1,19 @@
+## Plan: Exposure Cap, 3PM Offensive Gate, and Under-Heavy Rebalance — IMPLEMENTED ✅
 
+### Changes Applied
 
-## Plan: Fix `tierConfig is not defined` Runtime Error
+1. **Player exposure capped to 1** — `maxPlayerUsage: 1` in all three tiers + `MAX_GLOBAL_PLAYER_PROP_USAGE = 1` globally. Matchup exploit override removed.
 
-### Root Cause
-Line 6606 references `tierConfig.maxPlayerUsage` but the variable is actually named `config` (defined at line 6039 as `const config = { ...TIER_CONFIG[tier] }`). This was introduced in the previous edit when adding the matchup diversity relaxation.
+2. **3PM offensive ranking gate** — Hard-blocks 3PM overs when team `off_threes_rank >= 20`, penalizes -12 when `>= 15`.
 
-### Fix
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+3. **grind_under_core profiles added** — 4 execution, 4 validation, 6 exploration profiles filtering `recommended_side === 'under'`.
 
-Change line 6606 from:
-```typescript
-if (tierConfig.maxPlayerUsage < 4) tierConfig.maxPlayerUsage = 4;
-```
-to:
-```typescript
-if (config.maxPlayerUsage < 4) config.maxPlayerUsage = 4;
-```
+4. **GRIND cluster boosted** — 6 `env_cluster_grind` profiles in execution (was 4).
 
-Then redeploy and trigger the exploration tier generation run.
+5. **3PT archetype profiles reduced** — Exploration: 3→1, Validation: 2→1 (3pt_scorer), reb_ast kept intact.
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Fix variable name `tierConfig` → `config` on line 6606 |
-
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | All five changes |
