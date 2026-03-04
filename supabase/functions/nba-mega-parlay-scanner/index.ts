@@ -1236,8 +1236,9 @@ serve(async (req) => {
       for (const { pool, type } of pools) {
         if (marketTypeCounts[type] >= getMaxForType(type)) continue;
         for (const c of pool) {
-          // Mega Jackpot: prefer game diversity (max 1 per game)
           if (gc.get(c.game) && gc.get(c.game)! >= 1) continue;
+          // FIX #3: Enforce global exposure cap in Mega R1 loop
+          if (allUsedPlayers.has(normalizeName(c.player_name))) continue;
           if (!passesBasicChecks(c, legs, gc)) continue;
           if (used.has(normalizeName(c.player_name))) continue;
           addLeg(c, legs, gc, used, `mega_${type}`, 'mega_jackpot');
