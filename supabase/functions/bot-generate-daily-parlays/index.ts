@@ -9246,9 +9246,9 @@ Deno.serve(async (req) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
            body: JSON.stringify({
-9248:             type: 'daily_summary',
-9249:             admin_only: adminOnly,
-9250:             data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: '🚫 No Slate Today - Zero games scheduled' },
+             type: 'daily_summary',
+             admin_only: adminOnly,
+             data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: '🚫 No Slate Today - Zero games scheduled' },
           }),
         });
       } catch (_) { /* ignore */ }
