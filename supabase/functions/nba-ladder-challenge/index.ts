@@ -85,12 +85,21 @@ interface LockCandidate {
   l10_min: number;
   l10_max: number;
   l10_median: number;
-  l10_hit_rate: number; // % of L10 games that hit this line (OVER)
+  l10_hit_rate: number;
   l10_games: number;
+  l10_hits: number;
   // Defense
   opp_defense_rank: number;
   // Scoring
-  composite_score: number;
+  safety_score: number;
+  // Safety breakdown
+  safety_breakdown: {
+    hit_rate_score: number;
+    floor_score: number;
+    edge_score: number;
+    consistency_score: number;
+    floor_margin: number;
+  };
 }
 
 Deno.serve(async (req) => {
@@ -122,6 +131,28 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: true, skipped: true, reason: 'already_exists' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // === FRESH DATA: Force refresh game logs before picking ===
+    console.log(`[LadderLock] Refreshing game log data via nba-stats-fetcher...`);
+    try {
+      const refreshRes = await fetch(`${supabaseUrl}/functions/v1/nba-stats-fetcher`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          mode: 'sync',
+          daysBack: 3,
+          useESPN: true,
+          includeParlayPlayers: true,
+        }),
+      });
+      const refreshResult = await refreshRes.json();
+      console.log(`[LadderLock] Game log refresh result:`, JSON.stringify(refreshResult).slice(0, 200));
+    } catch (refreshErr) {
+      console.warn(`[LadderLock] Game log refresh failed (continuing with existing data):`, refreshErr.message);
     }
 
     // === STEP 1: Fetch NBA events ===
@@ -257,20 +288,22 @@ Deno.serve(async (req) => {
       const [normalizedPlayer, propType] = ppKey.split('|');
       const firstLine = lines[0];
       const logs = gameLogMap.get(normalizedPlayer) || [];
-      if (logs.length < 5) continue; // Need at least 5 games
+
+      // SAFETY GATE: Need at least 8 games (was 5)
+      if (logs.length < 8) continue;
 
       const gameLogField = PROP_GAME_LOG_FIELD[propType];
       if (!gameLogField) continue;
 
       const values = logs.map((g: any) => g[gameLogField] ?? 0);
 
-      // Try each distinct line for this player+prop — pick the SAFEST (highest hit rate)
+      // Try each distinct line for this player+prop — pick the SAFEST
       for (const lineObj of lines) {
         const hitCount = values.filter((v: number) => v > lineObj.line).length;
         const hitRate = hitCount / values.length;
 
-        // SAFETY FILTER: Must have at least 80% L10 hit rate
-        if (hitRate < 0.8) continue;
+        // SAFETY GATE 1: Must have at least 90% L10 hit rate (was 80%)
+        if (hitRate < 0.9) continue;
 
         const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
         const sorted = [...values].sort((a: number, b: number) => a - b);
@@ -278,8 +311,13 @@ Deno.serve(async (req) => {
         const min = Math.min(...values);
         const max = Math.max(...values);
 
-        // Floor protection: L10 min must be >= line
-        const floorProtection = min / lineObj.line;
+        // SAFETY GATE 2: Hard floor — L10 worst game MUST exceed the line
+        if (min <= lineObj.line) continue;
+
+        // SAFETY GATE 3: Median clearance — L10 median must beat line by at least 1.0
+        if (median < lineObj.line + 1) continue;
+
+        const floorMargin = min - lineObj.line;
 
         // Try sweet spot data for extra context
         let ssMatch: any = null;
@@ -317,14 +355,13 @@ Deno.serve(async (req) => {
         const oppDef = defenseMap.get(opponent.toLowerCase());
         const oppDefRank = oppDef?.opp_threes_rank || 15;
 
-        // === COMPOSITE SCORE: Prioritize safety ===
-        const hitRateScore = hitRate * 40;                          // 40% weight — hit rate is king
-        const floorScore = Math.min(floorProtection * 15, 20);     // 20% weight — floor protection
-        const edgeScore = Math.min(((avg - lineObj.line) / lineObj.line) * 30, 20); // 20% weight — edge over line
-        const consistencyScore = (1 - (max - min) / (avg || 1)) * 10; // 10% weight — low variance
-        const ssBonus = ssMatch?.confidence_score ? Math.min(ssMatch.confidence_score / 10, 10) : 0; // 10% bonus
+        // === SAFETY SCORE: Prioritize safety above all ===
+        const hitRateScore = hitRate * 50;                                          // 50% weight — hit rate is king
+        const floorScore = Math.min((floorMargin / lineObj.line) * 50, 25);         // 25% weight — floor margin
+        const edgeScore = Math.min(((avg - lineObj.line) / lineObj.line) * 30, 15); // 15% weight — edge over line
+        const consistencyScore = (1 - (max - min) / (avg || 1)) * 10;              // 10% weight — low variance
 
-        const compositeScore = hitRateScore + floorScore + edgeScore + consistencyScore + ssBonus;
+        const safetyScore = hitRateScore + floorScore + edgeScore + consistencyScore;
 
         candidates.push({
           player_name: firstLine.player_name,
@@ -344,24 +381,33 @@ Deno.serve(async (req) => {
           l10_median: median,
           l10_hit_rate: hitRate,
           l10_games: values.length,
+          l10_hits: hitCount,
           opp_defense_rank: oppDefRank,
-          composite_score: compositeScore,
+          safety_score: safetyScore,
+          safety_breakdown: {
+            hit_rate_score: Math.round(hitRateScore * 10) / 10,
+            floor_score: Math.round(floorScore * 10) / 10,
+            edge_score: Math.round(edgeScore * 10) / 10,
+            consistency_score: Math.round(consistencyScore * 10) / 10,
+            floor_margin: floorMargin,
+          },
         });
       }
     }
 
-    // Sort by composite score descending — top 1 is our LOCK
-    candidates.sort((a, b) => b.composite_score - a.composite_score);
+    // Sort by safety score descending — top 1 is our LOCK
+    candidates.sort((a, b) => b.safety_score - a.safety_score);
 
-    console.log(`[LadderLock] ${candidates.length} eligible candidates after filtering (80%+ hit rate)`);
+    console.log(`[LadderLock] ${candidates.length} eligible candidates after filtering (90%+ hit rate, floor > line, median +1)`);
     if (candidates.length > 0) {
       console.log(`[LadderLock] Top 5:`, candidates.slice(0, 5).map(c =>
-        `${c.player_name} ${c.prop_label} O${c.line} (score: ${c.composite_score.toFixed(2)}, hitRate: ${(c.l10_hit_rate * 100).toFixed(0)}%, avg: ${c.l10_avg}, floor: ${c.l10_min})`
+        `${c.player_name} ${c.prop_label} O${c.line} (safety: ${c.safety_score.toFixed(2)}, hitRate: ${(c.l10_hit_rate * 100).toFixed(0)}%, avg: ${c.l10_avg}, floor: ${c.l10_min}, floorMargin: +${c.safety_breakdown.floor_margin})`
       ));
     }
 
     if (candidates.length === 0) {
-      return new Response(JSON.stringify({ success: false, error: 'No eligible lock candidates found' }), {
+      console.log(`[LadderLock] No picks qualified — skipping today (this is correct behavior)`);
+      return new Response(JSON.stringify({ success: false, error: 'No eligible lock candidates — all picks filtered by safety gates (90% hit rate + floor > line + median +1)' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -380,7 +426,7 @@ Deno.serve(async (req) => {
       : Math.abs(lock.over_odds) / (Math.abs(lock.over_odds) + 100);
 
     const hitPct = `${(lock.l10_hit_rate * 100).toFixed(0)}%`;
-    const rationale = `Lock of the Day: ${lock.player_name} ${lock.prop_label} Over ${lock.line} (${oddsStr}) vs ${lock.opponent}. L10: ${hitPct} hit rate (${Math.round(lock.l10_hit_rate * lock.l10_games)}/${lock.l10_games}), Avg: ${lock.l10_avg}, Floor: ${lock.l10_min}, Ceiling: ${lock.l10_max}. Score: ${lock.composite_score.toFixed(2)}.`;
+    const rationale = `Lock of the Day: ${lock.player_name} ${lock.prop_label} Over ${lock.line} (${oddsStr}) vs ${lock.opponent}. L10: ${hitPct} hit rate (${lock.l10_hits}/${lock.l10_games}), Avg: ${lock.l10_avg}, Floor: ${lock.l10_min} (margin: +${lock.safety_breakdown.floor_margin}), Ceiling: ${lock.l10_max}. Safety Score: ${lock.safety_score.toFixed(2)}.`;
 
     const leg = {
       player_name: lock.player_name,
@@ -415,19 +461,25 @@ Deno.serve(async (req) => {
       console.log(`[LadderLock] Saved lock: ${lock.player_name} ${lock.prop_label} O${lock.line} (${oddsStr})`);
     }
 
-    // === STEP 8: Send Telegram notification ===
-    const floorIcon = lock.l10_min >= lock.line ? '🟢' : '🟡';
+    // === STEP 8: Send Telegram notification with safety score breakdown ===
+    const sb = lock.safety_breakdown;
     const telegramMessage =
-      `🔒 LADDER LOCK OF THE DAY 🔒\n\n` +
+      `🔒 LADDER LOCK OF THE DAY 🔒\n` +
+      `━━━━━━━━━━━━━━━━━━━━━\n` +
       `${lock.player_name}\n` +
-      `${lock.prop_label} Over ${lock.line} (${oddsStr})\n` +
+      `Take OVER ${lock.line} ${lock.prop_label} (${oddsStr})\n` +
       `${lock.game}\n\n` +
-      `📊 L10 Hit Rate: ${hitPct} (${Math.round(lock.l10_hit_rate * lock.l10_games)}/${lock.l10_games})\n` +
+      `📊 L10 Hit Rate: ${hitPct} (${lock.l10_hits}/${lock.l10_games})\n` +
       `📈 L10 Avg: ${lock.l10_avg} | Median: ${lock.l10_median}\n` +
-      `${floorIcon} Floor: ${lock.l10_min} | Ceiling: ${lock.l10_max}\n` +
-      `📋 Last 5: ${l5Str}\n` +
-      `🎯 Composite Score: ${lock.composite_score.toFixed(1)}\n` +
-      `vs ${lock.opponent}`;
+      `🟢 Floor: ${lock.l10_min} (margin: +${sb.floor_margin}) | Ceiling: ${lock.l10_max}\n` +
+      `📋 Last 5: ${l5Str}\n\n` +
+      `🛡️ Safety Score: ${lock.safety_score.toFixed(1)}/100\n` +
+      `  Hit Rate: ${sb.hit_rate_score}/50\n` +
+      `  Floor: ${sb.floor_score}/25\n` +
+      `  Edge: ${sb.edge_score}/15\n` +
+      `  Consistency: ${sb.consistency_score}/10\n` +
+      `━━━━━━━━━━━━━━━━━━━━━\n` +
+      `💰 $100 Stake | vs ${lock.opponent}`;
 
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
@@ -460,7 +512,8 @@ Deno.serve(async (req) => {
         l10_avg: lock.l10_avg,
         l10_min: lock.l10_min,
         l10_max: lock.l10_max,
-        composite_score: lock.composite_score,
+        safety_score: lock.safety_score,
+        safety_breakdown: lock.safety_breakdown,
         opponent: lock.opponent,
         game: lock.game,
       },
