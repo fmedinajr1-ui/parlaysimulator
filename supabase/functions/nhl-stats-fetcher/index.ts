@@ -120,15 +120,18 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<{ skaterLogs: an
                   console.log(`[ESPN NHL] First goalie stats sample for ${playerName}:`, JSON.stringify(stats));
                 }
 
-                const shotsAgainst = parseInt(stats[0]) || 0;
-                const goalsAgainst = parseInt(stats[1]) || 0;
-                const saves = parseInt(stats[2]) || 0;
-                const savePctStr = stats[3] || '0';
+                // ESPN goalie stat sample: ["GA","SA","0","0","SV","SV%","W","L","0","TOI","0","0"]
+                // Index: 0=GA, 1=SA, 4=SV, 5=SV%, 9=TOI
+                const goalsAgainst = parseInt(stats[0]) || 0;
+                const shotsAgainst = parseInt(stats[1]) || 0;
+                const saves = parseInt(stats[4]) || 0;
+                const savePctStr = stats[5] || '0';
                 const savePct = parseFloat(savePctStr) || (shotsAgainst > 0 ? saves / shotsAgainst : 0);
 
                 let toiMinutes = 0;
-                if (stats[4]) {
-                  const toiParts = stats[4].split(':');
+                const toiStr = stats[9] || stats[4] || '';
+                if (toiStr && toiStr.includes(':')) {
+                  const toiParts = toiStr.split(':');
                   toiMinutes = parseInt(toiParts[0]) || 0;
                   if (toiParts[1]) toiMinutes += parseInt(toiParts[1]) / 60;
                 }
