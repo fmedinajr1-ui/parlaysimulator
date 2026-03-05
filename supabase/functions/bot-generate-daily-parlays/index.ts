@@ -675,6 +675,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.45,
     profiles: [
+      // ============= OPTIMAL COMBO EXPLORATION (PRIORITY — combinatorial optimizer) =============
+      { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
       // ============= FLOOR LOCK EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
@@ -919,6 +923,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.65,
     profiles: [
+      // ============= OPTIMAL COMBO EXECUTION (PRIORITY — combinatorial optimizer) =============
+      { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       // ============= FLOOR LOCK EXECUTION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
@@ -3058,6 +3066,122 @@ function selectFloorLine(
     }
   }
   return null;
+}
+// ============= OPTIMAL COMBO: Combinatorial optimizer for highest combined L10 hit rate =============
+function buildOptimalComboParlays(
+  pool: { sweetSpots: EnrichedPick[] },
+  profile: ParlayProfile,
+  sportFilter: string[],
+  BLOCKED_SPORTS: string[],
+  maxCombos: number = 5,
+): EnrichedPick[][] {
+  const minHitRate = profile.minHitRate || 70;
+  const legCount = profile.legs || 3;
+  
+  // Filter candidates: must have L10 hit rate data and pass gate
+  const candidates = pool.sweetSpots.filter(p => {
+    if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+    if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+    if (!p.has_real_line) return false;
+    const hr = p.l10_hit_rate || p.confidence_score || 0;
+    const hrPct = hr <= 1 ? hr * 100 : hr;
+    return hrPct >= minHitRate;
+  });
+  
+  if (candidates.length < legCount) {
+    console.log(`[OptimalCombo] Only ${candidates.length} candidates with ${minHitRate}%+ L10 hit rate, need ${legCount}`);
+    return [];
+  }
+  
+  // Sort by L10 hit rate desc and cap at top 30 to keep C(30,3)=4060 manageable
+  const sorted = [...candidates].sort((a, b) => {
+    const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+    const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+    return bHr - aHr;
+  }).slice(0, 30);
+  
+  console.log(`[OptimalCombo] Evaluating C(${sorted.length}, ${legCount}) combinations...`);
+  
+  // Generate all valid combinations and score them
+  const combos: { picks: EnrichedPick[]; score: number }[] = [];
+  
+  function generateCombinations(start: number, current: EnrichedPick[]) {
+    if (current.length === legCount) {
+      // Check for correlations: no same player, no same game_id
+      const players = new Set<string>();
+      const gameIds = new Set<string>();
+      let valid = true;
+      for (const p of current) {
+        const pName = (p.player_name || '').toLowerCase();
+        if (players.has(pName)) { valid = false; break; }
+        players.add(pName);
+        const gId = (p as any).game_id || (p as any).event_id || '';
+        if (gId && gameIds.has(gId)) {
+          // Allow same game but different players (that's fine for props)
+        }
+      }
+      if (!valid) return;
+      
+      // Check category usage: max 4 same category (relaxed for optimal_combo)
+      const catCount = new Map<string, number>();
+      for (const p of current) {
+        const cat = p.category || '';
+        catCount.set(cat, (catCount.get(cat) || 0) + 1);
+        if ((catCount.get(cat) || 0) > 4) { valid = false; break; }
+      }
+      if (!valid) return;
+      
+      // Score by product of individual L10 hit rates
+      const score = current.reduce((acc, p) => {
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr : hr / 100;
+        return acc * hrPct;
+      }, 1);
+      
+      combos.push({ picks: [...current], score });
+      return;
+    }
+    for (let i = start; i < sorted.length; i++) {
+      current.push(sorted[i]);
+      generateCombinations(i + 1, current);
+      current.pop();
+    }
+  }
+  
+  generateCombinations(0, []);
+  
+  if (combos.length === 0) {
+    console.log(`[OptimalCombo] No valid ${legCount}-leg combinations found`);
+    return [];
+  }
+  
+  // Sort by combined probability (highest first)
+  combos.sort((a, b) => b.score - a.score);
+  
+  // Select top non-overlapping combinations
+  const selectedCombos: EnrichedPick[][] = [];
+  const usedPlayers = new Set<string>();
+  
+  for (const combo of combos) {
+    if (selectedCombos.length >= maxCombos) break;
+    
+    // Check if any player in this combo was already used
+    const comboPlayers = combo.picks.map(p => (p.player_name || '').toLowerCase());
+    const hasOverlap = comboPlayers.some(p => usedPlayers.has(p));
+    
+    if (!hasOverlap) {
+      selectedCombos.push(combo.picks);
+      comboPlayers.forEach(p => usedPlayers.add(p));
+      const hrStr = combo.picks.map(p => {
+        const hr = p.l10_hit_rate || 0;
+        return `${p.player_name} ${(hr <= 1 ? hr * 100 : hr).toFixed(0)}%`;
+      }).join(' × ');
+      console.log(`[OptimalCombo] ✅ Combo ${selectedCombos.length}: ${hrStr} = ${(combo.score * 100).toFixed(1)}% combined`);
+    }
+  }
+  
+  console.log(`[OptimalCombo] Selected ${selectedCombos.length} non-overlapping ${legCount}-leg combos from ${combos.length} valid combinations`);
+  return selectedCombos;
 }
 
 // ============= CEILING SHOT: Find alt line near player's L10 ceiling with plus-money odds =============
@@ -6358,7 +6482,7 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack']);
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
     
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
