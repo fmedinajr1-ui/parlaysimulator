@@ -7327,15 +7327,26 @@ async function generateTierParlays(
         const boostLimit = profile.boostLegs ?? (profile.useAltLines ? profile.legs : 0);
         const boostedCount = legs.filter(l => l.line_selection_reason && l.line_selection_reason !== 'main_line' && l.line_selection_reason !== 'safe_profile').length;
 
-        const selectedLine = (profile.useAltLines && boostedCount < boostLimit)
-          ? selectOptimalLine(
-              playerPick,
-              playerPick.alternateLines || [],
-              profile.strategy,
-              profile.preferPlusMoney || false,
-              profile.minBufferMultiplier || 1.0
-            )
-          : { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
+        // CEILING SHOT: Override line selection with ceiling alt line
+        let selectedLine: SelectedLine;
+        if (isCeilingShotProfile && (playerPick as any)._ceilingLine) {
+          selectedLine = (playerPick as any)._ceilingLine as SelectedLine;
+          console.log(`[CeilingShot] ${playerPick.player_name} ${playerPick.prop_type}: line ${playerPick.line} → ${selectedLine.line} @ +${selectedLine.odds} (L10 max: ${(playerPick as any).l10_max})`);
+        } else if (isFloorLockProfile) {
+          // Floor lock: always use standard line (safety IS the floor)
+          const floorResult = selectFloorLine(playerPick);
+          selectedLine = floorResult || { line: playerPick.line, odds: playerPick.americanOdds, reason: 'floor_lock_standard' };
+        } else if (profile.useAltLines && boostedCount < boostLimit) {
+          selectedLine = selectOptimalLine(
+            playerPick,
+            playerPick.alternateLines || [],
+            profile.strategy,
+            profile.preferPlusMoney || false,
+            profile.minBufferMultiplier || 1.0
+          );
+        } else {
+          selectedLine = { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
+        }
 
         // === MATCHUP LINE ADJUSTMENT: Check if matchup warrants a safer (downgrade) or higher-value (upgrade) alt line ===
         let wasLineAdjusted = false;
