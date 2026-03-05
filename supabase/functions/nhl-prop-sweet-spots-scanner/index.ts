@@ -220,7 +220,10 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const logs = isGoalieProp ? goalieLogs[prop.player_name] : skaterLogs[prop.player_name];
+      const logName = propToLogName.get(prop.player_name);
+      if (!logName) continue;
+
+      const logs = isGoalieProp ? goalieLogs[logName] : skaterLogs[logName];
       if (!logs || logs.length < 3) continue;
 
       const line = Number(prop.current_line);
