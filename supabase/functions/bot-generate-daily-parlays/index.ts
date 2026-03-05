@@ -815,6 +815,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
+      // ============= FLOOR LOCK EXPLORATION: L10 floor clears the line =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT EXPLORATION: Alt lines near L10 ceiling at plus-money =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
     ],
   },
   validation: {
@@ -1002,6 +1012,15 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', side: 'under' },
+      // ============= FLOOR LOCK: Safe parlays — L10 floor clears the line =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT: Risky parlays — alt lines near L10 ceiling at plus-money =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
     ],
   },
 };
@@ -1313,6 +1332,11 @@ interface SweetSpotPick {
   event_id?: string;
   alternateLines?: AlternateLine[];
   sport?: string;
+  // L10 floor/ceiling data for floor_lock and ceiling_shot strategies
+  l10_min?: number;
+  l10_max?: number;
+  l10_avg?: number;
+  l10_median?: number;
 }
 
 interface EnrichedPick extends SweetSpotPick {
@@ -3009,6 +3033,107 @@ function selectOptimalLine(
   }
   
   return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
+}
+
+// ============= FLOOR LOCK: Select standard line only if L10 floor clears it =============
+function selectFloorLine(
+  pick: EnrichedPick
+): SelectedLine | null {
+  const l10Min = (pick as any).l10_min;
+  const line = pick.line;
+  if (l10Min == null || l10Min <= 0 || line <= 0) return null;
+  
+  const side = (pick.recommended_side || 'over').toLowerCase();
+  if (side === 'over' && l10Min >= line) {
+    const floorMargin = l10Min - line;
+    return { line, odds: pick.americanOdds, reason: `floor_lock_margin_${floorMargin.toFixed(1)}` };
+  }
+  if (side === 'under') {
+    const l10Max = (pick as any).l10_max;
+    if (l10Max != null && l10Max <= line) {
+      const ceilingMargin = line - l10Max;
+      return { line, odds: pick.americanOdds, reason: `floor_lock_under_margin_${ceilingMargin.toFixed(1)}` };
+    }
+  }
+  return null;
+}
+
+// ============= CEILING SHOT: Find alt line near player's L10 ceiling with plus-money odds =============
+function selectCeilingLine(
+  pick: EnrichedPick,
+  alternateLines: AlternateLine[]
+): SelectedLine | null {
+  const l10Max = (pick as any).l10_max;
+  const l10Avg = (pick as any).l10_avg || pick.projected_value || 0;
+  const mainLine = pick.line;
+  const side = (pick.recommended_side || 'over').toLowerCase();
+  
+  if (l10Max == null || l10Max <= 0 || !alternateLines || alternateLines.length === 0) return null;
+  
+  if (side === 'over') {
+    // Find alt lines between mainLine and l10Max that have plus-money odds
+    // Target: within 1-2 steps of l10Max (player has shown they can reach this)
+    const targetMin = mainLine + 1; // Must be above standard line
+    const targetMax = l10Max; // Can't exceed what they've actually done
+    
+    const viableAlts = alternateLines
+      .filter(alt => {
+        if (alt.line < targetMin || alt.line > targetMax) return false;
+        const odds = alt.overOdds;
+        return odds > 100; // Must be plus-money
+      })
+      .map(alt => ({
+        ...alt,
+        distFromCeiling: l10Max - alt.line,
+        relevantOdds: alt.overOdds,
+      }))
+      // Sort by highest line first (closest to ceiling = best value)
+      .sort((a, b) => b.line - a.line);
+    
+    if (viableAlts.length === 0) return null;
+    
+    // Pick the highest viable alt line (closest to ceiling)
+    const best = viableAlts[0];
+    return {
+      line: best.line,
+      odds: best.relevantOdds,
+      reason: `ceiling_shot_l10max_${l10Max}_alt_${best.line}`,
+      originalLine: mainLine,
+      oddsImprovement: best.relevantOdds - pick.americanOdds,
+    };
+  }
+  
+  if (side === 'under') {
+    // For under ceiling shots: find lower alt lines with plus-money
+    const l10Min = (pick as any).l10_min || 0;
+    const targetMax = mainLine - 1;
+    const targetMin = l10Min;
+    
+    const viableAlts = alternateLines
+      .filter(alt => {
+        if (alt.line > targetMax || alt.line < targetMin) return false;
+        const odds = alt.underOdds;
+        return odds > 100;
+      })
+      .map(alt => ({
+        ...alt,
+        relevantOdds: alt.underOdds,
+      }))
+      .sort((a, b) => a.line - b.line); // Lowest line first for unders
+    
+    if (viableAlts.length === 0) return null;
+    
+    const best = viableAlts[0];
+    return {
+      line: best.line,
+      odds: best.relevantOdds,
+      reason: `ceiling_shot_under_l10min_${l10Min}_alt_${best.line}`,
+      originalLine: mainLine,
+      oddsImprovement: best.relevantOdds - pick.americanOdds,
+    };
+  }
+  
+  return null;
 }
 
 // ============= STRICT PROP OVERLAP PREVENTION =============
@@ -6192,6 +6317,10 @@ async function generateTierParlays(
     const isMatchupTeamStackProfile = profile.strategy === 'matchup_team_stack';
     // MATCHUP MISPRICED: intersection of mispriced edge AND matchup boost
     const isMatchupMispricedProfile = profile.strategy === 'matchup_mispriced';
+    // FLOOR LOCK: L10 floor clears the line — safest possible picks
+    const isFloorLockProfile = profile.strategy === 'floor_lock';
+    // CEILING SHOT: Alt lines near L10 ceiling at plus-money odds
+    const isCeilingShotProfile = profile.strategy === 'ceiling_shot';
     
     if (isSweetSpotCoreProfile) {
       // === SWEET SPOT CORE: All legs from category_sweet_spots — engine pre-vetted ===
@@ -6726,6 +6855,95 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/matchup_mispriced: ${candidatePicks.length} mispriced+matchup picks (sort=${sortBy})`);
+    } else if (isFloorLockProfile) {
+      // === FLOOR LOCK: All legs must have L10 floor clearing the line ===
+      const floorCandidates = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 70)) return false;
+        // FLOOR GATE: L10 min must clear the line
+        const l10Min = (p as any).l10_min;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over') {
+          return l10Min != null && l10Min > 0 && l10Min >= p.line;
+        } else if (side === 'under') {
+          const l10Max = (p as any).l10_max;
+          return l10Max != null && l10Max > 0 && l10Max <= p.line;
+        }
+        return false;
+      });
+      // Sort by floor margin (how far floor exceeds line)
+      const sortBy = profile.sortBy || 'composite';
+      if (sortBy === 'hit_rate') {
+        candidatePicks = floorCandidates.sort((a, b) => {
+          const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+          const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+          return bHr - aHr;
+        });
+      } else if (sortBy === 'shuffle') {
+        candidatePicks = floorCandidates.sort(() => Math.random() - 0.5);
+      } else {
+        // Sort by floor margin descending (safest picks first)
+        candidatePicks = floorCandidates.sort((a, b) => {
+          const aMargin = ((a as any).l10_min || 0) - a.line;
+          const bMargin = ((b as any).l10_min || 0) - b.line;
+          return bMargin - aMargin;
+        });
+      }
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/floor_lock: only ${candidatePicks.length} floor-cleared picks, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/floor_lock: 🔒 ${candidatePicks.length} picks where L10 floor clears line (sort=${sortBy})`);
+    } else if (isCeilingShotProfile) {
+      // === CEILING SHOT: L10 ceiling 30%+ above standard line, alt lines at plus-money ===
+      const ceilingCandidates = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 45)) return false;
+        // CEILING GATE: L10 max must be 30%+ above standard line
+        const l10Max = (p as any).l10_max;
+        if (l10Max == null || l10Max <= 0) return false;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over') {
+          return l10Max >= p.line * 1.3;
+        } else if (side === 'under') {
+          const l10Min = (p as any).l10_min;
+          return l10Min != null && l10Min > 0 && p.line >= l10Min * 1.3;
+        }
+        return false;
+      });
+      // Must have alternate lines available for ceiling shot
+      const ceilingWithAlts = ceilingCandidates.filter(p => {
+        const alts = (p as any).alternateLines || [];
+        const ceilingLine = selectCeilingLine(p, alts);
+        if (ceilingLine) {
+          // Stash the ceiling line selection on the pick for later use
+          (p as any)._ceilingLine = ceilingLine;
+          return true;
+        }
+        return false;
+      });
+      const sortBy = profile.sortBy || 'composite';
+      if (sortBy === 'shuffle') {
+        candidatePicks = ceilingWithAlts.sort(() => Math.random() - 0.5);
+      } else {
+        // Sort by ceiling upside (how far ceiling exceeds alt line)
+        candidatePicks = ceilingWithAlts.sort((a, b) => {
+          const aUpside = ((a as any).l10_max || 0) - ((a as any)._ceilingLine?.line || a.line);
+          const bUpside = ((b as any).l10_max || 0) - ((b as any)._ceilingLine?.line || b.line);
+          return bUpside - aUpside;
+        });
+      }
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/ceiling_shot: only ${candidatePicks.length} ceiling picks with plus-money alts, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/ceiling_shot: 🎯 ${candidatePicks.length} ceiling picks with plus-money alt lines (sort=${sortBy})`);
     } else if (isMispricedProfile) {
       candidatePicks = [...pool.mispricedPicks]
         .filter(p => {
@@ -7109,15 +7327,26 @@ async function generateTierParlays(
         const boostLimit = profile.boostLegs ?? (profile.useAltLines ? profile.legs : 0);
         const boostedCount = legs.filter(l => l.line_selection_reason && l.line_selection_reason !== 'main_line' && l.line_selection_reason !== 'safe_profile').length;
 
-        const selectedLine = (profile.useAltLines && boostedCount < boostLimit)
-          ? selectOptimalLine(
-              playerPick,
-              playerPick.alternateLines || [],
-              profile.strategy,
-              profile.preferPlusMoney || false,
-              profile.minBufferMultiplier || 1.0
-            )
-          : { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
+        // CEILING SHOT: Override line selection with ceiling alt line
+        let selectedLine: SelectedLine;
+        if (isCeilingShotProfile && (playerPick as any)._ceilingLine) {
+          selectedLine = (playerPick as any)._ceilingLine as SelectedLine;
+          console.log(`[CeilingShot] ${playerPick.player_name} ${playerPick.prop_type}: line ${playerPick.line} → ${selectedLine.line} @ +${selectedLine.odds} (L10 max: ${(playerPick as any).l10_max})`);
+        } else if (isFloorLockProfile) {
+          // Floor lock: always use standard line (safety IS the floor)
+          const floorResult = selectFloorLine(playerPick);
+          selectedLine = floorResult || { line: playerPick.line, odds: playerPick.americanOdds, reason: 'floor_lock_standard' };
+        } else if (profile.useAltLines && boostedCount < boostLimit) {
+          selectedLine = selectOptimalLine(
+            playerPick,
+            playerPick.alternateLines || [],
+            profile.strategy,
+            profile.preferPlusMoney || false,
+            profile.minBufferMultiplier || 1.0
+          );
+        } else {
+          selectedLine = { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
+        }
 
         // === MATCHUP LINE ADJUSTMENT: Check if matchup warrants a safer (downgrade) or higher-value (upgrade) alt line ===
         let wasLineAdjusted = false;
@@ -7524,7 +7753,11 @@ async function generateTierParlays(
         simulated_edge: effectiveEdge,
         simulated_sharpe: sharpe,
         strategy_name: `${strategyName}_${tier}_${profile.strategy}`,
-        selection_rationale: `${tier} tier: ${profile.strategy} (${profile.legs}-leg)`,
+        selection_rationale: profile.strategy === 'floor_lock' 
+          ? `🔒 FLOOR LOCK: ${legs.length}-leg safe parlay — every leg's L10 floor clears the line`
+          : profile.strategy === 'ceiling_shot'
+          ? `🎯 CEILING SHOT: ${legs.length}-leg risky parlay — alt lines near L10 ceiling at plus-money odds`
+          : `${tier} tier: ${profile.strategy} (${profile.legs}-leg)`,
         outcome: 'pending',
         is_simulated: tier !== 'execution',
         simulated_stake: stake,
