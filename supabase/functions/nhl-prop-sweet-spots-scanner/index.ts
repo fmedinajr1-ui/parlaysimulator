@@ -143,9 +143,6 @@ Deno.serve(async (req) => {
       if (logErr) {
         console.error(`[NHL Scanner] Skater log query error:`, logErr.message);
       }
-      if (i === 0) {
-        console.log(`[NHL Scanner] First batch (${batch.length} names): ${batch.slice(0, 3).join(', ')} → ${logs?.length || 0} rows returned`);
-      }
 
       for (const log of logs || []) {
         if (!skaterLogs[log.player_name]) skaterLogs[log.player_name] = [];
