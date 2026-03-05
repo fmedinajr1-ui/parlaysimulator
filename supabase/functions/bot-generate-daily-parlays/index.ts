@@ -6538,6 +6538,93 @@ async function generateTierParlays(
     const isFloorLockProfile = profile.strategy === 'floor_lock';
     // CEILING SHOT: Alt lines near L10 ceiling at plus-money odds
     const isCeilingShotProfile = profile.strategy === 'ceiling_shot';
+    // OPTIMAL COMBO: Combinatorial optimizer for highest combined L10 hit rate
+    const isOptimalComboProfile = profile.strategy === 'optimal_combo';
+    
+    // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
+    if (isOptimalComboProfile) {
+      const optimalCombos = buildOptimalComboParlays(pool, profile, sportFilter, BLOCKED_SPORTS, 5);
+      if (optimalCombos.length === 0) {
+        console.log(`[Bot] ${tier}/optimal_combo: no valid combinations found`);
+        continue;
+      }
+      // Each combo becomes a separate parlay — push directly and skip greedy loop
+      for (const combo of optimalCombos) {
+        if (parlaysToCreate.length >= config.count) break;
+        const comboLegs = combo.map(pick => {
+          const weight = 1.0;
+          const rawL10 = (pick as any).l10_hit_rate || 0;
+          const l10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
+          const selectedLine = { line: pick.line, odds: pick.americanOdds, reason: 'optimal_combo_standard' };
+          return {
+            id: pick.id,
+            player_name: pick.player_name,
+            team_name: pick.team_name,
+            prop_type: pick.prop_type,
+            line: pick.line,
+            side: pick.recommended_side || 'over',
+            category: pick.category,
+            weight,
+            hit_rate: l10Pct,
+            l10_hit_rate: l10Pct,
+            confidence_score: pick.confidence_score || 0.5,
+            american_odds: pick.americanOdds || -110,
+            odds_value_score: pick.oddsValueScore,
+            composite_score: pick.compositeScore,
+            outcome: 'pending',
+            original_line: pick.line,
+            selected_line: pick.line,
+            line_selection_reason: 'optimal_combo_standard',
+            odds_improvement: 0,
+            projection_buffer: (pick.projected_value || pick.l10_avg || 0) - pick.line,
+            projected_value: pick.projected_value || pick.l10_avg || 0,
+            line_source: pick.line_source || 'projected',
+            has_real_line: pick.has_real_line || false,
+            sport: pick.sport || 'basketball_nba',
+            defense_rank: (pick as any).defenseMatchupRank ?? null,
+            defense_adj: (pick as any).defenseMatchupAdj ?? 0,
+          };
+        });
+        
+        const combinedProb = comboLegs.reduce((p, l) => p * (l.hit_rate / 100), 1);
+        const totalDecimalOdds = comboLegs.reduce((p, l) => {
+          const odds = l.american_odds || -110;
+          const decimal = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+          return p * decimal;
+        }, 1);
+        const expectedOdds = totalDecimalOdds >= 2
+          ? Math.round((totalDecimalOdds - 1) * 100)
+          : Math.round(-100 / (totalDecimalOdds - 1));
+        
+        const hrStr = comboLegs.map(l => `${l.player_name} ${l.hit_rate.toFixed(0)}%`).join(' × ');
+        
+        // Fingerprint dedup
+        const fingerprint = comboLegs.map(l => `${l.player_name}_${l.prop_type}_${l.side}_${l.line}`).sort().join('||');
+        if (globalFingerprints.has(fingerprint)) continue;
+        globalFingerprints.add(fingerprint);
+        
+        parlaysToCreate.push({
+          parlay_date: targetDate,
+          legs: comboLegs,
+          leg_count: comboLegs.length,
+          combined_probability: combinedProb,
+          expected_odds: Math.min(expectedOdds, 10000),
+          simulated_win_rate: combinedProb,
+          simulated_edge: combinedProb - comboLegs.reduce((p, l) => p * americanToImplied(l.american_odds || -110), 1),
+          simulated_sharpe: 0.1,
+          strategy_name: `${strategyName}_${tier}_optimal_combo`,
+          selection_rationale: `🎲 OPTIMAL COMBO: ${comboLegs.length}-leg parlay — ${hrStr} = ${(combinedProb * 100).toFixed(1)}% combined probability`,
+          outcome: 'pending',
+          is_simulated: tier !== 'execution',
+          simulated_stake: typeof config.stake === 'number' && config.stake > 0 ? config.stake : 100,
+          tier: tier,
+        });
+        
+        strategyCountMap.set(profile.strategy, (strategyCountMap.get(profile.strategy) || 0) + 1);
+        console.log(`[Bot] Created ${tier}/optimal_combo ${comboLegs.length}-leg parlay #${parlaysToCreate.length} (${(combinedProb * 100).toFixed(1)}% combined)`);
+      }
+      continue; // Skip the standard greedy loop for this profile
+    }
     
     if (isSweetSpotCoreProfile) {
       // === SWEET SPOT CORE: All legs from category_sweet_spots — engine pre-vetted ===
