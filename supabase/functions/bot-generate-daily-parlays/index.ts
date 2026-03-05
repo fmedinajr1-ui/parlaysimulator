@@ -1038,7 +1038,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 // ============= BLOCKED SPORTS (paused until more data collected) =============
 const BLOCKED_SPORTS = ['baseball_ncaa', 'baseball_mlb', 'golf_pga'];
 
-// ============= BLOCKED CATEGORIES (catastrophic hit rates) =============
+// ============= BLOCKED CATEGORIES (catastrophic hit rates + non-NBA sports mislabeled) =============
 const BLOCKED_CATEGORIES = new Set([
   'OVER_TOTAL',      // 10.2% hit rate
   'UNDER_TOTAL',     // 18.2% hit rate
@@ -1046,6 +1046,11 @@ const BLOCKED_CATEGORIES = new Set([
   'BIG_ASSIST_OVER', // 10.3% hit rate
   'VOLUME_SCORER',   // 0% hit rate across ALL strategies
   'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
+  // MLB categories (mislabeled as basketball_nba sport)
+  'MLB_PITCHER_K_OVER', 'MLB_PITCHER_K_UNDER', 'MLB_HITS_OVER', 'MLB_HITS_UNDER',
+  'MLB_TOTAL_BASES_OVER', 'MLB_TOTAL_BASES_UNDER', 'MLB_RBIS_OVER', 'MLB_RBIS_UNDER',
+  'MLB_RUNS_OVER', 'MLB_RUNS_UNDER', 'MLB_STOLEN_BASES_OVER', 'MLB_STOLEN_BASES_UNDER',
+  'MLB_WALKS_OVER', 'MLB_WALKS_UNDER',
 ]);
 
 // ============= CASH LOCK FLIP MAP (force historically-losing categories to winning side) =============
