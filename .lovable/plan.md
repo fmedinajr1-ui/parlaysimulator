@@ -1,44 +1,98 @@
 
-# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-## What Was Added
-Two new parlay strategies using L10 game log floor/ceiling data:
+# NHL Prop Engine — Missing Data Layers for Composite Scores & Hit Rates
 
-### 🔒 Floor Lock (Safe Parlays)
-- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
-- **Gate**: `l10_min >= line * 0.85` for overs (relaxed from 100% — 0 candidates with real sportsbook lines at strict threshold), `l10_max <= line * 1.15` for unders
-- **Safety backstop**: Requires `l10_hit_rate >= 80%` to ensure consistency
-- **Line**: Standard sportsbook line (safety IS the floor guarantee)
-- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
+## What You Already Have
+| Data Source | Status | Records |
+|---|---|---|
+| `nhl_player_game_logs` (skaters) | ✅ | 12,023 logs (Oct '25 → today) |
+| `nhl_goalie_game_logs` | ✅ | 402 logs (Jan '26 → today) |
+| `nhl_team_pace_stats` | ✅ | All 32 teams (shots, goals, save%, win%) |
+| `nhl_team_defense_rankings` | ✅ | All 32 teams (goals/shots/PP/PK ranks) |
+| NHL team composite scoring engine | ✅ | Moneyline, spread, total bets |
 
-### 🎯 Ceiling Shot (Risky Parlays)
-- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
-- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
-- **Line**: Alternate line near L10 max with odds >= -130 (relaxed from > +100)
-- **Fallback**: If no alt lines available but `l10_max >= line * 1.5`, use standard line
-- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
+## What's Missing (6 Gaps)
 
-### 🎲 Optimal Combo (NEW — Combinatorial Optimizer)
-- **Concept**: Instead of greedy sort-and-take-top-N, enumerate ALL valid 3/4-leg combinations and pick the ones with highest combined probability
-- **Gate**: L10 hit rate >= 70% (execution) / 60% (exploration)
-- **Scoring**: Product of individual L10 hit rates (e.g., 90% × 100% × 90% = 81% combined)
-- **Correlation check**: No same player, max 4 same category
-- **Diversity**: Returns top 5 non-overlapping combos (no player reuse across combos)
-- **Profiles**: 3 execution (NBA 70%, NBA 65% 4-leg, all 70%), 3 exploration (NBA 60%, NBA 55% 4-leg, all 60%)
+### 1. NHL Player Prop Sweet Spots Scanner
+**The big one.** NBA has `category_sweet_spots` populated by analyzers that scan L10 game logs, compute hit rates against lines, and flag players hitting props consistently. **No equivalent exists for NHL skater/goalie props.**
 
-## Profile Ordering Fix (March 5, 2026)
-optimal_combo → floor_lock → ceiling_shot profiles at **top** of both exploration and execution arrays.
+Need to build: An `nhl-prop-sweet-spots-scanner` that:
+- Pulls today's NHL player prop lines from `unified_props` (shots on goal, goals, assists, points, saves)
+- Cross-references each prop against `nhl_player_game_logs` / `nhl_goalie_game_logs` L10
+- Calculates L10 hit rate, L10 avg, L10 median, L10 min/max, std dev
+- Writes qualifying picks (e.g., 60%+ L10 hit rate) to `category_sweet_spots` with proper NHL categories
 
-## Priority Strategy Bypass
-All three strategies (`optimal_combo`, `floor_lock`, `ceiling_shot`) added to PRIORITY_STRATEGIES and POST_TRIM_PRIORITY sets — they bypass the 30% strategy diversity cap.
+### 2. NHL Prop Categories
+NBA has categories like `THREE_POINT_SHOOTER`, `SCORING_LEADER`, etc. Need NHL equivalents:
+- `NHL_SHOTS_ON_GOAL` — SOG props (most common)
+- `NHL_GOALS_SCORER` — Goals props
+- `NHL_ASSISTS` — Assists props
+- `NHL_POINTS` — Points (G+A) props
+- `NHL_GOALIE_SAVES` — Goalie save props
+- `NHL_BLOCKED_SHOTS` — Blocked shots props
+- `NHL_POWER_PLAY_POINTS` — PP points props
 
-## Timeout Guard
-140s wall-clock guard in profile iteration loop. Logs remaining skipped profiles when triggered.
+### 3. NHL Prop-Specific Defense Rankings
+`nhl_team_defense_rankings` has goals/shots ranks but not **prop-specific** ranks needed for the environment score engine. Missing:
+- `opp_goals_allowed_rank` — Which teams give up the most goals (for goals props)
+- `opp_shots_allowed_rank` — Already have `shots_against_rank`
+- `opp_saves_faced_rank` — Teams that generate most shots (for goalie save props)
+- `opp_power_play_goals_allowed_rank` — For PP points props
 
-## Files Changed
-1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
-   - Added `buildOptimalComboParlays()` combinatorial optimizer function
-   - Added `optimal_combo` strategy detection + pre-assembled parlay creation in profile loop
-   - Relaxed `selectCeilingLine()` odds gate from `> +100` to `>= -130`
-   - Added ceiling shot fallback for `l10_max >= line * 1.5` without alt lines
-   - Added `optimal_combo`, `floor_lock`, `ceiling_shot` to PRIORITY_STRATEGIES + POST_TRIM_PRIORITY
+Can be derived from existing `nhl_team_pace_stats` + `nhl_team_defense_rankings` data.
+
+### 4. NHL Environment Score Function
+`calculateEnvironmentScore()` is NBA-only (pace 94-106 range, NBA prop routing). Need an NHL-specific version that:
+- Routes SOG props → shots_against_rank
+- Routes goals props → goals_against_rank
+- Routes saves props → shots_for_rank of opponent (more shots = more save opportunities)
+- Applies home ice advantage (weaker than NBA home court)
+- Factors in back-to-back detection
+
+### 5. NHL Mispriced Lines Detection
+`detect-mispriced-lines` computes edge% by comparing L10 avg vs. book line, adjusted for defense. Currently NBA-focused. Need to:
+- Add NHL player game log lookups for L10 averages
+- Add NHL goalie game log lookups
+- Apply NHL defense adjustments (shots_against_rank, goals_against_rank)
+- Map NHL prop types to correct stat columns
+
+### 6. NHL L10 Lookup in Parlay Generator
+The `usePlayerL5Stats` hook and the parlay generator's L10 lookups only map NBA columns (`points`, `rebounds`, `assists`, `threes_made`). Need NHL mappings:
+- `shots_on_goal` → SOG props
+- `goals` → Goals props
+- `assists` → Assists props
+- `points` → Points props
+- `saves` → Goalie saves (from `nhl_goalie_game_logs`)
+- `blocked_shots` → Blocked shots props
+
+## Implementation Plan
+
+### Step 1: Create `nhl-prop-sweet-spots-scanner` edge function
+- Query `unified_props` for today's NHL player props
+- For each prop, query L10 from `nhl_player_game_logs` or `nhl_goalie_game_logs`
+- Calculate hit rate, avg, median, min, max, std dev
+- Assign NHL categories
+- Upsert to `category_sweet_spots` with sport context
+- This is the **core** — everything else builds on it
+
+### Step 2: Add NHL prop-type routing to `calculateEnvironmentScore()`
+- Detect NHL sport and route to NHL-specific defense ranks from `nhl_team_defense_rankings`
+- Map: SOG → shots_against_rank, goals → goals_against_rank, saves → opponent shots_for_rank
+
+### Step 3: Add NHL to `detect-mispriced-lines`
+- Add NHL stat column mapping
+- Query L10 from NHL game logs
+- Apply NHL defense adjustments
+
+### Step 4: Wire NHL sweet spots into parlay generator
+- The generator already reads from `category_sweet_spots` generically
+- Just needs NHL category weights in `bot_category_weights`
+- And NHL environment score integration in the enrichment pass
+
+### Files Changed
+1. **`supabase/functions/nhl-prop-sweet-spots-scanner/index.ts`** (new) — core L10 scanner
+2. **`supabase/functions/bot-generate-daily-parlays/index.ts`** — add NHL environment score routing + NHL category weights
+3. **`supabase/functions/detect-mispriced-lines/index.ts`** — add NHL stat lookups
+4. **`supabase/config.toml`** — register new function
+5. **SQL migration** — seed NHL category weights into `bot_category_weights`
+
