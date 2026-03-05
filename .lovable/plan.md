@@ -1,28 +1,26 @@
 
+# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-# Admin-Only Preview Before Customer Broadcast
+## What Was Added
+Two new parlay strategies using L10 game log floor/ceiling data:
 
-## What Changes
+### 🔒 Floor Lock (Safe Parlays)
+- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
+- **Gate**: `l10_min >= line` for overs, `l10_max <= line` for unders
+- **Line**: Standard sportsbook line (safety IS the floor guarantee)
+- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
 
-### 1. Add `admin_only` flag to `bot-send-telegram` (line ~1613)
-Add a check for `admin_only` in the request body. When `true`, skip the customer broadcast loop entirely — only send to the admin chat ID.
+### 🎯 Ceiling Shot (Risky Parlays)
+- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
+- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
+- **Line**: Alternate line near L10 max with odds > +100
+- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
 
-```
-const adminOnly = body.admin_only === true;
-
-if (!adminOnly && (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || ...)) {
-  // broadcast to customers
-}
-```
-
-### 2. Add `admin_only` passthrough in `bot-generate-daily-parlays`
-Accept `admin_only` from the request body and forward it to every `bot-send-telegram` call (~lines 9205, 9244, 9289, 10244, 10347). This way you can trigger generation with `{ "admin_only": true }` and all Telegram messages only go to you.
-
-### 3. Workflow
-- **Step 1**: Trigger generation with `admin_only: true` → parlays are written to DB and sent only to your Telegram
-- **Step 2**: After you verify, use the existing `/broadcast` command or re-trigger with `admin_only: false` to push to customers
-
-### Files Changed
-1. **`supabase/functions/bot-send-telegram/index.ts`** — Gate customer broadcast behind `admin_only` flag
-2. **`supabase/functions/bot-generate-daily-parlays/index.ts`** — Pass `admin_only` through to all telegram calls
-
+## Files Changed
+1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
+   - Extended `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
+   - Added `selectFloorLine()` and `selectCeilingLine()` functions
+   - Added `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers
+   - Added strategy-specific candidate filtering in the parlay assembly loop
+   - Applied ceiling line override during leg assembly for ceiling_shot picks
+   - Labeled parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`
