@@ -28,6 +28,7 @@ const ENGINE_STEPS: EngineStep[] = [
 export function SlateRefreshControls() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRebuilding, setIsRebuilding] = useState(false);
+  const [isL10Refreshing, setIsL10Refreshing] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
   const [currentStepName, setCurrentStepName] = useState('');
