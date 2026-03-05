@@ -170,7 +170,35 @@ export function SlateRefreshControls() {
     }
   };
 
-  const isBusy = isRefreshing || isRebuilding;
+  const handleL10Refresh = async () => {
+    setIsL10Refreshing(true);
+    setCurrentStep(0);
+    setTotalSteps(1);
+    setCurrentStepName('Refreshing L10 data & rebuilding all parlays...');
+    toast.info('🔄 Starting full L10 refresh + rebuild...');
+
+    try {
+      setCurrentStep(1);
+      const { error } = await supabase.functions.invoke('refresh-l10-and-rebuild');
+      if (error) {
+        console.error('[L10Refresh] Error:', error);
+        toast.error('L10 refresh failed');
+      } else {
+        invalidateAllQueries();
+        setLastRefresh(new Date());
+        toast.success('L10 data refreshed & all parlays rebuilt! 🎯');
+      }
+    } catch (err) {
+      console.error('[L10Refresh] Error:', err);
+      toast.error('L10 refresh failed');
+    } finally {
+      setIsL10Refreshing(false);
+      setCurrentStep(0);
+      setCurrentStepName('');
+    }
+  };
+
+  const isBusy = isRefreshing || isRebuilding || isL10Refreshing;
   const progress = isBusy && totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
   return (
