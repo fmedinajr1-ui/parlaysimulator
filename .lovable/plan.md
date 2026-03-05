@@ -1,44 +1,26 @@
 
+# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-# Track 7-Day Ladder Challenge with $100 Stakes + Telegram Updates
+## What Was Added
+Two new parlay strategies using L10 game log floor/ceiling data:
 
-## What's Missing Today
-1. The ladder challenge insert **doesn't set `simulated_stake`** — settlement defaults to $100 (which is correct), but it should be explicit.
-2. When a ladder pick settles (won/lost), the existing `parlay_settled_alert` fires but it looks like any other parlay — no special "Ladder Challenge" branding or running tally.
-3. No 7-day running scoreboard showing the ladder challenge streak, cumulative profit, and record.
+### 🔒 Floor Lock (Safe Parlays)
+- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
+- **Gate**: `l10_min >= line` for overs, `l10_max <= line` for unders
+- **Line**: Standard sportsbook line (safety IS the floor guarantee)
+- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
 
-## Plan
+### 🎯 Ceiling Shot (Risky Parlays)
+- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
+- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
+- **Line**: Alternate line near L10 max with odds > +100
+- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
 
-### 1. `nba-ladder-challenge/index.ts` — Set explicit $100 stake
-- Add `simulated_stake: 100` to the insert at line 399 so it's tracked explicitly.
-
-### 2. `bot-settle-and-learn/index.ts` — Add ladder-specific Telegram alert
-- After a ladder pick settles (detect via `strategy_name === 'ladder_challenge'`), query the last 7 days of ladder picks from `bot_daily_parlays` to build a running scoreboard.
-- Send a dedicated Telegram notification type `ladder_challenge_result` with:
-  - The pick result (won/lost)
-  - Running 7-day record (e.g., "3W-1L")
-  - Cumulative P&L (e.g., "+$420")
-  - Day number in the challenge (e.g., "Day 4 of 7")
-
-### 3. `bot-send-telegram/index.ts` — New `ladder_challenge_result` formatter
-- Add a new message type and formatter that produces:
-
-```
-🔒 LADDER LOCK RESULT — Day 4 of 7
-━━━━━━━━━━━━━━━━━━━━━
-🟢 WON — Jose Alvarado AST O2.5
-Actual: 4 ✅
-
-💰 Stake: $100 | Profit: +$173
-
-📊 7-Day Challenge: 3W-1L
-💵 Running P&L: +$420
-🎯 Win Rate: 75%
-━━━━━━━━━━━━━━━━━━━━━
-```
-
-### Files Changed
-1. `supabase/functions/nba-ladder-challenge/index.ts` — add `simulated_stake: 100`
-2. `supabase/functions/bot-settle-and-learn/index.ts` — detect ladder settlements, query 7-day tally, fire dedicated alert
-3. `supabase/functions/bot-send-telegram/index.ts` — add `ladder_challenge_result` type + formatter
-
+## Files Changed
+1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
+   - Extended `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
+   - Added `selectFloorLine()` and `selectCeilingLine()` functions
+   - Added `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers
+   - Added strategy-specific candidate filtering in the parlay assembly loop
+   - Applied ceiling line override during leg assembly for ceiling_shot picks
+   - Labeled parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`
