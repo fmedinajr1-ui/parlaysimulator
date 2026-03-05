@@ -678,6 +678,218 @@ serve(async (req) => {
     const correctMlCount = correctPricedResults.filter(r => r.prop_type === 'team_moneyline').length;
     console.log(`[Mispriced] MLB: ${mlbCount} mispriced | ML: ${mlCount} mispriced | Total: ${mispricedResults.length} | Correct-priced: ${correctPricedResults.length} (NBA: ${correctNbaCount}, MLB: ${correctMlbCount}, ML: ${correctMlCount})`);
 
+    // ==================== NHL ANALYSIS ====================
+    const NHL_PROP_TO_STAT: Record<string, { col: string; table: 'skater' | 'goalie' }> = {
+      'player_shots_on_goal': { col: 'shots_on_goal', table: 'skater' },
+      'player_goals': { col: 'goals', table: 'skater' },
+      'player_assists': { col: 'assists', table: 'skater' },
+      'player_points': { col: 'points', table: 'skater' },
+      'player_blocked_shots': { col: 'blocked_shots', table: 'skater' },
+      'player_power_play_points': { col: 'power_play_points', table: 'skater' },
+      'player_saves': { col: 'saves', table: 'goalie' },
+      'player_goalie_saves': { col: 'saves', table: 'goalie' },
+      'goalie_saves': { col: 'saves', table: 'goalie' },
+    };
+
+    const NHL_PROP_DEF_CATEGORY: Record<string, string> = {
+      'player_shots_on_goal': 'shots_against',
+      'player_goals': 'goals_against',
+      'player_assists': 'goals_against',
+      'player_points': 'goals_against',
+      'player_saves': 'shots_for', // more opponent shots = more save chances
+      'player_goalie_saves': 'shots_for',
+      'goalie_saves': 'shots_for',
+      'player_blocked_shots': 'shots_for',
+    };
+
+    const { data: nhlProps, error: nhlPropsErr } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, current_line, bookmaker, commence_time')
+      .eq('sport', 'icehockey_nhl')
+      .gt('commence_time', now.toISOString())
+      .not('player_name', 'is', null)
+      .not('current_line', 'is', null);
+
+    if (nhlPropsErr) console.error(`[Mispriced] NHL props error: ${nhlPropsErr.message}`);
+    console.log(`[Mispriced] Found ${nhlProps?.length || 0} active NHL props`);
+
+    if (nhlProps && nhlProps.length > 0) {
+      // Load NHL defense rankings for matchup adjustments
+      const { data: nhlDefRanks } = await supabase
+        .from('nhl_team_defense_rankings')
+        .select('team_abbrev, goals_against_rank, shots_against_rank, shots_for_rank, goals_for_rank');
+
+      const nhlDefMap = new Map<string, any>();
+      for (const r of nhlDefRanks || []) {
+        nhlDefMap.set(r.team_abbrev?.toUpperCase(), r);
+      }
+
+      // Load NHL schedule for opponent lookups
+      const { data: nhlGames } = await supabase
+        .from('game_bets')
+        .select('home_team, away_team')
+        .eq('sport', 'icehockey_nhl')
+        .gt('commence_time', now.toISOString());
+
+      const nhlTeamToOpp: Record<string, string> = {};
+      for (const g of nhlGames || []) {
+        if (g.home_team && g.away_team) {
+          nhlTeamToOpp[g.home_team.toLowerCase()] = g.away_team;
+          nhlTeamToOpp[g.away_team.toLowerCase()] = g.home_team;
+        }
+      }
+
+      // Split props by skater vs goalie
+      const skaterPlayers = new Set<string>();
+      const goaliePlayers = new Set<string>();
+      for (const p of nhlProps) {
+        const mapping = NHL_PROP_TO_STAT[p.prop_type];
+        if (!mapping) continue;
+        if (mapping.table === 'goalie') goaliePlayers.add(p.player_name);
+        else skaterPlayers.add(p.player_name);
+      }
+
+      // Fetch skater logs
+      const nhlSkaterLogs: Record<string, any[]> = {};
+      const skaterArr = [...skaterPlayers];
+      for (let i = 0; i < skaterArr.length; i += 20) {
+        const batch = skaterArr.slice(i, i + 20);
+        const { data: logs } = await supabase
+          .from('nhl_player_game_logs')
+          .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points, team')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false })
+          .limit(400);
+        for (const log of logs || []) {
+          if (!nhlSkaterLogs[log.player_name]) nhlSkaterLogs[log.player_name] = [];
+          if (nhlSkaterLogs[log.player_name].length < 20) nhlSkaterLogs[log.player_name].push(log);
+        }
+      }
+
+      // Fetch goalie logs
+      const nhlGoalieLogs: Record<string, any[]> = {};
+      const goalieArr = [...goaliePlayers];
+      for (let i = 0; i < goalieArr.length; i += 20) {
+        const batch = goalieArr.slice(i, i + 20);
+        const { data: logs } = await supabase
+          .from('nhl_goalie_game_logs')
+          .select('player_name, game_date, saves, shots_against, goals_against')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false })
+          .limit(200);
+        for (const log of logs || []) {
+          if (!nhlGoalieLogs[log.player_name]) nhlGoalieLogs[log.player_name] = [];
+          if (nhlGoalieLogs[log.player_name].length < 20) nhlGoalieLogs[log.player_name].push(log);
+        }
+      }
+
+      console.log(`[Mispriced] NHL: ${Object.keys(nhlSkaterLogs).length} skaters, ${Object.keys(nhlGoalieLogs).length} goalies with logs`);
+
+      for (const prop of nhlProps) {
+        if (!prop.player_name || !prop.current_line || !prop.prop_type) continue;
+        const mapping = NHL_PROP_TO_STAT[prop.prop_type];
+        if (!mapping) continue;
+
+        const dedupKey = `nhl_${prop.player_name}_${prop.prop_type}`;
+        if (processedKeys.has(dedupKey)) continue;
+        processedKeys.add(dedupKey);
+
+        const logs = mapping.table === 'goalie'
+          ? nhlGoalieLogs[prop.player_name]
+          : nhlSkaterLogs[prop.player_name];
+        if (!logs || logs.length < 3) continue;
+
+        const l10Logs = logs.slice(0, Math.min(10, logs.length));
+        const l5Logs = logs.slice(0, Math.min(5, logs.length));
+
+        const l10Values = l10Logs.map(l => Number(l[mapping.col] ?? 0));
+        const l5Values = l5Logs.map(l => Number(l[mapping.col] ?? 0));
+        const allValues = logs.map(l => Number(l[mapping.col] ?? 0));
+
+        if (l10Values.length < 3) continue;
+
+        const avgL10 = calcAvg(l10Values);
+        const avgL5 = calcAvg(l5Values);
+        const avgAll = calcAvg(allValues);
+        const line = Number(prop.current_line);
+        if (line === 0) continue;
+
+        // Min line filters for NHL
+        const NHL_MIN_LINES: Record<string, number> = {
+          'player_shots_on_goal': 1.5, 'player_goals': 0.5, 'player_assists': 0.5,
+          'player_points': 0.5, 'player_saves': 15.5, 'player_goalie_saves': 15.5,
+          'goalie_saves': 15.5, 'player_blocked_shots': 0.5,
+        };
+        if (line < (NHL_MIN_LINES[prop.prop_type] ?? 0.5)) continue;
+
+        const rawEdgePct = ((avgL10 - line) / line) * 100;
+        const rawSignal = rawEdgePct > 0 ? 'OVER' : 'UNDER';
+
+        // Defense adjustment: look up opponent rank for this prop category
+        const playerTeam = (logs[0]?.team || '').toUpperCase();
+        const oppTeam = playerTeam ? nhlTeamToOpp[playerTeam.toLowerCase()] : null;
+        let oppDefRank: number | null = null;
+
+        if (oppTeam) {
+          const defCat = NHL_PROP_DEF_CATEGORY[prop.prop_type] || 'goals_against';
+          const oppDef = nhlDefMap.get(oppTeam.toUpperCase());
+          if (oppDef) {
+            if (defCat === 'shots_against') oppDefRank = oppDef.shots_against_rank;
+            else if (defCat === 'goals_against') oppDefRank = oppDef.goals_against_rank;
+            else if (defCat === 'shots_for') oppDefRank = oppDef.shots_for_rank; // for saves: opponent's shot generation
+          }
+        }
+
+        const defMultiplier = getDefenseMultiplier(oppDefRank, rawSignal);
+        const adjustedAvg = avgL10 * defMultiplier;
+
+        let edgePct = ((adjustedAvg - line) / line) * 100;
+        edgePct = Math.max(-75, Math.min(75, edgePct));
+        const trendEdge = avgAll > 0 ? ((avgL5 - avgAll) / avgAll) * 100 : 0;
+        if (Math.abs(edgePct) < 3) continue;
+
+        const signal = edgePct > 0 ? 'OVER' : 'UNDER';
+        const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
+
+        if (oppDefRank !== null) {
+          console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier})`);
+        }
+
+        const nhlEntry = {
+          player_name: prop.player_name,
+          prop_type: prop.prop_type,
+          book_line: line,
+          player_avg_l10: Math.round(avgL10 * 100) / 100,
+          player_avg_l20: Math.round(avgAll * 100) / 100,
+          edge_pct: Math.round(edgePct * 100) / 100,
+          signal,
+          shooting_context: {
+            l5_avg: Math.round(avgL5 * 10) / 10,
+            l10_avg: Math.round(avgL10 * 10) / 10,
+            season_avg: Math.round(avgAll * 10) / 10,
+            trend_pct: Math.round(trendEdge * 10) / 10,
+            games_analyzed: allValues.length,
+            defense_multiplier: defMultiplier !== 1.0 ? defMultiplier : undefined,
+          },
+          confidence_tier: confidenceTier,
+          analysis_date: today,
+          sport: 'icehockey_nhl',
+          defense_adjusted_avg: defMultiplier !== 1.0 ? Math.round(adjustedAvg * 100) / 100 : null,
+          opponent_defense_rank: oppDefRank,
+        };
+
+        if (Math.abs(edgePct) >= 15) {
+          mispricedResults.push(nhlEntry);
+        } else {
+          correctPricedResults.push(nhlEntry);
+        }
+      }
+    }
+
+    const nhlMispricedCount = mispricedResults.filter(r => r.sport === 'icehockey_nhl').length;
+    const nhlCorrectCount = correctPricedResults.filter(r => r.sport === 'icehockey_nhl').length;
+    console.log(`[Mispriced] NHL: ${nhlMispricedCount} mispriced, ${nhlCorrectCount} correct-priced`);
+
     // ==================== PERSIST CORRECT-PRICED RESULTS ====================
     if (correctPricedResults.length > 0) {
       await supabase.from('correct_priced_lines').delete().eq('analysis_date', today);

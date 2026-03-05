@@ -472,3 +472,6 @@ verify_jwt = false
 
 [functions.broadcast-new-strategies]
 verify_jwt = false
+
+[functions.nhl-prop-sweet-spots-scanner]
+verify_jwt = false
