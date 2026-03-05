@@ -36,10 +36,17 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
 
-    // Helper: filter out any parlay containing baseball legs
+    // Helper: filter out any parlay containing baseball legs (check sport AND category/prop_type for MLB)
+    const isBaseballLeg = (l: any) => {
+      const sport = (l.sport || '').toLowerCase();
+      const cat = (l.category || '').toLowerCase();
+      const prop = (l.prop_type || '').toLowerCase();
+      return sport.includes('baseball') || cat.includes('mlb') || 
+             ['pitcher_strikeouts', 'hits', 'total_bases', 'rbis', 'runs', 'stolen_bases', 'walks'].includes(prop) && cat.startsWith('mlb');
+    };
     const filterBaseball = (list: any[]) => list.filter(p => {
       const legs = Array.isArray(p.legs) ? p.legs : [];
-      return !legs.some((l: any) => (l.sport || '').toLowerCase().includes('baseball'));
+      return !legs.some((l: any) => isBaseballLeg(l));
     });
 
     if (!parlays || parlays.length === 0) {
