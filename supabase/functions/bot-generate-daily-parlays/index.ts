@@ -815,6 +815,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
+      // ============= FLOOR LOCK EXPLORATION: L10 floor clears the line =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT EXPLORATION: Alt lines near L10 ceiling at plus-money =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
     ],
   },
   validation: {
