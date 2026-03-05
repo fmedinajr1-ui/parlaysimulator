@@ -21,6 +21,13 @@ const NHL_GOALIE_PROP_MAP: Record<string, string> = {
   'goalie_saves': 'saves',
 };
 
+// Convert "Aaron Ekblad" → "A. Ekblad" for matching against ESPN-style abbreviated names
+function abbreviateName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return fullName;
+  return `${parts[0][0]}. ${parts.slice(1).join(' ')}`;
+}
+
 // NHL categories for sweet spot classification
 function classifyNhlCategory(propType: string): string {
   const p = propType.toLowerCase();
