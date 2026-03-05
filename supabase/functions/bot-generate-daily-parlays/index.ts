@@ -7742,7 +7742,11 @@ async function generateTierParlays(
         simulated_edge: effectiveEdge,
         simulated_sharpe: sharpe,
         strategy_name: `${strategyName}_${tier}_${profile.strategy}`,
-        selection_rationale: `${tier} tier: ${profile.strategy} (${profile.legs}-leg)`,
+        selection_rationale: profile.strategy === 'floor_lock' 
+          ? `🔒 FLOOR LOCK: ${legs.length}-leg safe parlay — every leg's L10 floor clears the line`
+          : profile.strategy === 'ceiling_shot'
+          ? `🎯 CEILING SHOT: ${legs.length}-leg risky parlay — alt lines near L10 ceiling at plus-money odds`
+          : `${tier} tier: ${profile.strategy} (${profile.legs}-leg)`,
         outcome: 'pending',
         is_simulated: tier !== 'execution',
         simulated_stake: stake,
