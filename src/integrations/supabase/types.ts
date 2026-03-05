@@ -7457,6 +7457,54 @@ export type Database = {
         }
         Relationships: []
       }
+      nhl_goalie_game_logs: {
+        Row: {
+          created_at: string | null
+          game_date: string
+          goals_against: number | null
+          id: string
+          is_home: boolean | null
+          minutes_played: number | null
+          opponent: string | null
+          player_name: string
+          save_pct: number | null
+          saves: number | null
+          shots_against: number | null
+          shutout: boolean | null
+          win: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          game_date: string
+          goals_against?: number | null
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent?: string | null
+          player_name: string
+          save_pct?: number | null
+          saves?: number | null
+          shots_against?: number | null
+          shutout?: boolean | null
+          win?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          game_date?: string
+          goals_against?: number | null
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent?: string | null
+          player_name?: string
+          save_pct?: number | null
+          saves?: number | null
+          shots_against?: number | null
+          shutout?: boolean | null
+          win?: boolean | null
+        }
+        Relationships: []
+      }
       nhl_player_game_logs: {
         Row: {
           assists: number | null
@@ -7508,6 +7556,63 @@ export type Database = {
           points?: number | null
           power_play_points?: number | null
           shots_on_goal?: number | null
+        }
+        Relationships: []
+      }
+      nhl_team_defense_rankings: {
+        Row: {
+          goals_against_per_game: number | null
+          goals_against_rank: number | null
+          goals_for_per_game: number | null
+          goals_for_rank: number | null
+          penalty_kill_pct: number | null
+          penalty_kill_rank: number | null
+          power_play_pct: number | null
+          power_play_rank: number | null
+          season: string | null
+          shots_against_per_game: number | null
+          shots_against_rank: number | null
+          shots_for_per_game: number | null
+          shots_for_rank: number | null
+          team_abbrev: string
+          team_name: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          goals_against_per_game?: number | null
+          goals_against_rank?: number | null
+          goals_for_per_game?: number | null
+          goals_for_rank?: number | null
+          penalty_kill_pct?: number | null
+          penalty_kill_rank?: number | null
+          power_play_pct?: number | null
+          power_play_rank?: number | null
+          season?: string | null
+          shots_against_per_game?: number | null
+          shots_against_rank?: number | null
+          shots_for_per_game?: number | null
+          shots_for_rank?: number | null
+          team_abbrev: string
+          team_name?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          goals_against_per_game?: number | null
+          goals_against_rank?: number | null
+          goals_for_per_game?: number | null
+          goals_for_rank?: number | null
+          penalty_kill_pct?: number | null
+          penalty_kill_rank?: number | null
+          power_play_pct?: number | null
+          power_play_rank?: number | null
+          season?: string | null
+          shots_against_per_game?: number | null
+          shots_against_rank?: number | null
+          shots_for_per_game?: number | null
+          shots_for_rank?: number | null
+          team_abbrev?: string
+          team_name?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }
