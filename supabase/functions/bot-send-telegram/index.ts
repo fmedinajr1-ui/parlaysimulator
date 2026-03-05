@@ -1434,6 +1434,72 @@ function formatParlaySettledAlert(data: Record<string, any>, dateStr: string): s
   return msg;
 }
 
+function formatNewStrategiesBroadcast(data: Record<string, any>, dateStr: string): string {
+  const parlays = data.parlays || [];
+  if (parlays.length === 0) return `🤖 No new strategy parlays to broadcast.`;
+
+  const strategyConfig: Record<string, { emoji: string; label: string; tagline: string }> = {
+    optimal_combo: { emoji: '🎲', label: 'OPTIMAL COMBO', tagline: 'Highest combined L10 probability' },
+    floor_lock: { emoji: '🔒', label: 'FLOOR LOCK', tagline: 'Player floors clear the line' },
+    ceiling_shot: { emoji: '🚀', label: 'CEILING SHOT', tagline: 'Alt lines near player ceilings' },
+  };
+
+  let msg = `🤖✨ NEW STRATEGY PARLAYS — ${dateStr}\n\n`;
+  msg += `Three new AI strategies just dropped:\n`;
+  msg += `🎲 Optimal Combo — best math combos\n`;
+  msg += `🔒 Floor Lock — safest picks\n`;
+  msg += `🚀 Ceiling Shot — high upside\n\n`;
+
+  // Group parlays by strategy
+  const groups: Record<string, any[]> = {};
+  for (const p of parlays) {
+    const strat = p.strategy_name || 'unknown';
+    const key = strat.replace(/_nba_.*|_all_.*|_\d+l.*/g, '');
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  }
+
+  let parlayNum = 0;
+  for (const [stratKey, stratParlays] of Object.entries(groups)) {
+    const cfg = strategyConfig[stratKey] || { emoji: '📌', label: stratKey.toUpperCase(), tagline: '' };
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `${cfg.emoji} ${cfg.label}\n`;
+    if (cfg.tagline) msg += `${cfg.tagline}\n`;
+    msg += `\n`;
+
+    for (const p of stratParlays) {
+      parlayNum++;
+      const legs = Array.isArray(p.legs) ? p.legs : [];
+      const odds = p.expected_odds || 0;
+      const oddsStr = odds > 0 ? `+${odds}` : `${odds}`;
+      const stake = p.simulated_stake || 10;
+      const decOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds || 110)) + 1;
+      const payout = Math.round(stake * decOdds);
+
+      msg += `#${parlayNum} · ${legs.length}L · ${oddsStr} · $${stake}→$${payout}\n`;
+
+      for (const leg of legs) {
+        const player = leg.player_name || 'Unknown';
+        const prop = (leg.prop_type || 'prop').toUpperCase();
+        const side = (leg.side || 'over').toUpperCase();
+        const line = leg.line ?? leg.selected_line ?? '?';
+        const hr = leg.l10_hit_rate ? `${Math.round(leg.l10_hit_rate <= 1 ? leg.l10_hit_rate * 100 : leg.l10_hit_rate)}%` : '';
+        const legOdds = leg.american_odds ? (leg.american_odds > 0 ? `+${leg.american_odds}` : `${leg.american_odds}`) : '';
+        msg += `  • ${player} ${prop} ${side} ${line}`;
+        if (legOdds) msg += ` (${legOdds})`;
+        if (hr) msg += ` · L10: ${hr}`;
+        msg += `\n`;
+      }
+      msg += `\n`;
+    }
+  }
+
+  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `💡 These are AI-optimized picks.\nTrack results in real-time!\n`;
+
+  return msg;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
