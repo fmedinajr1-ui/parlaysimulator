@@ -1448,7 +1448,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { type, data: rawData }: NotificationData = await req.json();
+    const reqBody = await req.json();
+    const { type, data: rawData }: NotificationData = reqBody;
+    const adminOnly = reqBody.admin_only === true;
 
     let data = rawData;
 
@@ -1610,7 +1612,8 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Message sent successfully to admin`);
 
     // Broadcast to all authorized customers for mega_parlay_scanner
-    if (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement' || type === 'dd_td_candidates' || type === 'double_confirmed_report') {
+    // Skip customer broadcast when admin_only mode is active
+    if (!adminOnly && (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement' || type === 'dd_td_candidates' || type === 'double_confirmed_report')) {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
