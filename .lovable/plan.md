@@ -1,35 +1,49 @@
 
-# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-## What Was Added
-Two new parlay strategies using L10 game log floor/ceiling data:
+# Add `optimal_combo` Strategy + Relax Ceiling Shot Gates
 
-### 🔒 Floor Lock (Safe Parlays)
-- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
-- **Gate**: `l10_min >= line * 0.85` for overs (relaxed from 100% — 0 candidates with real sportsbook lines at strict threshold), `l10_max <= line * 1.15` for unders
-- **Safety backstop**: Requires `l10_hit_rate >= 80%` to ensure consistency
-- **Line**: Standard sportsbook line (safety IS the floor guarantee)
-- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
+## Problem
+1. High-probability winning picks aren't being combined because the engine builds parlays greedily per-profile (sort-and-take-top-N), missing optimal combinations.
+2. Ceiling shot parlays are hard to generate because they require alt lines with plus-money odds — a strict gate that filters out most candidates.
 
-### 🎯 Ceiling Shot (Risky Parlays)
-- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
-- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
-- **Line**: Alternate line near L10 max with odds > +100
-- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
+## Changes — `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-## Profile Ordering Fix (March 5, 2026)
-Floor/ceiling profiles moved to **top** of both exploration and execution profile arrays to avoid Edge Function timeout. Previously positioned at bottom (~position 85+ of 92), never reached before 150s timeout.
+### 1. Add `buildOptimalComboParlays()` function (~60 lines)
+New combinatorial function that:
+- Takes all sweet spot candidates passing 70%+ L10 hit rate
+- Generates all valid 3-leg combinations (capped at top 30 candidates to keep C(30,3) = 4060 manageable)
+- Scores each combo by **product of individual L10 hit rates** (combined probability)
+- Filters out combos with correlated props (same player, same game_id)
+- Returns top 5 non-overlapping combinations ranked by combined probability
+- Uses relaxed `maxCategoryUsage: 4` to allow rebound-heavy or assist-heavy parlays when math supports it
 
-## Timeout Guard
-Added 140s wall-clock guard in profile iteration loop. Logs remaining skipped profiles when triggered.
+### 2. Add `optimal_combo` profile entries (at TOP, right after floor_lock/ceiling_shot)
+- **Execution tier** (3 profiles):
+  - `{ legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'combined_probability' }`
+  - `{ legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'combined_probability' }`
+  - `{ legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 70, sortBy: 'combined_probability' }`
+- **Exploration tier** (3 profiles):
+  - `{ legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'combined_probability' }`
+  - `{ legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_probability' }`
+  - `{ legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 60, sortBy: 'combined_probability' }`
 
-## Files Changed
-1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
-   - Extended `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
-   - Added `selectFloorLine()` and `selectCeilingLine()` functions
-   - Added `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers (at TOP of arrays)
-   - Added strategy-specific candidate filtering in the parlay assembly loop
-   - Applied ceiling line override during leg assembly for ceiling_shot picks
-   - Labeled parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`
-   - Added 140s timeout guard with logging
-   - Relaxed floor gate to 85% of line (from 100%) with 80% L10 hit rate backstop
+### 3. Add strategy detection + assembly logic in the profile iteration loop (~line 6416)
+- Detect `profile.strategy === 'optimal_combo'`
+- Call `buildOptimalComboParlays()` which returns pre-assembled parlay leg sets
+- Each returned combo becomes a full parlay (bypasses the standard greedy leg-by-leg assembly)
+- Label with `🎲 OPTIMAL COMBO` in `selection_rationale`
+
+### 4. Relax ceiling_shot candidate gate
+- Currently requires alt lines with plus-money odds — most candidates get filtered here
+- Relax: allow alt lines with odds >= -130 (not just > +100), broadening the candidate pool
+- Also allow ceiling candidates WITHOUT alt lines to use the standard line if `l10_max >= line * 1.5` (very high ceiling = worth it even at standard odds)
+
+### 5. Add `optimal_combo` and `floor_lock`/`ceiling_shot` to PRIORITY_STRATEGIES set
+So they bypass the strategy diversity cap and always get processed.
+
+### 6. After deploy: trigger test with `admin_only: true` and verify results
+
+## Expected Output
+- **Optimal combo parlays**: 3-5 parlays that maximize combined L10 hit rate probability (e.g., 90% × 100% × 90% = 81% combined)
+- **More ceiling shot parlays**: relaxed odds gate should yield candidates that were previously filtered out
+
