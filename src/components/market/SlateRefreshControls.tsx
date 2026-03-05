@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Zap } from "lucide-react";
+import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Zap, Database } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -28,6 +28,7 @@ const ENGINE_STEPS: EngineStep[] = [
 export function SlateRefreshControls() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRebuilding, setIsRebuilding] = useState(false);
+  const [isL10Refreshing, setIsL10Refreshing] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
   const [currentStepName, setCurrentStepName] = useState('');
@@ -97,6 +98,11 @@ export function SlateRefreshControls() {
 
     const CLEAN_REBUILD_STEPS: EngineStep[] = [
       {
+        name: 'Syncing fresh game logs',
+        function: 'nba-stats-fetcher',
+        body: { mode: 'sync', daysBack: 5, useESPN: true, includeParlayPlayers: true },
+      },
+      {
         name: 'Alerting customers',
         function: 'bot-send-telegram',
         body: { type: 'slate_rebuild_alert', data: {} },
@@ -164,7 +170,35 @@ export function SlateRefreshControls() {
     }
   };
 
-  const isBusy = isRefreshing || isRebuilding;
+  const handleL10Refresh = async () => {
+    setIsL10Refreshing(true);
+    setCurrentStep(0);
+    setTotalSteps(1);
+    setCurrentStepName('Refreshing L10 data & rebuilding all parlays...');
+    toast.info('🔄 Starting full L10 refresh + rebuild...');
+
+    try {
+      setCurrentStep(1);
+      const { error } = await supabase.functions.invoke('refresh-l10-and-rebuild');
+      if (error) {
+        console.error('[L10Refresh] Error:', error);
+        toast.error('L10 refresh failed');
+      } else {
+        invalidateAllQueries();
+        setLastRefresh(new Date());
+        toast.success('L10 data refreshed & all parlays rebuilt! 🎯');
+      }
+    } catch (err) {
+      console.error('[L10Refresh] Error:', err);
+      toast.error('L10 refresh failed');
+    } finally {
+      setIsL10Refreshing(false);
+      setCurrentStep(0);
+      setCurrentStepName('');
+    }
+  };
+
+  const isBusy = isRefreshing || isRebuilding || isL10Refreshing;
   const progress = isBusy && totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
   return (
@@ -239,6 +273,16 @@ export function SlateRefreshControls() {
             </div>
             
             <div className="flex items-center gap-2 shrink-0">
+              <Button 
+                variant="outline"
+                size="sm"
+                onClick={handleL10Refresh}
+                disabled={isBusy}
+                className="gap-2"
+              >
+                <Database className={`h-4 w-4 ${isL10Refreshing ? 'animate-pulse' : ''}`} />
+                {isL10Refreshing ? 'Refreshing...' : 'L10 Refresh & Rebuild'}
+              </Button>
               <Button 
                 variant="destructive"
                 size="sm"

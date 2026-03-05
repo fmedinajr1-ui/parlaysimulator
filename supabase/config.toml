@@ -466,4 +466,6 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.bot-daily-diversity-rebalance]
+
+[functions.refresh-l10-and-rebuild]
 verify_jwt = false
