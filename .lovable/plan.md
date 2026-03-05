@@ -1,4 +1,3 @@
-
 # Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
 ## What Was Added
@@ -42,3 +41,34 @@ All three strategies (`optimal_combo`, `floor_lock`, `ceiling_shot`) added to PR
    - Relaxed `selectCeilingLine()` odds gate from `> +100` to `>= -130`
    - Added ceiling shot fallback for `l10_max >= line * 1.5` without alt lines
    - Added `optimal_combo`, `floor_lock`, `ceiling_shot` to PRIORITY_STRATEGIES + POST_TRIM_PRIORITY
+
+# NHL Prop Engine — Data Layers for Composite Scores & Hit Rates — IMPLEMENTED ✅
+
+## What Was Added
+
+### 1. NHL Prop Sweet Spots Scanner (NEW)
+- **Edge Function**: `nhl-prop-sweet-spots-scanner`
+- Pulls active NHL player props from `unified_props` (sport: `icehockey_nhl`)
+- Cross-references against `nhl_player_game_logs` (skaters) and `nhl_goalie_game_logs` (goalies)
+- Computes L10 hit rate, avg, median, min/max, std dev for each prop
+- Classifies into NHL categories: `NHL_SHOTS_ON_GOAL`, `NHL_GOALS_SCORER`, `NHL_ASSISTS`, `NHL_POINTS`, `NHL_GOALIE_SAVES`, `NHL_BLOCKED_SHOTS`, `NHL_POWER_PLAY_POINTS`
+- Writes qualifying picks (50%+ L10 hit rate) to `category_sweet_spots`
+- Quality tiers: elite (80%+), strong (70%+), solid (60%+), marginal (50%+)
+
+### 2. NHL Mispriced Lines Detection
+- Added full NHL analysis block to `detect-mispriced-lines`
+- NHL prop-to-stat mapping for skaters and goalies
+- Defense-adjusted projections using `nhl_team_defense_rankings`
+- Prop-specific defense routing: SOG → `shots_against_rank`, goals → `goals_against_rank`, saves → `shots_for_rank` (opponent shot generation)
+- Results fork to `mispriced_lines` (15%+ edge) and `correct_priced_lines` (3-15% edge)
+
+### 3. NHL Category Weights
+- Seeded 14 entries in `bot_category_weights` for all NHL prop categories
+- Initial weights: Saves OVER boosted (1.3), SOG OVER boosted (1.2), Points OVER slightly boosted (1.1)
+- Weights will auto-calibrate as outcomes are tracked
+
+## Files Changed
+1. `supabase/functions/nhl-prop-sweet-spots-scanner/index.ts` (new) — core L10 scanner
+2. `supabase/functions/detect-mispriced-lines/index.ts` — added NHL analysis block
+3. `supabase/config.toml` — registered new function
+4. `bot_category_weights` table — seeded NHL categories
