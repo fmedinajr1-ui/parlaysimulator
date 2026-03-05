@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const oddsApiKey = Deno.env.get('ODDS_API_KEY');
+    const oddsApiKey = Deno.env.get('THE_ODDS_API_KEY') || Deno.env.get('ODDS_API_KEY');
     if (!oddsApiKey) {
       throw new Error('ODDS_API_KEY not configured');
     }

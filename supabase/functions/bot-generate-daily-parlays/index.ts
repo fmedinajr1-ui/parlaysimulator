@@ -4765,6 +4765,83 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     } else {
       console.log(`[AltLines] No qualifying candidates for alternate line fetching`);
     }
+
+    // === CEILING-SPECIFIC ALT LINE FETCH PASS ===
+    // Build team→event_id map from unified_props for resolving missing event_ids
+    const teamEventIdMap = new Map<string, string>();
+    (playerProps || []).forEach((od: any) => {
+      if (!od.event_id) return;
+      const team = (od.team_name || '').toLowerCase().trim();
+      if (team && !teamEventIdMap.has(team)) {
+        teamEventIdMap.set(team, od.event_id);
+      }
+    });
+    console.log(`[CeilingAltLines] Built team→event_id map with ${teamEventIdMap.size} teams`);
+
+    // Find ceiling candidates that need alt lines but don't have them yet
+    const ceilingAltCandidates = enrichedSweetSpots.filter(p => {
+      if ((p as any).alternateLines && (p as any).alternateLines.length > 0) return false; // already have alt lines
+      const l10Max = (p as any).l10_max;
+      if (l10Max == null || l10Max <= 0) return false;
+      // Use sportsbook line from oddsMap if available, else fall back
+      const oddsKey = `${(p.player_name || '').toLowerCase()}_${(p.prop_type || '').toLowerCase()}`;
+      const oddsEntry = oddsMap.get(oddsKey);
+      const sportsbookLine = oddsEntry?.line && oddsEntry.line > 0 ? oddsEntry.line : null;
+      const compareLine = p.line || sportsbookLine || (p as any).recommended_line;
+      if (!compareLine || compareLine <= 0) return false;
+      // Ceiling gate: l10_max must be 30%+ above the line
+      if (l10Max < compareLine * 1.3) return false;
+      // Resolve event_id if missing
+      if (!p.event_id) {
+        const teamName = (p.team_name || '').toLowerCase().trim();
+        const teamAbbrev = nameToAbbrev.get(teamName) || nameToAbbrev.get(p.team_name || '') || '';
+        // Try team name first, then abbreviation
+        const resolvedEventId = teamEventIdMap.get(teamName) || teamEventIdMap.get(teamAbbrev);
+        if (resolvedEventId) {
+          (p as any).event_id = resolvedEventId;
+          p.event_id = resolvedEventId;
+        }
+      }
+      return !!p.event_id;
+    }).slice(0, 15);
+
+    if (ceilingAltCandidates.length > 0) {
+      console.log(`[CeilingAltLines] Fetching alt lines for ${ceilingAltCandidates.length} ceiling-shot candidates`);
+      let ceilingAltFetched = 0;
+      for (const pick of ceilingAltCandidates) {
+        try {
+          const altResponse = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              eventId: pick.event_id,
+              playerName: pick.player_name,
+              propType: pick.prop_type,
+              sport: pick.sport || 'basketball_nba',
+            }),
+          });
+          if (altResponse.ok) {
+            const altData = await altResponse.json();
+            if (altData.lines && altData.lines.length > 0) {
+              (pick as any).alternateLines = altData.lines;
+              ceilingAltFetched++;
+              console.log(`[CeilingAltLines] ✅ ${pick.player_name} ${pick.prop_type}: ${altData.lines.length} alt lines (l10_max=${(pick as any).l10_max})`);
+            } else {
+              console.log(`[CeilingAltLines] ❌ ${pick.player_name} ${pick.prop_type}: no alt lines returned`);
+            }
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (err) {
+          console.warn(`[CeilingAltLines] Failed for ${pick.player_name}: ${err}`);
+        }
+      }
+      console.log(`[CeilingAltLines] Completed: ${ceilingAltFetched}/${ceilingAltCandidates.length} ceiling candidates received alt lines`);
+    } else {
+      console.log(`[CeilingAltLines] No qualifying ceiling candidates for alt line fetch`);
+    }
   }
 
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
@@ -6913,8 +6990,11 @@ async function generateTierParlays(
         const hr = p.l10_hit_rate || p.confidence_score || 0;
         const hrPct = hr <= 1 ? hr * 100 : hr;
         if (hrPct < (profile.minHitRate || 45)) return false;
-        // Use actual_line if available, else fall back to recommended_line
-        const compareLine = p.line || (p as any).recommended_line;
+        // Use sportsbook line from oddsMap if available, else fall back to recommended_line
+        const oddsKey = `${(p.player_name || '').toLowerCase()}_${(p.prop_type || '').toLowerCase()}`;
+        const ceilingOddsEntry = oddsMap.get(oddsKey);
+        const ceilingSportsbookLine = ceilingOddsEntry?.line && ceilingOddsEntry.line > 0 ? ceilingOddsEntry.line : null;
+        const compareLine = p.line || ceilingSportsbookLine || (p as any).recommended_line;
         if (!compareLine || compareLine <= 0) return false;
         // CEILING GATE: L10 max must be 30%+ above standard line
         const l10Max = (p as any).l10_max;
