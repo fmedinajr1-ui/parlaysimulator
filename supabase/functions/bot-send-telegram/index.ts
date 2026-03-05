@@ -51,6 +51,7 @@ type NotificationType =
   | 'leg_settled_alert'
   | 'parlay_settled_alert'
   | 'dd_td_candidates'
+  | 'new_strategies_broadcast'
   | 'test';
 
 interface NotificationData {
@@ -129,6 +130,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatParlaySettledAlert(data, dateStr);
     case 'dd_td_candidates':
       return formatDDTDCandidates(data, dateStr);
+    case 'new_strategies_broadcast':
+      return formatNewStrategiesBroadcast(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -1613,7 +1616,7 @@ Deno.serve(async (req) => {
 
     // Broadcast to all authorized customers for mega_parlay_scanner
     // Skip customer broadcast when admin_only mode is active
-    if (!adminOnly && (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement' || type === 'dd_td_candidates' || type === 'double_confirmed_report')) {
+    if (!adminOnly && (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement' || type === 'dd_td_candidates' || type === 'double_confirmed_report' || type === 'new_strategies_broadcast')) {
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
