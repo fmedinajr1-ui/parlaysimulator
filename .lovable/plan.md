@@ -1,44 +1,36 @@
 
 
-# Track 7-Day Ladder Challenge with $100 Stakes + Telegram Updates
+# Tighten Ladder Challenge + Fresh Data + Regenerate Today
 
-## What's Missing Today
-1. The ladder challenge insert **doesn't set `simulated_stake`** — settlement defaults to $100 (which is correct), but it should be explicit.
-2. When a ladder pick settles (won/lost), the existing `parlay_settled_alert` fires but it looks like any other parlay — no special "Ladder Challenge" branding or running tally.
-3. No 7-day running scoreboard showing the ladder challenge streak, cumulative profit, and record.
+## Changes to `supabase/functions/nba-ladder-challenge/index.ts`
 
-## Plan
+### A. Force fresh game log data before picking
+After the dedup check (line 126), add a call to `nba-stats-fetcher` with `{ mode: 'sync', daysBack: 3, useESPN: true, includeParlayPlayers: true }` so L10 data is never stale when the lock is selected.
 
-### 1. `nba-ladder-challenge/index.ts` — Set explicit $100 stake
-- Add `simulated_stake: 100` to the insert at line 399 so it's tracked explicitly.
+### B. Stricter safety gates (lines 260-273)
+1. Minimum L10 games: `5` → `8`
+2. Minimum hit rate: `0.8` → `0.9`
+3. **Hard floor rule**: `if (min <= lineObj.line) continue` — worst L10 game must CLEAR the line
+4. **Median clearance**: `if (median < lineObj.line + 1) continue` — median must beat line by 1+
 
-### 2. `bot-settle-and-learn/index.ts` — Add ladder-specific Telegram alert
-- After a ladder pick settles (detect via `strategy_name === 'ladder_challenge'`), query the last 7 days of ladder picks from `bot_daily_parlays` to build a running scoreboard.
-- Send a dedicated Telegram notification type `ladder_challenge_result` with:
-  - The pick result (won/lost)
-  - Running 7-day record (e.g., "3W-1L")
-  - Cumulative P&L (e.g., "+$420")
-  - Day number in the challenge (e.g., "Day 4 of 7")
+### C. New "Safety Score" replaces composite score (lines 321-327)
+Reweight to prioritize safety:
+- Hit Rate: 50% (was 40%)
+- Floor Protection: 25% (was 20%)
+- Edge: 15% (was 20%)
+- Consistency: 10% (same)
 
-### 3. `bot-send-telegram/index.ts` — New `ladder_challenge_result` formatter
-- Add a new message type and formatter that produces:
+Rename `composite_score` → `safety_score` throughout and include breakdown in the Telegram message.
 
-```
-🔒 LADDER LOCK RESULT — Day 4 of 7
-━━━━━━━━━━━━━━━━━━━━━
-🟢 WON — Jose Alvarado AST O2.5
-Actual: 4 ✅
+### D. Update Telegram message (lines 420-430)
+Show the new safety score breakdown: floor margin, hit rate fraction, edge, and the new score name.
 
-💰 Stake: $100 | Profit: +$173
+### E. Update log messages
+Change "80%+" references to "90%+" and "composite" to "safety".
 
-📊 7-Day Challenge: 3W-1L
-💵 Running P&L: +$420
-🎯 Win Rate: 75%
-━━━━━━━━━━━━━━━━━━━━━
-```
+## After deployment
+Invoke the function manually to regenerate today's pick with fresh data and tightened filters. If no pick qualifies under the stricter criteria, that's the correct outcome — we skip the day rather than force a weak pick.
 
-### Files Changed
-1. `supabase/functions/nba-ladder-challenge/index.ts` — add `simulated_stake: 100`
-2. `supabase/functions/bot-settle-and-learn/index.ts` — detect ladder settlements, query 7-day tally, fire dedicated alert
-3. `supabase/functions/bot-send-telegram/index.ts` — add `ladder_challenge_result` type + formatter
+## Files changed
+1. `supabase/functions/nba-ladder-challenge/index.ts` — all changes above
 
