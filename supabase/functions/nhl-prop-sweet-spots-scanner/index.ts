@@ -141,12 +141,21 @@ Deno.serve(async (req) => {
 
     // Resolve prop name → game log name
     function resolveLogName(propName: string): string | null {
-      // Try exact match first
+      // Try exact match first (handles full-name logs like "Aatu Raty")
       const lower = propName.toLowerCase();
-      if (logNameByFull.has(lower)) return logNameByFull.get(lower)!;
-      // Try abbreviated form: "Aaron Ekblad" → "A. Ekblad"
+      if (logNameByAbbrev.has(lower)) return logNameByAbbrev.get(lower)!;
+      // Try abbreviated form: "Aaron Ekblad" → "a. ekblad"
       const abbrev = abbreviateName(propName).toLowerCase();
       if (logNameByAbbrev.has(abbrev)) return logNameByAbbrev.get(abbrev)!;
+      // Try last name only match for edge cases
+      const parts = propName.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        const lastName = parts.slice(1).join(' ').toLowerCase();
+        for (const [key, val] of logNameByAbbrev) {
+          const logLast = key.split('. ').slice(1).join('. ') || key.split(' ').slice(1).join(' ');
+          if (logLast === lastName) return val;
+        }
+      }
       return null;
     }
 
