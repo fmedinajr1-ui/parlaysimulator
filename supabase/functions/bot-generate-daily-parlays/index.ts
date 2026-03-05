@@ -675,6 +675,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.45,
     profiles: [
+      // ============= FLOOR LOCK EXPLORATION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
       // Multi-sport exploration — capped at 4 legs max
       // VERIFIED-SOURCE EXPLORATION: mispriced_edge + double_confirmed_conviction (replaces generic explore_*)
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
@@ -815,16 +825,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
-      // ============= FLOOR LOCK EXPLORATION: L10 floor clears the line =============
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
-      // ============= CEILING SHOT EXPLORATION: Alt lines near L10 ceiling at plus-money =============
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
     ],
   },
   validation: {
@@ -918,6 +919,15 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.65,
     profiles: [
+      // ============= FLOOR LOCK EXECUTION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT EXECUTION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       // ============= SWEET SPOT CORE: 3-leg parlays from Sweet Spot engine (minHitRate=55, engine pre-vetted) =============
       // --- Sorted by hit_rate ---
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
@@ -1012,15 +1022,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', side: 'under' },
-      // ============= FLOOR LOCK: Safe parlays — L10 floor clears the line =============
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
-      // ============= CEILING SHOT: Risky parlays — alt lines near L10 ceiling at plus-money =============
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      // (floor_lock + ceiling_shot moved to TOP of execution profiles to avoid timeout)
     ],
   },
 };
@@ -6336,7 +6338,19 @@ async function generateTierParlays(
   const strategyCountMap = new Map<string, number>();
   console.log(`[Bot] Strategy diversity cap: max ${strategyDiversityCap} parlays per strategy (30% of ${config.count})`);
 
+  const tierStartTime = Date.now();
+  const TIMEOUT_MS = 140_000; // 140s wall-clock guard (Edge Function limit ~150s)
+  let profileIndex = 0;
+
   for (const profile of config.profiles) {
+    // === TIMEOUT GUARD ===
+    const elapsed = Date.now() - tierStartTime;
+    if (elapsed > TIMEOUT_MS) {
+      const remaining = config.profiles.length - profileIndex;
+      console.log(`[Bot] ⏰ TIMEOUT GUARD: ${elapsed}ms elapsed, skipping ${remaining} remaining profiles in ${tier} tier`);
+      break;
+    }
+    profileIndex++;
     // Season gate: skip baseball profiles before March 1st
     if (!isBaseballSeasonActive && profile.sports?.includes('baseball_ncaa')) {
       continue;
@@ -6946,14 +6960,18 @@ async function generateTierParlays(
         // Use actual_line if available, else fall back to recommended_line
         const compareLine = p.line || (p as any).recommended_line;
         if (!compareLine || compareLine <= 0) return false;
-        // FLOOR GATE: L10 min must clear the line
+        // FLOOR GATE: L10 min must clear at least 85% of the line (relaxed — strict 100% finds 0 candidates with real sportsbook lines)
+        // Safety backstop: require l10_hit_rate >= 80% to ensure consistency
         const l10Min = (p as any).l10_min;
+        const l10Hr = p.l10_hit_rate || p.confidence_score || 0;
+        const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
+        if (l10HrPct < 80) return false; // Must clear line 80%+ of the time
         const side = (p.recommended_side || 'over').toLowerCase();
         if (side === 'over') {
-          return l10Min != null && l10Min > 0 && l10Min >= compareLine;
+          return l10Min != null && l10Min > 0 && l10Min >= compareLine * 0.85;
         } else if (side === 'under') {
           const l10Max = (p as any).l10_max;
-          return l10Max != null && l10Max > 0 && l10Max <= compareLine;
+          return l10Max != null && l10Max > 0 && l10Max <= compareLine * 1.15;
         }
         return false;
       });
