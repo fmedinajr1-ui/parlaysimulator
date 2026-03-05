@@ -8109,7 +8109,7 @@ async function generateTierParlays(
   const postTrimStrategyCount = new Map<string, number>();
   const trimmedParlays: typeof parlaysToCreate = [];
   
-  const POST_TRIM_PRIORITY = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction']);
+  const POST_TRIM_PRIORITY = new Set(['double_confirmed_conviction', 'triple_confirmed_conviction', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
   for (const parlay of parlaysToCreate) {
     const strategy = parlay.strategy_name || 'unknown';
     const currentCount = postTrimStrategyCount.get(strategy) || 0;

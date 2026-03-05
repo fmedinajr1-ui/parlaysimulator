@@ -14,22 +14,31 @@ Two new parlay strategies using L10 game log floor/ceiling data:
 ### 🎯 Ceiling Shot (Risky Parlays)
 - **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
 - **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
-- **Line**: Alternate line near L10 max with odds > +100
+- **Line**: Alternate line near L10 max with odds >= -130 (relaxed from > +100)
+- **Fallback**: If no alt lines available but `l10_max >= line * 1.5`, use standard line
 - **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
 
+### 🎲 Optimal Combo (NEW — Combinatorial Optimizer)
+- **Concept**: Instead of greedy sort-and-take-top-N, enumerate ALL valid 3/4-leg combinations and pick the ones with highest combined probability
+- **Gate**: L10 hit rate >= 70% (execution) / 60% (exploration)
+- **Scoring**: Product of individual L10 hit rates (e.g., 90% × 100% × 90% = 81% combined)
+- **Correlation check**: No same player, max 4 same category
+- **Diversity**: Returns top 5 non-overlapping combos (no player reuse across combos)
+- **Profiles**: 3 execution (NBA 70%, NBA 65% 4-leg, all 70%), 3 exploration (NBA 60%, NBA 55% 4-leg, all 60%)
+
 ## Profile Ordering Fix (March 5, 2026)
-Floor/ceiling profiles moved to **top** of both exploration and execution profile arrays to avoid Edge Function timeout. Previously positioned at bottom (~position 85+ of 92), never reached before 150s timeout.
+optimal_combo → floor_lock → ceiling_shot profiles at **top** of both exploration and execution arrays.
+
+## Priority Strategy Bypass
+All three strategies (`optimal_combo`, `floor_lock`, `ceiling_shot`) added to PRIORITY_STRATEGIES and POST_TRIM_PRIORITY sets — they bypass the 30% strategy diversity cap.
 
 ## Timeout Guard
-Added 140s wall-clock guard in profile iteration loop. Logs remaining skipped profiles when triggered.
+140s wall-clock guard in profile iteration loop. Logs remaining skipped profiles when triggered.
 
 ## Files Changed
 1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
-   - Extended `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
-   - Added `selectFloorLine()` and `selectCeilingLine()` functions
-   - Added `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers (at TOP of arrays)
-   - Added strategy-specific candidate filtering in the parlay assembly loop
-   - Applied ceiling line override during leg assembly for ceiling_shot picks
-   - Labeled parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`
-   - Added 140s timeout guard with logging
-   - Relaxed floor gate to 85% of line (from 100%) with 80% L10 hit rate backstop
+   - Added `buildOptimalComboParlays()` combinatorial optimizer function
+   - Added `optimal_combo` strategy detection + pre-assembled parlay creation in profile loop
+   - Relaxed `selectCeilingLine()` odds gate from `> +100` to `>= -130`
+   - Added ceiling shot fallback for `l10_max >= line * 1.5` without alt lines
+   - Added `optimal_combo`, `floor_lock`, `ceiling_shot` to PRIORITY_STRATEGIES + POST_TRIM_PRIORITY
