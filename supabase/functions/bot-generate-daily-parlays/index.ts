@@ -7238,13 +7238,20 @@ async function generateTierParlays(
         return false;
       });
       console.log(`[Bot] ceiling_shot pool: ${withL10Max.length} picks with l10_max, ${ceilingCandidates.length} pass ceiling gate (need ${profile.legs})`);
-      // Must have alternate lines available for ceiling shot
+      // Must have alternate lines OR very high ceiling (l10_max >= 1.5x line) for ceiling shot
       const ceilingWithAlts = ceilingCandidates.filter(p => {
         const alts = (p as any).alternateLines || [];
         const ceilingLine = selectCeilingLine(p, alts);
         if (ceilingLine) {
-          // Stash the ceiling line selection on the pick for later use
           (p as any)._ceilingLine = ceilingLine;
+          return true;
+        }
+        // Fallback: if l10_max >= 1.5x the line, allow standard line (very high ceiling)
+        const l10Max = (p as any).l10_max || 0;
+        const compareLine = p.line || (p as any).recommended_line || 0;
+        if (l10Max >= compareLine * 1.5 && compareLine > 0) {
+          (p as any)._ceilingLine = { line: compareLine, odds: p.americanOdds || -110, reason: `ceiling_fallback_l10max_${l10Max}`, originalLine: compareLine, oddsImprovement: 0 };
+          console.log(`[CeilingShot] Fallback: ${p.player_name} ${p.prop_type} l10_max=${l10Max} >= ${compareLine}*1.5, using standard line`);
           return true;
         }
         return false;
