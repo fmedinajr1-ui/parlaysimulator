@@ -469,3 +469,6 @@ verify_jwt = false
 
 [functions.refresh-l10-and-rebuild]
 verify_jwt = false
+
+[functions.broadcast-new-strategies]
+verify_jwt = false
