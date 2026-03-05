@@ -1,0 +1,1 @@
+UPDATE bot_daily_parlays SET outcome = 'void', lesson_learned = 'Voided for full L10 rebuild' WHERE parlay_date = '2026-03-05' AND (outcome = 'pending' OR outcome IS NULL)
