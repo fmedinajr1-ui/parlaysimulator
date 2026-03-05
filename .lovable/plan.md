@@ -1,44 +1,43 @@
 
 
-# Track 7-Day Ladder Challenge with $100 Stakes + Telegram Updates
+# Floor & Ceiling Parlay Tiers
 
-## What's Missing Today
-1. The ladder challenge insert **doesn't set `simulated_stake`** — settlement defaults to $100 (which is correct), but it should be explicit.
-2. When a ladder pick settles (won/lost), the existing `parlay_settled_alert` fires but it looks like any other parlay — no special "Ladder Challenge" branding or running tally.
-3. No 7-day running scoreboard showing the ladder challenge streak, cumulative profit, and record.
+## Concept
+Two new parlay tiers that use actual L10 game log data (floor = `l10_min`, ceiling = `l10_max`) to intelligently shop alternate lines:
 
-## Plan
+- **Safe/Floor parlays**: Use the player's L10 floor as the target line. Example: De'Aaron Fox's worst game in L10 had 7 assists → take Over 6.5 at the standard line. The floor *exceeds* the line, meaning even his worst night covers.
+- **Ceiling/Risky parlays**: Find an alt line near the player's L10 ceiling (best game). Example: Fox hit 14 assists as his best in L10 → shop for Over 11.5 or 12.5 at plus-money odds. High upside, lower probability.
 
-### 1. `nba-ladder-challenge/index.ts` — Set explicit $100 stake
-- Add `simulated_stake: 100` to the insert at line 399 so it's tracked explicitly.
+## Changes
 
-### 2. `bot-settle-and-learn/index.ts` — Add ladder-specific Telegram alert
-- After a ladder pick settles (detect via `strategy_name === 'ladder_challenge'`), query the last 7 days of ladder picks from `bot_daily_parlays` to build a running scoreboard.
-- Send a dedicated Telegram notification type `ladder_challenge_result` with:
-  - The pick result (won/lost)
-  - Running 7-day record (e.g., "3W-1L")
-  - Cumulative P&L (e.g., "+$420")
-  - Day number in the challenge (e.g., "Day 4 of 7")
+### 1. Extend `SweetSpotPick` interface
+Add `l10_min`, `l10_max`, `l10_avg`, `l10_median` fields so floor/ceiling data flows through the enrichment pipeline.
 
-### 3. `bot-send-telegram/index.ts` — New `ladder_challenge_result` formatter
-- Add a new message type and formatter that produces:
+### 2. New `selectFloorLine` function
+For safe parlays: picks the standard line **only if** `l10_min >= line` (floor clears the line). No alt line shopping needed — the safety IS the floor guarantee.
 
-```
-🔒 LADDER LOCK RESULT — Day 4 of 7
-━━━━━━━━━━━━━━━━━━━━━
-🟢 WON — Jose Alvarado AST O2.5
-Actual: 4 ✅
+### 3. New `selectCeilingLine` function  
+For ceiling parlays: searches alternate lines for one near the player's `l10_max` (within 1-2 steps). Must have **plus-money odds** (> +100). Uses an 8-game lookback ceiling (`l8_max` computed from L10 data excluding the 2 oldest games) to be more recent-biased.
 
-💰 Stake: $100 | Profit: +$173
+### 4. New strategy profiles in `TIER_CONFIG`
 
-📊 7-Day Challenge: 3W-1L
-💵 Running P&L: +$420
-🎯 Win Rate: 75%
-━━━━━━━━━━━━━━━━━━━━━
-```
+**Execution tier** (safe/floor):
+- `floor_lock` — 3-leg, all legs must have `l10_min >= line`, 70%+ hit rate, standard lines only
+- Sorts by floor margin (how far floor exceeds line)
+
+**Exploration tier** (ceiling/risky):  
+- `ceiling_shot` — 3-leg, all legs use ceiling alt lines at plus-money, creates lottery-style tickets
+- Sorts by ceiling upside (how far ceiling exceeds alt line)
+
+### 5. Strategy filtering in parlay assembly
+- `floor_lock`: During candidate filtering, block any pick where `l10_min < line` (floor doesn't clear)
+- `ceiling_shot`: During candidate filtering, require `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line). In leg assembly, call `selectCeilingLine` to find the highest viable alt line with plus-money odds.
 
 ### Files Changed
-1. `supabase/functions/nba-ladder-challenge/index.ts` — add `simulated_stake: 100`
-2. `supabase/functions/bot-settle-and-learn/index.ts` — detect ladder settlements, query 7-day tally, fire dedicated alert
-3. `supabase/functions/bot-send-telegram/index.ts` — add `ladder_challenge_result` type + formatter
+1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
+   - Extend `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
+   - Add `selectFloorLine()` and `selectCeilingLine()` functions
+   - Add `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers
+   - Add strategy-specific candidate filtering in the parlay assembly loop
+   - Label parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`
 
