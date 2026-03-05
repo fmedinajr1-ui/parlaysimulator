@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Zap } from "lucide-react";
+import { RefreshCw, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Zap, Database } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
