@@ -99,41 +99,40 @@ Deno.serve(async (req) => {
     }
     console.log(`[NHL Scanner] ${uniqueProps.size} unique player-prop combos`);
 
-    // 2. Build name mapping: convert prop full names to abbreviated log format
-    // Props use "Aaron Ekblad", game logs use "A. Ekblad"
-    // Strategy: abbreviate each prop name and query logs directly with abbreviated names
+    // 2. Name mapping: game logs have MIXED formats ("Bryan Rust" AND "A. Tuch")
+    // Query with BOTH full name and abbreviated name, merge results
 
-    const allPropNames = [...new Set([...uniqueProps.values()].map(p => p.player_name).filter(Boolean))];
-    
-    // Generate abbreviated versions for all prop player names
-    const propToAbbrev = new Map<string, string>();
-    for (const name of allPropNames) {
-      propToAbbrev.set(name, abbreviateName(name));
-    }
-
-    // Split into skater vs goalie props
-    const skaterPlayers: string[] = [];
-    const goaliePlayers: string[] = [];
-    const propToLogName = new Map<string, string>(); // prop name → log name (abbreviated)
+    // Split into skater vs goalie props, collect both name forms
+    const skaterFullNames: string[] = [];
+    const skaterAbbrevNames: string[] = [];
+    const goalieFullNames: string[] = [];
+    const goalieAbbrevNames: string[] = [];
 
     for (const [, prop] of uniqueProps) {
-      const abbrevName = propToAbbrev.get(prop.player_name) || prop.player_name;
-      propToLogName.set(prop.player_name, abbrevName);
+      const full = prop.player_name;
+      const abbrev = abbreviateName(full);
+      const isGoalie = !!NHL_GOALIE_PROP_MAP[prop.prop_type];
 
-      if (NHL_GOALIE_PROP_MAP[prop.prop_type]) {
-        if (!goaliePlayers.includes(abbrevName)) goaliePlayers.push(abbrevName);
+      if (isGoalie) {
+        if (!goalieFullNames.includes(full)) goalieFullNames.push(full);
+        if (abbrev !== full && !goalieAbbrevNames.includes(abbrev)) goalieAbbrevNames.push(abbrev);
       } else {
-        if (!skaterPlayers.includes(abbrevName)) skaterPlayers.push(abbrevName);
+        if (!skaterFullNames.includes(full)) skaterFullNames.push(full);
+        if (abbrev !== full && !skaterAbbrevNames.includes(abbrev)) skaterAbbrevNames.push(abbrev);
       }
     }
 
-    console.log(`[NHL Scanner] Querying logs for ${skaterPlayers.length} skaters, ${goaliePlayers.length} goalies`);
-    console.log(`[NHL Scanner] Sample abbreviated names: ${skaterPlayers.slice(0, 5).join(', ')}`);
+    // Combine both name forms for querying
+    const allSkaterNames = [...new Set([...skaterFullNames, ...skaterAbbrevNames])];
+    const allGoalieNames = [...new Set([...goalieFullNames, ...goalieAbbrevNames])];
 
-    // Fetch skater logs using resolved log names
+    console.log(`[NHL Scanner] Querying logs for ${allSkaterNames.length} skater name variants, ${allGoalieNames.length} goalie name variants`);
+    console.log(`[NHL Scanner] Sample names: ${allSkaterNames.slice(0, 5).join(', ')}`);
+
+    // Fetch skater logs using BOTH full + abbreviated names
     const skaterLogs: Record<string, any[]> = {};
-    for (let i = 0; i < skaterPlayers.length; i += 20) {
-      const batch = skaterPlayers.slice(i, i + 20);
+    for (let i = 0; i < allSkaterNames.length; i += 20) {
+      const batch = allSkaterNames.slice(i, i + 20);
       const { data: logs } = await supabase
         .from('nhl_player_game_logs')
         .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points, hits, team')
@@ -148,16 +147,45 @@ Deno.serve(async (req) => {
     }
     console.log(`[NHL Scanner] Loaded skater logs for ${Object.keys(skaterLogs).length} players`);
 
-    // Fetch goalie logs using resolved log names
+    // Fetch goalie logs
     const goalieLogs: Record<string, any[]> = {};
-    for (let i = 0; i < goaliePlayers.length; i += 20) {
-      const batch = goaliePlayers.slice(i, i + 20);
+    for (let i = 0; i < allGoalieNames.length; i += 20) {
+      const batch = allGoalieNames.slice(i, i + 20);
       const { data: logs } = await supabase
         .from('nhl_goalie_game_logs')
         .select('player_name, game_date, saves, shots_against, goals_against, save_pct, opponent')
         .in('player_name', batch)
         .order('game_date', { ascending: false })
         .limit(200);
+
+      for (const log of logs || []) {
+        if (!goalieLogs[log.player_name]) goalieLogs[log.player_name] = [];
+        if (goalieLogs[log.player_name].length < 10) goalieLogs[log.player_name].push(log);
+      }
+    }
+    console.log(`[NHL Scanner] Loaded goalie logs for ${Object.keys(goalieLogs).length} goalies`);
+
+    // Build propToLogName: for each prop player, find which name form has logs
+    const propToLogName = new Map<string, string>();
+    for (const [, prop] of uniqueProps) {
+      const full = prop.player_name;
+      const abbrev = abbreviateName(full);
+      const isGoalie = !!NHL_GOALIE_PROP_MAP[prop.prop_type];
+      const logs = isGoalie ? goalieLogs : skaterLogs;
+      
+      if (logs[full] && logs[full].length > 0) {
+        // Merge both forms if both exist
+        if (abbrev !== full && logs[abbrev]) {
+          logs[full] = [...logs[full], ...logs[abbrev]]
+            .sort((a, b) => b.game_date.localeCompare(a.game_date))
+            .slice(0, 10);
+        }
+        propToLogName.set(full, full);
+      } else if (logs[abbrev] && logs[abbrev].length > 0) {
+        propToLogName.set(full, abbrev);
+      }
+    }
+    console.log(`[NHL Scanner] Name resolution: ${propToLogName.size}/${uniqueProps.size} props matched to game logs`);
 
       for (const log of logs || []) {
         if (!goalieLogs[log.player_name]) goalieLogs[log.player_name] = [];
