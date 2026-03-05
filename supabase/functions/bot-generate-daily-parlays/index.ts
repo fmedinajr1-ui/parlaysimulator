@@ -6960,14 +6960,18 @@ async function generateTierParlays(
         // Use actual_line if available, else fall back to recommended_line
         const compareLine = p.line || (p as any).recommended_line;
         if (!compareLine || compareLine <= 0) return false;
-        // FLOOR GATE: L10 min must clear the line
+        // FLOOR GATE: L10 min must clear at least 85% of the line (relaxed — strict 100% finds 0 candidates with real sportsbook lines)
+        // Safety backstop: require l10_hit_rate >= 80% to ensure consistency
         const l10Min = (p as any).l10_min;
+        const l10Hr = p.l10_hit_rate || p.confidence_score || 0;
+        const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
+        if (l10HrPct < 80) return false; // Must clear line 80%+ of the time
         const side = (p.recommended_side || 'over').toLowerCase();
         if (side === 'over') {
-          return l10Min != null && l10Min > 0 && l10Min >= compareLine;
+          return l10Min != null && l10Min > 0 && l10Min >= compareLine * 0.85;
         } else if (side === 'under') {
           const l10Max = (p as any).l10_max;
-          return l10Max != null && l10Max > 0 && l10Max <= compareLine;
+          return l10Max != null && l10Max > 0 && l10Max <= compareLine * 1.15;
         }
         return false;
       });
