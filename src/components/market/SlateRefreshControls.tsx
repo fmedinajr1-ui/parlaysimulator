@@ -98,6 +98,11 @@ export function SlateRefreshControls() {
 
     const CLEAN_REBUILD_STEPS: EngineStep[] = [
       {
+        name: 'Syncing fresh game logs',
+        function: 'nba-stats-fetcher',
+        body: { mode: 'sync', daysBack: 5, useESPN: true, includeParlayPlayers: true },
+      },
+      {
         name: 'Alerting customers',
         function: 'bot-send-telegram',
         body: { type: 'slate_rebuild_alert', data: {} },
