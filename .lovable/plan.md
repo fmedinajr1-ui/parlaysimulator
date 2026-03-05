@@ -1,44 +1,76 @@
 
-# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-## What Was Added
-Two new parlay strategies using L10 game log floor/ceiling data:
+# Load NHL Goalie Props Data + NHL Defense/Offense Rankings for Parlay Engine
 
-### 🔒 Floor Lock (Safe Parlays)
-- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
-- **Gate**: `l10_min >= line * 0.85` for overs (relaxed from 100% — 0 candidates with real sportsbook lines at strict threshold), `l10_max <= line * 1.15` for unders
-- **Safety backstop**: Requires `l10_hit_rate >= 80%` to ensure consistency
-- **Line**: Standard sportsbook line (safety IS the floor guarantee)
-- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
+## Current State
+- **`nhl_player_game_logs`** has 11,995 skater records (forwards + defensemen) but **zero goalie data** — the ESPN fetcher explicitly skips the "goaltenders" category (line 83)
+- **`nhl_team_pace_stats`** has team-level offensive/defensive stats (shots for/against, goals for/against, save %, win %) but no goalie-specific or prop-specific defensive rankings
+- No `nhl_goalie_game_logs` table exists
 
-### 🎯 Ceiling Shot (Risky Parlays)
-- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
-- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
-- **Line**: Alternate line near L10 max with odds >= -130 (relaxed from > +100)
-- **Fallback**: If no alt lines available but `l10_max >= line * 1.5`, use standard line
-- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
+## What We Need
 
-### 🎲 Optimal Combo (NEW — Combinatorial Optimizer)
-- **Concept**: Instead of greedy sort-and-take-top-N, enumerate ALL valid 3/4-leg combinations and pick the ones with highest combined probability
-- **Gate**: L10 hit rate >= 70% (execution) / 60% (exploration)
-- **Scoring**: Product of individual L10 hit rates (e.g., 90% × 100% × 90% = 81% combined)
-- **Correlation check**: No same player, max 4 same category
-- **Diversity**: Returns top 5 non-overlapping combos (no player reuse across combos)
-- **Profiles**: 3 execution (NBA 70%, NBA 65% 4-leg, all 70%), 3 exploration (NBA 60%, NBA 55% 4-leg, all 60%)
+### 1. New `nhl_goalie_game_logs` table
+Stores per-game goalie stats for L10 analysis:
 
-## Profile Ordering Fix (March 5, 2026)
-optimal_combo → floor_lock → ceiling_shot profiles at **top** of both exploration and execution arrays.
+| Column | Type | Description |
+|--------|------|-------------|
+| player_name | text | Goalie name |
+| game_date | date | Game date |
+| opponent | text | Opponent abbreviation |
+| is_home | boolean | Home/away |
+| saves | integer | Total saves (key prop) |
+| shots_against | integer | Shots faced |
+| goals_against | integer | Goals allowed |
+| save_pct | numeric | Game save % |
+| minutes_played | integer | TOI |
+| win | boolean | Got the W |
+| shutout | boolean | Shutout game |
 
-## Priority Strategy Bypass
-All three strategies (`optimal_combo`, `floor_lock`, `ceiling_shot`) added to PRIORITY_STRATEGIES and POST_TRIM_PRIORITY sets — they bypass the 30% strategy diversity cap.
+Unique constraint on `(player_name, game_date)` for upserts.
 
-## Timeout Guard
-140s wall-clock guard in profile iteration loop. Logs remaining skipped profiles when triggered.
+### 2. New `nhl_team_defense_rankings` table
+Prop-specific offensive/defensive rankings for matchup scoring:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| team_abbrev | text (PK) | Team abbreviation |
+| goals_for_rank | integer | Offensive goals rank (1=most) |
+| goals_against_rank | integer | Defensive goals rank (1=fewest) |
+| shots_for_rank | integer | Shot generation rank |
+| shots_against_rank | integer | Shot suppression rank |
+| power_play_rank | integer | PP efficiency rank |
+| penalty_kill_rank | integer | PK efficiency rank |
+| goals_for_per_game | numeric | Avg goals scored |
+| goals_against_per_game | numeric | Avg goals allowed |
+| shots_for_per_game | numeric | Avg shots generated |
+| shots_against_per_game | numeric | Avg shots faced |
+| season | text | Season identifier |
+| updated_at | timestamptz | Last refresh |
+
+### 3. Update `nhl-stats-fetcher` to capture goalies
+- Remove the `if (categoryName !== 'forwards' && categoryName !== 'defensemen') continue` gate
+- Add a `categoryName === 'goaltenders'` branch that parses ESPN goalie stats (SA, GA, SV, SV%, TOI, W) and inserts into `nhl_goalie_game_logs`
+- ESPN goalie stat order: SA, GA, SV, SV%, TOI (index positions vary — will log and map)
+
+### 4. Create `nhl-team-defense-rankings-fetcher` edge function
+- Reads from `nhl_team_pace_stats` (already populated by `nhl-team-stats-fetcher`)
+- Computes rank columns by sorting teams on each metric
+- Upserts into `nhl_team_defense_rankings`
+- Could also be computed from NHL API standings endpoint for PP%/PK%
+
+### 5. Backfill goalie data
+- Run the updated `nhl-stats-fetcher` with `daysBack: 60` to populate ~2 months of goalie game logs for L10 analysis
 
 ## Files Changed
-1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
-   - Added `buildOptimalComboParlays()` combinatorial optimizer function
-   - Added `optimal_combo` strategy detection + pre-assembled parlay creation in profile loop
-   - Relaxed `selectCeilingLine()` odds gate from `> +100` to `>= -130`
-   - Added ceiling shot fallback for `l10_max >= line * 1.5` without alt lines
-   - Added `optimal_combo`, `floor_lock`, `ceiling_shot` to PRIORITY_STRATEGIES + POST_TRIM_PRIORITY
+1. **SQL migration** — create `nhl_goalie_game_logs` and `nhl_team_defense_rankings` tables
+2. **`supabase/functions/nhl-stats-fetcher/index.ts`** — add goaltender parsing branch for both ESPN and NHL API paths
+3. **`supabase/functions/nhl-team-defense-rankings-fetcher/index.ts`** (new) — compute and persist prop-specific rankings from existing team stats
+4. **`supabase/config.toml`** — register new edge function
+
+## Execution Order
+1. Create tables via migration
+2. Update `nhl-stats-fetcher` with goalie parsing
+3. Deploy and invoke with `daysBack: 60` to backfill
+4. Create and deploy rankings fetcher
+5. Verify data in both tables
+
