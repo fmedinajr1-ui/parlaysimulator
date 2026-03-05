@@ -6338,7 +6338,19 @@ async function generateTierParlays(
   const strategyCountMap = new Map<string, number>();
   console.log(`[Bot] Strategy diversity cap: max ${strategyDiversityCap} parlays per strategy (30% of ${config.count})`);
 
+  const tierStartTime = Date.now();
+  const TIMEOUT_MS = 140_000; // 140s wall-clock guard (Edge Function limit ~150s)
+  let profileIndex = 0;
+
   for (const profile of config.profiles) {
+    // === TIMEOUT GUARD ===
+    const elapsed = Date.now() - tierStartTime;
+    if (elapsed > TIMEOUT_MS) {
+      const remaining = config.profiles.length - profileIndex;
+      console.log(`[Bot] ⏰ TIMEOUT GUARD: ${elapsed}ms elapsed, skipping ${remaining} remaining profiles in ${tier} tier`);
+      break;
+    }
+    profileIndex++;
     // Season gate: skip baseball profiles before March 1st
     if (!isBaseballSeasonActive && profile.sports?.includes('baseball_ncaa')) {
       continue;
