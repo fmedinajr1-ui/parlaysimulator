@@ -675,6 +675,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.45,
     profiles: [
+      // ============= FLOOR LOCK EXPLORATION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
       // Multi-sport exploration — capped at 4 legs max
       // VERIFIED-SOURCE EXPLORATION: mispriced_edge + double_confirmed_conviction (replaces generic explore_*)
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
@@ -815,16 +825,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
-      // ============= FLOOR LOCK EXPLORATION: L10 floor clears the line =============
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
-      // ============= CEILING SHOT EXPLORATION: Alt lines near L10 ceiling at plus-money =============
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
     ],
   },
   validation: {
@@ -918,6 +919,15 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.65,
     profiles: [
+      // ============= FLOOR LOCK EXECUTION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
+      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
+      // ============= CEILING SHOT EXECUTION (PRIORITY — processed first to avoid timeout) =============
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
+      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       // ============= SWEET SPOT CORE: 3-leg parlays from Sweet Spot engine (minHitRate=55, engine pre-vetted) =============
       // --- Sorted by hit_rate ---
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
@@ -1012,15 +1022,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', side: 'under' },
-      // ============= FLOOR LOCK: Safe parlays — L10 floor clears the line =============
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
-      { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
-      // ============= CEILING SHOT: Risky parlays — alt lines near L10 ceiling at plus-money =============
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
-      { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 55, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
+      // (floor_lock + ceiling_shot moved to TOP of execution profiles to avoid timeout)
     ],
   },
 };
