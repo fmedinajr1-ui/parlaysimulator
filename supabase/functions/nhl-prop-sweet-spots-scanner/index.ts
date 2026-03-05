@@ -133,12 +133,19 @@ Deno.serve(async (req) => {
     const skaterLogs: Record<string, any[]> = {};
     for (let i = 0; i < allSkaterNames.length; i += 20) {
       const batch = allSkaterNames.slice(i, i + 20);
-      const { data: logs } = await supabase
+      const { data: logs, error: logErr } = await supabase
         .from('nhl_player_game_logs')
         .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points, hits, team')
         .in('player_name', batch)
         .order('game_date', { ascending: false })
         .limit(400);
+
+      if (logErr) {
+        console.error(`[NHL Scanner] Skater log query error:`, logErr.message);
+      }
+      if (i === 0) {
+        console.log(`[NHL Scanner] First batch (${batch.length} names): ${batch.slice(0, 3).join(', ')} → ${logs?.length || 0} rows returned`);
+      }
 
       for (const log of logs || []) {
         if (!skaterLogs[log.player_name]) skaterLogs[log.player_name] = [];
