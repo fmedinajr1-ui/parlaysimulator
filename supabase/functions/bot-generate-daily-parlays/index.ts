@@ -8889,6 +8889,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = body.action || 'generate';
     const targetDate = body.date || getEasternDateRange().gameDate;
+    const adminOnly = body.admin_only === true;
 
     // ============= LOAD DYNAMIC STAKE CONFIG =============
     // Read stakes from bot_stake_config table so they can be updated without code deploys
