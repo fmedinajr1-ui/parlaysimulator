@@ -7304,7 +7304,9 @@ async function generateTierParlays(
       
       // === EXECUTION TIER 80% L10 HIT RATE GATE ===
       // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
-      if (tier === 'execution' && 'player_name' in pick) {
+      // EXEMPT: floor_lock and ceiling_shot strategies have their own dedicated gates
+      const isFloorCeilingStrategy = isFloorLockProfile || isCeilingShotProfile;
+      if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
         if (l10HrPct < 80) {
@@ -7313,10 +7315,11 @@ async function generateTierParlays(
       }
       
       // For hybrid profiles, use a lower hit rate floor for team legs
+      // EXEMPT: floor_lock and ceiling_shot already filtered by their own floor/ceiling gates
       const effectiveMinHitRate = (isHybridProfile && 'type' in pick && pick.type === 'team') 
         ? Math.min(minHitRate, 55) 
         : minHitRate;
-      if (hitRatePercent < effectiveMinHitRate) continue;
+      if (!isFloorCeilingStrategy && hitRatePercent < effectiveMinHitRate) continue;
       
       if ('oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) continue;
 
