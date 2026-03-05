@@ -1313,6 +1313,11 @@ interface SweetSpotPick {
   event_id?: string;
   alternateLines?: AlternateLine[];
   sport?: string;
+  // L10 floor/ceiling data for floor_lock and ceiling_shot strategies
+  l10_min?: number;
+  l10_max?: number;
+  l10_avg?: number;
+  l10_median?: number;
 }
 
 interface EnrichedPick extends SweetSpotPick {
@@ -3009,6 +3014,107 @@ function selectOptimalLine(
   }
   
   return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
+}
+
+// ============= FLOOR LOCK: Select standard line only if L10 floor clears it =============
+function selectFloorLine(
+  pick: EnrichedPick
+): SelectedLine | null {
+  const l10Min = (pick as any).l10_min;
+  const line = pick.line;
+  if (l10Min == null || l10Min <= 0 || line <= 0) return null;
+  
+  const side = (pick.recommended_side || 'over').toLowerCase();
+  if (side === 'over' && l10Min >= line) {
+    const floorMargin = l10Min - line;
+    return { line, odds: pick.americanOdds, reason: `floor_lock_margin_${floorMargin.toFixed(1)}` };
+  }
+  if (side === 'under') {
+    const l10Max = (pick as any).l10_max;
+    if (l10Max != null && l10Max <= line) {
+      const ceilingMargin = line - l10Max;
+      return { line, odds: pick.americanOdds, reason: `floor_lock_under_margin_${ceilingMargin.toFixed(1)}` };
+    }
+  }
+  return null;
+}
+
+// ============= CEILING SHOT: Find alt line near player's L10 ceiling with plus-money odds =============
+function selectCeilingLine(
+  pick: EnrichedPick,
+  alternateLines: AlternateLine[]
+): SelectedLine | null {
+  const l10Max = (pick as any).l10_max;
+  const l10Avg = (pick as any).l10_avg || pick.projected_value || 0;
+  const mainLine = pick.line;
+  const side = (pick.recommended_side || 'over').toLowerCase();
+  
+  if (l10Max == null || l10Max <= 0 || !alternateLines || alternateLines.length === 0) return null;
+  
+  if (side === 'over') {
+    // Find alt lines between mainLine and l10Max that have plus-money odds
+    // Target: within 1-2 steps of l10Max (player has shown they can reach this)
+    const targetMin = mainLine + 1; // Must be above standard line
+    const targetMax = l10Max; // Can't exceed what they've actually done
+    
+    const viableAlts = alternateLines
+      .filter(alt => {
+        if (alt.line < targetMin || alt.line > targetMax) return false;
+        const odds = alt.overOdds;
+        return odds > 100; // Must be plus-money
+      })
+      .map(alt => ({
+        ...alt,
+        distFromCeiling: l10Max - alt.line,
+        relevantOdds: alt.overOdds,
+      }))
+      // Sort by highest line first (closest to ceiling = best value)
+      .sort((a, b) => b.line - a.line);
+    
+    if (viableAlts.length === 0) return null;
+    
+    // Pick the highest viable alt line (closest to ceiling)
+    const best = viableAlts[0];
+    return {
+      line: best.line,
+      odds: best.relevantOdds,
+      reason: `ceiling_shot_l10max_${l10Max}_alt_${best.line}`,
+      originalLine: mainLine,
+      oddsImprovement: best.relevantOdds - pick.americanOdds,
+    };
+  }
+  
+  if (side === 'under') {
+    // For under ceiling shots: find lower alt lines with plus-money
+    const l10Min = (pick as any).l10_min || 0;
+    const targetMax = mainLine - 1;
+    const targetMin = l10Min;
+    
+    const viableAlts = alternateLines
+      .filter(alt => {
+        if (alt.line > targetMax || alt.line < targetMin) return false;
+        const odds = alt.underOdds;
+        return odds > 100;
+      })
+      .map(alt => ({
+        ...alt,
+        relevantOdds: alt.underOdds,
+      }))
+      .sort((a, b) => a.line - b.line); // Lowest line first for unders
+    
+    if (viableAlts.length === 0) return null;
+    
+    const best = viableAlts[0];
+    return {
+      line: best.line,
+      odds: best.relevantOdds,
+      reason: `ceiling_shot_under_l10min_${l10Min}_alt_${best.line}`,
+      originalLine: mainLine,
+      oddsImprovement: best.relevantOdds - pick.americanOdds,
+    };
+  }
+  
+  return null;
 }
 
 // ============= STRICT PROP OVERLAP PREVENTION =============
