@@ -187,13 +187,6 @@ Deno.serve(async (req) => {
     }
     console.log(`[NHL Scanner] Name resolution: ${propToLogName.size}/${uniqueProps.size} props matched to game logs`);
 
-      for (const log of logs || []) {
-        if (!goalieLogs[log.player_name]) goalieLogs[log.player_name] = [];
-        if (goalieLogs[log.player_name].length < 10) goalieLogs[log.player_name].push(log);
-      }
-    }
-    console.log(`[NHL Scanner] Loaded goalie logs for ${Object.keys(goalieLogs).length} goalies`);
-
     // 3. Fetch defense rankings for matchup scoring
     const { data: defenseRankings } = await supabase
       .from('nhl_team_defense_rankings')
