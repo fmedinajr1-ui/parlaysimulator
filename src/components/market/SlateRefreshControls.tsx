@@ -274,6 +274,16 @@ export function SlateRefreshControls() {
             
             <div className="flex items-center gap-2 shrink-0">
               <Button 
+                variant="outline"
+                size="sm"
+                onClick={handleL10Refresh}
+                disabled={isBusy}
+                className="gap-2"
+              >
+                <Database className={`h-4 w-4 ${isL10Refreshing ? 'animate-pulse' : ''}`} />
+                {isL10Refreshing ? 'Refreshing...' : 'L10 Refresh & Rebuild'}
+              </Button>
+              <Button 
                 variant="destructive"
                 size="sm"
                 onClick={handleCleanAndRebuild}
