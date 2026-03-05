@@ -101,33 +101,43 @@ Deno.serve(async (req) => {
 
     // 2. Build name mapping: prop full names → game log abbreviated names
     // Game logs use "A. Ekblad" format, props use "Aaron Ekblad"
-    // Query distinct player names from both log tables to build reverse lookup
+    // We need ALL distinct player names from game logs to build the lookup map
+    // Since Supabase doesn't support DISTINCT via SDK, we paginate and deduplicate
 
-    const { data: skaterNames } = await supabase
-      .from('nhl_player_game_logs')
-      .select('player_name')
-      .limit(1000);
-    const { data: goalieNames } = await supabase
+    const logNameByAbbrev = new Map<string, string>();
+
+    // Fetch all skater names (paginate to get all 815+ distinct names)
+    let skaterOffset = 0;
+    const seenSkaters = new Set<string>();
+    while (true) {
+      const { data: batch } = await supabase
+        .from('nhl_player_game_logs')
+        .select('player_name')
+        .range(skaterOffset, skaterOffset + 999)
+        .order('player_name');
+      if (!batch || batch.length === 0) break;
+      for (const row of batch) {
+        if (!seenSkaters.has(row.player_name)) {
+          seenSkaters.add(row.player_name);
+          logNameByAbbrev.set(row.player_name.toLowerCase(), row.player_name);
+        }
+      }
+      skaterOffset += 1000;
+      if (batch.length < 1000) break;
+    }
+
+    // Fetch all goalie names
+    const { data: goalieRows } = await supabase
       .from('nhl_goalie_game_logs')
       .select('player_name')
-      .limit(500);
-
-    // Build maps: abbreviated form → log name, and full form → log name
-    const skaterNameSet = new Set<string>();
-    const goalieNameSet = new Set<string>();
-    const logNameByAbbrev = new Map<string, string>(); // "A. Ekblad" → "A. Ekblad"
-    const logNameByFull = new Map<string, string>();   // "Aaron Ekblad" → "A. Ekblad" (if full name exists)
-
-    for (const row of skaterNames || []) {
-      skaterNameSet.add(row.player_name);
-      logNameByAbbrev.set(row.player_name.toLowerCase(), row.player_name);
-      logNameByFull.set(row.player_name.toLowerCase(), row.player_name);
+      .limit(1000);
+    for (const row of goalieRows || []) {
+      if (!logNameByAbbrev.has(row.player_name.toLowerCase())) {
+        logNameByAbbrev.set(row.player_name.toLowerCase(), row.player_name);
+      }
     }
-    for (const row of goalieNames || []) {
-      goalieNameSet.add(row.player_name);
-      logNameByAbbrev.set(row.player_name.toLowerCase(), row.player_name);
-      logNameByFull.set(row.player_name.toLowerCase(), row.player_name);
-    }
+
+    console.log(`[NHL Scanner] Built name lookup with ${logNameByAbbrev.size} distinct log names`);
 
     // Resolve prop name → game log name
     function resolveLogName(propName: string): string | null {
