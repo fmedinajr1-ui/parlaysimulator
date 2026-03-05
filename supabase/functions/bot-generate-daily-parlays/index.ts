@@ -9206,7 +9206,7 @@ Deno.serve(async (req) => {
         await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
-          body: JSON.stringify({ type: 'daily_summary', data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: 'Paused - Bankroll Floor Protection' } }),
+          body: JSON.stringify({ type: 'daily_summary', admin_only: adminOnly, data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: 'Paused - Bankroll Floor Protection' } }),
         });
       } catch (_) { /* ignore */ }
       return new Response(
@@ -9245,9 +9245,10 @@ Deno.serve(async (req) => {
         await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
-          body: JSON.stringify({
-            type: 'daily_summary',
-            data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: '🚫 No Slate Today - Zero games scheduled' },
+           body: JSON.stringify({
+9248:             type: 'daily_summary',
+9249:             admin_only: adminOnly,
+9250:             data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: '🚫 No Slate Today - Zero games scheduled' },
           }),
         });
       } catch (_) { /* ignore */ }
@@ -9293,9 +9294,10 @@ Deno.serve(async (req) => {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${supabaseKey}`,
             },
-            body: JSON.stringify({
-              type: 'daily_summary',
-              data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: `Skipped - ${reason}` },
+             body: JSON.stringify({
+               type: 'daily_summary',
+               admin_only: adminOnly,
+               data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: `Skipped - ${reason}` },
             }),
           });
         } catch (_) { /* ignore */ }
@@ -10248,13 +10250,14 @@ Deno.serve(async (req) => {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${supabaseKey}`,
             },
-            body: JSON.stringify({
-              type: 'parlay_approval_request',
-              data: {
-                parlays: allParlaysWithIds,
-                date: targetDate,
-              },
-            }),
+             body: JSON.stringify({
+               type: 'parlay_approval_request',
+               admin_only: adminOnly,
+               data: {
+                 parlays: allParlaysWithIds,
+                 date: targetDate,
+               },
+             }),
           });
           console.log(`[Bot v2] Sent ${allParlaysWithIds.length} parlays for admin approval`);
         }
@@ -10351,18 +10354,19 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${supabaseKey}`,
           },
-           body: JSON.stringify({
-            type: 'tiered_parlays_generated',
-            data: {
-              totalCount: allParlays.length,
-              exploration: results['exploration']?.count || 0,
-              validation: results['validation']?.count || 0,
-              execution: results['execution']?.count || 0,
-              poolSize: pool.totalPool,
-              date: targetDate,
-              topPicks,
-            },
-          }),
+            body: JSON.stringify({
+             type: 'tiered_parlays_generated',
+             admin_only: adminOnly,
+             data: {
+               totalCount: allParlays.length,
+               exploration: results['exploration']?.count || 0,
+               validation: results['validation']?.count || 0,
+               execution: results['execution']?.count || 0,
+               poolSize: pool.totalPool,
+               date: targetDate,
+               topPicks,
+             },
+           }),
         });
       } catch (telegramError) {
         console.error('[Bot v2] Telegram notification failed:', telegramError);
