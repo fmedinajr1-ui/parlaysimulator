@@ -3206,7 +3206,7 @@ function selectCeilingLine(
       .filter(alt => {
         if (alt.line < targetMin || alt.line > targetMax) return false;
         const odds = alt.overOdds;
-        return odds > 100; // Must be plus-money
+        return odds >= -130; // Relaxed from plus-money only — allow slight juice for ceiling shots
       })
       .map(alt => ({
         ...alt,
@@ -3239,7 +3239,7 @@ function selectCeilingLine(
       .filter(alt => {
         if (alt.line > targetMax || alt.line < targetMin) return false;
         const odds = alt.underOdds;
-        return odds > 100;
+        return odds >= -130; // Relaxed from plus-money only
       })
       .map(alt => ({
         ...alt,
