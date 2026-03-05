@@ -1,29 +1,26 @@
 
+# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-# Why No Floor/Ceiling Parlays Were Generated
+## What Was Added
+Two new parlay strategies using L10 game log floor/ceiling data:
 
-## Root Cause
-The pipeline filters sweet spots down to only picks with **verified sportsbook lines** (`has_real_line` check at line 4525). Today, only **11 sweet spots** survived this filter. Most players with strong L10 floor data (LaMelo Ball, Donovan Clingan, James Harden, etc.) had `actual_line: null` and no match in the unified_props odds map, so they were eliminated before the floor/ceiling logic ever ran.
+### 🔒 Floor Lock (Safe Parlays)
+- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
+- **Gate**: `l10_min >= line` for overs, `l10_max <= line` for unders
+- **Line**: Standard sportsbook line (safety IS the floor guarantee)
+- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
 
-With only 11 picks in the pool, the strict floor_lock gate (`l10_min >= line`) and ceiling_shot gate (`l10_max >= line * 1.3`) likely couldn't find 3 qualifying legs each.
+### 🎯 Ceiling Shot (Risky Parlays)
+- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
+- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
+- **Line**: Alternate line near L10 max with odds > +100
+- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
 
-## Fix: Two Changes
-
-### 1. Relax the verified-line requirement for floor/ceiling strategies
-For `floor_lock` and `ceiling_shot` profiles only, allow picks that have L10 data even if they don't have a live sportsbook line — use `recommended_line` as fallback. The L10 data IS the verification for these strategies.
-
-In the enrichment filter (~line 4520-4527), keep all picks with `l10_min != null` or `l10_max != null` regardless of `has_real_line`. Then in the floor/ceiling candidate filtering (~line 6860), use `p.actual_line || p.recommended_line` as the comparison line.
-
-### 2. Add diagnostic logging
-Add a log line before the floor/ceiling filtering that prints how many sweet spots have L10 data, so we can see exactly what's available:
-```
-[Bot] floor_lock pool: X picks with l10_min, Y pass floor gate (need 3)
-[Bot] ceiling_shot pool: X picks with l10_max, Y pass ceiling gate (need 3)
-```
-
-### Files Changed
-1. **`supabase/functions/bot-generate-daily-parlays/index.ts`**:
-   - In the enrichment filter (~4520): preserve picks with L10 data even without verified lines
-   - In floor_lock filtering (~6860): add diagnostic logging
-   - In ceiling_shot filtering (~6900): add diagnostic logging
-
+## Files Changed
+1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
+   - Extended `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
+   - Added `selectFloorLine()` and `selectCeilingLine()` functions
+   - Added `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers
+   - Added strategy-specific candidate filtering in the parlay assembly loop
+   - Applied ceiling line override during leg assembly for ceiling_shot picks
+   - Labeled parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`

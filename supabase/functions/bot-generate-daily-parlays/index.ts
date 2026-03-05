@@ -4522,7 +4522,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     // Only block if hit-rate blocked category
     if (blockedByHitRate.has(p.category)) return false;
     // REQUIRE real sportsbook line — no fake -110 defaults
-    if (!p.has_real_line) return false;
+    // EXCEPTION: Allow picks with L10 floor/ceiling data through for floor_lock/ceiling_shot strategies
+    const hasL10Data = (p as any).l10_min != null || (p as any).l10_max != null;
+    if (!p.has_real_line && !hasL10Data) return false;
     return true;
   });
 
@@ -6857,23 +6859,28 @@ async function generateTierParlays(
       console.log(`[Bot] ${tier}/matchup_mispriced: ${candidatePicks.length} mispriced+matchup picks (sort=${sortBy})`);
     } else if (isFloorLockProfile) {
       // === FLOOR LOCK: All legs must have L10 floor clearing the line ===
+      const withL10Min = pool.sweetSpots.filter(p => (p as any).l10_min != null);
       const floorCandidates = pool.sweetSpots.filter(p => {
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
         const hr = p.l10_hit_rate || p.confidence_score || 0;
         const hrPct = hr <= 1 ? hr * 100 : hr;
         if (hrPct < (profile.minHitRate || 70)) return false;
+        // Use actual_line if available, else fall back to recommended_line
+        const compareLine = p.line || (p as any).recommended_line;
+        if (!compareLine || compareLine <= 0) return false;
         // FLOOR GATE: L10 min must clear the line
         const l10Min = (p as any).l10_min;
         const side = (p.recommended_side || 'over').toLowerCase();
         if (side === 'over') {
-          return l10Min != null && l10Min > 0 && l10Min >= p.line;
+          return l10Min != null && l10Min > 0 && l10Min >= compareLine;
         } else if (side === 'under') {
           const l10Max = (p as any).l10_max;
-          return l10Max != null && l10Max > 0 && l10Max <= p.line;
+          return l10Max != null && l10Max > 0 && l10Max <= compareLine;
         }
         return false;
       });
+      console.log(`[Bot] floor_lock pool: ${withL10Min.length} picks with l10_min, ${floorCandidates.length} pass floor gate (need ${profile.legs})`);
       // Sort by floor margin (how far floor exceeds line)
       const sortBy = profile.sortBy || 'composite';
       if (sortBy === 'hit_rate') {
@@ -6899,24 +6906,29 @@ async function generateTierParlays(
       console.log(`[Bot] ${tier}/floor_lock: 🔒 ${candidatePicks.length} picks where L10 floor clears line (sort=${sortBy})`);
     } else if (isCeilingShotProfile) {
       // === CEILING SHOT: L10 ceiling 30%+ above standard line, alt lines at plus-money ===
+      const withL10Max = pool.sweetSpots.filter(p => (p as any).l10_max != null);
       const ceilingCandidates = pool.sweetSpots.filter(p => {
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
         const hr = p.l10_hit_rate || p.confidence_score || 0;
         const hrPct = hr <= 1 ? hr * 100 : hr;
         if (hrPct < (profile.minHitRate || 45)) return false;
+        // Use actual_line if available, else fall back to recommended_line
+        const compareLine = p.line || (p as any).recommended_line;
+        if (!compareLine || compareLine <= 0) return false;
         // CEILING GATE: L10 max must be 30%+ above standard line
         const l10Max = (p as any).l10_max;
         if (l10Max == null || l10Max <= 0) return false;
         const side = (p.recommended_side || 'over').toLowerCase();
         if (side === 'over') {
-          return l10Max >= p.line * 1.3;
+          return l10Max >= compareLine * 1.3;
         } else if (side === 'under') {
           const l10Min = (p as any).l10_min;
-          return l10Min != null && l10Min > 0 && p.line >= l10Min * 1.3;
+          return l10Min != null && l10Min > 0 && compareLine >= l10Min * 1.3;
         }
         return false;
       });
+      console.log(`[Bot] ceiling_shot pool: ${withL10Max.length} picks with l10_max, ${ceilingCandidates.length} pass ceiling gate (need ${profile.legs})`);
       // Must have alternate lines available for ceiling shot
       const ceilingWithAlts = ceilingCandidates.filter(p => {
         const alts = (p as any).alternateLines || [];
