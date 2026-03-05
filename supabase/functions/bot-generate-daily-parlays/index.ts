@@ -6317,6 +6317,10 @@ async function generateTierParlays(
     const isMatchupTeamStackProfile = profile.strategy === 'matchup_team_stack';
     // MATCHUP MISPRICED: intersection of mispriced edge AND matchup boost
     const isMatchupMispricedProfile = profile.strategy === 'matchup_mispriced';
+    // FLOOR LOCK: L10 floor clears the line — safest possible picks
+    const isFloorLockProfile = profile.strategy === 'floor_lock';
+    // CEILING SHOT: Alt lines near L10 ceiling at plus-money odds
+    const isCeilingShotProfile = profile.strategy === 'ceiling_shot';
     
     if (isSweetSpotCoreProfile) {
       // === SWEET SPOT CORE: All legs from category_sweet_spots — engine pre-vetted ===
