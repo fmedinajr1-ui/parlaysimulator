@@ -1,26 +1,30 @@
 
-# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-## What Was Added
-Two new parlay strategies using L10 game log floor/ceiling data:
+# Fix: Move Floor Lock & Ceiling Shot to Top of Profile Lists + Add Timeout Guard
 
-### 🔒 Floor Lock (Safe Parlays)
-- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
-- **Gate**: `l10_min >= line` for overs, `l10_max <= line` for unders
-- **Line**: Standard sportsbook line (safety IS the floor guarantee)
-- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
+## Root Cause (confirmed)
+Floor/ceiling profiles sit at the **bottom** of both tier arrays:
+- Exploration: lines 818-827 (positions ~85-92 out of ~92 profiles)  
+- Execution: lines 1016-1023 (positions ~30-33 out of ~33 profiles)
 
-### 🎯 Ceiling Shot (Risky Parlays)
-- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
-- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
-- **Line**: Alternate line near L10 max with odds > +100
-- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
+The function times out processing the ~80+ profiles before them and never reaches floor/ceiling.
 
-## Files Changed
-1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
-   - Extended `SweetSpotPick` with `l10_min`, `l10_max`, `l10_avg`, `l10_median`
-   - Added `selectFloorLine()` and `selectCeilingLine()` functions
-   - Added `floor_lock` and `ceiling_shot` strategy profiles to execution + exploration tiers
-   - Added strategy-specific candidate filtering in the parlay assembly loop
-   - Applied ceiling line override during leg assembly for ceiling_shot picks
-   - Labeled parlays with `🔒 FLOOR LOCK` / `🎯 CEILING SHOT` in `selection_rationale`
+## Changes
+
+### 1. Reorder profiles in `bot-generate-daily-parlays/index.ts`
+
+**Exploration tier** (~line 728): Move the 8 floor_lock + ceiling_shot profiles (currently lines 818-827) to the **top** of the exploration profiles array, right after the opening bracket. This ensures they're processed first.
+
+**Execution tier** (~line 975): Move the 7 floor_lock + ceiling_shot profiles (currently lines 1016-1023) to the **top** of the execution profiles array.
+
+### 2. Add timeout guard in profile iteration loop
+
+Add a wall-clock check at the start of each profile iteration. If elapsed time exceeds 140 seconds (out of typical 150s limit), log a warning with which profiles were skipped and break out of the loop. This provides visibility into future timeout-related skips.
+
+### 3. Trigger test run
+
+After deploying, invoke the function with `{"admin_only": true}` and check logs + database for `floor_lock` and `ceiling_shot` parlays.
+
+### Files Changed
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`** — reorder profiles, add timeout guard
+
