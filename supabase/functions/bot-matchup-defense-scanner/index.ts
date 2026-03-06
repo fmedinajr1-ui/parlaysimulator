@@ -6,9 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Returns a noon-ET-to-noon-ET window in UTC ISO strings
-// This captures tonight's games which tip off in the evening ET
-// but have UTC timestamps on the next calendar day
 function getEasternDateRange(): { today: string; startUtc: string; endUtc: string } {
   const now = new Date();
   const today = new Intl.DateTimeFormat('en-CA', {
@@ -16,56 +13,25 @@ function getEasternDateRange(): { today: string; startUtc: string; endUtc: strin
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(now);
 
-  // Noon ET today to noon ET tomorrow
-  // ET is UTC-5 (EST) or UTC-4 (EDT)
-  // We use 17:00 UTC (noon ET during EST) as start
-  // and 17:00 UTC next day as end
   const [year, month, day] = today.split('-').map(Number);
-  const startDate = new Date(Date.UTC(year, month - 1, day, 17, 0, 0)); // noon ET = 17:00 UTC (EST)
+  const startDate = new Date(Date.UTC(year, month - 1, day, 17, 0, 0));
   const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
 
-  return {
-    today,
-    startUtc: startDate.toISOString(),
-    endUtc: endDate.toISOString(),
-  };
+  return { today, startUtc: startDate.toISOString(), endUtc: endDate.toISOString() };
 }
 
-// NBA team full name -> abbreviation map
 const NBA_TEAM_NAME_TO_ABBREV: Record<string, string> = {
-  'atlanta hawks': 'ATL',
-  'boston celtics': 'BOS',
-  'brooklyn nets': 'BKN',
-  'charlotte hornets': 'CHA',
-  'chicago bulls': 'CHI',
-  'cleveland cavaliers': 'CLE',
-  'dallas mavericks': 'DAL',
-  'denver nuggets': 'DEN',
-  'detroit pistons': 'DET',
-  'golden state warriors': 'GSW',
-  'houston rockets': 'HOU',
-  'indiana pacers': 'IND',
-  'los angeles clippers': 'LAC',
-  'la clippers': 'LAC',
-  'los angeles lakers': 'LAL',
-  'la lakers': 'LAL',
-  'memphis grizzlies': 'MEM',
-  'miami heat': 'MIA',
-  'milwaukee bucks': 'MIL',
-  'minnesota timberwolves': 'MIN',
-  'new orleans pelicans': 'NOP',
-  'new york knicks': 'NYK',
-  'oklahoma city thunder': 'OKC',
-  'orlando magic': 'ORL',
-  'philadelphia 76ers': 'PHI',
-  'phoenix suns': 'PHX',
-  'portland trail blazers': 'POR',
-  'sacramento kings': 'SAC',
-  'san antonio spurs': 'SAS',
-  'toronto raptors': 'TOR',
-  'utah jazz': 'UTA',
-  'washington wizards': 'WAS',
-  // Common short forms
+  'atlanta hawks': 'ATL', 'boston celtics': 'BOS', 'brooklyn nets': 'BKN',
+  'charlotte hornets': 'CHA', 'chicago bulls': 'CHI', 'cleveland cavaliers': 'CLE',
+  'dallas mavericks': 'DAL', 'denver nuggets': 'DEN', 'detroit pistons': 'DET',
+  'golden state warriors': 'GSW', 'houston rockets': 'HOU', 'indiana pacers': 'IND',
+  'los angeles clippers': 'LAC', 'la clippers': 'LAC', 'los angeles lakers': 'LAL',
+  'la lakers': 'LAL', 'memphis grizzlies': 'MEM', 'miami heat': 'MIA',
+  'milwaukee bucks': 'MIL', 'minnesota timberwolves': 'MIN', 'new orleans pelicans': 'NOP',
+  'new york knicks': 'NYK', 'oklahoma city thunder': 'OKC', 'orlando magic': 'ORL',
+  'philadelphia 76ers': 'PHI', 'phoenix suns': 'PHX', 'portland trail blazers': 'POR',
+  'sacramento kings': 'SAC', 'san antonio spurs': 'SAS', 'toronto raptors': 'TOR',
+  'utah jazz': 'UTA', 'washington wizards': 'WAS',
   'hawks': 'ATL', 'celtics': 'BOS', 'nets': 'BKN', 'hornets': 'CHA',
   'bulls': 'CHI', 'cavaliers': 'CLE', 'cavs': 'CLE', 'mavericks': 'DAL',
   'mavs': 'DAL', 'nuggets': 'DEN', 'pistons': 'DET', 'warriors': 'GSW',
@@ -80,20 +46,26 @@ const NBA_TEAM_NAME_TO_ABBREV: Record<string, string> = {
 function resolveTeamAbbrev(teamName: string): string {
   if (!teamName) return '';
   const lower = teamName.trim().toLowerCase();
-  // Check if it's already an abbreviation (3 chars, all uppercase originally)
   if (teamName.trim().length <= 4 && teamName.trim() === teamName.trim().toUpperCase()) {
     return teamName.trim().toUpperCase();
   }
   return NBA_TEAM_NAME_TO_ABBREV[lower] || teamName.trim().toUpperCase();
 }
 
-interface DefenseProfile {
+interface TeamProfile {
   team_abbreviation: string;
+  // Defense ranks (higher = worse defense = more points allowed)
   overall_rank: number | null;
   opp_points_rank: number | null;
   opp_threes_rank: number | null;
   opp_rebounds_rank: number | null;
   opp_assists_rank: number | null;
+  // Offense ranks (rank 1 = best offense)
+  off_points_rank: number | null;
+  off_threes_rank: number | null;
+  off_rebounds_rank: number | null;
+  off_assists_rank: number | null;
+  off_pace_rank: number | null;
 }
 
 interface MatchupRecommendation {
@@ -102,31 +74,42 @@ interface MatchupRecommendation {
   prop_type: string;
   side: string;
   defense_rank: number;
-  priority: 'prime' | 'favorable' | 'avoid';
+  offense_rank: number;
+  matchup_score: number;
+  matchup_label: 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid';
 }
 
 interface GameMatchupMap {
   home_team: string;
   away_team: string;
-  home_soft_spots: { stat: string; rank: number }[];
-  away_soft_spots: { stat: string; rank: number }[];
-  home_elite_defense: { stat: string; rank: number }[];
-  away_elite_defense: { stat: string; rank: number }[];
+  home_soft_spots: { stat: string; def_rank: number; off_rank: number; score: number }[];
+  away_soft_spots: { stat: string; def_rank: number; off_rank: number; score: number }[];
+  home_elite_defense: { stat: string; def_rank: number; off_rank: number; score: number }[];
+  away_elite_defense: { stat: string; def_rank: number; off_rank: number; score: number }[];
   recommended_props: MatchupRecommendation[];
 }
 
 const STAT_CATEGORIES = [
-  { key: 'points', rankField: 'opp_points_rank', propTypes: ['points', 'pts'] },
-  { key: 'threes', rankField: 'opp_threes_rank', propTypes: ['threes', '3pm', 'three_pointers'] },
-  { key: 'rebounds', rankField: 'opp_rebounds_rank', propTypes: ['rebounds', 'reb'] },
-  { key: 'assists', rankField: 'opp_assists_rank', propTypes: ['assists', 'ast'] },
+  { key: 'points', defField: 'opp_points_rank', offField: 'off_points_rank', propTypes: ['points', 'pts'] },
+  { key: 'threes', defField: 'opp_threes_rank', offField: 'off_threes_rank', propTypes: ['threes', '3pm', 'three_pointers'] },
+  { key: 'rebounds', defField: 'opp_rebounds_rank', offField: 'off_rebounds_rank', propTypes: ['rebounds', 'reb'] },
+  { key: 'assists', defField: 'opp_assists_rank', offField: 'off_assists_rank', propTypes: ['assists', 'ast'] },
 ];
 
-function classifyRank(rank: number): 'prime' | 'favorable' | 'avoid' | null {
-  if (rank >= 25) return 'prime';
-  if (rank >= 18) return 'favorable';
-  if (rank <= 5) return 'avoid';
-  return null;
+// Bidirectional matchup score: oppDefenseRank * 0.6 + invertedOffenseRank * 0.4
+// defRank: higher = worse defense (more points allowed) — good for attacker
+// offRank: rank 1 = best offense → inverted = 30 (strongest contribution)
+function computeMatchupScore(defRank: number, offRank: number): number {
+  const invertedOff = 31 - offRank; // rank 1 → 30, rank 30 → 1
+  return defRank * 0.6 + invertedOff * 0.4;
+}
+
+function classifyMatchupScore(score: number): 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid' {
+  if (score >= 22) return 'elite';
+  if (score >= 18) return 'prime';
+  if (score >= 14) return 'favorable';
+  if (score <= 8) return 'avoid';
+  return 'neutral';
 }
 
 serve(async (req) => {
@@ -140,9 +123,9 @@ serve(async (req) => {
 
   try {
     const { today, startUtc, endUtc } = getEasternDateRange();
-    console.log(`[MatchupScanner] Starting defense scan for ${today} (window: ${startUtc} to ${endUtc})`);
+    console.log(`[MatchupScanner] Bidirectional scan for ${today} (${startUtc} to ${endUtc})`);
 
-    // Fetch today's games using noon-to-noon ET window
+    // Fetch today's games
     const { data: rawGames } = await supabase
       .from('game_bets')
       .select('home_team, away_team, game_id, sport')
@@ -151,13 +134,12 @@ serve(async (req) => {
       .lte('commence_time', endUtc);
 
     if (!rawGames || rawGames.length === 0) {
-      console.log('[MatchupScanner] No games found for today');
+      console.log('[MatchupScanner] No games found');
       return new Response(JSON.stringify({ message: 'No games today', games: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Deduplicate by event_id (multiple bookmaker rows per game)
     const seenEvents = new Set<string>();
     const games = rawGames.filter(g => {
       if (seenEvents.has(g.game_id)) return false;
@@ -165,37 +147,34 @@ serve(async (req) => {
       return true;
     });
 
-    console.log(`[MatchupScanner] Found ${games.length} unique games (from ${rawGames.length} rows)`);
+    console.log(`[MatchupScanner] ${games.length} unique games (from ${rawGames.length} rows)`);
 
-    // Load all defense rankings
-    const { data: defenseData } = await supabase
+    // Load BOTH offense + defense rankings
+    const { data: rankData } = await supabase
       .from('team_defense_rankings')
-      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank')
+      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank, off_points_rank, off_threes_rank, off_rebounds_rank, off_assists_rank, off_pace_rank')
       .eq('is_current', true);
 
-    const defenseMap = new Map<string, DefenseProfile>();
-    if (defenseData) {
-      for (const row of defenseData) {
-        defenseMap.set((row.team_abbreviation || '').toUpperCase(), row as DefenseProfile);
+    const profileMap = new Map<string, TeamProfile>();
+    if (rankData) {
+      for (const row of rankData) {
+        profileMap.set((row.team_abbreviation || '').toUpperCase(), row as TeamProfile);
       }
     }
-    console.log(`[MatchupScanner] Loaded ${defenseMap.size} team defense profiles`);
+    console.log(`[MatchupScanner] Loaded ${profileMap.size} team profiles (offense + defense)`);
 
     const allMatchups: GameMatchupMap[] = [];
     const allRecommendations: MatchupRecommendation[] = [];
 
     for (const game of games) {
-      // Resolve full team names to abbreviations
       const homeAbbrev = resolveTeamAbbrev(game.home_team || '');
       const awayAbbrev = resolveTeamAbbrev(game.away_team || '');
 
-      console.log(`[MatchupScanner] Game: ${game.home_team} -> ${homeAbbrev} vs ${game.away_team} -> ${awayAbbrev}`);
+      const homeProfile = profileMap.get(homeAbbrev);
+      const awayProfile = profileMap.get(awayAbbrev);
 
-      const homeDef = defenseMap.get(homeAbbrev);
-      const awayDef = defenseMap.get(awayAbbrev);
-
-      if (!homeDef && !awayDef) {
-        console.log(`[MatchupScanner] No defense data for ${homeAbbrev} vs ${awayAbbrev}, skipping`);
+      if (!homeProfile && !awayProfile) {
+        console.log(`[MatchupScanner] No data for ${homeAbbrev} vs ${awayAbbrev}, skipping`);
         continue;
       }
 
@@ -209,34 +188,37 @@ serve(async (req) => {
         recommended_props: [],
       };
 
-      // Analyze home team defense (away players attack it)
-      if (homeDef) {
+      // Away team attacks home defense
+      // Need: home defense ranks (how bad they are) + away offense ranks (how good attacker is)
+      if (homeProfile && awayProfile) {
         for (const stat of STAT_CATEGORIES) {
-          const rank = (homeDef as any)[stat.rankField] ?? homeDef.overall_rank;
-          if (rank == null) continue;
+          const defRank = (homeProfile as any)[stat.defField] ?? homeProfile.overall_rank;
+          const offRank = (awayProfile as any)[stat.offField];
+          if (defRank == null || offRank == null) continue;
 
-          const classification = classifyRank(rank);
-          if (classification === 'prime' || classification === 'favorable') {
-            matchup.home_soft_spots.push({ stat: stat.key, rank });
+          const score = computeMatchupScore(defRank, offRank);
+          const label = classifyMatchupScore(score);
+
+          console.log(`[MatchupScanner] ${awayAbbrev} ${stat.key} OFF(${offRank}) vs ${homeAbbrev} DEF(${defRank}) → score=${score.toFixed(1)} [${label}]`);
+
+          const entry = { stat: stat.key, def_rank: defRank, off_rank: offRank, score: Math.round(score * 10) / 10 };
+
+          if (label === 'elite' || label === 'prime' || label === 'favorable') {
+            matchup.home_soft_spots.push(entry);
+          } else if (label === 'avoid') {
+            matchup.home_elite_defense.push(entry);
+          }
+
+          if (label !== 'neutral') {
             const rec: MatchupRecommendation = {
               attacking_team: awayAbbrev,
               defending_team: homeAbbrev,
               prop_type: stat.key,
-              side: 'over',
-              defense_rank: rank,
-              priority: classification,
-            };
-            matchup.recommended_props.push(rec);
-            allRecommendations.push(rec);
-          } else if (classification === 'avoid') {
-            matchup.home_elite_defense.push({ stat: stat.key, rank });
-            const rec: MatchupRecommendation = {
-              attacking_team: awayAbbrev,
-              defending_team: homeAbbrev,
-              prop_type: stat.key,
-              side: 'over',
-              defense_rank: rank,
-              priority: 'avoid',
+              side: label === 'avoid' ? 'under' : 'over',
+              defense_rank: defRank,
+              offense_rank: offRank,
+              matchup_score: Math.round(score * 10) / 10,
+              matchup_label: label,
             };
             matchup.recommended_props.push(rec);
             allRecommendations.push(rec);
@@ -244,34 +226,36 @@ serve(async (req) => {
         }
       }
 
-      // Analyze away team defense (home players attack it)
-      if (awayDef) {
+      // Home team attacks away defense
+      if (awayProfile && homeProfile) {
         for (const stat of STAT_CATEGORIES) {
-          const rank = (awayDef as any)[stat.rankField] ?? awayDef.overall_rank;
-          if (rank == null) continue;
+          const defRank = (awayProfile as any)[stat.defField] ?? awayProfile.overall_rank;
+          const offRank = (homeProfile as any)[stat.offField];
+          if (defRank == null || offRank == null) continue;
 
-          const classification = classifyRank(rank);
-          if (classification === 'prime' || classification === 'favorable') {
-            matchup.away_soft_spots.push({ stat: stat.key, rank });
+          const score = computeMatchupScore(defRank, offRank);
+          const label = classifyMatchupScore(score);
+
+          console.log(`[MatchupScanner] ${homeAbbrev} ${stat.key} OFF(${offRank}) vs ${awayAbbrev} DEF(${defRank}) → score=${score.toFixed(1)} [${label}]`);
+
+          const entry = { stat: stat.key, def_rank: defRank, off_rank: offRank, score: Math.round(score * 10) / 10 };
+
+          if (label === 'elite' || label === 'prime' || label === 'favorable') {
+            matchup.away_soft_spots.push(entry);
+          } else if (label === 'avoid') {
+            matchup.away_elite_defense.push(entry);
+          }
+
+          if (label !== 'neutral') {
             const rec: MatchupRecommendation = {
               attacking_team: homeAbbrev,
               defending_team: awayAbbrev,
               prop_type: stat.key,
-              side: 'over',
-              defense_rank: rank,
-              priority: classification,
-            };
-            matchup.recommended_props.push(rec);
-            allRecommendations.push(rec);
-          } else if (classification === 'avoid') {
-            matchup.away_elite_defense.push({ stat: stat.key, rank });
-            const rec: MatchupRecommendation = {
-              attacking_team: homeAbbrev,
-              defending_team: awayAbbrev,
-              prop_type: stat.key,
-              side: 'over',
-              defense_rank: rank,
-              priority: 'avoid',
+              side: label === 'avoid' ? 'under' : 'over',
+              defense_rank: defRank,
+              offense_rank: offRank,
+              matchup_score: Math.round(score * 10) / 10,
+              matchup_label: label,
             };
             matchup.recommended_props.push(rec);
             allRecommendations.push(rec);
@@ -284,37 +268,42 @@ serve(async (req) => {
       }
     }
 
-    const primeCount = allRecommendations.filter(r => r.priority === 'prime').length;
-    const favorableCount = allRecommendations.filter(r => r.priority === 'favorable').length;
-    const avoidCount = allRecommendations.filter(r => r.priority === 'avoid').length;
+    const eliteCount = allRecommendations.filter(r => r.matchup_label === 'elite').length;
+    const primeCount = allRecommendations.filter(r => r.matchup_label === 'prime').length;
+    const favorableCount = allRecommendations.filter(r => r.matchup_label === 'favorable').length;
+    const avoidCount = allRecommendations.filter(r => r.matchup_label === 'avoid').length;
 
-    console.log(`[MatchupScanner] Results: ${allMatchups.length} games with matchup data | ${primeCount} prime, ${favorableCount} favorable, ${avoidCount} avoid`);
+    console.log(`[MatchupScanner] Results: ${allMatchups.length} games | ${eliteCount} elite, ${primeCount} prime, ${favorableCount} favorable, ${avoidCount} avoid`);
 
-    // Write to bot_research_findings
+    // Build summary
     const summaryLines = allMatchups.map(m => {
-      const softHome = m.home_soft_spots.map(s => `${s.stat}(${s.rank})`).join(',');
-      const softAway = m.away_soft_spots.map(s => `${s.stat}(${s.rank})`).join(',');
-      return `${m.away_team}@${m.home_team}: HomeDef weak=[${softHome}] AwayDef weak=[${softAway}]`;
+      const softHome = m.home_soft_spots.map(s => `${s.stat}(OFF${s.off_rank}vDEF${s.def_rank}=${s.score})`).join(',');
+      const softAway = m.away_soft_spots.map(s => `${s.stat}(OFF${s.off_rank}vDEF${s.def_rank}=${s.score})`).join(',');
+      return `${m.away_team}@${m.home_team}: AwayAttacks=[${softHome}] HomeAttacks=[${softAway}]`;
     }).join(' | ');
 
     const upsertPayload = {
-      title: `Matchup Defense Scan ${today}`,
+      title: `Bidirectional Matchup Scan ${today}`,
       category: 'matchup_defense_scan',
       research_date: today,
       summary: summaryLines.slice(0, 2000) || 'No actionable matchups found',
       actionable: allRecommendations.length > 0,
-      relevance_score: Math.min(9.99, Math.max(1, Math.round(primeCount * 2 + favorableCount))),
+      relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
+        engine_version: 'bidirectional_v1',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
+        elite_opportunities: eliteCount,
         prime_opportunities: primeCount,
         favorable_opportunities: favorableCount,
         avoid_zones: avoidCount,
+        scoring_formula: 'oppDefRank*0.6 + (31-teamOffRank)*0.4',
+        thresholds: { elite: '>=22', prime: '>=18', favorable: '>=14', avoid: '<=8' },
         matchups: allMatchups,
         recommendations: allRecommendations,
       },
-      sources: ['team_defense_rankings', 'game_bets'],
+      sources: ['team_defense_rankings(offense+defense)', 'game_bets'],
       updated_at: new Date().toISOString(),
     };
 
@@ -327,19 +316,18 @@ serve(async (req) => {
       const { error: insertError } = await supabase
         .from('bot_research_findings')
         .insert({ ...upsertPayload, id: crypto.randomUUID() });
-      if (insertError) {
-        console.error('[MatchupScanner] Insert fallback also failed:', insertError);
-      } else {
-        console.log('[MatchupScanner] Fallback insert succeeded');
-      }
+      if (insertError) console.error('[MatchupScanner] Insert fallback also failed:', insertError);
+      else console.log('[MatchupScanner] Fallback insert succeeded');
     } else {
-      console.log('[MatchupScanner] Successfully wrote matchup scan to bot_research_findings');
+      console.log('[MatchupScanner] Successfully wrote bidirectional scan to bot_research_findings');
     }
 
     const result = {
       scan_date: today,
+      engine_version: 'bidirectional_v1',
       games_scanned: games.length,
       games_with_matchups: allMatchups.length,
+      elite: eliteCount,
       prime: primeCount,
       favorable: favorableCount,
       avoid: avoidCount,
