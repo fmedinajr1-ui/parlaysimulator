@@ -3986,6 +3986,9 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /subscribe / /unsubscribe — Alerts
 /export — Export data
 /digest — Weekly summary
+/weekly — Full weekly rundown + forward leans
+/rankings — Team OFF/DEF rankings
+/rankings [TEAM] — Single team profile
 
 *User Management:*
 /setpassword [pw] [max] — Create password
@@ -4054,8 +4057,12 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/broadcast") { await handleBroadcast(chatId); return null; }
     if (cmd === "/extras") { return await handleExtras(chatId); }
     if (cmd === "/engineaccuracy") { return await handleEngineAccuracy(chatId); }
-    if (cmd === "/lookup") { return await handleLookup(chatId, args); }
+  if (cmd === "/lookup") { return await handleLookup(chatId, args); }
+  if (cmd === "/rankings") return await handleRankings(chatId, args);
+  if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
     if (cmd === "/sweetspots") { await handleSweetSpots(chatId); return null; }
+    if (cmd === "/rankings") return await handleRankings(chatId, args);
+    if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
@@ -4133,6 +4140,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /calendar — Your monthly P&L
 /roi — Your personal ROI
 /streaks — Hot & cold streaks
+/rankings — Team OFF/DEF rankings
+/weekly — Weekly rundown + forward leans
 /cancel — Cancel your subscription
 
 💬 *Ask me anything:*
