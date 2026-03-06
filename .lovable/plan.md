@@ -24,7 +24,26 @@ Orchestrator that:
 1. Runs bidirectional `bot-matchup-defense-scanner`
 2. Queries `bot_research_findings` for today's matchup scan
 3. Categorizes into elite/prime/favorable/avoid tiers
-4. Broadcasts formatted report to Telegram
+4. **Cross-references with `category_sweet_spots` for player-level validation**
+5. Broadcasts formatted report to Telegram with player targets vs environment-only flags
+
+# Bidirectional Scanner — Player-Level Validation Fix ✅ (March 6, 2026)
+
+## Problem
+Scanner correctly identified team-level matchup signals (e.g., WAS Rebounds Elite vs UTA) but these were misapplied as blanket OVER recommendations for individual bench players who don't have the usage/ceiling to benefit.
+
+## Fix
+1. **Scanner (`bot-matchup-defense-scanner`)**: Now cross-references `category_sweet_spots` to find specific players whose L10 averages support each team signal. Each recommendation now includes `player_backed: boolean` and `player_targets: PlayerTarget[]`.
+2. **Broadcast (`nba-matchup-daily-broadcast`)**: Shows player-backed targets with L10 stats (avg, hit rate, floor) under each matchup. Environment-only signals (no player backing) are flagged with ⚠️ warning.
+
+## New Telegram Format
+```
+🔥 ELITE (3 — 1 player-backed)
+  • WAS Rebounds vs UTA DEF (Score: 29.0)
+    OFF #2 vs DEF #29
+      ✅ Kyle Kuzma OVER 6.5 (L10: 8.2 avg, 90% hit, floor 5)
+      ⚠️ Environment only for low-usage players
+```
 
 # Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
