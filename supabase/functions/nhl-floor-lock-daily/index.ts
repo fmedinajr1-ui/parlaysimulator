@@ -409,6 +409,153 @@ Deno.serve(async (req) => {
     }
 
     // ============================================================
+    // === PHASE 2D: Cross-Sport NHL+MLB Optimal Combo ===
+    // ============================================================
+    log("=== PHASE 2D: Building Cross-Sport NHL+MLB Optimal Combos ===");
+
+    // Fetch today's MLB candidates
+    const { data: mlbCandidates, error: mlbError } = await supabase
+      .from("category_sweet_spots")
+      .select("*")
+      .eq("is_active", true)
+      .eq("analysis_date", today)
+      .like("category", "MLB_%")
+      .order("actual_hit_rate", { ascending: false });
+
+    if (mlbError) {
+      log(`MLB query error: ${JSON.stringify(mlbError)}`);
+    }
+
+    const mlbPool = mlbCandidates || [];
+    log(`MLB candidates for cross-sport: ${mlbPool.length}`);
+
+    // Deduplicate MLB by player, take top candidates
+    const mlbSeen = new Set<string>();
+    const dedupedMlb: typeof mlbPool = [];
+    for (const c of mlbPool) {
+      if ((c.actual_hit_rate || 0) >= 0.6 && !mlbSeen.has(c.player_name)) {
+        mlbSeen.add(c.player_name);
+        dedupedMlb.push(c);
+      }
+    }
+
+    // Merge NHL (already deduped in ocPool) + MLB, cap at 25
+    const crossPool = [...ocPool, ...dedupedMlb.slice(0, 15)].slice(0, 25);
+    log(`Cross-sport pool: ${crossPool.length} candidates (${ocPool.length} NHL + ${dedupedMlb.length} MLB)`);
+
+    // Helper: check combo has both sports
+    const isMixedSport = (combo: any[]) => {
+      const hasNHL = combo.some((c) => (c.category || "").startsWith("NHL_"));
+      const hasMLB = combo.some((c) => (c.category || "").startsWith("MLB_"));
+      return hasNHL && hasMLB;
+    };
+
+    // Build mixed-sport combos with cross-sport filter
+    const buildCrossSportCombos = (pool: any[], legCount: number, minHitRate: number, maxCombos: number) => {
+      const combos: { combo: any[]; prob: number }[] = [];
+      const n = pool.length;
+
+      if (legCount === 3) {
+        for (let i = 0; i < n; i++)
+          for (let j = i + 1; j < n; j++)
+            for (let k = j + 1; k < n; k++) {
+              const combo = [pool[i], pool[j], pool[k]];
+              if (!isMixedSport(combo)) continue;
+              const players = new Set(combo.map((c) => c.player_name));
+              if (players.size < 3) continue;
+              if (!combo.every((c) => (c.actual_hit_rate || 0) >= minHitRate)) continue;
+              const prob = combo.reduce((a, c) => a * (c.actual_hit_rate || 0.5), 1);
+              combos.push({ combo, prob });
+            }
+      } else if (legCount === 4) {
+        for (let i = 0; i < n; i++)
+          for (let j = i + 1; j < n; j++)
+            for (let k = j + 1; k < n; k++)
+              for (let l = k + 1; l < n; l++) {
+                const combo = [pool[i], pool[j], pool[k], pool[l]];
+                if (!isMixedSport(combo)) continue;
+                const players = new Set(combo.map((c) => c.player_name));
+                if (players.size < 4) continue;
+                if (!combo.every((c) => (c.actual_hit_rate || 0) >= minHitRate)) continue;
+                const prob = combo.reduce((a, c) => a * (c.actual_hit_rate || 0.5), 1);
+                combos.push({ combo, prob });
+              }
+      }
+
+      combos.sort((a, b) => b.prob - a.prob);
+
+      const selected: { combo: any[]; prob: number }[] = [];
+      const usedPlayers = new Set<string>();
+      for (const c of combos) {
+        if (selected.length >= maxCombos) break;
+        const players = c.combo.map((p) => p.player_name);
+        if (players.some((p) => usedPlayers.has(p))) continue;
+        selected.push(c);
+        players.forEach((p) => usedPlayers.add(p));
+      }
+
+      return selected;
+    };
+
+    if (dedupedMlb.length >= 1 && ocPool.length >= 1) {
+      // Execution: 3-leg, 70%+ hit rate, mixed sport
+      const csExec = buildCrossSportCombos(
+        crossPool.filter((c) => (c.actual_hit_rate || 0) >= 0.7),
+        3, 0.7, 1
+      );
+
+      // Exploration: 3-leg at 60%+ and 4-leg at 60%+
+      const csExplore3 = buildCrossSportCombos(crossPool, 3, 0.6, 1);
+      const csExplore4 = buildCrossSportCombos(crossPool, 4, 0.6, 1);
+
+      const allCSCombos = [...csExec, ...csExplore3, ...csExplore4];
+      let csInserted = 0;
+
+      for (let idx = 0; idx < allCSCombos.length; idx++) {
+        const { combo, prob } = allCSCombos[idx];
+        const legs = combo.map(buildLegRecord);
+        const tier = idx === 0 && csExec.length > 0 ? "execution" : "exploration";
+        const estimatedOdds = prob > 0 ? Math.round((1 / prob - 1) * 100) : 300;
+        const nhlCount = combo.filter((c) => (c.category || "").startsWith("NHL_")).length;
+        const mlbCount = combo.filter((c) => (c.category || "").startsWith("MLB_")).length;
+
+        const { error: insertErr } = await supabase.from("bot_daily_parlays").insert({
+          strategy_name: "cross_sport_optimal",
+          tier,
+          parlay_date: today,
+          legs,
+          leg_count: legs.length,
+          combined_probability: Math.round(prob * 1000) / 1000,
+          expected_odds: estimatedOdds,
+          selection_rationale: `Cross-Sport Optimal (${tier}): ${nhlCount} NHL + ${mlbCount} MLB legs. Combined: ${Math.round(prob * 100)}%.`,
+          is_simulated: true,
+        });
+
+        if (insertErr) {
+          log(`Cross-sport insert error: ${JSON.stringify(insertErr)}`);
+        } else {
+          csInserted++;
+        }
+      }
+
+      log(`✅ Cross-sport optimal: inserted ${csInserted} parlays`);
+      results["cross_sport_optimal"] = csInserted > 0 ? `ok (${csInserted})` : "skipped_no_combos";
+
+      if (allCSCombos.length > 0) {
+        const best = allCSCombos[0];
+        const legs = best.combo.map(buildLegRecord);
+        const nhlC = best.combo.filter((c) => (c.category || "").startsWith("NHL_")).length;
+        const mlbC = best.combo.filter((c) => (c.category || "").startsWith("MLB_")).length;
+        allParlayMessages.push(
+          `🌐 CROSS-SPORT OPTIMAL (${legs.length}-Leg: ${nhlC} NHL + ${mlbC} MLB)\nCombined Prob: ${Math.round(best.prob * 100)}%\n\n${formatLegs(legs)}\n\n💡 Best mixed-sport combo by product of L10 hit rates.`
+        );
+      }
+    } else {
+      log(`Not enough candidates for cross-sport (NHL: ${ocPool.length}, MLB: ${dedupedMlb.length}) — skipping`);
+      results["cross_sport_optimal"] = "skipped_insufficient";
+    }
+
+    // ============================================================
     // === PHASE 3: Consolidated Telegram Broadcast ===
     // ============================================================
     log("=== PHASE 3: Broadcasting to Telegram ===");
@@ -420,9 +567,9 @@ Deno.serve(async (req) => {
       });
       results["telegram"] = "sent_no_picks";
     } else {
-      const fullMessage = `🏒 NHL DAILY PARLAYS — ${today}\n\n` +
+      const fullMessage = `🏒 NHL + MLB DAILY PARLAYS — ${today}\n\n` +
         allParlayMessages.join("\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n") +
-        `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n🏒 Strategies: Floor Lock | Optimal Combo | Ceiling Shot`;
+        `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n🏒⚾ Strategies: Floor Lock | Optimal Combo | Ceiling Shot | Cross-Sport`;
 
       await supabase.functions.invoke("bot-send-telegram", {
         body: { message: fullMessage, bypass_quiet_hours: true },
