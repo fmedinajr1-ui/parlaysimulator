@@ -105,9 +105,52 @@ const nhlGoaliePropTypeToStat: Record<string, string> = {
   'saves': 'saves',
 };
 
-// Extract stat value from game log
-const extractStatValue = (gameLog: any, propType: string): number | null => {
+// Detect sport from category or prop_type
+const detectSport = (category: string, propType: string): 'nba' | 'mlb' | 'nhl' | 'ncaab' => {
+  const cat = (category || '').toUpperCase();
+  const pt = (propType || '').toLowerCase();
+  if (cat.startsWith('NHL_') || pt.startsWith('nhl_')) return 'nhl';
+  if (cat.startsWith('MLB_') || pt.startsWith('batter_') || pt.startsWith('pitcher_') || pt.startsWith('hitter_') || ['hits', 'total_bases', 'rbis', 'home_runs', 'stolen_bases', 'innings_pitched'].includes(pt)) return 'mlb';
+  if (cat.startsWith('NCAAB_')) return 'ncaab';
+  return 'nba';
+};
+
+// Compute MLB hitter fantasy score
+const computeMLBFantasy = (log: any): number => {
+  return (Number(log.hits) || 0) * 3 + (Number(log.runs) || 0) * 2 + (Number(log.rbis) || 0) * 2 +
+    (Number(log.walks) || 0) + (Number(log.stolen_bases) || 0) * 2 + (Number(log.home_runs) || 0) * 4;
+};
+
+// Extract stat value from game log based on sport
+const extractStatValue = (gameLog: any, propType: string, sport: string): number | null => {
   const normalizedProp = propType.toLowerCase().replace(/[\s_-]+/g, '_');
+
+  if (sport === 'mlb') {
+    if (normalizedProp === 'hitter_fantasy_score') return computeMLBFantasy(gameLog);
+    if (normalizedProp === 'pitcher_outs') {
+      const ip = Number(gameLog.innings_pitched) || 0;
+      return Math.floor(ip) * 3 + Math.round((ip % 1) * 10);
+    }
+    const statField = mlbPropTypeToStat[normalizedProp];
+    if (statField && gameLog[statField] !== undefined) return Number(gameLog[statField]);
+    if (gameLog[normalizedProp] !== undefined) return Number(gameLog[normalizedProp]);
+    console.log(`[MLB] Unknown prop type: ${propType}`);
+    return null;
+  }
+
+  if (sport === 'nhl') {
+    // Check goalie stats first
+    const goalieField = nhlGoaliePropTypeToStat[normalizedProp];
+    if (goalieField && gameLog[goalieField] !== undefined) return Number(gameLog[goalieField]);
+    // Then skater stats
+    const skaterField = nhlPropTypeToStat[normalizedProp];
+    if (skaterField && gameLog[skaterField] !== undefined) return Number(gameLog[skaterField]);
+    if (gameLog[normalizedProp] !== undefined) return Number(gameLog[normalizedProp]);
+    console.log(`[NHL] Unknown prop type: ${propType}`);
+    return null;
+  }
+
+  // NBA/NCAAB
   const statField = propTypeToStat[normalizedProp];
   
   if (!statField) {
