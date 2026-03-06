@@ -150,6 +150,12 @@ Deno.serve(async (req) => {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   try {
+    // === Load stake config ===
+    const { data: stakeConfig } = await supabase
+      .from("bot_stake_config").select("*").limit(1).maybeSingle();
+    const execStake = stakeConfig?.execution_stake ?? 250;
+    const explStake = stakeConfig?.exploration_stake ?? 50;
+    log(`Stakes loaded: exec=$${execStake}, explore=$${explStake}`);
     // === PRE-CHECK: Are there NHL games today? ===
     const { count: todayPropsCount } = await supabase
       .from("unified_props")
