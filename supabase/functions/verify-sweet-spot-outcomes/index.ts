@@ -27,7 +27,7 @@ const getFirstInitial = (s: string): string => {
   return parts[0]?.substring(0, 3) || '';
 };
 
-// Map prop_type to stat field in game logs
+// Map prop_type to stat field in game logs (NBA/NCAAB)
 const propTypeToStat: Record<string, string> = {
   'points': 'points',
   'pts': 'points',
@@ -54,9 +54,110 @@ const propTypeToStat: Record<string, string> = {
   'rebounds_assists': 'ra',
 };
 
-// Extract stat value from game log
-const extractStatValue = (gameLog: any, propType: string): number | null => {
+// MLB prop_type → stat field mapping
+const mlbPropTypeToStat: Record<string, string> = {
+  'hits': 'hits',
+  'batter_hits': 'hits',
+  'runs': 'runs',
+  'batter_runs_scored': 'runs',
+  'total_bases': 'total_bases',
+  'batter_total_bases': 'total_bases',
+  'rbis': 'rbis',
+  'batter_rbis': 'rbis',
+  'home_runs': 'home_runs',
+  'batter_home_runs': 'home_runs',
+  'stolen_bases': 'stolen_bases',
+  'batter_stolen_bases': 'stolen_bases',
+  'walks': 'walks',
+  'batter_walks': 'walks',
+  'strikeouts': 'strikeouts',
+  'batter_strikeouts': 'strikeouts',
+  'pitcher_strikeouts': 'pitcher_strikeouts',
+  'pitcher_hits_allowed': 'pitcher_hits_allowed',
+  'pitcher_earned_runs': 'earned_runs',
+  'innings_pitched': 'innings_pitched',
+  'hitter_fantasy_score': 'hitter_fantasy_score',
+  'pitcher_outs': 'pitcher_outs',
+};
+
+// NHL prop_type → stat field mapping (skaters)
+const nhlPropTypeToStat: Record<string, string> = {
+  'nhl_points': 'points',
+  'nhl_goals_scorer': 'goals',
+  'nhl_assists': 'assists',
+  'nhl_shots_on_goal': 'shots_on_goal',
+  'nhl_blocked_shots': 'blocked_shots',
+  'nhl_power_play_points': 'power_play_points',
+  // player_* prefixed keys from category_sweet_spots
+  'player_points': 'points',
+  'player_goals': 'goals',
+  'player_assists': 'assists',
+  'player_shots_on_goal': 'shots_on_goal',
+  'player_blocked_shots': 'blocked_shots',
+  'player_power_play_points': 'power_play_points',
+  // Short keys
+  'points': 'points',
+  'goals': 'goals',
+  'assists': 'assists',
+  'shots': 'shots_on_goal',
+  'shots_on_goal': 'shots_on_goal',
+  'blocked_shots': 'blocked_shots',
+  'power_play_points': 'power_play_points',
+};
+
+// NHL goalie prop_type → stat field mapping
+const nhlGoaliePropTypeToStat: Record<string, string> = {
+  'nhl_goalie_saves': 'saves',
+  'goalie_saves': 'saves',
+  'saves': 'saves',
+};
+
+// Detect sport from category or prop_type
+const detectSport = (category: string, propType: string): 'nba' | 'mlb' | 'nhl' | 'ncaab' => {
+  const cat = (category || '').toUpperCase();
+  const pt = (propType || '').toLowerCase();
+  if (cat.startsWith('NHL_') || pt.startsWith('nhl_')) return 'nhl';
+  if (cat.startsWith('MLB_') || pt.startsWith('batter_') || pt.startsWith('pitcher_') || pt.startsWith('hitter_') || ['hits', 'total_bases', 'rbis', 'home_runs', 'stolen_bases', 'innings_pitched'].includes(pt)) return 'mlb';
+  if (cat.startsWith('NCAAB_')) return 'ncaab';
+  return 'nba';
+};
+
+// Compute MLB hitter fantasy score
+const computeMLBFantasy = (log: any): number => {
+  return (Number(log.hits) || 0) * 3 + (Number(log.runs) || 0) * 2 + (Number(log.rbis) || 0) * 2 +
+    (Number(log.walks) || 0) + (Number(log.stolen_bases) || 0) * 2 + (Number(log.home_runs) || 0) * 4;
+};
+
+// Extract stat value from game log based on sport
+const extractStatValue = (gameLog: any, propType: string, sport: string): number | null => {
   const normalizedProp = propType.toLowerCase().replace(/[\s_-]+/g, '_');
+
+  if (sport === 'mlb') {
+    if (normalizedProp === 'hitter_fantasy_score') return computeMLBFantasy(gameLog);
+    if (normalizedProp === 'pitcher_outs') {
+      const ip = Number(gameLog.innings_pitched) || 0;
+      return Math.floor(ip) * 3 + Math.round((ip % 1) * 10);
+    }
+    const statField = mlbPropTypeToStat[normalizedProp];
+    if (statField && gameLog[statField] !== undefined) return Number(gameLog[statField]);
+    if (gameLog[normalizedProp] !== undefined) return Number(gameLog[normalizedProp]);
+    console.log(`[MLB] Unknown prop type: ${propType}`);
+    return null;
+  }
+
+  if (sport === 'nhl') {
+    // Check goalie stats first
+    const goalieField = nhlGoaliePropTypeToStat[normalizedProp];
+    if (goalieField && gameLog[goalieField] !== undefined) return Number(gameLog[goalieField]);
+    // Then skater stats
+    const skaterField = nhlPropTypeToStat[normalizedProp];
+    if (skaterField && gameLog[skaterField] !== undefined) return Number(gameLog[skaterField]);
+    if (gameLog[normalizedProp] !== undefined) return Number(gameLog[normalizedProp]);
+    console.log(`[NHL] Unknown prop type: ${propType}`);
+    return null;
+  }
+
+  // NBA/NCAAB
   const statField = propTypeToStat[normalizedProp];
   
   if (!statField) {
@@ -160,60 +261,79 @@ Deno.serve(async (req) => {
 
     console.log(`[verify-sweet-spot-outcomes] Found ${pendingPicks.length} pending picks`);
 
-    // Step 2: Fetch game logs in a 3-day window from BOTH NBA and NCAAB tables
+    // Step 2: Fetch game logs in a 3-day window from NBA, NCAAB, MLB, and NHL tables
     const windowStart = targetDate;
     const windowEnd = addDays(targetDate, 2);
 
-    const { data: nbaLogs, error: nbaLogsError } = await supabase
-      .from('nba_player_game_logs')
-      .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
-      .gte('game_date', windowStart)
-      .lte('game_date', windowEnd);
+    // Fetch all sport logs in parallel
+    const [nbaResult, ncaabResult, mlbResult, nhlSkaterResult, nhlGoalieResult] = await Promise.all([
+      supabase
+        .from('nba_player_game_logs')
+        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('ncaab_player_game_logs')
+        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('mlb_player_game_logs')
+        .select('player_name, game_date, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, total_bases, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed, at_bats')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('nhl_player_game_logs')
+        .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('nhl_goalie_game_logs')
+        .select('player_name, game_date, saves, shots_against, goals_against')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+    ]);
 
-    if (nbaLogsError) {
-      throw new Error(`Failed to fetch NBA game logs: ${nbaLogsError.message}`);
-    }
+    if (nbaResult.error) throw new Error(`Failed to fetch NBA game logs: ${nbaResult.error.message}`);
+    if (ncaabResult.error) console.warn(`[verify] NCAAB logs warning: ${ncaabResult.error.message}`);
+    if (mlbResult.error) console.warn(`[verify] MLB logs warning: ${mlbResult.error.message}`);
+    if (nhlSkaterResult.error) console.warn(`[verify] NHL skater logs warning: ${nhlSkaterResult.error.message}`);
+    if (nhlGoalieResult.error) console.warn(`[verify] NHL goalie logs warning: ${nhlGoalieResult.error.message}`);
 
-    // Fetch NCAAB game logs
-    const { data: ncaabLogs, error: ncaabLogsError } = await supabase
-      .from('ncaab_player_game_logs')
-      .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
-      .gte('game_date', windowStart)
-      .lte('game_date', windowEnd);
+    const nbaLogs = nbaResult.data || [];
+    const ncaabLogs = ncaabResult.data || [];
+    const mlbLogs = mlbResult.data || [];
+    const nhlSkaterLogs = nhlSkaterResult.data || [];
+    const nhlGoalieLogs = nhlGoalieResult.data || [];
 
-    if (ncaabLogsError) {
-      console.warn(`[verify-sweet-spot-outcomes] NCAAB logs fetch warning: ${ncaabLogsError.message}`);
-    }
+    console.log(`[verify] Logs found — NBA: ${nbaLogs.length}, NCAAB: ${ncaabLogs.length}, MLB: ${mlbLogs.length}, NHL skaters: ${nhlSkaterLogs.length}, NHL goalies: ${nhlGoalieLogs.length}`);
 
-    const allGameLogs = [...(nbaLogs || []), ...(ncaabLogs || [])];
-    console.log(`[verify-sweet-spot-outcomes] Found ${nbaLogs?.length || 0} NBA + ${ncaabLogs?.length || 0} NCAAB game logs in window ${windowStart} to ${windowEnd}`);
-
-    // Build normalized name lookup — use the most recent game log per player
-    const gameLogMap = new Map<string, any>();
-    // Also build a last-name index for fuzzy fallback
-    const lastNameIndex = new Map<string, any[]>();
-    
-    for (const log of allGameLogs) {
-      const normalizedName = normalizeName(log.player_name);
-      const existing = gameLogMap.get(normalizedName);
-      if (!existing || log.game_date > existing.game_date) {
-        gameLogMap.set(normalizedName, log);
+    // Build per-sport game log maps
+    const buildLogMap = (logs: any[]) => {
+      const map = new Map<string, any>();
+      const lastNameIdx = new Map<string, any[]>();
+      for (const log of logs) {
+        const nn = normalizeName(log.player_name);
+        const existing = map.get(nn);
+        if (!existing || log.game_date > existing.game_date) map.set(nn, log);
+        const ln = getLastName(log.player_name);
+        if (ln.length >= 3) {
+          const arr = lastNameIdx.get(ln) || [];
+          arr.push(log);
+          lastNameIdx.set(ln, arr);
+        }
       }
-      
-      // Build last name index
-      const lastName = getLastName(log.player_name);
-      if (lastName.length >= 3) {
-        const arr = lastNameIndex.get(lastName) || [];
-        arr.push(log);
-        lastNameIndex.set(lastName, arr);
-      }
-    }
+      return { map, lastNameIdx };
+    };
 
-    const totalPlayersWithLogs = gameLogMap.size;
-    console.log(`[verify-sweet-spot-outcomes] Unique players with game logs: ${totalPlayersWithLogs}`);
+    const nbaMap = buildLogMap([...nbaLogs, ...ncaabLogs]);
+    const mlbMap = buildLogMap(mlbLogs);
+    const nhlMap = buildLogMap([...nhlSkaterLogs, ...nhlGoalieLogs]);
 
-    // Determine if we have enough game data to verify
-    // If very few game logs exist, games likely haven't been played yet
+    // Legacy combined map for "substantial data" check
+    const totalPlayersWithLogs = nbaMap.map.size + mlbMap.map.size + nhlMap.map.size;
+    console.log(`[verify] Unique players: NBA/NCAAB ${nbaMap.map.size}, MLB ${mlbMap.map.size}, NHL ${nhlMap.map.size}`);
+
     const hasSubstantialData = totalPlayersWithLogs >= 10;
 
     // Step 3: Match and verify each pick
@@ -232,24 +352,26 @@ Deno.serve(async (req) => {
     const updates: { id: string; actual_value: number | null; outcome: string; settled_at: string; verified_source: string }[] = [];
 
     for (const pick of pendingPicks) {
+      const sport = detectSport(pick.category, pick.prop_type);
+      const sportMap = sport === 'mlb' ? mlbMap : sport === 'nhl' ? nhlMap : nbaMap;
+      const sportLabel = sport === 'mlb' ? 'mlb_player_game_logs' : sport === 'nhl' ? 'nhl_player_game_logs' : 'nba_player_game_logs';
+
       const normalizedPlayerName = normalizeName(pick.player_name);
-      let gameLog = gameLogMap.get(normalizedPlayerName);
+      let gameLog = sportMap.map.get(normalizedPlayerName);
       let matchType = 'exact';
 
       // Fuzzy fallback: try last name + first 3 chars match
       if (!gameLog) {
         const lastName = getLastName(pick.player_name);
         const firstPrefix = getFirstInitial(pick.player_name);
-        const candidates = lastNameIndex.get(lastName) || [];
+        const candidates = sportMap.lastNameIdx.get(lastName) || [];
         
         if (candidates.length === 1) {
-          // Only one player with this last name — safe match
           gameLog = candidates[0];
           matchType = 'fuzzy_lastname_unique';
           results.fuzzyMatches++;
         } else if (candidates.length > 1 && firstPrefix.length >= 3) {
-          // Multiple matches — use first 3 chars of first name to disambiguate
-          const match = candidates.find(c => {
+          const match = candidates.find((c: any) => {
             const candFirst = getFirstInitial(c.player_name);
             return candFirst.startsWith(firstPrefix) || firstPrefix.startsWith(candFirst);
           });
@@ -262,53 +384,48 @@ Deno.serve(async (req) => {
       }
 
       if (!gameLog) {
-        // No game log found — but was the player's game even scheduled?
-        // If we have very few logs, the game probably hasn't happened yet → keep as pending
         if (!hasSubstantialData) {
           results.pending++;
           results.details.push({
-            player: pick.player_name,
-            propType: pick.prop_type,
-            status: 'pending',
+            player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
             reason: 'Insufficient game data in window — games may not have been played yet'
           });
-          // Don't update — leave as pending/no_data for retry
           continue;
         }
         
-        // We have substantial data but this player isn't in it — mark no_data
+        // Check if this sport specifically has data
+        const sportHasData = sportMap.map.size >= 5;
+        if (!sportHasData) {
+          results.pending++;
+          results.details.push({
+            player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
+            reason: `No ${sport.toUpperCase()} game logs available in window`
+          });
+          continue;
+        }
+
         updates.push({
-          id: pick.id,
-          actual_value: null,
-          outcome: 'no_data',
-          settled_at: new Date().toISOString(),
-          verified_source: 'nba_player_game_logs'
+          id: pick.id, actual_value: null, outcome: 'no_data',
+          settled_at: new Date().toISOString(), verified_source: sportLabel
         });
         results.noData++;
         results.details.push({
-          player: pick.player_name,
-          propType: pick.prop_type,
-          status: 'no_data',
+          player: pick.player_name, propType: pick.prop_type, sport, status: 'no_data',
           reason: 'No game log found — player likely did not play'
         });
         continue;
       }
 
-      const actualValue = extractStatValue(gameLog, pick.prop_type);
+      const actualValue = extractStatValue(gameLog, pick.prop_type, sport);
       
       if (actualValue === null) {
         updates.push({
-          id: pick.id,
-          actual_value: null,
-          outcome: 'no_data',
-          settled_at: new Date().toISOString(),
-          verified_source: 'nba_player_game_logs'
+          id: pick.id, actual_value: null, outcome: 'no_data',
+          settled_at: new Date().toISOString(), verified_source: sportLabel
         });
         results.noData++;
         results.details.push({
-          player: pick.player_name,
-          propType: pick.prop_type,
-          status: 'no_data',
+          player: pick.player_name, propType: pick.prop_type, sport, status: 'no_data',
           reason: `Could not extract stat for prop type: ${pick.prop_type}`
         });
         continue;
@@ -316,12 +433,9 @@ Deno.serve(async (req) => {
 
       const line = pick.actual_line ?? pick.recommended_line;
       if (line === null || line === undefined) {
-        // Cannot settle without a valid line — leave as pending
         results.pending++;
         results.details.push({
-          player: pick.player_name,
-          propType: pick.prop_type,
-          status: 'pending',
+          player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
           reason: 'No actual_line or recommended_line — skipping settlement'
         });
         continue;
@@ -330,11 +444,8 @@ Deno.serve(async (req) => {
       const outcome = determineOutcome(actualValue, line, side);
 
       updates.push({
-        id: pick.id,
-        actual_value: actualValue,
-        outcome,
-        settled_at: new Date().toISOString(),
-        verified_source: `nba_player_game_logs (${matchType})`
+        id: pick.id, actual_value: actualValue, outcome,
+        settled_at: new Date().toISOString(), verified_source: `${sportLabel} (${matchType})`
       });
 
       results.verified++;
@@ -343,16 +454,9 @@ Deno.serve(async (req) => {
       else results.pushes++;
 
       results.details.push({
-        player: pick.player_name,
-        propType: pick.prop_type,
-        side,
-        line,
-        actual: actualValue,
-        outcome,
-        matchType,
-        gameDate: gameLog.game_date,
-        l10HitRate: pick.l10_hit_rate,
-        confidence: pick.confidence_score
+        player: pick.player_name, propType: pick.prop_type, sport, side, line,
+        actual: actualValue, outcome, matchType, gameDate: gameLog.game_date,
+        l10HitRate: pick.l10_hit_rate, confidence: pick.confidence_score
       });
     }
 
