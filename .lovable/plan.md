@@ -183,3 +183,29 @@ Included in the consolidated NHL daily broadcast with 🌐 emoji. Header updated
 1. `supabase/functions/nhl-floor-lock-daily/index.ts` — stake config loading + all inserts
 2. `supabase/functions/nba-matchup-daily-broadcast/index.ts` — bench under parlay creation
 3. `bot_stake_config` table — updated stakes
+
+# Cross Sport 4-Leg Promotion to Execution Tier — IMPLEMENTED ✅
+
+## What Changed
+Promoted `cross_sport_4` from exploration ($50 stakes) to execution ($250 stakes) based on 8-0 record and $3,930 profit.
+
+### Execution Tier (10 new profiles)
+- 3x `sortBy: 'composite'` (high-confidence selection)
+- 3x `sortBy: 'hit_rate'` (proven hitters)
+- 2x `sortBy: 'shuffle'` (break deterministic overlap)
+- 2x sport-specific: NBA+NHL and NBA+NCAAB pairs
+- All with `minHitRate: 55` execution gate
+
+### Exploration Feeders (2 retained)
+- 2x with `minHitRate: 45` and shuffle/composite sort to discover new combos
+
+### Removed from Exploration
+- 7 generic `cross_sport_4` profiles (5 default + 2 shuffle) replaced by execution-tier versions
+
+### Impact
+- **Volume**: ~5 → ~12-15 daily cross-sport 4-leg parlays
+- **Stakes**: $50 → $250 (5x amplifier)
+- **Projected boost**: Each win now adds $500-2000 vs $100-400 previously
+
+### Files Changed
+1. `supabase/functions/bot-generate-daily-parlays/index.ts` — profile tier migration
