@@ -258,10 +258,10 @@ Deno.serve(async (req) => {
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
-      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal },
+      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal, under_parlays: underParlaysInserted },
     });
 
-    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, duration }), {
+    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, under_parlays: underParlaysInserted, duration }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
