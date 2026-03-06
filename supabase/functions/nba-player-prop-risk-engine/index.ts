@@ -1390,32 +1390,61 @@ function isOnNeverFadePRAList(playerName: string): { tier: 1 | 2 | null } {
   return { tier: null };
 }
 
-// ============ CEILING CHECK ============
+// ============ CEILING CHECK (BLOWUP RISK) ============
 function failsCeilingCheck(
   gameLogs: number[],
   line: number,
   side: string
-): { fails: boolean; ceiling: number; ceilingRatio: number; reason: string } {
+): { fails: boolean; ceiling: number; ceilingRatio: number; reason: string; penalty: number } {
   const isUnder = side.toLowerCase() === 'under';
   
   if (!isUnder) {
-    return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Not an under play' };
+    return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Not an under play', penalty: 0 };
   }
   
   if (!gameLogs || gameLogs.length < 5) {
-    return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Insufficient game logs' };
+    return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Insufficient game logs', penalty: 0 };
   }
   
   const ceiling = gameLogs.reduce((max, val) => val > max ? val : max, 0);
   const ceilingRatio = line > 0 ? ceiling / line : 0;
+  const avg = gameLogs.reduce((a, b) => a + b, 0) / gameLogs.length;
+  const margin = line - avg;
   
-  // RELAXED: Reject if ceiling exceeds line by more than 150% (was 100%)
-  if (ceilingRatio > 2.5) {
+  // Calculate std dev for variance gate
+  const variance = gameLogs.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / gameLogs.length;
+  const stdDev = Math.sqrt(variance);
+  
+  // HARD BLOCK: Ceiling is 50%+ above the line — blowup risk
+  if (ceilingRatio >= 1.5) {
     return {
       fails: true,
       ceiling,
       ceilingRatio,
-      reason: `CEILING CHECK FAILED: Max ${ceiling} in L${gameLogs.length} is ${Math.round((ceilingRatio - 1) * 100)}% above line ${line}`
+      reason: `BLOWUP_RISK: L10 max ${ceiling} is ${Math.round((ceilingRatio - 1) * 100)}% above line ${line} — high ceiling blowup`,
+      penalty: 0
+    };
+  }
+  
+  // HARD BLOCK: High variance relative to margin — std dev can blow past line
+  if (margin > 0 && stdDev > margin * 1.5) {
+    return {
+      fails: true,
+      ceiling,
+      ceilingRatio,
+      reason: `HIGH_VARIANCE_UNDER: std_dev ${stdDev.toFixed(1)} > margin ${margin.toFixed(1)} × 1.5 — volatile player`,
+      penalty: 0
+    };
+  }
+  
+  // SOFT PENALTY: Ceiling is 25-50% above line — deprioritize
+  if (ceilingRatio >= 1.25) {
+    return {
+      fails: false,
+      ceiling,
+      ceilingRatio,
+      reason: `BLOWUP_WARNING: L10 max ${ceiling} is ${Math.round((ceilingRatio - 1) * 100)}% above line ${line} — -15 penalty`,
+      penalty: -15
     };
   }
   
@@ -1423,7 +1452,8 @@ function failsCeilingCheck(
     fails: false,
     ceiling,
     ceilingRatio,
-    reason: `Ceiling check passed: MAX ${ceiling} within 50% of line ${line}`
+    reason: `Ceiling check passed: MAX ${ceiling} within safe range of line ${line}`,
+    penalty: 0
   };
 }
 
