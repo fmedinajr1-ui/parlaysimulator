@@ -1,3 +1,17 @@
+# `/rankings` + `/weekly` Rundown — IMPLEMENTED ✅
+
+## `/rankings` Command
+- `/rankings` — Summary of top 10 NBA teams (OVR, PTS↑, PTS↓, REB↑, REB↓) + top 10 NHL teams (GAR, GFR, SAR, SFR)
+- `/rankings [TEAM]` — Single team profile across all categories (NBA + NHL)
+- Available to both admin and customer users
+
+## `/weekly` Command  
+- Past week recap: W/L record, P&L, best/worst day, strategy breakdown, hottest/coldest categories
+- Forward lean recommendations: cross-references `bot_category_weights` hit rates with `team_defense_rankings` weak defenses
+- Automated Sunday 10:00 AM ET broadcast to all active users via `pg_cron`
+
+---
+
 # Daily NHL Floor Lock + NBA Matchup Broadcast — IMPLEMENTED ✅
 
 ## Cron Schedule
