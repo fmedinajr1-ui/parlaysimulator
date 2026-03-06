@@ -2703,6 +2703,258 @@ async function handleFixAction(callbackQueryId: string, action: string, chatId: 
   await sendMessage(chatId, summary);
 }
 
+// ==================== RANKINGS ====================
+
+async function handleRankings(chatId: string, args: string): Promise<string> {
+  const teamArg = args.trim().toUpperCase();
+
+  const [nbaRes, nhlRes] = await Promise.all([
+    supabase.from('team_defense_rankings').select('team_abbreviation, off_points_rank, opp_points_rank, off_rebounds_rank, opp_rebounds_rank, off_threes_rank, opp_threes_rank, off_assists_rank, opp_assists_rank, overall_rank').eq('is_current', true),
+    supabase.from('nhl_team_defense_rankings').select('team_abbrev, team_name, goals_for_rank, goals_against_rank, shots_for_rank, shots_against_rank, power_play_rank, penalty_kill_rank'),
+  ]);
+
+  const nbaTeams = nbaRes.data || [];
+  const nhlTeams = nhlRes.data || [];
+
+  // Single team lookup
+  if (teamArg) {
+    const nba = nbaTeams.find(t => t.team_abbreviation === teamArg);
+    const nhl = nhlTeams.find(t => t.team_abbrev === teamArg);
+
+    if (!nba && !nhl) return `❌ Team "${teamArg}" not found. Try a 2-3 letter abbreviation (e.g., BOS, TOR).`;
+
+    let msg = '';
+    if (nba) {
+      msg += `🏀 *${teamArg} — NBA Rankings*\n`;
+      msg += `PTS:  OFF #${nba.off_points_rank || '?'}  |  DEF #${nba.opp_points_rank || '?'}\n`;
+      msg += `REB:  OFF #${nba.off_rebounds_rank || '?'}  |  DEF #${nba.opp_rebounds_rank || '?'}\n`;
+      msg += `3PT:  OFF #${nba.off_threes_rank || '?'}  |  DEF #${nba.opp_threes_rank || '?'}\n`;
+      msg += `AST:  OFF #${nba.off_assists_rank || '?'}  |  DEF #${nba.opp_assists_rank || '?'}\n`;
+    }
+    if (nhl) {
+      if (msg) msg += `\n`;
+      msg += `🏒 *${teamArg} — NHL Rankings*\n`;
+      msg += `Goals:  FOR #${nhl.goals_for_rank || '?'}  |  AGT #${nhl.goals_against_rank || '?'}\n`;
+      msg += `Shots:  FOR #${nhl.shots_for_rank || '?'}  |  AGT #${nhl.shots_against_rank || '?'}\n`;
+      msg += `PP:  #${nhl.power_play_rank || '?'}  |  PK:  #${nhl.penalty_kill_rank || '?'}\n`;
+    }
+    return msg;
+  }
+
+  // Summary view — top/bottom 5 per category
+  let msg = `📊 *Team Rankings*\n━━━━━━━━━━━━━━━━━\n\n`;
+
+  // NBA section
+  if (nbaTeams.length > 0) {
+    const sorted = [...nbaTeams].sort((a, b) => (a.overall_rank || 99) - (b.overall_rank || 99));
+    msg += `🏀 *NBA — Overall*\n`;
+    msg += `\`Team  OVR  PTS↑  PTS↓  REB↑  REB↓\`\n`;
+    sorted.slice(0, 10).forEach(t => {
+      const tm = (t.team_abbreviation || '').padEnd(5);
+      msg += `\`${tm} #${String(t.overall_rank || '?').padEnd(3)} #${String(t.off_points_rank || '?').padEnd(4)} #${String(t.opp_points_rank || '?').padEnd(4)} #${String(t.off_rebounds_rank || '?').padEnd(4)} #${String(t.opp_rebounds_rank || '?').padEnd(3)}\`\n`;
+    });
+    msg += `\n_Use /rankings [TEAM] for full profile_\n\n`;
+  }
+
+  // NHL section
+  if (nhlTeams.length > 0) {
+    const sorted = [...nhlTeams].sort((a, b) => (a.goals_against_rank || 99) - (b.goals_against_rank || 99));
+    msg += `🏒 *NHL — Best Defense*\n`;
+    msg += `\`Team  GAR  GFR  SAR  SFR\`\n`;
+    sorted.slice(0, 10).forEach(t => {
+      const tm = (t.team_abbrev || '').padEnd(5);
+      msg += `\`${tm} #${String(t.goals_against_rank || '?').padEnd(3)} #${String(t.goals_for_rank || '?').padEnd(3)} #${String(t.shots_against_rank || '?').padEnd(3)} #${String(t.shots_for_rank || '?').padEnd(3)}\`\n`;
+    });
+    msg += `\n_Use /rankings [TEAM] for full profile_\n`;
+  }
+
+  return msg;
+}
+
+// ==================== WEEKLY RUNDOWN ====================
+
+async function handleWeeklyRundown(chatId: string): Promise<string> {
+  const d7 = getEasternDateDaysAgo(7);
+
+  const [parlaysRes, daysRes, weightsRes, nbaDefRes, nhlDefRes] = await Promise.all([
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, legs").in("outcome", ["won", "lost"]).gte("parlay_date", d7),
+    supabase.from("bot_activation_status").select("check_date, daily_profit_loss, is_profitable_day, parlays_won, parlays_lost").gte("check_date", d7).order("check_date"),
+    supabase.from("bot_category_weights").select("category, side, current_hit_rate, total_picks, sport").eq("is_blocked", false).not("current_hit_rate", "is", null).order("current_hit_rate", { ascending: false }).limit(20),
+    supabase.from("team_defense_rankings").select("team_abbreviation, opp_points_rank, opp_rebounds_rank, opp_threes_rank, opp_assists_rank").eq("is_current", true),
+    supabase.from("nhl_team_defense_rankings").select("team_abbrev, goals_against_rank, shots_against_rank"),
+  ]);
+
+  const parlays = parlaysRes.data || [];
+  const days = daysRes.data || [];
+  const weights = weightsRes.data || [];
+  const nbaDef = nbaDefRes.data || [];
+  const nhlDef = nhlDefRes.data || [];
+
+  const wins = parlays.filter(p => p.outcome === 'won').length;
+  const losses = parlays.length - wins;
+  const totalPL = parlays.reduce((s, p) => s + (p.profit_loss || 0), 0);
+  const winDays = days.filter(d => d.is_profitable_day).length;
+
+  // Day-by-day
+  let bestDay = { date: '', pl: -Infinity };
+  let worstDay = { date: '', pl: Infinity };
+  days.forEach(d => {
+    const pl = d.daily_profit_loss || 0;
+    if (pl > bestDay.pl) bestDay = { date: d.check_date, pl };
+    if (pl < worstDay.pl) worstDay = { date: d.check_date, pl };
+  });
+
+  // Strategy breakdown
+  const stratMap: Record<string, { wins: number; total: number; pl: number }> = {};
+  parlays.forEach(p => {
+    const s = p.strategy_name || 'unknown';
+    if (!stratMap[s]) stratMap[s] = { wins: 0, total: 0, pl: 0 };
+    stratMap[s].total++;
+    stratMap[s].pl += (p.profit_loss || 0);
+    if (p.outcome === 'won') stratMap[s].wins++;
+  });
+  const stratEntries = Object.entries(stratMap).sort((a, b) => {
+    const wrA = a[1].total > 0 ? a[1].wins / a[1].total : 0;
+    const wrB = b[1].total > 0 ? b[1].wins / b[1].total : 0;
+    return wrB - wrA;
+  });
+
+  // Category performance from legs
+  const catHits: Record<string, { hits: number; total: number }> = {};
+  parlays.forEach(p => {
+    const legs = Array.isArray(p.legs) ? p.legs : [];
+    legs.forEach((leg: any) => {
+      const cat = leg.category || leg.prop_type || 'unknown';
+      const side = leg.side || leg.recommended_side || '';
+      const key = `${cat} ${side}`;
+      if (!catHits[key]) catHits[key] = { hits: 0, total: 0 };
+      catHits[key].total++;
+      if (leg.outcome === 'won' || leg.hit === true) catHits[key].hits++;
+    });
+  });
+  const catEntries = Object.entries(catHits).filter(([, v]) => v.total >= 3).sort((a, b) => (b[1].hits / b[1].total) - (a[1].hits / a[1].total));
+
+  // Build message — RECAP
+  const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  let msg = `📊 *WEEKLY RUNDOWN* (${weekAgo} – ${today})\n━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `📈 *RESULTS*\n`;
+  msg += `• Record: ${wins}W-${losses}L (${parlays.length > 0 ? (wins / parlays.length * 100).toFixed(0) : 0}%)\n`;
+  msg += `• P&L: ${totalPL >= 0 ? '+' : ''}$${totalPL.toFixed(0)}\n`;
+  msg += `• Days: ${winDays}/${days.length} profitable\n`;
+  if (bestDay.date) msg += `• Best Day: ${bestDay.date} ${bestDay.pl >= 0 ? '+' : ''}$${bestDay.pl.toFixed(0)}\n`;
+  if (worstDay.date && worstDay.pl < Infinity) msg += `• Worst Day: ${worstDay.date} ${worstDay.pl >= 0 ? '+' : ''}$${worstDay.pl.toFixed(0)}\n`;
+  msg += `\n`;
+
+  // Strategies
+  if (stratEntries.length > 0) {
+    msg += `🏆 *TOP STRATEGIES*\n`;
+    stratEntries.slice(0, 5).forEach(([name, s], i) => {
+      const wr = s.total > 0 ? (s.wins / s.total * 100).toFixed(0) : '0';
+      msg += `${i + 1}. ${name} — ${s.wins}W-${s.total - s.wins}L (${wr}%)\n`;
+    });
+    msg += `\n`;
+  }
+
+  // Hottest/Coldest categories
+  if (catEntries.length > 0) {
+    const hot = catEntries.filter(([, v]) => v.hits / v.total >= 0.6).slice(0, 3);
+    const cold = catEntries.filter(([, v]) => v.hits / v.total < 0.45).slice(-3);
+    if (hot.length > 0) {
+      msg += `🎯 *HOTTEST CATEGORIES*\n`;
+      hot.forEach(([k, v]) => msg += `• ${k} — ${(v.hits / v.total * 100).toFixed(0)}% hit (${v.total} picks)\n`);
+      msg += `\n`;
+    }
+    if (cold.length > 0) {
+      msg += `❄️ *COLDEST CATEGORIES*\n`;
+      cold.forEach(([k, v]) => msg += `• ${k} — ${(v.hits / v.total * 100).toFixed(0)}% hit (${v.total} picks)\n`);
+      msg += `\n`;
+    }
+  }
+
+  // FORWARD LEAN
+  msg += `━━━━━━━━━━━━━━━━━\n🔮 *FORWARD LEAN — Next Week*\n━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Hot categories from bot_category_weights + weak defenses
+  const hotWeights = weights.filter(w => (w.current_hit_rate || 0) >= 65 && (w.total_picks || 0) >= 10);
+  const leanInto: string[] = [];
+  const fade: string[] = [];
+
+  // NBA leans
+  const nbaDefMap: Record<string, any> = {};
+  nbaDef.forEach(t => nbaDefMap[t.team_abbreviation] = t);
+
+  // Find weak NBA defenses per category
+  const worstRebDef = nbaDef.filter(t => (t.opp_rebounds_rank || 0) >= 25).map(t => t.team_abbreviation).slice(0, 3);
+  const worstPtsDef = nbaDef.filter(t => (t.opp_points_rank || 0) >= 25).map(t => t.team_abbreviation).slice(0, 3);
+  const worstAstDef = nbaDef.filter(t => (t.opp_assists_rank || 0) >= 25).map(t => t.team_abbreviation).slice(0, 3);
+  const worstThreesDef = nbaDef.filter(t => (t.opp_threes_rank || 0) >= 25).map(t => t.team_abbreviation).slice(0, 3);
+
+  // Best NBA defenses (fade targets)
+  const bestPtsDef = nbaDef.filter(t => (t.opp_points_rank || 99) <= 5).map(t => t.team_abbreviation).slice(0, 3);
+  const bestRebDef = nbaDef.filter(t => (t.opp_rebounds_rank || 99) <= 5).map(t => t.team_abbreviation).slice(0, 3);
+
+  hotWeights.forEach(w => {
+    const cat = w.category.toUpperCase();
+    const hr = (w.current_hit_rate || 0).toFixed(0);
+    if (cat.includes('REBOUND') && worstRebDef.length > 0) {
+      leanInto.push(`Rebounds ${w.side} vs ${worstRebDef.join(', ')} (${hr}% cat HR)`);
+    } else if (cat.includes('POINT') && worstPtsDef.length > 0) {
+      leanInto.push(`Points ${w.side} vs ${worstPtsDef.join(', ')} (${hr}% cat HR)`);
+    } else if (cat.includes('ASSIST') && worstAstDef.length > 0) {
+      leanInto.push(`Assists ${w.side} vs ${worstAstDef.join(', ')} (${hr}% cat HR)`);
+    } else if (cat.includes('THREE') && worstThreesDef.length > 0) {
+      leanInto.push(`Threes ${w.side} vs ${worstThreesDef.join(', ')} (${hr}% cat HR)`);
+    }
+  });
+
+  // NHL leans
+  const worstNhlDef = nhlDef.filter(t => (t.goals_against_rank || 0) >= 25).map(t => t.team_abbrev).slice(0, 3);
+  const worstNhlShotDef = nhlDef.filter(t => (t.shots_against_rank || 0) >= 25).map(t => t.team_abbrev).slice(0, 3);
+
+  const nhlHot = hotWeights.filter(w => (w.sport || '').toLowerCase().includes('nhl') || (w.category || '').toUpperCase().includes('NHL'));
+  nhlHot.forEach(w => {
+    const hr = (w.current_hit_rate || 0).toFixed(0);
+    if (w.category.toUpperCase().includes('SHOT') && worstNhlShotDef.length > 0) {
+      leanInto.push(`🏒 SOG ${w.side} vs ${worstNhlShotDef.join(', ')} (${hr}% cat HR)`);
+    } else if (worstNhlDef.length > 0) {
+      leanInto.push(`🏒 ${w.category} ${w.side} vs ${worstNhlDef.join(', ')} (${hr}% cat HR)`);
+    }
+  });
+
+  // Fade: cold categories + strong defenses
+  const coldWeights = weights.filter(w => (w.current_hit_rate || 0) < 50 && (w.total_picks || 0) >= 10);
+  coldWeights.slice(0, 3).forEach(w => {
+    const cat = w.category.toUpperCase();
+    const hr = (w.current_hit_rate || 0).toFixed(0);
+    if (cat.includes('POINT') && bestPtsDef.length > 0) {
+      fade.push(`Points ${w.side} vs ${bestPtsDef.join(', ')} (${hr}% cat HR)`);
+    } else if (cat.includes('REBOUND') && bestRebDef.length > 0) {
+      fade.push(`Rebounds ${w.side} vs ${bestRebDef.join(', ')} (${hr}% cat HR)`);
+    } else {
+      fade.push(`${w.category} ${w.side} (${hr}% cat HR — cold streak)`);
+    }
+  });
+
+  if (leanInto.length > 0) {
+    msg += `✅ *LEAN INTO*\n`;
+    leanInto.forEach(l => msg += `• ${l}\n`);
+    msg += `\n`;
+  } else {
+    msg += `✅ No strong lean-into signals this week.\n\n`;
+  }
+
+  if (fade.length > 0) {
+    msg += `⛔ *FADE / AVOID*\n`;
+    fade.forEach(f => msg += `• ${f}\n`);
+  } else {
+    msg += `⛔ No active fade signals.\n`;
+  }
+
+  return msg;
+}
+
 // ==================== WEEKLY DIGEST ====================
 
 async function handleWeeklySummary(chatId: string) {
@@ -3734,6 +3986,9 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /subscribe / /unsubscribe — Alerts
 /export — Export data
 /digest — Weekly summary
+/weekly — Full weekly rundown + forward leans
+/rankings — Team OFF/DEF rankings
+/rankings [TEAM] — Single team profile
 
 *User Management:*
 /setpassword [pw] [max] — Create password
@@ -3802,8 +4057,12 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/broadcast") { await handleBroadcast(chatId); return null; }
     if (cmd === "/extras") { return await handleExtras(chatId); }
     if (cmd === "/engineaccuracy") { return await handleEngineAccuracy(chatId); }
-    if (cmd === "/lookup") { return await handleLookup(chatId, args); }
+  if (cmd === "/lookup") { return await handleLookup(chatId, args); }
+  if (cmd === "/rankings") return await handleRankings(chatId, args);
+  if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
     if (cmd === "/sweetspots") { await handleSweetSpots(chatId); return null; }
+    if (cmd === "/rankings") return await handleRankings(chatId, args);
+    if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
@@ -3881,6 +4140,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /calendar — Your monthly P&L
 /roi — Your personal ROI
 /streaks — Hot & cold streaks
+/rankings — Team OFF/DEF rankings
+/weekly — Weekly rundown + forward leans
 /cancel — Cancel your subscription
 
 💬 *Ask me anything:*
@@ -3949,6 +4210,24 @@ Deno.serve(async (req) => {
       if (chatId) {
         const digest = await handleWeeklySummary(chatId);
         await sendMessage(chatId, digest);
+      }
+      return new Response("OK", { status: 200 });
+    }
+
+    // Handle weekly rundown cron trigger (Sunday broadcast)
+    if (update.cron === "weekly_rundown") {
+      const { data: activeUsers } = await supabase
+        .from("bot_authorized_users")
+        .select("chat_id")
+        .eq("is_active", true);
+      const users = activeUsers || [];
+      for (const user of users) {
+        try {
+          const rundown = await handleWeeklyRundown(user.chat_id);
+          await sendLongMessage(user.chat_id, rundown);
+        } catch (e) {
+          console.error(`Weekly rundown failed for ${user.chat_id}:`, e);
+        }
       }
       return new Response("OK", { status: 200 });
     }
