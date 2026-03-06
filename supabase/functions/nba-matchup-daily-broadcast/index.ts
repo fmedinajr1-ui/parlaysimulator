@@ -55,24 +55,41 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Step 3: Categorize findings
+    // Step 3: Extract recommendations from key_insights
+    const insights = findings[0]?.key_insights as any;
+    const recommendations: any[] = insights?.recommendations || [];
+
+    if (recommendations.length === 0) {
+      log("No recommendations in findings");
+      await supabase.functions.invoke("bot-send-telegram", {
+        body: {
+          message: `🏀 NBA Bidirectional Matchup Scan — ${today}\n\n⚠️ Scanner ran but found no actionable matchups.`,
+          bypass_quiet_hours: true,
+        },
+      });
+      return new Response(JSON.stringify({ success: true, findings: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Step 4: Categorize and format with player-level validation
     const elite: any[] = [];
     const prime: any[] = [];
     const favorable: any[] = [];
     const avoid: any[] = [];
 
-    for (const f of findings) {
-      const insights = f.key_insights as any;
-      const label = insights?.matchup_label || "neutral";
-      const score = insights?.matchup_score || f.relevance_score || 0;
-
+    for (const rec of recommendations) {
+      const label = rec.matchup_label || "neutral";
       const entry = {
-        title: f.title,
-        score,
-        offRank: insights?.offense_rank,
-        defRank: insights?.defense_rank,
-        recs: insights?.prop_recommendations || [],
-        label,
+        attacking_team: rec.attacking_team,
+        defending_team: rec.defending_team,
+        prop_type: rec.prop_type,
+        side: rec.side,
+        score: rec.matchup_score,
+        offRank: rec.offense_rank,
+        defRank: rec.defense_rank,
+        player_backed: rec.player_backed || false,
+        player_targets: rec.player_targets || [],
       };
 
       if (label === "elite") elite.push(entry);
@@ -81,30 +98,49 @@ Deno.serve(async (req) => {
       else if (label === "avoid") avoid.push(entry);
     }
 
-    // Step 4: Format message
-    const formatSection = (emoji: string, header: string, items: any[]) => {
-      if (items.length === 0) return "";
-      const lines = items.slice(0, 6).map(i =>
-        `  • ${i.title} (Score: ${i.score})\n    OFF #${i.offRank} vs DEF #${i.defRank} → ${i.recs.join(", ")}`
-      ).join("\n");
-      return `${emoji} ${header} (${items.length})\n${lines}\n\n`;
+    // Step 5: Format message with player-level detail
+    const formatEntry = (i: any) => {
+      const header = `  • ${i.attacking_team} ${capitalize(i.prop_type)} vs ${i.defending_team} DEF (Score: ${i.score})`;
+      const ranks = `    OFF #${i.offRank} vs DEF #${i.defRank}`;
+
+      if (i.player_targets && i.player_targets.length > 0) {
+        const playerLines = i.player_targets.slice(0, 3).map((p: any) =>
+          `      ✅ ${p.player_name} ${i.side.toUpperCase()} ${p.line} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, floor ${p.l10_min})`
+        ).join("\n");
+        return `${header}\n${ranks}\n${playerLines}`;
+      } else {
+        return `${header}\n${ranks}\n      ⚠️ Environment only — no individual player data supports this`;
+      }
     };
 
+    const formatSection = (emoji: string, headerText: string, items: any[]) => {
+      if (items.length === 0) return "";
+      const backed = items.filter(i => i.player_backed).length;
+      const envOnly = items.length - backed;
+      const lines = items.slice(0, 6).map(formatEntry).join("\n\n");
+      const backingNote = backed > 0 ? `${backed} player-backed` : `⚠️ all environment-only`;
+      return `${emoji} ${headerText} (${items.length} — ${backingNote})\n${lines}\n\n`;
+    };
+
+    const playerBackedTotal = recommendations.filter((r: any) => r.player_backed).length;
+    const envOnlyTotal = recommendations.length - playerBackedTotal;
+
     const message = `🏀📊 NBA BIDIRECTIONAL MATCHUP SCAN — ${today}\n\n` +
-      `${findings.length} matchups analyzed (Offense + Defense)\n` +
+      `${recommendations.length} matchups analyzed | ${playerBackedTotal} player-backed | ${envOnlyTotal} env-only\n` +
       `Score = (OppDefRank × 0.6) + ((31-TeamOffRank) × 0.4)\n\n` +
       formatSection("🔥", "ELITE (Score ≥22)", elite) +
       formatSection("⭐", "PRIME (Score 18-22)", prime) +
       formatSection("✅", "FAVORABLE (Score 14-18)", favorable) +
       formatSection("🚫", "AVOID (Score ≤8)", avoid) +
-      `Total: ${elite.length} elite, ${prime.length} prime, ${favorable.length} favorable, ${avoid.length} avoid`;
+      `📋 Summary: ${elite.length} elite, ${prime.length} prime, ${favorable.length} favorable, ${avoid.length} avoid\n` +
+      `🎯 Player-backed signals are validated against L10 game log data`;
 
     await supabase.functions.invoke("bot-send-telegram", {
       body: { message, bypass_quiet_hours: true },
     });
 
     const duration = Date.now() - startTime;
-    log(`✅ Broadcast complete in ${duration}ms — ${findings.length} matchups`);
+    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "nba-matchup-daily-broadcast",
@@ -112,10 +148,10 @@ Deno.serve(async (req) => {
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
-      result: { total: findings.length, elite: elite.length, prime: prime.length, avoid: avoid.length },
+      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal },
     });
 
-    return new Response(JSON.stringify({ success: true, findings: findings.length, elite: elite.length, prime: prime.length, duration }), {
+    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, duration }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
@@ -127,3 +163,7 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
