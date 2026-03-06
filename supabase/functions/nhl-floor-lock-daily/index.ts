@@ -240,12 +240,22 @@ Deno.serve(async (req) => {
     // ============================================================
     log("=== PHASE 2B: Building NHL Optimal Combo Parlays ===");
 
-    const optimalCandidates = candidates.filter((c) => (c.actual_hit_rate || 0) >= 0.6);
-    log(`Optimal combo pool: ${optimalCandidates.length} candidates (60%+ hit rate)`);
+    // Deduplicate by player first, take top 20 to avoid memory explosion (C(360,3) = 7.7M!)
+    const ocSeen = new Set<string>();
+    const optimalCandidates: typeof candidates = [];
+    for (const c of candidates) {
+      if ((c.actual_hit_rate || 0) >= 0.6 && !ocSeen.has(c.player_name)) {
+        ocSeen.add(c.player_name);
+        optimalCandidates.push(c);
+      }
+    }
+    // Cap at top 20 by hit rate (already sorted)
+    const ocPool = optimalCandidates.slice(0, 20);
+    log(`Optimal combo pool: ${ocPool.length} candidates (deduped, top 20, 60%+ hit rate)`);
 
     // Execution: 70%+ hit rate, 3-leg
     const execCombos = buildOptimalCombos(
-      optimalCandidates.filter((c) => (c.actual_hit_rate || 0) >= 0.7),
+      ocPool.filter((c) => (c.actual_hit_rate || 0) >= 0.7),
       3,
       0.7,
       1
@@ -253,7 +263,7 @@ Deno.serve(async (req) => {
 
     // Exploration: 60%+ hit rate, 3-leg
     const exploreCombos = buildOptimalCombos(
-      optimalCandidates,
+      ocPool,
       3,
       0.6,
       2
