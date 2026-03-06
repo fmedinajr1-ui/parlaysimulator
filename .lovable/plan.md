@@ -1,3 +1,31 @@
+# Daily NHL Floor Lock + NBA Matchup Broadcast — IMPLEMENTED ✅
+
+## Cron Schedule
+
+| Job | Time (ET) | UTC Cron | Function |
+|-----|-----------|----------|----------|
+| NBA L10 Refresh & Rebuild | 10:00 AM | `0 15 * * *` | `refresh-l10-and-rebuild` (existing) |
+| NHL Data Refresh + Floor Lock Build + Telegram | 12:00 PM | `0 16 * * *` | `nhl-floor-lock-daily` |
+| NBA Bidirectional Matchup Broadcast | 1:30 PM | `30 17 * * *` | `nba-matchup-daily-broadcast` |
+
+## New Functions
+
+### `nhl-floor-lock-daily`
+Orchestrator that:
+1. Refreshes NHL game logs (`nhl-stats-fetcher`)
+2. Refreshes team defense rankings (`nhl-team-defense-rankings-fetcher`)
+3. Scans sweet spots (`nhl-prop-sweet-spots-scanner`)
+4. Builds 4-5 leg floor lock parlay from NHL picks with 100% L10 hit rate + `l10_min >= 1`
+5. Falls back to 80%+ hit rate if insufficient 100% candidates
+6. Inserts to `bot_daily_parlays` (strategy: `nhl_floor_lock`)
+7. Broadcasts formatted parlay to Telegram
+
+### `nba-matchup-daily-broadcast`
+1. Runs bidirectional `bot-matchup-defense-scanner`
+2. Queries `bot_research_findings` for today's matchup scan
+3. Categorizes into elite/prime/favorable/avoid tiers
+4. Broadcasts formatted report to Telegram
+
 # Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
 ## What Was Added
