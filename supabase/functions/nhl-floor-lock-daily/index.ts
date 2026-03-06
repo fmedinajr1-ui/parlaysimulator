@@ -256,6 +256,9 @@ Deno.serve(async (req) => {
       const combinedProb = selectedLegs.reduce((acc, p) => acc * (p.actual_hit_rate || 0.8), 1);
       const estimatedOdds = combinedProb > 0 ? Math.round((1 / combinedProb - 1) * 100) : 200;
 
+      const flStake = execStake;
+      const flPayout = Math.round(flStake * (estimatedOdds / 100 + 1) * 100) / 100;
+
       const { error: insertError } = await supabase.from("bot_daily_parlays").insert({
         strategy_name: "nhl_floor_lock",
         tier: "execution",
@@ -264,7 +267,9 @@ Deno.serve(async (req) => {
         leg_count: legs.length,
         combined_probability: Math.round(combinedProb * 1000) / 1000,
         expected_odds: estimatedOdds,
-        selection_rationale: `NHL Floor Lock: ${legs.length} legs with ${Math.round(combinedProb * 100)}% combined L10 probability.`,
+        simulated_stake: flStake,
+        simulated_payout: flPayout,
+        selection_rationale: `NHL Floor Lock: ${legs.length} legs with ${Math.round(combinedProb * 100)}% combined L10 probability. Stake: $${flStake}.`,
         is_simulated: true,
       });
 
@@ -326,6 +331,9 @@ Deno.serve(async (req) => {
       const tier = idx === 0 ? "execution" : "exploration";
       const estimatedOdds = prob > 0 ? Math.round((1 / prob - 1) * 100) : 300;
 
+      const ocStake = tier === "execution" ? execStake : explStake;
+      const ocPayout = Math.round(ocStake * (estimatedOdds / 100 + 1) * 100) / 100;
+
       const { error: insertErr } = await supabase.from("bot_daily_parlays").insert({
         strategy_name: "nhl_optimal_combo",
         tier,
@@ -334,7 +342,9 @@ Deno.serve(async (req) => {
         leg_count: legs.length,
         combined_probability: Math.round(prob * 1000) / 1000,
         expected_odds: estimatedOdds,
-        selection_rationale: `NHL Optimal Combo (${tier}): Best ${legs.length}-leg combination by product of L10 hit rates. Combined: ${Math.round(prob * 100)}%.`,
+        simulated_stake: ocStake,
+        simulated_payout: ocPayout,
+        selection_rationale: `NHL Optimal Combo (${tier}): Best ${legs.length}-leg combination by product of L10 hit rates. Combined: ${Math.round(prob * 100)}%. Stake: $${ocStake}.`,
         is_simulated: true,
       });
 
@@ -382,6 +392,9 @@ Deno.serve(async (req) => {
       const combinedProb = ceilingLegs.reduce((acc, p) => acc * (p.actual_hit_rate || 0.5), 1);
       const estimatedOdds = combinedProb > 0 ? Math.round((1 / combinedProb - 1) * 100) : 500;
 
+      const csStake = explStake;
+      const csPayout = Math.round(csStake * (estimatedOdds / 100 + 1) * 100) / 100;
+
       const { error: insertErr } = await supabase.from("bot_daily_parlays").insert({
         strategy_name: "nhl_ceiling_shot",
         tier: "exploration",
@@ -390,7 +403,9 @@ Deno.serve(async (req) => {
         leg_count: legs.length,
         combined_probability: Math.round(combinedProb * 1000) / 1000,
         expected_odds: estimatedOdds,
-        selection_rationale: `NHL Ceiling Shot: ${legs.length} legs targeting alt lines near L10 ceiling. Upside-first selection.`,
+        simulated_stake: csStake,
+        simulated_payout: csPayout,
+        selection_rationale: `NHL Ceiling Shot: ${legs.length} legs targeting alt lines near L10 ceiling. Stake: $${csStake}.`,
         is_simulated: true,
       });
 
@@ -525,6 +540,9 @@ Deno.serve(async (req) => {
         const nhlCount = combo.filter((c) => (c.category || "").startsWith("NHL_")).length;
         const mlbCount = combo.filter((c) => (c.category || "").startsWith("MLB_")).length;
 
+        const xsStake = tier === "execution" ? execStake : explStake;
+        const xsPayout = Math.round(xsStake * (estimatedOdds / 100 + 1) * 100) / 100;
+
         const { error: insertErr } = await supabase.from("bot_daily_parlays").insert({
           strategy_name: "cross_sport_optimal",
           tier,
@@ -533,7 +551,9 @@ Deno.serve(async (req) => {
           leg_count: legs.length,
           combined_probability: Math.round(prob * 1000) / 1000,
           expected_odds: estimatedOdds,
-          selection_rationale: `Cross-Sport Optimal (${tier}): ${nhlCount} NHL + ${mlbCount} MLB legs. Combined: ${Math.round(prob * 100)}%.`,
+          simulated_stake: xsStake,
+          simulated_payout: xsPayout,
+          selection_rationale: `Cross-Sport Optimal (${tier}): ${nhlCount} NHL + ${mlbCount} MLB legs. Combined: ${Math.round(prob * 100)}%. Stake: $${xsStake}.`,
           is_simulated: true,
         });
 
