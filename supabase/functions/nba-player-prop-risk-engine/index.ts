@@ -2224,7 +2224,7 @@ serve(async (req) => {
             continue;
           }
           
-          // Ceiling check for unders
+          // Ceiling check for unders (BLOWUP RISK)
           const ceilingCheck = failsCeilingCheck(statValues, line, side);
           if (ceilingCheck.fails) {
             rejectedProps.push({ 
@@ -2234,7 +2234,13 @@ serve(async (req) => {
               archetype,
               ceiling: ceilingCheck.ceiling
             });
+            console.log(`[BLOWUP-RISK] ${prop.player_name} ${prop.prop_type} UNDER ${line}: ${ceilingCheck.reason}`);
             continue;
+          }
+          // Store blowup penalty for confidence scoring
+          if (ceilingCheck.penalty !== 0) {
+            (prop as any)._blowupPenalty = ceilingCheck.penalty;
+            console.log(`[BLOWUP-WARN] ${prop.player_name} ${prop.prop_type} UNDER ${line}: ${ceilingCheck.reason}`);
           }
           
           // Bad game check
