@@ -133,3 +133,25 @@ All three strategies (`optimal_combo`, `floor_lock`, `ceiling_shot`) added to PR
 2. `supabase/functions/detect-mispriced-lines/index.ts` — added NHL analysis block
 3. `supabase/config.toml` — registered new function
 4. `bot_category_weights` table — seeded NHL categories
+
+# Cross-Sport NHL+MLB Optimal Combo Parlays — IMPLEMENTED ✅
+
+## What Was Added
+Phase 2D in `nhl-floor-lock-daily` that creates mixed-sport parlays combining NHL and MLB picks.
+
+### How It Works
+1. After NHL phases complete, fetches today's MLB candidates from `category_sweet_spots` (category LIKE `MLB_%`)
+2. Merges NHL pool (from Phase 2B) + MLB pool, deduplicates by player, caps at 25
+3. Builds combos using C(n,3) and C(n,4) with a **mixed-sport filter**: every combo must have at least 1 NHL leg AND at least 1 MLB leg
+4. Inserts to `bot_daily_parlays` with strategy `cross_sport_optimal`
+
+### Strategy Profiles
+- **Execution**: 3-leg, all legs ≥ 70% L10 hit rate, mixed sport
+- **Exploration**: 3-leg at 60%+ and 4-leg at 60%+, mixed sport
+
+### Broadcast
+Included in the consolidated NHL daily broadcast with 🌐 emoji. Header updated to "NHL + MLB DAILY PARLAYS".
+
+### Files Changed
+1. `supabase/functions/nhl-floor-lock-daily/index.ts` — added Phase 2D
+2. `supabase/functions/broadcast-new-strategies/index.ts` — added `cross_sport_optimal` to whitelist
