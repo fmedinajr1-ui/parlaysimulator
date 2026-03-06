@@ -4689,6 +4689,51 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs, blocked NCAAB player props, blocked prop types)`);
 
+  // === BLOWUP RISK FILTER: Block/penalize UNDER picks on high-ceiling volatile players ===
+  let blowupBlocked = 0;
+  let blowupPenalized = 0;
+  for (const pick of enrichedSweetSpots) {
+    const side = (pick.recommended_side || '').toLowerCase();
+    if (side !== 'under') continue;
+    
+    const l10Max = (pick as any).l10_max;
+    const l10Avg = (pick as any).l10_avg || pick.projected_value || 0;
+    const l10StdDev = (pick as any).l10_std_dev;
+    const line = pick.line || 0;
+    if (!l10Max || l10Max <= 0 || line <= 0) continue;
+    
+    const ceilingRatio = l10Max / line;
+    const margin = line - l10Avg;
+    
+    // HARD BLOCK: Ceiling is 50%+ above the line — player can easily blow past it
+    if (ceilingRatio >= 1.5) {
+      console.log(`[BlowupRisk] 🚫 HARD BLOCK: ${pick.player_name} UNDER ${line} — L10 max ${l10Max} is ${Math.round((ceilingRatio - 1) * 100)}% above line`);
+      pick.compositeScore = 0;
+      (pick as any).blowupBlocked = true;
+      blowupBlocked++;
+      continue;
+    }
+    
+    // HARD BLOCK: High variance relative to margin — std dev alone can blow past line
+    if (l10StdDev && margin > 0 && l10StdDev > margin * 1.5) {
+      console.log(`[BlowupRisk] 🚫 HARD BLOCK: ${pick.player_name} UNDER ${line} — L10 std_dev ${l10StdDev.toFixed(1)} > margin ${margin.toFixed(1)} × 1.5`);
+      pick.compositeScore = 0;
+      (pick as any).blowupBlocked = true;
+      blowupBlocked++;
+      continue;
+    }
+    
+    // SOFT PENALTY: Ceiling is 25-50% above line — deprioritize
+    if (ceilingRatio >= 1.25) {
+      console.log(`[BlowupRisk] ⚠️ PENALTY: ${pick.player_name} UNDER ${line} — L10 max ${l10Max} is ${Math.round((ceilingRatio - 1) * 100)}% above line (-15)`);
+      pick.compositeScore = Math.max(0, pick.compositeScore - 15);
+      blowupPenalized++;
+    }
+  }
+  if (blowupBlocked > 0 || blowupPenalized > 0) {
+    console.log(`[BlowupRisk] Blocked ${blowupBlocked}, penalized ${blowupPenalized} UNDER picks for blowup ceiling risk`);
+  }
+
   // === APPLY GAME CONTEXT PENALTIES/BOOSTS TO PLAYER PICKS ===
   let contextAdjustments = 0;
   for (const pick of enrichedSweetSpots) {
