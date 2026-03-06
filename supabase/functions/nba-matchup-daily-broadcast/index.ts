@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    log(`✅ Inserted ${underParlaysInserted} bidirectional bench under parlays`);
+    const duration = Date.now() - startTime;
     log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed`);
 
     await supabase.from("cron_job_history").insert({
