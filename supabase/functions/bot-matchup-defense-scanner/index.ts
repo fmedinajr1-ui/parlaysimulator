@@ -91,7 +91,7 @@ interface MatchupRecommendation {
   defense_rank: number;
   offense_rank: number;
   matchup_score: number;
-  matchup_label: 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid';
+  matchup_label: 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid' | 'bench_under';
   player_backed: boolean;
   player_targets: PlayerTarget[];
 }

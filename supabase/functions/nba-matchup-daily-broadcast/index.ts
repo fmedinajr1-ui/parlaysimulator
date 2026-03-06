@@ -77,6 +77,7 @@ Deno.serve(async (req) => {
     const prime: any[] = [];
     const favorable: any[] = [];
     const avoid: any[] = [];
+    const benchUnders: any[] = [];
 
     for (const rec of recommendations) {
       const label = rec.matchup_label || "neutral";
@@ -96,6 +97,7 @@ Deno.serve(async (req) => {
       else if (label === "prime") prime.push(entry);
       else if (label === "favorable") favorable.push(entry);
       else if (label === "avoid") avoid.push(entry);
+      else if (label === "bench_under") benchUnders.push(entry);
     }
 
     // Step 5: Format message with player-level detail
