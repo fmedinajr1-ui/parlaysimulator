@@ -568,6 +568,15 @@ serve(async (req) => {
           positionGroup
         );
         
+        // === BLOWUP CEILING RISK FLAG for UNDER picks ===
+        if (!blockResult.blocked && prop.side?.toLowerCase() === 'under' && categoryRec?.l10Max && prop.line > 0) {
+          const ceilingRatio = categoryRec.l10Max / prop.line;
+          if (ceilingRatio >= 1.3) {
+            blockResult.flags.push(RISK_FLAGS.BLOWUP_CEILING_UNDER.code);
+            console.log(`[Matchup] BLOWUP_CEILING: ${prop.playerName} UNDER ${prop.line} — L10 max ${categoryRec.l10Max} is ${Math.round((ceilingRatio - 1) * 100)}% above line`);
+          }
+        }
+        
         // Calculate confidence adjustment from flags
         let confidenceAdjustment = 0;
         const analysisNotes: string[] = [];
