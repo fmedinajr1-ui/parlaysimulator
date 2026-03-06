@@ -150,17 +150,59 @@ Deno.serve(async (req) => {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   try {
+    // === PRE-CHECK: Are there NHL games today? ===
+    const { count: todayPropsCount } = await supabase
+      .from("unified_props")
+      .select("*", { count: "exact", head: true })
+      .eq("sport", "icehockey_nhl")
+      .gte("commence_time", `${today}T00:00:00Z`)
+      .lt("commence_time", `${today}T23:59:59Z`);
+
+    // Also check tomorrow (games listed as next day in UTC)
+    const tomorrow = new Date(new Date(`${today}T12:00:00`).getTime() + 86400000).toISOString().split("T")[0];
+    const { count: tomorrowEarlyCount } = await supabase
+      .from("unified_props")
+      .select("*", { count: "exact", head: true })
+      .eq("sport", "icehockey_nhl")
+      .gte("commence_time", `${today}T17:00:00Z`) // 12pm ET = 5pm UTC
+      .lt("commence_time", `${tomorrow}T10:00:00Z`); // through early next day UTC
+
+    const totalGameProps = (todayPropsCount || 0) + (tomorrowEarlyCount || 0);
+    log(`NHL props check: ${todayPropsCount || 0} today UTC + ${tomorrowEarlyCount || 0} evening/tonight = ${totalGameProps} total`);
+
+    if (totalGameProps === 0) {
+      log("No NHL games today — skipping all phases");
+      const noGamesMsg = `🏒 NHL Daily Parlays — ${today}\n\n📅 No NHL games scheduled today. No parlays generated.`;
+      await supabase.functions.invoke("bot-send-telegram", {
+        body: { message: noGamesMsg, bypass_quiet_hours: false },
+      });
+
+      await supabase.from("cron_job_history").insert({
+        job_name: "nhl-floor-lock-daily",
+        status: "completed",
+        started_at: new Date(startTime).toISOString(),
+        completed_at: new Date().toISOString(),
+        duration_ms: Date.now() - startTime,
+        result: { skipped: true, reason: "no_nhl_games_today" },
+      });
+
+      return new Response(JSON.stringify({ success: true, skipped: true, reason: "no_nhl_games_today" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // === PHASE 1: Refresh NHL data ===
     log("=== PHASE 1: Refreshing NHL data ===");
     await invokeStep("Fetching NHL game logs", "nhl-stats-fetcher", {});
     await invokeStep("Fetching NHL team defense rankings", "nhl-team-defense-rankings-fetcher", {});
     await invokeStep("Scanning NHL prop sweet spots", "nhl-prop-sweet-spots-scanner", {});
 
-    // === Fetch all NHL candidates once ===
+    // === Fetch all NHL candidates — only today's analysis ===
     const { data: allCandidates, error: queryError } = await supabase
       .from("category_sweet_spots")
       .select("*")
       .eq("is_active", true)
+      .eq("analysis_date", today)
       .like("category", "NHL_%")
       .order("actual_hit_rate", { ascending: false })
       .order("l10_avg", { ascending: false });
@@ -170,7 +212,7 @@ Deno.serve(async (req) => {
       throw queryError;
     }
 
-    log(`Found ${allCandidates?.length || 0} total NHL candidates`);
+    log(`Found ${allCandidates?.length || 0} total NHL candidates for ${today}`);
     const candidates = allCandidates || [];
 
     // ============================================================
