@@ -108,6 +108,9 @@ const RISK_FLAGS: Record<string, RiskFlag> = {
   GRIND_REB_BOOST: { code: 'GRIND_REB', label: 'Grind-Out Boosts Rebounds', severity: 'low', confidenceAdjustment: 2 },
   GARBAGE_TIME_RISK: { code: 'GARBAGE_TIME', label: 'Garbage Time Risk', severity: 'critical', confidenceAdjustment: -6 },
   STARTER_BLOWOUT_BLOCK: { code: 'STARTER_BLOWOUT', label: 'Starter in Blowout', severity: 'critical', confidenceAdjustment: -8 },
+  
+  // Blowup ceiling risk for UNDER picks
+  BLOWUP_CEILING_UNDER: { code: 'BLOWUP_CEIL', label: 'High Ceiling Blowup Risk', severity: 'critical', confidenceAdjustment: -12 },
 };
 
 // v3.0: ARCHETYPE-PROP BLOCKING (strict)
@@ -459,17 +462,17 @@ serve(async (req) => {
         .select('*')
         .eq('game_date', today);
       
-      // Fetch category sweet spots for side enforcement
+      // Fetch category sweet spots for side enforcement + blowup risk detection
       const { data: categoryData } = await supabase
         .from('category_sweet_spots')
-        .select('player_name, prop_type, recommended_side, l10_hit_rate')
+        .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_max, l10_std_dev, l10_avg')
         .gte('l10_hit_rate', 0.7);
       
-      // Create category recommendations map
-      const categoryMap = new Map<string, { side: string; hitRate: number }>();
-      (categoryData || []).forEach((c: { player_name: string; prop_type: string; recommended_side: string; l10_hit_rate: number }) => {
+      // Create category recommendations map (with blowup risk data)
+      const categoryMap = new Map<string, { side: string; hitRate: number; l10Max?: number; l10StdDev?: number; l10Avg?: number }>();
+      (categoryData || []).forEach((c: any) => {
         const key = `${c.player_name?.toLowerCase()}_${c.prop_type?.toLowerCase()}`;
-        categoryMap.set(key, { side: c.recommended_side, hitRate: c.l10_hit_rate });
+        categoryMap.set(key, { side: c.recommended_side, hitRate: c.l10_hit_rate, l10Max: c.l10_max, l10StdDev: c.l10_std_dev, l10Avg: c.l10_avg });
       });
       
       console.log(`[Matchup] Loaded ${categoryMap.size} category recommendations`);
