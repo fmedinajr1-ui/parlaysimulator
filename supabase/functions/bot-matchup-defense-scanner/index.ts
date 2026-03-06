@@ -52,20 +52,35 @@ function resolveTeamAbbrev(teamName: string): string {
   return NBA_TEAM_NAME_TO_ABBREV[lower] || teamName.trim().toUpperCase();
 }
 
+// Map matchup stat categories to sweet spot category patterns
+const STAT_TO_SWEET_SPOT_CATEGORIES: Record<string, string[]> = {
+  points: ['NBA_POINTS', 'NBA_PTS'],
+  threes: ['NBA_THREES', 'NBA_3PM', 'NBA_THREE_POINTERS'],
+  rebounds: ['NBA_REBOUNDS', 'NBA_REB', 'NBA_TOTAL_REBOUNDS'],
+  assists: ['NBA_ASSISTS', 'NBA_AST'],
+};
+
 interface TeamProfile {
   team_abbreviation: string;
-  // Defense ranks (higher = worse defense = more points allowed)
   overall_rank: number | null;
   opp_points_rank: number | null;
   opp_threes_rank: number | null;
   opp_rebounds_rank: number | null;
   opp_assists_rank: number | null;
-  // Offense ranks (rank 1 = best offense)
   off_points_rank: number | null;
   off_threes_rank: number | null;
   off_rebounds_rank: number | null;
   off_assists_rank: number | null;
   off_pace_rank: number | null;
+}
+
+interface PlayerTarget {
+  player_name: string;
+  line: number;
+  l10_avg: number;
+  l10_hit_rate: number;
+  l10_min: number;
+  margin: number; // l10_avg - line
 }
 
 interface MatchupRecommendation {
@@ -77,6 +92,8 @@ interface MatchupRecommendation {
   offense_rank: number;
   matchup_score: number;
   matchup_label: 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid';
+  player_backed: boolean;
+  player_targets: PlayerTarget[];
 }
 
 interface GameMatchupMap {
@@ -96,11 +113,8 @@ const STAT_CATEGORIES = [
   { key: 'assists', defField: 'opp_assists_rank', offField: 'off_assists_rank', propTypes: ['assists', 'ast'] },
 ];
 
-// Bidirectional matchup score: oppDefenseRank * 0.6 + invertedOffenseRank * 0.4
-// defRank: higher = worse defense (more points allowed) — good for attacker
-// offRank: rank 1 = best offense → inverted = 30 (strongest contribution)
 function computeMatchupScore(defRank: number, offRank: number): number {
-  const invertedOff = 31 - offRank; // rank 1 → 30, rank 30 → 1
+  const invertedOff = 31 - offRank;
   return defRank * 0.6 + invertedOff * 0.4;
 }
 
@@ -163,8 +177,128 @@ serve(async (req) => {
     }
     console.log(`[MatchupScanner] Loaded ${profileMap.size} team profiles (offense + defense)`);
 
+    // Load active sweet spots for player-level cross-reference
+    const { data: sweetSpots } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, category, prop_type, recommended_line, l10_avg, l10_hit_rate, l10_min, l10_max, actual_line, recommended_side')
+      .eq('is_active', true)
+      .gte('l10_hit_rate', 0.6);
+
+    // Index sweet spots by category for fast lookup
+    const sweetSpotsByCategory = new Map<string, any[]>();
+    if (sweetSpots) {
+      for (const ss of sweetSpots) {
+        const cat = (ss.category || '').toUpperCase();
+        if (!sweetSpotsByCategory.has(cat)) sweetSpotsByCategory.set(cat, []);
+        sweetSpotsByCategory.get(cat)!.push(ss);
+      }
+    }
+    console.log(`[MatchupScanner] Loaded ${sweetSpots?.length || 0} active sweet spots for player validation`);
+
+    // Helper: find player targets for a team + stat category
+    function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
+      const categories = STAT_TO_SWEET_SPOT_CATEGORIES[statKey] || [];
+      const targets: PlayerTarget[] = [];
+
+      for (const catKey of categories) {
+        const spots = sweetSpotsByCategory.get(catKey) || [];
+        for (const ss of spots) {
+          // Check if player is on this team (player_name format includes team info sometimes)
+          // We check via the player_name field — sweet spots include team context
+          const playerName = ss.player_name || '';
+          const line = ss.recommended_line ?? ss.actual_line ?? 0;
+          const l10Avg = ss.l10_avg ?? 0;
+          const l10HitRate = ss.l10_hit_rate ?? 0;
+          const l10Min = ss.l10_min ?? 0;
+          const recSide = (ss.recommended_side || '').toLowerCase();
+
+          // For OVER recommendations: l10_avg must comfortably clear the line
+          if (side === 'over' && recSide === 'over' && l10Avg > line + 0.3 && l10HitRate >= 0.6) {
+            targets.push({
+              player_name: playerName,
+              line,
+              l10_avg: Math.round(l10Avg * 10) / 10,
+              l10_hit_rate: Math.round(l10HitRate * 100),
+              l10_min: l10Min,
+              margin: Math.round((l10Avg - line) * 10) / 10,
+            });
+          }
+          // For UNDER recommendations (avoid zones): l10_avg must be below the line
+          if (side === 'under' && recSide === 'under' && l10Avg < line - 0.3 && l10HitRate >= 0.6) {
+            targets.push({
+              player_name: playerName,
+              line,
+              l10_avg: Math.round(l10Avg * 10) / 10,
+              l10_hit_rate: Math.round(l10HitRate * 100),
+              l10_min: l10Min,
+              margin: Math.round((line - l10Avg) * 10) / 10,
+            });
+          }
+        }
+      }
+
+      // Sort by margin (strongest first), take top 5
+      targets.sort((a, b) => b.margin - a.margin);
+      return targets.slice(0, 5);
+    }
+
     const allMatchups: GameMatchupMap[] = [];
     const allRecommendations: MatchupRecommendation[] = [];
+
+    function processDirection(
+      attackerAbbrev: string,
+      defenderAbbrev: string,
+      attackerProfile: TeamProfile,
+      defenderProfile: TeamProfile,
+      matchup: GameMatchupMap,
+      softSpots: { stat: string; def_rank: number; off_rank: number; score: number }[],
+      eliteDefense: { stat: string; def_rank: number; off_rank: number; score: number }[]
+    ) {
+      for (const stat of STAT_CATEGORIES) {
+        const defRank = (defenderProfile as any)[stat.defField] ?? defenderProfile.overall_rank;
+        const offRank = (attackerProfile as any)[stat.offField];
+        if (defRank == null || offRank == null) continue;
+
+        const score = computeMatchupScore(defRank, offRank);
+        const label = classifyMatchupScore(score);
+
+        console.log(`[MatchupScanner] ${attackerAbbrev} ${stat.key} OFF(${offRank}) vs ${defenderAbbrev} DEF(${defRank}) → score=${score.toFixed(1)} [${label}]`);
+
+        const entry = { stat: stat.key, def_rank: defRank, off_rank: offRank, score: Math.round(score * 10) / 10 };
+
+        if (label === 'elite' || label === 'prime' || label === 'favorable') {
+          softSpots.push(entry);
+        } else if (label === 'avoid') {
+          eliteDefense.push(entry);
+        }
+
+        if (label !== 'neutral') {
+          const side = label === 'avoid' ? 'under' : 'over';
+          const playerTargets = findPlayerTargets(attackerAbbrev, stat.key, side);
+
+          const rec: MatchupRecommendation = {
+            attacking_team: attackerAbbrev,
+            defending_team: defenderAbbrev,
+            prop_type: stat.key,
+            side,
+            defense_rank: defRank,
+            offense_rank: offRank,
+            matchup_score: Math.round(score * 10) / 10,
+            matchup_label: label,
+            player_backed: playerTargets.length > 0,
+            player_targets: playerTargets,
+          };
+          matchup.recommended_props.push(rec);
+          allRecommendations.push(rec);
+
+          if (playerTargets.length > 0) {
+            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} player targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%)`).join(', ')}`);
+          } else {
+            console.log(`[MatchupScanner] ⚠️ ${attackerAbbrev} ${stat.key} ${side} — NO player targets found (environment only)`);
+          }
+        }
+      }
+    }
 
     for (const game of games) {
       const homeAbbrev = resolveTeamAbbrev(game.home_team || '');
@@ -189,78 +323,13 @@ serve(async (req) => {
       };
 
       // Away team attacks home defense
-      // Need: home defense ranks (how bad they are) + away offense ranks (how good attacker is)
       if (homeProfile && awayProfile) {
-        for (const stat of STAT_CATEGORIES) {
-          const defRank = (homeProfile as any)[stat.defField] ?? homeProfile.overall_rank;
-          const offRank = (awayProfile as any)[stat.offField];
-          if (defRank == null || offRank == null) continue;
-
-          const score = computeMatchupScore(defRank, offRank);
-          const label = classifyMatchupScore(score);
-
-          console.log(`[MatchupScanner] ${awayAbbrev} ${stat.key} OFF(${offRank}) vs ${homeAbbrev} DEF(${defRank}) → score=${score.toFixed(1)} [${label}]`);
-
-          const entry = { stat: stat.key, def_rank: defRank, off_rank: offRank, score: Math.round(score * 10) / 10 };
-
-          if (label === 'elite' || label === 'prime' || label === 'favorable') {
-            matchup.home_soft_spots.push(entry);
-          } else if (label === 'avoid') {
-            matchup.home_elite_defense.push(entry);
-          }
-
-          if (label !== 'neutral') {
-            const rec: MatchupRecommendation = {
-              attacking_team: awayAbbrev,
-              defending_team: homeAbbrev,
-              prop_type: stat.key,
-              side: label === 'avoid' ? 'under' : 'over',
-              defense_rank: defRank,
-              offense_rank: offRank,
-              matchup_score: Math.round(score * 10) / 10,
-              matchup_label: label,
-            };
-            matchup.recommended_props.push(rec);
-            allRecommendations.push(rec);
-          }
-        }
+        processDirection(awayAbbrev, homeAbbrev, awayProfile, homeProfile, matchup, matchup.home_soft_spots, matchup.home_elite_defense);
       }
 
       // Home team attacks away defense
       if (awayProfile && homeProfile) {
-        for (const stat of STAT_CATEGORIES) {
-          const defRank = (awayProfile as any)[stat.defField] ?? awayProfile.overall_rank;
-          const offRank = (homeProfile as any)[stat.offField];
-          if (defRank == null || offRank == null) continue;
-
-          const score = computeMatchupScore(defRank, offRank);
-          const label = classifyMatchupScore(score);
-
-          console.log(`[MatchupScanner] ${homeAbbrev} ${stat.key} OFF(${offRank}) vs ${awayAbbrev} DEF(${defRank}) → score=${score.toFixed(1)} [${label}]`);
-
-          const entry = { stat: stat.key, def_rank: defRank, off_rank: offRank, score: Math.round(score * 10) / 10 };
-
-          if (label === 'elite' || label === 'prime' || label === 'favorable') {
-            matchup.away_soft_spots.push(entry);
-          } else if (label === 'avoid') {
-            matchup.away_elite_defense.push(entry);
-          }
-
-          if (label !== 'neutral') {
-            const rec: MatchupRecommendation = {
-              attacking_team: homeAbbrev,
-              defending_team: awayAbbrev,
-              prop_type: stat.key,
-              side: label === 'avoid' ? 'under' : 'over',
-              defense_rank: defRank,
-              offense_rank: offRank,
-              matchup_score: Math.round(score * 10) / 10,
-              matchup_label: label,
-            };
-            matchup.recommended_props.push(rec);
-            allRecommendations.push(rec);
-          }
-        }
+        processDirection(homeAbbrev, awayAbbrev, homeProfile, awayProfile, matchup, matchup.away_soft_spots, matchup.away_elite_defense);
       }
 
       if (matchup.recommended_props.length > 0) {
@@ -272,8 +341,11 @@ serve(async (req) => {
     const primeCount = allRecommendations.filter(r => r.matchup_label === 'prime').length;
     const favorableCount = allRecommendations.filter(r => r.matchup_label === 'favorable').length;
     const avoidCount = allRecommendations.filter(r => r.matchup_label === 'avoid').length;
+    const playerBackedCount = allRecommendations.filter(r => r.player_backed).length;
+    const envOnlyCount = allRecommendations.filter(r => !r.player_backed && r.matchup_label !== 'neutral').length;
 
     console.log(`[MatchupScanner] Results: ${allMatchups.length} games | ${eliteCount} elite, ${primeCount} prime, ${favorableCount} favorable, ${avoidCount} avoid`);
+    console.log(`[MatchupScanner] Player validation: ${playerBackedCount} player-backed, ${envOnlyCount} environment-only`);
 
     // Build summary
     const summaryLines = allMatchups.map(m => {
@@ -291,19 +363,21 @@ serve(async (req) => {
       relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
-        engine_version: 'bidirectional_v1',
+        engine_version: 'bidirectional_v2_player_backed',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
         elite_opportunities: eliteCount,
         prime_opportunities: primeCount,
         favorable_opportunities: favorableCount,
         avoid_zones: avoidCount,
+        player_backed_count: playerBackedCount,
+        environment_only_count: envOnlyCount,
         scoring_formula: 'oppDefRank*0.6 + (31-teamOffRank)*0.4',
         thresholds: { elite: '>=22', prime: '>=18', favorable: '>=14', avoid: '<=8' },
         matchups: allMatchups,
         recommendations: allRecommendations,
       },
-      sources: ['team_defense_rankings(offense+defense)', 'game_bets'],
+      sources: ['team_defense_rankings(offense+defense)', 'game_bets', 'category_sweet_spots'],
       updated_at: new Date().toISOString(),
     };
 
@@ -324,13 +398,15 @@ serve(async (req) => {
 
     const result = {
       scan_date: today,
-      engine_version: 'bidirectional_v1',
+      engine_version: 'bidirectional_v2_player_backed',
       games_scanned: games.length,
       games_with_matchups: allMatchups.length,
       elite: eliteCount,
       prime: primeCount,
       favorable: favorableCount,
       avoid: avoidCount,
+      player_backed: playerBackedCount,
+      environment_only: envOnlyCount,
       total_recommendations: allRecommendations.length,
     };
 
