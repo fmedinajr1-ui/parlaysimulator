@@ -162,8 +162,95 @@ Deno.serve(async (req) => {
       body: { message, bypass_quiet_hours: true },
     });
 
+    // === PHASE: Create trackable bidirectional under parlays ===
+    log("Building bidirectional bench under parlays...");
+
+    // Load stake config
+    const { data: stakeConfig } = await supabase
+      .from("bot_stake_config").select("*").limit(1).maybeSingle();
+    const execStake = stakeConfig?.execution_stake ?? 250;
+
+    // Collect all strong under targets (80%+ L10 hit rate)
+    const strongUnders: any[] = [];
+    for (const item of benchUnders) {
+      for (const p of (item.player_targets || [])) {
+        if ((p.l10_hit_rate || 0) >= 80) {
+          strongUnders.push({
+            player_name: p.player_name,
+            prop_type: item.prop_type,
+            side: "UNDER",
+            line: p.line,
+            category: `NBA_${item.prop_type?.toUpperCase() || 'PROPS'}`,
+            l10_hit_rate: p.l10_hit_rate / 100,
+            l10_avg: p.l10_avg,
+            l10_min: p.l10_min,
+            l10_max: p.margin != null ? p.line - p.margin : null,
+            defending_team: item.defending_team,
+            quality_tier: p.l10_hit_rate >= 90 ? "elite" : "strong",
+          });
+        }
+      }
+    }
+
+    log(`Found ${strongUnders.length} strong under targets (80%+ L10 hit rate)`);
+
+    // Build 3-leg parlays from strong unders
+    let underParlaysInserted = 0;
+    if (strongUnders.length >= 3) {
+      // Sort by hit rate descending
+      strongUnders.sort((a: any, b: any) => (b.l10_hit_rate || 0) - (a.l10_hit_rate || 0));
+
+      // Build up to 2 non-overlapping 3-leg parlays
+      const usedPlayers = new Set<string>();
+      for (let parlayIdx = 0; parlayIdx < 2 && strongUnders.length >= 3; parlayIdx++) {
+        const available = strongUnders.filter((u: any) => !usedPlayers.has(u.player_name));
+        if (available.length < 3) break;
+
+        const selected = available.slice(0, 3);
+        const legs = selected.map((u: any) => ({
+          player: u.player_name,
+          prop: u.prop_type,
+          side: "UNDER",
+          line: u.line,
+          category: u.category,
+          l10_hit_rate: u.l10_hit_rate,
+          l10_avg: u.l10_avg,
+          l10_min: u.l10_min,
+          l10_max: u.l10_max,
+          defending_team: u.defending_team,
+          quality_tier: u.quality_tier,
+        }));
+
+        const combinedProb = selected.reduce((acc: number, u: any) => acc * (u.l10_hit_rate || 0.8), 1);
+        const estimatedOdds = combinedProb > 0 ? Math.round((1 / combinedProb - 1) * 100) : 200;
+        const stake = execStake;
+        const payout = Math.round(stake * (estimatedOdds / 100 + 1) * 100) / 100;
+
+        const { error: insertErr } = await supabase.from("bot_daily_parlays").insert({
+          strategy_name: "bidirectional_bench_under",
+          tier: "execution",
+          parlay_date: today,
+          legs,
+          leg_count: legs.length,
+          combined_probability: Math.round(combinedProb * 1000) / 1000,
+          expected_odds: estimatedOdds,
+          simulated_stake: stake,
+          simulated_payout: payout,
+          selection_rationale: `Bidirectional Bench Under: ${legs.length} UNDER legs from matchup scan with 80%+ L10 hit rates. Stake: $${stake}.`,
+          is_simulated: true,
+        });
+
+        if (insertErr) {
+          log(`Bench under parlay insert error: ${JSON.stringify(insertErr)}`);
+        } else {
+          underParlaysInserted++;
+          selected.forEach((u: any) => usedPlayers.add(u.player_name));
+        }
+      }
+    }
+
     const duration = Date.now() - startTime;
-    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed`);
+    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed, ${underParlaysInserted} under parlays`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "nba-matchup-daily-broadcast",
@@ -171,10 +258,10 @@ Deno.serve(async (req) => {
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
-      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal },
+      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal, under_parlays: underParlaysInserted },
     });
 
-    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, duration }), {
+    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, under_parlays: underParlaysInserted, duration }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
