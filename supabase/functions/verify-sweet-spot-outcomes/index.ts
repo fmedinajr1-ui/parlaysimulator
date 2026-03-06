@@ -88,7 +88,14 @@ const nhlPropTypeToStat: Record<string, string> = {
   'nhl_shots_on_goal': 'shots_on_goal',
   'nhl_blocked_shots': 'blocked_shots',
   'nhl_power_play_points': 'power_play_points',
-  // Alternate keys used in category_sweet_spots
+  // player_* prefixed keys from category_sweet_spots
+  'player_points': 'points',
+  'player_goals': 'goals',
+  'player_assists': 'assists',
+  'player_shots_on_goal': 'shots_on_goal',
+  'player_blocked_shots': 'blocked_shots',
+  'player_power_play_points': 'power_play_points',
+  // Short keys
   'points': 'points',
   'goals': 'goals',
   'assists': 'assists',
