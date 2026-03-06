@@ -177,6 +177,22 @@ serve(async (req) => {
     }
     console.log(`[MatchupScanner] Loaded ${profileMap.size} team profiles (offense + defense)`);
 
+    // Load bdl_player_cache to build player → team map
+    const { data: playerCache } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, team_name')
+      .eq('is_active', true);
+
+    const playerTeamMap = new Map<string, string>();
+    if (playerCache) {
+      for (const p of playerCache) {
+        if (p.player_name && p.team_name) {
+          playerTeamMap.set(p.player_name, resolveTeamAbbrev(p.team_name));
+        }
+      }
+    }
+    console.log(`[MatchupScanner] Loaded ${playerTeamMap.size} player→team mappings from bdl_player_cache`);
+
     // Load active sweet spots for player-level cross-reference
     const { data: sweetSpots } = await supabase
       .from('category_sweet_spots')
@@ -184,28 +200,31 @@ serve(async (req) => {
       .eq('is_active', true)
       .gte('l10_hit_rate', 0.6);
 
-    // Index sweet spots by category for fast lookup
-    const sweetSpotsByCategory = new Map<string, any[]>();
+    // Index sweet spots by prop_type for fast lookup
+    const sweetSpotsByPropType = new Map<string, any[]>();
     if (sweetSpots) {
       for (const ss of sweetSpots) {
-        const cat = (ss.category || '').toUpperCase();
-        if (!sweetSpotsByCategory.has(cat)) sweetSpotsByCategory.set(cat, []);
-        sweetSpotsByCategory.get(cat)!.push(ss);
+        const pt = (ss.prop_type || '').toLowerCase();
+        if (!sweetSpotsByPropType.has(pt)) sweetSpotsByPropType.set(pt, []);
+        sweetSpotsByPropType.get(pt)!.push(ss);
       }
     }
-    console.log(`[MatchupScanner] Loaded ${sweetSpots?.length || 0} active sweet spots for player validation`);
+    console.log(`[MatchupScanner] Loaded ${sweetSpots?.length || 0} active sweet spots, indexed by prop_type (${sweetSpotsByPropType.size} unique prop types: ${[...sweetSpotsByPropType.keys()].join(', ')})`);
 
     // Helper: find player targets for a team + stat category
     function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
-      const categories = STAT_TO_SWEET_SPOT_CATEGORIES[statKey] || [];
+      const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
       const targets: PlayerTarget[] = [];
 
-      for (const catKey of categories) {
-        const spots = sweetSpotsByCategory.get(catKey) || [];
+      for (const pt of propTypes) {
+        const spots = sweetSpotsByPropType.get(pt) || [];
         for (const ss of spots) {
-          // Check if player is on this team (player_name format includes team info sometimes)
-          // We check via the player_name field — sweet spots include team context
           const playerName = ss.player_name || '';
+          
+          // Team filter: only include players on the attacking team
+          const playerTeam = playerTeamMap.get(playerName);
+          if (playerTeam !== teamAbbrev) continue;
+
           const line = ss.recommended_line ?? ss.actual_line ?? 0;
           const l10Avg = ss.l10_avg ?? 0;
           const l10HitRate = ss.l10_hit_rate ?? 0;
