@@ -1518,8 +1518,89 @@ Deno.serve(async (req) => {
     }
 
     const reqBody = await req.json();
-    const { type, data: rawData }: NotificationData = reqBody;
     const adminOnly = reqBody.admin_only === true;
+
+    // Handle raw message passthrough (used by matchup broadcast, nhl floor lock, etc.)
+    if (reqBody.message && !reqBody.type) {
+      const rawMessage = reqBody.message as string;
+      console.log(`[Telegram] Raw message passthrough (${rawMessage.length} chars)`);
+
+      const sendRaw = async (text: string, targetChatId: string) => {
+        const body: Record<string, any> = {
+          chat_id: targetChatId,
+          text,
+          disable_web_page_preview: true,
+        };
+        let resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        let result = await resp.json();
+
+        // Split if too long
+        if (!resp.ok && result?.description?.includes('message is too long')) {
+          const chunks: string[] = [];
+          let current = '';
+          for (const line of text.split('\n')) {
+            if ((current + '\n' + line).length > 4000 && current.length > 0) {
+              chunks.push(current);
+              current = line;
+            } else {
+              current += (current ? '\n' : '') + line;
+            }
+          }
+          if (current) chunks.push(current);
+          for (const chunk of chunks) {
+            resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: targetChatId, text: chunk, disable_web_page_preview: true }),
+            });
+            result = await resp.json();
+          }
+        }
+        return { resp, result };
+      };
+
+      // Send to admin
+      const { resp, result } = await sendRaw(rawMessage, chatId);
+      if (!resp.ok) {
+        console.error('[Telegram] Raw message API error:', result);
+        return new Response(JSON.stringify({ success: false, error: result }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Broadcast to customers if not admin_only and bypass_quiet_hours
+      if (!adminOnly && reqBody.bypass_quiet_hours) {
+        try {
+          const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+          const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+          const sb = createClient(supabaseUrl, supabaseKey);
+          const { data: customers } = await sb
+            .from('bot_authorized_users')
+            .select('chat_id, username')
+            .eq('is_active', true);
+          if (customers && customers.length > 0) {
+            for (const customer of customers) {
+              if (customer.chat_id === chatId) continue;
+              try { await sendRaw(rawMessage, customer.chat_id); } catch (e) {
+                console.error(`[Telegram] Failed to send raw to ${customer.chat_id}:`, e);
+              }
+            }
+          }
+        } catch (e) { console.error('[Telegram] Customer broadcast error:', e); }
+      }
+
+      console.log('[Telegram] Raw message sent successfully');
+      return new Response(JSON.stringify({ success: true, raw_passthrough: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { type, data: rawData }: NotificationData = reqBody;
 
     let data = rawData;
 
