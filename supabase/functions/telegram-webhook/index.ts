@@ -4214,6 +4214,24 @@ Deno.serve(async (req) => {
       return new Response("OK", { status: 200 });
     }
 
+    // Handle weekly rundown cron trigger (Sunday broadcast)
+    if (update.cron === "weekly_rundown") {
+      const { data: activeUsers } = await supabase
+        .from("bot_authorized_users")
+        .select("chat_id")
+        .eq("is_active", true);
+      const users = activeUsers || [];
+      for (const user of users) {
+        try {
+          const rundown = await handleWeeklyRundown(user.chat_id);
+          await sendLongMessage(user.chat_id, rundown);
+        } catch (e) {
+          console.error(`Weekly rundown failed for ${user.chat_id}:`, e);
+        }
+      }
+      return new Response("OK", { status: 200 });
+    }
+
     return new Response("OK", { status: 200 });
   } catch (error) {
     console.error("Webhook error:", error);
