@@ -27,7 +27,7 @@ const getFirstInitial = (s: string): string => {
   return parts[0]?.substring(0, 3) || '';
 };
 
-// Map prop_type to stat field in game logs
+// Map prop_type to stat field in game logs (NBA/NCAAB)
 const propTypeToStat: Record<string, string> = {
   'points': 'points',
   'pts': 'points',
@@ -52,6 +52,57 @@ const propTypeToStat: Record<string, string> = {
   'points_assists': 'pa',
   'ra': 'ra',
   'rebounds_assists': 'ra',
+};
+
+// MLB prop_type → stat field mapping
+const mlbPropTypeToStat: Record<string, string> = {
+  'hits': 'hits',
+  'batter_hits': 'hits',
+  'runs': 'runs',
+  'batter_runs_scored': 'runs',
+  'total_bases': 'total_bases',
+  'batter_total_bases': 'total_bases',
+  'rbis': 'rbis',
+  'batter_rbis': 'rbis',
+  'home_runs': 'home_runs',
+  'batter_home_runs': 'home_runs',
+  'stolen_bases': 'stolen_bases',
+  'batter_stolen_bases': 'stolen_bases',
+  'walks': 'walks',
+  'batter_walks': 'walks',
+  'strikeouts': 'strikeouts',
+  'batter_strikeouts': 'strikeouts',
+  'pitcher_strikeouts': 'pitcher_strikeouts',
+  'pitcher_hits_allowed': 'pitcher_hits_allowed',
+  'pitcher_earned_runs': 'earned_runs',
+  'innings_pitched': 'innings_pitched',
+  'hitter_fantasy_score': 'hitter_fantasy_score',
+  'pitcher_outs': 'pitcher_outs',
+};
+
+// NHL prop_type → stat field mapping (skaters)
+const nhlPropTypeToStat: Record<string, string> = {
+  'nhl_points': 'points',
+  'nhl_goals_scorer': 'goals',
+  'nhl_assists': 'assists',
+  'nhl_shots_on_goal': 'shots_on_goal',
+  'nhl_blocked_shots': 'blocked_shots',
+  'nhl_power_play_points': 'power_play_points',
+  // Alternate keys used in category_sweet_spots
+  'points': 'points',
+  'goals': 'goals',
+  'assists': 'assists',
+  'shots': 'shots_on_goal',
+  'shots_on_goal': 'shots_on_goal',
+  'blocked_shots': 'blocked_shots',
+  'power_play_points': 'power_play_points',
+};
+
+// NHL goalie prop_type → stat field mapping
+const nhlGoaliePropTypeToStat: Record<string, string> = {
+  'nhl_goalie_saves': 'saves',
+  'goalie_saves': 'saves',
+  'saves': 'saves',
 };
 
 // Extract stat value from game log
