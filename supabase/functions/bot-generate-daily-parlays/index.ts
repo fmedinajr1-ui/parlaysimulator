@@ -729,11 +729,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'basketball_ncaab'] },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_ncaab', 'icehockey_nhl'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      // cross_sport_4 PROMOTED TO EXECUTION (8-0 record, $3,930 profit) — 2 exploration feeders kept below
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       // Table tennis exploration — OVER TOTALS ONLY
@@ -797,8 +793,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'], sortBy: 'shuffle' },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'basketball_ncaab'], sortBy: 'shuffle' },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_ncaab', 'icehockey_nhl'], sortBy: 'shuffle' },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], sortBy: 'shuffle' },
+      // cross_sport_4 EXPLORATION FEEDERS (discover new combos for execution graduation)
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 45, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 45, sortBy: 'composite' },
       // === MATCHUP-FIRST EXPLORATION: all legs attack weak defenses (rank 20+) ===
       { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'matchup_exploit', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
@@ -1030,6 +1027,21 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', side: 'under' },
+      // ============= CROSS SPORT 4-LEG EXECUTION (PROMOTED — 8-0 record, $3,930 profit) =============
+      // --- Sorted by composite (default high-confidence selection) ---
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // --- Sorted by hit_rate (prioritize proven hitters) ---
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      // --- Sorted by shuffle (break deterministic overlap) ---
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      // --- Sport-specific pairs (proven correlations) ---
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'composite' },
       // (floor_lock + ceiling_shot moved to TOP of execution profiles to avoid timeout)
     ],
   },
