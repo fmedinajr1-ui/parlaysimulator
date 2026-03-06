@@ -345,24 +345,26 @@ Deno.serve(async (req) => {
     const updates: { id: string; actual_value: number | null; outcome: string; settled_at: string; verified_source: string }[] = [];
 
     for (const pick of pendingPicks) {
+      const sport = detectSport(pick.category, pick.prop_type);
+      const sportMap = sport === 'mlb' ? mlbMap : sport === 'nhl' ? nhlMap : nbaMap;
+      const sportLabel = sport === 'mlb' ? 'mlb_player_game_logs' : sport === 'nhl' ? 'nhl_player_game_logs' : 'nba_player_game_logs';
+
       const normalizedPlayerName = normalizeName(pick.player_name);
-      let gameLog = gameLogMap.get(normalizedPlayerName);
+      let gameLog = sportMap.map.get(normalizedPlayerName);
       let matchType = 'exact';
 
       // Fuzzy fallback: try last name + first 3 chars match
       if (!gameLog) {
         const lastName = getLastName(pick.player_name);
         const firstPrefix = getFirstInitial(pick.player_name);
-        const candidates = lastNameIndex.get(lastName) || [];
+        const candidates = sportMap.lastNameIdx.get(lastName) || [];
         
         if (candidates.length === 1) {
-          // Only one player with this last name — safe match
           gameLog = candidates[0];
           matchType = 'fuzzy_lastname_unique';
           results.fuzzyMatches++;
         } else if (candidates.length > 1 && firstPrefix.length >= 3) {
-          // Multiple matches — use first 3 chars of first name to disambiguate
-          const match = candidates.find(c => {
+          const match = candidates.find((c: any) => {
             const candFirst = getFirstInitial(c.player_name);
             return candFirst.startsWith(firstPrefix) || firstPrefix.startsWith(candFirst);
           });
@@ -375,53 +377,48 @@ Deno.serve(async (req) => {
       }
 
       if (!gameLog) {
-        // No game log found — but was the player's game even scheduled?
-        // If we have very few logs, the game probably hasn't happened yet → keep as pending
         if (!hasSubstantialData) {
           results.pending++;
           results.details.push({
-            player: pick.player_name,
-            propType: pick.prop_type,
-            status: 'pending',
+            player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
             reason: 'Insufficient game data in window — games may not have been played yet'
           });
-          // Don't update — leave as pending/no_data for retry
           continue;
         }
         
-        // We have substantial data but this player isn't in it — mark no_data
+        // Check if this sport specifically has data
+        const sportHasData = sportMap.map.size >= 5;
+        if (!sportHasData) {
+          results.pending++;
+          results.details.push({
+            player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
+            reason: `No ${sport.toUpperCase()} game logs available in window`
+          });
+          continue;
+        }
+
         updates.push({
-          id: pick.id,
-          actual_value: null,
-          outcome: 'no_data',
-          settled_at: new Date().toISOString(),
-          verified_source: 'nba_player_game_logs'
+          id: pick.id, actual_value: null, outcome: 'no_data',
+          settled_at: new Date().toISOString(), verified_source: sportLabel
         });
         results.noData++;
         results.details.push({
-          player: pick.player_name,
-          propType: pick.prop_type,
-          status: 'no_data',
+          player: pick.player_name, propType: pick.prop_type, sport, status: 'no_data',
           reason: 'No game log found — player likely did not play'
         });
         continue;
       }
 
-      const actualValue = extractStatValue(gameLog, pick.prop_type);
+      const actualValue = extractStatValue(gameLog, pick.prop_type, sport);
       
       if (actualValue === null) {
         updates.push({
-          id: pick.id,
-          actual_value: null,
-          outcome: 'no_data',
-          settled_at: new Date().toISOString(),
-          verified_source: 'nba_player_game_logs'
+          id: pick.id, actual_value: null, outcome: 'no_data',
+          settled_at: new Date().toISOString(), verified_source: sportLabel
         });
         results.noData++;
         results.details.push({
-          player: pick.player_name,
-          propType: pick.prop_type,
-          status: 'no_data',
+          player: pick.player_name, propType: pick.prop_type, sport, status: 'no_data',
           reason: `Could not extract stat for prop type: ${pick.prop_type}`
         });
         continue;
@@ -429,12 +426,9 @@ Deno.serve(async (req) => {
 
       const line = pick.actual_line ?? pick.recommended_line;
       if (line === null || line === undefined) {
-        // Cannot settle without a valid line — leave as pending
         results.pending++;
         results.details.push({
-          player: pick.player_name,
-          propType: pick.prop_type,
-          status: 'pending',
+          player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
           reason: 'No actual_line or recommended_line — skipping settlement'
         });
         continue;
@@ -443,11 +437,8 @@ Deno.serve(async (req) => {
       const outcome = determineOutcome(actualValue, line, side);
 
       updates.push({
-        id: pick.id,
-        actual_value: actualValue,
-        outcome,
-        settled_at: new Date().toISOString(),
-        verified_source: `nba_player_game_logs (${matchType})`
+        id: pick.id, actual_value: actualValue, outcome,
+        settled_at: new Date().toISOString(), verified_source: `${sportLabel} (${matchType})`
       });
 
       results.verified++;
@@ -456,16 +447,9 @@ Deno.serve(async (req) => {
       else results.pushes++;
 
       results.details.push({
-        player: pick.player_name,
-        propType: pick.prop_type,
-        side,
-        line,
-        actual: actualValue,
-        outcome,
-        matchType,
-        gameDate: gameLog.game_date,
-        l10HitRate: pick.l10_hit_rate,
-        confidence: pick.confidence_score
+        player: pick.player_name, propType: pick.prop_type, sport, side, line,
+        actual: actualValue, outcome, matchType, gameDate: gameLog.game_date,
+        l10HitRate: pick.l10_hit_rate, confidence: pick.confidence_score
       });
     }
 
