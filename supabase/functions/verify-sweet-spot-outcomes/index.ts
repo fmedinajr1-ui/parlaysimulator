@@ -254,60 +254,79 @@ Deno.serve(async (req) => {
 
     console.log(`[verify-sweet-spot-outcomes] Found ${pendingPicks.length} pending picks`);
 
-    // Step 2: Fetch game logs in a 3-day window from BOTH NBA and NCAAB tables
+    // Step 2: Fetch game logs in a 3-day window from NBA, NCAAB, MLB, and NHL tables
     const windowStart = targetDate;
     const windowEnd = addDays(targetDate, 2);
 
-    const { data: nbaLogs, error: nbaLogsError } = await supabase
-      .from('nba_player_game_logs')
-      .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
-      .gte('game_date', windowStart)
-      .lte('game_date', windowEnd);
+    // Fetch all sport logs in parallel
+    const [nbaResult, ncaabResult, mlbResult, nhlSkaterResult, nhlGoalieResult] = await Promise.all([
+      supabase
+        .from('nba_player_game_logs')
+        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('ncaab_player_game_logs')
+        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('mlb_player_game_logs')
+        .select('player_name, game_date, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, total_bases, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed, at_bats')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('nhl_player_game_logs')
+        .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+      supabase
+        .from('nhl_goalie_game_logs')
+        .select('player_name, game_date, saves, shots_against, goals_against')
+        .gte('game_date', windowStart)
+        .lte('game_date', windowEnd),
+    ]);
 
-    if (nbaLogsError) {
-      throw new Error(`Failed to fetch NBA game logs: ${nbaLogsError.message}`);
-    }
+    if (nbaResult.error) throw new Error(`Failed to fetch NBA game logs: ${nbaResult.error.message}`);
+    if (ncaabResult.error) console.warn(`[verify] NCAAB logs warning: ${ncaabResult.error.message}`);
+    if (mlbResult.error) console.warn(`[verify] MLB logs warning: ${mlbResult.error.message}`);
+    if (nhlSkaterResult.error) console.warn(`[verify] NHL skater logs warning: ${nhlSkaterResult.error.message}`);
+    if (nhlGoalieResult.error) console.warn(`[verify] NHL goalie logs warning: ${nhlGoalieResult.error.message}`);
 
-    // Fetch NCAAB game logs
-    const { data: ncaabLogs, error: ncaabLogsError } = await supabase
-      .from('ncaab_player_game_logs')
-      .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
-      .gte('game_date', windowStart)
-      .lte('game_date', windowEnd);
+    const nbaLogs = nbaResult.data || [];
+    const ncaabLogs = ncaabResult.data || [];
+    const mlbLogs = mlbResult.data || [];
+    const nhlSkaterLogs = nhlSkaterResult.data || [];
+    const nhlGoalieLogs = nhlGoalieResult.data || [];
 
-    if (ncaabLogsError) {
-      console.warn(`[verify-sweet-spot-outcomes] NCAAB logs fetch warning: ${ncaabLogsError.message}`);
-    }
+    console.log(`[verify] Logs found — NBA: ${nbaLogs.length}, NCAAB: ${ncaabLogs.length}, MLB: ${mlbLogs.length}, NHL skaters: ${nhlSkaterLogs.length}, NHL goalies: ${nhlGoalieLogs.length}`);
 
-    const allGameLogs = [...(nbaLogs || []), ...(ncaabLogs || [])];
-    console.log(`[verify-sweet-spot-outcomes] Found ${nbaLogs?.length || 0} NBA + ${ncaabLogs?.length || 0} NCAAB game logs in window ${windowStart} to ${windowEnd}`);
-
-    // Build normalized name lookup — use the most recent game log per player
-    const gameLogMap = new Map<string, any>();
-    // Also build a last-name index for fuzzy fallback
-    const lastNameIndex = new Map<string, any[]>();
-    
-    for (const log of allGameLogs) {
-      const normalizedName = normalizeName(log.player_name);
-      const existing = gameLogMap.get(normalizedName);
-      if (!existing || log.game_date > existing.game_date) {
-        gameLogMap.set(normalizedName, log);
+    // Build per-sport game log maps
+    const buildLogMap = (logs: any[]) => {
+      const map = new Map<string, any>();
+      const lastNameIdx = new Map<string, any[]>();
+      for (const log of logs) {
+        const nn = normalizeName(log.player_name);
+        const existing = map.get(nn);
+        if (!existing || log.game_date > existing.game_date) map.set(nn, log);
+        const ln = getLastName(log.player_name);
+        if (ln.length >= 3) {
+          const arr = lastNameIdx.get(ln) || [];
+          arr.push(log);
+          lastNameIdx.set(ln, arr);
+        }
       }
-      
-      // Build last name index
-      const lastName = getLastName(log.player_name);
-      if (lastName.length >= 3) {
-        const arr = lastNameIndex.get(lastName) || [];
-        arr.push(log);
-        lastNameIndex.set(lastName, arr);
-      }
-    }
+      return { map, lastNameIdx };
+    };
 
-    const totalPlayersWithLogs = gameLogMap.size;
-    console.log(`[verify-sweet-spot-outcomes] Unique players with game logs: ${totalPlayersWithLogs}`);
+    const nbaMap = buildLogMap([...nbaLogs, ...ncaabLogs]);
+    const mlbMap = buildLogMap(mlbLogs);
+    const nhlMap = buildLogMap([...nhlSkaterLogs, ...nhlGoalieLogs]);
 
-    // Determine if we have enough game data to verify
-    // If very few game logs exist, games likely haven't been played yet
+    // Legacy combined map for "substantial data" check
+    const totalPlayersWithLogs = nbaMap.map.size + mlbMap.map.size + nhlMap.map.size;
+    console.log(`[verify] Unique players: NBA/NCAAB ${nbaMap.map.size}, MLB ${mlbMap.map.size}, NHL ${nhlMap.map.size}`);
+
     const hasSubstantialData = totalPlayersWithLogs >= 10;
 
     // Step 3: Match and verify each pick
