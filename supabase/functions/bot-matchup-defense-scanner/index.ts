@@ -52,12 +52,12 @@ function resolveTeamAbbrev(teamName: string): string {
   return NBA_TEAM_NAME_TO_ABBREV[lower] || teamName.trim().toUpperCase();
 }
 
-// Map matchup stat categories to sweet spot category patterns
-const STAT_TO_SWEET_SPOT_CATEGORIES: Record<string, string[]> = {
-  points: ['NBA_POINTS', 'NBA_PTS'],
-  threes: ['NBA_THREES', 'NBA_3PM', 'NBA_THREE_POINTERS'],
-  rebounds: ['NBA_REBOUNDS', 'NBA_REB', 'NBA_TOTAL_REBOUNDS'],
-  assists: ['NBA_ASSISTS', 'NBA_AST'],
+// Map scanner stat keys to prop_type values used in category_sweet_spots
+const STAT_TO_PROP_TYPES: Record<string, string[]> = {
+  points: ['points', 'pts', 'player_points'],
+  threes: ['threes', '3pm', 'three_pointers', 'player_threes'],
+  rebounds: ['rebounds', 'reb', 'total_rebounds', 'player_rebounds'],
+  assists: ['assists', 'ast', 'player_assists'],
 };
 
 interface TeamProfile {
