@@ -155,3 +155,31 @@ Included in the consolidated NHL daily broadcast with 🌐 emoji. Header updated
 ### Files Changed
 1. `supabase/functions/nhl-floor-lock-daily/index.ts` — added Phase 2D
 2. `supabase/functions/broadcast-new-strategies/index.ts` — added `cross_sport_optimal` to whitelist
+
+# Track All Parlays + Reconfigure Stakes — IMPLEMENTED ✅
+
+## What Changed
+
+### 1. Stake Reconfiguration
+- Execution: $100 → **$250**
+- Validation: $50 → **$125**
+- Exploration: $20 → **$50**
+- Bankroll Doubler: $10 → **$25**
+- Baselines updated to match
+
+### 2. NHL Floor Lock Daily — Stake Integration
+- Reads `bot_stake_config` at start of each run
+- All 4 strategies now include `simulated_stake` and `simulated_payout`:
+  - Floor Lock & Optimal Combo (execution) → `execution_stake` ($250)
+  - Ceiling Shot & Cross-Sport exploration → `exploration_stake` ($50)
+
+### 3. Bidirectional Bench Under Parlay Tracking
+- `nba-matchup-daily-broadcast` now converts bench_under targets (80%+ L10 hit rate) into trackable 3-leg parlays
+- Inserts into `bot_daily_parlays` with `strategy_name: 'bidirectional_bench_under'`, tier `execution`
+- Up to 2 non-overlapping parlays per day, with proper stakes
+- Settlement engine auto-resolves via existing `bot-settle-and-learn`
+
+### Files Changed
+1. `supabase/functions/nhl-floor-lock-daily/index.ts` — stake config loading + all inserts
+2. `supabase/functions/nba-matchup-daily-broadcast/index.ts` — bench under parlay creation
+3. `bot_stake_config` table — updated stakes
