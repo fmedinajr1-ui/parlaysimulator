@@ -250,7 +250,7 @@ Deno.serve(async (req) => {
     }
 
     const duration = Date.now() - startTime;
-    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed`);
+    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed, ${underParlaysInserted} under parlays`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "nba-matchup-daily-broadcast",
