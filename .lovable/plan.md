@@ -1,71 +1,135 @@
+# `/rankings` + `/weekly` Rundown — IMPLEMENTED ✅
 
+## `/rankings` Command
+- `/rankings` — Summary of top 10 NBA teams (OVR, PTS↑, PTS↓, REB↑, REB↓) + top 10 NHL teams (GAR, GFR, SAR, SFR)
+- `/rankings [TEAM]` — Single team profile across all categories (NBA + NHL)
+- Available to both admin and customer users
 
-# Add NHL Optimal Combo + Ceiling Shot Strategies
+## `/weekly` Command  
+- Past week recap: W/L record, P&L, best/worst day, strategy breakdown, hottest/coldest categories
+- Forward lean recommendations: cross-references `bot_category_weights` hit rates with `team_defense_rankings` weak defenses
+- Automated Sunday 10:00 AM ET broadcast to all active users via `pg_cron`
 
-## Current State
-- `nhl-floor-lock-daily` orchestrator builds only one strategy: a 4-5 leg floor lock parlay from NHL picks with 100% L10 hit rate
-- The NBA side already has `optimal_combo`, `floor_lock`, and `ceiling_shot` strategies in `bot-generate-daily-parlays` but these only target `basketball_nba` or `all` sports -- NHL picks can slip in via `all` but there are no dedicated NHL-only profiles
-- The `broadcast-new-strategies` function filters for `floor_lock`, `optimal_combo`, `ceiling_shot` strategy names but doesn't include NHL-specific variants
+---
 
-## Plan
+# Daily NHL Floor Lock + NBA Matchup Broadcast — IMPLEMENTED ✅
 
-### 1. Extend `nhl-floor-lock-daily` to build all 3 NHL strategies
+## Cron Schedule
 
-After the existing floor lock parlay build (Phase 2), add two new phases:
+| Job | Time (ET) | UTC Cron | Function |
+|-----|-----------|----------|----------|
+| NBA L10 Refresh & Rebuild | 10:00 AM | `0 15 * * *` | `refresh-l10-and-rebuild` (existing) |
+| NHL Data Refresh + Floor Lock Build + Telegram | 12:00 PM | `0 16 * * *` | `nhl-floor-lock-daily` |
+| NBA Bidirectional Matchup Broadcast | 1:30 PM | `30 17 * * *` | `nba-matchup-daily-broadcast` |
 
-**Phase 2B: NHL Optimal Combo**
-- Query `category_sweet_spots` for NHL picks with >= 70% L10 hit rate (execution) and >= 60% (exploration)
-- Enumerate all valid 3-leg combinations, score by product of individual hit rates
-- Deduplicate by player, enforce max 4 same category
-- Pick top 3 non-overlapping combos
-- Insert to `bot_daily_parlays` with strategy `nhl_optimal_combo` (one execution, two exploration)
+## New Functions
 
-**Phase 2C: NHL Ceiling Shot**
-- Query `category_sweet_spots` for NHL picks where `l10_max >= actual_line * 1.3`
-- Target alt lines near ceiling with odds >= -130, or standard line if `l10_max >= line * 1.5`
-- Build 3-leg parlays preferring plus-money odds
-- Insert with strategy `nhl_ceiling_shot`
+### `nhl-floor-lock-daily`
+Orchestrator that:
+1. Refreshes NHL game logs (`nhl-stats-fetcher`)
+2. Refreshes team defense rankings (`nhl-team-defense-rankings-fetcher`)
+3. Scans sweet spots (`nhl-prop-sweet-spots-scanner`)
+4. Builds 4-5 leg floor lock parlay from NHL picks with 100% L10 hit rate + `l10_min >= 1`
+5. Falls back to 80%+ hit rate if insufficient 100% candidates
+6. Inserts to `bot_daily_parlays` (strategy: `nhl_floor_lock`)
+7. Broadcasts formatted parlay to Telegram
 
-### 2. Update Telegram broadcast in Phase 3
+### `nba-matchup-daily-broadcast`
+1. Runs bidirectional `bot-matchup-defense-scanner`
+2. Queries `bot_research_findings` for today's matchup scan
+3. Categorizes into elite/prime/favorable/avoid tiers
+4. **Cross-references with `category_sweet_spots` for player-level validation**
+5. Broadcasts formatted report to Telegram with player targets vs environment-only flags
 
-Extend the existing Phase 3 to format and send all three strategy types in a single consolidated message:
-- 🔒 Floor Lock section (existing)
-- 🎯 Optimal Combo section (new)  
-- 🚀 Ceiling Shot section (new)
+# Bidirectional Scanner — Player-Level Validation Fix ✅ (March 6, 2026)
 
-### 3. Update `broadcast-new-strategies`
+## Problem
+Scanner correctly identified team-level matchup signals (e.g., WAS Rebounds Elite vs UTA) but these were misapplied as blanket OVER recommendations for individual bench players who don't have the usage/ceiling to benefit.
 
-Add `nhl_optimal_combo` and `nhl_ceiling_shot` to the strategy name filter so these are included in the daily broadcast to customers.
+## Fix
+1. **Scanner (`bot-matchup-defense-scanner`)**: Now cross-references `category_sweet_spots` to find specific players whose L10 averages support each team signal. Each recommendation now includes `player_backed: boolean` and `player_targets: PlayerTarget[]`.
+2. **Broadcast (`nba-matchup-daily-broadcast`)**: Shows player-backed targets with L10 stats (avg, hit rate, floor) under each matchup. Environment-only signals (no player backing) are flagged with ⚠️ warning.
 
-### Files Changed
-1. `supabase/functions/nhl-floor-lock-daily/index.ts` — add optimal combo + ceiling shot builders after floor lock, consolidated broadcast
-2. `supabase/functions/broadcast-new-strategies/index.ts` — add NHL strategy names to filter
-
-### Technical Details
-
-**Optimal Combo combinatorial logic** (mirrors NBA implementation):
-```typescript
-function buildNHLOptimalCombos(candidates, legCount, minHitRate) {
-  const combos = [];
-  // C(n, legCount) enumeration
-  for (let i = 0; i < candidates.length; i++)
-    for (let j = i+1; j < candidates.length; j++)
-      for (let k = j+1; k < candidates.length; k++) {
-        const combo = [candidates[i], candidates[j], candidates[k]];
-        // No same player, max 4 same category
-        if (new Set(combo.map(c => c.player_name)).size < legCount) continue;
-        const prob = combo.reduce((a, c) => a * c.actual_hit_rate, 1);
-        if (combo.every(c => c.actual_hit_rate >= minHitRate))
-          combos.push({ combo, prob });
-      }
-  return combos.sort((a, b) => b.prob - a.prob);
-}
+## New Telegram Format
+```
+🔥 ELITE (3 — 1 player-backed)
+  • WAS Rebounds vs UTA DEF (Score: 29.0)
+    OFF #2 vs DEF #29
+      ✅ Kyle Kuzma OVER 6.5 (L10: 8.2 avg, 90% hit, floor 5)
+      ⚠️ Environment only for low-usage players
 ```
 
-**Ceiling Shot selection** (mirrors NBA implementation):
-- Filter: `l10_max >= actual_line * 1.3` AND `actual_hit_rate >= 0.45`
-- Prefer picks where ceiling is 50%+ above line for bigger upside
-- Build 3-leg parlays, tag with `nhl_ceiling_shot`
+# Floor & Ceiling Parlay Tiers — IMPLEMENTED ✅
 
-No database changes needed — uses existing `category_sweet_spots` and `bot_daily_parlays` tables.
+## What Was Added
+Two new parlay strategies using L10 game log floor/ceiling data:
 
+### 🔒 Floor Lock (Safe Parlays)
+- **Concept**: Only picks where the player's worst game in L10 still clears the betting line
+- **Gate**: `l10_min >= line * 0.85` for overs (relaxed from 100% — 0 candidates with real sportsbook lines at strict threshold), `l10_max <= line * 1.15` for unders
+- **Safety backstop**: Requires `l10_hit_rate >= 80%` to ensure consistency
+- **Line**: Standard sportsbook line (safety IS the floor guarantee)
+- **Profiles**: 4 execution (70%+ hit rate), 4 exploration (60%+ hit rate)
+
+### 🎯 Ceiling Shot (Risky Parlays)
+- **Concept**: Alt lines near the player's L10 ceiling with plus-money odds
+- **Gate**: `l10_max >= line * 1.3` (ceiling must be 30%+ above standard line)
+- **Line**: Alternate line near L10 max with odds >= -130 (relaxed from > +100)
+- **Fallback**: If no alt lines available but `l10_max >= line * 1.5`, use standard line
+- **Profiles**: 3 execution (55%+ hit rate), 4 exploration (45%+ hit rate)
+
+### 🎲 Optimal Combo (NEW — Combinatorial Optimizer)
+- **Concept**: Instead of greedy sort-and-take-top-N, enumerate ALL valid 3/4-leg combinations and pick the ones with highest combined probability
+- **Gate**: L10 hit rate >= 70% (execution) / 60% (exploration)
+- **Scoring**: Product of individual L10 hit rates (e.g., 90% × 100% × 90% = 81% combined)
+- **Correlation check**: No same player, max 4 same category
+- **Diversity**: Returns top 5 non-overlapping combos (no player reuse across combos)
+- **Profiles**: 3 execution (NBA 70%, NBA 65% 4-leg, all 70%), 3 exploration (NBA 60%, NBA 55% 4-leg, all 60%)
+
+## Profile Ordering Fix (March 5, 2026)
+optimal_combo → floor_lock → ceiling_shot profiles at **top** of both exploration and execution arrays.
+
+## Priority Strategy Bypass
+All three strategies (`optimal_combo`, `floor_lock`, `ceiling_shot`) added to PRIORITY_STRATEGIES and POST_TRIM_PRIORITY sets — they bypass the 30% strategy diversity cap.
+
+## Timeout Guard
+140s wall-clock guard in profile iteration loop. Logs remaining skipped profiles when triggered.
+
+## Files Changed
+1. `supabase/functions/bot-generate-daily-parlays/index.ts`:
+   - Added `buildOptimalComboParlays()` combinatorial optimizer function
+   - Added `optimal_combo` strategy detection + pre-assembled parlay creation in profile loop
+   - Relaxed `selectCeilingLine()` odds gate from `> +100` to `>= -130`
+   - Added ceiling shot fallback for `l10_max >= line * 1.5` without alt lines
+   - Added `optimal_combo`, `floor_lock`, `ceiling_shot` to PRIORITY_STRATEGIES + POST_TRIM_PRIORITY
+
+# NHL Prop Engine — Data Layers for Composite Scores & Hit Rates — IMPLEMENTED ✅
+
+## What Was Added
+
+### 1. NHL Prop Sweet Spots Scanner (NEW)
+- **Edge Function**: `nhl-prop-sweet-spots-scanner`
+- Pulls active NHL player props from `unified_props` (sport: `icehockey_nhl`)
+- Cross-references against `nhl_player_game_logs` (skaters) and `nhl_goalie_game_logs` (goalies)
+- Computes L10 hit rate, avg, median, min/max, std dev for each prop
+- Classifies into NHL categories: `NHL_SHOTS_ON_GOAL`, `NHL_GOALS_SCORER`, `NHL_ASSISTS`, `NHL_POINTS`, `NHL_GOALIE_SAVES`, `NHL_BLOCKED_SHOTS`, `NHL_POWER_PLAY_POINTS`
+- Writes qualifying picks (50%+ L10 hit rate) to `category_sweet_spots`
+- Quality tiers: elite (80%+), strong (70%+), solid (60%+), marginal (50%+)
+
+### 2. NHL Mispriced Lines Detection
+- Added full NHL analysis block to `detect-mispriced-lines`
+- NHL prop-to-stat mapping for skaters and goalies
+- Defense-adjusted projections using `nhl_team_defense_rankings`
+- Prop-specific defense routing: SOG → `shots_against_rank`, goals → `goals_against_rank`, saves → `shots_for_rank` (opponent shot generation)
+- Results fork to `mispriced_lines` (15%+ edge) and `correct_priced_lines` (3-15% edge)
+
+### 3. NHL Category Weights
+- Seeded 14 entries in `bot_category_weights` for all NHL prop categories
+- Initial weights: Saves OVER boosted (1.3), SOG OVER boosted (1.2), Points OVER slightly boosted (1.1)
+- Weights will auto-calibrate as outcomes are tracked
+
+## Files Changed
+1. `supabase/functions/nhl-prop-sweet-spots-scanner/index.ts` (new) — core L10 scanner
+2. `supabase/functions/detect-mispriced-lines/index.ts` — added NHL analysis block
+3. `supabase/config.toml` — registered new function
+4. `bot_category_weights` table — seeded NHL categories
