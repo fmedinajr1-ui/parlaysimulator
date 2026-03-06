@@ -77,6 +77,7 @@ Deno.serve(async (req) => {
     const prime: any[] = [];
     const favorable: any[] = [];
     const avoid: any[] = [];
+    const benchUnders: any[] = [];
 
     for (const rec of recommendations) {
       const label = rec.matchup_label || "neutral";
@@ -96,6 +97,7 @@ Deno.serve(async (req) => {
       else if (label === "prime") prime.push(entry);
       else if (label === "favorable") favorable.push(entry);
       else if (label === "avoid") avoid.push(entry);
+      else if (label === "bench_under") benchUnders.push(entry);
     }
 
     // Step 5: Format message with player-level detail
@@ -113,6 +115,13 @@ Deno.serve(async (req) => {
       }
     };
 
+    const formatBenchUnderEntry = (i: any) => {
+      const playerLines = i.player_targets.slice(0, 3).map((p: any) =>
+        `  • ${p.player_name} UNDER ${p.line} ${capitalize(i.prop_type)} vs ${i.defending_team} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, ceiling ${p.player_name ? i.player_targets.find((t: any) => t.player_name === p.player_name)?.l10_min ?? '?' : '?'})`
+      ).join("\n");
+      return playerLines;
+    };
+
     const formatSection = (emoji: string, headerText: string, items: any[]) => {
       if (items.length === 0) return "";
       const backed = items.filter(i => i.player_backed).length;
@@ -120,6 +129,19 @@ Deno.serve(async (req) => {
       const lines = items.slice(0, 6).map(formatEntry).join("\n\n");
       const backingNote = backed > 0 ? `${backed} player-backed` : `⚠️ all environment-only`;
       return `${emoji} ${headerText} (${items.length} — ${backingNote})\n${lines}\n\n`;
+    };
+
+    // Format bench unders section — flatten all player targets
+    const formatBenchUndersSection = (items: any[]) => {
+      if (items.length === 0) return "";
+      const allTargets: string[] = [];
+      for (const item of items) {
+        for (const p of (item.player_targets || []).slice(0, 3)) {
+          allTargets.push(`  • ${p.player_name} UNDER ${p.line} ${capitalize(item.prop_type)} vs ${item.defending_team} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, margin ${p.margin})`);
+        }
+      }
+      if (allTargets.length === 0) return "";
+      return `📉 BENCH PLAYER UNDERS (${allTargets.length} player-backed)\n${allTargets.slice(0, 10).join("\n")}\n\n`;
     };
 
     const playerBackedTotal = recommendations.filter((r: any) => r.player_backed).length;
@@ -132,7 +154,8 @@ Deno.serve(async (req) => {
       formatSection("⭐", "PRIME (Score 18-22)", prime) +
       formatSection("✅", "FAVORABLE (Score 14-18)", favorable) +
       formatSection("🚫", "AVOID (Score ≤8)", avoid) +
-      `📋 Summary: ${elite.length} elite, ${prime.length} prime, ${favorable.length} favorable, ${avoid.length} avoid\n` +
+      formatBenchUndersSection(benchUnders) +
+      `📋 Summary: ${elite.length} elite, ${prime.length} prime, ${favorable.length} favorable, ${avoid.length} avoid, ${benchUnders.length} bench unders\n` +
       `🎯 Player-backed signals are validated against L10 game log data`;
 
     await supabase.functions.invoke("bot-send-telegram", {

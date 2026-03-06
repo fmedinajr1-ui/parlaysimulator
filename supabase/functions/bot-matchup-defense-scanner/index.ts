@@ -91,7 +91,7 @@ interface MatchupRecommendation {
   defense_rank: number;
   offense_rank: number;
   matchup_score: number;
-  matchup_label: 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid';
+  matchup_label: 'elite' | 'prime' | 'favorable' | 'neutral' | 'avoid' | 'bench_under';
   player_backed: boolean;
   player_targets: PlayerTarget[];
 }
@@ -295,6 +295,29 @@ serve(async (req) => {
             console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} player targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%)`).join(', ')}`);
           } else {
             console.log(`[MatchupScanner] ⚠️ ${attackerAbbrev} ${stat.key} ${side} — NO player targets found (environment only)`);
+          }
+
+          // Bench player UNDER scan: for non-avoid matchups, also find under targets
+          // These are players whose individual L10 data supports UNDER despite a favorable team environment
+          if (label !== 'avoid') {
+            const underTargets = findPlayerTargets(attackerAbbrev, stat.key, 'under');
+            if (underTargets.length > 0) {
+              const benchUnderRec: MatchupRecommendation = {
+                attacking_team: attackerAbbrev,
+                defending_team: defenderAbbrev,
+                prop_type: stat.key,
+                side: 'under',
+                defense_rank: defRank,
+                offense_rank: offRank,
+                matchup_score: Math.round(score * 10) / 10,
+                matchup_label: 'bench_under' as any,
+                player_backed: true,
+                player_targets: underTargets,
+              };
+              matchup.recommended_props.push(benchUnderRec);
+              allRecommendations.push(benchUnderRec);
+              console.log(`[MatchupScanner] 📉 ${attackerAbbrev} ${stat.key} BENCH UNDERS — ${underTargets.length} targets: ${underTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%)`).join(', ')}`);
+            }
           }
         }
       }
