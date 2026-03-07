@@ -983,12 +983,32 @@ function formatLegDisplay(leg: any): string {
       three_pointers_made: '3PT', fantasy_score: 'FPTS',
       goals: 'G', assists_nhl: 'A', shots: 'SOG', saves: 'SVS',
       aces: 'ACES', games: 'GAMES',
+      player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+      player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+      player_turnovers: 'TO', player_pra: 'PRA', player_pts_rebs: 'P+R',
+      player_pts_asts: 'P+A', player_rebs_asts: 'R+A',
+      player_double_double: 'DD', player_triple_double: 'TD',
+      player_goals: 'G', player_shots_on_goal: 'SOG', player_blocked_shots: 'BLK',
+      player_power_play_points: 'PPP', player_points_nhl: 'PTS',
+      player_assists_nhl: 'A', player_saves: 'SVS',
+      pitcher_strikeouts: 'Ks', total_bases: 'TB', hits: 'H',
+      runs: 'R', rbis: 'RBI', stolen_bases: 'SB', walks: 'BB',
+      hitter_fantasy_score: 'FPTS', batter_home_runs: 'HR',
+      player_fantasy_score: 'FPTS',
     };
+    // Sport-specific emoji
+    const sportKey = (leg.sport || leg.category || '').toLowerCase();
+    let sportEmoji = '🏀';
+    if (sportKey.includes('nhl') || sportKey.includes('hockey')) sportEmoji = '🏒';
+    else if (sportKey.includes('mlb') || sportKey.includes('baseball') || sportKey.includes('pitcher') || sportKey.includes('hitter') || sportKey.includes('batter')) sportEmoji = '⚾';
+    else if (sportKey.includes('ncaab')) sportEmoji = '🏀';
+    else if (sportKey.includes('nfl') || sportKey.includes('ncaaf')) sportEmoji = '🏈';
+
     const name = leg.player_name || 'Player';
     const side = (leg.side || 'over').toUpperCase();
     const line = leg.line || leg.selected_line || '';
     const propType = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
-    actionLine = `🏀 Take ${name} ${side} ${line} ${propType} ${odds}`;
+    actionLine = `${sportEmoji} Take ${name} ${side} ${line} ${propType} ${odds}`;
     matchupLine = leg.matchup || '';
   }
   
