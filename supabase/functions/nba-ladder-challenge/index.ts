@@ -155,36 +155,46 @@ Deno.serve(async (req) => {
       console.warn(`[LadderLock] Game log refresh failed (continuing with existing data):`, refreshErr.message);
     }
 
-    // === STEP 1: Query sweet spots — wide net (70%+), game log verification at live lines will enforce 90% ===
-    console.log(`[LadderLock] Querying sweet spots for today's high-accuracy players...`);
+    // === STEP 1: Query NBA sweet spots — filter out NHL/MLB, wide net (70%+) ===
+    console.log(`[LadderLock] Querying NBA sweet spots for today's high-accuracy players...`);
+    
+    // NBA categories to include (exclude NHL_* and MLB_*)
+    const NBA_CATEGORIES_FILTER = `category.not.like.NHL_%,category.not.like.MLB_%,category.not.like.NCAAB_%`;
+    
     const { data: sweetSpots, error: ssError } = await supabase
       .from('category_sweet_spots')
       .select('*')
       .eq('analysis_date', today)
       .eq('is_active', true)
-      .gte('l10_hit_rate', 0.7) // Wide net — real gate is 90% at live line verified by game logs
+      .gte('l10_hit_rate', 0.7)
       .not('l10_avg', 'is', null)
+      .not('category', 'like', 'NHL_%')
+      .not('category', 'like', 'MLB_%')
+      .not('category', 'like', 'NCAAB_%')
       .order('l10_hit_rate', { ascending: false })
       .limit(100);
 
     if (ssError) console.warn(`[LadderLock] Sweet spot query error:`, ssError.message);
 
-    // Fallback to all-time active sweet spots if today's scan hasn't run
+    // Fallback to all-time active NBA sweet spots
     const { data: fallbackSpots } = await supabase
       .from('category_sweet_spots')
       .select('*')
       .eq('is_active', true)
       .gte('l10_hit_rate', 0.7)
       .not('l10_avg', 'is', null)
+      .not('category', 'like', 'NHL_%')
+      .not('category', 'like', 'MLB_%')
+      .not('category', 'like', 'NCAAB_%')
       .order('l10_hit_rate', { ascending: false })
       .limit(100);
 
     const allSpots = (sweetSpots && sweetSpots.length > 0) ? sweetSpots : (fallbackSpots || []);
-    console.log(`[LadderLock] Found ${allSpots.length} sweet spots with 70%+ L10 hit rate (will verify at live lines)`);
+    console.log(`[LadderLock] Found ${allSpots.length} NBA sweet spots with 70%+ L10 hit rate`);
 
     if (allSpots.length === 0) {
-      console.log(`[LadderLock] No qualified sweet spots found — skipping today`);
-      return new Response(JSON.stringify({ success: false, error: 'No sweet spots with 70%+ hit rate available' }), {
+      console.log(`[LadderLock] No qualified NBA sweet spots found — skipping today`);
+      return new Response(JSON.stringify({ success: false, error: 'No NBA sweet spots with 70%+ hit rate available' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
