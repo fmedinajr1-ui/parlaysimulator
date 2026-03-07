@@ -386,10 +386,16 @@ export function useDailyParlays() {
     const isLottery = strategyName.includes('lottery') || strategyName.includes('mega');
     const type: DailyParlay['type'] = isLottery ? 'LOTTERY' : 'CURATED';
     
+    // Detect sport from strategy name
+    const isNHL = strategyName.startsWith('nhl_');
+    const isCross = strategyName.includes('cross_sport');
+    const sport: DailyParlay['sport'] = isNHL ? 'nhl' : isCross ? 'cross' : 'nba';
+    
     dailyParlays.push({
       id: parlay.id,
       type,
       source: 'bot',
+      sport,
       legCount: legs.length,
       legs,
       combinedOdds: parlay.expected_odds || 300,

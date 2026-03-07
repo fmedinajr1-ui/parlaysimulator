@@ -17,6 +17,7 @@ import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
 import { TelegramCustomerManager } from '@/components/bot/TelegramCustomerManager';
 import { SlateRefreshControls } from '@/components/market/SlateRefreshControls';
+import { NHLPerformanceCard } from '@/components/bot/NHLPerformanceCard';
 
 import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
@@ -274,6 +275,7 @@ export default function BotDashboard() {
 
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="space-y-4">
+          <NHLPerformanceCard />
           <BotLearningAnalytics />
           <ProfitAuditCard />
           <CategoryWeightsChart weights={state.categoryWeights} />
