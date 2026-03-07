@@ -349,119 +349,102 @@ Deno.serve(async (req) => {
       if (p.team_name) playerTeamMap.set(normalizeName(p.player_name), p.team_name);
     }
 
-    // === STEP 5: Score verified candidates with live line matching ===
+    // === STEP 5: For each sweet spot player, try ALL available live lines and pick the safest ===
     const candidates: LockCandidate[] = [];
 
-    for (const v of verified) {
-      const nName = normalizeName(v.sweet_spot.player_name);
-      const lineKey = `${nName}|${v.prop_market}`;
-      const playerLines = linesByPlayer.get(lineKey) || [];
-      const ssLine = v.sweet_spot.recommended_line ?? v.sweet_spot.actual_line;
+    for (const [ppKey, data] of playerPropData) {
+      const [nName] = ppKey.split('|');
+      const playerLines = linesByPlayer.get(ppKey) || [];
+      
+      if (playerLines.length === 0) continue; // Must have a live bettable line
 
-      // Find the live line closest to sweet spot line (prefer exact match or lower)
-      let bestLiveLine: PlayerLine | null = null;
-      if (playerLines.length > 0) {
-        // Sort by distance to sweet spot line, prefer lines <= ssLine
-        const sorted = [...playerLines].sort((a, b) => {
-          const distA = Math.abs(a.line - ssLine);
-          const distB = Math.abs(b.line - ssLine);
-          // Prefer lines at or below ssLine
-          if (a.line <= ssLine && b.line > ssLine) return -1;
-          if (b.line <= ssLine && a.line > ssLine) return 1;
-          return distA - distB;
-        });
-        bestLiveLine = sorted[0];
-        console.log(`[LadderLock] ${v.sweet_spot.player_name} ${v.prop_market}: SS line=${ssLine}, live line=${bestLiveLine.line}, odds=${bestLiveLine.over_odds}`);
-      } else {
-        console.log(`[LadderLock] ${v.sweet_spot.player_name} ${v.prop_market}: No live line found, using SS line=${ssLine}`);
-      }
+      // Try each live line for this player+prop
+      for (const liveLine of playerLines) {
+        const line = liveLine.line;
+        const values = data.values;
 
-      // Use best matching live line, fall back to sweet spot line
-      const line = bestLiveLine?.line ?? ssLine;
-      const overOdds = bestLiveLine?.over_odds ?? -110;
-      const bookmaker = bestLiveLine?.bookmaker ?? 'sweet_spot';
-      const game = bestLiveLine?.game ?? '';
-      const homeTeam = bestLiveLine?.home_team ?? '';
-      const awayTeam = bestLiveLine?.away_team ?? '';
+        // SAFETY GATE 1: 90%+ hit rate at this specific line
+        const hitCount = values.filter((v: number) => v > line).length;
+        const hitRate = hitCount / values.length;
+        if (hitRate < 0.9) continue;
 
-      // Re-verify safety gates against the actual line we'll use
-      const actualHitCount = v.l10_values.filter((val: number) => val > line).length;
-      const actualHitRate = actualHitCount / v.l10_values.length;
-      if (actualHitRate < 0.9) {
-        console.log(`[LadderLock] ${v.sweet_spot.player_name} failed hit rate gate at line ${line}: ${(actualHitRate*100).toFixed(0)}%`);
-        continue;
-      }
-      if (v.l10_min <= line) {
-        console.log(`[LadderLock] ${v.sweet_spot.player_name} failed floor gate: min ${v.l10_min} <= line ${line}`);
-        continue;
-      }
-      if (v.l10_median < line + 1) {
-        console.log(`[LadderLock] ${v.sweet_spot.player_name} failed median gate: median ${v.l10_median} < line+1 ${line+1}`);
-        continue;
-      }
+        const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
+        const sorted = [...values].sort((a: number, b: number) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const min = Math.min(...values);
+        const max = Math.max(...values);
 
-      // Resolve opponent
-      const playerTeam = playerTeamMap.get(nName);
-      let opponent = '';
-      let playerTeamName = '';
-      if (playerTeam && homeTeam && awayTeam) {
-        const ptLower = playerTeam.toLowerCase();
-        const homeLower = homeTeam.toLowerCase();
-        const awayLower = awayTeam.toLowerCase();
-        if (homeLower.includes(ptLower) || ptLower.includes(homeLower)) {
-          opponent = awayTeam; playerTeamName = homeTeam;
-        } else if (awayLower.includes(ptLower) || ptLower.includes(awayLower)) {
-          opponent = homeTeam; playerTeamName = awayTeam;
-        } else {
-          const ptWords = ptLower.split(' ');
-          if (ptWords.some((w: string) => homeLower.includes(w) && w.length > 3)) {
+        // SAFETY GATE 2: Hard floor — L10 worst game MUST exceed the line
+        if (min <= line) continue;
+
+        // SAFETY GATE 3: Median clearance — L10 median must beat line by at least 1.0
+        if (median < line + 1) continue;
+
+        // Resolve opponent
+        const playerTeam = playerTeamMap.get(nName);
+        let opponent = '';
+        let playerTeamName = '';
+        const homeTeam = liveLine.home_team;
+        const awayTeam = liveLine.away_team;
+        if (playerTeam && homeTeam && awayTeam) {
+          const ptLower = playerTeam.toLowerCase();
+          const homeLower = homeTeam.toLowerCase();
+          const awayLower = awayTeam.toLowerCase();
+          if (homeLower.includes(ptLower) || ptLower.includes(homeLower)) {
             opponent = awayTeam; playerTeamName = homeTeam;
-          } else {
+          } else if (awayLower.includes(ptLower) || ptLower.includes(awayLower)) {
             opponent = homeTeam; playerTeamName = awayTeam;
+          } else {
+            const ptWords = ptLower.split(' ');
+            if (ptWords.some((w: string) => homeLower.includes(w) && w.length > 3)) {
+              opponent = awayTeam; playerTeamName = homeTeam;
+            } else {
+              opponent = homeTeam; playerTeamName = awayTeam;
+            }
           }
         }
+
+        const floorMargin = min - line;
+
+        // === SAFETY SCORE ===
+        const hitRateScore = hitRate * 50;
+        const floorScore = Math.min((floorMargin / line) * 50, 25);
+        const edgeScore = Math.min(((avg - line) / line) * 30, 15);
+        const consistencyScore = (1 - (max - min) / (avg || 1)) * 10;
+        const safetyScore = hitRateScore + floorScore + edgeScore + consistencyScore;
+
+        const propLabel = PROP_LABELS[data.propMarket] || data.sweet_spot.prop_type || data.propMarket;
+
+        candidates.push({
+          player_name: liveLine.player_name,
+          prop_type: data.propMarket,
+          prop_label: propLabel,
+          line,
+          over_odds: liveLine.over_odds,
+          bookmaker: liveLine.bookmaker,
+          game: liveLine.game,
+          home_team: homeTeam,
+          away_team: awayTeam,
+          opponent,
+          player_team: playerTeamName,
+          l10_avg: Math.round(avg * 10) / 10,
+          l10_min: min,
+          l10_max: max,
+          l10_median: median,
+          l10_hit_rate: hitRate,
+          l10_games: values.length,
+          l10_hits: hitCount,
+          opp_defense_rank: 15,
+          safety_score: safetyScore,
+          safety_breakdown: {
+            hit_rate_score: Math.round(hitRateScore * 10) / 10,
+            floor_score: Math.round(floorScore * 10) / 10,
+            edge_score: Math.round(edgeScore * 10) / 10,
+            consistency_score: Math.round(consistencyScore * 10) / 10,
+            floor_margin: floorMargin,
+          },
+        });
       }
-
-      const floorMargin = v.l10_min - line;
-
-      // === SAFETY SCORE: Hit rate is king (sweet-spot-first means highest accuracy wins) ===
-      const hitRateScore = actualHitRate * 50;                                      // 50% weight
-      const floorScore = Math.min((floorMargin / line) * 50, 25);                  // 25% weight
-      const edgeScore = Math.min(((v.l10_avg - line) / line) * 30, 15);           // 15% weight
-      const consistencyScore = (1 - (v.l10_max - v.l10_min) / (v.l10_avg || 1)) * 10; // 10% weight
-      const safetyScore = hitRateScore + floorScore + edgeScore + consistencyScore;
-
-      const propLabel = PROP_LABELS[v.prop_market] || v.sweet_spot.prop_type || v.prop_market;
-
-      candidates.push({
-        player_name: bestLiveLine?.player_name || v.sweet_spot.player_name,
-        prop_type: v.prop_market,
-        prop_label: propLabel,
-        line,
-        over_odds: overOdds,
-        bookmaker,
-        game,
-        home_team: homeTeam,
-        away_team: awayTeam,
-        opponent,
-        player_team: playerTeamName,
-        l10_avg: v.l10_avg,
-        l10_min: v.l10_min,
-        l10_max: v.l10_max,
-        l10_median: v.l10_median,
-        l10_hit_rate: actualHitRate,
-        l10_games: v.l10_games,
-        l10_hits: actualHitCount,
-        opp_defense_rank: 15,
-        safety_score: safetyScore,
-        safety_breakdown: {
-          hit_rate_score: Math.round(hitRateScore * 10) / 10,
-          floor_score: Math.round(floorScore * 10) / 10,
-          edge_score: Math.round(edgeScore * 10) / 10,
-          consistency_score: Math.round(consistencyScore * 10) / 10,
-          floor_margin: floorMargin,
-        },
-      });
     }
 
     // Sort by safety score descending — top 1 is our LOCK
