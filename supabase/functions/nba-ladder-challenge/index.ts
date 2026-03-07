@@ -155,60 +155,90 @@ Deno.serve(async (req) => {
       console.warn(`[LadderLock] Game log refresh failed (continuing with existing data):`, refreshErr.message);
     }
 
-    // === STEP 1: Query sweet spots — the accuracy engine IS our source of truth ===
-    console.log(`[LadderLock] Querying sweet spots for today's most accurate picks...`);
+    // === STEP 1: Query NBA sweet spots — filter out NHL/MLB, wide net (70%+) ===
+    console.log(`[LadderLock] Querying NBA sweet spots for today's high-accuracy players...`);
+    
+    // NBA categories to include (exclude NHL_* and MLB_*)
+    const NBA_CATEGORIES_FILTER = `category.not.like.NHL_%,category.not.like.MLB_%,category.not.like.NCAAB_%`;
+    
     const { data: sweetSpots, error: ssError } = await supabase
       .from('category_sweet_spots')
       .select('*')
       .eq('analysis_date', today)
       .eq('is_active', true)
-      .gte('l10_hit_rate', 0.9) // 90%+ hit rate gate
-      .not('l10_min', 'is', null)
+      .gte('l10_hit_rate', 0.7)
       .not('l10_avg', 'is', null)
-      .order('l10_hit_rate', { ascending: false });
+      .not('category', 'like', 'NHL_%')
+      .not('category', 'like', 'MLB_%')
+      .not('category', 'like', 'NCAAB_%')
+      .order('l10_hit_rate', { ascending: false })
+      .limit(100);
 
     if (ssError) console.warn(`[LadderLock] Sweet spot query error:`, ssError.message);
 
-    // Also fetch all-time active sweet spots as fallback (in case today's scan hasn't run yet)
+    // Fallback to all-time active NBA sweet spots
     const { data: fallbackSpots } = await supabase
       .from('category_sweet_spots')
       .select('*')
       .eq('is_active', true)
-      .gte('l10_hit_rate', 0.9)
-      .not('l10_min', 'is', null)
+      .gte('l10_hit_rate', 0.7)
       .not('l10_avg', 'is', null)
+      .not('category', 'like', 'NHL_%')
+      .not('category', 'like', 'MLB_%')
+      .not('category', 'like', 'NCAAB_%')
       .order('l10_hit_rate', { ascending: false })
-      .limit(50);
+      .limit(100);
 
     const allSpots = (sweetSpots && sweetSpots.length > 0) ? sweetSpots : (fallbackSpots || []);
-    console.log(`[LadderLock] Found ${allSpots.length} sweet spots with 90%+ L10 hit rate`);
+    console.log(`[LadderLock] Found ${allSpots.length} NBA sweet spots with 70%+ L10 hit rate`);
 
     if (allSpots.length === 0) {
-      console.log(`[LadderLock] No 90%+ sweet spots found — skipping today`);
-      return new Response(JSON.stringify({ success: false, error: 'No sweet spots with 90%+ hit rate available' }), {
+      console.log(`[LadderLock] No qualified NBA sweet spots found — skipping today`);
+      return new Response(JSON.stringify({ success: false, error: 'No NBA sweet spots with 70%+ hit rate available' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // === STEP 2: Verify L10 data from game logs for top candidates ===
-    const topCandidateNames = [...new Set(allSpots.slice(0, 30).map((s: any) => s.player_name))];
-    console.log(`[LadderLock] Verifying game logs for ${topCandidateNames.length} players...`);
+    // === STEP 2: Fetch L10 game logs for all candidate players ===
+    const topCandidateNames = [...new Set(allSpots.map((s: any) => s.player_name))];
+    console.log(`[LadderLock] Fetching game logs for ${topCandidateNames.length} players...`);
 
-    const gameLogPromises = topCandidateNames.map(async (name: string) => {
-      const { data } = await supabase
+    // Batch fetch: try exact name match first, then fuzzy last name
+    const gameLogMap = new Map<string, any[]>();
+    
+    for (const name of topCandidateNames) {
+      const nName = normalizeName(name);
+      
+      // Try exact match first
+      let { data } = await supabase
         .from('nba_player_game_logs')
         .select('player_name, points, rebounds, assists, threes_made, game_date')
-        .ilike('player_name', `%${name.split(' ').pop()}%`)
+        .ilike('player_name', name)
         .order('game_date', { ascending: false })
         .limit(10);
-      return { name: normalizeName(name), logs: data || [] };
-    });
 
-    const gameLogResults = await Promise.all(gameLogPromises);
-    const gameLogMap = new Map<string, any[]>();
-    for (const { name, logs } of gameLogResults) {
-      gameLogMap.set(name, logs);
+      // If no exact match, try last name fuzzy
+      if (!data || data.length === 0) {
+        const lastName = name.split(' ').pop() || name;
+        const res = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, points, rebounds, assists, threes_made, game_date')
+          .ilike('player_name', `%${lastName}%`)
+          .order('game_date', { ascending: false })
+          .limit(20);
+        // Filter to best name match
+        data = (res.data || []).filter((g: any) => {
+          const gNorm = normalizeName(g.player_name);
+          return gNorm === nName || gNorm.includes(nName) || nName.includes(gNorm);
+        }).slice(0, 10);
+      }
+
+      if (data && data.length > 0) {
+        gameLogMap.set(nName, data);
+      }
     }
+
+    console.log(`[LadderLock] Matched game logs for ${gameLogMap.size}/${topCandidateNames.length} players`);
 
     // === STEP 3: Apply safety gates using sweet spot data + game logs ===
     interface VerifiedCandidate {
@@ -258,79 +288,44 @@ Deno.serve(async (req) => {
 
     const verified: VerifiedCandidate[] = [];
 
+    // Skip pre-verification at SS lines — we'll verify directly against live sportsbook lines
+    // Just collect player+prop combos and their game log data
+    const playerPropData = new Map<string, { values: number[]; sweet_spot: any; propMarket: string; gameLogField: string }>();
+
     for (const ss of allSpots) {
       const nName = normalizeName(ss.player_name);
       const logs = gameLogMap.get(nName);
-      if (!logs || logs.length < 8) continue; // Need 8+ games
+      if (!logs || logs.length < 8) continue;
 
       const propType = ss.prop_type || ss.category || '';
       const gameLogField = CATEGORY_TO_FIELD[propType.toLowerCase()] || CATEGORY_TO_FIELD[propType];
       const propMarket = CATEGORY_TO_MARKET[propType.toLowerCase()] || CATEGORY_TO_MARKET[propType];
       if (!gameLogField || !propMarket) continue;
 
-      const line = ss.recommended_line || ss.actual_line;
-      if (!line || line <= 0) continue;
-
       const values = logs.map((g: any) => g[gameLogField] ?? 0);
-      const hitCount = values.filter((v: number) => v > line).length;
-      const hitRate = hitCount / values.length;
-
-      // SAFETY GATE 1: Verify 90%+ hit rate from actual game logs (not just sweet spot claim)
-      if (hitRate < 0.9) continue;
-
-      const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
-      const sorted = [...values].sort((a: number, b: number) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-
-      // SAFETY GATE 2: Hard floor — L10 worst game MUST exceed the line
-      if (min <= line) continue;
-
-      // SAFETY GATE 3: Median clearance — L10 median must beat line by at least 1.0
-      if (median < line + 1) continue;
-
-      verified.push({
-        sweet_spot: ss,
-        l10_values: values,
-        l10_avg: Math.round(avg * 10) / 10,
-        l10_min: min,
-        l10_max: max,
-        l10_median: median,
-        l10_hit_rate: hitRate,
-        l10_games: values.length,
-        l10_hits: hitCount,
-        floor_margin: min - line,
-        prop_market: propMarket,
-        game_log_field: gameLogField,
-      });
+      const key = `${nName}|${propMarket}`;
+      if (!playerPropData.has(key)) {
+        playerPropData.set(key, { values, sweet_spot: ss, propMarket, gameLogField });
+      }
     }
 
-    console.log(`[LadderLock] ${verified.length} candidates passed all safety gates (90% hit rate + floor > line + median +1)`);
+    console.log(`[LadderLock] ${playerPropData.size} player+prop combos with 8+ game logs ready for live line verification`);
 
-    if (verified.length === 0) {
-      console.log(`[LadderLock] No picks qualified — skipping today`);
-      return new Response(JSON.stringify({ success: false, error: 'No eligible lock candidates — all picks filtered by safety gates' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // === STEP 4: Fetch live lines ONLY for verified candidates (targeted API calls) ===
-    console.log(`[LadderLock] Fetching live lines for ${Math.min(verified.length, 10)} verified candidates...`);
+    // === STEP 4: Fetch live lines for sweet spot players ===
+    console.log(`[LadderLock] Fetching live lines for ${playerPropData.size} player+prop combos...`);
     
+    const neededMarkets = [...new Set([...playerPropData.values()].map(v => v.propMarket))];
     const eventsUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${apiKey}`;
     const eventsRes = await fetchWithTimeout(eventsUrl);
     if (!eventsRes.ok) throw new Error(`Events API returned ${eventsRes.status}`);
     const events: any[] = await eventsRes.json();
-    
+
     if (events.length === 0) {
       return new Response(JSON.stringify({ success: false, error: 'No NBA events today' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Fetch lines for the specific markets we need
-    const neededMarkets = [...new Set(verified.map(v => v.prop_market))];
     const allLines: PlayerLine[] = [];
     
     for (const evt of events) {
@@ -366,14 +361,12 @@ Deno.serve(async (req) => {
 
     console.log(`[LadderLock] Fetched ${allLines.length} live lines`);
 
-    // Build line lookup: normalizedName|market -> best line
-    const lineLookup = new Map<string, PlayerLine>();
+    // Build line lookup: normalizedName|market -> ALL lines (to find best match for sweet spot line)
+    const linesByPlayer = new Map<string, PlayerLine[]>();
     for (const line of allLines) {
       const key = `${normalizeName(line.player_name)}|${line.prop_type}`;
-      const existing = lineLookup.get(key);
-      if (!existing || line.over_odds > existing.over_odds) {
-        lineLookup.set(key, line);
-      }
+      if (!linesByPlayer.has(key)) linesByPlayer.set(key, []);
+      linesByPlayer.get(key)!.push(line);
     }
 
     // Player team lookup
@@ -387,93 +380,102 @@ Deno.serve(async (req) => {
       if (p.team_name) playerTeamMap.set(normalizeName(p.player_name), p.team_name);
     }
 
-    // === STEP 5: Score verified candidates with live line matching ===
+    // === STEP 5: For each sweet spot player, try ALL available live lines and pick the safest ===
     const candidates: LockCandidate[] = [];
 
-    for (const v of verified) {
-      const nName = normalizeName(v.sweet_spot.player_name);
-      const lineKey = `${nName}|${v.prop_market}`;
-      const liveLine = lineLookup.get(lineKey);
+    for (const [ppKey, data] of playerPropData) {
+      const [nName] = ppKey.split('|');
+      const playerLines = linesByPlayer.get(ppKey) || [];
+      
+      if (playerLines.length === 0) continue; // Must have a live bettable line
 
-      // Use live line if available, otherwise use sweet spot line
-      const line = liveLine?.line ?? v.sweet_spot.recommended_line ?? v.sweet_spot.actual_line;
-      const overOdds = liveLine?.over_odds ?? -110;
-      const bookmaker = liveLine?.bookmaker ?? 'sweet_spot';
-      const game = liveLine?.game ?? '';
-      const homeTeam = liveLine?.home_team ?? '';
-      const awayTeam = liveLine?.away_team ?? '';
+      // Try each live line for this player+prop
+      for (const liveLine of playerLines) {
+        const line = liveLine.line;
+        const values = data.values;
 
-      // Re-verify safety gates against live line (it may differ from sweet spot line)
-      if (liveLine && liveLine.line !== (v.sweet_spot.recommended_line ?? v.sweet_spot.actual_line)) {
-        const liveHitCount = v.l10_values.filter((val: number) => val > liveLine.line).length;
-        const liveHitRate = liveHitCount / v.l10_values.length;
-        if (liveHitRate < 0.9) continue;
-        if (v.l10_min <= liveLine.line) continue;
-        if (v.l10_median < liveLine.line + 1) continue;
-      }
+        // SAFETY GATE 1: 90%+ hit rate at this specific line
+        const hitCount = values.filter((v: number) => v > line).length;
+        const hitRate = hitCount / values.length;
+        if (hitRate < 0.9) continue;
 
-      // Resolve opponent
-      const playerTeam = playerTeamMap.get(nName);
-      let opponent = '';
-      let playerTeamName = '';
-      if (playerTeam && homeTeam && awayTeam) {
-        const ptLower = playerTeam.toLowerCase();
-        const homeLower = homeTeam.toLowerCase();
-        const awayLower = awayTeam.toLowerCase();
-        if (homeLower.includes(ptLower) || ptLower.includes(homeLower)) {
-          opponent = awayTeam; playerTeamName = homeTeam;
-        } else if (awayLower.includes(ptLower) || ptLower.includes(awayLower)) {
-          opponent = homeTeam; playerTeamName = awayTeam;
-        } else {
-          const ptWords = ptLower.split(' ');
-          if (ptWords.some((w: string) => homeLower.includes(w) && w.length > 3)) {
+        const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
+        const sorted = [...values].sort((a: number, b: number) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+
+        // SAFETY GATE 2: Hard floor — L10 worst game MUST exceed the line
+        if (min <= line) continue;
+
+        // SAFETY GATE 3: Median clearance — L10 median must beat line by at least 1.0
+        if (median < line + 1) continue;
+
+        // Resolve opponent
+        const playerTeam = playerTeamMap.get(nName);
+        let opponent = '';
+        let playerTeamName = '';
+        const homeTeam = liveLine.home_team;
+        const awayTeam = liveLine.away_team;
+        if (playerTeam && homeTeam && awayTeam) {
+          const ptLower = playerTeam.toLowerCase();
+          const homeLower = homeTeam.toLowerCase();
+          const awayLower = awayTeam.toLowerCase();
+          if (homeLower.includes(ptLower) || ptLower.includes(homeLower)) {
             opponent = awayTeam; playerTeamName = homeTeam;
-          } else {
+          } else if (awayLower.includes(ptLower) || ptLower.includes(awayLower)) {
             opponent = homeTeam; playerTeamName = awayTeam;
+          } else {
+            const ptWords = ptLower.split(' ');
+            if (ptWords.some((w: string) => homeLower.includes(w) && w.length > 3)) {
+              opponent = awayTeam; playerTeamName = homeTeam;
+            } else {
+              opponent = homeTeam; playerTeamName = awayTeam;
+            }
           }
         }
+
+        const floorMargin = min - line;
+
+        // === SAFETY SCORE ===
+        const hitRateScore = hitRate * 50;
+        const floorScore = Math.min((floorMargin / line) * 50, 25);
+        const edgeScore = Math.min(((avg - line) / line) * 30, 15);
+        const consistencyScore = (1 - (max - min) / (avg || 1)) * 10;
+        const safetyScore = hitRateScore + floorScore + edgeScore + consistencyScore;
+
+        const propLabel = PROP_LABELS[data.propMarket] || data.sweet_spot.prop_type || data.propMarket;
+
+        candidates.push({
+          player_name: liveLine.player_name,
+          prop_type: data.propMarket,
+          prop_label: propLabel,
+          line,
+          over_odds: liveLine.over_odds,
+          bookmaker: liveLine.bookmaker,
+          game: liveLine.game,
+          home_team: homeTeam,
+          away_team: awayTeam,
+          opponent,
+          player_team: playerTeamName,
+          l10_avg: Math.round(avg * 10) / 10,
+          l10_min: min,
+          l10_max: max,
+          l10_median: median,
+          l10_hit_rate: hitRate,
+          l10_games: values.length,
+          l10_hits: hitCount,
+          opp_defense_rank: 15,
+          safety_score: safetyScore,
+          safety_breakdown: {
+            hit_rate_score: Math.round(hitRateScore * 10) / 10,
+            floor_score: Math.round(floorScore * 10) / 10,
+            edge_score: Math.round(edgeScore * 10) / 10,
+            consistency_score: Math.round(consistencyScore * 10) / 10,
+            floor_margin: floorMargin,
+          },
+        });
       }
-
-      const floorMargin = v.l10_min - line;
-
-      // === SAFETY SCORE: Hit rate is king (sweet-spot-first means highest accuracy wins) ===
-      const hitRateScore = v.l10_hit_rate * 50;                                    // 50% weight
-      const floorScore = Math.min((floorMargin / line) * 50, 25);                  // 25% weight
-      const edgeScore = Math.min(((v.l10_avg - line) / line) * 30, 15);           // 15% weight
-      const consistencyScore = (1 - (v.l10_max - v.l10_min) / (v.l10_avg || 1)) * 10; // 10% weight
-      const safetyScore = hitRateScore + floorScore + edgeScore + consistencyScore;
-
-      const propLabel = PROP_LABELS[v.prop_market] || v.sweet_spot.prop_type || v.prop_market;
-
-      candidates.push({
-        player_name: liveLine?.player_name || v.sweet_spot.player_name,
-        prop_type: v.prop_market,
-        prop_label: propLabel,
-        line,
-        over_odds: overOdds,
-        bookmaker,
-        game,
-        home_team: homeTeam,
-        away_team: awayTeam,
-        opponent,
-        player_team: playerTeamName,
-        l10_avg: v.l10_avg,
-        l10_min: v.l10_min,
-        l10_max: v.l10_max,
-        l10_median: v.l10_median,
-        l10_hit_rate: v.l10_hit_rate,
-        l10_games: v.l10_games,
-        l10_hits: v.l10_hits,
-        opp_defense_rank: 15,
-        safety_score: safetyScore,
-        safety_breakdown: {
-          hit_rate_score: Math.round(hitRateScore * 10) / 10,
-          floor_score: Math.round(floorScore * 10) / 10,
-          edge_score: Math.round(edgeScore * 10) / 10,
-          consistency_score: Math.round(consistencyScore * 10) / 10,
-          floor_margin: floorMargin,
-        },
-      });
     }
 
     // Sort by safety score descending — top 1 is our LOCK
