@@ -461,7 +461,7 @@ Deno.serve(async (req) => {
       const floorMargin = v.l10_min - line;
 
       // === SAFETY SCORE: Hit rate is king (sweet-spot-first means highest accuracy wins) ===
-      const hitRateScore = v.l10_hit_rate * 50;                                    // 50% weight
+      const hitRateScore = actualHitRate * 50;                                      // 50% weight
       const floorScore = Math.min((floorMargin / line) * 50, 25);                  // 25% weight
       const edgeScore = Math.min(((v.l10_avg - line) / line) * 30, 15);           // 15% weight
       const consistencyScore = (1 - (v.l10_max - v.l10_min) / (v.l10_avg || 1)) * 10; // 10% weight
@@ -485,9 +485,9 @@ Deno.serve(async (req) => {
         l10_min: v.l10_min,
         l10_max: v.l10_max,
         l10_median: v.l10_median,
-        l10_hit_rate: v.l10_hit_rate,
+        l10_hit_rate: actualHitRate,
         l10_games: v.l10_games,
-        l10_hits: v.l10_hits,
+        l10_hits: actualHitCount,
         opp_defense_rank: 15,
         safety_score: safetyScore,
         safety_breakdown: {
