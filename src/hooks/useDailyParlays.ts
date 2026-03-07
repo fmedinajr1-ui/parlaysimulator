@@ -30,6 +30,7 @@ export interface DailyParlay {
   id: string;
   type: 'OPTIMAL' | 'SAFE' | 'BALANCED' | 'UPSIDE' | 'CORE' | 'HEAT_UPSIDE' | 'LOTTERY' | 'CURATED';
   source: 'sweet-spot' | 'sharp' | 'heat' | 'bot';
+  sport?: 'nba' | 'nhl' | 'cross';
   legCount: number;
   legs: UnifiedParlayLeg[];
   combinedOdds: number;
