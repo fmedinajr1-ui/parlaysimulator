@@ -12,6 +12,7 @@ import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
 import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
 import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowcase";
+import { VolumeStakingBreakdown } from "@/components/bot-landing/VolumeStakingBreakdown";
 import { FreeTrialBanner } from "@/components/bot-landing/FreeTrialBanner";
 
 
@@ -151,6 +152,8 @@ export default function BotLanding() {
           hasBotAccess={hasBotAccess || isAdmin}
         />
       </div>
+
+      <VolumeStakingBreakdown />
 
       <div ref={whyRef}>
         <WhyMultipleParlays />
