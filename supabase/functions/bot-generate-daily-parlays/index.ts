@@ -4597,6 +4597,18 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.warn(`[PlayerTeamMap] Failed to build player team map: ${ptmErr}`);
   }
 
+  // === DERIVE SPORT FROM CATEGORY ===
+  // category_sweet_spots has no sport column — derive from category prefix
+  function deriveSportFromCategory(category: string): string {
+    const cat = (category || '').toUpperCase();
+    if (cat.startsWith('NHL_')) return 'icehockey_nhl';
+    if (cat.startsWith('MLB_') || cat.startsWith('PITCHER_') || cat.startsWith('HITTER_') || cat.startsWith('BATTER_')) return 'baseball_mlb';
+    if (cat.startsWith('NCAAB_')) return 'basketball_ncaab';
+    if (cat.startsWith('NCAAF_')) return 'americanfootball_ncaaf';
+    if (cat.startsWith('NFL_')) return 'americanfootball_nfl';
+    return 'basketball_nba';
+  }
+
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     // Resolve oddsKey FIRST — used for both line override and odds lookup
@@ -4625,7 +4637,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const hitRatePercent = hitRateDecimal * 100;
     const projectedValue = pick.projected_value || pick.l10_avg || pick.l10_median || line || 0;
     const edge = projectedValue - (line || 0);
-    const pickSport = pick.sport || 'basketball_nba';
+    const pickSport = pick.sport || deriveSportFromCategory(pick.category);
     const categoryWeight = weightMap.get(`${pick.category}__${pick.recommended_side}__${pickSport}`) ?? weightMap.get(`${pick.category}__${pick.recommended_side}`) ?? weightMap.get(pick.category) ?? 1.0;
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
@@ -4650,7 +4662,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       compositeScore,
       has_real_line: hasRealLine,
       line_source: hasRealLine ? 'verified' : 'projected',
-      sport: pick.sport || 'basketball_nba',
+      sport: pick.sport || deriveSportFromCategory(pick.category),
       team_name: resolvedTeamName,
       event_id: oddsEntry?.event_id || pick.event_id || undefined,
       _gameContext: (() => {
@@ -4931,7 +4943,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
               eventId: pick.event_id,
               playerName: pick.player_name,
               propType: pick.prop_type,
-              sport: pick.sport || 'basketball_nba',
+              sport: pick.sport || deriveSportFromCategory(pick.category),
             }),
           });
           
@@ -5008,7 +5020,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
               eventId: pick.event_id,
               playerName: pick.player_name,
               propType: pick.prop_type,
-              sport: pick.sport || 'basketball_nba',
+              sport: pick.sport || deriveSportFromCategory(pick.category),
             }),
           });
           if (altResponse.ok) {
@@ -5740,14 +5752,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // === APPLY SPORT-SHIFT MULTIPLIERS ===
   let sportShiftApplied = 0;
   for (const pick of enrichedSweetSpots) {
-    const mult = sportShiftMultipliers.get(pick.sport || 'basketball_nba') || 1.0;
+    const mult = sportShiftMultipliers.get(pick.sport || deriveSportFromCategory(pick.category)) || 1.0;
     if (mult !== 1.0) {
       pick.compositeScore = Math.min(95, Math.round(pick.compositeScore * mult));
       sportShiftApplied++;
     }
   }
   for (const pick of enrichedTeamPicks) {
-    const mult = sportShiftMultipliers.get(pick.sport || 'basketball_nba') || 1.0;
+    const mult = sportShiftMultipliers.get(pick.sport || deriveSportFromCategory(pick.category)) || 1.0;
     if (mult !== 1.0) {
       pick.compositeScore = Math.min(95, Math.round(pick.compositeScore * mult));
       sportShiftApplied++;
@@ -5797,7 +5809,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     let envScoreApplied = 0;
     let unresolvedTeamCount = 0;
     for (const pick of enrichedSweetSpots) {
-      if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
+      if ((pick.sport || deriveSportFromCategory(pick.category)) !== 'basketball_nba') continue;
       const resolvedTeam = (pick as any).team_name || playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
       const teamKey = normalizeBdlTeamName(resolvedTeam);
       if (!teamKey) unresolvedTeamCount++;
@@ -6294,7 +6306,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   try {
     let mispricedEnvApplied = 0;
     for (const pick of enrichedMispricedPicks) {
-      if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
+      if ((pick.sport || deriveSportFromCategory(pick.category)) !== 'basketball_nba') continue;
       const resolvedTeam = (pick as any).team_name || playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
       const teamKey = normalizeBdlTeamName(resolvedTeam);
       if (!teamKey) continue;
@@ -6642,7 +6654,7 @@ async function generateTierParlays(
             projected_value: pick.projected_value || pick.l10_avg || 0,
             line_source: pick.line_source || 'projected',
             has_real_line: pick.has_real_line || false,
-            sport: pick.sport || 'basketball_nba',
+            sport: pick.sport || deriveSportFromCategory(pick.category),
             defense_rank: (pick as any).defenseMatchupRank ?? null,
             defense_adj: (pick as any).defenseMatchupAdj ?? 0,
           };
@@ -7713,7 +7725,7 @@ async function generateTierParlays(
         parlayTeamCount.set(teamPick.away_team, (parlayTeamCount.get(teamPick.away_team) || 0) + 1);
       } else {
         const playerPick = pick as EnrichedPick;
-        const playerSport = playerPick.sport || 'basketball_nba';
+        const playerSport = playerPick.sport || deriveSportFromCategory(playerPick.category);
         const weight = weightMap.get(`${playerPick.category}__${playerPick.recommended_side}__${playerSport}`) ?? weightMap.get(`${playerPick.category}__${playerPick.recommended_side}`) ?? weightMap.get(playerPick.category) ?? 1.0;
         
         // Select line based on profile (with boost leg limiting)
@@ -7802,7 +7814,7 @@ async function generateTierParlays(
           projected_value: playerPick.projected_value || playerPick.l10_avg || 0,
           line_source: playerPick.line_source || 'projected',
           has_real_line: playerPick.has_real_line || false,
-          sport: playerPick.sport || 'basketball_nba',
+          sport: playerPick.sport || deriveSportFromCategory(playerPick.category),
           defense_rank: (playerPick as any).defenseMatchupRank ?? null,
           defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
           environment_score: (playerPick as any).environmentScore ?? null,
@@ -8552,7 +8564,7 @@ function generateMonsterParlays(
       const teamKey = getTeamKey(pick);
       if (teamKey && usedTeams.has(teamKey)) continue;
 
-      const sport = pick.sport || 'basketball_nba';
+      const sport = pick.sport || deriveSportFromCategory(pick.category);
       if ((sportCount[sport] || 0) >= 2) continue;
 
       if (isMirrorPick(selected, pick)) continue;
@@ -8639,7 +8651,7 @@ function generateMonsterParlays(
       original_line: snapLine(pick.line, pick.prop_type),
       selected_line: snapLine(pick.line, pick.prop_type),
       projected_value: pick.projected_value || pick.l10_avg || 0,
-      sport: pick.sport || 'basketball_nba',
+      sport: pick.sport || deriveSportFromCategory(pick.category),
     };
   };
 
@@ -9109,7 +9121,7 @@ async function generateMasterParlay(
       prop_type: pick.prop_type,
       line: pick.line,
       side: pick.recommended_side || 'over',
-      sport: pick.sport || 'basketball_nba',
+      sport: pick.sport || deriveSportFromCategory(pick.category),
       americanOdds: pick.americanOdds || -110,
       hit_rate: Math.round(cappedHitRate * 100),
       defense_rank: (pick as EnrichedMasterCandidate).defenseRank,
@@ -10224,7 +10236,7 @@ Deno.serve(async (req) => {
             projected_value: pick.projected_value || pick.l10_avg || 0,
             line_source: pick.line_source || 'projected',
             has_real_line: pick.has_real_line || false,
-            sport: pick.sport || 'basketball_nba',
+            sport: pick.sport || deriveSportFromCategory(pick.category),
           };
         };
 
