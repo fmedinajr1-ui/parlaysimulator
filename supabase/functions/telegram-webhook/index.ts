@@ -4244,7 +4244,146 @@ Deno.serve(async (req) => {
       return new Response("OK", { status: 200 });
     }
 
-    // Handle message
+    // Handle photo messages (slip analysis)
+    if (update.message?.photo && update.message.photo.length > 0) {
+      const chatId = update.message.chat.id.toString();
+      const username = update.message.from?.username || undefined;
+      
+      // Auth check
+      const authorized = await isAuthorized(chatId);
+      if (!authorized) {
+        await sendMessage(chatId, "🔒 You need to be authorized first.\n\nSend /start to begin the access process.");
+        return new Response("OK", { status: 200 });
+      }
+      
+      try {
+        await sendMessage(chatId, "📸 Analyzing your slip...");
+        await logActivity("telegram_photo", "User sent photo for slip analysis", { chatId, username });
+        
+        // Get largest photo (last in array)
+        const photo = update.message.photo[update.message.photo.length - 1];
+        const fileId = photo.file_id;
+        
+        // Download photo via Telegram API
+        const fileResp = await fetch(`${TELEGRAM_API}/getFile`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_id: fileId }),
+        });
+        const fileData = await fileResp.json();
+        
+        if (!fileData.ok || !fileData.result?.file_path) {
+          await sendMessage(chatId, "❌ Could not download the photo. Please try again.");
+          return new Response("OK", { status: 200 });
+        }
+        
+        const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${fileData.result.file_path}`;
+        const imageResp = await fetch(fileUrl);
+        const imageBuffer = await imageResp.arrayBuffer();
+        
+        // Convert to base64
+        const uint8Array = new Uint8Array(imageBuffer);
+        let binary = '';
+        for (let i = 0; i < uint8Array.length; i++) {
+          binary += String.fromCharCode(uint8Array[i]);
+        }
+        const imageBase64 = `data:image/jpeg;base64,${btoa(binary)}`;
+        
+        // Call extract-parlay edge function
+        const extractResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/extract-parlay`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ imageBase64 }),
+        });
+        
+        if (!extractResp.ok) {
+          const errText = await extractResp.text();
+          console.error("[Photo] extract-parlay failed:", extractResp.status, errText);
+          await sendMessage(chatId, "❌ Failed to analyze the slip. Please try again.");
+          return new Response("OK", { status: 200 });
+        }
+        
+        const extraction = await extractResp.json();
+        
+        if (!extraction.isBettingSlip || !extraction.legs || extraction.legs.length === 0) {
+          await sendMessage(chatId, "🤔 I couldn't detect a betting slip in this image.\n\nMake sure the full slip is visible and try again!");
+          return new Response("OK", { status: 200 });
+        }
+        
+        // Format the analysis message
+        const legs = extraction.legs;
+        let msg = `🎯 *Slip Analysis* (${legs.length} legs)\n\n`;
+        
+        // Cross-reference with sweet spots
+        const today = getEasternDate();
+        const playerNames = legs
+          .map((l: any) => l.player || l.description?.split(' ')[0] + ' ' + l.description?.split(' ')[1])
+          .filter(Boolean);
+        
+        const { data: sweetSpots } = await supabase
+          .from("category_sweet_spots")
+          .select("player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, actual_line, quality_tier")
+          .eq("analysis_date", today)
+          .eq("is_active", true);
+        
+        for (let i = 0; i < legs.length; i++) {
+          const leg = legs[i];
+          const desc = leg.description || 'Unknown';
+          const odds = leg.odds && leg.odds !== 'N/A' ? ` (${leg.odds})` : '';
+          
+          // Try to match with sweet spots
+          let ssMatch = '';
+          if (sweetSpots && leg.player) {
+            const playerLower = leg.player.toLowerCase();
+            const match = sweetSpots.find((ss: any) => 
+              ss.player_name?.toLowerCase().includes(playerLower) || 
+              playerLower.includes(ss.player_name?.toLowerCase() || '')
+            );
+            if (match) {
+              const hitPct = ((match.l10_hit_rate || 0) * 100).toFixed(0);
+              const tier = match.quality_tier === 'elite' ? '🔥' : match.quality_tier === 'strong' ? '💪' : '📊';
+              const sideMatch = leg.side === match.recommended_side ? '✅' : '⚠️';
+              ssMatch = `\n   ${sideMatch} ${tier} L10: ${hitPct}% hit rate (avg ${match.l10_avg?.toFixed(1)})`;
+            }
+          }
+          
+          msg += `${i + 1}. ${desc}${odds}${ssMatch}\n`;
+        }
+        
+        // Add totals
+        if (extraction.totalOdds) msg += `\n*Total Odds:* ${extraction.totalOdds}`;
+        if (extraction.stake) msg += `\n*Stake:* $${extraction.stake}`;
+        if (extraction.potentialPayout) msg += `\n*Payout:* $${extraction.potentialPayout}`;
+        if (extraction.platform) msg += `\n*Platform:* ${extraction.platform}`;
+        
+        // Quick EV estimate
+        const legsWithSS = legs.filter((l: any) => {
+          if (!sweetSpots || !l.player) return false;
+          return sweetSpots.some((ss: any) => 
+            ss.player_name?.toLowerCase().includes(l.player.toLowerCase())
+          );
+        });
+        
+        if (legsWithSS.length > 0) {
+          msg += `\n\n📊 *Sweet Spot Coverage:* ${legsWithSS.length}/${legs.length} legs tracked`;
+        }
+        
+        msg += `\n\n💡 _Send any betting slip photo for instant analysis!_`;
+        
+        await sendLongMessage(chatId, msg);
+        await logActivity("telegram_photo_analyzed", `Analyzed slip with ${legs.length} legs`, { chatId, legCount: legs.length, platform: extraction.platform });
+      } catch (err) {
+        console.error("[Photo] Error:", err);
+        await sendMessage(chatId, "❌ Something went wrong analyzing your slip. Please try again.");
+      }
+      
+      return new Response("OK", { status: 200 });
+    }
+
+    // Handle text message
     if (update.message?.text) {
       const chatId = update.message.chat.id.toString();
       const text = update.message.text;
