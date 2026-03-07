@@ -748,6 +748,29 @@ async function handleParlays(chatId: string, page = 1) {
       lastTier = tier;
     }
 
+    // Fetch trap analysis for all legs in this page
+    const allPageLegs: { event_id: string; outcome_name: string }[] = [];
+    for (const pp of pageParlays) {
+      const pLegs = Array.isArray(pp.legs) ? pp.legs : JSON.parse(pp.legs || '[]');
+      for (const l of pLegs) {
+        if (l.event_id && l.player_name) {
+          allPageLegs.push({ event_id: l.event_id, outcome_name: `${l.player_name} ${(l.side || 'over').toLowerCase()} ${l.line}` });
+        }
+      }
+    }
+    // Batch fetch cached trap data
+    const trapMap = new Map<string, { risk_label: string; trap_probability: number }>();
+    if (allPageLegs.length > 0) {
+      const eventIds = [...new Set(allPageLegs.map(l => l.event_id))];
+      const { data: trapRows } = await supabase
+        .from('trap_probability_analysis')
+        .select('event_id, outcome_name, risk_label, trap_probability')
+        .in('event_id', eventIds.slice(0, 50));
+      for (const t of trapRows || []) {
+        trapMap.set(`${t.event_id}`, { risk_label: t.risk_label, trap_probability: t.trap_probability });
+      }
+    }
+
     const globalIdx = startIdx + i + 1;
     const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
     const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
@@ -757,7 +780,15 @@ async function handleParlays(chatId: string, page = 1) {
     for (const leg of legs) {
       const legText = formatLegDisplay(leg);
       const legLines = legText.split('\n');
-      message += `     ${legLines[0]}\n`;
+      // Append trap indicator if cached
+      let trapTag = '';
+      if (leg.event_id) {
+        const trap = trapMap.get(leg.event_id);
+        if (trap) {
+          trapTag = trap.risk_label === 'High' ? ' ⚠️TRAP' : trap.risk_label === 'Medium' ? ' 🟡CAUTION' : ' ✅SAFE';
+        }
+      }
+      message += `     ${legLines[0]}${trapTag}\n`;
       if (legLines.length > 1 && legLines[1].trim()) {
         message += `     ${legLines[1]}\n`;
       }
