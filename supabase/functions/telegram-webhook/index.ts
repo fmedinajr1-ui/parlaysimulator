@@ -14,6 +14,28 @@ const supabase = createClient(
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+// Shared prop labels
+const PROP_LABELS: Record<string, string> = {
+  threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+  steals: 'STL', blocks: 'BLK', turnovers: 'TO', pra: 'PRA',
+  pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
+  three_pointers_made: '3PT', fantasy_score: 'FPTS',
+  goals: 'G', shots: 'SOG', saves: 'SVS', aces: 'ACES', games: 'GAMES',
+  assists_nhl: 'A', spread: 'SPR', total: 'TOT', moneyline: 'ML', h2h: 'ML',
+  player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+  player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+  player_turnovers: 'TO', player_pra: 'PRA', player_pts_rebs: 'P+R',
+  player_pts_asts: 'P+A', player_rebs_asts: 'R+A',
+  player_double_double: 'DD', player_triple_double: 'TD',
+  player_goals: 'G', player_shots_on_goal: 'SOG', player_blocked_shots: 'BLK',
+  player_power_play_points: 'PPP', player_points_nhl: 'PTS',
+  player_assists_nhl: 'A', player_saves: 'SVS',
+  pitcher_strikeouts: 'Ks', total_bases: 'TB', hits: 'H',
+  runs: 'R', rbis: 'RBI', stolen_bases: 'SB', walks: 'BB',
+  hitter_fantasy_score: 'FPTS', batter_home_runs: 'HR',
+  player_fantasy_score: 'FPTS',
+};
+
 // ==================== AUTHORIZATION HELPERS ====================
 
 async function isAuthorized(chatId: string): Promise<boolean> {
@@ -726,6 +748,29 @@ async function handleParlays(chatId: string, page = 1) {
       lastTier = tier;
     }
 
+    // Fetch trap analysis for all legs in this page
+    const allPageLegs: { event_id: string; outcome_name: string }[] = [];
+    for (const pp of pageParlays) {
+      const pLegs = Array.isArray(pp.legs) ? pp.legs : JSON.parse(pp.legs || '[]');
+      for (const l of pLegs) {
+        if (l.event_id && l.player_name) {
+          allPageLegs.push({ event_id: l.event_id, outcome_name: `${l.player_name} ${(l.side || 'over').toLowerCase()} ${l.line}` });
+        }
+      }
+    }
+    // Batch fetch cached trap data
+    const trapMap = new Map<string, { risk_label: string; trap_probability: number }>();
+    if (allPageLegs.length > 0) {
+      const eventIds = [...new Set(allPageLegs.map(l => l.event_id))];
+      const { data: trapRows } = await supabase
+        .from('trap_probability_analysis')
+        .select('event_id, outcome_name, risk_label, trap_probability')
+        .in('event_id', eventIds.slice(0, 50));
+      for (const t of trapRows || []) {
+        trapMap.set(`${t.event_id}`, { risk_label: t.risk_label, trap_probability: t.trap_probability });
+      }
+    }
+
     const globalIdx = startIdx + i + 1;
     const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
     const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
@@ -735,7 +780,15 @@ async function handleParlays(chatId: string, page = 1) {
     for (const leg of legs) {
       const legText = formatLegDisplay(leg);
       const legLines = legText.split('\n');
-      message += `     ${legLines[0]}\n`;
+      // Append trap indicator if cached
+      let trapTag = '';
+      if (leg.event_id) {
+        const trap = trapMap.get(leg.event_id);
+        if (trap) {
+          trapTag = trap.risk_label === 'High' ? ' ⚠️TRAP' : trap.risk_label === 'Medium' ? ' 🟡CAUTION' : ' ✅SAFE';
+        }
+      }
+      message += `     ${legLines[0]}${trapTag}\n`;
       if (legLines.length > 1 && legLines[1].trim()) {
         message += `     ${legLines[1]}\n`;
       }
@@ -983,12 +1036,32 @@ function formatLegDisplay(leg: any): string {
       three_pointers_made: '3PT', fantasy_score: 'FPTS',
       goals: 'G', assists_nhl: 'A', shots: 'SOG', saves: 'SVS',
       aces: 'ACES', games: 'GAMES',
+      player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+      player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+      player_turnovers: 'TO', player_pra: 'PRA', player_pts_rebs: 'P+R',
+      player_pts_asts: 'P+A', player_rebs_asts: 'R+A',
+      player_double_double: 'DD', player_triple_double: 'TD',
+      player_goals: 'G', player_shots_on_goal: 'SOG', player_blocked_shots: 'BLK',
+      player_power_play_points: 'PPP', player_points_nhl: 'PTS',
+      player_assists_nhl: 'A', player_saves: 'SVS',
+      pitcher_strikeouts: 'Ks', total_bases: 'TB', hits: 'H',
+      runs: 'R', rbis: 'RBI', stolen_bases: 'SB', walks: 'BB',
+      hitter_fantasy_score: 'FPTS', batter_home_runs: 'HR',
+      player_fantasy_score: 'FPTS',
     };
+    // Sport-specific emoji
+    const sportKey = (leg.sport || leg.category || '').toLowerCase();
+    let sportEmoji = '🏀';
+    if (sportKey.includes('nhl') || sportKey.includes('hockey')) sportEmoji = '🏒';
+    else if (sportKey.includes('mlb') || sportKey.includes('baseball') || sportKey.includes('pitcher') || sportKey.includes('hitter') || sportKey.includes('batter')) sportEmoji = '⚾';
+    else if (sportKey.includes('ncaab')) sportEmoji = '🏀';
+    else if (sportKey.includes('nfl') || sportKey.includes('ncaaf')) sportEmoji = '🏈';
+
     const name = leg.player_name || 'Player';
     const side = (leg.side || 'over').toUpperCase();
     const line = leg.line || leg.selected_line || '';
     const propType = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
-    actionLine = `🏀 Take ${name} ${side} ${line} ${propType} ${odds}`;
+    actionLine = `${sportEmoji} Take ${name} ${side} ${line} ${propType} ${odds}`;
     matchupLine = leg.matchup || '';
   }
   
@@ -2322,11 +2395,7 @@ async function handleBroadcast(chatId: string) {
     return;
   }
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-    shots: 'SOG', saves: 'SVS', aces: 'ACES',
-  };
+  const propLabels = PROP_LABELS;
 
   const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
 
@@ -2485,11 +2554,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       return;
     }
 
-    const propLabels: Record<string, string> = {
-      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-      shots: 'SOG', saves: 'SVS', aces: 'ACES',
-    };
+    const propLabels = PROP_LABELS;
 
     const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
     let msg = `✏️ *Editing Parlay* (${(parlay.strategy_name || '').replace(/_/g, ' ')})\n\n`;
@@ -2544,11 +2609,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     // Save back
     await supabase.from('bot_daily_parlays').update({ legs, approval_status: 'edited' }).eq('id', parlayId);
 
-    const propLabels: Record<string, string> = {
-      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-      shots: 'SOG', saves: 'SVS', aces: 'ACES',
-    };
+    const propLabels = PROP_LABELS;
 
     // Re-render edit view
     let msg = `✏️ *Editing Parlay* (${(parlay.strategy_name || '').replace(/_/g, ' ')})\n\n`;
@@ -2588,11 +2649,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       await sendMessage(chatId, '✅ No pending parlays to review!');
     } else {
       await answerCallbackQuery(callbackQueryId, `Loading ${pending.length} parlays...`);
-      const propLabels: Record<string, string> = {
-        threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-        steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-        shots: 'SOG', saves: 'SVS', aces: 'ACES',
-      };
+      const propLabels = PROP_LABELS;
       for (let pi = 0; pi < pending.length; pi++) {
         const p = pending[pi];
         const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
