@@ -593,9 +593,21 @@ Deno.serve(async (req) => {
       });
       results["telegram"] = "sent_no_picks";
     } else {
-      const fullMessage = `🏒 NHL + MLB DAILY PARLAYS — ${today}\n\n` +
-        allParlayMessages.join("\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n") +
-        `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n🏒⚾ Strategies: Floor Lock | Optimal Combo | Ceiling Shot | Cross-Sport`;
+      // Separate NHL-only and cross-sport messages
+      const nhlOnlyMessages = allParlayMessages.filter(m => !m.includes('Cross-Sport'));
+      const crossSportMessages = allParlayMessages.filter(m => m.includes('Cross-Sport'));
+      
+      let fullMessage = `🏒 NHL-ONLY DAILY PARLAYS — ${today}\n\n`;
+      if (nhlOnlyMessages.length > 0) {
+        fullMessage += nhlOnlyMessages.join("\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+      } else {
+        fullMessage += "⚠️ No pure NHL parlays today.";
+      }
+      if (crossSportMessages.length > 0) {
+        fullMessage += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🏒⚾ CROSS-SPORT PICKS\n\n` +
+          crossSportMessages.join("\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+      }
+      fullMessage += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n🏒 Strategies: Floor Lock | Optimal Combo | Ceiling Shot`;
 
       await supabase.functions.invoke("bot-send-telegram", {
         body: { message: fullMessage, bypass_quiet_hours: true },
