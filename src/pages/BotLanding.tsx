@@ -153,6 +153,8 @@ export default function BotLanding() {
         />
       </div>
 
+      <VolumeStakingBreakdown />
+
       <div ref={whyRef}>
         <WhyMultipleParlays />
       </div>
