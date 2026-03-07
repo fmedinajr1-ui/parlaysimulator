@@ -257,62 +257,28 @@ Deno.serve(async (req) => {
 
     const verified: VerifiedCandidate[] = [];
 
+    // Skip pre-verification at SS lines — we'll verify directly against live sportsbook lines
+    // Just collect player+prop combos and their game log data
+    const playerPropData = new Map<string, { values: number[]; sweet_spot: any; propMarket: string; gameLogField: string }>();
+
     for (const ss of allSpots) {
       const nName = normalizeName(ss.player_name);
       const logs = gameLogMap.get(nName);
-      if (!logs || logs.length < 8) continue; // Need 8+ games
+      if (!logs || logs.length < 8) continue;
 
       const propType = ss.prop_type || ss.category || '';
       const gameLogField = CATEGORY_TO_FIELD[propType.toLowerCase()] || CATEGORY_TO_FIELD[propType];
       const propMarket = CATEGORY_TO_MARKET[propType.toLowerCase()] || CATEGORY_TO_MARKET[propType];
       if (!gameLogField || !propMarket) continue;
 
-      const line = ss.recommended_line || ss.actual_line;
-      if (!line || line <= 0) continue;
-
       const values = logs.map((g: any) => g[gameLogField] ?? 0);
-      const hitCount = values.filter((v: number) => v > line).length;
-      const hitRate = hitCount / values.length;
-
-      // SAFETY GATE 1: Verify 90%+ hit rate from actual game logs (not just sweet spot claim)
-      if (hitRate < 0.9) continue;
-
-      const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
-      const sorted = [...values].sort((a: number, b: number) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-
-      // SAFETY GATE 2: Hard floor — L10 worst game MUST exceed the line
-      if (min <= line) continue;
-
-      // SAFETY GATE 3: Median clearance — L10 median must beat line by at least 1.0
-      if (median < line + 1) continue;
-
-      verified.push({
-        sweet_spot: ss,
-        l10_values: values,
-        l10_avg: Math.round(avg * 10) / 10,
-        l10_min: min,
-        l10_max: max,
-        l10_median: median,
-        l10_hit_rate: hitRate,
-        l10_games: values.length,
-        l10_hits: hitCount,
-        floor_margin: min - line,
-        prop_market: propMarket,
-        game_log_field: gameLogField,
-      });
+      const key = `${nName}|${propMarket}`;
+      if (!playerPropData.has(key)) {
+        playerPropData.set(key, { values, sweet_spot: ss, propMarket, gameLogField });
+      }
     }
 
-    console.log(`[LadderLock] ${verified.length} candidates passed all safety gates (90% hit rate + floor > line + median +1)`);
-
-    if (verified.length === 0) {
-      console.log(`[LadderLock] No picks qualified — skipping today`);
-      return new Response(JSON.stringify({ success: false, error: 'No eligible lock candidates — all picks filtered by safety gates' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    console.log(`[LadderLock] ${playerPropData.size} player+prop combos with 8+ game logs ready for live line verification`);
 
     // === STEP 4: Fetch live lines ONLY for verified candidates (targeted API calls) ===
     console.log(`[LadderLock] Fetching live lines for ${Math.min(verified.length, 10)} verified candidates...`);
