@@ -161,7 +161,7 @@ export default function BotLanding() {
 
       <DailyWinnersShowcase />
 
-      <HomepageAnalyzer />
+      
 
       {!(hasBotAccess || isAdmin) && (
         <div ref={pricingRef}>
