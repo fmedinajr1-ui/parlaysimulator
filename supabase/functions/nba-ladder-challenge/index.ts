@@ -280,22 +280,10 @@ Deno.serve(async (req) => {
 
     console.log(`[LadderLock] ${playerPropData.size} player+prop combos with 8+ game logs ready for live line verification`);
 
-    // === STEP 4: Fetch live lines ONLY for verified candidates (targeted API calls) ===
-    console.log(`[LadderLock] Fetching live lines for ${Math.min(verified.length, 10)} verified candidates...`);
+    // === STEP 4: Fetch live lines for sweet spot players ===
+    console.log(`[LadderLock] Fetching live lines for ${playerPropData.size} player+prop combos...`);
     
-    const eventsUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${apiKey}`;
-    const eventsRes = await fetchWithTimeout(eventsUrl);
-    if (!eventsRes.ok) throw new Error(`Events API returned ${eventsRes.status}`);
-    const events: any[] = await eventsRes.json();
-    
-    if (events.length === 0) {
-      return new Response(JSON.stringify({ success: false, error: 'No NBA events today' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Fetch lines for the specific markets we need
-    const neededMarkets = [...new Set(verified.map(v => v.prop_market))];
+    const neededMarkets = [...new Set([...playerPropData.values()].map(v => v.propMarket))];
     const allLines: PlayerLine[] = [];
     
     for (const evt of events) {
