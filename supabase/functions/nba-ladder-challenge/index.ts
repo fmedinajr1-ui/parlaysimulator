@@ -199,25 +199,46 @@ Deno.serve(async (req) => {
       });
     }
 
-    // === STEP 2: Verify L10 data from game logs for top candidates ===
-    const topCandidateNames = [...new Set(allSpots.slice(0, 30).map((s: any) => s.player_name))];
-    console.log(`[LadderLock] Verifying game logs for ${topCandidateNames.length} players...`);
+    // === STEP 2: Fetch L10 game logs for all candidate players ===
+    const topCandidateNames = [...new Set(allSpots.map((s: any) => s.player_name))];
+    console.log(`[LadderLock] Fetching game logs for ${topCandidateNames.length} players...`);
 
-    const gameLogPromises = topCandidateNames.map(async (name: string) => {
-      const { data } = await supabase
+    // Batch fetch: try exact name match first, then fuzzy last name
+    const gameLogMap = new Map<string, any[]>();
+    
+    for (const name of topCandidateNames) {
+      const nName = normalizeName(name);
+      
+      // Try exact match first
+      let { data } = await supabase
         .from('nba_player_game_logs')
         .select('player_name, points, rebounds, assists, threes_made, game_date')
-        .ilike('player_name', `%${name.split(' ').pop()}%`)
+        .ilike('player_name', name)
         .order('game_date', { ascending: false })
         .limit(10);
-      return { name: normalizeName(name), logs: data || [] };
-    });
 
-    const gameLogResults = await Promise.all(gameLogPromises);
-    const gameLogMap = new Map<string, any[]>();
-    for (const { name, logs } of gameLogResults) {
-      gameLogMap.set(name, logs);
+      // If no exact match, try last name fuzzy
+      if (!data || data.length === 0) {
+        const lastName = name.split(' ').pop() || name;
+        const res = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, points, rebounds, assists, threes_made, game_date')
+          .ilike('player_name', `%${lastName}%`)
+          .order('game_date', { ascending: false })
+          .limit(20);
+        // Filter to best name match
+        data = (res.data || []).filter((g: any) => {
+          const gNorm = normalizeName(g.player_name);
+          return gNorm === nName || gNorm.includes(nName) || nName.includes(gNorm);
+        }).slice(0, 10);
+      }
+
+      if (data && data.length > 0) {
+        gameLogMap.set(nName, data);
+      }
     }
+
+    console.log(`[LadderLock] Matched game logs for ${gameLogMap.size}/${topCandidateNames.length} players`);
 
     // === STEP 3: Apply safety gates using sweet spot data + game logs ===
     interface VerifiedCandidate {
