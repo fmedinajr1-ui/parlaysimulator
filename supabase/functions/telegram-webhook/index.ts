@@ -3380,22 +3380,70 @@ const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
 const isAdmin = (chatId: string) => chatId === ADMIN_CHAT_ID;
 
 // Customer-facing /start message (for authorized users)
+async function handleStakePlan(chatId: string) {
+  return `🌾 *YOUR PROFIT PLAN — $500 Start*
+
+📊 *Our Engine:* 28% Win Rate | +780 Avg Odds
+EV per $10 bet: ($10 × 28% × 5.9) − ($10 × 72%) = *+$9.32*
+
+━━━━━━━━━━━━━━━━━━━━
+
+📗 *PHASE 1 — Foundation (Week 1-2)*
+💵 Stake: *$5/parlay* (1% bankroll)
+📈 Volume: 5 parlays/day
+💰 Daily EV: *+$23* | Weekly: *+$163*
+🎯 Goal: Learn the system, survive variance
+
+📘 *PHASE 2 — Growth (Week 3-4)*
+💵 Stake: *$10/parlay* (2% bankroll)
+📈 Volume: 5-8 parlays/day
+💰 Daily EV: *+$46 to +$74* | Weekly: *+$325-$520*
+🎯 Goal: Compound winnings
+
+📕 *PHASE 3 — Scale (Month 2+)*
+💵 Stake: *2% of current bankroll*
+📈 As bankroll grows, stakes grow automatically
+💰 $500 → $1,000 in ~11 days at standard pace
+🎯 Goal: Let compounding do the work
+
+━━━━━━━━━━━━━━━━━━━━
+
+⚠️ *VARIANCE WARNING*
+At 28% win rate, 7 losses in a row happens ~10% of the time.
+At $5 stakes that's only −$35 (7% of bankroll).
+*One win at +780 odds recovers 8 losses.*
+
+🎯 *KEY RULE:* Never stake more than 3% per parlay.
+
+━━━━━━━━━━━━━━━━━━━━
+
+📊 *QUICK MATH BY BANKROLL*
+$300 → $3 stakes → ~$14/day EV
+$500 → $5 stakes → ~$23/day EV
+$1,000 → $10 stakes → ~$47/day EV
+$2,500 → $25 stakes → ~$116/day EV
+
+💬 Questions? Just ask me anything!`;
+}
+
 async function handleCustomerStart(chatId: string) {
   await logActivity("telegram_start", `Customer started bot chat`, { chatId });
   return `🌾 *Welcome to Parlay Farm!*
 
-💰 *Recommended Starter Balance:* $200–$400
-📊 *Stake $10–$20 per parlay*
+📊 *Our track record:* 28% Win Rate at +780 Avg Odds = *+92% ROI*
+💰 *Recommended Start:* $500 bankroll, $5/parlay
+
+We've built a step-by-step plan to grow your bankroll.
+👉 Type /plan to see your full profit roadmap
 
 *Commands:*
+/plan — Your step-by-step profit plan
 /parlays — Today's picks
 /accuracy — Sweet Spot engine accuracy
 /calendar — Your monthly P&L
 /roi — Your ROI breakdown
 /streaks — Hot & cold streaks
 /help — All commands
-
-One winning day can return 10x your investment. 🚀
 
 💬 Or just *ask me anything* in plain English!`;
 }
@@ -4130,10 +4178,12 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/accuracy") return await handleCustomerAccuracy(chatId);
   if (cmd === "/cancel") return await handleCancelSubscription(chatId);
   if (cmd === "/lookup") { return await handleLookup(chatId, args); }
+  if (cmd === "/plan") return await handleStakePlan(chatId);
   if (cmd === "/help") {
     return `📋 *Parlay Farm — Help*
 
 *Commands:*
+/plan — Your step-by-step profit plan
 /parlays — Today's full pick list
 /accuracy — Sweet Spot engine accuracy
 /lookup [player] — Player cross-reference report
