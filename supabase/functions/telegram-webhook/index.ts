@@ -14,6 +14,28 @@ const supabase = createClient(
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+// Shared prop labels
+const PROP_LABELS: Record<string, string> = {
+  threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+  steals: 'STL', blocks: 'BLK', turnovers: 'TO', pra: 'PRA',
+  pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
+  three_pointers_made: '3PT', fantasy_score: 'FPTS',
+  goals: 'G', shots: 'SOG', saves: 'SVS', aces: 'ACES', games: 'GAMES',
+  assists_nhl: 'A', spread: 'SPR', total: 'TOT', moneyline: 'ML', h2h: 'ML',
+  player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+  player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+  player_turnovers: 'TO', player_pra: 'PRA', player_pts_rebs: 'P+R',
+  player_pts_asts: 'P+A', player_rebs_asts: 'R+A',
+  player_double_double: 'DD', player_triple_double: 'TD',
+  player_goals: 'G', player_shots_on_goal: 'SOG', player_blocked_shots: 'BLK',
+  player_power_play_points: 'PPP', player_points_nhl: 'PTS',
+  player_assists_nhl: 'A', player_saves: 'SVS',
+  pitcher_strikeouts: 'Ks', total_bases: 'TB', hits: 'H',
+  runs: 'R', rbis: 'RBI', stolen_bases: 'SB', walks: 'BB',
+  hitter_fantasy_score: 'FPTS', batter_home_runs: 'HR',
+  player_fantasy_score: 'FPTS',
+};
+
 // ==================== AUTHORIZATION HELPERS ====================
 
 async function isAuthorized(chatId: string): Promise<boolean> {
@@ -2342,11 +2364,7 @@ async function handleBroadcast(chatId: string) {
     return;
   }
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-    shots: 'SOG', saves: 'SVS', aces: 'ACES',
-  };
+  const propLabels = PROP_LABELS;
 
   const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
 
@@ -2505,11 +2523,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       return;
     }
 
-    const propLabels: Record<string, string> = {
-      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-      shots: 'SOG', saves: 'SVS', aces: 'ACES',
-    };
+    const propLabels = PROP_LABELS;
 
     const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
     let msg = `✏️ *Editing Parlay* (${(parlay.strategy_name || '').replace(/_/g, ' ')})\n\n`;
@@ -2564,11 +2578,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     // Save back
     await supabase.from('bot_daily_parlays').update({ legs, approval_status: 'edited' }).eq('id', parlayId);
 
-    const propLabels: Record<string, string> = {
-      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-      shots: 'SOG', saves: 'SVS', aces: 'ACES',
-    };
+    const propLabels = PROP_LABELS;
 
     // Re-render edit view
     let msg = `✏️ *Editing Parlay* (${(parlay.strategy_name || '').replace(/_/g, ' ')})\n\n`;
@@ -2608,11 +2618,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       await sendMessage(chatId, '✅ No pending parlays to review!');
     } else {
       await answerCallbackQuery(callbackQueryId, `Loading ${pending.length} parlays...`);
-      const propLabels: Record<string, string> = {
-        threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-        steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-        shots: 'SOG', saves: 'SVS', aces: 'ACES',
-      };
+      const propLabels = PROP_LABELS;
       for (let pi = 0; pi < pending.length; pi++) {
         const p = pending[pi];
         const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
