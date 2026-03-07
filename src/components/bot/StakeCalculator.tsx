@@ -116,6 +116,74 @@ export function StakeCalculator() {
           Half-Kelly sizing · Conservative bankroll management · Based on actual 9-day performance
         </p>
       </CardContent>
+
+      {/* Static Stake Size Reference Table */}
+      <CardHeader className="border-t border-border pt-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Target className="h-5 w-5" />
+          Customer Stake Plan — Quick Reference
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Recommended stakes by bankroll size to replicate ~59% ROI · 247W / 648L proven track record
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Strategy performance proof */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Proven Strategy Performance</p>
+          <div className="grid gap-2">
+            {STRATEGIES.map((s) => (
+              <div key={s.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/30 text-sm">
+                <div>
+                  <span className="font-medium">{s.name}</span>
+                  <span className="text-muted-foreground ml-2 text-xs">{s.volume}</span>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  <span>{(s.winRate * 100).toFixed(1)}% WR</span>
+                  <span className="text-primary font-bold">+{s.roi.toFixed(0)}% ROI</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Stake plan table */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recommended Stakes by Bankroll</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground text-xs">
+                  <th className="text-left py-2 font-medium">Bankroll</th>
+                  <th className="text-right py-2 font-medium">Execution</th>
+                  <th className="text-right py-2 font-medium">Validation</th>
+                  <th className="text-right py-2 font-medium">Exploration</th>
+                  <th className="text-right py-2 font-medium">Lottery</th>
+                  <th className="text-right py-2 font-medium">Daily EV</th>
+                  <th className="text-right py-2 font-medium">Monthly</th>
+                </tr>
+              </thead>
+              <tbody>
+                {BANKROLL_PLANS.map((plan) => (
+                  <tr key={plan.bankroll} className="border-b border-border/50 hover:bg-muted/20">
+                    <td className="py-2 font-semibold">${plan.bankroll.toLocaleString()}</td>
+                    <td className="text-right py-2">${plan.execution}</td>
+                    <td className="text-right py-2">${plan.validation}</td>
+                    <td className="text-right py-2">${plan.exploration}</td>
+                    <td className="text-right py-2">${plan.lottery}</td>
+                    <td className="text-right py-2 text-primary font-medium">+${plan.dailyEV.toLocaleString()}</td>
+                    <td className="text-right py-2 text-primary font-bold">+${plan.monthlyEV.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <p className="text-xs text-center text-muted-foreground">
+          Stakes = 2% execution / 1% validation / 0.4% exploration / 0.2% lottery · Half-Kelly sizing · Projections based on live 9-day P&L
+        </p>
+      </CardContent>
     </Card>
   );
 }
