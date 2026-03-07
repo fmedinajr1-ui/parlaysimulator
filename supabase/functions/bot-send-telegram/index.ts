@@ -245,12 +245,7 @@ function formatExtraPlaysReport(data: Record<string, any>, dateStr: string): str
   const sweetSpots = data.sweetSpots || [];
   const totalExtras = data.totalExtras || 0;
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', player_points: 'PTS',
-    player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
-    player_blocks: 'BLK', player_steals: 'STL',
-  };
+  const propLabels = PROP_LABELS;
 
   let msg = `🎯 *EXTRA PLAYS — ${dateStr}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -315,11 +310,7 @@ function formatEngineAccuracyReport(data: Record<string, any>, dateStr: string):
 function formatParlayApprovalRequest(data: Record<string, any>, dateStr: string): { text: string; reply_markup?: object } | string {
   const parlays = data.parlays || [];
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-    shots: 'SOG', saves: 'SVS', aces: 'ACES',
-  };
+  const propLabels = PROP_LABELS;
 
   if (parlays.length === 0) {
     return `🔍 *REVIEW PARLAYS — ${dateStr}*\n\nNo execution parlays to review.`;
@@ -472,11 +463,7 @@ function formatHitRateEvaluation(data: Record<string, any>, dateStr: string): st
 function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): string {
   const { activeParlays, totalStake } = data;
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-    shots: 'SOG', saves: 'SVS', aces: 'ACES',
-  };
+  const propLabels = PROP_LABELS;
 
   const active = activeParlays || [];
   const riskDisplay = totalStake ? `$${totalStake}` : 'N/A';
@@ -510,10 +497,7 @@ function formatLongshotAnnouncement(data: Record<string, any>, dateStr: string):
   const stakeAmount = data.stake || 20;
   const payout = Math.round((expectedOdds / 100) * stakeAmount + stakeAmount);
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA',
-  };
+  const propLabels = PROP_LABELS;
 
   let msg = `🚀 *LONGSHOT PARLAY — ${dateStr}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -649,11 +633,7 @@ async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: 
   if (topPicks && Array.isArray(topPicks) && topPicks.length > 0) {
     msg += `🔥 *Top Picks Preview:*\n`;
     for (const pick of topPicks.slice(0, 5)) {
-      const propLabels: Record<string, string> = {
-        threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-        steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-        shots: 'SOG', saves: 'SVS', aces: 'ACES',
-      };
+      const propLabels = PROP_LABELS;
       const oddsStr = pick.american_odds ? (pick.american_odds > 0 ? `(+${pick.american_odds})` : `(${pick.american_odds})`) : '';
       
       // Detect team-based legs: explicit type OR player_name contains " @ "
@@ -756,12 +736,7 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
   if (parlayDetails && Array.isArray(parlayDetails) && parlayDetails.length > 0) {
     msg += `\n--- LEG BREAKDOWN ---\n`;
     
-    const propLabels: Record<string, string> = {
-      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
-      shots: 'SOG', saves: 'SVS', aces: 'ACES', spread: 'SPR',
-      total: 'TOT', moneyline: 'ML', h2h: 'ML',
-    };
+    const propLabels = PROP_LABELS;
     
     for (let i = 0; i < parlayDetails.length; i++) {
       const p = parlayDetails[i];
@@ -1386,11 +1361,7 @@ function formatLegSettledAlert(data: Record<string, any>, dateStr: string): stri
   const legs = data.legs || [];
   if (legs.length === 0) return '';
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', player_points: 'PTS',
-    player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
-  };
+  const propLabels = PROP_LABELS;
 
   let msg = `📊 *LEG UPDATES — ${dateStr}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -1421,11 +1392,7 @@ function formatLegSettledAlert(data: Record<string, any>, dateStr: string): stri
 function formatParlaySettledAlert(data: Record<string, any>, dateStr: string): string {
   const { outcome, strategy, odds, legs, stake, profitLoss, dailyWon, dailyLost, dailyPnl } = data;
 
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', pra: 'PRA', player_points: 'PTS',
-    player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
-  };
+  const propLabels = PROP_LABELS;
 
   const won = outcome === 'won';
   const icon = won ? '🟢' : '🔴';
