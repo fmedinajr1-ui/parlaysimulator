@@ -470,7 +470,7 @@ Deno.serve(async (req) => {
       const propLabel = PROP_LABELS[v.prop_market] || v.sweet_spot.prop_type || v.prop_market;
 
       candidates.push({
-        player_name: liveLine?.player_name || v.sweet_spot.player_name,
+        player_name: bestLiveLine?.player_name || v.sweet_spot.player_name,
         prop_type: v.prop_market,
         prop_label: propLabel,
         line,
