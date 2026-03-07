@@ -1477,13 +1477,14 @@ function formatNewStrategiesBroadcast(data: Record<string, any>, dateStr: string
       msg += `#${parlayNum} · ${legs.length}L · ${oddsStr} · $${stake}→$${payout}\n`;
 
       for (const leg of legs) {
-        const player = leg.player_name || 'Unknown';
-        const prop = (leg.prop_type || 'prop').toUpperCase();
+        const player = leg.player_name || leg.player || 'Unknown';
+        const prop = PROP_LABELS[leg.prop_type] || (leg.prop_type || 'prop').toUpperCase();
         const side = (leg.side || 'over').toUpperCase();
         const line = leg.line ?? leg.selected_line ?? '?';
         const hr = leg.l10_hit_rate ? `${Math.round(leg.l10_hit_rate <= 1 ? leg.l10_hit_rate * 100 : leg.l10_hit_rate)}%` : '';
         const legOdds = leg.american_odds ? (leg.american_odds > 0 ? `+${leg.american_odds}` : `${leg.american_odds}`) : '';
-        msg += `  • ${player} ${prop} ${side} ${line}`;
+        const emoji = getSportEmoji(leg);
+        msg += `  ${emoji} ${player} ${prop} ${side} ${line}`;
         if (legOdds) msg += ` (${legOdds})`;
         if (hr) msg += ` · L10: ${hr}`;
         msg += `\n`;
