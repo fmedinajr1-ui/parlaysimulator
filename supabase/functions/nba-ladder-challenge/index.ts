@@ -366,14 +366,12 @@ Deno.serve(async (req) => {
 
     console.log(`[LadderLock] Fetched ${allLines.length} live lines`);
 
-    // Build line lookup: normalizedName|market -> best line
-    const lineLookup = new Map<string, PlayerLine>();
+    // Build line lookup: normalizedName|market -> ALL lines (to find best match for sweet spot line)
+    const linesByPlayer = new Map<string, PlayerLine[]>();
     for (const line of allLines) {
       const key = `${normalizeName(line.player_name)}|${line.prop_type}`;
-      const existing = lineLookup.get(key);
-      if (!existing || line.over_odds > existing.over_odds) {
-        lineLookup.set(key, line);
-      }
+      if (!linesByPlayer.has(key)) linesByPlayer.set(key, []);
+      linesByPlayer.get(key)!.push(line);
     }
 
     // Player team lookup
@@ -393,23 +391,49 @@ Deno.serve(async (req) => {
     for (const v of verified) {
       const nName = normalizeName(v.sweet_spot.player_name);
       const lineKey = `${nName}|${v.prop_market}`;
-      const liveLine = lineLookup.get(lineKey);
+      const playerLines = linesByPlayer.get(lineKey) || [];
+      const ssLine = v.sweet_spot.recommended_line ?? v.sweet_spot.actual_line;
 
-      // Use live line if available, otherwise use sweet spot line
-      const line = liveLine?.line ?? v.sweet_spot.recommended_line ?? v.sweet_spot.actual_line;
-      const overOdds = liveLine?.over_odds ?? -110;
-      const bookmaker = liveLine?.bookmaker ?? 'sweet_spot';
-      const game = liveLine?.game ?? '';
-      const homeTeam = liveLine?.home_team ?? '';
-      const awayTeam = liveLine?.away_team ?? '';
+      // Find the live line closest to sweet spot line (prefer exact match or lower)
+      let bestLiveLine: PlayerLine | null = null;
+      if (playerLines.length > 0) {
+        // Sort by distance to sweet spot line, prefer lines <= ssLine
+        const sorted = [...playerLines].sort((a, b) => {
+          const distA = Math.abs(a.line - ssLine);
+          const distB = Math.abs(b.line - ssLine);
+          // Prefer lines at or below ssLine
+          if (a.line <= ssLine && b.line > ssLine) return -1;
+          if (b.line <= ssLine && a.line > ssLine) return 1;
+          return distA - distB;
+        });
+        bestLiveLine = sorted[0];
+        console.log(`[LadderLock] ${v.sweet_spot.player_name} ${v.prop_market}: SS line=${ssLine}, live line=${bestLiveLine.line}, odds=${bestLiveLine.over_odds}`);
+      } else {
+        console.log(`[LadderLock] ${v.sweet_spot.player_name} ${v.prop_market}: No live line found, using SS line=${ssLine}`);
+      }
 
-      // Re-verify safety gates against live line (it may differ from sweet spot line)
-      if (liveLine && liveLine.line !== (v.sweet_spot.recommended_line ?? v.sweet_spot.actual_line)) {
-        const liveHitCount = v.l10_values.filter((val: number) => val > liveLine.line).length;
-        const liveHitRate = liveHitCount / v.l10_values.length;
-        if (liveHitRate < 0.9) continue;
-        if (v.l10_min <= liveLine.line) continue;
-        if (v.l10_median < liveLine.line + 1) continue;
+      // Use best matching live line, fall back to sweet spot line
+      const line = bestLiveLine?.line ?? ssLine;
+      const overOdds = bestLiveLine?.over_odds ?? -110;
+      const bookmaker = bestLiveLine?.bookmaker ?? 'sweet_spot';
+      const game = bestLiveLine?.game ?? '';
+      const homeTeam = bestLiveLine?.home_team ?? '';
+      const awayTeam = bestLiveLine?.away_team ?? '';
+
+      // Re-verify safety gates against the actual line we'll use
+      const actualHitCount = v.l10_values.filter((val: number) => val > line).length;
+      const actualHitRate = actualHitCount / v.l10_values.length;
+      if (actualHitRate < 0.9) {
+        console.log(`[LadderLock] ${v.sweet_spot.player_name} failed hit rate gate at line ${line}: ${(actualHitRate*100).toFixed(0)}%`);
+        continue;
+      }
+      if (v.l10_min <= line) {
+        console.log(`[LadderLock] ${v.sweet_spot.player_name} failed floor gate: min ${v.l10_min} <= line ${line}`);
+        continue;
+      }
+      if (v.l10_median < line + 1) {
+        console.log(`[LadderLock] ${v.sweet_spot.player_name} failed median gate: median ${v.l10_median} < line+1 ${line+1}`);
+        continue;
       }
 
       // Resolve opponent
