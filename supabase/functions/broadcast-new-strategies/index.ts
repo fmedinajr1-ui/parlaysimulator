@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
         'optimal_combo_nba_3l', 'optimal_combo_nba_4l', 'optimal_combo_all_3l',
         'ceiling_shot_nba_3l', 'ceiling_shot_nba_4l', 'ceiling_shot_all_3l', 'ceiling_shot_all_4l',
         'nhl_floor_lock', 'nhl_optimal_combo', 'nhl_ceiling_shot',
-        'cross_sport_optimal',
+        'cross_sport_optimal', 'elite_cross_sport_6leg',
       ])
       .not('outcome', 'eq', 'voided');
 
