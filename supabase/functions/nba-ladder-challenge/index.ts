@@ -155,37 +155,36 @@ Deno.serve(async (req) => {
       console.warn(`[LadderLock] Game log refresh failed (continuing with existing data):`, refreshErr.message);
     }
 
-    // === STEP 1: Query sweet spots — the accuracy engine IS our source of truth ===
-    console.log(`[LadderLock] Querying sweet spots for today's most accurate picks...`);
+    // === STEP 1: Query sweet spots — wide net (70%+), game log verification at live lines will enforce 90% ===
+    console.log(`[LadderLock] Querying sweet spots for today's high-accuracy players...`);
     const { data: sweetSpots, error: ssError } = await supabase
       .from('category_sweet_spots')
       .select('*')
       .eq('analysis_date', today)
       .eq('is_active', true)
-      .gte('l10_hit_rate', 0.9) // 90%+ hit rate gate
-      .not('l10_min', 'is', null)
+      .gte('l10_hit_rate', 0.7) // Wide net — real gate is 90% at live line verified by game logs
       .not('l10_avg', 'is', null)
-      .order('l10_hit_rate', { ascending: false });
+      .order('l10_hit_rate', { ascending: false })
+      .limit(100);
 
     if (ssError) console.warn(`[LadderLock] Sweet spot query error:`, ssError.message);
 
-    // Also fetch all-time active sweet spots as fallback (in case today's scan hasn't run yet)
+    // Fallback to all-time active sweet spots if today's scan hasn't run
     const { data: fallbackSpots } = await supabase
       .from('category_sweet_spots')
       .select('*')
       .eq('is_active', true)
-      .gte('l10_hit_rate', 0.9)
-      .not('l10_min', 'is', null)
+      .gte('l10_hit_rate', 0.7)
       .not('l10_avg', 'is', null)
       .order('l10_hit_rate', { ascending: false })
-      .limit(50);
+      .limit(100);
 
     const allSpots = (sweetSpots && sweetSpots.length > 0) ? sweetSpots : (fallbackSpots || []);
-    console.log(`[LadderLock] Found ${allSpots.length} sweet spots with 90%+ L10 hit rate`);
+    console.log(`[LadderLock] Found ${allSpots.length} sweet spots with 70%+ L10 hit rate (will verify at live lines)`);
 
     if (allSpots.length === 0) {
-      console.log(`[LadderLock] No 90%+ sweet spots found — skipping today`);
-      return new Response(JSON.stringify({ success: false, error: 'No sweet spots with 90%+ hit rate available' }), {
+      console.log(`[LadderLock] No qualified sweet spots found — skipping today`);
+      return new Response(JSON.stringify({ success: false, error: 'No sweet spots with 70%+ hit rate available' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
