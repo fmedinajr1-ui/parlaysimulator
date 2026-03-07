@@ -17,6 +17,36 @@ const corsHeaders = {
 
 const TELEGRAM_API = 'https://api.telegram.org/bot';
 
+// Shared prop labels for all formatters
+const PROP_LABELS: Record<string, string> = {
+  threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+  steals: 'STL', blocks: 'BLK', turnovers: 'TO', pra: 'PRA',
+  pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
+  three_pointers_made: '3PT', fantasy_score: 'FPTS',
+  goals: 'G', shots: 'SOG', saves: 'SVS', aces: 'ACES',
+  spread: 'SPR', total: 'TOT', moneyline: 'ML', h2h: 'ML',
+  player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+  player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+  player_turnovers: 'TO', player_pra: 'PRA', player_pts_rebs: 'P+R',
+  player_pts_asts: 'P+A', player_rebs_asts: 'R+A',
+  player_double_double: 'DD', player_triple_double: 'TD',
+  player_goals: 'G', player_shots_on_goal: 'SOG', player_blocked_shots: 'BLK',
+  player_power_play_points: 'PPP', player_points_nhl: 'PTS',
+  player_assists_nhl: 'A', player_saves: 'SVS', assists_nhl: 'A',
+  pitcher_strikeouts: 'Ks', total_bases: 'TB', hits: 'H',
+  runs: 'R', rbis: 'RBI', stolen_bases: 'SB', walks: 'BB',
+  hitter_fantasy_score: 'FPTS', batter_home_runs: 'HR',
+  player_fantasy_score: 'FPTS',
+};
+
+function getSportEmoji(leg: any): string {
+  const sportKey = (leg.sport || leg.category || '').toLowerCase();
+  if (sportKey.includes('nhl') || sportKey.includes('hockey')) return '🏒';
+  if (sportKey.includes('mlb') || sportKey.includes('baseball') || sportKey.includes('pitcher') || sportKey.includes('hitter') || sportKey.includes('batter')) return '⚾';
+  if (sportKey.includes('nfl') || sportKey.includes('ncaaf') || sportKey.includes('football')) return '🏈';
+  return '🏀';
+}
+
 type NotificationType = 
   | 'parlays_generated'
   | 'tiered_parlays_generated'
@@ -652,7 +682,8 @@ async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: 
       } else {
         const side = (pick.side || 'over').toUpperCase();
         const prop = propLabels[pick.prop_type] || (pick.prop_type || '').toUpperCase();
-        msg += `🏀 Take ${pick.player_name || 'Player'} ${side} ${pick.line} ${prop} ${oddsStr}\n`;
+        const emoji = getSportEmoji(pick);
+        msg += `${emoji} Take ${pick.player_name || 'Player'} ${side} ${pick.line} ${prop} ${oddsStr}\n`;
       }
       if (pick.composite_score || pick.hit_rate) {
         msg += `  🎯${Math.round(pick.composite_score || 0)} | 💎${Math.round(pick.hit_rate || 0)}%\n`;
