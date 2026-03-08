@@ -163,6 +163,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatDDTDCandidates(data, dateStr);
     case 'new_strategies_broadcast':
       return formatNewStrategiesBroadcast(data, dateStr);
+    case 'leg_swap_report':
+      return formatLegSwapReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -190,6 +192,46 @@ function formatLadderChallengeResult(data: Record<string, any>): string {
   msg += `💵 Running P&L: ${runningPnlSign}$${Math.abs(runningPnl).toFixed(0)}\n`;
   msg += `🎯 Win Rate: ${winRate}%\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━`;
+
+  return msg;
+}
+
+function formatLegSwapReport(data: Record<string, any>, dateStr: string): string {
+  const swaps = data.swaps || [];
+  const voids = data.voids || [];
+  const totalChecked = data.totalParlaysChecked || 0;
+
+  let msg = `🔄 *PRE-GAME LEG VERIFICATION — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Checked ${totalChecked} parlays\n\n`;
+
+  if (swaps.length > 0) {
+    msg += `✅ *SWAPS MADE (${swaps.length}):*\n`;
+    for (const s of swaps) {
+      const origProp = PROP_LABELS[(s.originalLeg?.prop || '').toLowerCase()] || (s.originalLeg?.prop || '').toUpperCase();
+      const newProp = PROP_LABELS[(s.newLeg?.prop || '').toLowerCase()] || (s.newLeg?.prop || '').toUpperCase();
+      const origSide = (s.originalLeg?.side || 'over').toUpperCase().charAt(0);
+      const newSide = (s.newLeg?.side || 'over').toUpperCase().charAt(0);
+      msg += `\n🔁 *${s.originalLeg?.player}* → *${s.newLeg?.player}*\n`;
+      msg += `   ${origProp} ${origSide}${s.originalLeg?.line} → ${newProp} ${newSide}${s.newLeg?.line}\n`;
+      msg += `   Reason: ${s.reason}\n`;
+      if (s.newLeg?.confidence) msg += `   New confidence: ${Math.round(s.newLeg.confidence)}%\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (voids.length > 0) {
+    msg += `🚫 *PARLAYS VOIDED (${voids.length}):*\n`;
+    for (const v of voids) {
+      const strategy = (v.parlayStrategy || 'unknown').replace(/_/g, ' ');
+      msg += `• ${strategy} — ${v.reason}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (swaps.length === 0 && voids.length === 0) {
+    msg += `✅ All legs clear — no swaps needed`;
+  }
 
   return msg;
 }
