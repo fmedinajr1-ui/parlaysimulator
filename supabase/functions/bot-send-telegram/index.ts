@@ -1881,10 +1881,18 @@ Deno.serve(async (req) => {
             if (customer.chat_id === chatId) continue; // skip admin, already sent
 
             // Build personalized message with stake recommendation
-            let customerMessage = message;
-            if (stakePercent > 0 && customer.bankroll && customer.bankroll > 0) {
+            let customerMessage: string;
+            if (type === 'new_strategies_broadcast' && customer.bankroll && customer.bankroll > 0) {
+              // Regenerate the full message with personalized stakes per parlay
+              const etNow = new Date();
+              const custDateStr = etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
+              customerMessage = formatNewStrategiesBroadcast(reqBody.data || {}, custDateStr, customer.bankroll);
+            } else if (stakePercent > 0 && customer.bankroll && customer.bankroll > 0) {
+              customerMessage = message;
               const personalStake = Math.round(customer.bankroll * stakePercent);
               customerMessage += `\n\n💰 *Your stake:* $${personalStake} (based on $${customer.bankroll.toLocaleString()} bankroll)`;
+            } else {
+              customerMessage = message;
             }
 
             try {
