@@ -153,6 +153,27 @@ export function useBankroll() {
 
       if (error) throw error;
 
+      // Sync bankroll to bot_activation_status so the bot uses the updated floor
+      if (updates.bankrollAmount !== undefined) {
+        try {
+          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+          const { data: existing } = await supabase
+            .from('bot_activation_status')
+            .select('id, is_real_mode_ready')
+            .eq('check_date', today)
+            .maybeSingle();
+          
+          const bankrollField = existing?.is_real_mode_ready ? 'real_bankroll' : 'simulated_bankroll';
+          if (existing) {
+            await supabase.from('bot_activation_status').update({ [bankrollField]: updates.bankrollAmount }).eq('id', existing.id);
+          } else {
+            await supabase.from('bot_activation_status').insert({ check_date: today, [bankrollField]: updates.bankrollAmount });
+          }
+        } catch (syncError) {
+          console.warn('Failed to sync bankroll to bot status:', syncError);
+        }
+      }
+
       // Refresh settings
       await fetchBankroll();
       

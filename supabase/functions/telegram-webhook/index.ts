@@ -1111,9 +1111,11 @@ async function handleCustomerCalendar(chatId: string) {
 
   const { data: authUser } = await supabase
     .from("bot_authorized_users")
-    .select("authorized_at")
+    .select("authorized_at, bankroll")
     .eq("chat_id", chatId)
     .maybeSingle();
+
+  const currentBankroll = authUser?.bankroll || 500;
 
   const now = new Date();
   const year = now.getFullYear();
@@ -1124,7 +1126,7 @@ async function handleCustomerCalendar(chatId: string) {
 
   const { data: days } = await supabase
     .from('customer_daily_pnl')
-    .select('pnl_date, daily_profit_loss, parlays_won, parlays_lost, parlays_total')
+    .select('pnl_date, daily_profit_loss, parlays_won, parlays_lost, parlays_total, bankroll')
     .eq('chat_id', chatId)
     .gte('pnl_date', monthStart)
     .lte('pnl_date', monthEnd)
@@ -1160,7 +1162,10 @@ async function handleCustomerCalendar(chatId: string) {
   const totalWon = days.reduce((s, d) => s + (d.parlays_won || 0), 0);
   const totalLost = days.reduce((s, d) => s + (d.parlays_lost || 0), 0);
 
-  return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n\n*Record:* ${winDays}W - ${lossDays}L (${winPct}%)\n*Total P&L:* ${fmtPnL(totalPnL)}\n*Parlays:* ${totalWon}W - ${totalLost}L\n*Best Day:* ${fmtDate(bestDay.pnl_date)} (${fmtPnL(bestDay.daily_profit_loss || 0)})\n*Worst Day:* ${fmtDate(worstDay.pnl_date)} (${fmtPnL(worstDay.daily_profit_loss || 0)})`;
+  // Get latest bankroll from customer_daily_pnl or bot_authorized_users
+  const latestBankroll = days[days.length - 1]?.bankroll || currentBankroll || 0;
+
+  return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n💰 Bankroll: $${latestBankroll.toLocaleString()}\n\n*Record:* ${winDays}W - ${lossDays}L (${winPct}%)\n*Total P&L:* ${fmtPnL(totalPnL)}\n*Parlays:* ${totalWon}W - ${totalLost}L\n*Best Day:* ${fmtDate(bestDay.pnl_date)} (${fmtPnL(bestDay.daily_profit_loss || 0)})\n*Worst Day:* ${fmtDate(worstDay.pnl_date)} (${fmtPnL(worstDay.daily_profit_loss || 0)})`;
 }
 
 // ==================== CUSTOMER ACCURACY COMMAND ====================
@@ -1246,11 +1251,21 @@ async function handleCustomerRoi(chatId: string) {
     return `📊 *Your ROI*\n\nNo results recorded yet. Your personal stats will appear here as parlays settle!`;
   }
 
+  // Get current bankroll
+  const { data: userBankroll } = await supabase
+    .from("bot_authorized_users")
+    .select("bankroll")
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  const currentBankroll = userBankroll?.bankroll || 500;
+
   let msg = `📊 *Your ROI*\n\n`;
+  msg += `💰 *Bankroll:* $${currentBankroll.toLocaleString()}\n\n`;
   msg += `*7 Day:* ${fmtPnL(s7.pnl)} | ${winRate(s7.won, s7.won + s7.lost)}% WR (${s7.won}W-${s7.lost}L)\n`;
   msg += `*30 Day:* ${fmtPnL(s30.pnl)} | ${winRate(s30.won, s30.won + s30.lost)}% WR (${s30.won}W-${s30.lost}L)\n`;
   msg += `*All-Time:* ${fmtPnL(sAll.pnl)} | ${winRate(sAll.won, sAll.won + sAll.lost)}% WR (${sAll.won}W-${sAll.lost}L)\n`;
   msg += `\n📅 Tracked over ${sAll.days} day(s)`;
+  msg += `\n\n💡 Use /bankroll [amount] to update your bankroll`;
 
   return msg;
 }
@@ -1578,7 +1593,15 @@ async function handleBankroll(chatId: string, amountStr: string) {
   await logActivity("telegram_bankroll", "User updating bankroll", { chatId, amount: amountStr });
 
   if (!amountStr) {
-    return "Usage: /bankroll [amount]\n\nExample: /bankroll 1500";
+    // Show current bankroll
+    const today = getEasternDate();
+    const { data: existing } = await supabase
+      .from("bot_activation_status")
+      .select("simulated_bankroll, real_bankroll, is_real_mode_ready")
+      .eq("check_date", today)
+      .maybeSingle();
+    const bankroll = existing?.is_real_mode_ready ? existing?.real_bankroll : existing?.simulated_bankroll;
+    return `💰 *Current Bankroll:* $${(bankroll || 1000).toLocaleString()}\n\nUsage: /bankroll [amount]\nExample: /bankroll 1500`;
   }
 
   const amount = parseFloat(amountStr);
@@ -1601,7 +1624,43 @@ async function handleBankroll(chatId: string, amountStr: string) {
     await supabase.from("bot_activation_status").insert({ check_date: today, [bankrollField]: amount });
   }
 
+  // Also sync admin's personal bankroll in bot_authorized_users
+  await supabase
+    .from("bot_authorized_users")
+    .update({ bankroll: amount })
+    .eq("chat_id", chatId);
+
   return `✅ Bankroll updated to *$${amount.toLocaleString()}* (${existing?.is_real_mode_ready ? 'real' : 'simulated'} mode)`;
+}
+
+// Customer /bankroll command
+async function handleCustomerBankroll(chatId: string, amountStr: string) {
+  await logActivity("telegram_customer_bankroll", "Customer updating bankroll", { chatId, amount: amountStr });
+
+  // Get current bankroll
+  const { data: user } = await supabase
+    .from("bot_authorized_users")
+    .select("bankroll")
+    .eq("chat_id", chatId)
+    .maybeSingle();
+
+  const currentBankroll = user?.bankroll || 500;
+
+  if (!amountStr) {
+    return `💰 *Your Bankroll:* $${currentBankroll.toLocaleString()}\n\nYour stakes are calculated based on this amount:\n• Execution: ${(currentBankroll * 0.05).toFixed(0)} (5%)\n• Validation: ${(currentBankroll * 0.025).toFixed(0)} (2.5%)\n• Exploration: ${(currentBankroll * 0.01).toFixed(0)} (1%)\n\nTo update: /bankroll [amount]\nExample: /bankroll 1000`;
+  }
+
+  const amount = parseFloat(amountStr);
+  if (isNaN(amount) || amount <= 0 || amount > 1000000) {
+    return "❌ Invalid amount. Must be a positive number under $1,000,000.";
+  }
+
+  await supabase
+    .from("bot_authorized_users")
+    .update({ bankroll: amount })
+    .eq("chat_id", chatId);
+
+  return `✅ Bankroll set to *$${amount.toLocaleString()}*\n\n📊 *Your new stakes:*\n• Execution: $${(amount * 0.05).toFixed(0)} (5%)\n• Validation: $${(amount * 0.025).toFixed(0)} (2.5%)\n• Exploration: $${(amount * 0.01).toFixed(0)} (1%)`;
 }
 
 async function handleForceSettle(chatId: string, dateStr: string) {
@@ -3492,11 +3551,13 @@ async function handleCustomerStart(chatId: string) {
 
 We've built a step-by-step plan to grow your bankroll.
 👉 Type /plan to see your full profit roadmap
+👉 Type /bankroll [amount] to set your bankroll
 
 *Commands:*
 /plan — Your step-by-step profit plan
 /parlays — Today's picks
 /accuracy — Sweet Spot engine accuracy
+/bankroll — Set/view your bankroll & stakes
 /calendar — Your monthly P&L
 /roi — Your ROI breakdown
 /streaks — Hot & cold streaks
@@ -4233,6 +4294,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/roi") return await handleCustomerRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
   if (cmd === "/accuracy") return await handleCustomerAccuracy(chatId);
+  if (cmd === "/bankroll") return await handleCustomerBankroll(chatId, args);
   if (cmd === "/cancel") return await handleCancelSubscription(chatId);
   if (cmd === "/lookup") { return await handleLookup(chatId, args); }
   if (cmd === "/plan") return await handleStakePlan(chatId);
@@ -4243,6 +4305,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /plan — Your step-by-step profit plan
 /parlays — Today's full pick list
 /accuracy — Sweet Spot engine accuracy
+/bankroll — Set/view your bankroll
 /lookup [player] — Player cross-reference report
 /calendar — Your monthly P&L
 /roi — Your personal ROI

@@ -1348,7 +1348,35 @@ Deno.serve(async (req) => {
         .eq('check_date', dateKey)
         .maybeSingle();
 
-      const BANKROLL_FLOOR = 2000;
+      // Dynamic bankroll floor: look up admin's user_bankroll setting
+      let BANKROLL_FLOOR = 2000;
+      try {
+        const ADMIN_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID');
+        if (ADMIN_CHAT_ID) {
+          const { data: adminUser } = await supabase
+            .from('bot_authorized_users')
+            .select('bankroll')
+            .eq('chat_id', ADMIN_CHAT_ID)
+            .maybeSingle();
+          if (adminUser?.bankroll && adminUser.bankroll > 0) {
+            BANKROLL_FLOOR = adminUser.bankroll;
+            console.log(`[Bot Settle] Dynamic bankroll floor from admin: $${BANKROLL_FLOOR}`);
+          }
+        }
+        // Also check user_bankroll table (UI setting)
+        const { data: uiBankroll } = await supabase
+          .from('user_bankroll')
+          .select('bankroll_amount')
+          .limit(1)
+          .maybeSingle();
+        if (uiBankroll?.bankroll_amount && uiBankroll.bankroll_amount > BANKROLL_FLOOR) {
+          BANKROLL_FLOOR = uiBankroll.bankroll_amount;
+          console.log(`[Bot Settle] Dynamic bankroll floor from UI: $${BANKROLL_FLOOR}`);
+        }
+      } catch (floorErr) {
+        console.warn('[Bot Settle] Failed to get dynamic bankroll floor, using default $2000:', floorErr);
+      }
+
       const finalBankroll = Math.max(BANKROLL_FLOOR, prevBankroll + authPL);
       const dateIsProfitable = authPL > 0;
       const dateConsecutive = dateIsProfitable ? prevConsecutive + 1 : 0;
@@ -1387,6 +1415,58 @@ Deno.serve(async (req) => {
             simulated_bankroll: finalBankroll,
             activated_at: dateIsRealModeReady ? new Date().toISOString() : null,
           });
+      }
+
+      // === PER-CUSTOMER P&L SCALING & BANKROLL ROLLOVER ===
+      try {
+        const { data: activeCustomers } = await supabase
+          .from('bot_authorized_users')
+          .select('chat_id, bankroll')
+          .eq('is_active', true);
+
+        if (activeCustomers && activeCustomers.length > 0) {
+          // Get bot's base stake from bot_stake_config for ratio calculation
+          const { data: stakeConfig } = await supabase
+            .from('bot_stake_config')
+            .select('execution_stake, validation_stake, exploration_stake, bankroll_doubler_stake')
+            .limit(1)
+            .maybeSingle();
+
+          const botBaseStake = stakeConfig?.execution_stake || 250;
+
+          for (const customer of activeCustomers) {
+            const customerBankroll = customer.bankroll || 500;
+            // Customer's execution stake is 5% of their bankroll
+            const customerStake = customerBankroll * 0.05;
+            // Scale P&L proportionally: customer_stake / bot_base_stake
+            const scaleFactor = botBaseStake > 0 ? customerStake / botBaseStake : 1;
+            const customerPnl = authPL * scaleFactor;
+            const newCustomerBankroll = customerBankroll + customerPnl;
+
+            // Upsert into customer_daily_pnl
+            await supabase
+              .from('customer_daily_pnl')
+              .upsert({
+                chat_id: customer.chat_id,
+                pnl_date: dateKey,
+                daily_profit_loss: customerPnl,
+                parlays_won: authWon,
+                parlays_lost: authLost,
+                parlays_total: authWon + authLost,
+                bankroll: newCustomerBankroll,
+              }, { onConflict: 'chat_id,pnl_date' });
+
+            // Update running bankroll in bot_authorized_users
+            await supabase
+              .from('bot_authorized_users')
+              .update({ bankroll: Math.max(0, newCustomerBankroll) })
+              .eq('chat_id', customer.chat_id);
+          }
+
+          console.log(`[Bot Settle] Updated P&L for ${activeCustomers.length} customers on ${dateKey} (scale base: $${botBaseStake})`);
+        }
+      } catch (custErr) {
+        console.error('[Bot Settle] Customer P&L rollover error:', custErr);
       }
 
       // Track latest values for Telegram notification

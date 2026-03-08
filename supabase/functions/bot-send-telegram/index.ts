@@ -1634,12 +1634,32 @@ Deno.serve(async (req) => {
           const sb = createClient(supabaseUrl, supabaseKey);
           const { data: customers } = await sb
             .from('bot_authorized_users')
-            .select('chat_id, username')
+            .select('chat_id, username, bankroll')
             .eq('is_active', true);
           if (customers && customers.length > 0) {
+            // Determine tier stake percent from message content
+            let stakePercent = 0;
+            const msgLower = rawMessage.toLowerCase();
+            if (msgLower.includes('execution') || msgLower.includes('cash lock') || msgLower.includes('elite')) {
+              stakePercent = 0.05;
+            } else if (msgLower.includes('validation') || msgLower.includes('proving')) {
+              stakePercent = 0.025;
+            } else if (msgLower.includes('exploration') || msgLower.includes('explorer')) {
+              stakePercent = 0.01;
+            } else if (msgLower.includes('lottery') || msgLower.includes('longshot')) {
+              stakePercent = 0.005;
+            }
+
             for (const customer of customers) {
               if (customer.chat_id === chatId) continue;
-              try { await sendRaw(rawMessage, customer.chat_id); } catch (e) {
+              try {
+                let customerMsg = rawMessage;
+                if (stakePercent > 0 && customer.bankroll && customer.bankroll > 0) {
+                  const personalStake = Math.round(customer.bankroll * stakePercent);
+                  customerMsg += `\n\n💰 Your stake: $${personalStake} (based on $${customer.bankroll.toLocaleString()} bankroll)`;
+                }
+                await sendRaw(customerMsg, customer.chat_id);
+              } catch (e) {
                 console.error(`[Telegram] Failed to send raw to ${customer.chat_id}:`, e);
               }
             }
@@ -1814,7 +1834,7 @@ Deno.serve(async (req) => {
 
     console.log(`[Telegram] Message sent successfully to admin`);
 
-    // Broadcast to all authorized customers for mega_parlay_scanner
+    // Broadcast to all authorized customers for certain notification types
     // Skip customer broadcast when admin_only mode is active
     if (!adminOnly && (type === 'mega_parlay_scanner' || type === 'mega_lottery_v2' || type === 'daily_winners_recap' || type === 'slate_rebuild_alert' || type === 'slate_status_update' || type === 'longshot_announcement' || type === 'dd_td_candidates' || type === 'double_confirmed_report' || type === 'new_strategies_broadcast')) {
       try {
@@ -1824,17 +1844,35 @@ Deno.serve(async (req) => {
 
         const { data: customers } = await sb
           .from('bot_authorized_users')
-          .select('chat_id, username')
+          .select('chat_id, username, bankroll')
           .eq('is_active', true);
 
         if (customers && customers.length > 0) {
-          console.log(`[Telegram] Broadcasting mega scanner to ${customers.length} customers`);
+          console.log(`[Telegram] Broadcasting ${type} to ${customers.length} customers`);
+
+          // Determine tier from notification type for stake calculation
+          const tierStakePercent: Record<string, number> = {
+            'mega_parlay_scanner': 0.05,     // Execution: 5%
+            'double_confirmed_report': 0.05,  // Execution: 5%
+            'mega_lottery_v2': 0.005,         // Lottery: 0.5%
+            'longshot_announcement': 0.005,    // Lottery: 0.5%
+          };
+          const stakePercent = tierStakePercent[type] || 0;
+
           for (const customer of customers) {
             if (customer.chat_id === chatId) continue; // skip admin, already sent
+
+            // Build personalized message with stake recommendation
+            let customerMessage = message;
+            if (stakePercent > 0 && customer.bankroll && customer.bankroll > 0) {
+              const personalStake = Math.round(customer.bankroll * stakePercent);
+              customerMessage += `\n\n💰 *Your stake:* $${personalStake} (based on $${customer.bankroll.toLocaleString()} bankroll)`;
+            }
+
             try {
               const custBody: Record<string, any> = {
                 chat_id: customer.chat_id,
-                text: message,
+                text: customerMessage,
                 disable_web_page_preview: true,
               };
               const custResp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
