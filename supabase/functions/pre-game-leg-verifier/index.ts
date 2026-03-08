@@ -55,11 +55,12 @@ Deno.serve(async (req) => {
     console.log(`[LegVerifier] Starting pre-game verification for ${today}`);
 
     // Step 1: Fetch today's pending parlays
+    // Fetch pending parlays (outcome is NULL or 'pending')
     const { data: parlays, error: parlayError } = await supabase
       .from('bot_daily_parlays')
       .select('*')
       .eq('parlay_date', today)
-      .is('outcome', null);
+      .or('outcome.is.null,outcome.eq.pending');
 
     if (parlayError) {
       throw new Error(`Failed to fetch parlays: ${parlayError.message}`);
