@@ -1634,12 +1634,32 @@ Deno.serve(async (req) => {
           const sb = createClient(supabaseUrl, supabaseKey);
           const { data: customers } = await sb
             .from('bot_authorized_users')
-            .select('chat_id, username')
+            .select('chat_id, username, bankroll')
             .eq('is_active', true);
           if (customers && customers.length > 0) {
+            // Determine tier stake percent from message content
+            let stakePercent = 0;
+            const msgLower = rawMessage.toLowerCase();
+            if (msgLower.includes('execution') || msgLower.includes('cash lock') || msgLower.includes('elite')) {
+              stakePercent = 0.05;
+            } else if (msgLower.includes('validation') || msgLower.includes('proving')) {
+              stakePercent = 0.025;
+            } else if (msgLower.includes('exploration') || msgLower.includes('explorer')) {
+              stakePercent = 0.01;
+            } else if (msgLower.includes('lottery') || msgLower.includes('longshot')) {
+              stakePercent = 0.005;
+            }
+
             for (const customer of customers) {
               if (customer.chat_id === chatId) continue;
-              try { await sendRaw(rawMessage, customer.chat_id); } catch (e) {
+              try {
+                let customerMsg = rawMessage;
+                if (stakePercent > 0 && customer.bankroll && customer.bankroll > 0) {
+                  const personalStake = Math.round(customer.bankroll * stakePercent);
+                  customerMsg += `\n\n💰 Your stake: $${personalStake} (based on $${customer.bankroll.toLocaleString()} bankroll)`;
+                }
+                await sendRaw(customerMsg, customer.chat_id);
+              } catch (e) {
                 console.error(`[Telegram] Failed to send raw to ${customer.chat_id}:`, e);
               }
             }
