@@ -1624,13 +1624,13 @@ async function handleBankroll(chatId: string, amountStr: string) {
     await supabase.from("bot_activation_status").insert({ check_date: today, [bankrollField]: amount });
   }
 
-  // Also sync admin's personal bankroll in bot_authorized_users
+  // Also sync admin's personal bankroll + confirm date in bot_authorized_users
   await supabase
     .from("bot_authorized_users")
-    .update({ bankroll: amount })
+    .update({ bankroll: amount, bankroll_confirmed_date: today })
     .eq("chat_id", chatId);
 
-  return `✅ Bankroll updated to *$${amount.toLocaleString()}* (${existing?.is_real_mode_ready ? 'real' : 'simulated'} mode)`;
+  return `✅ Bankroll updated to *$${amount.toLocaleString()}* (${existing?.is_real_mode_ready ? 'real' : 'simulated'} mode)\n📊 Stakes: Exec $${(amount * 0.05).toFixed(0)} | Val $${(amount * 0.025).toFixed(0)} | Exp $${(amount * 0.01).toFixed(0)}`;
 }
 
 // Customer /bankroll command
@@ -1655,9 +1655,10 @@ async function handleCustomerBankroll(chatId: string, amountStr: string) {
     return "❌ Invalid amount. Must be a positive number under $1,000,000.";
   }
 
+  const today = getEasternDate();
   await supabase
     .from("bot_authorized_users")
-    .update({ bankroll: amount })
+    .update({ bankroll: amount, bankroll_confirmed_date: today })
     .eq("chat_id", chatId);
 
   return `✅ Bankroll set to *$${amount.toLocaleString()}*\n\n📊 *Your new stakes:*\n• Execution: $${(amount * 0.05).toFixed(0)} (5%)\n• Validation: $${(amount * 0.025).toFixed(0)} (2.5%)\n• Exploration: $${(amount * 0.01).toFixed(0)} (1%)`;
@@ -2478,19 +2479,49 @@ async function handleBroadcast(chatId: string) {
     msg += `\n`;
   }
 
-  // Send to all active customers
+  // Send to all active customers with personalized stake sizing
   const { data: customers } = await supabase
     .from('bot_authorized_users')
-    .select('chat_id, username')
+    .select('chat_id, username, bankroll, bankroll_confirmed_date')
     .eq('is_active', true);
 
   let sentCount = 0;
   let failCount = 0;
+  let unconfirmedCount = 0;
 
   if (customers && customers.length > 0) {
     for (const customer of customers) {
       try {
-        await sendLongMessage(customer.chat_id, msg, 'Markdown');
+        const bankroll = customer.bankroll || 500;
+        const isConfirmed = customer.bankroll_confirmed_date === today;
+
+        // Build personalized stake section
+        let personalMsg = msg;
+        personalMsg += `\n💰 *Your Stakes* (Bankroll: $${bankroll.toLocaleString()})${!isConfirmed ? ' ⚠️ unconfirmed' : ''}\n`;
+
+        for (let i = 0; i < approvedParlays.length; i++) {
+          const p = approvedParlays[i];
+          const tier = p.tier || 'exploration';
+          let pct = 0.01; // exploration default
+          if (tier === 'execution') pct = 0.05;
+          else if (tier === 'validation') pct = 0.025;
+          else if (tier === 'bankroll_doubler' || tier === 'lottery') pct = 0.005;
+
+          const stake = Math.round(bankroll * pct);
+          const odds = p.expected_odds;
+          const payout = odds > 0
+            ? Math.round(stake * (odds / 100))
+            : Math.round(stake * (100 / Math.abs(odds)));
+
+          personalMsg += `#${i + 1}: $${stake} → 💵 $${payout + stake} potential\n`;
+        }
+
+        if (!isConfirmed) {
+          personalMsg += `\n⚠️ _Bankroll not confirmed today. Reply /bankroll ${bankroll} to confirm._`;
+          unconfirmedCount++;
+        }
+
+        await sendLongMessage(customer.chat_id, personalMsg, 'Markdown');
         sentCount++;
       } catch (e) {
         console.warn(`[Broadcast] Failed to send to ${customer.chat_id}:`, e);
@@ -2503,9 +2534,10 @@ async function handleBroadcast(chatId: string) {
     parlayCount: approvedParlays.length,
     sentCount,
     failCount,
+    unconfirmedCount,
   });
 
-  await sendMessage(chatId, `📡 *Broadcast complete!*\n\n✅ Sent ${approvedParlays.length} parlays to ${sentCount} customers${failCount > 0 ? `\n⚠️ ${failCount} failed` : ''}`);
+  await sendMessage(chatId, `📡 *Broadcast complete!*\n\n✅ Sent ${approvedParlays.length} parlays to ${sentCount} customers${failCount > 0 ? `\n⚠️ ${failCount} failed` : ''}${unconfirmedCount > 0 ? `\n💰 ${unconfirmedCount} haven't confirmed today's bankroll` : ''}`);
 }
 
 // ==================== CALLBACK QUERY HANDLER ====================
@@ -2759,6 +2791,20 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     await answerCallbackQuery(callbackQueryId, `✅ ${count} parlays approved!`);
     await sendMessage(chatId, `✅ All ${count} pending parlays approved! Use /broadcast to send to customers.`);
     await logActivity('parlays_bulk_approved', `Admin approved all ${count} pending parlays`, { count });
+
+  } else if (data.startsWith('bankroll_keep:')) {
+    const amount = parseFloat(data.split(':')[1]);
+    const today = getEasternDate();
+    await supabase
+      .from("bot_authorized_users")
+      .update({ bankroll_confirmed_date: today })
+      .eq("chat_id", chatId);
+    await answerCallbackQuery(callbackQueryId, `✅ Bankroll confirmed at $${amount.toLocaleString()}`);
+    await sendMessage(chatId, `✅ Bankroll confirmed at *$${amount.toLocaleString()}* for today.\n\nStakes: Exec $${Math.round(amount * 0.05)} | Val $${Math.round(amount * 0.025)} | Exp $${Math.round(amount * 0.01)}`);
+
+  } else if (data === 'bankroll_update_prompt') {
+    await answerCallbackQuery(callbackQueryId, 'Send /bankroll [amount]');
+    await sendMessage(chatId, `💰 Reply with your new bankroll amount:\n\n/bankroll 1500`);
 
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
