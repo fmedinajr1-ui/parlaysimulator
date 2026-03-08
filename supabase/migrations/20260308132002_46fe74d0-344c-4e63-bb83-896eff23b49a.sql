@@ -1,0 +1,1 @@
+ALTER TABLE public.bot_daily_parlays ADD COLUMN IF NOT EXISTS legs_swapped integer DEFAULT 0;

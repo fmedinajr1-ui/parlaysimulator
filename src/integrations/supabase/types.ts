@@ -1165,6 +1165,7 @@ export type Database = {
           legs: Json
           legs_hit: number | null
           legs_missed: number | null
+          legs_swapped: number | null
           legs_voided: number | null
           lesson_learned: string | null
           outcome: string | null
@@ -1193,6 +1194,7 @@ export type Database = {
           legs?: Json
           legs_hit?: number | null
           legs_missed?: number | null
+          legs_swapped?: number | null
           legs_voided?: number | null
           lesson_learned?: string | null
           outcome?: string | null
@@ -1221,6 +1223,7 @@ export type Database = {
           legs?: Json
           legs_hit?: number | null
           legs_missed?: number | null
+          legs_swapped?: number | null
           legs_voided?: number | null
           lesson_learned?: string | null
           outcome?: string | null
