@@ -1040,6 +1040,7 @@ export type Database = {
           authorized_at: string
           authorized_by: string
           bankroll: number | null
+          bankroll_confirmed_date: string | null
           chat_id: string
           id: string
           is_active: boolean
@@ -1049,6 +1050,7 @@ export type Database = {
           authorized_at?: string
           authorized_by?: string
           bankroll?: number | null
+          bankroll_confirmed_date?: string | null
           chat_id: string
           id?: string
           is_active?: boolean
@@ -1058,6 +1060,7 @@ export type Database = {
           authorized_at?: string
           authorized_by?: string
           bankroll?: number | null
+          bankroll_confirmed_date?: string | null
           chat_id?: string
           id?: string
           is_active?: boolean
