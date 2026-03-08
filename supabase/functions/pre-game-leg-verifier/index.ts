@@ -27,11 +27,28 @@ function nameSimilarity(name1: string, name2: string): number {
   return 0;
 }
 
+function americanToDecimal(american: number): number {
+  if (american > 0) return (american / 100) + 1;
+  return (100 / Math.abs(american)) + 1;
+}
+
+function decimalToAmerican(decimal: number): number {
+  if (decimal >= 2) return Math.round((decimal - 1) * 100);
+  return Math.round(-100 / (decimal - 1));
+}
+
 interface SwapRecord {
   parlayId: string;
   parlayStrategy: string;
   originalLeg: any;
   newLeg: any;
+  reason: string;
+}
+
+interface DropRecord {
+  parlayId: string;
+  parlayStrategy: string;
+  droppedPlayer: string;
   reason: string;
 }
 
@@ -54,8 +71,17 @@ Deno.serve(async (req) => {
     const today = getEasternDate();
     console.log(`[LegVerifier] Starting pre-game verification for ${today}`);
 
-    // Step 1: Fetch today's pending parlays
-    // Fetch pending parlays (outcome is NULL or 'pending')
+    // Fetch stake config for cap
+    const { data: stakeConfig } = await supabase
+      .from('bot_stake_config')
+      .select('execution_stake')
+      .limit(1)
+      .single();
+
+    const executionStakeCap = stakeConfig?.execution_stake || 250;
+    console.log(`[LegVerifier] Execution stake cap: $${executionStakeCap}`);
+
+    // Fetch today's pending parlays
     const { data: parlays, error: parlayError } = await supabase
       .from('bot_daily_parlays')
       .select('*')
@@ -68,21 +94,16 @@ Deno.serve(async (req) => {
 
     if (!parlays || parlays.length === 0) {
       console.log('[LegVerifier] No pending parlays for today');
-      return new Response(JSON.stringify({ success: true, message: 'No pending parlays', swaps: 0, voids: 0 }), {
+      return new Response(JSON.stringify({ success: true, message: 'No pending parlays', swaps: 0, voids: 0, drops: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     console.log(`[LegVerifier] Found ${parlays.length} pending parlays`);
 
-    // Step 2: Fetch fresh injury/lineup data
+    // Fetch fresh injury/lineup data
     const { data: alerts } = await supabase
       .from('lineup_alerts')
-      .select('*')
-      .eq('game_date', today);
-
-    const { data: lineups } = await supabase
-      .from('starting_lineups')
       .select('*')
       .eq('game_date', today);
 
@@ -100,17 +121,19 @@ Deno.serve(async (req) => {
 
     console.log(`[LegVerifier] Found ${outPlayers.size} OUT/DOUBTFUL players`);
 
-    // Step 3: Check each parlay's legs
+    // Process each parlay
     const swaps: SwapRecord[] = [];
+    const drops: DropRecord[] = [];
     const voids: VoidRecord[] = [];
     let totalSwapped = 0;
+    let totalDropped = 0;
     let totalVoided = 0;
 
     for (const parlay of parlays) {
       const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
       let swapCount = 0;
       const updatedLegs = [...legs];
-      const swapAudit: any[] = [];
+      const deadLegIndices: number[] = [];
 
       for (let i = 0; i < legs.length; i++) {
         const leg = legs[i];
@@ -119,12 +142,9 @@ Deno.serve(async (req) => {
 
         // Check if player is OUT/DOUBTFUL
         let matchedAlert: { alertType: string; injuryNote: string } | null = null;
-        
-        // Direct match
         if (outPlayers.has(normalizedPlayer)) {
           matchedAlert = outPlayers.get(normalizedPlayer)!;
         } else {
-          // Fuzzy match
           for (const [alertName, alertData] of outPlayers) {
             if (nameSimilarity(normalizedPlayer, alertName) >= 0.7) {
               matchedAlert = alertData;
@@ -137,7 +157,8 @@ Deno.serve(async (req) => {
 
         console.log(`[LegVerifier] ⚠️ ${playerName} is ${matchedAlert.alertType} — seeking swap`);
 
-        // Find swap alternative via the existing edge function
+        // Try to find swap with STRICT criteria (minimumConfidence: 70)
+        let swapped = false;
         try {
           const swapResponse = await fetch(`${supabaseUrl}/functions/v1/find-swap-alternatives`, {
             method: 'POST',
@@ -155,18 +176,17 @@ Deno.serve(async (req) => {
                 sport: leg.sport || leg.category,
                 currentOdds: leg.odds || leg.american_odds || -110,
               },
-              minimumConfidence: 65,
+              minimumConfidence: 70,
             }),
           });
 
           const swapData = await swapResponse.json();
 
           if (swapData.success && swapData.alternatives && swapData.alternatives.length > 0) {
-            // Pick best alternative (already sorted by confidence)
             const best = swapData.alternatives[0];
-            
-            // Only swap if it's an upgrade or strong_upgrade
-            if (['strong_upgrade', 'upgrade', 'slight_upgrade'].includes(best.comparisonToOriginal?.recommendation)) {
+
+            // STRICT: only accept strong_upgrade or upgrade
+            if (['strong_upgrade', 'upgrade'].includes(best.comparisonToOriginal?.recommendation)) {
               const newLeg = {
                 ...leg,
                 player_name: best.playerName,
@@ -184,77 +204,99 @@ Deno.serve(async (req) => {
 
               updatedLegs[i] = newLeg;
               swapCount++;
+              swapped = true;
 
-              const swapRecord: SwapRecord = {
+              swaps.push({
                 parlayId: parlay.id,
                 parlayStrategy: parlay.strategy_name,
                 originalLeg: { player: playerName, prop: leg.prop_type, line: leg.line, side: leg.side },
                 newLeg: { player: best.playerName, prop: best.propType, line: best.line, side: best.side, confidence: best.confidence },
                 reason: `${matchedAlert.alertType}: ${matchedAlert.injuryNote}`,
-              };
-              swaps.push(swapRecord);
-              swapAudit.push(swapRecord);
+              });
 
               console.log(`[LegVerifier] ✅ Swapped ${playerName} → ${best.playerName} (${best.confidence}% conf)`);
             }
-          } else {
-            console.log(`[LegVerifier] ❌ No suitable swap for ${playerName}`);
           }
         } catch (swapErr) {
           console.error(`[LegVerifier] Swap fetch error for ${playerName}:`, swapErr);
         }
-      }
 
-      // Update the parlay if any swaps were made
-      if (swapCount > 0) {
-        const existingMetadata = (parlay.metadata || {}) as Record<string, any>;
-        
-        const { error: updateError } = await supabase
-          .from('bot_daily_parlays')
-          .update({
-            legs: updatedLegs,
-            legs_swapped: swapCount,
-            selection_rationale: `${parlay.selection_rationale || ''} | ${swapCount} leg(s) auto-swapped pre-game`,
-          })
-          .eq('id', parlay.id);
-
-        if (updateError) {
-          console.error(`[LegVerifier] Failed to update parlay ${parlay.id}:`, updateError);
-        } else {
-          totalSwapped += swapCount;
-          console.log(`[LegVerifier] Updated parlay ${parlay.id} with ${swapCount} swaps`);
+        // If no swap was made, mark this leg for dropping
+        if (!swapped) {
+          deadLegIndices.push(i);
+          drops.push({
+            parlayId: parlay.id,
+            parlayStrategy: parlay.strategy_name,
+            droppedPlayer: playerName,
+            reason: `${matchedAlert.alertType}: ${matchedAlert.injuryNote}`,
+          });
+          console.log(`[LegVerifier] ❌ No viable swap for ${playerName} — marking for drop`);
         }
       }
 
-      // Check if too many legs are flagged with no swap — void the parlay
-      const flaggedNoSwap = legs.filter((leg: any, idx: number) => {
-        const name = normalizeName(leg.player_name || leg.playerName || '');
-        const isOut = outPlayers.has(name) || [...outPlayers.keys()].some(k => nameSimilarity(name, k) >= 0.7);
-        return isOut && updatedLegs[idx] === legs[idx]; // No swap was made
-      });
+      // Remove dead legs (iterate in reverse to preserve indices)
+      const finalLegs = updatedLegs.filter((_, idx) => !deadLegIndices.includes(idx));
+      const legsDropped = deadLegIndices.length;
 
-      if (flaggedNoSwap.length > 0 && flaggedNoSwap.length >= Math.ceil(legs.length / 2)) {
-        // Void the parlay — too many dead legs with no swaps
-        await supabase
-          .from('bot_daily_parlays')
-          .update({
-            outcome: 'void',
-            lesson_learned: `Auto-voided: ${flaggedNoSwap.length}/${legs.length} legs have OUT/DOUBTFUL players with no viable swap`,
-          })
-          .eq('id', parlay.id);
+      if (legsDropped > 0 || swapCount > 0) {
+        if (finalLegs.length >= 2) {
+          // Recalculate odds from remaining legs
+          let combinedDecimalOdds = 1;
+          for (const leg of finalLegs) {
+            const legOdds = leg.odds || leg.american_odds || -110;
+            combinedDecimalOdds *= americanToDecimal(legOdds);
+          }
+          const newExpectedOdds = decimalToAmerican(combinedDecimalOdds);
 
-        voids.push({
-          parlayId: parlay.id,
-          parlayStrategy: parlay.strategy_name,
-          reason: `${flaggedNoSwap.length}/${legs.length} legs OUT with no swap available`,
-        });
-        totalVoided++;
-        console.log(`[LegVerifier] 🚫 Voided parlay ${parlay.id} — ${flaggedNoSwap.length} dead legs`);
+          // Raise stake: 1.5x for each dropped leg, capped at execution_stake
+          const originalStake = parlay.simulated_stake || 50;
+          const stakeMultiplier = 1 + (legsDropped * 0.5);
+          const newStake = Math.min(Math.round(originalStake * stakeMultiplier), executionStakeCap);
+          const newPayout = Math.round(newStake * combinedDecimalOdds * 100) / 100;
+
+          const { error: updateError } = await supabase
+            .from('bot_daily_parlays')
+            .update({
+              legs: finalLegs,
+              leg_count: finalLegs.length,
+              expected_odds: newExpectedOdds,
+              legs_swapped: swapCount,
+              simulated_stake: newStake,
+              simulated_payout: newPayout,
+              selection_rationale: `${parlay.selection_rationale || ''} | ${swapCount > 0 ? `${swapCount} swapped` : ''}${legsDropped > 0 ? ` ${legsDropped} dropped` : ''} pre-game → ${finalLegs.length}-leg @ $${newStake}`,
+            })
+            .eq('id', parlay.id);
+
+          if (updateError) {
+            console.error(`[LegVerifier] Failed to update parlay ${parlay.id}:`, updateError);
+          } else {
+            totalSwapped += swapCount;
+            totalDropped += legsDropped;
+            console.log(`[LegVerifier] Updated parlay ${parlay.id}: ${swapCount} swaps, ${legsDropped} drops → ${finalLegs.length}-leg @ $${newStake}`);
+          }
+        } else {
+          // Fewer than 2 healthy legs — void
+          await supabase
+            .from('bot_daily_parlays')
+            .update({
+              outcome: 'void',
+              lesson_learned: `Auto-voided: only ${finalLegs.length} healthy leg(s) remain after ${legsDropped} drops`,
+            })
+            .eq('id', parlay.id);
+
+          voids.push({
+            parlayId: parlay.id,
+            parlayStrategy: parlay.strategy_name,
+            reason: `Only ${finalLegs.length} healthy leg(s) remain — minimum 2 required`,
+          });
+          totalVoided++;
+          console.log(`[LegVerifier] 🚫 Voided parlay ${parlay.id} — only ${finalLegs.length} healthy legs`);
+        }
       }
     }
 
-    // Step 4: Broadcast summary to Telegram if any changes were made
-    if (swaps.length > 0 || voids.length > 0) {
+    // Broadcast summary to Telegram if any changes
+    if (swaps.length > 0 || drops.length > 0 || voids.length > 0) {
       try {
         await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
           method: 'POST',
@@ -264,7 +306,7 @@ Deno.serve(async (req) => {
           },
           body: JSON.stringify({
             type: 'leg_swap_report',
-            data: { swaps, voids, totalParlaysChecked: parlays.length },
+            data: { swaps, drops, voids, totalParlaysChecked: parlays.length },
           }),
         });
         console.log('[LegVerifier] Telegram swap report sent');
@@ -276,30 +318,34 @@ Deno.serve(async (req) => {
     // Log the verification run
     await supabase.from('bot_activity_log').insert({
       event_type: 'pre_game_verification',
-      message: `Verified ${parlays.length} parlays: ${totalSwapped} legs swapped, ${totalVoided} parlays voided`,
+      message: `Verified ${parlays.length} parlays: ${totalSwapped} swapped, ${totalDropped} dropped, ${totalVoided} voided`,
       severity: totalVoided > 0 ? 'warning' : 'info',
       metadata: {
         date: today,
         parlaysChecked: parlays.length,
         legsSwapped: totalSwapped,
+        legsDropped: totalDropped,
         parlaysVoided: totalVoided,
         outPlayersFound: outPlayers.size,
         swapDetails: swaps,
+        dropDetails: drops,
         voidDetails: voids,
       },
     });
 
-    console.log(`[LegVerifier] Complete: ${totalSwapped} swaps, ${totalVoided} voids across ${parlays.length} parlays`);
+    console.log(`[LegVerifier] Complete: ${totalSwapped} swaps, ${totalDropped} drops, ${totalVoided} voids across ${parlays.length} parlays`);
 
     return new Response(JSON.stringify({
       success: true,
       summary: {
         parlaysChecked: parlays.length,
         legsSwapped: totalSwapped,
+        legsDropped: totalDropped,
         parlaysVoided: totalVoided,
         outPlayersDetected: outPlayers.size,
       },
       swaps,
+      drops,
       voids,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

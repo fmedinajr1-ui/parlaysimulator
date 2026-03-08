@@ -198,6 +198,7 @@ function formatLadderChallengeResult(data: Record<string, any>): string {
 
 function formatLegSwapReport(data: Record<string, any>, dateStr: string): string {
   const swaps = data.swaps || [];
+  const drops = data.drops || [];
   const voids = data.voids || [];
   const totalChecked = data.totalParlaysChecked || 0;
 
@@ -220,6 +221,16 @@ function formatLegSwapReport(data: Record<string, any>, dateStr: string): string
     msg += `\n`;
   }
 
+  if (drops.length > 0) {
+    msg += `🗑 *LEGS DROPPED (${drops.length}):*\n`;
+    for (const d of drops) {
+      const strategy = (d.parlayStrategy || 'unknown').replace(/_/g, ' ');
+      msg += `• *${d.droppedPlayer}* — ${d.reason}\n`;
+      msg += `   _${strategy} → reduced to fewer legs, stake raised_\n`;
+    }
+    msg += `\n`;
+  }
+
   if (voids.length > 0) {
     msg += `🚫 *PARLAYS VOIDED (${voids.length}):*\n`;
     for (const v of voids) {
@@ -229,8 +240,8 @@ function formatLegSwapReport(data: Record<string, any>, dateStr: string): string
     msg += `\n`;
   }
 
-  if (swaps.length === 0 && voids.length === 0) {
-    msg += `✅ All legs clear — no swaps needed`;
+  if (swaps.length === 0 && drops.length === 0 && voids.length === 0) {
+    msg += `✅ All legs clear — no changes needed`;
   }
 
   return msg;
