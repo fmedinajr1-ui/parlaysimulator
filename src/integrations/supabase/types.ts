@@ -1039,6 +1039,7 @@ export type Database = {
         Row: {
           authorized_at: string
           authorized_by: string
+          bankroll: number | null
           chat_id: string
           id: string
           is_active: boolean
@@ -1047,6 +1048,7 @@ export type Database = {
         Insert: {
           authorized_at?: string
           authorized_by?: string
+          bankroll?: number | null
           chat_id: string
           id?: string
           is_active?: boolean
@@ -1055,6 +1057,7 @@ export type Database = {
         Update: {
           authorized_at?: string
           authorized_by?: string
+          bankroll?: number | null
           chat_id?: string
           id?: string
           is_active?: boolean
@@ -2255,6 +2258,7 @@ export type Database = {
       }
       customer_daily_pnl: {
         Row: {
+          bankroll: number | null
           chat_id: string
           created_at: string
           daily_profit_loss: number
@@ -2265,6 +2269,7 @@ export type Database = {
           pnl_date: string
         }
         Insert: {
+          bankroll?: number | null
           chat_id: string
           created_at?: string
           daily_profit_loss?: number
@@ -2275,6 +2280,7 @@ export type Database = {
           pnl_date: string
         }
         Update: {
+          bankroll?: number | null
           chat_id?: string
           created_at?: string
           daily_profit_loss?: number
