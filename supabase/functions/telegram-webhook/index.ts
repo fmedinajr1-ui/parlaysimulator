@@ -1111,9 +1111,11 @@ async function handleCustomerCalendar(chatId: string) {
 
   const { data: authUser } = await supabase
     .from("bot_authorized_users")
-    .select("authorized_at")
+    .select("authorized_at, bankroll")
     .eq("chat_id", chatId)
     .maybeSingle();
+
+  const currentBankroll = authUser?.bankroll || 500;
 
   const now = new Date();
   const year = now.getFullYear();
@@ -1124,7 +1126,7 @@ async function handleCustomerCalendar(chatId: string) {
 
   const { data: days } = await supabase
     .from('customer_daily_pnl')
-    .select('pnl_date, daily_profit_loss, parlays_won, parlays_lost, parlays_total')
+    .select('pnl_date, daily_profit_loss, parlays_won, parlays_lost, parlays_total, bankroll')
     .eq('chat_id', chatId)
     .gte('pnl_date', monthStart)
     .lte('pnl_date', monthEnd)
@@ -1160,7 +1162,10 @@ async function handleCustomerCalendar(chatId: string) {
   const totalWon = days.reduce((s, d) => s + (d.parlays_won || 0), 0);
   const totalLost = days.reduce((s, d) => s + (d.parlays_lost || 0), 0);
 
-  return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n\n*Record:* ${winDays}W - ${lossDays}L (${winPct}%)\n*Total P&L:* ${fmtPnL(totalPnL)}\n*Parlays:* ${totalWon}W - ${totalLost}L\n*Best Day:* ${fmtDate(bestDay.pnl_date)} (${fmtPnL(bestDay.daily_profit_loss || 0)})\n*Worst Day:* ${fmtDate(worstDay.pnl_date)} (${fmtPnL(worstDay.daily_profit_loss || 0)})`;
+  // Get latest bankroll from customer_daily_pnl or bot_authorized_users
+  const latestBankroll = days[days.length - 1]?.bankroll || currentBankroll || 0;
+
+  return `📅 *${monthName} — Your P&L*\n\n📆 Member since: ${joinStr}\n💰 Bankroll: $${latestBankroll.toLocaleString()}\n\n*Record:* ${winDays}W - ${lossDays}L (${winPct}%)\n*Total P&L:* ${fmtPnL(totalPnL)}\n*Parlays:* ${totalWon}W - ${totalLost}L\n*Best Day:* ${fmtDate(bestDay.pnl_date)} (${fmtPnL(bestDay.daily_profit_loss || 0)})\n*Worst Day:* ${fmtDate(worstDay.pnl_date)} (${fmtPnL(worstDay.daily_profit_loss || 0)})`;
 }
 
 // ==================== CUSTOMER ACCURACY COMMAND ====================
@@ -1578,7 +1583,15 @@ async function handleBankroll(chatId: string, amountStr: string) {
   await logActivity("telegram_bankroll", "User updating bankroll", { chatId, amount: amountStr });
 
   if (!amountStr) {
-    return "Usage: /bankroll [amount]\n\nExample: /bankroll 1500";
+    // Show current bankroll
+    const today = getEasternDate();
+    const { data: existing } = await supabase
+      .from("bot_activation_status")
+      .select("simulated_bankroll, real_bankroll, is_real_mode_ready")
+      .eq("check_date", today)
+      .maybeSingle();
+    const bankroll = existing?.is_real_mode_ready ? existing?.real_bankroll : existing?.simulated_bankroll;
+    return `💰 *Current Bankroll:* $${(bankroll || 1000).toLocaleString()}\n\nUsage: /bankroll [amount]\nExample: /bankroll 1500`;
   }
 
   const amount = parseFloat(amountStr);
@@ -1601,7 +1614,43 @@ async function handleBankroll(chatId: string, amountStr: string) {
     await supabase.from("bot_activation_status").insert({ check_date: today, [bankrollField]: amount });
   }
 
+  // Also sync admin's personal bankroll in bot_authorized_users
+  await supabase
+    .from("bot_authorized_users")
+    .update({ bankroll: amount })
+    .eq("chat_id", chatId);
+
   return `✅ Bankroll updated to *$${amount.toLocaleString()}* (${existing?.is_real_mode_ready ? 'real' : 'simulated'} mode)`;
+}
+
+// Customer /bankroll command
+async function handleCustomerBankroll(chatId: string, amountStr: string) {
+  await logActivity("telegram_customer_bankroll", "Customer updating bankroll", { chatId, amount: amountStr });
+
+  // Get current bankroll
+  const { data: user } = await supabase
+    .from("bot_authorized_users")
+    .select("bankroll")
+    .eq("chat_id", chatId)
+    .maybeSingle();
+
+  const currentBankroll = user?.bankroll || 500;
+
+  if (!amountStr) {
+    return `💰 *Your Bankroll:* $${currentBankroll.toLocaleString()}\n\nYour stakes are calculated based on this amount:\n• Execution: ${(currentBankroll * 0.05).toFixed(0)} (5%)\n• Validation: ${(currentBankroll * 0.025).toFixed(0)} (2.5%)\n• Exploration: ${(currentBankroll * 0.01).toFixed(0)} (1%)\n\nTo update: /bankroll [amount]\nExample: /bankroll 1000`;
+  }
+
+  const amount = parseFloat(amountStr);
+  if (isNaN(amount) || amount <= 0 || amount > 1000000) {
+    return "❌ Invalid amount. Must be a positive number under $1,000,000.";
+  }
+
+  await supabase
+    .from("bot_authorized_users")
+    .update({ bankroll: amount })
+    .eq("chat_id", chatId);
+
+  return `✅ Bankroll set to *$${amount.toLocaleString()}*\n\n📊 *Your new stakes:*\n• Execution: $${(amount * 0.05).toFixed(0)} (5%)\n• Validation: $${(amount * 0.025).toFixed(0)} (2.5%)\n• Exploration: $${(amount * 0.01).toFixed(0)} (1%)`;
 }
 
 async function handleForceSettle(chatId: string, dateStr: string) {
