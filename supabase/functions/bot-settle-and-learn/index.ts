@@ -907,9 +907,31 @@ Deno.serve(async (req) => {
         outcome = 'void';
         parlaysSettled++;
       } else if (legsHit + legsMissed === activeLegCount) {
-        if (legsMissed === 0) {
+      if (legsMissed === 0) {
           outcome = 'won';
-          const odds = parlay.expected_odds || 500;
+          let effectiveOdds = parlay.expected_odds || 500;
+          
+          // When legs are voided, recalculate odds from remaining active legs
+          if (legsVoided > 0) {
+            let combinedDecimal = 1.0;
+            let hasIndividualOdds = false;
+            for (const leg of updatedLegs) {
+              if (leg.outcome === 'void') continue;
+              const legOdds = leg.american_odds || leg.odds || -110;
+              hasIndividualOdds = true;
+              const legDecimal = legOdds > 0 ? (legOdds / 100) + 1 : (100 / Math.abs(legOdds)) + 1;
+              combinedDecimal *= legDecimal;
+            }
+            if (hasIndividualOdds) {
+              // Convert combined decimal back to American odds
+              effectiveOdds = combinedDecimal >= 2 
+                ? Math.round((combinedDecimal - 1) * 100) 
+                : Math.round(-100 / (combinedDecimal - 1));
+              console.log(`[VOID-ODDS] Parlay ${parlay.id}: ${legsVoided} voided legs, original odds ${parlay.expected_odds}, reduced odds ${effectiveOdds}`);
+            }
+          }
+          
+          const odds = effectiveOdds;
           const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
           const payout = (parlay.simulated_stake || 100) * decimalOdds;
           profitLoss = payout - (parlay.simulated_stake || 100);
