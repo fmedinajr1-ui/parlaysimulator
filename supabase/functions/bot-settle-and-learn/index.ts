@@ -982,6 +982,7 @@ Deno.serve(async (req) => {
           outcome,
           legs_hit: legsHit,
           legs_missed: legsMissed,
+          legs_voided: legsVoided,
           profit_loss: profitLoss,
           simulated_payout: outcome === 'won' ? profitLoss + (parlay.simulated_stake || 100) : (outcome === 'lost' ? 0 : null),
           settled_at: outcome !== 'pending' ? new Date().toISOString() : null,
