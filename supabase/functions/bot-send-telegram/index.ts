@@ -1486,7 +1486,15 @@ function formatParlaySettledAlert(data: Record<string, any>, dateStr: string): s
   return msg;
 }
 
-function formatNewStrategiesBroadcast(data: Record<string, any>, dateStr: string): string {
+function getStrategyStakePercent(strategyName: string): number {
+  const s = (strategyName || '').toLowerCase();
+  if (s.includes('floor_lock') || s.includes('optimal_combo') || s.includes('manual_curated')) return 0.05;
+  if (s.includes('ceiling_shot') || s.includes('cross_sport') || s.includes('nhl_ceiling')) return 0.01;
+  if (s.includes('lottery') || s.includes('longshot')) return 0.005;
+  return 0.025; // validation default
+}
+
+function formatNewStrategiesBroadcast(data: Record<string, any>, dateStr: string, customerBankroll?: number): string {
   const parlays = data.parlays || [];
   if (parlays.length === 0) return `🤖 No new strategy parlays to broadcast.`;
 
@@ -1524,9 +1532,19 @@ function formatNewStrategiesBroadcast(data: Record<string, any>, dateStr: string
       const legs = Array.isArray(p.legs) ? p.legs : [];
       const odds = p.expected_odds || 0;
       const oddsStr = odds > 0 ? `+${odds}` : `${odds}`;
-      const stake = p.simulated_stake || 10;
       const decOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds || 110)) + 1;
-      const payout = Math.round(stake * decOdds);
+
+      // Use customer bankroll if available, otherwise fall back to bot stake
+      let stake: number;
+      let payout: number;
+      if (customerBankroll && customerBankroll > 0) {
+        const pct = getStrategyStakePercent(p.strategy_name || '');
+        stake = Math.round(customerBankroll * pct);
+        payout = Math.round(stake * decOdds);
+      } else {
+        stake = p.simulated_stake || 10;
+        payout = Math.round(stake * decOdds);
+      }
 
       msg += `#${parlayNum} · ${legs.length}L · ${oddsStr} · $${stake}→$${payout}\n`;
 
