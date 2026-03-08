@@ -590,26 +590,19 @@ Deno.serve(async (req) => {
     }
 
     if (targetDates.length === 0) {
-      // Only settle PAST dates — not today (games may still be in progress)
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
+      // Settle past 7 days to catch any stragglers (not today — games may still be in progress)
+      const formatET = (d: Date) => new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/New_York',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
-      }).format(yesterday);
-      
-      const twoDaysAgo = new Date();
-      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-      const twoDaysAgoStr = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/New_York',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(twoDaysAgo);
-      
-      targetDates = [twoDaysAgoStr, yesterdayStr];
+      }).format(d);
+
+      for (let i = 1; i <= 7; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        targetDates.push(formatET(d));
+      }
     }
 
     // Date guard: filter out today's date to prevent premature settlement
