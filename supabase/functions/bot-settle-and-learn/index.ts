@@ -1317,8 +1317,18 @@ Deno.serve(async (req) => {
     const datesToProcess = pnlByDate.size > 0 ? [...pnlByDate.keys()] : [];
 
     for (const dateKey of datesToProcess) {
-      const datePnL = pnlByDate.get(dateKey)!;
-      
+      // === SOURCE-OF-TRUTH: Query authoritative totals from bot_daily_parlays ===
+      const { data: authTotals } = await supabase
+        .from('bot_daily_parlays')
+        .select('profit_loss, outcome')
+        .eq('parlay_date', dateKey)
+        .in('outcome', ['won', 'lost', 'push']);
+
+      const authPL = (authTotals || []).reduce((sum, p) => sum + (p.profit_loss || 0), 0);
+      const authWon = (authTotals || []).filter(p => p.outcome === 'won').length;
+      const authLost = (authTotals || []).filter(p => p.outcome === 'lost').length;
+      const authGenerated = (authTotals || []).length;
+
       // Get the previous day's status for bankroll chaining
       const { data: prevStatus } = await supabase
         .from('bot_activation_status')
@@ -1338,33 +1348,25 @@ Deno.serve(async (req) => {
         .eq('check_date', dateKey)
         .maybeSingle();
 
-      // Accumulate P&L across multiple runs
-      const accumulatedPnL = (existingEntry?.daily_profit_loss || 0) + datePnL.profitLoss;
-      const accumulatedWon = (existingEntry?.parlays_won || 0) + datePnL.won;
-      const accumulatedLost = (existingEntry?.parlays_lost || 0) + datePnL.lost;
       const BANKROLL_FLOOR = 1000;
-      const accumulatedBankroll = Math.max(
-        BANKROLL_FLOOR,
-        existingEntry 
-          ? (existingEntry.simulated_bankroll || prevBankroll) + datePnL.profitLoss
-          : prevBankroll + datePnL.profitLoss
-      );
-      const dateIsProfitable = accumulatedPnL > 0;
+      const finalBankroll = Math.max(BANKROLL_FLOOR, prevBankroll + authPL);
+      const dateIsProfitable = authPL > 0;
       const dateConsecutive = dateIsProfitable ? prevConsecutive + 1 : 0;
       const dateIsRealModeReady = dateConsecutive >= 3 && 
-                              (accumulatedWon / Math.max(1, accumulatedWon + accumulatedLost)) >= 0.60;
+                              (authWon / Math.max(1, authWon + authLost)) >= 0.60;
 
       if (existingEntry) {
         await supabase
           .from('bot_activation_status')
           .update({
-            parlays_won: accumulatedWon,
-            parlays_lost: accumulatedLost,
-            daily_profit_loss: accumulatedPnL,
+            parlays_won: authWon,
+            parlays_lost: authLost,
+            parlays_generated: authGenerated,
+            daily_profit_loss: authPL,
             is_profitable_day: dateIsProfitable,
             consecutive_profitable_days: dateConsecutive,
             is_real_mode_ready: dateIsRealModeReady,
-            simulated_bankroll: accumulatedBankroll,
+            simulated_bankroll: finalBankroll,
             activated_at: dateIsRealModeReady && !existingEntry.is_real_mode_ready 
               ? new Date().toISOString() 
               : existingEntry.activated_at,
@@ -1375,13 +1377,14 @@ Deno.serve(async (req) => {
           .from('bot_activation_status')
           .insert({
             check_date: dateKey,
-            parlays_won: datePnL.won,
-            parlays_lost: datePnL.lost,
-            daily_profit_loss: datePnL.profitLoss,
-            is_profitable_day: datePnL.profitLoss > 0,
-            consecutive_profitable_days: datePnL.profitLoss > 0 ? prevConsecutive + 1 : 0,
+            parlays_won: authWon,
+            parlays_lost: authLost,
+            parlays_generated: authGenerated,
+            daily_profit_loss: authPL,
+            is_profitable_day: dateIsProfitable,
+            consecutive_profitable_days: dateConsecutive,
             is_real_mode_ready: dateIsRealModeReady,
-            simulated_bankroll: prevBankroll + datePnL.profitLoss,
+            simulated_bankroll: finalBankroll,
             activated_at: dateIsRealModeReady ? new Date().toISOString() : null,
           });
       }
@@ -1390,7 +1393,7 @@ Deno.serve(async (req) => {
       isProfitableDay = dateIsProfitable;
       newConsecutive = dateConsecutive;
       isRealModeReady = dateIsRealModeReady;
-      newBankroll = accumulatedBankroll;
+      newBankroll = finalBankroll;
     }
 
     // If no dates had settlements, still set defaults for downstream
