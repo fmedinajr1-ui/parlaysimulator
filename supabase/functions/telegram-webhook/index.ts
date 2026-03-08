@@ -1624,13 +1624,13 @@ async function handleBankroll(chatId: string, amountStr: string) {
     await supabase.from("bot_activation_status").insert({ check_date: today, [bankrollField]: amount });
   }
 
-  // Also sync admin's personal bankroll in bot_authorized_users
+  // Also sync admin's personal bankroll + confirm date in bot_authorized_users
   await supabase
     .from("bot_authorized_users")
-    .update({ bankroll: amount })
+    .update({ bankroll: amount, bankroll_confirmed_date: today })
     .eq("chat_id", chatId);
 
-  return `✅ Bankroll updated to *$${amount.toLocaleString()}* (${existing?.is_real_mode_ready ? 'real' : 'simulated'} mode)`;
+  return `✅ Bankroll updated to *$${amount.toLocaleString()}* (${existing?.is_real_mode_ready ? 'real' : 'simulated'} mode)\n📊 Stakes: Exec $${(amount * 0.05).toFixed(0)} | Val $${(amount * 0.025).toFixed(0)} | Exp $${(amount * 0.01).toFixed(0)}`;
 }
 
 // Customer /bankroll command
@@ -1655,9 +1655,10 @@ async function handleCustomerBankroll(chatId: string, amountStr: string) {
     return "❌ Invalid amount. Must be a positive number under $1,000,000.";
   }
 
+  const today = getEasternDate();
   await supabase
     .from("bot_authorized_users")
-    .update({ bankroll: amount })
+    .update({ bankroll: amount, bankroll_confirmed_date: today })
     .eq("chat_id", chatId);
 
   return `✅ Bankroll set to *$${amount.toLocaleString()}*\n\n📊 *Your new stakes:*\n• Execution: $${(amount * 0.05).toFixed(0)} (5%)\n• Validation: $${(amount * 0.025).toFixed(0)} (2.5%)\n• Exploration: $${(amount * 0.01).toFixed(0)} (1%)`;
