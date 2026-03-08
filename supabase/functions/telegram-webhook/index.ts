@@ -3551,11 +3551,13 @@ async function handleCustomerStart(chatId: string) {
 
 We've built a step-by-step plan to grow your bankroll.
 👉 Type /plan to see your full profit roadmap
+👉 Type /bankroll [amount] to set your bankroll
 
 *Commands:*
 /plan — Your step-by-step profit plan
 /parlays — Today's picks
 /accuracy — Sweet Spot engine accuracy
+/bankroll — Set/view your bankroll & stakes
 /calendar — Your monthly P&L
 /roi — Your ROI breakdown
 /streaks — Hot & cold streaks
@@ -4303,6 +4305,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /plan — Your step-by-step profit plan
 /parlays — Today's full pick list
 /accuracy — Sweet Spot engine accuracy
+/bankroll — Set/view your bankroll
 /lookup [player] — Player cross-reference report
 /calendar — Your monthly P&L
 /roi — Your personal ROI
