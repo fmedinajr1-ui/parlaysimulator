@@ -1251,11 +1251,21 @@ async function handleCustomerRoi(chatId: string) {
     return `📊 *Your ROI*\n\nNo results recorded yet. Your personal stats will appear here as parlays settle!`;
   }
 
+  // Get current bankroll
+  const { data: userBankroll } = await supabase
+    .from("bot_authorized_users")
+    .select("bankroll")
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  const currentBankroll = userBankroll?.bankroll || 500;
+
   let msg = `📊 *Your ROI*\n\n`;
+  msg += `💰 *Bankroll:* $${currentBankroll.toLocaleString()}\n\n`;
   msg += `*7 Day:* ${fmtPnL(s7.pnl)} | ${winRate(s7.won, s7.won + s7.lost)}% WR (${s7.won}W-${s7.lost}L)\n`;
   msg += `*30 Day:* ${fmtPnL(s30.pnl)} | ${winRate(s30.won, s30.won + s30.lost)}% WR (${s30.won}W-${s30.lost}L)\n`;
   msg += `*All-Time:* ${fmtPnL(sAll.pnl)} | ${winRate(sAll.won, sAll.won + sAll.lost)}% WR (${sAll.won}W-${sAll.lost}L)\n`;
   msg += `\n📅 Tracked over ${sAll.days} day(s)`;
+  msg += `\n\n💡 Use /bankroll [amount] to update your bankroll`;
 
   return msg;
 }
@@ -4282,6 +4292,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/roi") return await handleCustomerRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
   if (cmd === "/accuracy") return await handleCustomerAccuracy(chatId);
+  if (cmd === "/bankroll") return await handleCustomerBankroll(chatId, args);
   if (cmd === "/cancel") return await handleCancelSubscription(chatId);
   if (cmd === "/lookup") { return await handleLookup(chatId, args); }
   if (cmd === "/plan") return await handleStakePlan(chatId);
