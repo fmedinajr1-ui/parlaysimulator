@@ -1348,7 +1348,7 @@ Deno.serve(async (req) => {
         .eq('check_date', dateKey)
         .maybeSingle();
 
-      const BANKROLL_FLOOR = 1000;
+      const BANKROLL_FLOOR = 2000;
       const finalBankroll = Math.max(BANKROLL_FLOOR, prevBankroll + authPL);
       const dateIsProfitable = authPL > 0;
       const dateConsecutive = dateIsProfitable ? prevConsecutive + 1 : 0;
