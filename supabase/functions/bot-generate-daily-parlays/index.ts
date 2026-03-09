@@ -6787,6 +6787,35 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/sweet_spot_core: ${candidatePicks.length} sweet spot candidates (minHR=${profile.minHitRate}%, sort=${sortBy})`);
+    } else if (isSweetSpotL3Profile) {
+      // === SWEET SPOT L3: 5-leg parlays scored by L3 average vs line ===
+      const l3Filtered = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const l3 = (p as any).l3_avg;
+        if (l3 == null) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 55)) return false;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over' && l3 <= p.line) return false;
+        if (side === 'under' && l3 >= p.line) return false;
+        return true;
+      });
+      // Score by L3 distance from line
+      candidatePicks = l3Filtered.map(p => {
+        const l3 = (p as any).l3_avg;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        const l3Score = side === 'over' ? l3 - p.line : p.line - l3;
+        (p as any)._l3Score = l3Score;
+        return p;
+      }).sort((a, b) => ((b as any)._l3Score || 0) - ((a as any)._l3Score || 0));
+
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/sweet_spot_l3: only ${candidatePicks.length} L3-qualified picks, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/sweet_spot_l3: ${candidatePicks.length} candidates sorted by L3 score (top: ${candidatePicks[0]?.player_name} L3=${((candidatePicks[0] as any)?.l3_avg || 0).toFixed(1)})`);
     } else if (isSweetSpotPlusProfile) {
       // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
       const sweetCandidates = pool.sweetSpots.filter(p => {
