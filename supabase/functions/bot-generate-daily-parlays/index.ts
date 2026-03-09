@@ -10533,6 +10533,28 @@ Deno.serve(async (req) => {
       p.selection_rationale = `${p.selection_rationale || ''} [source:${generationSource}]`.trim();
     }
 
+    // === DAILY PARLAY CAP (25 total) ===
+    const DAILY_PARLAY_CAP = 25;
+    const { count: currentPendingCount } = await supabase
+      .from('bot_daily_parlays')
+      .select('*', { count: 'exact', head: true })
+      .eq('parlay_date', targetDate)
+      .eq('outcome', 'pending');
+    
+    const existingPendingTotal = currentPendingCount || 0;
+    const slotsRemaining = Math.max(0, DAILY_PARLAY_CAP - existingPendingTotal);
+    
+    if (slotsRemaining === 0) {
+      console.log(`[Bot v2] ⛔ Daily cap reached: ${existingPendingTotal} pending parlays already at cap of ${DAILY_PARLAY_CAP}`);
+      allParlays = [];
+    } else if (allParlays.length > slotsRemaining) {
+      // Keep highest combined_probability parlays up to the cap
+      allParlays.sort((a: any, b: any) => (b.combined_probability || 0) - (a.combined_probability || 0));
+      const trimmed = allParlays.length - slotsRemaining;
+      allParlays = allParlays.slice(0, slotsRemaining);
+      console.log(`[Bot v2] ✂️ Daily cap trim: kept ${slotsRemaining} of ${slotsRemaining + trimmed} parlays (cap=${DAILY_PARLAY_CAP}, existing=${existingPendingTotal})`);
+    }
+
     // Append new parlays with fingerprint dedup — skip any parlay whose legs already exist today
     console.log(`[Bot v2] Appending ${allParlays.length} new parlays for ${targetDate} (source: ${generationSource})`);
 
