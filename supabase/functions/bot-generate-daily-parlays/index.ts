@@ -1005,10 +1005,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // ROLE-STACKED 3/5/8-LEG: structural diversity with SAFE/BALANCED/GREAT_ODDS roles
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 8, strategy: 'role_stacked_8leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, minBufferMultiplier: 1.5 },
-      { legs: 8, strategy: 'role_stacked_8leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, minBufferMultiplier: 1.5 },
+      // 5-leg and 8-leg role-stacked REMOVED from execution (0% win rate on 5+ leggers) — moved to exploration
       // ============= REDUCED: Standard execution (kept for diversity) =============
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: false },
