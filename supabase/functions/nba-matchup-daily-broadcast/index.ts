@@ -106,9 +106,12 @@ Deno.serve(async (req) => {
       const ranks = `    OFF #${i.offRank} vs DEF #${i.defRank}`;
 
       if (i.player_targets && i.player_targets.length > 0) {
-        const playerLines = i.player_targets.slice(0, 3).map((p: any) =>
-          `      ✅ ${p.player_name} ${i.side.toUpperCase()} ${p.line} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, floor ${p.l10_min})`
-        ).join("\n");
+        const playerLines = i.player_targets.slice(0, 3).map((p: any) => {
+          const l3Tag = p.l3_avg && p.l10_avg && p.l10_avg > 0
+            ? (p.l3_avg / p.l10_avg < 0.85 ? ' 📉' : (p.l3_avg / p.l10_avg > 1.15 ? ' 📈' : ''))
+            : '';
+          return `      ✅ ${p.player_name} ${i.side.toUpperCase()} ${p.line} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, floor ${p.l10_min})${l3Tag}`;
+        }).join("\n");
         return `${header}\n${ranks}\n${playerLines}`;
       } else {
         return `${header}\n${ranks}\n      ⚠️ Environment only — no individual player data supports this`;
