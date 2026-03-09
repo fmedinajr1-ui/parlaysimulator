@@ -263,7 +263,7 @@ Deno.serve(async (req) => {
       const EXPOSURE_CAP_DOUBLE_CONFIRMED = 2;
       const { data: postDedupPending } = await supabase
         .from('bot_daily_parlays')
-        .select('id, legs, combined_probability')
+        .select('id, legs, combined_probability, strategy_name')
         .eq('parlay_date', today)
         .eq('outcome', 'pending')
         .order('combined_probability', { ascending: false }); // Keep highest-probability ones
