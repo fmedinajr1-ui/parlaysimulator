@@ -954,6 +954,11 @@ Deno.serve(async (req) => {
       const propNorm = normalizePropType(prop.prop_type);
       const sameTypeCount = existingLegs.filter(l => normalizePropType(l.prop_type) === propNorm).length;
       if (sameTypeCount >= MAX_SAME_PROP) return false;
+      // Median-line proximity gate: skip coin-flip picks
+      if (prop.market_type === 'player_prop' && prop.l10Median != null) {
+        const gap = Math.abs(prop.l10Median - prop.line);
+        if (gap < 0.5) return false;
+      }
       // Block same-game double-double picks (no two DD from same game)
       if (prop.prop_type === 'player_double_double') {
         const existingDD = existingLegs.filter(
