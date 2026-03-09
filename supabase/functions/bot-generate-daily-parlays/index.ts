@@ -3381,10 +3381,11 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     if (hitRatePercent < 70) return false;
   }
   
-  // === GLOBAL SLATE EXPOSURE CAP (max 5 per player+prop across all tiers) ===
+  // === GLOBAL SLATE EXPOSURE CAP (max 3 per player+prop across all tiers, including existing pending) ===
   if ('player_name' in pick && 'prop_type' in pick) {
     const globalKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
-    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= MAX_GLOBAL_PLAYER_PROP_USAGE) {
+    const HARD_CAP_PLAYER_PROP = 3; // Absolute max across all attempts + current run
+    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= HARD_CAP_PLAYER_PROP) {
       return false;
     }
   }
