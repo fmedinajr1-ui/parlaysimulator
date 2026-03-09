@@ -315,10 +315,37 @@ Deno.serve(async (req) => {
               .select('*', { count: 'exact', head: true });
             totalExposureVoided += (count || 0);
           }
-          console.log(`[QualityRegen] 🔒 Exposure dedup: voided ${totalExposureVoided} excess parlays (cap=${EXPOSURE_CAP} per player-prop-side)`);
+          console.log(`[QualityRegen] 🔒 Exposure dedup: voided ${totalExposureVoided} excess parlays (cap=${EXPOSURE_CAP} per player, ${EXPOSURE_CAP_DOUBLE_CONFIRMED} for double-confirmed)`);
         } else {
           console.log(`[QualityRegen] ✅ No exposure cap violations found`);
         }
+      }
+
+      // === DAILY PARLAY CAP (25 total) ===
+      const DAILY_PARLAY_CAP = 25;
+      const { data: postCapPending } = await supabase
+        .from('bot_daily_parlays')
+        .select('id, combined_probability')
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending')
+        .order('combined_probability', { ascending: false });
+
+      if (postCapPending && postCapPending.length > DAILY_PARLAY_CAP) {
+        const excessIds = postCapPending.slice(DAILY_PARLAY_CAP).map(p => p.id);
+        let totalCapVoided = 0;
+        for (let i = 0; i < excessIds.length; i += 100) {
+          const chunk = excessIds.slice(i, i + 100);
+          const { count } = await supabase
+            .from('bot_daily_parlays')
+            .update({ outcome: 'void', lesson_learned: 'daily_cap_25' })
+            .in('id', chunk)
+            .eq('outcome', 'pending')
+            .select('*', { count: 'exact', head: true });
+          totalCapVoided += (count || 0);
+        }
+        console.log(`[QualityRegen] ✂️ Daily cap: voided ${totalCapVoided} excess parlays (kept top ${DAILY_PARLAY_CAP} by probability)`);
+      } else {
+        console.log(`[QualityRegen] ✅ Daily cap OK: ${postCapPending?.length || 0} pending (cap=${DAILY_PARLAY_CAP})`);
       }
     }
 
