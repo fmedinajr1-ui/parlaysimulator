@@ -257,6 +257,58 @@ Deno.serve(async (req) => {
           console.log(`[QualityRegen] ✅ No duplicates found across ${allTodayPending.length} pending parlays`);
         }
       }
+
+      // === EXPOSURE DEDUP: void excess parlays when any player-prop-side combo exceeds 3 appearances ===
+      const EXPOSURE_CAP = 3;
+      const { data: postDedupPending } = await supabase
+        .from('bot_daily_parlays')
+        .select('id, legs, combined_probability')
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending')
+        .order('combined_probability', { ascending: false }); // Keep highest-probability ones
+
+      if (postDedupPending && postDedupPending.length > 1) {
+        const playerPropUsage = new Map<string, string[]>(); // key → [parlay IDs in order of probability]
+        
+        for (const p of postDedupPending) {
+          const legs = Array.isArray(p.legs) ? p.legs : [];
+          for (const leg of legs) {
+            if (leg.player_name && leg.prop_type) {
+              const key = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}|${(leg.side || '').toLowerCase()}`;
+              if (!playerPropUsage.has(key)) playerPropUsage.set(key, []);
+              playerPropUsage.get(key)!.push(p.id);
+            }
+          }
+        }
+
+        const exposureVoidIds = new Set<string>();
+        for (const [key, parlayIds] of playerPropUsage.entries()) {
+          if (parlayIds.length > EXPOSURE_CAP) {
+            // Sorted by descending probability — void the tail (lower probability)
+            const toVoid = parlayIds.slice(EXPOSURE_CAP);
+            for (const id of toVoid) exposureVoidIds.add(id);
+            console.log(`[QualityRegen] 🔒 Exposure cap: ${key} has ${parlayIds.length} appearances, voiding ${toVoid.length} lowest-prob`);
+          }
+        }
+
+        if (exposureVoidIds.size > 0) {
+          const voidArr = Array.from(exposureVoidIds);
+          let totalExposureVoided = 0;
+          for (let i = 0; i < voidArr.length; i += 100) {
+            const chunk = voidArr.slice(i, i + 100);
+            const { count } = await supabase
+              .from('bot_daily_parlays')
+              .update({ outcome: 'void', lesson_learned: 'exposure_cap_quality_regen' })
+              .in('id', chunk)
+              .eq('outcome', 'pending')
+              .select('*', { count: 'exact', head: true });
+            totalExposureVoided += (count || 0);
+          }
+          console.log(`[QualityRegen] 🔒 Exposure dedup: voided ${totalExposureVoided} excess parlays (cap=${EXPOSURE_CAP} per player-prop-side)`);
+        } else {
+          console.log(`[QualityRegen] ✅ No exposure cap violations found`);
+        }
+      }
     }
 
     const targetMet = bestAttempt?.meetsTarget ?? false;
