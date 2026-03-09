@@ -9681,7 +9681,7 @@ Deno.serve(async (req) => {
     globalSlatePlayerPropUsage = new Map();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
-      .select('legs, leg_count')
+      .select('legs, leg_count, outcome')
       .eq('parlay_date', targetDate);
     if (existingParlays) {
       for (const p of existingParlays) {
@@ -9689,8 +9689,19 @@ Deno.serve(async (req) => {
         // Only block exact fingerprint duplicates — do NOT add mirror prints from existing parlays
         // Mirror blocking is scoped to within THIS run only to prevent cross-run over-blocking
         globalFingerprints.add(createParlayFingerprint(legs));
+        
+        // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player-prop usage from PENDING parlays ===
+        if (p.outcome === 'pending') {
+          for (const leg of legs) {
+            if (leg.player_name && leg.prop_type) {
+              const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
+              globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
+            }
+          }
+        }
       }
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} exact fingerprints for ${targetDate} (mirrors scoped to current run only, usage maps reset)`);
+      const preloadedUsage = Array.from(globalSlatePlayerPropUsage.entries()).filter(([_, v]) => v >= 2);
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalSlatePlayerPropUsage.size} player-prop usage counts for ${targetDate} (${preloadedUsage.length} at 2+ usage)`);
     }
 
     // Light-slate: increase usage limits for exploration tier
