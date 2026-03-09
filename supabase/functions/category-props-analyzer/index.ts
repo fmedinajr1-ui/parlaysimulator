@@ -1368,6 +1368,23 @@ serve(async (req) => {
           const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
           const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
 
+          // v11.0: Compute L3 average for recency decline detection
+          const l3Values = statValues.slice(0, 3);
+          const l3Avg = l3Values.length >= 3 ? Math.round((l3Values.reduce((a, b) => a + b, 0) / l3Values.length) * 10) / 10 : null;
+
+          // v11.0: UNIVERSAL RECENCY DECLINE BLOCK
+          if (l3Avg !== null && l10Avg > 0) {
+            const declineRatio = l3Avg / l10Avg;
+            if (effectiveSide === 'over' && declineRatio < 0.75) {
+              console.log(`[Recency Block] 📉 ${playerName} ${config.propType} OVER blocked: L3 avg ${l3Avg} is ${((1 - declineRatio) * 100).toFixed(0)}% below L10 avg ${l10Avg.toFixed(1)}`);
+              continue;
+            }
+            if (effectiveSide === 'under' && declineRatio > 1.25) {
+              console.log(`[Recency Block] 📈 ${playerName} ${config.propType} UNDER blocked: L3 avg ${l3Avg} is ${((declineRatio - 1) * 100).toFixed(0)}% above L10 avg ${l10Avg.toFixed(1)}`);
+              continue;
+            }
+          }
+
           sweetSpots.push({
             category: catKey,
             player_name: playerName,
@@ -1379,6 +1396,7 @@ serve(async (req) => {
             l10_min: l10Min,
             l10_max: l10Max,
             l10_median: Math.round(l10Median * 10) / 10,
+            l3_avg: l3Avg, // v11.0: Recency signal
             games_played: l10Logs.length,
             archetype: getPlayerArchetype(playerName), // v3.0: Store actual archetype
             confidence_score: Math.round(confidenceScore * 100) / 100,
@@ -1487,6 +1505,23 @@ serve(async (req) => {
           const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
           const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
 
+          // v11.0: Compute L3 average for MLB
+          const mlbL3Values = statValues.slice(0, 3);
+          const mlbL3Avg = mlbL3Values.length >= 3 ? Math.round((mlbL3Values.reduce((a, b) => a + b, 0) / mlbL3Values.length) * 10) / 10 : null;
+
+          // v11.0: UNIVERSAL RECENCY DECLINE BLOCK for MLB
+          if (mlbL3Avg !== null && l10Avg > 0) {
+            const declineRatio = mlbL3Avg / l10Avg;
+            if (effectiveSide === 'over' && declineRatio < 0.75) {
+              console.log(`[Recency Block] 📉 MLB ${playerName} ${config.propType} OVER blocked: L3 ${mlbL3Avg} vs L10 ${l10Avg.toFixed(1)}`);
+              continue;
+            }
+            if (effectiveSide === 'under' && declineRatio > 1.25) {
+              console.log(`[Recency Block] 📈 MLB ${playerName} ${config.propType} UNDER blocked: L3 ${mlbL3Avg} vs L10 ${l10Avg.toFixed(1)}`);
+              continue;
+            }
+          }
+
           sweetSpots.push({
             category: catKey,
             player_name: playerName,
@@ -1499,6 +1534,7 @@ serve(async (req) => {
             l10_max: l10Max,
             l10_median: Math.round(l10Median * 10) / 10,
             l10_std_dev: Math.round(l10StdDev * 10) / 10,
+            l3_avg: mlbL3Avg, // v11.0: Recency signal
             games_played: l10Logs.length,
             archetype: null, // MLB doesn't use archetypes
             confidence_score: Math.round(confidenceScore * 100) / 100,

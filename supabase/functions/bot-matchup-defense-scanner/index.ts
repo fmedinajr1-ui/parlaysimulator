@@ -196,7 +196,7 @@ serve(async (req) => {
     // Load active sweet spots for player-level cross-reference
     const { data: sweetSpots } = await supabase
       .from('category_sweet_spots')
-      .select('player_name, category, prop_type, recommended_line, l10_avg, l10_hit_rate, l10_min, l10_max, actual_line, recommended_side')
+      .select('player_name, category, prop_type, recommended_line, l10_avg, l10_hit_rate, l10_min, l10_max, actual_line, recommended_side, l3_avg')
       .eq('is_active', true)
       .gte('l10_hit_rate', 0.6);
 
@@ -230,6 +230,14 @@ serve(async (req) => {
           const l10HitRate = ss.l10_hit_rate ?? 0;
           const l10Min = ss.l10_min ?? 0;
           const recSide = (ss.recommended_side || '').toLowerCase();
+          const l3Avg = ss.l3_avg ?? null;
+
+          // v11.0: Universal recency decline filter
+          if (l3Avg !== null && l10Avg > 0) {
+            const declineRatio = l3Avg / l10Avg;
+            if (side === 'over' && declineRatio < 0.75) continue; // L3 25%+ below L10 → skip OVER
+            if (side === 'under' && declineRatio > 1.25) continue; // L3 25%+ above L10 → skip UNDER
+          }
 
           // For OVER recommendations: l10_avg must comfortably clear the line
           if (side === 'over' && recSide === 'over' && l10Avg > line + 0.3 && l10HitRate >= 0.6) {
