@@ -88,11 +88,21 @@ async function loadCategoryRecommendations(supabase: any): Promise<void> {
   const today = getEasternDate();
   const { data } = await supabase
     .from("category_sweet_spots")
-    .select("player_name, prop_type, recommended_side, l10_hit_rate")
+    .select("player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l3_avg")
     .gte("l10_hit_rate", 0.7); // Only use high-confidence categories (70%+)
 
   categoryRecommendations.clear();
   for (const c of data || []) {
+    // v11.0: Universal recency decline filter
+    const l3Avg = c.l3_avg ?? null;
+    const l10Avg = c.l10_avg || 0;
+    const side = c.recommended_side?.toLowerCase() || "over";
+    if (l3Avg !== null && l10Avg > 0) {
+      const declineRatio = l3Avg / l10Avg;
+      if (side === "over" && declineRatio < 0.75) continue;
+      if (side === "under" && declineRatio > 1.25) continue;
+    }
+
     const propLower = c.prop_type?.toLowerCase() || "";
     const propCategory = propLower.includes("rebound")
       ? "rebounds"
@@ -105,11 +115,11 @@ async function loadCategoryRecommendations(supabase: any): Promise<void> {
             : "points";
     const key = `${c.player_name?.toLowerCase()}_${propCategory}`;
     categoryRecommendations.set(key, {
-      side: c.recommended_side?.toLowerCase() || "over",
+      side,
       hit_rate: c.l10_hit_rate,
     });
   }
-  console.log(`[Heat Engine] Loaded ${categoryRecommendations.size} category recommendations (70%+ L10)`);
+  console.log(`[Heat Engine] Loaded ${categoryRecommendations.size} category recommendations (70%+ L10, recency-filtered)`);
 }
 
 // Runtime archetype data (populated from database)

@@ -1774,6 +1774,7 @@ export type Database = {
           l10_median: number | null
           l10_min: number | null
           l10_std_dev: number | null
+          l3_avg: number | null
           l5_three_pct: number | null
           line_difference: number | null
           matchup_adjustment: number | null
@@ -1818,6 +1819,7 @@ export type Database = {
           l10_median?: number | null
           l10_min?: number | null
           l10_std_dev?: number | null
+          l3_avg?: number | null
           l5_three_pct?: number | null
           line_difference?: number | null
           matchup_adjustment?: number | null
@@ -1862,6 +1864,7 @@ export type Database = {
           l10_median?: number | null
           l10_min?: number | null
           l10_std_dev?: number | null
+          l3_avg?: number | null
           l5_three_pct?: number | null
           line_difference?: number | null
           matchup_adjustment?: number | null

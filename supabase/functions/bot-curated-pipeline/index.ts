@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     // === STEP 3: Load sweet spots (engine 1) ===
     const { data: sweetSpots } = await supabase
       .from('category_sweet_spots')
-      .select('player_name, prop_type, recommended_line, recommended_side, l10_hit_rate, l10_avg, confidence_score, actual_line, bookmaker')
+      .select('player_name, prop_type, recommended_line, recommended_side, l10_hit_rate, l10_avg, confidence_score, actual_line, bookmaker, l3_avg')
       .eq('is_active', true)
       .eq('analysis_date', today);
 
@@ -148,6 +148,16 @@ Deno.serve(async (req) => {
 
     // Sweet spots
     for (const ss of (sweetSpots || [])) {
+      // v11.0: Universal recency decline filter
+      const l3Avg = ss.l3_avg ?? null;
+      const l10Avg = ss.l10_avg || 0;
+      const recSide = (ss.recommended_side || 'over').toLowerCase();
+      if (l3Avg !== null && l10Avg > 0) {
+        const declineRatio = l3Avg / l10Avg;
+        if (recSide === 'over' && declineRatio < 0.75) continue;
+        if (recSide === 'under' && declineRatio > 1.25) continue;
+      }
+
       const key = normalizeKey(ss.player_name, ss.prop_type);
       const hr = (ss.l10_hit_rate || 0) <= 1 ? (ss.l10_hit_rate || 0) * 100 : (ss.l10_hit_rate || 0);
       const existing = playerMap.get(key) || {
@@ -158,8 +168,8 @@ Deno.serve(async (req) => {
       if (hr > existing.bestHitRate) {
         existing.bestHitRate = hr;
         existing.bestLine = ss.recommended_line || ss.actual_line || 0;
-        existing.bestSide = (ss.recommended_side || 'over').toLowerCase();
-        existing.l10Avg = ss.l10_avg || 0;
+        existing.bestSide = recSide;
+        existing.l10Avg = l10Avg;
       }
       playerMap.set(key, existing);
     }
