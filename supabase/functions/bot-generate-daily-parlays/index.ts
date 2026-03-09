@@ -9706,8 +9706,9 @@ Deno.serve(async (req) => {
           }
         }
       }
-      const preloadedUsage = Array.from(globalSlatePlayerPropUsage.entries()).filter(([_, v]) => v >= 2);
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalSlatePlayerPropUsage.size} player-prop usage counts for ${targetDate} (${preloadedUsage.length} at 2+ usage)`);
+      const preloadedUsage = Array.from(globalSlatePlayerPropUsage.entries()).filter(([_, v]) => v >= 1);
+      const existingPendingCount = (existingParlays || []).filter(p => p.outcome === 'pending').length;
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalSlatePlayerPropUsage.size} player usage counts for ${targetDate} (${preloadedUsage.length} at 1+ usage, ${existingPendingCount} existing pending)`);
     }
 
     // Light-slate: increase usage limits for exploration tier
