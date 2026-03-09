@@ -47,6 +47,23 @@ function getSportEmoji(leg: any): string {
   return '🏀';
 }
 
+// v11.0: Recency decline warning helper
+// Checks if a leg has l3_avg and l10_avg, returns 📉 warning if moderate decline (15-25%)
+function getRecencyWarning(leg: any): string {
+  const l3 = leg.l3_avg ?? leg.l3Avg;
+  const l10 = leg.l10_avg ?? leg.l10Avg ?? leg.l10_average;
+  const side = (leg.side || 'over').toLowerCase();
+  if (l3 == null || l10 == null || l10 <= 0) return '';
+  const ratio = l3 / l10;
+  if (side === 'over' && ratio < 0.85 && ratio >= 0.75) {
+    return ` 📉L3:${l3}`;
+  }
+  if (side === 'under' && ratio > 1.15 && ratio <= 1.25) {
+    return ` 📈L3:${l3}`;
+  }
+  return '';
+}
+
 type NotificationType = 
   | 'parlays_generated'
   | 'tiered_parlays_generated'
@@ -536,7 +553,8 @@ function formatSlateStatusUpdate(data: Record<string, any>, dateStr: string): st
       const side = (leg.side || 'over').toUpperCase();
       const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
       const hitRate = leg.hit_rate_l10 ? ` (${Math.round(leg.hit_rate_l10)}% L10)` : '';
-      msg += ` Take ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}\n`;
+      const recencyWarn = getRecencyWarning(leg);
+      msg += ` Take ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}${recencyWarn}\n`;
     }
     msg += `\n`;
   }
