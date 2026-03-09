@@ -405,7 +405,8 @@ function formatParlayApprovalRequest(data: Record<string, any>, dateStr: string)
       const side = (leg.side || 'over').toUpperCase();
       const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
       const hitRate = leg.hit_rate_l10 || leg.hit_rate ? ` (${Math.round(leg.hit_rate_l10 || leg.hit_rate)}% L10)` : '';
-      msg += `  ${j + 1}. ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}\n`;
+      const recencyWarn = getRecencyWarning(leg);
+      msg += `  ${j + 1}. ${leg.player_name || 'Player'} ${side} ${leg.line} ${prop}${hitRate}${recencyWarn}\n`;
     }
     msg += `\n`;
   }
