@@ -1053,7 +1053,8 @@ Deno.serve(async (req) => {
       while (legs.length < 4 && calcCombinedOdds(legs) < 500) {
         const filler = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
-          if (p.hitRate < 50) return false;
+          if (p.hitRate < 65) return false;
+          if (p.l10Avg == null) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
         });
