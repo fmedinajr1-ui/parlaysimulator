@@ -826,6 +826,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
+      // ============= SWEET SPOT PLUS: 4-leg (moved from execution — better fit for exploration risk) =============
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      // ============= ROLE-STACKED 5/8-LEG: moved from execution (0% win rate on 5+ leggers) =============
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
     ],
   },
