@@ -973,6 +973,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'env_cluster_grind' },
+      // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency =============
+      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
+      { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 55, sortBy: 'l3_score' },
+      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'l3_score' },
       // ============= SWEET SPOT PLUS: moved to EXPLORATION tier (4-leggers underperform in execution) =============
       // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR, 13 profiles) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
@@ -6588,7 +6592,7 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
     
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
@@ -6646,6 +6650,8 @@ async function generateTierParlays(
     const isCeilingShotProfile = profile.strategy === 'ceiling_shot';
     // OPTIMAL COMBO: Combinatorial optimizer for highest combined L10 hit rate
     const isOptimalComboProfile = profile.strategy === 'optimal_combo';
+    // SWEET SPOT L3: 5-leg parlays scored by L3 recency
+    const isSweetSpotL3Profile = profile.strategy === 'sweet_spot_l3';
     
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
@@ -6781,6 +6787,35 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/sweet_spot_core: ${candidatePicks.length} sweet spot candidates (minHR=${profile.minHitRate}%, sort=${sortBy})`);
+    } else if (isSweetSpotL3Profile) {
+      // === SWEET SPOT L3: 5-leg parlays scored by L3 average vs line ===
+      const l3Filtered = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const l3 = (p as any).l3_avg;
+        if (l3 == null) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 55)) return false;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over' && l3 <= p.line) return false;
+        if (side === 'under' && l3 >= p.line) return false;
+        return true;
+      });
+      // Score by L3 distance from line
+      candidatePicks = l3Filtered.map(p => {
+        const l3 = (p as any).l3_avg;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        const l3Score = side === 'over' ? l3 - p.line : p.line - l3;
+        (p as any)._l3Score = l3Score;
+        return p;
+      }).sort((a, b) => ((b as any)._l3Score || 0) - ((a as any)._l3Score || 0));
+
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/sweet_spot_l3: only ${candidatePicks.length} L3-qualified picks, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/sweet_spot_l3: ${candidatePicks.length} candidates sorted by L3 score (top: ${candidatePicks[0]?.player_name} L3=${((candidatePicks[0] as any)?.l3_avg || 0).toFixed(1)})`);
     } else if (isSweetSpotPlusProfile) {
       // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
       const sweetCandidates = pool.sweetSpots.filter(p => {
