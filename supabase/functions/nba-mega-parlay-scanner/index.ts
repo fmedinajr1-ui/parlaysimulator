@@ -1006,7 +1006,9 @@ Deno.serve(async (req) => {
         if (p.hitRate < 70) return false;
         if (p.edgePct < 3) return false;
         if (p.defenseRank !== null && p.defenseRank < 15) return false;
-        if (p.sweetSpotSide !== p.side && p.mispricedSide !== p.side) return false;
+        // Double signal: require sweet spot alignment AND (mispriced or edge >= 5)
+        if (p.sweetSpotSide !== p.side) return false;
+        if (p.mispricedSide !== p.side && (p.edgePct == null || p.edgePct < 5)) return false;
         if (p.l10Avg !== null && p.side === 'OVER' && p.l10Avg < p.line * 1.1) return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
         return passesBasicChecks(p, legs, gc);
