@@ -6650,6 +6650,8 @@ async function generateTierParlays(
     const isCeilingShotProfile = profile.strategy === 'ceiling_shot';
     // OPTIMAL COMBO: Combinatorial optimizer for highest combined L10 hit rate
     const isOptimalComboProfile = profile.strategy === 'optimal_combo';
+    // SWEET SPOT L3: 5-leg parlays scored by L3 recency
+    const isSweetSpotL3Profile = profile.strategy === 'sweet_spot_l3';
     
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
