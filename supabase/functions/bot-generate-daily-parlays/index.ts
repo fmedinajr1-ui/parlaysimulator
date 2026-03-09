@@ -826,6 +826,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', side: 'under' },
+      // ============= SWEET SPOT PLUS: 4-leg (moved from execution — better fit for exploration risk) =============
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      // ============= ROLE-STACKED 5/8-LEG: moved from execution (0% win rate on 5+ leggers) =============
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
     ],
   },
@@ -963,17 +973,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'env_cluster_grind' },
-      // ============= SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus engine leg =============
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      // ============= SWEET SPOT PLUS: moved to EXPLORATION tier (4-leggers underperform in execution) =============
       // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR, 13 profiles) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
@@ -1005,10 +1005,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // ROLE-STACKED 3/5/8-LEG: structural diversity with SAFE/BALANCED/GREAT_ODDS roles
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
       { legs: 3, strategy: 'role_stacked_3leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 8, strategy: 'role_stacked_8leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, minBufferMultiplier: 1.5 },
-      { legs: 8, strategy: 'role_stacked_8leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, minBufferMultiplier: 1.5 },
+      // 5-leg and 8-leg role-stacked REMOVED from execution (0% win rate on 5+ leggers) — moved to exploration
       // ============= REDUCED: Standard execution (kept for diversity) =============
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle', useAltLines: false },
@@ -3384,10 +3381,11 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     if (hitRatePercent < 70) return false;
   }
   
-  // === GLOBAL SLATE EXPOSURE CAP (max 5 per player+prop across all tiers) ===
+  // === GLOBAL SLATE EXPOSURE CAP (max 3 per player+prop across all tiers, including existing pending) ===
   if ('player_name' in pick && 'prop_type' in pick) {
     const globalKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
-    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= MAX_GLOBAL_PLAYER_PROP_USAGE) {
+    const HARD_CAP_PLAYER_PROP = 3; // Absolute max across all attempts + current run
+    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= HARD_CAP_PLAYER_PROP) {
       return false;
     }
   }
@@ -9684,7 +9682,7 @@ Deno.serve(async (req) => {
     globalSlatePlayerPropUsage = new Map();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
-      .select('legs, leg_count')
+      .select('legs, leg_count, outcome')
       .eq('parlay_date', targetDate);
     if (existingParlays) {
       for (const p of existingParlays) {
@@ -9692,8 +9690,19 @@ Deno.serve(async (req) => {
         // Only block exact fingerprint duplicates — do NOT add mirror prints from existing parlays
         // Mirror blocking is scoped to within THIS run only to prevent cross-run over-blocking
         globalFingerprints.add(createParlayFingerprint(legs));
+        
+        // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player-prop usage from PENDING parlays ===
+        if (p.outcome === 'pending') {
+          for (const leg of legs) {
+            if (leg.player_name && leg.prop_type) {
+              const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
+              globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
+            }
+          }
+        }
       }
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} exact fingerprints for ${targetDate} (mirrors scoped to current run only, usage maps reset)`);
+      const preloadedUsage = Array.from(globalSlatePlayerPropUsage.entries()).filter(([_, v]) => v >= 2);
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalSlatePlayerPropUsage.size} player-prop usage counts for ${targetDate} (${preloadedUsage.length} at 2+ usage)`);
     }
 
     // Light-slate: increase usage limits for exploration tier
@@ -9705,7 +9714,7 @@ Deno.serve(async (req) => {
 
     // Volume mode: relax constraints for small pools to produce more parlays
     if (isVolumeMode) {
-      TIER_CONFIG.exploration.maxPlayerUsage = 4;
+      // maxPlayerUsage stays at 1 even in volume mode — only relax team/category caps
       TIER_CONFIG.exploration.maxTeamUsage = 5;
       TIER_CONFIG.exploration.maxCategoryUsage = 10;
       TIER_CONFIG.exploration.minHitRate = 40;
