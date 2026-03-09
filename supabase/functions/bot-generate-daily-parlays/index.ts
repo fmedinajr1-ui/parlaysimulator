@@ -963,17 +963,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'env_cluster_grind' },
-      // ============= SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus engine leg =============
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_shootout' },
-      { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'env_cluster_grind' },
+      // ============= SWEET SPOT PLUS: moved to EXPLORATION tier (4-leggers underperform in execution) =============
       // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR, 13 profiles) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'composite' },
