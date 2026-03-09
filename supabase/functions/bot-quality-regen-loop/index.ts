@@ -274,21 +274,31 @@ Deno.serve(async (req) => {
         for (const p of postDedupPending) {
           const legs = Array.isArray(p.legs) ? p.legs : [];
           for (const leg of legs) {
-            if (leg.player_name && leg.prop_type) {
-              const key = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}|${(leg.side || '').toLowerCase()}`;
-              if (!playerPropUsage.has(key)) playerPropUsage.set(key, []);
-              playerPropUsage.get(key)!.push(p.id);
+            if (leg.player_name) {
+              const playerKey = (leg.player_name || '').toLowerCase().trim();
+              if (!playerPropUsage.has(playerKey)) playerPropUsage.set(playerKey, []);
+              if (!playerPropUsage.get(playerKey)!.includes(p.id)) {
+                playerPropUsage.get(playerKey)!.push(p.id);
+              }
             }
           }
         }
 
         const exposureVoidIds = new Set<string>();
-        for (const [key, parlayIds] of playerPropUsage.entries()) {
-          if (parlayIds.length > EXPOSURE_CAP) {
-            // Sorted by descending probability — void the tail (lower probability)
-            const toVoid = parlayIds.slice(EXPOSURE_CAP);
+        for (const [playerKey, parlayIds] of playerPropUsage.entries()) {
+          // Check if any parlay with this player is double-confirmed
+          const isDoubleConfirmed = postDedupPending.some(p => 
+            parlayIds.includes(p.id) && (
+              (p as any).strategy_name?.includes('double_confirmed') || 
+              (p as any).strategy_name?.includes('triple_confirmed') || 
+              (p as any).strategy_name?.includes('consensus')
+            )
+          );
+          const cap = isDoubleConfirmed ? EXPOSURE_CAP_DOUBLE_CONFIRMED : EXPOSURE_CAP;
+          if (parlayIds.length > cap) {
+            const toVoid = parlayIds.slice(cap);
             for (const id of toVoid) exposureVoidIds.add(id);
-            console.log(`[QualityRegen] 🔒 Exposure cap: ${key} has ${parlayIds.length} appearances, voiding ${toVoid.length} lowest-prob`);
+            console.log(`[QualityRegen] 🔒 Exposure cap: player ${playerKey} in ${parlayIds.length} parlays (cap=${cap}), voiding ${toVoid.length} lowest-prob`);
           }
         }
 
