@@ -209,3 +209,25 @@ Promoted `cross_sport_4` from exploration ($50 stakes) to execution ($250 stakes
 
 ### Files Changed
 1. `supabase/functions/bot-generate-daily-parlays/index.ts` — profile tier migration
+
+# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+
+## Problem
+Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+
+## Solution
+Added `l3_avg` column + universal recency decline filter across ALL engines.
+
+### Thresholds
+- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
+- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
+- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+
+### Files Changed
+1. Migration: Added `l3_avg NUMERIC` column to `category_sweet_spots`
+2. `category-props-analyzer` — computes L3 avg, blocks picks with 25%+ recency decline (NBA + MLB)
+3. `bot-matchup-defense-scanner` — fetches `l3_avg`, filters player targets with recency gate
+4. `bot-curated-pipeline` — filters sweet spots with L3 recency check before building multi-engine map
+5. `sharp-parlay-builder` — filters category recommendations with L3 gate at load time
+6. `heat-prop-engine` — filters category recommendations with L3 gate at load time
+7. `bot-send-telegram` — adds `getRecencyWarning()` helper, shows 📉 in slate status + parlay approval
