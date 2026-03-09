@@ -34,6 +34,8 @@ const POISON_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'threes': 'under',
   'three_pointers': 'under',
   'steals': 'under',
+  'assists': 'under',
+  'player_assists': 'under',
 };
 
 // ============= STRICT PROP OVERLAP PREVENTION =============
@@ -218,7 +220,7 @@ Deno.serve(async (req) => {
     const existingPlayerNames: string[] = [];
     if (existingLotteryParlays && existingLotteryParlays.length > 0) {
       // If we already have 3+ tickets today, skip
-      if (existingLotteryParlays.length >= 10) {
+      if (existingLotteryParlays.length >= 5) {
         console.log(`[MegaParlay] Already have ${existingLotteryParlays.length} lottery tickets today, skipping`);
         return new Response(JSON.stringify({ success: true, skipped: true, reason: '3 tickets already generated today' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -234,9 +236,20 @@ Deno.serve(async (req) => {
       }
     }
 
+    // === INJURY FILTER: exclude OUT/DOUBTFUL players ===
+    const { data: injuryAlerts } = await supabase
+      .from('lineup_alerts')
+      .select('player_name, alert_type')
+      .eq('game_date', today)
+      .in('alert_type', ['OUT', 'DOUBTFUL']);
+
+    const injuredPlayers = (injuryAlerts || []).map(a => normalizeName(a.player_name));
+    console.log(`[MegaParlay] Injury filter: ${injuredPlayers.length} OUT/DOUBTFUL players excluded`);
+
     const excludeSet = new Set([
       ...excludePlayers.map(normalizeName),
       ...existingPlayerNames.map(normalizeName),
+      ...injuredPlayers,
     ]);
 
     if (excludeSet.size > 0) {
@@ -941,6 +954,11 @@ Deno.serve(async (req) => {
       const propNorm = normalizePropType(prop.prop_type);
       const sameTypeCount = existingLegs.filter(l => normalizePropType(l.prop_type) === propNorm).length;
       if (sameTypeCount >= MAX_SAME_PROP) return false;
+      // Median-line proximity gate: skip coin-flip picks
+      if (prop.market_type === 'player_prop' && prop.l10Median != null) {
+        const gap = Math.abs(prop.l10Median - prop.line);
+        if (gap < 0.5) return false;
+      }
       // Block same-game double-double picks (no two DD from same game)
       if (prop.prop_type === 'player_double_double') {
         const existingDD = existingLegs.filter(
@@ -993,7 +1011,9 @@ Deno.serve(async (req) => {
         if (p.hitRate < 70) return false;
         if (p.edgePct < 3) return false;
         if (p.defenseRank !== null && p.defenseRank < 15) return false;
-        if (p.sweetSpotSide !== p.side && p.mispricedSide !== p.side) return false;
+        // Double signal: require sweet spot alignment AND (mispriced or edge >= 5)
+        if (p.sweetSpotSide !== p.side) return false;
+        if (p.mispricedSide !== p.side && (p.edgePct == null || p.edgePct < 5)) return false;
         if (p.l10Avg !== null && p.side === 'OVER' && p.l10Avg < p.line * 1.1) return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
         return passesBasicChecks(p, legs, gc);
@@ -1038,7 +1058,8 @@ Deno.serve(async (req) => {
       while (legs.length < 4 && calcCombinedOdds(legs) < 500) {
         const filler = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
-          if (p.hitRate < 50) return false;
+          if (p.hitRate < 65) return false;
+          if (p.l10Avg == null) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
         });
