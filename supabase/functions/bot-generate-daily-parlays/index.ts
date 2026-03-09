@@ -9714,7 +9714,7 @@ Deno.serve(async (req) => {
 
     // Volume mode: relax constraints for small pools to produce more parlays
     if (isVolumeMode) {
-      TIER_CONFIG.exploration.maxPlayerUsage = 4;
+      // maxPlayerUsage stays at 1 even in volume mode — only relax team/category caps
       TIER_CONFIG.exploration.maxTeamUsage = 5;
       TIER_CONFIG.exploration.maxCategoryUsage = 10;
       TIER_CONFIG.exploration.minHitRate = 40;
