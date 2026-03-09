@@ -248,10 +248,8 @@ serve(async (req) => {
           const playerTeam = playerTeamMap.get(playerName);
           if (playerTeam !== teamAbbrev) continue;
 
-          const line = ss.recommended_line ?? ss.actual_line ?? 0;
-          const l10Avg = ss.l10_avg ?? 0;
-          const l10HitRate = ss.l10_hit_rate ?? 0;
-          const l10Min = ss.l10_min ?? 0;
+          // Injury filter: skip OUT/DOUBTFUL players entirely
+          if (excludedPlayers.has(playerName)) continue;
           const recSide = (ss.recommended_side || '').toLowerCase();
           const l3Avg = ss.l3_avg ?? null;
 
