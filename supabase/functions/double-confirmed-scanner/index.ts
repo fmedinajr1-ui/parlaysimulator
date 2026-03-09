@@ -96,7 +96,20 @@ serve(async (req) => {
 
       if (mispricedSide !== sweetSpotSide) continue;
 
-      // Both qualify: 70%+ hit rate AND 15%+ edge (already filtered in queries)
+      // L3 recency gate: block picks with sharp recent performance declines
+      const l3Avg = (ss as any).l3_avg;
+      const l10Avg = ss.l10_avg || 0;
+      if (l3Avg != null && l10Avg > 0) {
+        const ratio = l3Avg / l10Avg;
+        if (mispricedSide === 'OVER' && ratio < 0.75) {
+          console.log(`[DoubleConfirmed] L3 blocked OVER ${ml.player_name} ${ml.prop_type}: L3=${l3Avg} vs L10=${l10Avg} (ratio ${ratio.toFixed(2)})`);
+          continue;
+        }
+        if (mispricedSide === 'UNDER' && ratio > 1.25) {
+          console.log(`[DoubleConfirmed] L3 blocked UNDER ${ml.player_name} ${ml.prop_type}: L3=${l3Avg} vs L10=${l10Avg} (ratio ${ratio.toFixed(2)})`);
+          continue;
+        }
+      }
       const hitRate = ss.l10_hit_rate || 0;
       const edgePct = Math.abs(ml.edge_pct || 0);
 
