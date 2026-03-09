@@ -193,6 +193,29 @@ serve(async (req) => {
     }
     console.log(`[MatchupScanner] Loaded ${playerTeamMap.size} player→team mappings from bdl_player_cache`);
 
+    // === INJURY / LINEUP FILTER ===
+    // Fetch today's lineup alerts to exclude OUT/DOUBTFUL players
+    const { data: alertsData } = await supabase
+      .from('lineup_alerts')
+      .select('player_name, alert_type')
+      .eq('game_date', today);
+
+    const excludedPlayers = new Set<string>();
+    const gtdPlayers = new Set<string>();
+    if (alertsData) {
+      for (const alert of alertsData) {
+        const name = (alert.player_name || '').trim();
+        if (!name) continue;
+        const status = (alert.alert_type || '').toUpperCase();
+        if (status === 'OUT' || status === 'DOUBTFUL') {
+          excludedPlayers.add(name);
+        } else if (status === 'GTD' || status === 'QUESTIONABLE') {
+          gtdPlayers.add(name);
+        }
+      }
+    }
+    console.log(`[MatchupScanner] Injury filter: ${excludedPlayers.size} OUT/DOUBTFUL excluded, ${gtdPlayers.size} GTD/QUESTIONABLE flagged`);
+
     // Load active sweet spots for player-level cross-reference
     const { data: sweetSpots } = await supabase
       .from('category_sweet_spots')
