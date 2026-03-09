@@ -9699,9 +9699,9 @@ Deno.serve(async (req) => {
         // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player-prop usage from PENDING parlays ===
         if (p.outcome === 'pending') {
           for (const leg of legs) {
-            if (leg.player_name && leg.prop_type) {
-              const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
-              globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
+            if (leg.player_name) {
+              const playerKey = (leg.player_name || '').toLowerCase().trim();
+              globalSlatePlayerPropUsage.set(playerKey, (globalSlatePlayerPropUsage.get(playerKey) || 0) + 1);
             }
           }
         }
