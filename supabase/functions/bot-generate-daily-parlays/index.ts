@@ -3381,11 +3381,16 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     if (hitRatePercent < 70) return false;
   }
   
-  // === GLOBAL SLATE EXPOSURE CAP (max 3 per player+prop across all tiers, including existing pending) ===
-  if ('player_name' in pick && 'prop_type' in pick) {
-    const globalKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
-    const HARD_CAP_PLAYER_PROP = 3; // Absolute max across all attempts + current run
-    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= HARD_CAP_PLAYER_PROP) {
+  // === GLOBAL SLATE EXPOSURE CAP (max 1 per player globally, max 2 if double/triple confirmed) ===
+  if ('player_name' in pick) {
+    const playerKey = (pick.player_name || '').toLowerCase().trim();
+    // Check if this pick is double/triple confirmed (appears in multiple engines)
+    const isDoubleConfirmed = (pick as any).double_confirmed || (pick as any).triple_confirmed || 
+      ((pick as any).engine_count && (pick as any).engine_count >= 2) ||
+      (strategyName && (strategyName.includes('double_confirmed') || strategyName.includes('triple_confirmed') || strategyName.includes('consensus')));
+    const PLAYER_CAP = isDoubleConfirmed ? 2 : 1;
+    const currentUsage = globalSlatePlayerPropUsage.get(playerKey) || 0;
+    if (currentUsage >= PLAYER_CAP) {
       return false;
     }
   }
@@ -9694,15 +9699,16 @@ Deno.serve(async (req) => {
         // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player-prop usage from PENDING parlays ===
         if (p.outcome === 'pending') {
           for (const leg of legs) {
-            if (leg.player_name && leg.prop_type) {
-              const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
-              globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
+            if (leg.player_name) {
+              const playerKey = (leg.player_name || '').toLowerCase().trim();
+              globalSlatePlayerPropUsage.set(playerKey, (globalSlatePlayerPropUsage.get(playerKey) || 0) + 1);
             }
           }
         }
       }
-      const preloadedUsage = Array.from(globalSlatePlayerPropUsage.entries()).filter(([_, v]) => v >= 2);
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalSlatePlayerPropUsage.size} player-prop usage counts for ${targetDate} (${preloadedUsage.length} at 2+ usage)`);
+      const preloadedUsage = Array.from(globalSlatePlayerPropUsage.entries()).filter(([_, v]) => v >= 1);
+      const existingPendingCount = (existingParlays || []).filter(p => p.outcome === 'pending').length;
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalSlatePlayerPropUsage.size} player usage counts for ${targetDate} (${preloadedUsage.length} at 1+ usage, ${existingPendingCount} existing pending)`);
     }
 
     // Light-slate: increase usage limits for exploration tier
@@ -10012,14 +10018,22 @@ Deno.serve(async (req) => {
         };
       };
 
-      // Build one 5-leg and one 8-leg ticket if we have enough picks
+      // 5-leg and 8-leg role-stacked tickets moved to exploration only (execution capped at 3 legs)
       if (multiLegCandidates.length >= 5) {
         const fiveLeg = buildMultiLegTicket(5, 'Mid-Tier');
-        if (fiveLeg) allParlays.push(fiveLeg);
+        if (fiveLeg) {
+          fiveLeg.tier = 'exploration';
+          fiveLeg.is_simulated = true;
+          allParlays.push(fiveLeg);
+        }
       }
       if (multiLegCandidates.length >= 8) {
         const eightLeg = buildMultiLegTicket(8, 'High Roller');
-        if (eightLeg) allParlays.push(eightLeg);
+        if (eightLeg) {
+          eightLeg.tier = 'exploration';
+          eightLeg.is_simulated = true;
+          allParlays.push(eightLeg);
+        }
       }
     } catch (multiLegErr) {
       console.error(`[MultiLeg] Error building multi-leg tickets:`, multiLegErr);
@@ -10525,6 +10539,28 @@ Deno.serve(async (req) => {
     // 6. Tag all parlays with generation source for attribution tracking
     for (const p of allParlays) {
       p.selection_rationale = `${p.selection_rationale || ''} [source:${generationSource}]`.trim();
+    }
+
+    // === DAILY PARLAY CAP (25 total) ===
+    const DAILY_PARLAY_CAP = 25;
+    const { count: currentPendingCount } = await supabase
+      .from('bot_daily_parlays')
+      .select('*', { count: 'exact', head: true })
+      .eq('parlay_date', targetDate)
+      .eq('outcome', 'pending');
+    
+    const existingPendingTotal = currentPendingCount || 0;
+    const slotsRemaining = Math.max(0, DAILY_PARLAY_CAP - existingPendingTotal);
+    
+    if (slotsRemaining === 0) {
+      console.log(`[Bot v2] ⛔ Daily cap reached: ${existingPendingTotal} pending parlays already at cap of ${DAILY_PARLAY_CAP}`);
+      allParlays = [];
+    } else if (allParlays.length > slotsRemaining) {
+      // Keep highest combined_probability parlays up to the cap
+      allParlays.sort((a: any, b: any) => (b.combined_probability || 0) - (a.combined_probability || 0));
+      const trimmed = allParlays.length - slotsRemaining;
+      allParlays = allParlays.slice(0, slotsRemaining);
+      console.log(`[Bot v2] ✂️ Daily cap trim: kept ${slotsRemaining} of ${slotsRemaining + trimmed} parlays (cap=${DAILY_PARLAY_CAP}, existing=${existingPendingTotal})`);
     }
 
     // Append new parlays with fingerprint dedup — skip any parlay whose legs already exist today
