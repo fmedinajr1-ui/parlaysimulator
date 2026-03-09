@@ -3381,11 +3381,16 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     if (hitRatePercent < 70) return false;
   }
   
-  // === GLOBAL SLATE EXPOSURE CAP (max 3 per player+prop across all tiers, including existing pending) ===
-  if ('player_name' in pick && 'prop_type' in pick) {
-    const globalKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
-    const HARD_CAP_PLAYER_PROP = 3; // Absolute max across all attempts + current run
-    if ((globalSlatePlayerPropUsage.get(globalKey) || 0) >= HARD_CAP_PLAYER_PROP) {
+  // === GLOBAL SLATE EXPOSURE CAP (max 1 per player globally, max 2 if double/triple confirmed) ===
+  if ('player_name' in pick) {
+    const playerKey = (pick.player_name || '').toLowerCase().trim();
+    // Check if this pick is double/triple confirmed (appears in multiple engines)
+    const isDoubleConfirmed = (pick as any).double_confirmed || (pick as any).triple_confirmed || 
+      ((pick as any).engine_count && (pick as any).engine_count >= 2) ||
+      (strategyName && (strategyName.includes('double_confirmed') || strategyName.includes('triple_confirmed') || strategyName.includes('consensus')));
+    const PLAYER_CAP = isDoubleConfirmed ? 2 : 1;
+    const currentUsage = globalSlatePlayerPropUsage.get(playerKey) || 0;
+    if (currentUsage >= PLAYER_CAP) {
       return false;
     }
   }
