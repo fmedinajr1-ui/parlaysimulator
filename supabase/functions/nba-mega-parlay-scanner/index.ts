@@ -220,7 +220,7 @@ Deno.serve(async (req) => {
     const existingPlayerNames: string[] = [];
     if (existingLotteryParlays && existingLotteryParlays.length > 0) {
       // If we already have 3+ tickets today, skip
-      if (existingLotteryParlays.length >= 10) {
+      if (existingLotteryParlays.length >= 5) {
         console.log(`[MegaParlay] Already have ${existingLotteryParlays.length} lottery tickets today, skipping`);
         return new Response(JSON.stringify({ success: true, skipped: true, reason: '3 tickets already generated today' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
