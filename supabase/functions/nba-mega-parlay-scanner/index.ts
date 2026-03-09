@@ -34,6 +34,8 @@ const POISON_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'threes': 'under',
   'three_pointers': 'under',
   'steals': 'under',
+  'assists': 'under',
+  'player_assists': 'under',
 };
 
 // ============= STRICT PROP OVERLAP PREVENTION =============
