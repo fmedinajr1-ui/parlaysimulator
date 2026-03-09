@@ -236,9 +236,20 @@ Deno.serve(async (req) => {
       }
     }
 
+    // === INJURY FILTER: exclude OUT/DOUBTFUL players ===
+    const { data: injuryAlerts } = await supabase
+      .from('lineup_alerts')
+      .select('player_name, alert_type')
+      .eq('game_date', today)
+      .in('alert_type', ['OUT', 'DOUBTFUL']);
+
+    const injuredPlayers = (injuryAlerts || []).map(a => normalizeName(a.player_name));
+    console.log(`[MegaParlay] Injury filter: ${injuredPlayers.length} OUT/DOUBTFUL players excluded`);
+
     const excludeSet = new Set([
       ...excludePlayers.map(normalizeName),
       ...existingPlayerNames.map(normalizeName),
+      ...injuredPlayers,
     ]);
 
     if (excludeSet.size > 0) {
