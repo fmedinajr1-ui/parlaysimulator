@@ -42,7 +42,7 @@ serve(async (req) => {
     const [sweetSpotsRes, mispricedRes] = await Promise.all([
       supabase
         .from('category_sweet_spots')
-        .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, actual_line, category')
+        .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l3_avg, actual_line, category')
         .eq('analysis_date', today)
         .gte('l10_hit_rate', 0.70),
       supabase

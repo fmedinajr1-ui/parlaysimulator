@@ -4686,6 +4686,35 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Block NCAAB player props from ever entering the pick pool
   enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
 
+  // === L3 RECENCY GATE: Block picks with sharp recent performance declines ===
+  {
+    const preL3Count = enrichedSweetSpots.length;
+    let l3Blocked = 0;
+    enrichedSweetSpots = enrichedSweetSpots.filter(p => {
+      const l3Avg = (p as any).l3_avg;
+      const l10Avg = (p as any).l10_avg;
+      if (l3Avg == null || l10Avg == null || l10Avg === 0) return true; // No data, allow through
+      const ratio = l3Avg / l10Avg;
+      const side = (p.recommended_side || '').toLowerCase();
+      // OVER picks: block if L3 avg dropped 25%+ below L10 avg (player trending down)
+      if (side === 'over' && ratio < 0.75) {
+        console.log(`[L3Gate] Blocked OVER ${p.player_name} ${p.prop_type}: L3=${l3Avg.toFixed(1)} vs L10=${l10Avg.toFixed(1)} (ratio ${ratio.toFixed(2)})`);
+        l3Blocked++;
+        return false;
+      }
+      // UNDER picks: block if L3 avg surged 25%+ above L10 avg (player trending up)
+      if (side === 'under' && ratio > 1.25) {
+        console.log(`[L3Gate] Blocked UNDER ${p.player_name} ${p.prop_type}: L3=${l3Avg.toFixed(1)} vs L10=${l10Avg.toFixed(1)} (ratio ${ratio.toFixed(2)})`);
+        l3Blocked++;
+        return false;
+      }
+      return true;
+    });
+    if (l3Blocked > 0) {
+      console.log(`[L3Gate] Blocked ${l3Blocked}/${preL3Count} picks due to L3 recency decline`);
+    }
+  }
+
   // Block catastrophic prop types (static + dynamic from bot_prop_type_performance)
     {
       const prePropTypeCount = enrichedSweetSpots.length;
