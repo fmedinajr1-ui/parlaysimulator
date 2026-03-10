@@ -7628,10 +7628,10 @@ async function generateTierParlays(
       }
       
       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
-      if (tier === 'execution' && 'player_name' in pick) {
+      // BYPASS for L3 strategy — L3 recency is the primary signal, not matchup defense
+      if (tier === 'execution' && 'player_name' in pick && !isSweetSpotL3Profile) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
         if (!matchupResult.pass) {
-          if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] GodMode blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
           continue;
         }
         // Apply sliding penalty to composite for borderline matchups
