@@ -688,6 +688,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
       { legs: 5, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
       { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
+      // ============= L3 + MATCHUP COMBO: L3 recency + defensive matchup rankings =============
+      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
+      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
       // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
