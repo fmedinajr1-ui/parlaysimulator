@@ -258,12 +258,8 @@ serve(async (req) => {
           const recSide = (ss.recommended_side || '').toLowerCase();
           const l3Avg = ss.l3_avg ?? null;
 
-          // v11.0: Universal recency decline filter — block NULL L3 picks
-          if (l3Avg === null) {
-            console.log(`[L3Gate] Skipped ${playerName} ${pt}: no L3 data`);
-            continue;
-          }
-          if (l10Avg > 0) {
+          // v11.1: Soft L3 gate — L3 enhances but doesn't block
+          if (l3Avg !== null && l10Avg > 0) {
             const declineRatio = l3Avg / l10Avg;
             if (side === 'over' && declineRatio < 0.75) continue; // L3 25%+ below L10 → skip OVER
             if (side === 'under' && declineRatio > 1.25) continue; // L3 25%+ above L10 → skip UNDER
