@@ -7688,7 +7688,7 @@ async function generateTierParlays(
       // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
       // EXEMPT: floor_lock and ceiling_shot strategies have their own dedicated gates
       const isFloorCeilingStrategy = isFloorLockProfile || isCeilingShotProfile;
-      if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy) {
+      if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
         if (l10HrPct < 80) {
