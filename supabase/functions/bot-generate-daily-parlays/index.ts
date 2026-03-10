@@ -688,6 +688,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
       { legs: 5, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
       { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
+      // ============= L3 + MATCHUP COMBO: L3 recency + defensive matchup rankings =============
+      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
+      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
       // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
@@ -4694,6 +4698,83 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Block NCAAB player props from ever entering the pick pool
   enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
 
+  // === INLINE L3 BACKFILL: Compute l3_avg from nba_player_game_logs for NBA picks missing it ===
+  {
+    const missingL3 = enrichedSweetSpots.filter(p => (p as any).l3_avg == null && (p.sport || 'basketball_nba') === 'basketball_nba');
+    if (missingL3.length > 0) {
+      const uniqueNames = [...new Set(missingL3.map(p => p.player_name))];
+      console.log(`[L3Backfill] ${missingL3.length} NBA picks missing l3_avg, fetching game logs for ${uniqueNames.length} players`);
+      
+      // Batch fetch game logs for these players (last 3 games each)
+      const l3Map = new Map<string, Map<string, number>>();
+      const batchSize = 50;
+      for (let i = 0; i < uniqueNames.length; i += batchSize) {
+        const batch = uniqueNames.slice(i, i + batchSize);
+        const { data: logs } = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, game_date, pts, reb, ast, stl, blk, fg3m, tov, pra')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false })
+          .limit(batch.length * 3);
+        
+        if (logs) {
+          for (const log of logs) {
+            const name = log.player_name;
+            if (!l3Map.has(name)) l3Map.set(name, new Map());
+            const playerLogs = l3Map.get(name)!;
+            // Only keep first 3 per player
+            if (playerLogs.size >= 3) continue;
+            // Store each stat type
+            const statMap: Record<string, number> = {
+              points: log.pts || 0,
+              rebounds: log.reb || 0,
+              assists: log.ast || 0,
+              steals: log.stl || 0,
+              blocks: log.blk || 0,
+              threes: log.fg3m || 0,
+              turnovers: log.tov || 0,
+              pts_rebs_asts: log.pra || 0,
+            };
+            const dateKey = log.game_date;
+            if (!playerLogs.has(dateKey)) {
+              playerLogs.set(dateKey, 0); // placeholder
+            }
+            // Store full stat row keyed by date
+            if (!(l3Map as any)._stats) (l3Map as any)._stats = new Map();
+            const statsStore = (l3Map as any)._stats as Map<string, any[]>;
+            if (!statsStore.has(name)) statsStore.set(name, []);
+            const existing = statsStore.get(name)!;
+            if (existing.length < 3) existing.push(statMap);
+          }
+        }
+      }
+      
+      // Apply L3 averages to picks
+      let backfilled = 0;
+      const statsStore = (l3Map as any)._stats as Map<string, any[]> | undefined;
+      for (const pick of missingL3) {
+        const playerStats = statsStore?.get(pick.player_name);
+        if (!playerStats || playerStats.length < 3) continue;
+        
+        const propType = (pick.prop_type || '').toLowerCase();
+        let statKey = 'points';
+        if (propType.includes('rebound')) statKey = 'rebounds';
+        else if (propType.includes('assist')) statKey = 'assists';
+        else if (propType.includes('steal')) statKey = 'steals';
+        else if (propType.includes('block')) statKey = 'blocks';
+        else if (propType.includes('three') || propType.includes('3p')) statKey = 'threes';
+        else if (propType.includes('turnover')) statKey = 'turnovers';
+        else if (propType.includes('pts') && propType.includes('reb') && propType.includes('ast')) statKey = 'pts_rebs_asts';
+        
+        const values = playerStats.map((s: any) => s[statKey] || 0);
+        const l3Avg = Math.round((values.reduce((a: number, b: number) => a + b, 0) / values.length) * 100) / 100;
+        (pick as any).l3_avg = l3Avg;
+        backfilled++;
+      }
+      console.log(`[L3Backfill] Backfilled l3_avg for ${backfilled}/${missingL3.length} NBA picks`);
+    }
+  }
+
   // === L3 RECENCY GATE: Block picks with sharp recent performance declines ===
   {
     const preL3Count = enrichedSweetSpots.length;
@@ -6598,7 +6679,7 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
     
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
@@ -6658,7 +6739,9 @@ async function generateTierParlays(
     const isOptimalComboProfile = profile.strategy === 'optimal_combo';
     // SWEET SPOT L3: 5-leg parlays scored by L3 recency
     const isSweetSpotL3Profile = profile.strategy === 'sweet_spot_l3';
-    
+    // L3 + MATCHUP COMBO: hybrid L3 recency + defensive matchup rankings
+    const isL3MatchupComboProfile = profile.strategy === 'l3_matchup_combo';
+
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
       const optimalCombos = buildOptimalComboParlays(pool, profile, sportFilter, BLOCKED_SPORTS, 5);
@@ -6822,6 +6905,61 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/sweet_spot_l3: ${candidatePicks.length} candidates sorted by L3 score (top: ${candidatePicks[0]?.player_name} L3=${((candidatePicks[0] as any)?.l3_avg || 0).toFixed(1)})`);
+    } else if (isL3MatchupComboProfile) {
+      // === L3 + MATCHUP COMBO: hybrid L3 recency + defensive matchup rankings ===
+      // Uses _gameContext.opponentAbbrev + defenseDetailMap for prop-specific defense rank
+      const getPropDefRank = (p: any): number => {
+        const ctx = p._gameContext as any;
+        const oppAbbrev = ctx?.opponentAbbrev;
+        if (!oppAbbrev) return 0;
+        const defDetail = defenseDetailMap.get(oppAbbrev);
+        if (!defDetail) return 0;
+        const propType = (p.prop_type || '').toLowerCase();
+        if (propType.includes('rebound')) return defDetail.opp_rebounds_rank || defDetail.overall_rank || 0;
+        if (propType.includes('assist')) return defDetail.opp_assists_rank || defDetail.overall_rank || 0;
+        if (propType.includes('three') || propType.includes('3p')) return defDetail.opp_threes_rank || defDetail.overall_rank || 0;
+        if (propType.includes('point')) return defDetail.opp_points_rank || defDetail.overall_rank || 0;
+        return defDetail.overall_rank || 0;
+      };
+
+      const l3MatchupFiltered = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if ((p.sport || 'basketball_nba') !== 'basketball_nba') return false;
+        const l3 = (p as any).l3_avg;
+        if (l3 == null) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 55)) return false;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over' && l3 <= p.line) return false;
+        if (side === 'under' && l3 >= p.line) return false;
+        const defRank = getPropDefRank(p);
+        if (defRank < 18) return false;
+        return true;
+      });
+
+      // Score by combined L3 margin + defensive rank
+      candidatePicks = l3MatchupFiltered.map(p => {
+        const l3 = (p as any).l3_avg;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        const l3Margin = side === 'over' ? l3 - p.line : p.line - l3;
+        const defRank = getPropDefRank(p);
+        // Normalize: L3 margin (0-10 range) + defense rank (18-30 → 0-12 range)
+        const l3Score = Math.min(l3Margin, 10); // cap at 10
+        const defScore = defRank - 18; // 0-12 range
+        const combinedScore = (l3Score * 0.5) + (defScore * 0.5);
+        (p as any)._l3MatchupScore = combinedScore;
+        (p as any)._l3Score = l3Margin;
+        (p as any)._defRank = defRank;
+        return p;
+      }).sort((a, b) => ((b as any)._l3MatchupScore || 0) - ((a as any)._l3MatchupScore || 0));
+
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/l3_matchup_combo: only ${candidatePicks.length} L3+matchup picks (need ${profile.legs}). Top: ${candidatePicks[0]?.player_name || 'none'}`);
+        continue;
+      }
+      const top = candidatePicks[0];
+      console.log(`[Bot] ${tier}/l3_matchup_combo: ${candidatePicks.length} candidates (top: ${top?.player_name} L3=${((top as any)?.l3_avg || 0).toFixed(1)} vs line ${top?.line} DEF#${(top as any)?._defRank} score=${((top as any)?._l3MatchupScore || 0).toFixed(2)})`);
     } else if (isSweetSpotPlusProfile) {
       // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
       const sweetCandidates = pool.sweetSpots.filter(p => {
@@ -7951,7 +8089,7 @@ async function generateTierParlays(
       
       // === GAP 2: Per-leg minimum score gate by parlay size ===
       // Bypass for L3 strategy (uses L3 score, not composite) and floor_lock/optimal_combo (pre-assembled)
-      if (!isSweetSpotL3Profile && !isFloorLockProfile && !isOptimalComboProfile) {
+      if (!isSweetSpotL3Profile && !isL3MatchupComboProfile && !isFloorLockProfile && !isOptimalComboProfile) {
         const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
         const minScore = minScoreByParlaySize(effectiveMaxLegs);
         if (legCompositeScore < minScore) {
