@@ -294,16 +294,19 @@ serve(async (req) => {
         const l10Logs = logs.slice(0, Math.min(10, logs.length));
         const l20Logs = logs.slice(0, Math.min(20, logs.length));
         const l5Logs = logs.slice(0, Math.min(5, logs.length));
+        const l3Logs = logs.slice(0, Math.min(3, logs.length));
 
         const l10Values = l10Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
         const l20Values = l20Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
         const l5Values = l5Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
+        const l3Values = l3Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
 
         if (l10Values.length < 3) continue;
 
         const avgL10 = calcAvg(l10Values);
         const avgL20 = calcAvg(l20Values);
         const avgL5 = calcAvg(l5Values);
+        const avgL3 = l3Values.length >= 3 ? calcAvg(l3Values) : null;
         const line = Number(prop.current_line);
         if (line === 0) continue;
 
