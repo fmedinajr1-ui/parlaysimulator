@@ -973,10 +973,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'env_cluster_grind' },
-      // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency =============
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 55, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'l3_score' },
+      // ============= SWEET SPOT L3: moved to EXPLORATION tier (NHL picks blocked by execution gates) =============
       // ============= SWEET SPOT PLUS: moved to EXPLORATION tier (4-leggers underperform in execution) =============
       // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR, 13 profiles) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
