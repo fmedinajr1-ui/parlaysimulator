@@ -6943,7 +6943,7 @@ async function generateTierParlays(
         const l3 = (p as any).l3_avg;
         const side = (p.recommended_side || 'over').toLowerCase();
         const l3Margin = side === 'over' ? l3 - p.line : p.line - l3;
-        const defRank = (p as any).matchupDefRank || 18;
+        const defRank = getPropDefRank(p);
         // Normalize: L3 margin (0-10 range) + defense rank (18-30 → 0-12 range)
         const l3Score = Math.min(l3Margin, 10); // cap at 10
         const defScore = defRank - 18; // 0-12 range
