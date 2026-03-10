@@ -8000,7 +8000,7 @@ async function generateTierParlays(
       
       // === GAP 2: Per-leg minimum score gate by parlay size ===
       // Bypass for L3 strategy (uses L3 score, not composite) and floor_lock/optimal_combo (pre-assembled)
-      if (!isSweetSpotL3Profile && !isFloorLockProfile && !isOptimalComboProfile) {
+      if (!isSweetSpotL3Profile && !isL3MatchupComboProfile && !isFloorLockProfile && !isOptimalComboProfile) {
         const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
         const minScore = minScoreByParlaySize(effectiveMaxLegs);
         if (legCompositeScore < minScore) {
