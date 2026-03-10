@@ -7614,7 +7614,10 @@ async function generateTierParlays(
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
-      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile, profile.strategy)) continue;
+      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile || isSweetSpotL3Profile, profile.strategy)) {
+        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] GlobalGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        continue;
+      }
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
       const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
       // Relax team usage cap for matchup_team_stack profiles (allow same-team stacking)
