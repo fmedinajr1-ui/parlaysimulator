@@ -148,11 +148,15 @@ Deno.serve(async (req) => {
 
     // Sweet spots
     for (const ss of (sweetSpots || [])) {
-      // v11.0: Universal recency decline filter
+      // v11.0: Universal recency decline filter — block NULL L3 picks
       const l3Avg = ss.l3_avg ?? null;
       const l10Avg = ss.l10_avg || 0;
       const recSide = (ss.recommended_side || 'over').toLowerCase();
-      if (l3Avg !== null && l10Avg > 0) {
+      if (l3Avg === null) {
+        console.log(`[L3Gate] Skipped ${ss.player_name} ${ss.prop_type}: no L3 data`);
+        continue;
+      }
+      if (l10Avg > 0) {
         const declineRatio = l3Avg / l10Avg;
         if (recSide === 'over' && declineRatio < 0.75) continue;
         if (recSide === 'under' && declineRatio > 1.25) continue;
