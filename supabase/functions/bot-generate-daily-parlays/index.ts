@@ -6602,7 +6602,7 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
     
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
