@@ -4700,7 +4700,12 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     enrichedSweetSpots = enrichedSweetSpots.filter(p => {
       const l3Avg = (p as any).l3_avg;
       const l10Avg = (p as any).l10_avg;
-      if (l3Avg == null || l10Avg == null || l10Avg === 0) return true; // No data, allow through
+      if (l3Avg == null) {
+        console.log(`[L3Gate] Blocked ${p.player_name} ${p.prop_type}: no L3 data available`);
+        l3Blocked++;
+        return false;
+      }
+      if (l10Avg == null || l10Avg === 0) return true; // No L10 data, allow through
       const ratio = l3Avg / l10Avg;
       const side = (p.recommended_side || '').toLowerCase();
       // OVER picks: block if L3 avg dropped 25%+ below L10 avg (player trending down)

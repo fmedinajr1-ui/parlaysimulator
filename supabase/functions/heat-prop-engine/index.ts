@@ -93,11 +93,15 @@ async function loadCategoryRecommendations(supabase: any): Promise<void> {
 
   categoryRecommendations.clear();
   for (const c of data || []) {
-    // v11.0: Universal recency decline filter
+    // v11.0: Universal recency decline filter — block NULL L3 picks
     const l3Avg = c.l3_avg ?? null;
     const l10Avg = c.l10_avg || 0;
     const side = c.recommended_side?.toLowerCase() || "over";
-    if (l3Avg !== null && l10Avg > 0) {
+    if (l3Avg === null) {
+      console.log(`[L3Gate] Skipped ${c.player_name} ${c.prop_type}: no L3 data`);
+      continue;
+    }
+    if (l10Avg > 0) {
       const declineRatio = l3Avg / l10Avg;
       if (side === "over" && declineRatio < 0.75) continue;
       if (side === "under" && declineRatio > 1.25) continue;
