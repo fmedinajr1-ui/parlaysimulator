@@ -6744,6 +6744,8 @@ async function generateTierParlays(
     const isSweetSpotL3Profile = profile.strategy === 'sweet_spot_l3';
     // L3 + MATCHUP COMBO: hybrid L3 recency + defensive matchup rankings
     const isL3MatchupComboProfile = profile.strategy === 'l3_matchup_combo';
+    // L3 SWEET + MISPRICED HYBRID: 2 sweet spot legs + 3 L3-confirmed mispriced legs
+    const isL3SweetMispricedHybridProfile = profile.strategy === 'l3_sweet_mispriced_hybrid';
 
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
