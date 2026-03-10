@@ -6662,7 +6662,9 @@ async function generateTierParlays(
     const isOptimalComboProfile = profile.strategy === 'optimal_combo';
     // SWEET SPOT L3: 5-leg parlays scored by L3 recency
     const isSweetSpotL3Profile = profile.strategy === 'sweet_spot_l3';
-    
+    // L3 + MATCHUP COMBO: hybrid L3 recency + defensive matchup rankings
+    const isL3MatchupComboProfile = profile.strategy === 'l3_matchup_combo';
+
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
       const optimalCombos = buildOptimalComboParlays(pool, profile, sportFilter, BLOCKED_SPORTS, 5);
