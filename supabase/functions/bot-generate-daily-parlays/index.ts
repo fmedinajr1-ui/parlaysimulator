@@ -7622,12 +7622,18 @@ async function generateTierParlays(
       const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
       // Relax team usage cap for matchup_team_stack profiles (allow same-team stacking)
       const effectiveConfig = isMatchupTeamStackProfile ? { ...config, maxTeamUsage: 6 } : config;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) {
+        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] ParlayGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        continue;
+      }
       
       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
       if (tier === 'execution' && 'player_name' in pick) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
-        if (!matchupResult.pass) continue;
+        if (!matchupResult.pass) {
+          if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] GodMode blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+          continue;
+        }
         // Apply sliding penalty to composite for borderline matchups
         if (matchupResult.penalty !== 0) {
           (pick as any).compositeScore = Math.max(0, (pick.compositeScore || 0) + matchupResult.penalty);
