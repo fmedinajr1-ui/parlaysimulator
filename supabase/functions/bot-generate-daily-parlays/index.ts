@@ -7909,26 +7909,29 @@ async function generateTierParlays(
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
+        // BYPASS for L3 strategy — uses L3 recency score, not projection buffer
         const projBuffer = legData.projection_buffer || 0;
         const projValue = legData.projected_value || 0;
-        const isConvictionPick = playerPick.isTripleConfirmed || playerPick.isDoubleConfirmed || (playerPick.engineCount >= 3);
-        const minBuf = getMinBuffer(legData.prop_type, selectedLine.line, isConvictionPick);
-        if (projValue > 0 && Math.abs(projBuffer) < minBuf) {
-          const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
-          if (!loggedNegEdgeKeys.has(bufKey)) {
-            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < ${minBuf} min${isConvictionPick ? ' [conviction]' : ''})`);
-            loggedNegEdgeKeys.add(bufKey);
+        if (!isSweetSpotL3Profile) {
+          const isConvictionPick = playerPick.isTripleConfirmed || playerPick.isDoubleConfirmed || (playerPick.engineCount >= 3);
+          const minBuf = getMinBuffer(legData.prop_type, selectedLine.line, isConvictionPick);
+          if (projValue > 0 && Math.abs(projBuffer) < minBuf) {
+            const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
+            if (!loggedNegEdgeKeys.has(bufKey)) {
+              console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < ${minBuf} min${isConvictionPick ? ' [conviction]' : ''})`);
+              loggedNegEdgeKeys.add(bufKey);
+            }
+            continue;
           }
-          continue;
-        }
-        // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
-        if (projValue > 0 && projBuffer < 0) {
-          const negKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
-          if (!loggedNegEdgeKeys.has(negKey)) {
-            console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
-            loggedNegEdgeKeys.add(negKey);
+          // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
+          if (projValue > 0 && projBuffer < 0) {
+            const negKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
+            if (!loggedNegEdgeKeys.has(negKey)) {
+              console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
+              loggedNegEdgeKeys.add(negKey);
+            }
+            continue;
           }
-          continue;
         }
         // EDGE_PCT SAFETY NET: Block any pick with negative or insufficient edge_pct from mispriced_lines
         if (playerPick.edge_pct !== undefined && playerPick.edge_pct < 3) {
