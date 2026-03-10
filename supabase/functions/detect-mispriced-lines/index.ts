@@ -294,16 +294,19 @@ serve(async (req) => {
         const l10Logs = logs.slice(0, Math.min(10, logs.length));
         const l20Logs = logs.slice(0, Math.min(20, logs.length));
         const l5Logs = logs.slice(0, Math.min(5, logs.length));
+        const l3Logs = logs.slice(0, Math.min(3, logs.length));
 
         const l10Values = l10Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
         const l20Values = l20Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
         const l5Values = l5Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
+        const l3Values = l3Logs.map(l => getNbaStatValue(l, statKey)).filter((v): v is number => v !== null);
 
         if (l10Values.length < 3) continue;
 
         const avgL10 = calcAvg(l10Values);
         const avgL20 = calcAvg(l20Values);
         const avgL5 = calcAvg(l5Values);
+        const avgL3 = l3Values.length >= 3 ? calcAvg(l3Values) : null;
         const line = Number(prop.current_line);
         if (line === 0) continue;
 
@@ -431,9 +434,24 @@ serve(async (req) => {
             teamTotalAlignment = 'neutral';
           }
 
-          if (teamTotalAlignment !== 'neutral') {
+        if (teamTotalAlignment !== 'neutral') {
             console.log(`[Mispriced] ${prop.player_name} ${signal} ${prop.prop_type}: team total=${totalEntry.side} (${totalEntry.compositeScore}) → ${teamTotalAlignment}, edge ${Math.round(edgePct)}→${Math.round(alignedEdgePct)}`);
           }
+        }
+
+        // === L3 RECENCY GATE ===
+        let l3EdgePct: number | null = null;
+        let l3Confirms: boolean | null = null;
+        if (avgL3 !== null) {
+          const adjustedAvgL3 = avgL3 * defMultiplier;
+          l3EdgePct = Math.max(-75, Math.min(75, ((adjustedAvgL3 - line) / line) * 100));
+          l3Confirms = (signal === 'OVER' && l3EdgePct > 0) || (signal === 'UNDER' && l3EdgePct < 0);
+          if (l3Confirms) {
+            alignedEdgePct = alignedEdgePct * 0.6 + l3EdgePct * 0.4;
+          } else {
+            alignedEdgePct *= 0.5;
+          }
+          console.log(`[Mispriced] ${prop.player_name} L3: avg=${avgL3.toFixed(1)} l3Edge=${l3EdgePct.toFixed(1)}% confirms=${l3Confirms} → finalEdge=${alignedEdgePct.toFixed(1)}%`);
         }
 
         const resultEntry = {
@@ -446,6 +464,9 @@ serve(async (req) => {
           signal,
           shooting_context: {
             ...shootingContext,
+            l3_avg: avgL3 !== null ? Math.round(avgL3 * 10) / 10 : undefined,
+            l3_edge_pct: l3EdgePct !== null ? Math.round(l3EdgePct * 10) / 10 : undefined,
+            l3_confirms: l3Confirms,
             l5_avg: Math.round(avgL5 * 10) / 10,
             l10_avg: Math.round(avgL10 * 10) / 10,
             l20_avg: Math.round(avgL20 * 10) / 10,
@@ -519,15 +540,18 @@ serve(async (req) => {
         if (!allLogs || allLogs.length < 10) continue; // need decent sample for baseball
 
         const l20Logs = allLogs.slice(0, Math.min(20, allLogs.length));
+        const l3Logs = allLogs.slice(0, Math.min(3, allLogs.length));
         const seasonLogs = allLogs; // full 2024 season
 
         const seasonValues = seasonLogs.map(l => getMlbStatValue(l, statKey)).filter((v): v is number => v !== null);
         const l20Values = l20Logs.map(l => getMlbStatValue(l, statKey)).filter((v): v is number => v !== null);
+        const l3Values = l3Logs.map(l => getMlbStatValue(l, statKey)).filter((v): v is number => v !== null);
 
         if (seasonValues.length < 10) continue;
 
         const avgSeason = calcAvg(seasonValues);
         const avgL20 = calcAvg(l20Values);
+        const avgL3 = l3Values.length >= 3 ? calcAvg(l3Values) : null;
         const line = Number(prop.current_line);
         if (line === 0) continue;
 
@@ -542,6 +566,19 @@ serve(async (req) => {
         const baseballContext = calcBaseballContext(seasonLogs);
         const confidenceTier = getConfidenceTier(edgePct, seasonValues.length);
 
+        // === MLB L3 RECENCY GATE ===
+        let l3EdgePct: number | null = null;
+        let l3Confirms: boolean | null = null;
+        if (avgL3 !== null) {
+          l3EdgePct = Math.max(-75, Math.min(75, ((avgL3 - line) / line) * 100));
+          l3Confirms = (signal === 'OVER' && l3EdgePct > 0) || (signal === 'UNDER' && l3EdgePct < 0);
+          if (l3Confirms) {
+            edgePct = edgePct * 0.6 + l3EdgePct * 0.4;
+          } else {
+            edgePct *= 0.5;
+          }
+        }
+
         const mlbEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -552,6 +589,9 @@ serve(async (req) => {
           signal,
           shooting_context: {
             ...baseballContext,
+            l3_avg: avgL3 !== null ? Math.round(avgL3 * 10) / 10 : undefined,
+            l3_edge_pct: l3EdgePct !== null ? Math.round(l3EdgePct * 10) / 10 : undefined,
+            l3_confirms: l3Confirms,
             l20_avg: Math.round(avgL20 * 10) / 10,
             season_avg: Math.round(avgSeason * 10) / 10,
             trend_pct: Math.round(trendEdge * 10) / 10,
@@ -801,15 +841,18 @@ serve(async (req) => {
 
         const l10Logs = logs.slice(0, Math.min(10, logs.length));
         const l5Logs = logs.slice(0, Math.min(5, logs.length));
+        const l3Logs = logs.slice(0, Math.min(3, logs.length));
 
         const l10Values = l10Logs.map(l => Number(l[mapping.col] ?? 0));
         const l5Values = l5Logs.map(l => Number(l[mapping.col] ?? 0));
+        const l3Values = l3Logs.map(l => Number(l[mapping.col] ?? 0));
         const allValues = logs.map(l => Number(l[mapping.col] ?? 0));
 
         if (l10Values.length < 3) continue;
 
         const avgL10 = calcAvg(l10Values);
         const avgL5 = calcAvg(l5Values);
+        const avgL3 = l3Values.length >= 3 ? calcAvg(l3Values) : null;
         const avgAll = calcAvg(allValues);
         const line = Number(prop.current_line);
         if (line === 0) continue;
@@ -851,8 +894,22 @@ serve(async (req) => {
         const signal = edgePct > 0 ? 'OVER' : 'UNDER';
         const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
 
+        // === NHL L3 RECENCY GATE ===
+        let l3EdgePct: number | null = null;
+        let l3Confirms: boolean | null = null;
+        if (avgL3 !== null) {
+          const adjustedAvgL3 = avgL3 * defMultiplier;
+          l3EdgePct = Math.max(-75, Math.min(75, ((adjustedAvgL3 - line) / line) * 100));
+          l3Confirms = (signal === 'OVER' && l3EdgePct > 0) || (signal === 'UNDER' && l3EdgePct < 0);
+          if (l3Confirms) {
+            edgePct = edgePct * 0.6 + l3EdgePct * 0.4;
+          } else {
+            edgePct *= 0.5;
+          }
+        }
+
         if (oppDefRank !== null) {
-          console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier})`);
+          console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier}) l3=${l3Confirms}`);
         }
 
         const nhlEntry = {
@@ -864,6 +921,9 @@ serve(async (req) => {
           edge_pct: Math.round(edgePct * 100) / 100,
           signal,
           shooting_context: {
+            l3_avg: avgL3 !== null ? Math.round(avgL3 * 10) / 10 : undefined,
+            l3_edge_pct: l3EdgePct !== null ? Math.round(l3EdgePct * 10) / 10 : undefined,
+            l3_confirms: l3Confirms,
             l5_avg: Math.round(avgL5 * 10) / 10,
             l10_avg: Math.round(avgL10 * 10) / 10,
             season_avg: Math.round(avgAll * 10) / 10,
