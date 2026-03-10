@@ -841,15 +841,18 @@ serve(async (req) => {
 
         const l10Logs = logs.slice(0, Math.min(10, logs.length));
         const l5Logs = logs.slice(0, Math.min(5, logs.length));
+        const l3Logs = logs.slice(0, Math.min(3, logs.length));
 
         const l10Values = l10Logs.map(l => Number(l[mapping.col] ?? 0));
         const l5Values = l5Logs.map(l => Number(l[mapping.col] ?? 0));
+        const l3Values = l3Logs.map(l => Number(l[mapping.col] ?? 0));
         const allValues = logs.map(l => Number(l[mapping.col] ?? 0));
 
         if (l10Values.length < 3) continue;
 
         const avgL10 = calcAvg(l10Values);
         const avgL5 = calcAvg(l5Values);
+        const avgL3 = l3Values.length >= 3 ? calcAvg(l3Values) : null;
         const avgAll = calcAvg(allValues);
         const line = Number(prop.current_line);
         if (line === 0) continue;
