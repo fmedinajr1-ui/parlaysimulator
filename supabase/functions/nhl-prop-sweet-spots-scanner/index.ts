@@ -226,6 +226,10 @@ Deno.serve(async (req) => {
       const values = logs.map(l => Number(l[statCol] ?? 0));
       const stats = calcStats(values);
 
+      // Compute L3 average (last 3 games — logs are already sorted by game_date DESC)
+      const l3Values = values.slice(0, 3);
+      const l3Avg = l3Values.length >= 3 ? Math.round((l3Values.reduce((a, b) => a + b, 0) / l3Values.length) * 100) / 100 : null;
+
       // Hit rates
       const overHits = values.filter(v => v > line).length;
       const underHits = values.filter(v => v < line).length;
@@ -261,6 +265,7 @@ Deno.serve(async (req) => {
         l10_max: stats.max,
         l10_std_dev: Math.round(stats.stdDev * 100) / 100,
         l10_hit_rate: Math.round(bestHitRate * 100) / 100,
+        l3_avg: l3Avg,
         confidence_score: Math.round(bestHitRate * 100),
         analysis_date: today,
         is_active: true,
@@ -271,7 +276,7 @@ Deno.serve(async (req) => {
         actual_line: line,
         season_avg: Math.round(stats.avg * 100) / 100,
         quality_tier: bestHitRate >= 0.80 ? 'elite' : bestHitRate >= 0.70 ? 'strong' : bestHitRate >= 0.60 ? 'solid' : 'marginal',
-        engine_version: 'nhl-scanner-v1',
+        engine_version: 'nhl-scanner-v2',
         projection_source: 'l10_game_logs',
       };
 

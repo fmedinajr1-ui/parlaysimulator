@@ -684,6 +684,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
       { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency (moved from execution) =============
+      { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
+      { legs: 5, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
+      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
       // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
@@ -973,10 +977,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'env_cluster_shootout' },
       { legs: 3, strategy: 'sweet_spot_core', sports: ['all'], minHitRate: 70, sortBy: 'env_cluster_grind' },
-      // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency =============
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 55, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'l3_score' },
+      // ============= SWEET SPOT L3: moved to EXPLORATION tier (NHL picks blocked by execution gates) =============
       // ============= SWEET SPOT PLUS: moved to EXPLORATION tier (4-leggers underperform in execution) =============
       // ============= PRIORITY: HIGH-CONVICTION STRATEGIES (BOOSTED — 54.5% WR, 13 profiles) =============
       { legs: 3, strategy: 'triple_confirmed_conviction', sports: ['all'], minHitRate: 70, sortBy: 'composite' },
@@ -4315,7 +4316,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .eq('analysis_date', targetDate)
     .gte('confidence_score', 0.45)
     .order('confidence_score', { ascending: false })
-    .limit(200);
+    .limit(500);
 
   // === STEP 1: BUILD SWEET SPOT LOOKUP MAP FOR CROSS-REFERENCING ===
   const PROP_TYPE_NORMALIZE: Record<string, string> = {
@@ -7614,17 +7615,26 @@ async function generateTierParlays(
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
-      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile, profile.strategy)) continue;
+      if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile || isSweetSpotL3Profile, profile.strategy)) {
+        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] GlobalGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        continue;
+      }
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
       const effectiveVolumeMode = volumeMode || isSweetSpotCoreProfile || isSweetSpotPlusProfile;
       // Relax team usage cap for matchup_team_stack profiles (allow same-team stacking)
       const effectiveConfig = isMatchupTeamStackProfile ? { ...config, maxTeamUsage: 6 } : config;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) continue;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) {
+        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] ParlayGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        continue;
+      }
       
       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
-      if (tier === 'execution' && 'player_name' in pick) {
+      // BYPASS for L3 strategy — L3 recency is the primary signal, not matchup defense
+      if (tier === 'execution' && 'player_name' in pick && !isSweetSpotL3Profile) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
-        if (!matchupResult.pass) continue;
+        if (!matchupResult.pass) {
+          continue;
+        }
         // Apply sliding penalty to composite for borderline matchups
         if (matchupResult.penalty !== 0) {
           (pick as any).compositeScore = Math.max(0, (pick.compositeScore || 0) + matchupResult.penalty);
@@ -7688,7 +7698,7 @@ async function generateTierParlays(
       // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
       // EXEMPT: floor_lock and ceiling_shot strategies have their own dedicated gates
       const isFloorCeilingStrategy = isFloorLockProfile || isCeilingShotProfile;
-      if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy) {
+      if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
         if (l10HrPct < 80) {
@@ -7900,26 +7910,29 @@ async function generateTierParlays(
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
+        // BYPASS for L3 strategy — uses L3 recency score, not projection buffer
         const projBuffer = legData.projection_buffer || 0;
         const projValue = legData.projected_value || 0;
-        const isConvictionPick = playerPick.isTripleConfirmed || playerPick.isDoubleConfirmed || (playerPick.engineCount >= 3);
-        const minBuf = getMinBuffer(legData.prop_type, selectedLine.line, isConvictionPick);
-        if (projValue > 0 && Math.abs(projBuffer) < minBuf) {
-          const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
-          if (!loggedNegEdgeKeys.has(bufKey)) {
-            console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < ${minBuf} min${isConvictionPick ? ' [conviction]' : ''})`);
-            loggedNegEdgeKeys.add(bufKey);
+        if (!isSweetSpotL3Profile) {
+          const isConvictionPick = playerPick.isTripleConfirmed || playerPick.isDoubleConfirmed || (playerPick.engineCount >= 3);
+          const minBuf = getMinBuffer(legData.prop_type, selectedLine.line, isConvictionPick);
+          if (projValue > 0 && Math.abs(projBuffer) < minBuf) {
+            const bufKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
+            if (!loggedNegEdgeKeys.has(bufKey)) {
+              console.log(`[BufferGate] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(2)} < ${minBuf} min${isConvictionPick ? ' [conviction]' : ''})`);
+              loggedNegEdgeKeys.add(bufKey);
+            }
+            continue;
           }
-          continue;
-        }
-        // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
-        if (projValue > 0 && projBuffer < 0) {
-          const negKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
-          if (!loggedNegEdgeKeys.has(negKey)) {
-            console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
-            loggedNegEdgeKeys.add(negKey);
+          // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
+          if (projValue > 0 && projBuffer < 0) {
+            const negKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
+            if (!loggedNegEdgeKeys.has(negKey)) {
+              console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
+              loggedNegEdgeKeys.add(negKey);
+            }
+            continue;
           }
-          continue;
         }
         // EDGE_PCT SAFETY NET: Block any pick with negative or insufficient edge_pct from mispriced_lines
         if (playerPick.edge_pct !== undefined && playerPick.edge_pct < 3) {
@@ -7937,11 +7950,14 @@ async function generateTierParlays(
       }
       
       // === GAP 2: Per-leg minimum score gate by parlay size ===
-      const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
-      const minScore = minScoreByParlaySize(effectiveMaxLegs);
-      if (legCompositeScore < minScore) {
-        if (tier === 'execution') console.log(`[ScoreGate] Blocked ${legData.player_name || legData.home_team} (score ${legCompositeScore} < ${minScore} for ${effectiveMaxLegs}-leg parlay)`);
-        continue;
+      // Bypass for L3 strategy (uses L3 score, not composite) and floor_lock/optimal_combo (pre-assembled)
+      if (!isSweetSpotL3Profile && !isFloorLockProfile && !isOptimalComboProfile) {
+        const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
+        const minScore = minScoreByParlaySize(effectiveMaxLegs);
+        if (legCompositeScore < minScore) {
+          if (tier === 'execution') console.log(`[ScoreGate] Blocked ${legData.player_name || legData.home_team} (score ${legCompositeScore} < ${minScore} for ${effectiveMaxLegs}-leg parlay)`);
+          continue;
+        }
       }
 
       legs.push(legData);
