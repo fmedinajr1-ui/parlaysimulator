@@ -4698,6 +4698,83 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Block NCAAB player props from ever entering the pick pool
   enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
 
+  // === INLINE L3 BACKFILL: Compute l3_avg from nba_player_game_logs for NBA picks missing it ===
+  {
+    const missingL3 = enrichedSweetSpots.filter(p => (p as any).l3_avg == null && (p.sport || 'basketball_nba') === 'basketball_nba');
+    if (missingL3.length > 0) {
+      const uniqueNames = [...new Set(missingL3.map(p => p.player_name))];
+      console.log(`[L3Backfill] ${missingL3.length} NBA picks missing l3_avg, fetching game logs for ${uniqueNames.length} players`);
+      
+      // Batch fetch game logs for these players (last 3 games each)
+      const l3Map = new Map<string, Map<string, number>>();
+      const batchSize = 50;
+      for (let i = 0; i < uniqueNames.length; i += batchSize) {
+        const batch = uniqueNames.slice(i, i + batchSize);
+        const { data: logs } = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, game_date, pts, reb, ast, stl, blk, fg3m, tov, pra')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false })
+          .limit(batch.length * 3);
+        
+        if (logs) {
+          for (const log of logs) {
+            const name = log.player_name;
+            if (!l3Map.has(name)) l3Map.set(name, new Map());
+            const playerLogs = l3Map.get(name)!;
+            // Only keep first 3 per player
+            if (playerLogs.size >= 3) continue;
+            // Store each stat type
+            const statMap: Record<string, number> = {
+              points: log.pts || 0,
+              rebounds: log.reb || 0,
+              assists: log.ast || 0,
+              steals: log.stl || 0,
+              blocks: log.blk || 0,
+              threes: log.fg3m || 0,
+              turnovers: log.tov || 0,
+              pts_rebs_asts: log.pra || 0,
+            };
+            const dateKey = log.game_date;
+            if (!playerLogs.has(dateKey)) {
+              playerLogs.set(dateKey, 0); // placeholder
+            }
+            // Store full stat row keyed by date
+            if (!(l3Map as any)._stats) (l3Map as any)._stats = new Map();
+            const statsStore = (l3Map as any)._stats as Map<string, any[]>;
+            if (!statsStore.has(name)) statsStore.set(name, []);
+            const existing = statsStore.get(name)!;
+            if (existing.length < 3) existing.push(statMap);
+          }
+        }
+      }
+      
+      // Apply L3 averages to picks
+      let backfilled = 0;
+      const statsStore = (l3Map as any)._stats as Map<string, any[]> | undefined;
+      for (const pick of missingL3) {
+        const playerStats = statsStore?.get(pick.player_name);
+        if (!playerStats || playerStats.length < 3) continue;
+        
+        const propType = (pick.prop_type || '').toLowerCase();
+        let statKey = 'points';
+        if (propType.includes('rebound')) statKey = 'rebounds';
+        else if (propType.includes('assist')) statKey = 'assists';
+        else if (propType.includes('steal')) statKey = 'steals';
+        else if (propType.includes('block')) statKey = 'blocks';
+        else if (propType.includes('three') || propType.includes('3p')) statKey = 'threes';
+        else if (propType.includes('turnover')) statKey = 'turnovers';
+        else if (propType.includes('pts') && propType.includes('reb') && propType.includes('ast')) statKey = 'pts_rebs_asts';
+        
+        const values = playerStats.map((s: any) => s[statKey] || 0);
+        const l3Avg = Math.round((values.reduce((a: number, b: number) => a + b, 0) / values.length) * 100) / 100;
+        (pick as any).l3_avg = l3Avg;
+        backfilled++;
+      }
+      console.log(`[L3Backfill] Backfilled l3_avg for ${backfilled}/${missingL3.length} NBA picks`);
+    }
+  }
+
   // === L3 RECENCY GATE: Block picks with sharp recent performance declines ===
   {
     const preL3Count = enrichedSweetSpots.length;
