@@ -894,8 +894,22 @@ serve(async (req) => {
         const signal = edgePct > 0 ? 'OVER' : 'UNDER';
         const confidenceTier = getConfidenceTier(edgePct, l10Values.length);
 
+        // === NHL L3 RECENCY GATE ===
+        let l3EdgePct: number | null = null;
+        let l3Confirms: boolean | null = null;
+        if (avgL3 !== null) {
+          const adjustedAvgL3 = avgL3 * defMultiplier;
+          l3EdgePct = Math.max(-75, Math.min(75, ((adjustedAvgL3 - line) / line) * 100));
+          l3Confirms = (signal === 'OVER' && l3EdgePct > 0) || (signal === 'UNDER' && l3EdgePct < 0);
+          if (l3Confirms) {
+            edgePct = edgePct * 0.6 + l3EdgePct * 0.4;
+          } else {
+            edgePct *= 0.5;
+          }
+        }
+
         if (oppDefRank !== null) {
-          console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier})`);
+          console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier}) l3=${l3Confirms}`);
         }
 
         const nhlEntry = {
@@ -907,6 +921,9 @@ serve(async (req) => {
           edge_pct: Math.round(edgePct * 100) / 100,
           signal,
           shooting_context: {
+            l3_avg: avgL3 !== null ? Math.round(avgL3 * 10) / 10 : undefined,
+            l3_edge_pct: l3EdgePct !== null ? Math.round(l3EdgePct * 10) / 10 : undefined,
+            l3_confirms: l3Confirms,
             l5_avg: Math.round(avgL5 * 10) / 10,
             l10_avg: Math.round(avgL10 * 10) / 10,
             season_avg: Math.round(avgAll * 10) / 10,
