@@ -4315,7 +4315,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .eq('analysis_date', targetDate)
     .gte('confidence_score', 0.45)
     .order('confidence_score', { ascending: false })
-    .limit(200);
+    .limit(500);
 
   // === STEP 1: BUILD SWEET SPOT LOOKUP MAP FOR CROSS-REFERENCING ===
   const PROP_TYPE_NORMALIZE: Record<string, string> = {
