@@ -6828,6 +6828,49 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/sweet_spot_l3: ${candidatePicks.length} candidates sorted by L3 score (top: ${candidatePicks[0]?.player_name} L3=${((candidatePicks[0] as any)?.l3_avg || 0).toFixed(1)})`);
+    } else if (isL3MatchupComboProfile) {
+      // === L3 + MATCHUP COMBO: hybrid L3 recency + defensive matchup rankings ===
+      // Only NBA picks with valid L3 data, L3 clearing the line, AND favorable defensive matchup (rank >= 18)
+      const l3MatchupFiltered = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        // NBA only
+        if ((p.sport || 'basketball_nba') !== 'basketball_nba') return false;
+        const l3 = (p as any).l3_avg;
+        if (l3 == null) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 55)) return false;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over' && l3 <= p.line) return false;
+        if (side === 'under' && l3 >= p.line) return false;
+        // Must have favorable defensive matchup (rank >= 18 in relevant category)
+        const defRank = (p as any).matchupDefRank || 0;
+        if (defRank < 18) return false;
+        return true;
+      });
+
+      // Score by combined L3 margin + defensive rank
+      candidatePicks = l3MatchupFiltered.map(p => {
+        const l3 = (p as any).l3_avg;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        const l3Margin = side === 'over' ? l3 - p.line : p.line - l3;
+        const defRank = (p as any).matchupDefRank || 18;
+        // Normalize: L3 margin (0-10 range) + defense rank (18-30 → 0-12 range)
+        const l3Score = Math.min(l3Margin, 10); // cap at 10
+        const defScore = defRank - 18; // 0-12 range
+        const combinedScore = (l3Score * 0.5) + (defScore * 0.5);
+        (p as any)._l3MatchupScore = combinedScore;
+        (p as any)._l3Score = l3Margin;
+        (p as any)._defRank = defRank;
+        return p;
+      }).sort((a, b) => ((b as any)._l3MatchupScore || 0) - ((a as any)._l3MatchupScore || 0));
+
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/l3_matchup_combo: only ${candidatePicks.length} L3+matchup picks (need ${profile.legs}). Top: ${candidatePicks[0]?.player_name || 'none'}`);
+        continue;
+      }
+      const top = candidatePicks[0];
+      console.log(`[Bot] ${tier}/l3_matchup_combo: ${candidatePicks.length} candidates (top: ${top?.player_name} L3=${((top as any)?.l3_avg || 0).toFixed(1)} vs line ${top?.line} DEF#${(top as any)?._defRank} score=${((top as any)?._l3MatchupScore || 0).toFixed(2)})`);
     } else if (isSweetSpotPlusProfile) {
       // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
       const sweetCandidates = pool.sweetSpots.filter(p => {
