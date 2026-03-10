@@ -260,7 +260,7 @@ serve(async (req) => {
 
           // v11.0: Universal recency decline filter — block NULL L3 picks
           if (l3Avg === null) {
-            console.log(`[L3Gate] Skipped ${playerName} ${matchedPropType}: no L3 data`);
+            console.log(`[L3Gate] Skipped ${playerName} ${pt}: no L3 data`);
             continue;
           }
           if (l10Avg > 0) {
