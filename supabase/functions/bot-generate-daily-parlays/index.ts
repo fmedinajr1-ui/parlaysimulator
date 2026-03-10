@@ -6907,10 +6907,23 @@ async function generateTierParlays(
       console.log(`[Bot] ${tier}/sweet_spot_l3: ${candidatePicks.length} candidates sorted by L3 score (top: ${candidatePicks[0]?.player_name} L3=${((candidatePicks[0] as any)?.l3_avg || 0).toFixed(1)})`);
     } else if (isL3MatchupComboProfile) {
       // === L3 + MATCHUP COMBO: hybrid L3 recency + defensive matchup rankings ===
-      // Only NBA picks with valid L3 data, L3 clearing the line, AND favorable defensive matchup (rank >= 18)
+      // Uses _gameContext.opponentAbbrev + defenseDetailMap for prop-specific defense rank
+      const getPropDefRank = (p: any): number => {
+        const ctx = p._gameContext as any;
+        const oppAbbrev = ctx?.opponentAbbrev;
+        if (!oppAbbrev) return 0;
+        const defDetail = defenseDetailMap.get(oppAbbrev);
+        if (!defDetail) return 0;
+        const propType = (p.prop_type || '').toLowerCase();
+        if (propType.includes('rebound')) return defDetail.opp_rebounds_rank || defDetail.overall_rank || 0;
+        if (propType.includes('assist')) return defDetail.opp_assists_rank || defDetail.overall_rank || 0;
+        if (propType.includes('three') || propType.includes('3p')) return defDetail.opp_threes_rank || defDetail.overall_rank || 0;
+        if (propType.includes('point')) return defDetail.opp_points_rank || defDetail.overall_rank || 0;
+        return defDetail.overall_rank || 0;
+      };
+
       const l3MatchupFiltered = pool.sweetSpots.filter(p => {
         if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
-        // NBA only
         if ((p.sport || 'basketball_nba') !== 'basketball_nba') return false;
         const l3 = (p as any).l3_avg;
         if (l3 == null) return false;
@@ -6920,8 +6933,7 @@ async function generateTierParlays(
         const side = (p.recommended_side || 'over').toLowerCase();
         if (side === 'over' && l3 <= p.line) return false;
         if (side === 'under' && l3 >= p.line) return false;
-        // Must have favorable defensive matchup (rank >= 18 in relevant category)
-        const defRank = (p as any).matchupDefRank || 0;
+        const defRank = getPropDefRank(p);
         if (defRank < 18) return false;
         return true;
       });
