@@ -6965,6 +6965,78 @@ async function generateTierParlays(
       }
       const top = candidatePicks[0];
       console.log(`[Bot] ${tier}/l3_matchup_combo: ${candidatePicks.length} candidates (top: ${top?.player_name} L3=${((top as any)?.l3_avg || 0).toFixed(1)} vs line ${top?.line} DEF#${(top as any)?._defRank} score=${((top as any)?._l3MatchupScore || 0).toFixed(2)})`);
+    } else if (isL3SweetMispricedHybridProfile) {
+      // === L3 SWEET + MISPRICED HYBRID: 2 sweet spot legs + 3 L3-confirmed mispriced legs ===
+      const requiredLegs = profile.legs;
+      const sweetLegs = Math.min(2, requiredLegs - 1);
+      const mispricedLegs = requiredLegs - sweetLegs;
+      const usedNames = new Set<string>();
+
+      // Pool 1: Sweet spot picks with L3 clearing line
+      const sweetCandidates = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if ((p.sport || 'basketball_nba') !== 'basketball_nba') return false;
+        const l3 = (p as any).l3_avg;
+        if (l3 == null) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 50)) return false;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        if (side === 'over' && l3 <= p.line) return false;
+        if (side === 'under' && l3 >= p.line) return false;
+        return true;
+      }).map(p => {
+        const l3 = (p as any).l3_avg;
+        const side = (p.recommended_side || 'over').toLowerCase();
+        (p as any)._l3Score = side === 'over' ? l3 - p.line : p.line - l3;
+        return p;
+      }).sort((a, b) => ((b as any)._l3Score || 0) - ((a as any)._l3Score || 0));
+
+      // Pool 2: Mispriced picks with L3 confirmation
+      const mispricedCandidates = (pool.mispricedPicks || []).filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if ((p.sport || 'basketball_nba') !== 'basketball_nba') return false;
+        const ctx = (p as any).shooting_context || (p as any)._shootingContext || {};
+        if (ctx.l3_confirms !== true) return false;
+        const hr = (p as any).l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 50)) return false;
+        // Ensure positive directional edge
+        if ((p as any).edge_pct <= 3) return false;
+        return true;
+      }).sort((a, b) => ((b as any).edge_pct || 0) - ((a as any).edge_pct || 0));
+
+      if (sweetCandidates.length < sweetLegs || mispricedCandidates.length < mispricedLegs) {
+        console.log(`[Bot] ${tier}/l3_sweet_mispriced_hybrid: insufficient candidates (sweet=${sweetCandidates.length}/${sweetLegs}, mispriced=${mispricedCandidates.length}/${mispricedLegs})`);
+        continue;
+      }
+
+      // Pick top sweet spot legs, then fill mispriced avoiding same player
+      const selectedSweet = [];
+      for (const p of sweetCandidates) {
+        if (selectedSweet.length >= sweetLegs) break;
+        const name = (p.player_name || '').toLowerCase();
+        if (usedNames.has(name)) continue;
+        usedNames.add(name);
+        selectedSweet.push(p);
+      }
+
+      const selectedMispriced = [];
+      for (const p of mispricedCandidates) {
+        if (selectedMispriced.length >= mispricedLegs) break;
+        const name = (p.player_name || '').toLowerCase();
+        if (usedNames.has(name)) continue;
+        usedNames.add(name);
+        selectedMispriced.push(p);
+      }
+
+      if (selectedSweet.length < sweetLegs || selectedMispriced.length < mispricedLegs) {
+        console.log(`[Bot] ${tier}/l3_sweet_mispriced_hybrid: dedup reduced below threshold (sweet=${selectedSweet.length}, mispriced=${selectedMispriced.length})`);
+        continue;
+      }
+
+      candidatePicks = [...selectedSweet, ...selectedMispriced];
+      console.log(`[Bot] ${tier}/l3_sweet_mispriced_hybrid: ${sweetLegs} sweet + ${mispricedLegs} mispriced = ${candidatePicks.length} legs (top sweet: ${selectedSweet[0]?.player_name}, top mispriced: ${selectedMispriced[0]?.player_name} edge=${((selectedMispriced[0] as any)?.edge_pct || 0).toFixed(1)}%)`);
     } else if (isSweetSpotPlusProfile) {
       // === SWEET SPOT PLUS: 3 sweet spot legs + 1 bonus from other engines ===
       const sweetCandidates = pool.sweetSpots.filter(p => {
