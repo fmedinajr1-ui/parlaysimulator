@@ -7937,11 +7937,14 @@ async function generateTierParlays(
       }
       
       // === GAP 2: Per-leg minimum score gate by parlay size ===
-      const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
-      const minScore = minScoreByParlaySize(effectiveMaxLegs);
-      if (legCompositeScore < minScore) {
-        if (tier === 'execution') console.log(`[ScoreGate] Blocked ${legData.player_name || legData.home_team} (score ${legCompositeScore} < ${minScore} for ${effectiveMaxLegs}-leg parlay)`);
-        continue;
+      // Bypass for L3 strategy (uses L3 score, not composite) and floor_lock/optimal_combo (pre-assembled)
+      if (!isSweetSpotL3Profile && !isFloorLockProfile && !isOptimalComboProfile) {
+        const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
+        const minScore = minScoreByParlaySize(effectiveMaxLegs);
+        if (legCompositeScore < minScore) {
+          if (tier === 'execution') console.log(`[ScoreGate] Blocked ${legData.player_name || legData.home_team} (score ${legCompositeScore} < ${minScore} for ${effectiveMaxLegs}-leg parlay)`);
+          continue;
+        }
       }
 
       legs.push(legData);
