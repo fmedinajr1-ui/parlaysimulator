@@ -4397,7 +4397,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // 5. Mispriced lines — statistical edge picks
   const { data: rawMispricedLines } = await supabase
     .from('mispriced_lines')
-    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, defense_adjusted_avg, opponent_defense_rank')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, defense_adjusted_avg, opponent_defense_rank, shooting_context')
     .eq('analysis_date', targetDate)
     .gte('edge_pct', 3) // require minimum 3% positive edge
     .order('edge_pct', { ascending: false })
