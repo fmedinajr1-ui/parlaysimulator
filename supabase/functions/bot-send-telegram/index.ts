@@ -1360,7 +1360,7 @@ function formatMegaLotteryV2(data: Record<string, any>, dateStr: string): string
 }
 
 function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
-  const { date, rating, winnerCount, totalProfit, winners, lotteryWinners, tierContext, keyPlayers } = data;
+  const { date, rating, winnerCount, totalProfit, totalStaked, winners, lotteryWinners, tierContext, keyPlayers } = data;
   const displayDate = date || dateStr;
 
   let msg = `🏆 YESTERDAY'S WINS — ${displayDate}\n`;
@@ -1387,7 +1387,7 @@ function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): st
   if (winners && Array.isArray(winners)) {
     const regularWinners = winners.filter((w: any) => !w.isLottery);
     for (const w of regularWinners) {
-      msg += `#${w.rank} | ${w.tier} | ${w.odds} | $${w.profit?.toLocaleString()} profit\n`;
+      msg += `#${w.rank} | ${w.tier} | ${w.odds} | $${w.stake?.toLocaleString()} stake → +$${w.profit?.toLocaleString()} profit\n`;
       for (const leg of (w.legs || [])) {
         const actualStr = leg.actual !== null && leg.actual !== undefined ? ` (actual: ${leg.actual})` : '';
         msg += `  ✅ ${leg.player} ${leg.prop} ${leg.side}${leg.line}${actualStr}\n`;
@@ -1396,7 +1396,8 @@ function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): st
     }
   }
 
-  msg += `💰 Total: +$${(totalProfit || 0).toLocaleString()} profit across ${winnerCount || 0} winners\n\n`;
+  const roi = totalStaked > 0 ? Math.round((totalProfit / totalStaked) * 100) : 0;
+  msg += `💰 Total: $${(totalStaked || 0).toLocaleString()} staked → +$${(totalProfit || 0).toLocaleString()} profit (${roi}% ROI) across ${winnerCount || 0} winners\n\n`;
 
   if (keyPlayers && keyPlayers.length > 0) {
     msg += `🔑 Key Players: ${keyPlayers.join(', ')}\n\n`;

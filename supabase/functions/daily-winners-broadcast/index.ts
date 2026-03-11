@@ -87,6 +87,7 @@ Deno.serve(async (req) => {
     }
 
     const totalProfit = winners.reduce((sum, w) => sum + (w.profit_loss || 0), 0);
+    const totalStaked = winners.reduce((sum, w) => sum + (w.simulated_stake || 0), 0);
     const displayDate = formatDisplayDate(targetDate);
     const rating = getDayRating(winners.length, totalProfit);
 
@@ -155,6 +156,7 @@ Deno.serve(async (req) => {
         rating,
         winnerCount: winners.length,
         totalProfit: Math.round(totalProfit),
+        totalStaked: Math.round(totalStaked),
         winners: winnersData,
         lotteryWinners,
         tierContext,
