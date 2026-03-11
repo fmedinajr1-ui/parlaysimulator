@@ -1,48 +1,46 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Fix: Normalize `threes` / `player_threes` Prop Type Split
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+### Problem
+When legs flow into `bot_player_performance`, prop types like `threes`, `player_threes`, `three_pointers`, and `3pm` are stored as separate records. A player can be a "proven winner" on `player_threes` while simultaneously being flagged as a "serial loser" on `threes` — or vice versa. The same split affects `points`/`player_points`, `rebounds`/`player_rebounds`, `assists`/`player_assists`, etc.
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+### Solution
+Add a `normalizePropType()` utility function that maps all variant prop type strings to a single canonical form. Apply it at every point where prop types are used as keys.
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+**Canonical mapping:**
+```text
+player_points, points, pts       → player_points
+player_rebounds, rebounds, reb    → player_rebounds
+player_assists, assists, ast     → player_assists
+player_threes, threes, 3pm, three_pointers → player_threes
+player_blocks, blocks, blk       → player_blocks
+player_steals, steals, stl       → player_steals
+player_turnovers, turnovers, to  → player_turnovers
+```
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+### Files to Change
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+**1. `supabase/functions/bot-settle-and-learn/index.ts`**
+- Add `normalizePropType()` function
+- Line ~1112: Normalize `propType` before building the `playerKey` and `propTypePerfUpdates` key
+- This ensures settlement writes a single canonical record per player+prop
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+**2. `supabase/functions/bot-update-engine-hit-rates/index.ts`**
+- Add same `normalizePropType()` function
+- Line ~219: Normalize `leg.prop_type` before building the player stats key
+- Ensures the full-rebuild path also produces canonical records
 
-### Changes
+**3. `supabase/functions/bot-generate-daily-parlays/index.ts`**
+- Add same `normalizePropType()` function
+- Line ~1133: Normalize `p.prop_type` when building the lookup map key
+- Line ~1149: Normalize `propType` in `getPlayerBonus()` 
+- Line ~1170: Normalize in `isGodModePick()`
+- Ensures reads match the canonical keys written by settlement
 
-#### 1. `nhl-prop-sweet-spots-scanner/index.ts` — Matchup scoring engine (v3)
-- **Prop-specific defense routing**: Goals → `goals_against_rank`, SOG → `shots_against_rank`, Saves → `shots_for_rank`, PP Points → `penalty_kill_rank`
-- **Matchup score formula**: `(oppDefRank * 0.6) + ((31 - teamOffRank) * 0.4)`
-- **Tier classification**: Elite (≥22, +10), Prime (≥18, +5), Favorable (≥14, +2), Neutral (10-14, 0), Avoid (<10, -10)
-- **Hard block**: OVER picks vs top-3 defenses in the specific stat category are excluded entirely
-- **Team extraction**: Parses `game_description` for team abbreviations to resolve opponent
-- **Confidence adjustment**: `confidence_score` now reflects matchup quality (base hit rate + adjustment)
+### Data Cleanup
+After deploying, run a one-time merge of existing split records in `bot_player_performance` — combining `threes` rows into their `player_threes` counterparts (summing legs_played/legs_won, recalculating hit_rate, keeping the most recent streak).
 
-#### 2. `nhl-floor-lock-daily/index.ts` — Matchup-aware filtering
-- **Floor Lock**: Excludes legs with `matchup_adjustment < -5`
-- **Optimal Combo**: Pool sorted by weighted score `(hit_rate * 0.7) + (matchup_normalized * 0.3)` instead of pure hit rate
-- **Broadcast**: Each leg now shows matchup context (e.g., "vs OTT (ELITE — score 25.2)")
-- **Matchup distribution logging**: Shows breakdown of elite/prime/favorable/neutral/avoid counts
+### No Schema Changes Required
+The `prop_type` column remains a text field. We're just normalizing the values written to it.
 
-#### 3. `nhl-team-defense-rankings-fetcher/index.ts` — Already had `power_play_rank`
-- Confirmed existing computation is correct; no changes needed.
-
-### Verified
-- Scanner ran successfully: 63 props analyzed, 30 elite, 63 matchup-boosted
-- Elite matchups scoring 25.2, prime at 18, favorable at 15.6
-- Prop-specific routing confirmed (Goals uses goals_against_rank, SOG uses shots_against_rank)
