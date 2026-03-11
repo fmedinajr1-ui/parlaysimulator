@@ -96,9 +96,12 @@ function buildCeilingShotLegs(candidates: any[], legCount: number = 3) {
 }
 
 function formatLegs(legs: any[]) {
-  return legs.map((l: any, i: number) =>
-    `${i + 1}. ${l.player} — ${l.prop} ${l.side} ${l.line}\n   🎯 L10: ${Math.round((l.l10_hit_rate || 0) * 100)}% | Avg ${l.l10_avg} | Floor ${l.l10_min} | Ceiling ${l.l10_max}`
-  ).join("\n\n");
+  return legs.map((l: any, i: number) => {
+    const matchupTag = l.matchup_tier && l.matchup_tier !== 'unknown'
+      ? `\n   🆚 vs ${l.opponent || '?'} (${l.matchup_tier.toUpperCase()} — score ${l.matchup_score || '?'})`
+      : '';
+    return `${i + 1}. ${l.player} — ${l.prop} ${l.side} ${l.line}\n   🎯 L10: ${Math.round((l.l10_hit_rate || 0) * 100)}% | Avg ${l.l10_avg} | Floor ${l.l10_min} | Ceiling ${l.l10_max}${matchupTag}`;
+  }).join("\n\n");
 }
 
 function buildLegRecord(pick: any) {
@@ -113,7 +116,19 @@ function buildLegRecord(pick: any) {
     l10_min: pick.l10_min,
     l10_max: pick.l10_max,
     quality_tier: pick.quality_tier,
+    matchup_adjustment: pick.matchup_adjustment || 0,
+    matchup_tier: getMatchupTierLabel(pick.matchup_adjustment || 0),
+    matchup_score: pick.confidence_score || null,
+    opponent: null, // extracted from game context
   };
+}
+
+function getMatchupTierLabel(adj: number): string {
+  if (adj >= 10) return 'elite';
+  if (adj >= 5) return 'prime';
+  if (adj >= 2) return 'favorable';
+  if (adj >= 0) return 'neutral';
+  return 'avoid';
 }
 
 Deno.serve(async (req) => {
