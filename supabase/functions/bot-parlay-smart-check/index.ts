@@ -17,6 +17,34 @@ interface LegCheck {
   risk_tags: string[];
   recommendation: 'KEEP' | 'FLIP' | 'DROP' | 'CAUTION';
   details: Record<string, any>;
+  quality_score: number;
+}
+
+const TAG_SCORE_ADJUSTMENTS: Record<string, number> = {
+  'L3_CONFIRMED': 15,
+  'ELITE_MATCHUP': 10,
+  'PRIME_MATCHUP': 5,
+  'L3_BELOW_LINE': -10,
+  'L3_ABOVE_LINE': -10,
+  'L3_DECLINE': -20,
+  'L3_SURGE': -15,
+  'BLOWOUT_RISK': -15,
+  'ELEVATED_SPREAD': -5,
+  'PLAYER_OUT': -50,
+  'PLAYER_DOUBTFUL': -30,
+  'PLAYER_QUESTIONABLE': -10,
+  'AVOID_MATCHUP': -10,
+  'NO_L3_DATA': -5,
+  'NO_MATCHUP_DATA': 0,
+};
+
+function computeQualityScore(riskTags: string[]): number {
+  let score = 50;
+  for (const tag of riskTags) {
+    const baseTag = tag.replace(/\(.*\)/, '');
+    score += TAG_SCORE_ADJUSTMENTS[baseTag] ?? 0;
+  }
+  return Math.max(0, Math.min(100, score));
 }
 
 interface ParlayCheckResult {
@@ -26,6 +54,7 @@ interface ParlayCheckResult {
   leg_count: number;
   legs: LegCheck[];
   summary: { keeps: number; flips: number; drops: number; cautions: number };
+  avg_quality: number;
 }
 
 function getEasternDate(): string {
@@ -270,6 +299,8 @@ serve(async (req) => {
           }
         }
 
+        const quality_score = computeQualityScore(riskTags);
+
         legChecks.push({
           parlay_id: parlay.id,
           leg_index: idx,
@@ -281,8 +312,12 @@ serve(async (req) => {
           risk_tags: riskTags,
           recommendation,
           details,
+          quality_score,
         });
       });
+
+      // Sort legs by quality_score ascending (worst first)
+      legChecks.sort((a, b) => a.quality_score - b.quality_score);
 
       const summary = {
         keeps: legChecks.filter(l => l.recommendation === 'KEEP').length,
@@ -291,6 +326,10 @@ serve(async (req) => {
         cautions: legChecks.filter(l => l.recommendation === 'CAUTION').length,
       };
 
+      const avg_quality = legChecks.length > 0
+        ? Math.round(legChecks.reduce((s, l) => s + l.quality_score, 0) / legChecks.length)
+        : 50;
+
       results.push({
         parlay_id: parlay.id,
         strategy_name: parlay.strategy_name,
@@ -298,6 +337,7 @@ serve(async (req) => {
         leg_count: legs.length,
         legs: legChecks,
         summary,
+        avg_quality,
       });
     }
 

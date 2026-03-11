@@ -23,6 +23,7 @@ interface LegCheck {
   risk_tags: string[];
   recommendation: 'KEEP' | 'FLIP' | 'DROP' | 'CAUTION';
   details: Record<string, any>;
+  quality_score: number;
 }
 
 interface ParlayCheckResult {
@@ -32,6 +33,13 @@ interface ParlayCheckResult {
   leg_count: number;
   legs: LegCheck[];
   summary: { keeps: number; flips: number; drops: number; cautions: number };
+  avg_quality: number;
+}
+
+function qualityColor(score: number) {
+  if (score < 30) return 'bg-red-500/20 text-red-400 border-red-500/40';
+  if (score <= 60) return 'bg-amber-500/20 text-amber-400 border-amber-500/40';
+  return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
 }
 
 interface SmartCheckResponse {
@@ -207,13 +215,19 @@ export function ParlaySmartCheckPanel() {
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground font-medium">
                   {flaggedLegs.length} legs flagged across {results.parlays_checked} parlays
+                  {results.results.length > 0 && (
+                    <span className="ml-2">
+                      • Avg Quality: {Math.round(results.results.reduce((s, r) => s + r.avg_quality, 0) / results.results.length)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                  {results.results.map(parlay => (
-                    parlay.legs
+                  {results.results.map(parlay => {
+                    const flagged = parlay.legs
                       .filter(l => l.recommendation !== 'KEEP')
-                      .map(leg => {
+                      .sort((a, b) => a.quality_score - b.quality_score);
+                    return flagged.map(leg => {
                         const key = `${leg.parlay_id}::${leg.leg_index}`;
                         const selected = selectedActions.get(key);
                         const recStyle = RECOMMENDATION_STYLES[leg.recommendation];
@@ -228,10 +242,15 @@ export function ParlaySmartCheckPanel() {
                                   {leg.side} {leg.line} {leg.prop_type}
                                 </span>
                               </div>
-                              <Badge className={`${recStyle.bg} ${recStyle.text} text-xs gap-1`}>
-                                {recStyle.icon}
-                                {leg.recommendation}
-                              </Badge>
+                              <div className="flex items-center gap-1.5">
+                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${qualityColor(leg.quality_score)}`}>
+                                  Q:{leg.quality_score}
+                                </Badge>
+                                <Badge className={`${recStyle.bg} ${recStyle.text} text-xs gap-1`}>
+                                  {recStyle.icon}
+                                  {leg.recommendation}
+                                </Badge>
+                              </div>
                             </div>
 
                             {/* Risk Tags */}
@@ -302,8 +321,8 @@ export function ParlaySmartCheckPanel() {
                             </div>
                           </div>
                         );
-                      })
-                  ))}
+                      });
+                  })}
                 </div>
 
                 {/* Auto-Apply Button */}
