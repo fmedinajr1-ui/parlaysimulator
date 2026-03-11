@@ -37,6 +37,13 @@ const MEDIUM_SAMPLE_BONUS = 0.05;
 const BLOCK_HIT_RATE_THRESHOLD = 0.40; // Block if hit rate < 40%
 const BLOCK_MIN_SAMPLES = 10; // Need at least 10 samples to block
 
+// Streak penalty constants
+const STREAK_MILD_THRESHOLD = -3;
+const STREAK_SEVERE_THRESHOLD = -8;
+const STREAK_BLOCK_THRESHOLD = -15;
+const STREAK_MILD_PENALTY_PER = 0.02;
+const STREAK_SEVERE_PENALTY_PER = 0.03;
+
 interface CategoryStats {
   category: string;
   side: string;
@@ -63,11 +70,17 @@ function clamp(min: number, max: number, value: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function calculateWeight(hitRate: number, sampleSize: number): number {
-  // Base weight adjustment from hit rate
+function calculateStreakPenalty(currentStreak: number): number {
+  if (currentStreak >= STREAK_MILD_THRESHOLD) return 0;
+  if (currentStreak >= STREAK_SEVERE_THRESHOLD) {
+    return currentStreak * STREAK_MILD_PENALTY_PER;
+  }
+  return currentStreak * STREAK_SEVERE_PENALTY_PER;
+}
+
+function calculateWeight(hitRate: number, sampleSize: number, currentStreak: number = 0): number {
   const hitRateAdjustment = (hitRate - HIT_RATE_BASELINE) * WEIGHT_SENSITIVITY;
   
-  // Sample size bonus - reward categories with more data
   let sampleBonus = 0;
   if (sampleSize >= LARGE_SAMPLE_THRESHOLD) {
     sampleBonus = LARGE_SAMPLE_BONUS;
@@ -75,15 +88,22 @@ function calculateWeight(hitRate: number, sampleSize: number): number {
     sampleBonus = MEDIUM_SAMPLE_BONUS;
   }
   
-  const rawWeight = BASE_WEIGHT + hitRateAdjustment + sampleBonus;
+  const streakPenalty = calculateStreakPenalty(currentStreak);
+  const rawWeight = BASE_WEIGHT + hitRateAdjustment + sampleBonus + streakPenalty;
   return clamp(MIN_WEIGHT, MAX_WEIGHT, rawWeight);
 }
 
-function shouldBlock(hitRate: number, sampleSize: number): { blocked: boolean; reason: string | null } {
+function shouldBlock(hitRate: number, sampleSize: number, currentStreak: number = 0): { blocked: boolean; reason: string | null } {
+  if (currentStreak <= STREAK_BLOCK_THRESHOLD) {
+    return {
+      blocked: true,
+      reason: `Streak ${currentStreak} below auto-block threshold (${STREAK_BLOCK_THRESHOLD})`,
+    };
+  }
   if (sampleSize >= BLOCK_MIN_SAMPLES && hitRate < BLOCK_HIT_RATE_THRESHOLD) {
     return {
       blocked: true,
-      reason: `Hit rate ${(hitRate * 100).toFixed(1)}% below threshold (35%) with ${sampleSize} samples`,
+      reason: `Hit rate ${(hitRate * 100).toFixed(1)}% below threshold (40%) with ${sampleSize} samples`,
     };
   }
   return { blocked: false, reason: null };
@@ -194,8 +214,9 @@ Deno.serve(async (req) => {
 
     for (const [key, stats] of categoryMap) {
       const existing = existingMap.get(key);
-      const newWeight = calculateWeight(stats.hit_rate, stats.total_picks);
-      const blockStatus = shouldBlock(stats.hit_rate, stats.total_picks);
+      const currentStreak = existing?.current_streak ?? 0;
+      const newWeight = calculateWeight(stats.hit_rate, stats.total_picks, currentStreak);
+      const blockStatus = shouldBlock(stats.hit_rate, stats.total_picks, currentStreak);
 
       if (blockStatus.blocked) blocked++;
 
