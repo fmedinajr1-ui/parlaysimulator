@@ -317,13 +317,10 @@ Deno.serve(async (req) => {
       let matchupTier = 'unknown';
       let opponentAbbrev: string | null = null;
 
-      // Get player's team from most recent log
-      const playerTeamFromLog = logs[0]?.team?.toUpperCase() || null;
-      
-      // Extract opponent from game_description
+      // Extract teams from game_description (no team column in logs)
       const { opponent, playerTeamAbbrev } = extractTeamsFromDescription(
         prop.game_description || '', 
-        playerTeamFromLog
+        null // no team column available
       );
       
       // Also try opponent from most recent game log if available
