@@ -1161,7 +1161,7 @@ async function loadPlayerPerformance(supabase: any): Promise<void> {
 }
 
 function getPlayerBonus(playerName: string, propType: string, tier?: string): number {
-  const key = `${playerName.toLowerCase()}|${propType.toLowerCase()}`;
+  const key = `${playerName.toLowerCase()}|${normalizePropType(propType)}`;
   const perf = playerPerformanceMap.get(key);
   if (!perf || perf.legsPlayed < 5) return 0;
   
