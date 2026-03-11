@@ -23,6 +23,7 @@ interface LegCheck {
   risk_tags: string[];
   recommendation: 'KEEP' | 'FLIP' | 'DROP' | 'CAUTION';
   details: Record<string, any>;
+  quality_score: number;
 }
 
 interface ParlayCheckResult {
@@ -32,6 +33,13 @@ interface ParlayCheckResult {
   leg_count: number;
   legs: LegCheck[];
   summary: { keeps: number; flips: number; drops: number; cautions: number };
+  avg_quality: number;
+}
+
+function qualityColor(score: number) {
+  if (score < 30) return 'bg-red-500/20 text-red-400 border-red-500/40';
+  if (score <= 60) return 'bg-amber-500/20 text-amber-400 border-amber-500/40';
+  return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
 }
 
 interface SmartCheckResponse {

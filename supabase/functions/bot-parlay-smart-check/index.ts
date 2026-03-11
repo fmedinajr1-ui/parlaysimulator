@@ -299,6 +299,8 @@ serve(async (req) => {
           }
         }
 
+        const quality_score = computeQualityScore(riskTags);
+
         legChecks.push({
           parlay_id: parlay.id,
           leg_index: idx,
@@ -310,8 +312,12 @@ serve(async (req) => {
           risk_tags: riskTags,
           recommendation,
           details,
+          quality_score,
         });
       });
+
+      // Sort legs by quality_score ascending (worst first)
+      legChecks.sort((a, b) => a.quality_score - b.quality_score);
 
       const summary = {
         keeps: legChecks.filter(l => l.recommendation === 'KEEP').length,
@@ -320,6 +326,10 @@ serve(async (req) => {
         cautions: legChecks.filter(l => l.recommendation === 'CAUTION').length,
       };
 
+      const avg_quality = legChecks.length > 0
+        ? Math.round(legChecks.reduce((s, l) => s + l.quality_score, 0) / legChecks.length)
+        : 50;
+
       results.push({
         parlay_id: parlay.id,
         strategy_name: parlay.strategy_name,
@@ -327,6 +337,7 @@ serve(async (req) => {
         leg_count: legs.length,
         legs: legChecks,
         summary,
+        avg_quality,
       });
     }
 
