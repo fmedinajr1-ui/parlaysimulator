@@ -305,7 +305,7 @@ Deno.serve(async (req) => {
         const chunk = sweetSpots.slice(i, i + chunkSize);
         const { error } = await supabase
           .from('category_sweet_spots')
-          .upsert(chunk, { onConflict: 'player_name,prop_type,analysis_date' });
+          .upsert(chunk, { onConflict: 'player_name,prop_type,analysis_date,category' });
 
         if (error) {
           console.error(`[NHL Scanner] Upsert error:`, error.message);

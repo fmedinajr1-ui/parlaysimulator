@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Step 4: Categorize and format with player-level validation
+    // Step 4: Categorize
     const elite: any[] = [];
     const prime: any[] = [];
     const favorable: any[] = [];
@@ -100,17 +100,61 @@ Deno.serve(async (req) => {
       else if (label === "bench_under") benchUnders.push(entry);
     }
 
-    // Step 5: Format message with player-level detail
+    // Step 5: Format message with risk tags
     const formatEntry = (i: any) => {
       const header = `  • ${i.attacking_team} ${capitalize(i.prop_type)} vs ${i.defending_team} DEF (Score: ${i.score})`;
       const ranks = `    OFF #${i.offRank} vs DEF #${i.defRank}`;
 
       if (i.player_targets && i.player_targets.length > 0) {
         const playerLines = i.player_targets.slice(0, 3).map((p: any) => {
-          const l3Tag = p.l3_avg && p.l10_avg && p.l10_avg > 0
-            ? (p.l3_avg / p.l10_avg < 0.85 ? ' 📉' : (p.l3_avg / p.l10_avg > 1.15 ? ' 📈' : ''))
-            : '';
-          return `      ✅ ${p.player_name} ${i.side.toUpperCase()} ${p.line} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, floor ${p.l10_min})${l3Tag}`;
+          // Base line with L10 stats
+          let playerLine = `      ✅ ${p.player_name} ${i.side.toUpperCase()} ${p.line} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, floor ${p.l10_min})`;
+
+          // Risk tag rendering
+          const riskTags: string[] = p.risk_tags || [];
+          const l3Avg = p.l3_avg;
+
+          if (riskTags.length > 0 || l3Avg !== null) {
+            const contextParts: string[] = [];
+
+            // L3 context
+            if (l3Avg !== null) {
+              const trendIcon = p.l3_trend === 'hot' ? '📈' : p.l3_trend === 'cold' ? '📉' : '➡️';
+              contextParts.push(`L3: ${l3Avg} ${trendIcon}`);
+            }
+
+            // Blowout/spread context
+            const blowoutTag = riskTags.find((t: string) => t.startsWith('BLOWOUT_RISK'));
+            const spreadTag = riskTags.find((t: string) => t.startsWith('ELEVATED_SPREAD'));
+            if (blowoutTag) {
+              contextParts.push(`⚠️ ${blowoutTag}`);
+            } else if (spreadTag) {
+              contextParts.push(`🟡 ${spreadTag}`);
+            }
+
+            // L3 directional warnings
+            if (riskTags.includes('L3_BELOW_LINE') && i.side === 'over') {
+              contextParts.push('⚠️ L3 says UNDER');
+            } else if (riskTags.includes('L3_ABOVE_LINE') && i.side === 'under') {
+              contextParts.push('⚠️ L3 says OVER');
+            } else if (riskTags.includes('L3_CONFIRMED')) {
+              contextParts.push('✅ L3 CONFIRMED');
+            }
+
+            // Decline/surge
+            if (riskTags.includes('L3_DECLINE')) {
+              contextParts.push('📉 L3 DECLINE');
+            }
+            if (riskTags.includes('L3_SURGE')) {
+              contextParts.push('📈 L3 SURGE');
+            }
+
+            if (contextParts.length > 0) {
+              playerLine += `\n        (${contextParts.join(' | ')})`;
+            }
+          }
+
+          return playerLine;
         }).join("\n");
         return `${header}\n${ranks}\n${playerLines}`;
       } else {
@@ -118,29 +162,34 @@ Deno.serve(async (req) => {
       }
     };
 
-    const formatBenchUnderEntry = (i: any) => {
-      const playerLines = i.player_targets.slice(0, 3).map((p: any) =>
-        `  • ${p.player_name} UNDER ${p.line} ${capitalize(i.prop_type)} vs ${i.defending_team} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, ceiling ${p.player_name ? i.player_targets.find((t: any) => t.player_name === p.player_name)?.l10_min ?? '?' : '?'})`
-      ).join("\n");
-      return playerLines;
-    };
-
     const formatSection = (emoji: string, headerText: string, items: any[]) => {
       if (items.length === 0) return "";
       const backed = items.filter(i => i.player_backed).length;
-      const envOnly = items.length - backed;
-      const lines = items.slice(0, 6).map(formatEntry).join("\n\n");
       const backingNote = backed > 0 ? `${backed} player-backed` : `⚠️ all environment-only`;
+      const lines = items.slice(0, 6).map(formatEntry).join("\n\n");
       return `${emoji} ${headerText} (${items.length} — ${backingNote})\n${lines}\n\n`;
     };
 
-    // Format bench unders section — flatten all player targets
+    // Format bench unders section
     const formatBenchUndersSection = (items: any[]) => {
       if (items.length === 0) return "";
       const allTargets: string[] = [];
       for (const item of items) {
         for (const p of (item.player_targets || []).slice(0, 3)) {
-          allTargets.push(`  • ${p.player_name} UNDER ${p.line} ${capitalize(item.prop_type)} vs ${item.defending_team} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, margin ${p.margin})`);
+          let line = `  • ${p.player_name} UNDER ${p.line} ${capitalize(item.prop_type)} vs ${item.defending_team} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, margin ${p.margin})`;
+          
+          // Add risk tag context for bench unders too
+          const riskTags: string[] = p.risk_tags || [];
+          const contextParts: string[] = [];
+          if (p.l3_avg !== null) {
+            contextParts.push(`L3: ${p.l3_avg}`);
+          }
+          if (riskTags.includes('L3_CONFIRMED')) contextParts.push('✅');
+          if (riskTags.includes('L3_ABOVE_LINE')) contextParts.push('⚠️ L3 says OVER');
+          if (contextParts.length > 0) {
+            line += ` (${contextParts.join(' | ')})`;
+          }
+          allTargets.push(line);
         }
       }
       if (allTargets.length === 0) return "";
@@ -149,9 +198,10 @@ Deno.serve(async (req) => {
 
     const playerBackedTotal = recommendations.filter((r: any) => r.player_backed).length;
     const envOnlyTotal = recommendations.length - playerBackedTotal;
+    const riskTaggedTotal = recommendations.flatMap((r: any) => r.player_targets || []).filter((t: any) => t.risk_tags?.length > 0).length;
 
     const message = `🏀📊 NBA BIDIRECTIONAL MATCHUP SCAN — ${today}\n\n` +
-      `${recommendations.length} matchups analyzed | ${playerBackedTotal} player-backed | ${envOnlyTotal} env-only\n` +
+      `${recommendations.length} matchups | ${playerBackedTotal} player-backed | ${riskTaggedTotal} risk-tagged\n` +
       `Score = (OppDefRank × 0.6) + ((31-TeamOffRank) × 0.4)\n\n` +
       formatSection("🔥", "ELITE (Score ≥22)", elite) +
       formatSection("⭐", "PRIME (Score 18-22)", prime) +
@@ -159,7 +209,8 @@ Deno.serve(async (req) => {
       formatSection("🚫", "AVOID (Score ≤8)", avoid) +
       formatBenchUndersSection(benchUnders) +
       `📋 Summary: ${elite.length} elite, ${prime.length} prime, ${favorable.length} favorable, ${avoid.length} avoid, ${benchUnders.length} bench unders\n` +
-      `🎯 Player-backed signals are validated against L10 game log data`;
+      `🎯 Player-backed signals validated against L10 data\n` +
+      `⚠️ Risk tags: check L3 trend + spread before placing`;
 
     await supabase.functions.invoke("bot-send-telegram", {
       body: { message, bypass_quiet_hours: true },
@@ -168,7 +219,6 @@ Deno.serve(async (req) => {
     // === PHASE: Create trackable bidirectional under parlays ===
     log("Building bidirectional bench under parlays...");
 
-    // Load stake config
     const { data: stakeConfig } = await supabase
       .from("bot_stake_config").select("*").limit(1).maybeSingle();
     const execStake = stakeConfig?.execution_stake ?? 250;
@@ -190,6 +240,8 @@ Deno.serve(async (req) => {
             l10_max: p.margin != null ? p.line - p.margin : null,
             defending_team: item.defending_team,
             quality_tier: p.l10_hit_rate >= 90 ? "elite" : "strong",
+            l3_avg: p.l3_avg ?? null,
+            risk_tags: p.risk_tags || [],
           });
         }
       }
@@ -200,10 +252,8 @@ Deno.serve(async (req) => {
     // Build 3-leg parlays from strong unders
     let underParlaysInserted = 0;
     if (strongUnders.length >= 3) {
-      // Sort by hit rate descending
       strongUnders.sort((a: any, b: any) => (b.l10_hit_rate || 0) - (a.l10_hit_rate || 0));
 
-      // Build up to 2 non-overlapping 3-leg parlays
       const usedPlayers = new Set<string>();
       for (let parlayIdx = 0; parlayIdx < 2 && strongUnders.length >= 3; parlayIdx++) {
         const available = strongUnders.filter((u: any) => !usedPlayers.has(u.player_name));
@@ -222,6 +272,8 @@ Deno.serve(async (req) => {
           l10_max: u.l10_max,
           defending_team: u.defending_team,
           quality_tier: u.quality_tier,
+          l3_avg: u.l3_avg,
+          risk_tags: u.risk_tags,
         }));
 
         const combinedProb = selected.reduce((acc: number, u: any) => acc * (u.l10_hit_rate || 0.8), 1);
@@ -253,7 +305,7 @@ Deno.serve(async (req) => {
     }
 
     const duration = Date.now() - startTime;
-    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed, ${underParlaysInserted} under parlays`);
+    log(`✅ Broadcast complete in ${duration}ms — ${recommendations.length} matchups, ${playerBackedTotal} player-backed, ${riskTaggedTotal} risk-tagged, ${underParlaysInserted} under parlays`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "nba-matchup-daily-broadcast",
@@ -261,10 +313,10 @@ Deno.serve(async (req) => {
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
-      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal, under_parlays: underParlaysInserted },
+      result: { total: recommendations.length, elite: elite.length, prime: prime.length, avoid: avoid.length, player_backed: playerBackedTotal, risk_tagged: riskTaggedTotal, under_parlays: underParlaysInserted },
     });
 
-    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, under_parlays: underParlaysInserted, duration }), {
+    return new Response(JSON.stringify({ success: true, findings: recommendations.length, elite: elite.length, prime: prime.length, player_backed: playerBackedTotal, risk_tagged: riskTaggedTotal, under_parlays: underParlaysInserted, duration }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
