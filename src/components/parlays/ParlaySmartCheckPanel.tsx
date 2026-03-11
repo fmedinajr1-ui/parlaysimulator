@@ -237,10 +237,15 @@ export function ParlaySmartCheckPanel() {
                                   {leg.side} {leg.line} {leg.prop_type}
                                 </span>
                               </div>
-                              <Badge className={`${recStyle.bg} ${recStyle.text} text-xs gap-1`}>
-                                {recStyle.icon}
-                                {leg.recommendation}
-                              </Badge>
+                              <div className="flex items-center gap-1.5">
+                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${qualityColor(leg.quality_score)}`}>
+                                  Q:{leg.quality_score}
+                                </Badge>
+                                <Badge className={`${recStyle.bg} ${recStyle.text} text-xs gap-1`}>
+                                  {recStyle.icon}
+                                  {leg.recommendation}
+                                </Badge>
+                              </div>
                             </div>
 
                             {/* Risk Tags */}
