@@ -326,7 +326,7 @@ Deno.serve(async (req) => {
       // Also try opponent from most recent game log if available
       const logOpponent = logs[0]?.opponent?.toUpperCase();
       const resolvedOpponent = opponent || logOpponent;
-      const resolvedPlayerTeam = playerTeamAbbrev || playerTeamFromLog;
+      const resolvedPlayerTeam = playerTeamAbbrev || null;
 
       if (resolvedOpponent && defRankMap.size > 0) {
         const oppDef = defRankMap.get(resolvedOpponent);
