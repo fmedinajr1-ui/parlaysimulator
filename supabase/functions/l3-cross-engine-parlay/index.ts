@@ -66,7 +66,6 @@ Deno.serve(async (req) => {
       sb.from('category_sweet_spots')
         .select('player_name, prop_type, category, recommended_side, actual_line, l3_avg, l10_avg, l10_hit_rate, confidence_score, quality_tier')
         .eq('analysis_date', today)
-        .not('l3_avg', 'is', null)
         .eq('is_active', true),
       sb.from('high_conviction_results')
         .select('player_name, prop_type, signal, edge_pct, conviction_score, current_line, player_avg, sport, engines, confidence_tier')
@@ -88,6 +87,50 @@ Deno.serve(async (req) => {
 
     console.log(`[L3CrossEngine] L3-confirmed mispriced: ${l3Mispriced.length}`);
 
+    // --- L3 BACKFILL for sweet spots missing l3_avg ---
+    const sweetsNeedingBackfill = sweets.filter((s: any) => s.l3_avg == null);
+    if (sweetsNeedingBackfill.length > 0) {
+      console.log(`[L3CrossEngine] Backfilling L3 for ${sweetsNeedingBackfill.length} sweet spot picks`);
+      const playerNames = [...new Set(sweetsNeedingBackfill.map((s: any) => s.player_name))];
+      
+      // Fetch recent game logs for these players
+      const { data: gameLogs } = await sb
+        .from('nba_player_game_logs')
+        .select('player_name, pts, reb, ast, stl, blk, turnover, threes_made, game_date')
+        .in('player_name', playerNames.slice(0, 50)) // cap to avoid huge queries
+        .order('game_date', { ascending: false })
+        .limit(500);
+
+      if (gameLogs && gameLogs.length > 0) {
+        // Group by player
+        const playerLogs = new Map<string, any[]>();
+        for (const log of gameLogs) {
+          const key = log.player_name.toLowerCase();
+          if (!playerLogs.has(key)) playerLogs.set(key, []);
+          playerLogs.get(key)!.push(log);
+        }
+
+        // Compute L3 avg per player+prop
+        const propStatMap: Record<string, string> = {
+          points: 'pts', rebounds: 'reb', assists: 'ast',
+          steals: 'stl', blocks: 'blk', turnovers: 'turnover',
+          threes: 'threes_made', pts: 'pts', reb: 'reb', ast: 'ast',
+        };
+
+        for (const s of sweetsNeedingBackfill) {
+          const logs = playerLogs.get(s.player_name.toLowerCase());
+          if (!logs || logs.length < 3) continue;
+          const normalizedProp = normalizePropType(s.prop_type);
+          const statKey = propStatMap[normalizedProp];
+          if (!statKey) continue;
+          const last3 = logs.slice(0, 3);
+          const avg = last3.reduce((sum: number, g: any) => sum + (g[statKey] || 0), 0) / 3;
+          s.l3_avg = Math.round(avg * 100) / 100;
+        }
+        console.log(`[L3CrossEngine] Backfilled L3 data for sweet spot picks`);
+      }
+    }
+
     // Build a unified pick map keyed by player|prop
     const pickMap = new Map<string, any>();
 
@@ -97,7 +140,6 @@ Deno.serve(async (req) => {
     for (const m of l3Mispriced) {
       const key = makeKey(m.player_name, m.prop_type);
       const ctx = m.shooting_context || {};
-      const l3Avg = ctx.l3_avg || ctx.l3_edge_pct ? null : null;
       
       if (!pickMap.has(key)) {
         pickMap.set(key, {
@@ -112,7 +154,7 @@ Deno.serve(async (req) => {
           sources: ['mispriced'],
           l3_avg: ctx.l3_avg || 0,
           hit_rate: 0,
-          odds: -110, // default
+          odds: -110,
         });
       } else {
         pickMap.get(key).sources.push('mispriced');
@@ -120,8 +162,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Add sweet spot picks
+    // Add sweet spot picks (now with backfilled l3_avg)
     for (const s of sweets) {
+      if (!s.l3_avg) continue; // skip if still no L3 data after backfill
       const key = makeKey(s.player_name, s.prop_type);
       if (pickMap.has(key)) {
         const existing = pickMap.get(key);
@@ -173,9 +216,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Score all picks
+    // Score all picks with quality floor
     const scoredPicks: ScoredPick[] = [];
     for (const [, pick] of pickMap) {
+      // Quality floor: must meet at least one threshold
+      const meetsQuality = (pick.hit_rate >= 0.6) || (pick.edge_pct >= 8) || (pick.sources.length >= 2);
+      if (!meetsQuality) continue;
+
       // Calculate L3 margin (how far L3 clears the line)
       let l3Margin = 0;
       if (pick.l3_avg > 0 && pick.line > 0) {
@@ -186,10 +233,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Composite scoring
-      const overlapBonus = (pick.sources.length - 1) * 15; // 15 pts per extra source
+      // Composite scoring — tuned to reward L3 margin over overlap
+      const overlapBonus = (pick.sources.length - 1) * 10; // 10 pts per extra source (was 15)
       const edgeScore = Math.min(pick.edge_pct / 2, 30); // max 30
-      const l3Score = Math.max(l3Margin * 40, 0); // margin * 40, max uncapped
+      const l3Score = Math.max(l3Margin * 60, 0); // margin * 60 (was 40)
       const hitRateScore = pick.hit_rate * 20; // up to ~20
       const tierBonus = pick.confidence_tier === 'ELITE' ? 10 : pick.confidence_tier === 'HIGH' ? 5 : 0;
 
@@ -211,7 +258,7 @@ Deno.serve(async (req) => {
       console.log(`[L3CrossEngine] Top 5:`, scoredPicks.slice(0, 5).map(p => `${p.player_name} ${p.prop_type} ${p.side} (score: ${p.composite_score}, sources: ${p.sources.join(',')})`));
     }
 
-    // Assemble 3-5 leg parlay — max 1 per player, uncorrelated
+    // Assemble 3-5 leg parlay — max 1 per player, no redundant L3 gate
     const selectedLegs: ScoredPick[] = [];
     const usedPlayers = new Set<string>();
 
@@ -221,18 +268,14 @@ Deno.serve(async (req) => {
       const playerKey = pick.player_name.toLowerCase();
       if (usedPlayers.has(playerKey)) continue;
 
-      // L3 gate: must clear line in right direction
-      if (pick.l3_avg > 0 && pick.line > 0) {
-        if (pick.side === 'over' && pick.l3_avg < pick.line * 0.85) continue;
-        if (pick.side === 'under' && pick.l3_avg > pick.line * 1.15) continue;
-      }
-
       usedPlayers.add(playerKey);
       selectedLegs.push(pick);
     }
 
-    if (selectedLegs.length < 3) {
-      console.log(`[L3CrossEngine] Only ${selectedLegs.length} legs found, need at least 3`);
+    // Allow 2-leg parlays at reduced stake
+    const minLegs = 2;
+    if (selectedLegs.length < minLegs) {
+      console.log(`[L3CrossEngine] Only ${selectedLegs.length} legs found, need at least ${minLegs}`);
       return new Response(JSON.stringify({ 
         success: false, 
         reason: 'insufficient_legs', 
@@ -246,7 +289,7 @@ Deno.serve(async (req) => {
     // Calculate combined odds
     const combinedDecimal = selectedLegs.reduce((acc, leg) => acc * americanToDecimal(leg.odds), 1);
     const combinedAmerican = decimalToAmerican(combinedDecimal);
-    const stake = 10;
+    const stake = selectedLegs.length >= 3 ? 10 : 5; // reduced stake for 2-leggers
     const payout = Math.round(stake * combinedDecimal);
 
     // Build legs array for persistence
