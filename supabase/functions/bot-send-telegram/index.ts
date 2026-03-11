@@ -1387,7 +1387,7 @@ function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): st
   if (winners && Array.isArray(winners)) {
     const regularWinners = winners.filter((w: any) => !w.isLottery);
     for (const w of regularWinners) {
-      msg += `#${w.rank} | ${w.tier} | ${w.odds} | $${w.profit?.toLocaleString()} profit\n`;
+      msg += `#${w.rank} | ${w.tier} | ${w.odds} | $${w.stake?.toLocaleString()} stake → +$${w.profit?.toLocaleString()} profit\n`;
       for (const leg of (w.legs || [])) {
         const actualStr = leg.actual !== null && leg.actual !== undefined ? ` (actual: ${leg.actual})` : '';
         msg += `  ✅ ${leg.player} ${leg.prop} ${leg.side}${leg.line}${actualStr}\n`;
