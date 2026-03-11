@@ -716,12 +716,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       { legs: 3, strategy: 'ceiling_shot', sports: ['all'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
       // Multi-sport exploration — capped at 4 legs max
-      // VERIFIED-SOURCE EXPLORATION: mispriced_edge + double_confirmed_conviction (replaces generic explore_*)
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      // VERIFIED-SOURCE EXPLORATION: mispriced_edge REDUCED (0.5% ROI) + double_confirmed_conviction
+      // PAUSED: mispriced_edge NBA composite — { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      // PAUSED: mispriced_edge NBA hit_rate — { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
       // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'composite' },
+      // PAUSED: mispriced_edge NHL — { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // REDIRECTED: 3 mispriced_edge slots → cross_sport_4 + double_confirmed_conviction
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
