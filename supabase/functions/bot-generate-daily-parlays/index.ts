@@ -878,9 +878,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minConfidence: 0.52,
     profiles: [
       // ALL 3-LEG: Validated tier capped at 3 legs for win rate optimization
-      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
+      // DISABLED: validated_conservative (0% win rate) — replaced with top performers
+      { legs: 3, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 50, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
       // NCAAB validation — UNDERS ONLY (70.6% hit rate, spreads/overs remain blocked)
       { legs: 3, strategy: 'validated_ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minOddsValue: 45, minHitRate: 62, maxCategoryUsage: 3 },
       // { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 }, // PAUSED
