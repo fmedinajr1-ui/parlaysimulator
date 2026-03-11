@@ -54,6 +54,7 @@ interface ParlayCheckResult {
   leg_count: number;
   legs: LegCheck[];
   summary: { keeps: number; flips: number; drops: number; cautions: number };
+  avg_quality: number;
 }
 
 function getEasternDate(): string {
