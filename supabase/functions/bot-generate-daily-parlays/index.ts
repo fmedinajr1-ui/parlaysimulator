@@ -948,7 +948,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     ],
   },
   execution: {
-    count: 40,
+    count: 50,
     iterations: 25000,
     maxPlayerUsage: 1,
     maxTeamUsage: 2,
@@ -1054,6 +1054,13 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', side: 'under' },
+      // ============= DOUBLE CONFIRMED CONVICTION EXECUTION (PROMOTED — 66.7% win rate) =============
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 60, sortBy: 'composite' },
       // ============= CROSS SPORT 4-LEG EXECUTION (PROMOTED — 8-0 record, $3,930 profit) =============
       // --- Sorted by composite (default high-confidence selection) ---
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
@@ -1069,6 +1076,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // --- Sport-specific pairs (proven correlations) ---
       { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'composite' },
+      // --- Additional sport-pair diversity ---
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'hit_rate' },
       // (floor_lock + ceiling_shot moved to TOP of execution profiles to avoid timeout)
     ],
   },
