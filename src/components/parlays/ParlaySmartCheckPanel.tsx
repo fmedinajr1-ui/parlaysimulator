@@ -215,6 +215,11 @@ export function ParlaySmartCheckPanel() {
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground font-medium">
                   {flaggedLegs.length} legs flagged across {results.parlays_checked} parlays
+                  {results.results.length > 0 && (
+                    <span className="ml-2">
+                      • Avg Quality: {Math.round(results.results.reduce((s, r) => s + r.avg_quality, 0) / results.results.length)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 max-h-80 overflow-y-auto">
