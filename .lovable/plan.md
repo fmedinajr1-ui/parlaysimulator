@@ -42,3 +42,13 @@ Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
 - Streak ≤ -8: penalty = streak × 0.03
 - Streak ≤ -15: auto-block regardless of hit rate
 - Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
+
+# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
+
+## Problem
+1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
+2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
+
+## Solution
+- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
+- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
