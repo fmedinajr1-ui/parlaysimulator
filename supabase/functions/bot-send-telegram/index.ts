@@ -100,6 +100,7 @@ type NotificationType =
   | 'dd_td_candidates'
   | 'new_strategies_broadcast'
   | 'leg_swap_report'
+  | 'custom'
   | 'test';
 
 interface NotificationData {
