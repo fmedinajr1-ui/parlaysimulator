@@ -862,6 +862,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // ============= ROLE-STACKED 5/8-LEG: moved from execution (0% win rate on 5+ leggers) =============
       { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      // BOOSTED: +2 role_stacked_5leg profiles (reallocated from validated_conservative)
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 60, sortBy: 'composite', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
     ],
   },
@@ -878,9 +881,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minConfidence: 0.52,
     profiles: [
       // ALL 3-LEG: Validated tier capped at 3 legs for win rate optimization
-      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
+      // DISABLED: validated_conservative (0% win rate) — replaced with top performers
+      { legs: 3, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 50, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 50, sortBy: 'composite' },
       // NCAAB validation — UNDERS ONLY (70.6% hit rate, spreads/overs remain blocked)
       { legs: 3, strategy: 'validated_ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minOddsValue: 45, minHitRate: 62, maxCategoryUsage: 3 },
       // { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 }, // PAUSED
@@ -923,9 +926,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'proving_boosted', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
       { legs: 3, strategy: 'proving_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
       // === SHUFFLE VARIATION PROFILES (break deterministic selection) ===
-      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55, sortBy: 'shuffle' },
+      // DISABLED: validated_conservative shuffle variants — replaced with top performers
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
