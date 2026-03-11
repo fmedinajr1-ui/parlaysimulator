@@ -1360,7 +1360,7 @@ function formatMegaLotteryV2(data: Record<string, any>, dateStr: string): string
 }
 
 function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): string {
-  const { date, rating, winnerCount, totalProfit, winners, lotteryWinners, tierContext, keyPlayers } = data;
+  const { date, rating, winnerCount, totalProfit, totalStaked, winners, lotteryWinners, tierContext, keyPlayers } = data;
   const displayDate = date || dateStr;
 
   let msg = `🏆 YESTERDAY'S WINS — ${displayDate}\n`;
