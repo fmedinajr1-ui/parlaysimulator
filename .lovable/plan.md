@@ -1,54 +1,33 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Root Cause: NHL Parlays Voided by False Injury Match
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+### The Bug (Two Compounding Issues)
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+**1. Field name mismatch in NHL leg records**
+The `nhl-floor-lock-daily` builder stores the player name as `player` (e.g., `player: "Owen Tippett"`), but the `pre-game-leg-verifier` reads `leg.player_name || leg.playerName || ''` (line 140). Since neither `player_name` nor `playerName` exists on NHL legs, every NHL player resolves to an **empty string**.
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+**2. Empty string matches everything in fuzzy matcher**
+The `nameSimilarity` function (line 23) checks `n2.includes(n1)`. Since `"ja morant".includes("")` is **always true** in JavaScript, the empty string gets a similarity score of 0.9 — passing the 0.7 threshold. Every NHL leg falsely matches the first OUT player (Ja Morant), gets flagged for dropping, and since no swap is found, all legs are dropped and the parlay is voided.
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+### Changes
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+**1. Fix `pre-game-leg-verifier/index.ts`** (2 changes)
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+- **Line 140**: Add `leg.player` to the fallback chain:
+  ```
+  const playerName = leg.player_name || leg.playerName || leg.player || '';
+  ```
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+- **Line 19-27** (`nameSimilarity`): Add empty string guard:
+  ```
+  if (!n1 || !n2 || n1.length < 2 || n2.length < 2) return 0;
+  ```
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+**2. Fix `nhl-floor-lock-daily/index.ts`** leg builder
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+Locate the `buildLegRecord` helper and ensure it outputs `player_name` (matching the convention used by NBA strategies) alongside or instead of `player`. This prevents future mismatches.
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
+### Expected Impact
+NHL parlays will no longer be false-positive voided. The $650 in today's voided stakes would have been active. The empty-string guard also prevents any future field name inconsistencies from causing false matches.
 
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
-
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
-
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
-
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
-
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
