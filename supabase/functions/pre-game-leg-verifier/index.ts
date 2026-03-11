@@ -19,6 +19,7 @@ function normalizeName(name: string): string {
 function nameSimilarity(name1: string, name2: string): number {
   const n1 = normalizeName(name1);
   const n2 = normalizeName(name2);
+  if (!n1 || !n2 || n1.length < 2 || n2.length < 2) return 0;
   if (n1 === n2) return 1;
   if (n1.includes(n2) || n2.includes(n1)) return 0.9;
   const last1 = n1.split(' ').pop() || '';
