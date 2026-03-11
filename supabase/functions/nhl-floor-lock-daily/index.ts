@@ -236,6 +236,19 @@ Deno.serve(async (req) => {
     log(`Found ${allCandidates?.length || 0} total NHL candidates for ${today}`);
     const candidates = allCandidates || [];
 
+    // Log matchup distribution
+    const matchupDist = { elite: 0, prime: 0, favorable: 0, neutral: 0, avoid: 0, unknown: 0 };
+    for (const c of candidates) {
+      const adj = c.matchup_adjustment || 0;
+      if (adj >= 10) matchupDist.elite++;
+      else if (adj >= 5) matchupDist.prime++;
+      else if (adj >= 2) matchupDist.favorable++;
+      else if (adj >= 0) matchupDist.neutral++;
+      else if (adj < 0) matchupDist.avoid++;
+      else matchupDist.unknown++;
+    }
+    log(`Matchup distribution: ${JSON.stringify(matchupDist)}`);
+
     // ============================================================
     // === PHASE 2A: Floor Lock Parlay (100% L10 hit rate) ===
     // ============================================================
@@ -243,12 +256,14 @@ Deno.serve(async (req) => {
 
     let floorCandidates = candidates.filter(
       (c) => (c.actual_hit_rate || 0) >= 1.0 && (c.l10_min || 0) >= 1
+        && (c.matchup_adjustment || 0) >= -5 // Exclude terrible matchups even with 100% L10
     );
 
     if (floorCandidates.length < 3) {
       log("Not enough 100% candidates, relaxing to 80%+ hit rate...");
       const relaxed = candidates.filter(
         (c) => (c.actual_hit_rate || 0) >= 0.8 && (c.l10_min || 0) >= 0.5
+          && (c.matchup_adjustment || 0) >= -5
       );
       const existingIds = new Set(floorCandidates.map((c) => c.id));
       floorCandidates.push(...relaxed.filter((r) => !existingIds.has(r.id)));
