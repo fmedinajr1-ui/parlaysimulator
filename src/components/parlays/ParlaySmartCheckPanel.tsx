@@ -316,8 +316,8 @@ export function ParlaySmartCheckPanel() {
                             </div>
                           </div>
                         );
-                      })
-                  ))}
+                      });
+                  })}
                 </div>
 
                 {/* Auto-Apply Button */}
