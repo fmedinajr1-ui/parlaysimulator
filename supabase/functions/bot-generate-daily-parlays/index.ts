@@ -937,10 +937,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
       { legs: 3, strategy: 'validated_balanced', sports: ['all'], minOddsValue: 42, minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'shuffle' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
+      // PAUSED: mispriced_edge shuffle variants (0.5% ROI) — redirected to high-ROI strategies
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 58, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 52, sortBy: 'shuffle' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 52, sortBy: 'shuffle' },
       // WINNING ARCHETYPE shuffle — 3PT REDUCED from 2 to 0, kept reb_ast
       { legs: 3, strategy: 'winning_archetype_reb_ast', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', preferCategories: ['BIG_REBOUNDER', 'HIGH_ASSIST'] },
       // GRIND UNDER VALIDATION: NBA under plays
