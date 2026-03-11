@@ -182,10 +182,15 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatNewStrategiesBroadcast(data, dateStr);
     case 'leg_swap_report':
       return formatLegSwapReport(data, dateStr);
+    case 'custom':
+      // Extract clean message from adaptive intelligence and other custom senders
+      return data.message || data.text || data.summary || '📌 Bot update received';
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
-      return `📌 Bot Update: ${JSON.stringify(data)}`;
+      // Suppress raw JSON dumps — show a clean one-liner or skip
+      console.log(`[Telegram] Unknown notification type: ${type}`, JSON.stringify(data).slice(0, 200));
+      return `📌 Bot Update (${type})`;
   }
 }
 
