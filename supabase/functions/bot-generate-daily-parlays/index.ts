@@ -167,7 +167,7 @@ async function detectWinningMispricedPatterns(supabase: any): Promise<{ sports: 
 
 function autoPromoteToExecution(winningPatterns: { sports: string[]; legCount: number; winRate: number; sampleSize: number }[]): any[] {
   const promoted: any[] = [];
-  const maxPromoted = 4; // Reduced from 8 to prevent mispriced domination
+  const maxPromoted = 1; // Reduced from 4 to 1 — mispriced_edge has 0.5% ROI, limit auto-promotion
 
   for (const pattern of winningPatterns) {
     if (promoted.length >= maxPromoted) break;
