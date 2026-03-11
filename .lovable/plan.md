@@ -1,40 +1,54 @@
+# Active Plans & Recent Changes
 
+See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-## Fix L3 Cross-Engine Production Bottlenecks
+# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
 
-### Root Cause Analysis
+## Problem
+Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
 
-Today's data shows:
-- **101** L3-confirmed mispriced picks
-- **83** sweet spot picks with L3 data
-- **0** high conviction results
+## Solution
+Added `l3_avg` column + universal recency decline filter across ALL engines.
 
-The engine has **three compounding restrictions** that choke output:
+### Thresholds
+- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
+- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
+- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
 
-1. **Double L3 filtering**: Mispriced picks already require `l3_confirms === true`, but then the assembly loop (line 225-228) applies ANOTHER L3 gate requiring `l3_avg >= line * 0.85` for overs. This is redundant — a pick confirmed as L3-aligned is being re-filtered with a stricter threshold.
+# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
 
-2. **High conviction dependency**: With 0 high conviction results today, no pick can achieve 3-source overlap. The overlap bonus (15 pts per source) means single-source picks score drastically lower, pushing quality picks to the bottom.
+## Problem
+NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
 
-3. **Hard 3-leg minimum**: If the double gate filters too many, the engine returns "insufficient_legs" and produces nothing.
+## Solution
+Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
 
-### Changes (`l3-cross-engine-parlay/index.ts`)
+# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
 
-**1. Remove redundant assembly L3 gate**
-Delete lines 224-228 (the second L3 filter in the assembly loop). Source data is already L3-validated — mispriced requires `l3_confirms === true`, and sweet spots have non-null `l3_avg`. The composite score already penalizes picks with poor L3 margins via `l3Score`, so bad picks naturally rank lower without a hard gate.
+## Problem
+`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
 
-**2. Accept all L3-confirmed sources independently**
-Currently all three sources feed the pickMap, but the scoring heavily rewards overlap. Adjust the composite formula:
-- Reduce overlap bonus from 15 to 10 per extra source
-- Increase L3 margin weight from 40 to 60 (reward strong L3 clearance over multi-engine overlap)
-- Add a hit rate floor: require `hit_rate >= 0.6` OR `edge_pct >= 8` OR `sources.length >= 2` to enter the scored picks array — this replaces the hard L3 gate with a quality floor
+## Solution
+Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
 
-**3. Lower minimum legs to 2 with adjusted stake**
-If only 2 quality legs pass scoring, build a 2-leg parlay at reduced stake ($5 instead of $10). Keep 3-5 legs as the preferred range.
+# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
 
-**4. Inline L3 backfill for sweet spot picks missing l3_avg**
-Query `nba_player_game_logs` for any sweet spot pick where `l3_avg` is null, compute it on the fly (last 3 games), and populate before scoring. This prevents good sweet spot candidates from scoring 0 on the L3 margin component.
+## Problem
+`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
 
-### Expected Impact
+## Solution
+Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
+- Streak ≤ -3: penalty = streak × 0.02
+- Streak ≤ -8: penalty = streak × 0.03
+- Streak ≤ -15: auto-block regardless of hit rate
+- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
 
-With these changes, the engine should produce 1-2 parlays daily from the ~180 available L3-confirmed picks instead of returning "insufficient_legs". Quality is maintained through composite scoring rather than hard gates.
+# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
 
+## Problem
+1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
+2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
+
+## Solution
+- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
+- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
