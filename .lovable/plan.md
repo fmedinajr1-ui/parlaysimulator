@@ -1,54 +1,38 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Scale Up cross_sport_4 & double_confirmed_conviction
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+### Current Profile Counts
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+| Strategy | Exploration | Validation | Execution | Total |
+|----------|------------|------------|-----------|-------|
+| `cross_sport_4` | 2 | 2 | 10 | 14 |
+| `double_confirmed_conviction` | ~11 | ~7 | 0 | ~18 |
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+**Key finding**: `double_confirmed_conviction` has zero execution-tier profiles — it only runs at exploration/validation stakes. This explains lower volume despite good win rate.
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+### Changes (`bot-generate-daily-parlays/index.ts`)
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+**1. Add `double_confirmed_conviction` to Execution tier (6 profiles)**
+Insert before the cross_sport_4 execution block (line 1057):
+- 2× `composite` sort, NBA, `minHitRate: 65`
+- 2× `hit_rate` sort, all sports, `minHitRate: 60`
+- 1× `shuffle` sort, NBA, `minHitRate: 65`
+- 1× sport-pair NBA+NHL, `minHitRate: 60`, `composite`
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+This puts it at $100 stake with strict 65%+ hit rate filtering.
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+**2. Add 4 more `cross_sport_4` execution profiles (10 → 14)**
+Add after line 1071:
+- 2× `shuffle` sort with NBA+NHL sport pair
+- 2× `hit_rate` sort with NBA+NCAAB sport pair
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+This increases sport-pair diversity while maintaining the 55% hit rate floor.
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+**3. Bump execution tier count from 40 to 50**
+Update line 951 (`count: 40` → `count: 50`) to accommodate the 10 new profiles.
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
+### Expected Output
+- **cross_sport_4**: 14 → 18 execution profiles → 4-6 unique parlays/day at $100-250 stakes
+- **double_confirmed_conviction**: 0 → 6 execution profiles → 4-6 unique parlays/day at $100 stakes (plus existing validation/exploration output)
 
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
-
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
-
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
-
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
-
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
