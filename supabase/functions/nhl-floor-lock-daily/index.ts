@@ -96,9 +96,12 @@ function buildCeilingShotLegs(candidates: any[], legCount: number = 3) {
 }
 
 function formatLegs(legs: any[]) {
-  return legs.map((l: any, i: number) =>
-    `${i + 1}. ${l.player} — ${l.prop} ${l.side} ${l.line}\n   🎯 L10: ${Math.round((l.l10_hit_rate || 0) * 100)}% | Avg ${l.l10_avg} | Floor ${l.l10_min} | Ceiling ${l.l10_max}`
-  ).join("\n\n");
+  return legs.map((l: any, i: number) => {
+    const matchupTag = l.matchup_tier && l.matchup_tier !== 'unknown'
+      ? `\n   🆚 vs ${l.opponent || '?'} (${l.matchup_tier.toUpperCase()} — score ${l.matchup_score || '?'})`
+      : '';
+    return `${i + 1}. ${l.player} — ${l.prop} ${l.side} ${l.line}\n   🎯 L10: ${Math.round((l.l10_hit_rate || 0) * 100)}% | Avg ${l.l10_avg} | Floor ${l.l10_min} | Ceiling ${l.l10_max}${matchupTag}`;
+  }).join("\n\n");
 }
 
 function buildLegRecord(pick: any) {
@@ -113,7 +116,19 @@ function buildLegRecord(pick: any) {
     l10_min: pick.l10_min,
     l10_max: pick.l10_max,
     quality_tier: pick.quality_tier,
+    matchup_adjustment: pick.matchup_adjustment || 0,
+    matchup_tier: getMatchupTierLabel(pick.matchup_adjustment || 0),
+    matchup_score: pick.confidence_score || null,
+    opponent: null, // extracted from game context
   };
+}
+
+function getMatchupTierLabel(adj: number): string {
+  if (adj >= 10) return 'elite';
+  if (adj >= 5) return 'prime';
+  if (adj >= 2) return 'favorable';
+  if (adj >= 0) return 'neutral';
+  return 'avoid';
 }
 
 Deno.serve(async (req) => {
@@ -221,6 +236,19 @@ Deno.serve(async (req) => {
     log(`Found ${allCandidates?.length || 0} total NHL candidates for ${today}`);
     const candidates = allCandidates || [];
 
+    // Log matchup distribution
+    const matchupDist = { elite: 0, prime: 0, favorable: 0, neutral: 0, avoid: 0, unknown: 0 };
+    for (const c of candidates) {
+      const adj = c.matchup_adjustment || 0;
+      if (adj >= 10) matchupDist.elite++;
+      else if (adj >= 5) matchupDist.prime++;
+      else if (adj >= 2) matchupDist.favorable++;
+      else if (adj >= 0) matchupDist.neutral++;
+      else if (adj < 0) matchupDist.avoid++;
+      else matchupDist.unknown++;
+    }
+    log(`Matchup distribution: ${JSON.stringify(matchupDist)}`);
+
     // ============================================================
     // === PHASE 2A: Floor Lock Parlay (100% L10 hit rate) ===
     // ============================================================
@@ -228,12 +256,14 @@ Deno.serve(async (req) => {
 
     let floorCandidates = candidates.filter(
       (c) => (c.actual_hit_rate || 0) >= 1.0 && (c.l10_min || 0) >= 1
+        && (c.matchup_adjustment || 0) >= -5 // Exclude terrible matchups even with 100% L10
     );
 
     if (floorCandidates.length < 3) {
       log("Not enough 100% candidates, relaxing to 80%+ hit rate...");
       const relaxed = candidates.filter(
         (c) => (c.actual_hit_rate || 0) >= 0.8 && (c.l10_min || 0) >= 0.5
+          && (c.matchup_adjustment || 0) >= -5
       );
       const existingIds = new Set(floorCandidates.map((c) => c.id));
       floorCandidates.push(...relaxed.filter((r) => !existingIds.has(r.id)));
@@ -293,18 +323,23 @@ Deno.serve(async (req) => {
     // ============================================================
     log("=== PHASE 2B: Building NHL Optimal Combo Parlays ===");
 
-    // Deduplicate by player first, take top 20 to avoid memory explosion (C(360,3) = 7.7M!)
+    // Deduplicate by player first, take top 20; exclude avoid-tier matchups
     const ocSeen = new Set<string>();
     const optimalCandidates: typeof candidates = [];
     for (const c of candidates) {
-      if ((c.actual_hit_rate || 0) >= 0.6 && !ocSeen.has(c.player_name)) {
+      if ((c.actual_hit_rate || 0) >= 0.6 && (c.matchup_adjustment || 0) >= -5 && !ocSeen.has(c.player_name)) {
         ocSeen.add(c.player_name);
         optimalCandidates.push(c);
       }
     }
-    // Cap at top 20 by hit rate (already sorted)
+    // Sort by weighted score: (hit_rate * 0.7) + (normalized matchup * 0.3)
+    optimalCandidates.sort((a, b) => {
+      const scoreA = (a.actual_hit_rate || 0) * 0.7 + (Math.max(0, (a.matchup_adjustment || 0) + 10) / 20) * 0.3;
+      const scoreB = (b.actual_hit_rate || 0) * 0.7 + (Math.max(0, (b.matchup_adjustment || 0) + 10) / 20) * 0.3;
+      return scoreB - scoreA;
+    });
     const ocPool = optimalCandidates.slice(0, 20);
-    log(`Optimal combo pool: ${ocPool.length} candidates (deduped, top 20, 60%+ hit rate)`);
+    log(`Optimal combo pool: ${ocPool.length} candidates (deduped, matchup-filtered, top 20, 60%+ hit rate)`);
 
     // Execution: 70%+ hit rate, 3-leg
     const execCombos = buildOptimalCombos(

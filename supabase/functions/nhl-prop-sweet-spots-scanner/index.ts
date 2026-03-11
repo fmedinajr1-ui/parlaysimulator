@@ -41,6 +41,78 @@ function classifyNhlCategory(propType: string): string {
   return 'NHL_OTHER';
 }
 
+// === Prop-specific defense routing ===
+// Returns { defRankKey, offRankKey } for the opponent and player's team
+function getDefenseRouting(category: string): { defRankKey: string; offRankKey: string } {
+  switch (category) {
+    case 'NHL_GOALS_SCORER':
+      return { defRankKey: 'goals_against_rank', offRankKey: 'goals_for_rank' };
+    case 'NHL_ASSISTS':
+    case 'NHL_POINTS':
+      return { defRankKey: 'goals_against_rank', offRankKey: 'goals_for_rank' };
+    case 'NHL_SHOTS_ON_GOAL':
+      return { defRankKey: 'shots_against_rank', offRankKey: 'shots_for_rank' };
+    case 'NHL_GOALIE_SAVES':
+      // More opponent shots = more saves opportunity
+      return { defRankKey: 'shots_for_rank', offRankKey: 'shots_against_rank' };
+    case 'NHL_BLOCKED_SHOTS':
+      return { defRankKey: 'shots_for_rank', offRankKey: 'shots_against_rank' };
+    case 'NHL_POWER_PLAY_POINTS':
+      return { defRankKey: 'penalty_kill_rank', offRankKey: 'power_play_rank' };
+    default:
+      return { defRankKey: 'goals_against_rank', offRankKey: 'goals_for_rank' };
+  }
+}
+
+// Compute matchup score: higher = better for OVER
+// oppDefRank: higher rank = weaker defense = better for attacker
+// teamOffRank: lower rank = stronger offense = better for attacker
+function computeMatchupScore(oppDefRank: number, teamOffRank: number): number {
+  return (oppDefRank * 0.6) + ((31 - teamOffRank) * 0.4);
+}
+
+function getMatchupTier(score: number): { tier: string; adjustment: number } {
+  if (score >= 22) return { tier: 'elite', adjustment: 10 };
+  if (score >= 18) return { tier: 'prime', adjustment: 5 };
+  if (score >= 14) return { tier: 'favorable', adjustment: 2 };
+  if (score >= 10) return { tier: 'neutral', adjustment: 0 };
+  return { tier: 'avoid', adjustment: -10 };
+}
+
+// Extract opponent team abbreviation from game_description
+// Format: "Team A vs Team B" or "Team A @ Team B"
+// NHL team abbreviations from the API
+const NHL_TEAM_ABBREVS = new Set([
+  'ANA','ARI','BOS','BUF','CGY','CAR','CHI','COL','CBJ','DAL',
+  'DET','EDM','FLA','LAK','MIN','MTL','NSH','NJD','NYI','NYR',
+  'OTT','PHI','PIT','SEA','SJS','STL','TBL','TOR','UTA','VAN',
+  'VGK','WPG','WSH',
+]);
+
+function extractTeamsFromDescription(desc: string, playerTeam?: string): { opponent?: string; playerTeamAbbrev?: string } {
+  if (!desc) return {};
+  
+  // Try to find two NHL team abbreviations in the description
+  const words = desc.toUpperCase().replace(/[^A-Z\s]/g, ' ').split(/\s+/);
+  const found: string[] = [];
+  for (const w of words) {
+    if (NHL_TEAM_ABBREVS.has(w) && !found.includes(w)) found.push(w);
+  }
+  
+  if (found.length === 2) {
+    // If we know the player's team, opponent is the other one
+    if (playerTeam) {
+      const pt = playerTeam.toUpperCase();
+      if (found[0] === pt) return { opponent: found[1], playerTeamAbbrev: found[0] };
+      if (found[1] === pt) return { opponent: found[0], playerTeamAbbrev: found[1] };
+    }
+    // Otherwise return both
+    return { opponent: found[1], playerTeamAbbrev: found[0] };
+  }
+  
+  return {};
+}
+
 function calcStats(values: number[]) {
   if (values.length === 0) return { avg: 0, median: 0, min: 0, max: 0, stdDev: 0 };
   const sorted = [...values].sort((a, b) => a - b);
@@ -100,9 +172,6 @@ Deno.serve(async (req) => {
     console.log(`[NHL Scanner] ${uniqueProps.size} unique player-prop combos`);
 
     // 2. Name mapping: game logs have MIXED formats ("Bryan Rust" AND "A. Tuch")
-    // Query with BOTH full name and abbreviated name, merge results
-
-    // Split into skater vs goalie props, collect both name forms
     const skaterFullNames: string[] = [];
     const skaterAbbrevNames: string[] = [];
     const goalieFullNames: string[] = [];
@@ -122,12 +191,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Combine both name forms for querying
     const allSkaterNames = [...new Set([...skaterFullNames, ...skaterAbbrevNames])];
     const allGoalieNames = [...new Set([...goalieFullNames, ...goalieAbbrevNames])];
 
     console.log(`[NHL Scanner] Querying logs for ${allSkaterNames.length} skater name variants, ${allGoalieNames.length} goalie name variants`);
-    console.log(`[NHL Scanner] Sample names: ${allSkaterNames.slice(0, 5).join(', ')}`);
 
     // Fetch skater logs using BOTH full + abbreviated names
     const skaterLogs: Record<string, any[]> = {};
@@ -178,7 +245,6 @@ Deno.serve(async (req) => {
       const logs = isGoalie ? goalieLogs : skaterLogs;
       
       if (logs[full] && logs[full].length > 0) {
-        // Merge both forms if both exist
         if (abbrev !== full && logs[abbrev]) {
           logs[full] = [...logs[full], ...logs[abbrev]]
             .sort((a, b) => b.game_date.localeCompare(a.game_date))
@@ -194,25 +260,25 @@ Deno.serve(async (req) => {
     // 3. Fetch defense rankings for matchup scoring
     const { data: defenseRankings } = await supabase
       .from('nhl_team_defense_rankings')
-      .select('team_abbrev, goals_against_rank, shots_against_rank, shots_for_per_game, goals_for_rank, shots_for_rank, penalty_kill_rank');
+      .select('team_abbrev, goals_against_rank, shots_against_rank, shots_for_rank, goals_for_rank, penalty_kill_rank, power_play_rank');
 
     const defRankMap = new Map<string, any>();
     for (const r of defenseRankings || []) {
       defRankMap.set(r.team_abbrev?.toUpperCase(), r);
     }
+    console.log(`[NHL Scanner] Defense rankings loaded: ${defRankMap.size} teams`);
 
-    // 4. Analyze each prop and compute L10 stats
+    // 4. Analyze each prop and compute L10 stats + matchup scoring
     const sweetSpots: any[] = [];
     let analyzed = 0;
     let qualifying = 0;
+    let matchupBlocked = 0;
+    let matchupBoosted = 0;
 
     for (const [key, prop] of uniqueProps) {
       const isGoalieProp = !!NHL_GOALIE_PROP_MAP[prop.prop_type];
       const statCol = isGoalieProp ? NHL_GOALIE_PROP_MAP[prop.prop_type] : NHL_SKATER_PROP_MAP[prop.prop_type];
-      if (!statCol) {
-        console.log(`[NHL Scanner] No stat mapping for prop_type: ${prop.prop_type}`);
-        continue;
-      }
+      if (!statCol) continue;
 
       const logName = propToLogName.get(prop.player_name);
       if (!logName) continue;
@@ -226,7 +292,7 @@ Deno.serve(async (req) => {
       const values = logs.map(l => Number(l[statCol] ?? 0));
       const stats = calcStats(values);
 
-      // Compute L3 average (last 3 games — logs are already sorted by game_date DESC)
+      // Compute L3 average
       const l3Values = values.slice(0, 3);
       const l3Avg = l3Values.length >= 3 ? Math.round((l3Values.reduce((a, b) => a + b, 0) / l3Values.length) * 100) / 100 : null;
 
@@ -236,21 +302,60 @@ Deno.serve(async (req) => {
       const overHitRate = overHits / values.length;
       const underHitRate = underHits / values.length;
 
-      // Determine recommended side
       const bestSide = overHitRate >= underHitRate ? 'OVER' : 'UNDER';
       const bestHitRate = Math.max(overHitRate, underHitRate);
 
       analyzed++;
 
-      // Qualifying threshold: 50%+ hit rate with 3+ games
       if (bestHitRate < 0.50 || values.length < 3) continue;
 
       const category = classifyNhlCategory(prop.prop_type);
 
-      // Extract opponent from game_description for defense lookup
+      // === MATCHUP SCORING ===
       let matchupAdjustment = 0;
-      // We'll use the player's team from logs to find opponent defense
-      const playerTeam = logs[0]?.team?.toUpperCase();
+      let matchupScore: number | null = null;
+      let matchupTier = 'unknown';
+      let opponentAbbrev: string | null = null;
+
+      // Extract teams from game_description (no team column in logs)
+      const { opponent, playerTeamAbbrev } = extractTeamsFromDescription(
+        prop.game_description || '', 
+        null // no team column available
+      );
+      
+      // Also try opponent from most recent game log if available
+      const logOpponent = logs[0]?.opponent?.toUpperCase();
+      const resolvedOpponent = opponent || logOpponent;
+      const resolvedPlayerTeam = playerTeamAbbrev || null;
+
+      if (resolvedOpponent && defRankMap.size > 0) {
+        const oppDef = defRankMap.get(resolvedOpponent);
+        const teamOff = resolvedPlayerTeam ? defRankMap.get(resolvedPlayerTeam) : null;
+
+        if (oppDef) {
+          opponentAbbrev = resolvedOpponent;
+          const routing = getDefenseRouting(category);
+          
+          const oppDefRank = oppDef[routing.defRankKey] || 16; // default middle
+          const teamOffRank = teamOff?.[routing.offRankKey] || 16;
+          
+          matchupScore = Math.round(computeMatchupScore(oppDefRank, teamOffRank) * 100) / 100;
+          const tierResult = getMatchupTier(matchupScore);
+          matchupTier = tierResult.tier;
+          matchupAdjustment = tierResult.adjustment;
+
+          // HARD BLOCK: OVER picks vs top-3 defenses in specific stat category
+          if (bestSide === 'OVER' && oppDefRank <= 3) {
+            matchupBlocked++;
+            console.log(`[NHL Scanner] ❌ BLOCKED ${prop.player_name} ${prop.prop_type} OVER — opponent ${resolvedOpponent} is rank ${oppDefRank} in ${routing.defRankKey}`);
+            continue; // Skip this pick entirely
+          }
+
+          if (matchupAdjustment > 0) matchupBoosted++;
+        }
+      }
+
+      const adjustedConfidence = Math.max(0, Math.min(100, Math.round(bestHitRate * 100) + matchupAdjustment));
 
       const entry = {
         player_name: prop.player_name,
@@ -266,7 +371,7 @@ Deno.serve(async (req) => {
         l10_std_dev: Math.round(stats.stdDev * 100) / 100,
         l10_hit_rate: Math.round(bestHitRate * 100) / 100,
         l3_avg: l3Avg,
-        confidence_score: Math.round(bestHitRate * 100),
+        confidence_score: adjustedConfidence,
         analysis_date: today,
         is_active: true,
         games_played: values.length,
@@ -276,7 +381,7 @@ Deno.serve(async (req) => {
         actual_line: line,
         season_avg: Math.round(stats.avg * 100) / 100,
         quality_tier: bestHitRate >= 0.80 ? 'elite' : bestHitRate >= 0.70 ? 'strong' : bestHitRate >= 0.60 ? 'solid' : 'marginal',
-        engine_version: 'nhl-scanner-v2',
+        engine_version: 'nhl-scanner-v3-matchup',
         projection_source: 'l10_game_logs',
       };
 
@@ -284,15 +389,15 @@ Deno.serve(async (req) => {
       qualifying++;
 
       if (bestHitRate >= 0.70) {
-        console.log(`[NHL Scanner] 🔥 ${prop.player_name} ${prop.prop_type} ${bestSide} ${line}: L10 ${Math.round(bestHitRate * 100)}% hit (avg ${stats.avg.toFixed(1)}, range ${stats.min}-${stats.max})`);
+        const matchupTag = matchupTier !== 'unknown' ? ` | ${matchupTier.toUpperCase()} matchup (${matchupScore})` : '';
+        console.log(`[NHL Scanner] 🔥 ${prop.player_name} ${prop.prop_type} ${bestSide} ${line}: L10 ${Math.round(bestHitRate * 100)}% hit (avg ${stats.avg.toFixed(1)}, range ${stats.min}-${stats.max})${matchupTag}`);
       }
     }
 
-    console.log(`[NHL Scanner] Analyzed ${analyzed} props, ${qualifying} qualify (50%+ L10 hit rate)`);
+    console.log(`[NHL Scanner] Analyzed ${analyzed} props, ${qualifying} qualify | ${matchupBlocked} blocked by defense | ${matchupBoosted} boosted by matchup`);
 
     // 5. Upsert to category_sweet_spots
     if (sweetSpots.length > 0) {
-      // Clear today's NHL entries first
       await supabase
         .from('category_sweet_spots')
         .delete()
@@ -328,7 +433,7 @@ Deno.serve(async (req) => {
     const strongCount = sweetSpots.filter(s => s.actual_hit_rate >= 0.70 && s.actual_hit_rate < 0.80).length;
 
     const duration = Date.now() - startTime;
-    console.log(`[NHL Scanner] Done in ${duration}ms | Elite: ${eliteCount} | Strong: ${strongCount} | Total: ${sweetSpots.length}`);
+    console.log(`[NHL Scanner] Done in ${duration}ms | Elite: ${eliteCount} | Strong: ${strongCount} | Blocked: ${matchupBlocked} | Total: ${sweetSpots.length}`);
 
     await supabase.from('cron_job_history').insert({
       job_name: 'nhl-prop-sweet-spots-scanner',
@@ -336,7 +441,7 @@ Deno.serve(async (req) => {
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
-      result: { analyzed, qualifying, byCategory, byQuality, eliteCount, strongCount },
+      result: { analyzed, qualifying, matchupBlocked, matchupBoosted, byCategory, byQuality, eliteCount, strongCount },
     });
 
     return new Response(JSON.stringify({
@@ -344,6 +449,8 @@ Deno.serve(async (req) => {
       duration_ms: duration,
       analyzed,
       sweetSpots: qualifying,
+      matchupBlocked,
+      matchupBoosted,
       eliteCount,
       strongCount,
       byCategory,

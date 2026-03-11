@@ -1,0 +1,1 @@
+ALTER TABLE public.nhl_team_defense_rankings ADD COLUMN IF NOT EXISTS power_play_rank INTEGER;

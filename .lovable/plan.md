@@ -1,60 +1,48 @@
+# Active Plans & Recent Changes
 
+See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-## Plan: NHL Matchup Intelligence Filter
+# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
 
-### Problem
-The NHL prop scanner fetches `nhl_team_defense_rankings` but **never uses them**. `matchupAdjustment` is hardcoded to 0. The floor lock strategy picks purely on L10 hit rate — a player with 100% L10 against a bottom-5 defense gets the same weight as one facing the league's best. This is why accuracy is off.
+## Problem
+Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
 
-### Solution
-Wire defensive and offensive matchup scoring into the NHL scanner and the floor lock orchestrator, mirroring how NBA does prop-specific defense routing.
+## Solution
+Added `l3_avg` column + universal recency decline filter across ALL engines.
+
+### Thresholds
+- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
+- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
+- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+
+# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+
+## Problem
+NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+
+## Solution
+Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
 
 ### Changes
 
-#### 1. `nhl-prop-sweet-spots-scanner/index.ts` — Add matchup scoring
+#### 1. `nhl-prop-sweet-spots-scanner/index.ts` — Matchup scoring engine (v3)
+- **Prop-specific defense routing**: Goals → `goals_against_rank`, SOG → `shots_against_rank`, Saves → `shots_for_rank`, PP Points → `penalty_kill_rank`
+- **Matchup score formula**: `(oppDefRank * 0.6) + ((31 - teamOffRank) * 0.4)`
+- **Tier classification**: Elite (≥22, +10), Prime (≥18, +5), Favorable (≥14, +2), Neutral (10-14, 0), Avoid (<10, -10)
+- **Hard block**: OVER picks vs top-3 defenses in the specific stat category are excluded entirely
+- **Team extraction**: Parses `game_description` for team abbreviations to resolve opponent
+- **Confidence adjustment**: `confidence_score` now reflects matchup quality (base hit rate + adjustment)
 
-**Extract opponent from `game_description`** (format: "Team A vs Team B"). Cross-reference with `nhl_team_defense_rankings` to get the opponent's defensive profile.
+#### 2. `nhl-floor-lock-daily/index.ts` — Matchup-aware filtering
+- **Floor Lock**: Excludes legs with `matchup_adjustment < -5`
+- **Optimal Combo**: Pool sorted by weighted score `(hit_rate * 0.7) + (matchup_normalized * 0.3)` instead of pure hit rate
+- **Broadcast**: Each leg now shows matchup context (e.g., "vs OTT (ELITE — score 25.2)")
+- **Matchup distribution logging**: Shows breakdown of elite/prime/favorable/neutral/avoid counts
 
-**Prop-specific defense routing** (like NBA):
-| Prop Type | Defense Rank Used | Offense Rank Used |
-|-----------|------------------|-------------------|
-| Goals | `goals_against_rank` | `goals_for_rank` |
-| Assists/Points | `goals_against_rank` (proxy) | `goals_for_rank` |
-| SOG | `shots_against_rank` | `shots_for_rank` |
-| Saves | `shots_for_rank` (opp shoots more = more saves) | `shots_against_rank` |
-| Blocked Shots | `shots_for_rank` (opp shoots more) | — |
-| PP Points | `penalty_kill_rank` | `power_play_rank` (need PP rank added) |
+#### 3. `nhl-team-defense-rankings-fetcher/index.ts` — Already had `power_play_rank`
+- Confirmed existing computation is correct; no changes needed.
 
-**Compute `matchup_score`** per candidate:
-```
-matchup_score = (oppDefRank * 0.6) + ((31 - teamOffRank) * 0.4)
-```
-Where `oppDefRank` = opponent's weakness rank (higher = weaker defense = better for OVER) and `teamOffRank` = player's team offensive strength.
-
-**Apply `matchup_adjustment`** to confidence:
-- Elite matchup (score >= 22): +10 adjustment
-- Prime matchup (score >= 18): +5
-- Favorable (score >= 14): +2
-- Neutral (10-14): 0
-- Avoid (score < 10): -10
-- Hard block OVER picks vs top-3 defenses in the specific stat category
-
-**Persist** `matchup_adjustment`, `matchup_score`, and `opponent_abbrev` to `category_sweet_spots`.
-
-#### 2. `nhl-floor-lock-daily/index.ts` — Filter by matchup quality
-
-After fetching candidates, add a matchup filter layer before building parlays:
-
-- **Floor Lock**: Exclude legs with `matchup_adjustment < -5` (avoid terrible matchups even with 100% L10)
-- **Optimal Combo**: Weight combo scoring by `(hit_rate * 0.7) + (matchup_score_normalized * 0.3)` instead of pure hit rate product
-- **Ceiling Shot**: Boost candidates with elite matchups, deprioritize avoid-tier
-- **All strategies**: Add matchup context to Telegram broadcast per leg (e.g., "vs WAS (Rank 28 GA — Elite)")
-
-#### 3. `nhl-team-defense-rankings-fetcher/index.ts` — Add `power_play_rank`
-
-The table already stores `penalty_kill_rank` and `power_play_pct` but doesn't rank PP%. Add `power_play_rank` computation so PP Points props can route correctly.
-
-### Files
-1. `supabase/functions/nhl-prop-sweet-spots-scanner/index.ts` — matchup scoring engine
-2. `supabase/functions/nhl-floor-lock-daily/index.ts` — matchup-aware candidate filtering + broadcast formatting
-3. `supabase/functions/nhl-team-defense-rankings-fetcher/index.ts` — add `power_play_rank`
-
+### Verified
+- Scanner ran successfully: 63 props analyzed, 30 elite, 63 matchup-boosted
+- Elite matchups scoring 25.2, prime at 18, favorable at 15.6
+- Prop-specific routing confirmed (Goals uses goals_against_rank, SOG uses shots_against_rank)
