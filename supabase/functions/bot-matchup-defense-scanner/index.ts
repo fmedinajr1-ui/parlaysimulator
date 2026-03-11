@@ -81,6 +81,11 @@ interface PlayerTarget {
   l10_hit_rate: number;
   l10_min: number;
   margin: number; // l10_avg - line
+  // NEW: risk context fields
+  l3_avg: number | null;
+  risk_tags: string[];
+  l3_trend: 'hot' | 'cold' | 'steady' | null;
+  spread: number | null;
 }
 
 interface MatchupRecommendation {
@@ -124,6 +129,61 @@ function classifyMatchupScore(score: number): 'elite' | 'prime' | 'favorable' | 
   if (score >= 14) return 'favorable';
   if (score <= 8) return 'avoid';
   return 'neutral';
+}
+
+/**
+ * Build risk tags for a player target based on L3 trend, spread, and side.
+ * Never blocks — only tags for user awareness.
+ */
+function buildRiskTags(
+  side: string,
+  l3Avg: number | null,
+  l10Avg: number,
+  line: number,
+  spread: number | null
+): { tags: string[]; trend: 'hot' | 'cold' | 'steady' | null } {
+  const tags: string[] = [];
+  let trend: 'hot' | 'cold' | 'steady' | null = null;
+
+  // === L3 directional tags ===
+  if (l3Avg !== null && l10Avg > 0) {
+    const ratio = l3Avg / l10Avg;
+
+    // Trend classification
+    if (ratio < 0.85) trend = 'cold';
+    else if (ratio > 1.15) trend = 'hot';
+    else trend = 'steady';
+
+    // Severe decline/surge warnings
+    if (ratio < 0.80) tags.push('L3_DECLINE');
+    if (ratio > 1.20 && side === 'under') tags.push('L3_SURGE');
+
+    // L3 vs line directional signal
+    if (side === 'over' && l3Avg < line) {
+      tags.push(`L3_BELOW_LINE`);
+    } else if (side === 'under' && l3Avg > line) {
+      tags.push(`L3_ABOVE_LINE`);
+    }
+
+    // Confirmation signal
+    if (side === 'over' && l3Avg > line && ratio >= 0.90) {
+      tags.push('L3_CONFIRMED');
+    } else if (side === 'under' && l3Avg < line && ratio <= 1.10) {
+      tags.push('L3_CONFIRMED');
+    }
+  }
+
+  // === Blowout risk tags ===
+  if (spread !== null) {
+    const absSpread = Math.abs(spread);
+    if (absSpread >= 10 && side === 'over') {
+      tags.push(`BLOWOUT_RISK(${spread > 0 ? '-' : '+'}${absSpread})`);
+    } else if (absSpread >= 7) {
+      tags.push(`ELEVATED_SPREAD(${spread > 0 ? '-' : '+'}${absSpread})`);
+    }
+  }
+
+  return { tags, trend };
 }
 
 serve(async (req) => {
@@ -193,8 +253,28 @@ serve(async (req) => {
     }
     console.log(`[MatchupScanner] Loaded ${playerTeamMap.size} player→team mappings from bdl_player_cache`);
 
+    // === SPREAD LOOKUP: Build spreadMap for blowout detection ===
+    const { data: spreadData } = await supabase
+      .from('whale_picks')
+      .select('home_team, away_team, market_key, current_line')
+      .gte('start_time', startUtc)
+      .lte('start_time', endUtc);
+
+    // spreadMap: key = "TEAM_ABBREV", value = spread (negative = favored)
+    // e.g. DET -14.5 means DET is favored by 14.5
+    const spreadMap = new Map<string, number>();
+    if (spreadData) {
+      for (const wp of spreadData) {
+        if (!wp.market_key?.includes('spread') || wp.current_line == null) continue;
+        const homeAbbr = resolveTeamAbbrev(wp.home_team || '');
+        const awayAbbr = resolveTeamAbbrev(wp.away_team || '');
+        if (homeAbbr) spreadMap.set(homeAbbr, wp.current_line); // home spread
+        if (awayAbbr) spreadMap.set(awayAbbr, -wp.current_line); // away spread is inverse
+      }
+    }
+    console.log(`[MatchupScanner] Loaded spreads for ${spreadMap.size} teams: ${[...spreadMap.entries()].map(([t,s]) => `${t}(${s})`).join(', ')}`);
+
     // === INJURY / LINEUP FILTER ===
-    // Fetch today's lineup alerts to exclude OUT/DOUBTFUL players
     const { data: alertsData } = await supabase
       .from('lineup_alerts')
       .select('player_name, alert_type')
@@ -239,6 +319,9 @@ serve(async (req) => {
       const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
       const targets: PlayerTarget[] = [];
 
+      // Get the team's spread for blowout tagging
+      const teamSpread = spreadMap.get(teamAbbrev) ?? null;
+
       for (const pt of propTypes) {
         const spots = sweetSpotsByPropType.get(pt) || [];
         for (const ss of spots) {
@@ -258,12 +341,9 @@ serve(async (req) => {
           const recSide = (ss.recommended_side || '').toLowerCase();
           const l3Avg = ss.l3_avg ?? null;
 
-          // v11.1: Soft L3 gate — L3 enhances but doesn't block
-          if (l3Avg !== null && l10Avg > 0) {
-            const declineRatio = l3Avg / l10Avg;
-            if (side === 'over' && declineRatio < 0.75) continue; // L3 25%+ below L10 → skip OVER
-            if (side === 'under' && declineRatio > 1.25) continue; // L3 25%+ above L10 → skip UNDER
-          }
+          // NO MORE HARD BLOCKS — everything passes, risk tags inform instead
+          // Build risk tags for this player target
+          const { tags: riskTags, trend: l3Trend } = buildRiskTags(side, l3Avg, l10Avg, line, teamSpread);
 
           // For OVER recommendations: l10_avg must comfortably clear the line
           if (side === 'over' && recSide === 'over' && l10Avg > line + 0.3 && l10HitRate >= 0.6) {
@@ -274,9 +354,13 @@ serve(async (req) => {
               l10_hit_rate: Math.round(l10HitRate * 100),
               l10_min: l10Min,
               margin: Math.round((l10Avg - line) * 10) / 10,
+              l3_avg: l3Avg !== null ? Math.round(l3Avg * 10) / 10 : null,
+              risk_tags: riskTags,
+              l3_trend: l3Trend,
+              spread: teamSpread,
             });
           }
-          // For UNDER recommendations (avoid zones): l10_avg must be below the line
+          // For UNDER recommendations
           if (side === 'under' && recSide === 'under' && l10Avg < line - 0.3 && l10HitRate >= 0.6) {
             targets.push({
               player_name: playerName,
@@ -285,6 +369,10 @@ serve(async (req) => {
               l10_hit_rate: Math.round(l10HitRate * 100),
               l10_min: l10Min,
               margin: Math.round((line - l10Avg) * 10) / 10,
+              l3_avg: l3Avg !== null ? Math.round(l3Avg * 10) / 10 : null,
+              risk_tags: riskTags,
+              l3_trend: l3Trend,
+              spread: teamSpread,
             });
           }
         }
@@ -345,13 +433,13 @@ serve(async (req) => {
           allRecommendations.push(rec);
 
           if (playerTargets.length > 0) {
-            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} player targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%)`).join(', ')}`);
+            const tagSummary = playerTargets.flatMap(t => t.risk_tags).filter(Boolean);
+            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} player targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%${t.risk_tags.length > 0 ? ' ⚠️' + t.risk_tags.join(',') : ''})`).join(', ')}`);
           } else {
             console.log(`[MatchupScanner] ⚠️ ${attackerAbbrev} ${stat.key} ${side} — NO player targets found (environment only)`);
           }
 
-          // Bench player UNDER scan: for non-avoid matchups, also find under targets
-          // These are players whose individual L10 data supports UNDER despite a favorable team environment
+          // Bench player UNDER scan
           if (label !== 'avoid') {
             const underTargets = findPlayerTargets(attackerAbbrev, stat.key, 'under');
             if (underTargets.length > 0) {
@@ -420,8 +508,15 @@ serve(async (req) => {
     const playerBackedCount = allRecommendations.filter(r => r.player_backed).length;
     const envOnlyCount = allRecommendations.filter(r => !r.player_backed && r.matchup_label !== 'neutral').length;
 
+    // Count risk-tagged targets
+    const allTargets = allRecommendations.flatMap(r => r.player_targets);
+    const riskTaggedCount = allTargets.filter(t => t.risk_tags && t.risk_tags.length > 0).length;
+    const blowoutTaggedCount = allTargets.filter(t => t.risk_tags?.some(tag => tag.startsWith('BLOWOUT'))).length;
+    const l3ConfirmedCount = allTargets.filter(t => t.risk_tags?.includes('L3_CONFIRMED')).length;
+
     console.log(`[MatchupScanner] Results: ${allMatchups.length} games | ${eliteCount} elite, ${primeCount} prime, ${favorableCount} favorable, ${avoidCount} avoid`);
     console.log(`[MatchupScanner] Player validation: ${playerBackedCount} player-backed, ${envOnlyCount} environment-only`);
+    console.log(`[MatchupScanner] Risk tags: ${riskTaggedCount} tagged, ${blowoutTaggedCount} blowout risk, ${l3ConfirmedCount} L3 confirmed`);
 
     // Build summary
     const summaryLines = allMatchups.map(m => {
@@ -439,7 +534,7 @@ serve(async (req) => {
       relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
-        engine_version: 'bidirectional_v2_player_backed',
+        engine_version: 'bidirectional_v3_risk_tags',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
         elite_opportunities: eliteCount,
@@ -448,12 +543,15 @@ serve(async (req) => {
         avoid_zones: avoidCount,
         player_backed_count: playerBackedCount,
         environment_only_count: envOnlyCount,
+        risk_tagged_count: riskTaggedCount,
+        blowout_tagged_count: blowoutTaggedCount,
+        l3_confirmed_count: l3ConfirmedCount,
         scoring_formula: 'oppDefRank*0.6 + (31-teamOffRank)*0.4',
         thresholds: { elite: '>=22', prime: '>=18', favorable: '>=14', avoid: '<=8' },
         matchups: allMatchups,
         recommendations: allRecommendations,
       },
-      sources: ['team_defense_rankings(offense+defense)', 'game_bets', 'category_sweet_spots'],
+      sources: ['team_defense_rankings(offense+defense)', 'game_bets', 'category_sweet_spots', 'whale_picks(spreads)'],
       updated_at: new Date().toISOString(),
     };
 
@@ -474,7 +572,7 @@ serve(async (req) => {
 
     const result = {
       scan_date: today,
-      engine_version: 'bidirectional_v2_player_backed',
+      engine_version: 'bidirectional_v3_risk_tags',
       games_scanned: games.length,
       games_with_matchups: allMatchups.length,
       elite: eliteCount,
@@ -483,6 +581,9 @@ serve(async (req) => {
       avoid: avoidCount,
       player_backed: playerBackedCount,
       environment_only: envOnlyCount,
+      risk_tagged: riskTaggedCount,
+      blowout_tagged: blowoutTaggedCount,
+      l3_confirmed: l3ConfirmedCount,
       total_recommendations: allRecommendations.length,
     };
 
