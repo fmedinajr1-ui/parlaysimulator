@@ -423,7 +423,8 @@ async function evaluateLeg(
   leg: any, 
   allGames: Record<string, GameResult[]>, 
   gameDates: string[],
-  defaultSport: string
+  defaultSport: string,
+  parlayDate?: string
 ): Promise<LegResult> {
   const description = leg.description || '';
   const legIndex = leg.legIndex || 0;
