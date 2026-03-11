@@ -423,7 +423,8 @@ async function evaluateLeg(
   leg: any, 
   allGames: Record<string, GameResult[]>, 
   gameDates: string[],
-  defaultSport: string
+  defaultSport: string,
+  parlayDate?: string
 ): Promise<LegResult> {
   const description = leg.description || '';
   const legIndex = leg.legIndex || 0;
@@ -461,8 +462,11 @@ async function evaluateLeg(
     }
     
     console.log(`📅 Target game date from commence_time: ${targetGameDate} (${hoursSinceStart.toFixed(1)}h ago)`);
+  } else if (parlayDate) {
+    targetGameDate = parlayDate;
+    console.log(`⚠️ No commence_time — falling back to parlay created date: ${targetGameDate}`);
   } else {
-    console.log(`⚠️ No commence_time found for leg, using fallback dates`);
+    console.log(`⚠️ No commence_time and no parlay date fallback available`);
   }
   
   console.log(`📋 Evaluating leg ${legIndex}: ${description.substring(0, 60)}... (sport: ${sport}, games: ${games.length}, gameDate: ${targetGameDate})`);
@@ -842,7 +846,8 @@ serve(async (req) => {
           // Evaluate each leg
           for (let i = 0; i < legs.length; i++) {
             const leg = { ...legs[i], legIndex: i };
-            const result = await evaluateLeg(supabase, leg, allGames, gameDates, normalizedSport);
+            const parlayCreatedDate = parlay.created_at ? parlay.created_at.split('T')[0] : undefined;
+            const result = await evaluateLeg(supabase, leg, allGames, gameDates, normalizedSport, parlayCreatedDate);
             legResults.push(result);
             
             // Track pending reasons
