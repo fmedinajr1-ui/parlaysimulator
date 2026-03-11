@@ -1396,7 +1396,8 @@ function formatDailyWinnersRecap(data: Record<string, any>, dateStr: string): st
     }
   }
 
-  msg += `💰 Total: +$${(totalProfit || 0).toLocaleString()} profit across ${winnerCount || 0} winners\n\n`;
+  const roi = totalStaked > 0 ? Math.round((totalProfit / totalStaked) * 100) : 0;
+  msg += `💰 Total: $${(totalStaked || 0).toLocaleString()} staked → +$${(totalProfit || 0).toLocaleString()} profit (${roi}% ROI) across ${winnerCount || 0} winners\n\n`;
 
   if (keyPlayers && keyPlayers.length > 0) {
     msg += `🔑 Key Players: ${keyPlayers.join(', ')}\n\n`;

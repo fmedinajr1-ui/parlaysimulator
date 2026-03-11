@@ -156,6 +156,7 @@ Deno.serve(async (req) => {
         rating,
         winnerCount: winners.length,
         totalProfit: Math.round(totalProfit),
+        totalStaked: Math.round(totalStaked),
         winners: winnersData,
         lotteryWinners,
         tierContext,
