@@ -100,6 +100,7 @@ type NotificationType =
   | 'dd_td_candidates'
   | 'new_strategies_broadcast'
   | 'leg_swap_report'
+  | 'custom'
   | 'test';
 
 interface NotificationData {
@@ -182,10 +183,15 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatNewStrategiesBroadcast(data, dateStr);
     case 'leg_swap_report':
       return formatLegSwapReport(data, dateStr);
+    case 'custom':
+      // Extract clean message from adaptive intelligence and other custom senders
+      return data.message || data.text || data.summary || '📌 Bot update received';
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
-      return `📌 Bot Update: ${JSON.stringify(data)}`;
+      // Suppress raw JSON dumps — show a clean one-liner or skip
+      console.log(`[Telegram] Unknown notification type: ${type}`, JSON.stringify(data).slice(0, 200));
+      return `📌 Bot Update (${type})`;
   }
 }
 
@@ -1732,6 +1738,25 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[Telegram] Sending ${type} notification`);
+
+    // Suppress noisy internal notification types that don't need admin attention
+    const SUPPRESSED_TYPES = ['weight_change', 'quality_regen_report', 'hit_rate_evaluation'];
+    if (SUPPRESSED_TYPES.includes(type)) {
+      console.log(`[Telegram] Suppressed ${type} notification (internal-only)`);
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: 'suppressed_type' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Only send doctor_report if problems were detected
+    if (type === 'doctor_report' && data.problems_detected === 0) {
+      console.log(`[Telegram] Suppressed clean doctor_report (0 problems)`);
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: 'clean_doctor_report' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
     if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report' && type !== 'double_confirmed_report' && type !== 'mega_parlay_scanner' && type !== 'mega_lottery_v2' && type !== 'daily_winners_recap' && type !== 'leg_settled_alert' && type !== 'parlay_settled_alert') {

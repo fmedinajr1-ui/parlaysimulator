@@ -1473,6 +1473,20 @@ Deno.serve(async (req) => {
 
           console.log(`[Bot Settle] Updated P&L for ${activeCustomers.length} customers on ${dateKey} (scale base: $${botBaseStake})`);
         }
+
+        // Sync admin's bankroll to the authoritative simulated_bankroll
+        try {
+          const ADMIN_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID');
+          if (ADMIN_CHAT_ID) {
+            await supabase
+              .from('bot_authorized_users')
+              .update({ bankroll: Math.max(0, finalBankroll) })
+              .eq('chat_id', ADMIN_CHAT_ID);
+            console.log(`[Bot Settle] Synced admin bankroll to $${finalBankroll} on ${dateKey}`);
+          }
+        } catch (adminSyncErr) {
+          console.warn('[Bot Settle] Admin bankroll sync error:', adminSyncErr);
+        }
       } catch (custErr) {
         console.error('[Bot Settle] Customer P&L rollover error:', custErr);
       }
