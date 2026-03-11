@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
         if (!playerStats[key]) {
           playerStats[key] = {
             player_name: leg.player_name,
-            prop_type: leg.prop_type || 'unknown',
+            prop_type: normalizePropType(leg.prop_type || 'unknown'),
             side: leg.side || 'over',
             total: 0, won: 0, edges: [],
             recentOutcomes: [],

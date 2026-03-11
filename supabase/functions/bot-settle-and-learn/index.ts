@@ -1124,7 +1124,7 @@ Deno.serve(async (req) => {
           if (isTeamLeg(leg)) continue; // Only track player props
 
           const playerName = (leg.player_name || '').trim();
-          const propType = (leg.prop_type || '').toLowerCase();
+          const propType = normalizePropType(leg.prop_type || '');
           const side = (leg.side || 'over').toLowerCase();
           if (!playerName || !propType) continue;
 

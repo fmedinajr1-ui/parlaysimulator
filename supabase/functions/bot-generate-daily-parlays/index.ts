@@ -1182,7 +1182,7 @@ function isGodModePick(pick: any): boolean {
   if (!isHighConviction) return false;
   
   // Must be a proven winner (70%+ L10, 5+ legs)
-  const playerKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
+  const playerKey = `${(pick.player_name || '').toLowerCase()}|${normalizePropType(pick.prop_type || '')}`;
   const perf = playerPerformanceMap.get(playerKey);
   if (!perf || perf.legsPlayed < 5 || perf.hitRate < 0.70) return false;
   
