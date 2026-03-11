@@ -214,8 +214,9 @@ Deno.serve(async (req) => {
 
     for (const [key, stats] of categoryMap) {
       const existing = existingMap.get(key);
-      const newWeight = calculateWeight(stats.hit_rate, stats.total_picks);
-      const blockStatus = shouldBlock(stats.hit_rate, stats.total_picks);
+      const currentStreak = existing?.current_streak ?? 0;
+      const newWeight = calculateWeight(stats.hit_rate, stats.total_picks, currentStreak);
+      const blockStatus = shouldBlock(stats.hit_rate, stats.total_picks, currentStreak);
 
       if (blockStatus.blocked) blocked++;
 
