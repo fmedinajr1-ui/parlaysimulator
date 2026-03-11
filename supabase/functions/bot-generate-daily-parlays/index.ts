@@ -17,6 +17,21 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Normalize prop type variants to canonical form to prevent split tracking
+function normalizePropType(raw: string): string {
+  const lower = (raw || '').toLowerCase().trim();
+  const map: Record<string, string> = {
+    'points': 'player_points', 'pts': 'player_points', 'player_points': 'player_points',
+    'rebounds': 'player_rebounds', 'reb': 'player_rebounds', 'player_rebounds': 'player_rebounds',
+    'assists': 'player_assists', 'ast': 'player_assists', 'player_assists': 'player_assists',
+    'threes': 'player_threes', '3pm': 'player_threes', 'three_pointers': 'player_threes', 'player_threes': 'player_threes',
+    'blocks': 'player_blocks', 'blk': 'player_blocks', 'player_blocks': 'player_blocks',
+    'steals': 'player_steals', 'stl': 'player_steals', 'player_steals': 'player_steals',
+    'turnovers': 'player_turnovers', 'to': 'player_turnovers', 'player_turnovers': 'player_turnovers',
+  };
+  return map[lower] || lower;
+}
+
 // ============= DYNAMIC WINNING ARCHETYPE DETECTION =============
 const FALLBACK_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'BIG_REBOUNDER', 'HIGH_ASSIST'];
 
@@ -1130,7 +1145,7 @@ async function loadPlayerPerformance(supabase: any): Promise<void> {
     
     if (playerPerf && playerPerf.length > 0) {
       for (const p of playerPerf) {
-        const key = `${(p.player_name || '').toLowerCase()}|${(p.prop_type || '').toLowerCase()}`;
+        const key = `${(p.player_name || '').toLowerCase()}|${normalizePropType(p.prop_type || '')}`;
         playerPerformanceMap.set(key, {
           legsPlayed: p.legs_played,
           legsWon: p.legs_won,
@@ -1146,7 +1161,7 @@ async function loadPlayerPerformance(supabase: any): Promise<void> {
 }
 
 function getPlayerBonus(playerName: string, propType: string, tier?: string): number {
-  const key = `${playerName.toLowerCase()}|${propType.toLowerCase()}`;
+  const key = `${playerName.toLowerCase()}|${normalizePropType(propType)}`;
   const perf = playerPerformanceMap.get(key);
   if (!perf || perf.legsPlayed < 5) return 0;
   
@@ -1167,7 +1182,7 @@ function isGodModePick(pick: any): boolean {
   if (!isHighConviction) return false;
   
   // Must be a proven winner (70%+ L10, 5+ legs)
-  const playerKey = `${(pick.player_name || '').toLowerCase()}|${(pick.prop_type || '').toLowerCase()}`;
+  const playerKey = `${(pick.player_name || '').toLowerCase()}|${normalizePropType(pick.prop_type || '')}`;
   const perf = playerPerformanceMap.get(playerKey);
   if (!perf || perf.legsPlayed < 5 || perf.hitRate < 0.70) return false;
   
