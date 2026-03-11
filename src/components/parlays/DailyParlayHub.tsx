@@ -10,6 +10,7 @@ import { UnifiedParlayCard } from "./UnifiedParlayCard";
 import { LineupCheckSheet } from "@/components/lineup/LineupCheckSheet";
 import { LineupRiskSummary } from "@/components/lineup/LineupStatusBadge";
 import { EliteThreesParlayCard } from "@/components/market/EliteThreesParlayCard";
+import { ParlaySmartCheckPanel } from "./ParlaySmartCheckPanel";
 
 export function DailyParlayHub() {
   const { parlays, isLoading, parlayCount, today } = useDailyParlays();
