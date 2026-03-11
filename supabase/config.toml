@@ -475,3 +475,9 @@ verify_jwt = false
 
 [functions.nhl-prop-sweet-spots-scanner]
 verify_jwt = false
+
+[functions.bot-parlay-smart-check]
+verify_jwt = false
+
+[functions.bot-parlay-auto-apply]
+verify_jwt = false
