@@ -226,7 +226,7 @@ Deno.serve(async (req) => {
       const legs = (parlay.legs as any[]) || [];
       for (const leg of legs) {
         if (!leg.player_name || leg.type === 'team') continue;
-        const key = `${leg.player_name}|${leg.prop_type || 'unknown'}|${leg.side || 'over'}`;
+        const key = `${leg.player_name}|${normalizePropType(leg.prop_type || 'unknown')}|${leg.side || 'over'}`;
         
         if (!playerStats[key]) {
           playerStats[key] = {
