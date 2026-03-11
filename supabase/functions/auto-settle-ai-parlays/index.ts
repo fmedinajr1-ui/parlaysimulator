@@ -846,7 +846,8 @@ serve(async (req) => {
           // Evaluate each leg
           for (let i = 0; i < legs.length; i++) {
             const leg = { ...legs[i], legIndex: i };
-            const result = await evaluateLeg(supabase, leg, allGames, gameDates, normalizedSport);
+            const parlayCreatedDate = parlay.created_at ? parlay.created_at.split('T')[0] : undefined;
+            const result = await evaluateLeg(supabase, leg, allGames, gameDates, normalizedSport, parlayCreatedDate);
             legResults.push(result);
             
             // Track pending reasons
