@@ -910,17 +910,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 55 },
-      // Mispriced edge — validated tier
-      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55 },
-      { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52 },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
-      // Double-confirmed — validated tier
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 65 },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 65 },
-      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 60, sortBy: 'composite' },
-      // NEW mispriced_edge validation profiles (replaced validated_aggressive)
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
+      // Mispriced edge — validated tier (REDUCED: 0.5% ROI, kept 2 of 8)
+      { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 58 },
+      // PAUSED: mispriced_edge 4-leg — { legs: 4, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 52 },
+      // REDIRECTED: 6 mispriced_edge validation slots → cross_sport_4 + double_confirmed_conviction
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 52, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'icehockey_nhl'], minHitRate: 52, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'], minHitRate: 62, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
       { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
       { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
