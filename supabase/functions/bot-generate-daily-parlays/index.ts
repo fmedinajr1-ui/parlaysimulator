@@ -1145,7 +1145,7 @@ async function loadPlayerPerformance(supabase: any): Promise<void> {
     
     if (playerPerf && playerPerf.length > 0) {
       for (const p of playerPerf) {
-        const key = `${(p.player_name || '').toLowerCase()}|${(p.prop_type || '').toLowerCase()}`;
+        const key = `${(p.player_name || '').toLowerCase()}|${normalizePropType(p.prop_type || '')}`;
         playerPerformanceMap.set(key, {
           legsPlayed: p.legs_played,
           legsWon: p.legs_won,
