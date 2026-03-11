@@ -202,7 +202,7 @@ Deno.serve(async (req) => {
       const batch = allSkaterNames.slice(i, i + 20);
       const { data: logs, error: logErr } = await supabase
         .from('nhl_player_game_logs')
-        .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points, opponent, team')
+        .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points, opponent')
         .in('player_name', batch)
         .order('game_date', { ascending: false })
         .limit(400);
