@@ -218,10 +218,11 @@ export function ParlaySmartCheckPanel() {
                 </div>
 
                 <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                  {results.results.map(parlay => (
-                    parlay.legs
+                  {results.results.map(parlay => {
+                    const flagged = parlay.legs
                       .filter(l => l.recommendation !== 'KEEP')
-                      .map(leg => {
+                      .sort((a, b) => a.quality_score - b.quality_score);
+                    return flagged.map(leg => {
                         const key = `${leg.parlay_id}::${leg.leg_index}`;
                         const selected = selectedActions.get(key);
                         const recStyle = RECOMMENDATION_STYLES[leg.recommendation];
