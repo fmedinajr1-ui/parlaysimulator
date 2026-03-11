@@ -37,6 +37,21 @@ function getDateDaysAgo(days: number): string {
   }).format(d);
 }
 
+// Normalize prop type variants to canonical form to prevent split tracking
+function normalizePropType(raw: string): string {
+  const lower = (raw || '').toLowerCase().trim();
+  const map: Record<string, string> = {
+    'points': 'player_points', 'pts': 'player_points', 'player_points': 'player_points',
+    'rebounds': 'player_rebounds', 'reb': 'player_rebounds', 'player_rebounds': 'player_rebounds',
+    'assists': 'player_assists', 'ast': 'player_assists', 'player_assists': 'player_assists',
+    'threes': 'player_threes', '3pm': 'player_threes', 'three_pointers': 'player_threes', 'player_threes': 'player_threes',
+    'blocks': 'player_blocks', 'blk': 'player_blocks', 'player_blocks': 'player_blocks',
+    'steals': 'player_steals', 'stl': 'player_steals', 'player_steals': 'player_steals',
+    'turnovers': 'player_turnovers', 'to': 'player_turnovers', 'player_turnovers': 'player_turnovers',
+  };
+  return map[lower] || lower;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
