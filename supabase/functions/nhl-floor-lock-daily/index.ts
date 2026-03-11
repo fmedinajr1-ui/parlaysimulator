@@ -323,18 +323,23 @@ Deno.serve(async (req) => {
     // ============================================================
     log("=== PHASE 2B: Building NHL Optimal Combo Parlays ===");
 
-    // Deduplicate by player first, take top 20 to avoid memory explosion (C(360,3) = 7.7M!)
+    // Deduplicate by player first, take top 20; exclude avoid-tier matchups
     const ocSeen = new Set<string>();
     const optimalCandidates: typeof candidates = [];
     for (const c of candidates) {
-      if ((c.actual_hit_rate || 0) >= 0.6 && !ocSeen.has(c.player_name)) {
+      if ((c.actual_hit_rate || 0) >= 0.6 && (c.matchup_adjustment || 0) >= -5 && !ocSeen.has(c.player_name)) {
         ocSeen.add(c.player_name);
         optimalCandidates.push(c);
       }
     }
-    // Cap at top 20 by hit rate (already sorted)
+    // Sort by weighted score: (hit_rate * 0.7) + (normalized matchup * 0.3)
+    optimalCandidates.sort((a, b) => {
+      const scoreA = (a.actual_hit_rate || 0) * 0.7 + (Math.max(0, (a.matchup_adjustment || 0) + 10) / 20) * 0.3;
+      const scoreB = (b.actual_hit_rate || 0) * 0.7 + (Math.max(0, (b.matchup_adjustment || 0) + 10) / 20) * 0.3;
+      return scoreB - scoreA;
+    });
     const ocPool = optimalCandidates.slice(0, 20);
-    log(`Optimal combo pool: ${ocPool.length} candidates (deduped, top 20, 60%+ hit rate)`);
+    log(`Optimal combo pool: ${ocPool.length} candidates (deduped, matchup-filtered, top 20, 60%+ hit rate)`);
 
     // Execution: 70%+ hit rate, 3-leg
     const execCombos = buildOptimalCombos(
