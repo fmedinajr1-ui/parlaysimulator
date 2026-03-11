@@ -1,54 +1,33 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Disable Losing Strategies & Boost Top Performers
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+### Current State
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+After searching the codebase, here's what I found:
+- **`validated_conservative`**: Exists with 6 profiles in the validation tier (lines 881-883, 926-928). This is the only active "losing" strategy still generating parlays.
+- **`validation_mispriced_edge`** and **`strong_cash_cross_sport`**: These do NOT exist as active generation profiles — they were likely legacy strategy names from older settled parlays. No action needed.
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+### Changes (1 file: `bot-generate-daily-parlays/index.ts`)
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+**1. Remove `validated_conservative` (6 profiles)**
+Comment out or delete all 6 `validated_conservative` profiles (lines 881-883 standard + lines 926-928 shuffle variants) from the validation tier.
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+**2. Boost top performers with the freed-up slots**
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+Replace those 6 profiles with:
+- **+2 `cross_sport_4`** profiles in validation tier (currently only in execution/exploration) — add `minHitRate: 50` to allow validation-level filtering
+- **+2 `double_confirmed_conviction`** profiles in validation tier (supplement the 2 already there at lines 891-892) — add shuffle sort variants for diversity
+- **+2 `role_stacked_5leg`** profiles in exploration tier (supplement the 2 already there at lines 863-864) — add shuffle and composite sort variants
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+This maintains the same total profile count while shifting volume from the 0% win rate `validated_conservative` to the three strategies driving 90%+ of profits.
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+### Summary
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+| Strategy | Before | After |
+|----------|--------|-------|
+| `validated_conservative` | 6 profiles | 0 (disabled) |
+| `cross_sport_4` | 10 execution + 2 exploration | +2 validation = 14 total |
+| `double_confirmed_conviction` | 2 validation + ~20 exec/explore | +2 validation = ~24 total |
+| `role_stacked_5leg` | 2 exploration | +2 exploration = 4 total |
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
-
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
-
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
-
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
-
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
-
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
