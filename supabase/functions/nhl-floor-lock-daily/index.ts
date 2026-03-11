@@ -106,6 +106,7 @@ function formatLegs(legs: any[]) {
 
 function buildLegRecord(pick: any) {
   return {
+    player_name: pick.player_name,
     player: pick.player_name,
     prop: pick.prop_type,
     side: pick.recommended_side || "OVER",

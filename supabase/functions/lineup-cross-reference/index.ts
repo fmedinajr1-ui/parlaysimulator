@@ -44,6 +44,7 @@ function nameSimilarity(name1: string, name2: string): number {
   const n1 = normalizeName(name1);
   const n2 = normalizeName(name2);
   
+  if (!n1 || !n2 || n1.length < 2 || n2.length < 2) return 0;
   if (n1 === n2) return 1;
   
   // Check if one contains the other
