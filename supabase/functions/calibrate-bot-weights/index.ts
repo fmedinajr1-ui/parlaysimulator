@@ -37,6 +37,13 @@ const MEDIUM_SAMPLE_BONUS = 0.05;
 const BLOCK_HIT_RATE_THRESHOLD = 0.40; // Block if hit rate < 40%
 const BLOCK_MIN_SAMPLES = 10; // Need at least 10 samples to block
 
+// Streak penalty constants
+const STREAK_MILD_THRESHOLD = -3;
+const STREAK_SEVERE_THRESHOLD = -8;
+const STREAK_BLOCK_THRESHOLD = -15;
+const STREAK_MILD_PENALTY_PER = 0.02;
+const STREAK_SEVERE_PENALTY_PER = 0.03;
+
 interface CategoryStats {
   category: string;
   side: string;
