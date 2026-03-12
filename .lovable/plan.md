@@ -52,3 +52,19 @@ Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
 ## Solution
 - **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
 - **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
+
+# Mispriced Lines Intelligence Tightening — IMPLEMENTED ✅ (March 12, 2026)
+
+## Problem
+`detect-mispriced-lines` scored edges purely on L10/L20 averages vs book line, ignoring player consistency, historical hit rates, minutes volatility, cross-book consensus, and its own track record.
+
+## Solution
+Added 5 intelligence upgrades to the existing engine:
+
+1. **Variance/Consistency Filter**: CV (stdDev/mean) dampens edge 20-40% for volatile players (CV > 0.35)
+2. **Historical Hit-Rate Cross-Ref**: Cross-references `category_sweet_spots` L10 hit rate — dampens edge 30% if hit rate < 60%
+3. **Minutes Stability Check** (NBA only): Compares L3 vs L10 avg minutes — dampens edge 25% if ratio < 0.80
+4. **Cross-Book Consensus**: Calculates median line across all bookmakers — boosts edge 15% when a single book deviates > 5% from consensus
+5. **Outcome Feedback Loop**: Last 14 days of settled mispriced_lines accuracy → applies 0.8x-1.2x multiplier per prop type
+
+All fields persisted to `shooting_context` for transparency: `variance_cv`, `historical_hit_rate`, `minutes_stability`, `consensus_line`, `consensus_deviation_pct`, `feedback_accuracy`, `feedback_multiplier`.
