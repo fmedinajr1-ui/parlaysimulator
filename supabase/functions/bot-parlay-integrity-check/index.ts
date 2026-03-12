@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
       strategyCounts[name] = (strategyCounts[name] || 0) + 1;
     }
 
-    console.error(`[Integrity] ❌ ${total} violations found for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg`);
+    console.error(`[Integrity] ❌ ${total} violations found for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg, ${dupLegTotal} duplicate-leg combos`);
 
     // Fire Telegram integrity alert — bypasses quiet hours via type='integrity_alert'
     try {
@@ -147,6 +147,8 @@ Deno.serve(async (req) => {
             date: targetDate,
             oneLegCount: oneLeg.length,
             twoLegCount: twoLeg.length,
+            duplicateLegCount: dupLegTotal,
+            topDuplicates: duplicateLegs.sort((a, b) => b.count - a.count).slice(0, 5).map(d => `${d.key} (×${d.count})`),
             total,
             strategyCounts,
           },
