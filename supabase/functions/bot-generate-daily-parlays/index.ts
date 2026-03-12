@@ -1669,7 +1669,12 @@ function calculateParlayCoherence(legs: any[]): number {
     if (ctx.pace === 'fast') coherenceScore += 6;
     if (ctx.pace === 'slow') coherenceScore -= 8;
     if (ctx.defenseStrength === 'soft') coherenceScore += 6;
-    if (ctx.defenseStrength === 'tough') coherenceScore -= 8;
+    // GRIND+tough defense OVER gets amplified penalty (-20 instead of -8)
+    if (ctx.defenseStrength === 'tough' && ctx.envCluster === 'GRIND') {
+      coherenceScore -= 20;
+    } else if (ctx.defenseStrength === 'tough') {
+      coherenceScore -= 8;
+    }
 
     // TEAM TOTAL ALIGNMENT: Player OVER vs game total signal
     if (ctx.teamTotalSignal && ctx.teamTotalComposite) {
@@ -7889,6 +7894,21 @@ async function generateTierParlays(
         if (matchupResult.penalty !== 0) {
           (pick as any).compositeScore = Math.max(0, (pick.compositeScore || 0) + matchupResult.penalty);
         }
+      }
+      
+      // === GRIND+OVER HARD-BLOCK: prevent OVER picks in GRIND-cluster games with tough defense ===
+      const pickSideForGrind = pick.recommended_side || pick.side || '';
+      const grindCtx = (pick as any)._gameContext as PickGameContext | undefined;
+      if (
+        pickSideForGrind.toLowerCase() === 'over' &&
+        grindCtx?.envCluster === 'GRIND' &&
+        grindCtx?.defenseStrength === 'tough' &&
+        strategyName !== 'bench_under' &&
+        strategyName !== 'grind_under_core'
+      ) {
+        console.log(`[GrindOverBlock] Skipped: ${pick.player_name || 'unknown'} OVER in GRIND+tough defense game`);
+        rejectionCounters.envCluster = (rejectionCounters.envCluster || 0) + 1;
+        continue;
       }
       
       // === ANTI-CORRELATION BLOCKING: prevent contradictory legs ===
