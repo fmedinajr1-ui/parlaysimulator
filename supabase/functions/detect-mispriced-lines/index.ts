@@ -131,6 +131,32 @@ function getConfidenceTier(edgePct: number, gamesPlayed: number): string {
   return 'LOW';
 }
 
+// ===== INTELLIGENCE UPGRADE HELPERS =====
+
+function calcCV(values: number[]): number {
+  if (values.length < 3) return 0;
+  const avg = calcAvg(values);
+  if (avg === 0) return 0;
+  const variance = values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
+  return Math.sqrt(variance) / avg;
+}
+
+function getVarianceDampener(cv: number): number {
+  // CV > 0.50 → dampen 40%, CV > 0.35 → dampen 20%, else no dampening
+  if (cv > 0.50) return 0.60;
+  if (cv > 0.35) return 0.80;
+  return 1.0;
+}
+
+function getFeedbackMultiplier(accuracy: number | null): number {
+  if (accuracy === null) return 1.0;
+  // 80%+ → 1.2x boost, 60-80% → 1.0x neutral, 40-60% → 0.9x, <40% → 0.8x
+  if (accuracy >= 80) return 1.20;
+  if (accuracy >= 60) return 1.0;
+  if (accuracy >= 40) return 0.90;
+  return 0.80;
+}
+
 // Prop type → defense stat category mapping
 const PROP_TO_DEFENSE_CATEGORY: Record<string, string> = {
   'player_points': 'points',
@@ -257,6 +283,70 @@ serve(async (req) => {
     }
 
     console.log(`[Mispriced] Defense data loaded: ${Object.keys(teamToOpponent).length / 2} games, ${defenseStats?.length || 0} defense entries, ${playerTeams?.length || 0} player-team mappings`);
+
+    // ==================== INTELLIGENCE UPGRADE DATA ====================
+    const fourteenDaysAgo = new Date(now);
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+    const fourteenDaysAgoStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(fourteenDaysAgo);
+
+    const [sweetSpotsRes, allPropsRes, feedbackRes] = await Promise.all([
+      supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, l10_hit_rate, recommended_side')
+        .eq('analysis_date', today)
+        .not('l10_hit_rate', 'is', null),
+      supabase
+        .from('unified_props')
+        .select('player_name, prop_type, current_line, bookmaker')
+        .gt('commence_time', now.toISOString())
+        .not('player_name', 'is', null)
+        .not('current_line', 'is', null),
+      supabase
+        .from('mispriced_lines')
+        .select('prop_type, signal, outcome, sport')
+        .gte('analysis_date', fourteenDaysAgoStr)
+        .not('outcome', 'is', null),
+    ]);
+
+    // Sweet spots map: "player_lower|prop_type" → l10_hit_rate
+    const sweetSpotHitRates = new Map<string, number>();
+    for (const ss of sweetSpotsRes.data || []) {
+      const key = `${(ss.player_name || '').toLowerCase()}|${ss.prop_type}`;
+      sweetSpotHitRates.set(key, ss.l10_hit_rate || 0);
+    }
+
+    // Cross-book consensus map: "player_lower|prop_type" → median line
+    const consensusMap = new Map<string, number>();
+    const linesByKey = new Map<string, number[]>();
+    for (const p of allPropsRes.data || []) {
+      const key = `${(p.player_name || '').toLowerCase()}|${p.prop_type}`;
+      if (!linesByKey.has(key)) linesByKey.set(key, []);
+      linesByKey.get(key)!.push(Number(p.current_line));
+    }
+    for (const [key, lines] of linesByKey) {
+      if (lines.length < 2) continue;
+      lines.sort((a, b) => a - b);
+      const mid = Math.floor(lines.length / 2);
+      consensusMap.set(key, lines.length % 2 === 0 ? (lines[mid - 1] + lines[mid]) / 2 : lines[mid]);
+    }
+
+    // Outcome feedback map: "prop_type|sport" → accuracy %
+    const feedbackMap = new Map<string, { hits: number; total: number }>();
+    for (const f of feedbackRes.data || []) {
+      const key = `${f.prop_type}|${f.sport}`;
+      if (!feedbackMap.has(key)) feedbackMap.set(key, { hits: 0, total: 0 });
+      const entry = feedbackMap.get(key)!;
+      entry.total++;
+      if (f.outcome === 'hit') entry.hits++;
+    }
+    const feedbackAccuracy = new Map<string, number>();
+    for (const [key, val] of feedbackMap) {
+      if (val.total >= 5) feedbackAccuracy.set(key, Math.round((val.hits / val.total) * 100));
+    }
+
+    console.log(`[Mispriced] Intelligence data: ${sweetSpotHitRates.size} sweet spots, ${consensusMap.size} consensus lines, ${feedbackAccuracy.size} feedback categories`);
 
     if (nbaProps && nbaProps.length > 0) {
       const uniqueNbaPlayers = [...new Set(nbaProps.map(p => p.player_name).filter(Boolean))];
@@ -454,6 +544,68 @@ serve(async (req) => {
           console.log(`[Mispriced] ${prop.player_name} L3: avg=${avgL3.toFixed(1)} l3Edge=${l3EdgePct.toFixed(1)}% confirms=${l3Confirms} → finalEdge=${alignedEdgePct.toFixed(1)}%`);
         }
 
+        // === INTELLIGENCE UPGRADE 1: VARIANCE/CONSISTENCY FILTER ===
+        const varianceCV = calcCV(l10Values);
+        const varianceDampener = getVarianceDampener(varianceCV);
+        if (varianceDampener < 1.0) {
+          alignedEdgePct *= varianceDampener;
+          console.log(`[Mispriced] ${prop.player_name} CV=${varianceCV.toFixed(2)} → dampened ${Math.round(varianceDampener*100)}%`);
+        }
+
+        // === INTELLIGENCE UPGRADE 2: HISTORICAL HIT-RATE CROSS-REF ===
+        const ssKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const historicalHitRate = sweetSpotHitRates.get(ssKey) ?? null;
+        if (historicalHitRate !== null && historicalHitRate < 60) {
+          alignedEdgePct *= 0.70;
+          console.log(`[Mispriced] ${prop.player_name} hit rate=${historicalHitRate}% → dampened 30%`);
+        }
+
+        // === INTELLIGENCE UPGRADE 3: MINUTES STABILITY CHECK ===
+        const l10Minutes = l10Logs.map(l => {
+          const m = typeof l.min === 'string' ? parseFloat(l.min) : (l.min ? parseFloat(String(l.min)) : 0);
+          return m > 0 ? m : null;
+        }).filter((v): v is number => v !== null);
+        const l3Minutes = l3Logs.map(l => {
+          const m = typeof l.min === 'string' ? parseFloat(l.min) : (l.min ? parseFloat(String(l.min)) : 0);
+          return m > 0 ? m : null;
+        }).filter((v): v is number => v !== null);
+        let minutesStability: number | null = null;
+        if (l10Minutes.length >= 5 && l3Minutes.length >= 3) {
+          const avgL10Min = calcAvg(l10Minutes);
+          const avgL3Min = calcAvg(l3Minutes);
+          minutesStability = avgL10Min > 0 ? avgL3Min / avgL10Min : null;
+          if (minutesStability !== null && minutesStability < 0.80) {
+            alignedEdgePct *= 0.75;
+            console.log(`[Mispriced] ${prop.player_name} min stability=${(minutesStability*100).toFixed(0)}% → dampened 25%`);
+          }
+        }
+
+        // === INTELLIGENCE UPGRADE 4: CROSS-BOOK CONSENSUS ===
+        const consensusKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const consensusLine = consensusMap.get(consensusKey) ?? null;
+        let consensusDeviation: number | null = null;
+        if (consensusLine !== null && consensusLine > 0) {
+          consensusDeviation = Math.abs(line - consensusLine) / consensusLine * 100;
+          if (consensusDeviation > 5) {
+            // Book deviates >5% from consensus — boost edge (true mispricing)
+            alignedEdgePct *= 1.15;
+            console.log(`[Mispriced] ${prop.player_name} consensus=${consensusLine} vs book=${line} (${consensusDeviation.toFixed(1)}% dev) → boosted 15%`);
+          }
+        }
+
+        // === INTELLIGENCE UPGRADE 5: OUTCOME FEEDBACK LOOP ===
+        const fbKey = `${prop.prop_type}|${prop.sport || 'basketball_nba'}`;
+        const propAccuracy = feedbackAccuracy.get(fbKey) ?? null;
+        const feedbackMult = getFeedbackMultiplier(propAccuracy);
+        if (feedbackMult !== 1.0) {
+          alignedEdgePct *= feedbackMult;
+          console.log(`[Mispriced] ${prop.player_name} feedback accuracy=${propAccuracy}% → mult ${feedbackMult}x`);
+        }
+
+        // Recalculate tier after all adjustments
+        alignedTier = getConfidenceTier(alignedEdgePct, l10Values.length);
+        if (Math.abs(alignedEdgePct) < 3) continue;
+
         const resultEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -473,6 +625,14 @@ serve(async (req) => {
             trend_pct: Math.round(trendEdge * 10) / 10,
             games_analyzed: l20Values.length,
             defense_multiplier: defMultiplier !== 1.0 ? defMultiplier : undefined,
+            // Intelligence upgrades
+            variance_cv: Math.round(varianceCV * 1000) / 1000,
+            historical_hit_rate: historicalHitRate,
+            minutes_stability: minutesStability !== null ? Math.round(minutesStability * 100) / 100 : undefined,
+            consensus_line: consensusLine,
+            consensus_deviation_pct: consensusDeviation !== null ? Math.round(consensusDeviation * 10) / 10 : undefined,
+            feedback_accuracy: propAccuracy,
+            feedback_multiplier: feedbackMult !== 1.0 ? feedbackMult : undefined,
           },
           confidence_tier: alignedTier,
           analysis_date: today,
@@ -579,6 +739,36 @@ serve(async (req) => {
           }
         }
 
+        // === MLB INTELLIGENCE UPGRADES ===
+        // 1. Variance filter
+        const mlbCV = calcCV(l20Values.length >= 10 ? l20Values : seasonValues.slice(0, 20));
+        const mlbVarDamp = getVarianceDampener(mlbCV);
+        if (mlbVarDamp < 1.0) edgePct *= mlbVarDamp;
+
+        // 2. Hit-rate cross-ref
+        const mlbSSKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const mlbHitRate = sweetSpotHitRates.get(mlbSSKey) ?? null;
+        if (mlbHitRate !== null && mlbHitRate < 60) edgePct *= 0.70;
+
+        // 3. Cross-book consensus
+        const mlbConsKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const mlbConsensus = consensusMap.get(mlbConsKey) ?? null;
+        let mlbConsDev: number | null = null;
+        if (mlbConsensus !== null && mlbConsensus > 0) {
+          mlbConsDev = Math.abs(line - mlbConsensus) / mlbConsensus * 100;
+          if (mlbConsDev > 5) edgePct *= 1.15;
+        }
+
+        // 4. Outcome feedback
+        const mlbFbKey = `${prop.prop_type}|baseball_mlb`;
+        const mlbAccuracy = feedbackAccuracy.get(mlbFbKey) ?? null;
+        const mlbFbMult = getFeedbackMultiplier(mlbAccuracy);
+        if (mlbFbMult !== 1.0) edgePct *= mlbFbMult;
+
+        // Recalculate tier & skip if edge dampened below threshold
+        const mlbFinalTier = getConfidenceTier(edgePct, seasonValues.length);
+        if (Math.abs(edgePct) < 3) continue;
+
         const mlbEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -596,8 +786,14 @@ serve(async (req) => {
             season_avg: Math.round(avgSeason * 10) / 10,
             trend_pct: Math.round(trendEdge * 10) / 10,
             games_analyzed: seasonValues.length,
+            variance_cv: Math.round(mlbCV * 1000) / 1000,
+            historical_hit_rate: mlbHitRate,
+            consensus_line: mlbConsensus,
+            consensus_deviation_pct: mlbConsDev !== null ? Math.round(mlbConsDev * 10) / 10 : undefined,
+            feedback_accuracy: mlbAccuracy,
+            feedback_multiplier: mlbFbMult !== 1.0 ? mlbFbMult : undefined,
           },
-          confidence_tier: confidenceTier,
+          confidence_tier: mlbFinalTier,
           analysis_date: today,
           sport: 'baseball_mlb',
         };
@@ -912,6 +1108,31 @@ serve(async (req) => {
           console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier}) l3=${l3Confirms}`);
         }
 
+        // === NHL INTELLIGENCE UPGRADES ===
+        const nhlCV = calcCV(l10Values);
+        const nhlVarDamp = getVarianceDampener(nhlCV);
+        if (nhlVarDamp < 1.0) edgePct *= nhlVarDamp;
+
+        const nhlSSKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const nhlHitRate = sweetSpotHitRates.get(nhlSSKey) ?? null;
+        if (nhlHitRate !== null && nhlHitRate < 60) edgePct *= 0.70;
+
+        const nhlConsKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const nhlConsensus = consensusMap.get(nhlConsKey) ?? null;
+        let nhlConsDev: number | null = null;
+        if (nhlConsensus !== null && nhlConsensus > 0) {
+          nhlConsDev = Math.abs(line - nhlConsensus) / nhlConsensus * 100;
+          if (nhlConsDev > 5) edgePct *= 1.15;
+        }
+
+        const nhlFbKey = `${prop.prop_type}|icehockey_nhl`;
+        const nhlAccuracy = feedbackAccuracy.get(nhlFbKey) ?? null;
+        const nhlFbMult = getFeedbackMultiplier(nhlAccuracy);
+        if (nhlFbMult !== 1.0) edgePct *= nhlFbMult;
+
+        const nhlFinalTier = getConfidenceTier(edgePct, l10Values.length);
+        if (Math.abs(edgePct) < 3) continue;
+
         const nhlEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -930,8 +1151,14 @@ serve(async (req) => {
             trend_pct: Math.round(trendEdge * 10) / 10,
             games_analyzed: allValues.length,
             defense_multiplier: defMultiplier !== 1.0 ? defMultiplier : undefined,
+            variance_cv: Math.round(nhlCV * 1000) / 1000,
+            historical_hit_rate: nhlHitRate,
+            consensus_line: nhlConsensus,
+            consensus_deviation_pct: nhlConsDev !== null ? Math.round(nhlConsDev * 10) / 10 : undefined,
+            feedback_accuracy: nhlAccuracy,
+            feedback_multiplier: nhlFbMult !== 1.0 ? nhlFbMult : undefined,
           },
-          confidence_tier: confidenceTier,
+          confidence_tier: nhlFinalTier,
           analysis_date: today,
           sport: 'icehockey_nhl',
           defense_adjusted_avg: defMultiplier !== 1.0 ? Math.round(adjustedAvg * 100) / 100 : null,
