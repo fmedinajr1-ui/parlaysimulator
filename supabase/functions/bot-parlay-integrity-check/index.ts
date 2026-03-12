@@ -78,7 +78,34 @@ Deno.serve(async (req) => {
 
     const oneLeg = realViolations.filter(p => p.leg_count === 1);
     const twoLeg = realViolations.filter(p => p.leg_count === 2);
-    const total = oneLeg.length + twoLeg.length;
+    const legCountTotal = oneLeg.length + twoLeg.length;
+
+    // ═══════════ CHECK 2: Duplicate legs across pending parlays ═══════════
+    // Detect same player+prop+side appearing in more than 1 pending parlay
+    const legKeyToParlayIds = new Map<string, string[]>();
+    for (const parlay of (allPending || [])) {
+      const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+      for (const leg of legs) {
+        const player = (leg.player_name || leg.playerName || '').toLowerCase().trim();
+        const prop = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+        const side = (leg.side || leg.recommended_side || 'over').toLowerCase().trim();
+        if (!player || !prop) continue;
+        const key = `${player}|${prop}|${side}`;
+        const list = legKeyToParlayIds.get(key) || [];
+        list.push(parlay.id);
+        legKeyToParlayIds.set(key, list);
+      }
+    }
+
+    const duplicateLegs: { key: string; count: number; parlayIds: string[] }[] = [];
+    for (const [key, ids] of legKeyToParlayIds) {
+      if (ids.length > 1) {
+        duplicateLegs.push({ key, count: ids.length, parlayIds: ids });
+      }
+    }
+    const dupLegTotal = duplicateLegs.length;
+
+    const total = legCountTotal + dupLegTotal;
 
     if (total === 0) {
       // Silent pass — log to activity log only, no Telegram
@@ -86,13 +113,13 @@ Deno.serve(async (req) => {
         event_type: 'integrity_check_pass',
         message: `Integrity check passed for ${targetDate}: 0 violations (${excludedCount} excluded exploration strategies)`,
         severity: 'info',
-        metadata: { date: targetDate, violations: 0, excluded_exploration: excludedCount },
+        metadata: { date: targetDate, violations: 0, excluded_exploration: excludedCount, duplicate_legs: 0 },
       });
 
-      console.log(`[Integrity] ✅ All clear for ${targetDate} (${excludedCount} exploration strategies excluded)`);
+      console.log(`[Integrity] ✅ All clear for ${targetDate} (${excludedCount} exploration strategies excluded, 0 duplicate legs)`);
 
       return new Response(
-        JSON.stringify({ clean: true, violations: 0, excluded_exploration: excludedCount, date: targetDate }),
+        JSON.stringify({ clean: true, violations: 0, duplicate_legs: 0, excluded_exploration: excludedCount, date: targetDate }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
