@@ -675,6 +675,41 @@ serve(async (req) => {
           }
         }
 
+        // === MLB INTELLIGENCE UPGRADES ===
+        // 1. Variance filter
+        const mlbCV = calcCV(l20Values.length >= 10 ? l20Values : seasonValues.slice(0, 20));
+        const mlbVarDamp = getVarianceDampener(mlbCV);
+        if (mlbVarDamp < 1.0) edgePct *= mlbVarDamp;
+
+        // 2. Hit-rate cross-ref
+        const mlbSSKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const mlbHitRate = sweetSpotHitRates.get(mlbSSKey) ?? null;
+        if (mlbHitRate !== null && mlbHitRate < 60) edgePct *= 0.70;
+
+        // 3. Cross-book consensus
+        const mlbConsKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const mlbConsensus = consensusMap.get(mlbConsKey) ?? null;
+        let mlbConsDev: number | null = null;
+        if (mlbConsensus !== null && mlbConsensus > 0) {
+          mlbConsDev = Math.abs(line - mlbConsensus) / mlbConsensus * 100;
+          if (mlbConsDev > 5) edgePct *= 1.15;
+        }
+
+        // 4. Outcome feedback
+        const mlbFbKey = `${prop.prop_type}|baseball_mlb`;
+        const mlbAccuracy = feedbackAccuracy.get(mlbFbKey) ?? null;
+        const mlbFbMult = getFeedbackMultiplier(mlbAccuracy);
+        if (mlbFbMult !== 1.0) edgePct *= mlbFbMult;
+
+        // Recalculate tier & skip if edge dampened below threshold
+        const mlbFinalTier = getConfidenceTier(edgePct, seasonValues.length);
+        if (Math.abs(edgePct) < 3) continue;
+
+        // (remove trailing brace from original L3 block — handled above)
+        if (false) {
+          }
+        }
+
         const mlbEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
