@@ -1669,7 +1669,12 @@ function calculateParlayCoherence(legs: any[]): number {
     if (ctx.pace === 'fast') coherenceScore += 6;
     if (ctx.pace === 'slow') coherenceScore -= 8;
     if (ctx.defenseStrength === 'soft') coherenceScore += 6;
-    if (ctx.defenseStrength === 'tough') coherenceScore -= 8;
+    // GRIND+tough defense OVER gets amplified penalty (-20 instead of -8)
+    if (ctx.defenseStrength === 'tough' && ctx.envCluster === 'GRIND') {
+      coherenceScore -= 20;
+    } else if (ctx.defenseStrength === 'tough') {
+      coherenceScore -= 8;
+    }
 
     // TEAM TOTAL ALIGNMENT: Player OVER vs game total signal
     if (ctx.teamTotalSignal && ctx.teamTotalComposite) {
