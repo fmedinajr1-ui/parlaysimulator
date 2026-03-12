@@ -137,6 +137,13 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // === NHL PARLAYS TEMPORARILY DISABLED ===
+  // Remove this block to re-enable NHL parlay generation
+  return new Response(
+    JSON.stringify({ success: false, reason: "nhl_parlays_temporarily_disabled", message: "NHL parlays are paused until data accuracy improves" }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseKey);

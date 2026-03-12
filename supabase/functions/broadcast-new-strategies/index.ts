@@ -28,8 +28,7 @@ Deno.serve(async (req) => {
         'floor_lock_nba_3l', 'floor_lock_nba_4l', 'floor_lock_all_3l', 'floor_lock_all_4l',
         'optimal_combo_nba_3l', 'optimal_combo_nba_4l', 'optimal_combo_all_3l',
         'ceiling_shot_nba_3l', 'ceiling_shot_nba_4l', 'ceiling_shot_all_3l', 'ceiling_shot_all_4l',
-        'nhl_floor_lock', 'nhl_optimal_combo', 'nhl_ceiling_shot',
-        'cross_sport_optimal', 'elite_cross_sport_6leg', 'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'l3_cross_engine',
+        'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'l3_cross_engine',
       ])
       .not('outcome', 'eq', 'voided');
 
