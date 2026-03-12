@@ -131,6 +131,32 @@ function getConfidenceTier(edgePct: number, gamesPlayed: number): string {
   return 'LOW';
 }
 
+// ===== INTELLIGENCE UPGRADE HELPERS =====
+
+function calcCV(values: number[]): number {
+  if (values.length < 3) return 0;
+  const avg = calcAvg(values);
+  if (avg === 0) return 0;
+  const variance = values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
+  return Math.sqrt(variance) / avg;
+}
+
+function getVarianceDampener(cv: number): number {
+  // CV > 0.50 → dampen 40%, CV > 0.35 → dampen 20%, else no dampening
+  if (cv > 0.50) return 0.60;
+  if (cv > 0.35) return 0.80;
+  return 1.0;
+}
+
+function getFeedbackMultiplier(accuracy: number | null): number {
+  if (accuracy === null) return 1.0;
+  // 80%+ → 1.2x boost, 60-80% → 1.0x neutral, 40-60% → 0.9x, <40% → 0.8x
+  if (accuracy >= 80) return 1.20;
+  if (accuracy >= 60) return 1.0;
+  if (accuracy >= 40) return 0.90;
+  return 0.80;
+}
+
 // Prop type → defense stat category mapping
 const PROP_TO_DEFENSE_CATEGORY: Record<string, string> = {
   'player_points': 'points',
