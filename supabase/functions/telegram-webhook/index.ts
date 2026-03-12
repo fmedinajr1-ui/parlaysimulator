@@ -1797,6 +1797,177 @@ async function handleExport(chatId: string, dateStr: string) {
   await sendLongMessage(chatId, msg);
   return null; // Already sent
 }
+// ==================== SCANLINES HANDLER ====================
+
+async function handleScanLines(chatId: string) {
+  await sendMessage(chatId, "⏳ Scanning lines with intelligence filters...", "Markdown");
+
+  // Trigger the edge function
+  try {
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/detect-mispriced-lines`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      await sendMessage(chatId, `❌ Scan failed (${resp.status}): ${errText.slice(0, 200)}`);
+      return;
+    }
+    await resp.text(); // consume body
+  } catch (err) {
+    await sendMessage(chatId, `❌ Scan error: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  // Fetch results
+  const today = getEasternDate();
+  const { data: lines } = await supabase
+    .from('mispriced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
+    .eq('analysis_date', today)
+    .order('edge_pct', { ascending: true })
+    .limit(15);
+
+  if (!lines || lines.length === 0) {
+    await sendMessage(chatId, "📭 Scan complete — no mispriced lines detected today.");
+    return;
+  }
+
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+  let msg = `🔍 *SCANLINES — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${lines.length} lines found\n\n`;
+
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const side = (l.signal || 'UNDER').toUpperCase().charAt(0);
+    const propLabel = normalizePropType(l.prop_type || '').toUpperCase();
+    const edgeStr = (l.edge_pct || 0) >= 0 ? `+${(l.edge_pct || 0).toFixed(0)}%` : `${(l.edge_pct || 0).toFixed(0)}%`;
+    const tierEmoji = l.confidence_tier === 'ELITE' ? '💎' : l.confidence_tier === 'HIGH' ? '🔥' : '📊';
+
+    msg += `${i + 1}. ${tierEmoji} *${l.player_name}* — ${propLabel} ${side} ${l.book_line}\n`;
+    msg += `   Edge: ${edgeStr} | L10: ${l.player_avg_l10?.toFixed(1) || '?'}\n`;
+
+    // Intelligence filter details from shooting_context
+    const ctx = l.shooting_context as Record<string, any> | null;
+    if (ctx) {
+      const flags: string[] = [];
+      if (ctx.variance_cv != null) flags.push(`CV:${ctx.variance_cv.toFixed(2)}`);
+      if (ctx.historical_hit_rate != null) flags.push(`HR:${Math.round(ctx.historical_hit_rate * 100)}%`);
+      if (ctx.consensus_deviation_pct != null && ctx.consensus_deviation_pct > 5) flags.push(`CD:${ctx.consensus_deviation_pct.toFixed(0)}%↑`);
+      if (ctx.feedback_multiplier != null && ctx.feedback_multiplier !== 1) flags.push(`FB:${ctx.feedback_multiplier.toFixed(2)}x`);
+      if (ctx.minutes_stability != null && ctx.minutes_stability < 0.8) flags.push(`⚠️MIN`);
+      if (flags.length > 0) {
+        msg += `   _${flags.join(' | ')}_\n`;
+      }
+    }
+  }
+
+  await sendLongMessage(chatId, msg, "Markdown");
+  await logActivity("telegram_scanlines", `Admin ran /scanlines`, { chatId, count: lines.length });
+}
+
+// ==================== PIPELINE SUMMARY HANDLER ====================
+
+async function handlePipelineSummary(chatId: string) {
+  const today = getEasternDate();
+
+  const { data: parlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('id, strategy_name, tier, legs, leg_count, combined_probability, expected_odds, outcome')
+    .eq('parlay_date', today)
+    .order('created_at', { ascending: true });
+
+  if (!parlays || parlays.length === 0) {
+    await sendMessage(chatId, "📭 No parlays in pipeline today.\n\nCheck back after the bot runs its daily generation.");
+    return;
+  }
+
+  // Extract unique picks
+  const pickMap = new Map<string, { player_name: string; prop_type: string; line: number; side: string; composite_score?: number; l10_hit_rate?: number }>();
+  for (const p of parlays) {
+    const legs = (p.legs as any[]) || [];
+    for (const leg of legs) {
+      const key = `${leg.player_name}|${leg.prop_type}|${leg.line}|${leg.side}`;
+      if (!pickMap.has(key)) {
+        pickMap.set(key, {
+          player_name: leg.player_name,
+          prop_type: leg.prop_type,
+          line: leg.line,
+          side: leg.side,
+          composite_score: leg.composite_score,
+          l10_hit_rate: leg.l10_hit_rate,
+        });
+      }
+    }
+  }
+
+  // Group by tier
+  const tierGroups: Record<string, typeof parlays> = {};
+  const tierOrder = ['execution', 'exploration', 'validation', 'bankroll_doubler'];
+  for (const p of parlays) {
+    const tier = p.tier || classifyTier(p.strategy_name);
+    if (!tierGroups[tier]) tierGroups[tier] = [];
+    tierGroups[tier].push(p);
+  }
+
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+  let msg = `🔧 *PIPELINE — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${parlays.length} parlays | ${pickMap.size} unique picks\n\n`;
+
+  // Tier breakdown
+  for (const tier of tierOrder) {
+    const group = tierGroups[tier];
+    if (!group || group.length === 0) continue;
+    const tierLabel = tier.toUpperCase().replace('_', ' ');
+    const emoji = tier === 'execution' ? '🎯' : tier === 'exploration' ? '🔬' : tier === 'validation' ? '✅' : '💰';
+    msg += `${emoji} *${tierLabel}* (${group.length})\n`;
+    for (const p of group.slice(0, 3)) {
+      const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+      const probStr = `${Math.round(p.combined_probability * 100)}%`;
+      const outcomeStr = p.outcome ? ` ${p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳'}` : '';
+      msg += `  • ${p.strategy_name} — ${p.leg_count}L ${oddsStr} | ${probStr}${outcomeStr}\n`;
+    }
+    if (group.length > 3) msg += `  _+${group.length - 3} more_\n`;
+    msg += `\n`;
+  }
+  // Any other tiers not in tierOrder
+  for (const [tier, group] of Object.entries(tierGroups)) {
+    if (tierOrder.includes(tier)) continue;
+    msg += `📋 *${tier.toUpperCase()}* (${group.length})\n`;
+    for (const p of group.slice(0, 2)) {
+      const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+      msg += `  • ${p.strategy_name} — ${p.leg_count}L ${oddsStr}\n`;
+    }
+    msg += `\n`;
+  }
+
+  // Top picks by composite score
+  const allPicks = Array.from(pickMap.values())
+    .filter(p => p.composite_score != null)
+    .sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0))
+    .slice(0, 5);
+
+  if (allPicks.length > 0) {
+    msg += `*Top Picks by Score:*\n`;
+    for (let i = 0; i < allPicks.length; i++) {
+      const p = allPicks[i];
+      const sideLabel = p.side?.toUpperCase() === 'OVER' ? 'O' : 'U';
+      const propLabel = (PROP_LABELS[p.prop_type] || p.prop_type).toUpperCase();
+      const hitRate = p.l10_hit_rate != null ? ` L10:${Math.round(p.l10_hit_rate * 100)}%` : '';
+      msg += `${i + 1}. *${p.player_name}* — ${propLabel} ${sideLabel} ${p.line} (Score:${p.composite_score}${hitRate})\n`;
+    }
+  }
+
+  await sendLongMessage(chatId, msg, "Markdown");
+  await logActivity("telegram_pipeline", `Admin ran /pipeline`, { chatId, parlayCount: parlays.length, pickCount: pickMap.size });
+}
+
 
 // ==================== MISPRICED LINES HANDLER ====================
 
@@ -4215,6 +4386,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /deletesweep — Void sweep parlays
 /deletebystrat [name] — Void by strategy
 /sweetspots — Active sweet spot picks
+/scanlines — Run & view mispriced line scan
+/pipeline — Today's parlay pipeline summary
 /fixpipeline — Run full pipeline
 /regenparlay — Void & regenerate
 /fixprops — Refresh props + regen
@@ -4273,6 +4446,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/rankings") return await handleRankings(chatId, args);
   if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
     if (cmd === "/sweetspots") { await handleSweetSpots(chatId); return null; }
+    if (cmd === "/scanlines") { await handleScanLines(chatId); return null; }
+    if (cmd === "/pipeline") { await handlePipelineSummary(chatId); return null; }
     if (cmd === "/rankings") return await handleRankings(chatId, args);
     if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
 
