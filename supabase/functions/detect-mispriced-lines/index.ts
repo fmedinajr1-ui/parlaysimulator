@@ -480,6 +480,68 @@ serve(async (req) => {
           console.log(`[Mispriced] ${prop.player_name} L3: avg=${avgL3.toFixed(1)} l3Edge=${l3EdgePct.toFixed(1)}% confirms=${l3Confirms} → finalEdge=${alignedEdgePct.toFixed(1)}%`);
         }
 
+        // === INTELLIGENCE UPGRADE 1: VARIANCE/CONSISTENCY FILTER ===
+        const varianceCV = calcCV(l10Values);
+        const varianceDampener = getVarianceDampener(varianceCV);
+        if (varianceDampener < 1.0) {
+          alignedEdgePct *= varianceDampener;
+          console.log(`[Mispriced] ${prop.player_name} CV=${varianceCV.toFixed(2)} → dampened ${Math.round(varianceDampener*100)}%`);
+        }
+
+        // === INTELLIGENCE UPGRADE 2: HISTORICAL HIT-RATE CROSS-REF ===
+        const ssKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const historicalHitRate = sweetSpotHitRates.get(ssKey) ?? null;
+        if (historicalHitRate !== null && historicalHitRate < 60) {
+          alignedEdgePct *= 0.70;
+          console.log(`[Mispriced] ${prop.player_name} hit rate=${historicalHitRate}% → dampened 30%`);
+        }
+
+        // === INTELLIGENCE UPGRADE 3: MINUTES STABILITY CHECK ===
+        const l10Minutes = l10Logs.map(l => {
+          const m = typeof l.min === 'string' ? parseFloat(l.min) : (l.min ? parseFloat(String(l.min)) : 0);
+          return m > 0 ? m : null;
+        }).filter((v): v is number => v !== null);
+        const l3Minutes = l3Logs.map(l => {
+          const m = typeof l.min === 'string' ? parseFloat(l.min) : (l.min ? parseFloat(String(l.min)) : 0);
+          return m > 0 ? m : null;
+        }).filter((v): v is number => v !== null);
+        let minutesStability: number | null = null;
+        if (l10Minutes.length >= 5 && l3Minutes.length >= 3) {
+          const avgL10Min = calcAvg(l10Minutes);
+          const avgL3Min = calcAvg(l3Minutes);
+          minutesStability = avgL10Min > 0 ? avgL3Min / avgL10Min : null;
+          if (minutesStability !== null && minutesStability < 0.80) {
+            alignedEdgePct *= 0.75;
+            console.log(`[Mispriced] ${prop.player_name} min stability=${(minutesStability*100).toFixed(0)}% → dampened 25%`);
+          }
+        }
+
+        // === INTELLIGENCE UPGRADE 4: CROSS-BOOK CONSENSUS ===
+        const consensusKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const consensusLine = consensusMap.get(consensusKey) ?? null;
+        let consensusDeviation: number | null = null;
+        if (consensusLine !== null && consensusLine > 0) {
+          consensusDeviation = Math.abs(line - consensusLine) / consensusLine * 100;
+          if (consensusDeviation > 5) {
+            // Book deviates >5% from consensus — boost edge (true mispricing)
+            alignedEdgePct *= 1.15;
+            console.log(`[Mispriced] ${prop.player_name} consensus=${consensusLine} vs book=${line} (${consensusDeviation.toFixed(1)}% dev) → boosted 15%`);
+          }
+        }
+
+        // === INTELLIGENCE UPGRADE 5: OUTCOME FEEDBACK LOOP ===
+        const fbKey = `${prop.prop_type}|${prop.sport || 'basketball_nba'}`;
+        const propAccuracy = feedbackAccuracy.get(fbKey) ?? null;
+        const feedbackMult = getFeedbackMultiplier(propAccuracy);
+        if (feedbackMult !== 1.0) {
+          alignedEdgePct *= feedbackMult;
+          console.log(`[Mispriced] ${prop.player_name} feedback accuracy=${propAccuracy}% → mult ${feedbackMult}x`);
+        }
+
+        // Recalculate tier after all adjustments
+        alignedTier = getConfidenceTier(alignedEdgePct, l10Values.length);
+        if (Math.abs(alignedEdgePct) < 3) continue;
+
         const resultEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
