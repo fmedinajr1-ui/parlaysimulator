@@ -165,11 +165,11 @@ Deno.serve(async (req) => {
 
     if (err2) throw err2;
 
-    // Build map: player|prop → list of parlay IDs (sorted by probability desc)
+    // Build map: player|prop|side → list of parlay IDs (sorted by probability desc)
     const playerPropMap = new Map<string, string[]>();
 
     for (const parlay of (remainingParlays || [])) {
-      const keys = extractPlayerPropKeys(parlay.legs);
+      const keys = extractPlayerPropSideKeys(parlay.legs);
       for (const key of keys) {
         const list = playerPropMap.get(key) || [];
         if (!list.includes(parlay.id)) {

@@ -10022,12 +10022,12 @@ Deno.serve(async (req) => {
         // Mirror blocking is scoped to within THIS run only to prevent cross-run over-blocking
         globalFingerprints.add(createParlayFingerprint(legs));
         
-        // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player-prop usage from PENDING parlays ===
+        // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player+prop+side usage from PENDING parlays ===
         if (p.outcome === 'pending') {
           for (const leg of legs) {
-            if (leg.player_name) {
-              const playerKey = (leg.player_name || '').toLowerCase().trim();
-              globalSlatePlayerPropUsage.set(playerKey, (globalSlatePlayerPropUsage.get(playerKey) || 0) + 1);
+            if (leg.player_name && leg.prop_type) {
+              const playerPropSideKey = `${(leg.player_name || '').toLowerCase().trim()}|${normalizePropType(leg.prop_type || '')}|${(leg.side || 'over').toLowerCase()}`;
+              globalSlatePlayerPropUsage.set(playerPropSideKey, (globalSlatePlayerPropUsage.get(playerPropSideKey) || 0) + 1);
             }
           }
         }
