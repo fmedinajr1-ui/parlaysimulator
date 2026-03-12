@@ -72,7 +72,7 @@ export function useBotPipeline() {
         .order("created_at", { ascending: true });
 
       if (error) throw error;
-      return (data || []) as PipelineParlay[];
+      return (data || []) as unknown as PipelineParlay[];
     },
     staleTime: 60000,
     refetchInterval: 60000,
