@@ -1,105 +1,54 @@
+# Active Plans & Recent Changes
 
+See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-## Bot Pipeline Explorer Page
+# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
 
-A new `/bot-pipeline` page that shows the full decision-making process of the bot in a clean, step-by-step UI. It fetches today's `bot_daily_parlays` data and presents the pipeline as three collapsible stages, with clickable picks that expand to show detailed analysis.
+## Problem
+Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
 
-### Page Structure
+## Solution
+Added `l3_avg` column + universal recency decline filter across ALL engines.
 
-```text
-┌─────────────────────────────────────────────┐
-│  🤖 Bot Pipeline Explorer     [Mar 12, 2026]│
-│  ─────────────────────────────────────────── │
-│                                             │
-│  STEP 1: Initial Pool                       │
-│  ┌─────────────────────────────────────────┐│
-│  │ All unique picks across all parlays     ││
-│  │ Grouped by game • Sorted by composite   ││
-│  │ [Cade Cunningham O 0.5 3PT] [98] [80%]  ││
-│  │ [Luke Kennard U 12.5 PTS]   [95] [80%]  ││
-│  │ ...clickable to expand details           ││
-│  └─────────────────────────────────────────┘│
-│                                             │
-│  STEP 2: After Filters                      │
-│  ┌─────────────────────────────────────────┐│
-│  │ Shows which picks survived filters      ││
-│  │ Tags: GRIND_BLOCK, GOD_MODE, COHERENCE  ││
-│  │ Picks grouped by env cluster            ││
-│  └─────────────────────────────────────────┘│
-│                                             │
-│  STEP 3: Final Parlays                      │
-│  ┌─────────────────────────────────────────┐│
-│  │ Each parlay card with strategy name     ││
-│  │ Tier badge • Odds • Probability         ││
-│  │ Clickable legs with full detail sheet   ││
-│  └─────────────────────────────────────────┘│
-│                                             │
-│  CLICK A PICK → Detail Sheet:               │
-│  ┌─────────────────────────────────────────┐│
-│  │ Player: Cade Cunningham                 ││
-│  │ Prop: O 0.5 3PT @ -110                  ││
-│  │ ──────────────────────                  ││
-│  │ L10 Hit Rate: 80%                       ││
-│  │ Composite Score: 98                     ││
-│  │ Confidence: 53%                         ││
-│  │ Category: THREE_POINT_SHOOTER           ││
-│  │ ──────────────────────                  ││
-│  │ 🏀 Game Context                         ││
-│  │ Env Cluster: SHOOTOUT (strength: 3)     ││
-│  │ Defense: soft | Pace: neutral           ││
-│  │ Vegas Total: 215.5                      ││
-│  │ Team Total Signal: OVER (score: 65)     ││
-│  │ Blowout Risk: No                        ││
-│  │ ──────────────────────                  ││
-│  │ 📋 Why This Pick Was Selected           ││
-│  │ Strategy: shootout_stack                ││
-│  │ Rationale: execution tier shootout...   ││
-│  └─────────────────────────────────────────┘│
-└─────────────────────────────────────────────┘
-```
+### Thresholds
+- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
+- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
+- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
 
-### Files to Create/Edit
+# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
 
-1. **`src/pages/BotPipeline.tsx`** — New page component
-   - Fetches from `bot_daily_parlays` for today's date (Eastern time)
-   - Extracts all unique picks from all parlays' legs JSON
-   - Presents 3 collapsible steps:
-     - **Step 1 - Initial Pool**: All unique picks, grouped by game (`_gameContext.gameKey`), sorted by `composite_score`
-     - **Step 2 - Filter Tags**: Same picks but with visual tags showing env cluster, defense strength, and which filters would apply (GRIND+OVER block, GOD_MODE check, coherence)
-     - **Step 3 - Final Parlays**: Actual parlays grouped by tier (execution first, then exploration), showing strategy name, odds, probability, and leg count
-   - Each pick is clickable → opens a Sheet with full detail
+## Problem
+NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
 
-2. **`src/components/bot/PipelinePickDetail.tsx`** — Detail sheet component
-   - Shows all stored leg data: player, prop, line, side, odds
-   - L10 stats: hit_rate, l10_hit_rate, composite_score, confidence
-   - Game context: envCluster, defenseStrength, pace, vegasTotal, teamTotalSignal, blowoutRisk
-   - Which parlays this pick appears in (cross-reference)
-   - Selection rationale from the parlay
+## Solution
+Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
 
-3. **`src/hooks/useBotPipeline.ts`** — Data hook
-   - Query `bot_daily_parlays` for today
-   - Parse legs JSON, deduplicate picks by `player_name + prop_type + line + side`
-   - Group by game, compute filter tag indicators
-   - Auto-refetch every 60s (staleTime: 60000)
+# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
 
-4. **`src/App.tsx`** — Add route
-   - Add lazy import and `/bot-pipeline` route
+## Problem
+`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
 
-### Data Available Per Pick (from legs JSON)
-- `player_name`, `prop_type`, `line`, `side`, `team_name`, `sport`
-- `composite_score`, `confidence_score`, `hit_rate`, `l10_hit_rate`
-- `american_odds`, `category`, `type` (player/team)
-- `_gameContext`: `envCluster`, `envClusterStrength`, `defenseStrength`, `pace`, `vegasTotal`, `teamTotalSignal`, `teamTotalComposite`, `blowoutRisk`, `gameKey`, `opponentAbbrev`
+## Solution
+Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
 
-### Auto-Refresh
-- Uses `useQuery` with `staleTime: 60000` and `refetchInterval: 60000`
-- Date-aware: always shows today's Eastern date
-- Empty state when no parlays generated yet
+# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
 
-### UI Design
-- Dark theme consistent with existing app (Tailwind dark classes)
-- Collapsible sections using existing `Collapsible` component
-- Pick detail via `Sheet` component (slide-in from right)
-- Badges for tier, strategy, env cluster, defense strength
-- Color coding: green = favorable, yellow = neutral, red = tough/GRIND
+## Problem
+`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
 
+## Solution
+Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
+- Streak ≤ -3: penalty = streak × 0.02
+- Streak ≤ -8: penalty = streak × 0.03
+- Streak ≤ -15: auto-block regardless of hit rate
+- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
+
+# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
+
+## Problem
+1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
+2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
+
+## Solution
+- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
+- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON

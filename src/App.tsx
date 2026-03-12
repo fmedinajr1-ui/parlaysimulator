@@ -35,6 +35,7 @@ const NotFound = React.lazy(() => import("./pages/NotFound"));
 const ProfitPlan = React.lazy(() => import("./pages/ProfitPlan"));
 const Scout = React.lazy(() => import("./pages/Scout"));
 const BotSuccess = React.lazy(() => import("./pages/BotSuccess"));
+const BotPipeline = React.lazy(() => import("./pages/BotPipeline"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -88,6 +89,7 @@ function AnimatedRoutes() {
               <Route path="/profit-plan" element={<ProfitPlan />} />
               <Route path="/scout" element={<Scout />} />
               <Route path="/bot-success" element={<BotSuccess />} />
+              <Route path="/bot-pipeline" element={<BotPipeline />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
