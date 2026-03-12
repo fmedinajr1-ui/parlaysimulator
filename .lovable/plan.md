@@ -1,70 +1,69 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Add `/scanlines` and `/pipeline` Telegram Admin Commands
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+### Overview
+Two new admin commands in `telegram-webhook/index.ts`:
+- `/scanlines` — Triggers `detect-mispriced-lines` and then displays the results (combines `/runmispriced` trigger + `/mispriced` display in one command)
+- `/pipeline` — Shows today's bot pipeline summary from `bot_daily_parlays`
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+### Changes
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+**File: `supabase/functions/telegram-webhook/index.ts`**
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+**1. Add `/scanlines` handler function (~40 lines)**
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+`handleScanLines(chatId)`:
+1. Send "Scanning lines..." status message
+2. Invoke `detect-mispriced-lines` edge function via internal fetch
+3. Query `mispriced_lines` for today, filtering to new intelligence fields (`variance_cv`, `historical_hit_rate`, `consensus_deviation_pct`, `feedback_multiplier`) from `shooting_context`
+4. Format top 15 results showing:
+   - Player, prop, side, line
+   - Edge %, confidence tier
+   - New filters: variance CV, hit rate, consensus deviation, feedback multiplier
+   - Flag lines that were dampened by any filter
+5. Send formatted message to admin chat
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+**2. Add `/pipeline` handler function (~50 lines)**
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+`handlePipeline(chatId)`:
+1. Query `bot_daily_parlays` for today (same as `useBotPipeline` hook)
+2. Extract unique picks from legs, group by tier
+3. Format summary:
+   ```
+   🔧 PIPELINE — Mar 12
+   ━━━━━━━━━━━━━━━━━━
+   24 parlays | 47 unique picks
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+   EXECUTION (3 parlays)
+   • Strategy A — 4L +450 | 38%
+   • Strategy B — 3L +280 | 42%
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+   EXPLORATION (5 parlays)
+   ...
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
+   Top Picks by Score:
+   1. Player X — PTS O 24.5 (Score: 92, L10: 80%)
+   2. Player Y — AST O 6.5 (Score: 88, L10: 75%)
+   ```
+4. Send to admin chat
 
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
+**3. Wire commands (~line 4277)**
 
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
+Add after the `/sweetspots` command:
+```
+if (cmd === "/scanlines") { await handleScanLines(chatId); return null; }
+if (cmd === "/pipeline") { await handlePipeline(chatId); return null; }
+```
 
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
+**4. Update help text (~line 4217)**
 
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
+Add to the Management section:
+```
+/scanlines — Run & view mispriced line scan
+/pipeline — Today's parlay pipeline summary
+```
 
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
+### Testing
+After deploying, invoke both commands via the edge function test tool to verify they return proper formatted messages without errors.
 
-# Mispriced Lines Intelligence Tightening — IMPLEMENTED ✅ (March 12, 2026)
-
-## Problem
-`detect-mispriced-lines` scored edges purely on L10/L20 averages vs book line, ignoring player consistency, historical hit rates, minutes volatility, cross-book consensus, and its own track record.
-
-## Solution
-Added 5 intelligence upgrades to the existing engine:
-
-1. **Variance/Consistency Filter**: CV (stdDev/mean) dampens edge 20-40% for volatile players (CV > 0.35)
-2. **Historical Hit-Rate Cross-Ref**: Cross-references `category_sweet_spots` L10 hit rate — dampens edge 30% if hit rate < 60%
-3. **Minutes Stability Check** (NBA only): Compares L3 vs L10 avg minutes — dampens edge 25% if ratio < 0.80
-4. **Cross-Book Consensus**: Calculates median line across all bookmakers — boosts edge 15% when a single book deviates > 5% from consensus
-5. **Outcome Feedback Loop**: Last 14 days of settled mispriced_lines accuracy → applies 0.8x-1.2x multiplier per prop type
-
-All fields persisted to `shooting_context` for transparency: `variance_cv`, `historical_hit_rate`, `minutes_stability`, `consensus_line`, `consensus_deviation_pct`, `feedback_accuracy`, `feedback_multiplier`.
