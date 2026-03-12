@@ -34,8 +34,23 @@ Deno.serve(async (req) => {
 
     console.log(`[Integrity] Checking parlays for ${targetDate}`);
 
+    // Query all pending parlays (for both leg-count and duplicate-leg checks)
+    const { data: allPending, error: pendingErr } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, leg_count, strategy_name, tier, legs')
+      .eq('parlay_date', targetDate)
+      .eq('outcome', 'pending');
+
+    if (pendingErr) {
+      console.error('[Integrity] Query error:', pendingErr);
+      throw pendingErr;
+    }
+
+    // ═══════════ CHECK 1: 1-leg or 2-leg parlays ═══════════
+    const violations = (allPending || []).filter(p => p.leg_count === 1 || p.leg_count === 2);
+
     // Query for any 1-leg or 2-leg parlays
-    const { data: violations, error } = await supabase
+    const { data: shortViolations, error } = await supabase
       .from('bot_daily_parlays')
       .select('id, leg_count, strategy_name, tier')
       .eq('parlay_date', targetDate)
