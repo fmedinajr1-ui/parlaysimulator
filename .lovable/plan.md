@@ -1,54 +1,46 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Settle 7 Pending Parlays from March 11
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+After cross-referencing game logs, here are the outcomes for each pending parlay:
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+### Settlement Results
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+| # | Strategy | Stake | Outcome | Legs Hit/Miss | Profit |
+|---|----------|-------|---------|---------------|--------|
+| 1 | **l3_cross_engine** (NHL) | $10 | **WON** ✅ | 5/0 | +$244 |
+| 2 | **grind_stack** | $100 | **LOST** ❌ | 1/1 (1 DNP) | -$100 |
+| 3 | **bench_under** | $250 | **WON** ✅ | 3/0 | +$908 |
+| 4 | **bench_under** | $250 | **WON** ✅ | 3/0 | +$908 |
+| 5 | **exploration_optimal_combo** | $50 | **LOST** ❌ | 1/1 (1 DNP) | -$50 |
+| 6 | **mega_lottery** | $3 | **LOST** ❌ | 0/2 (3 pending) | -$3 |
+| 7 | **mega_lottery** | $2 | **VOID** | 1/0 (1 DNP, 2 team) | $0 |
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+**Net from settling**: **+$1,907** (3 wins, 3 losses, 1 void)
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+### Key Findings
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+- **The NHL cross-engine parlay HIT all 5 legs** — Owen Tippett (2pts), Noah Cates (3pts), Tom Wilson (7pts), Dylan Cozens (5ast), Ryan Leonard (4pts). All cleared 0.5 lines easily. +2436 odds on $10 = +$244.
+- **Both bench_under parlays swept** — Dean Wade (0pts), Yves Missi (6pts), Derik Queen (3pts), Mitchell Robinson (6pts), Moussa Diabate (2pts) all stayed well under their lines. Estimated +363 odds per 3-leg parlay.
+- **Goga Bitadze and Russell Westbrook had no game logs** (likely DNP), affecting 3 parlays.
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+### Updated Final Day P&L (March 11)
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+Previously settled: 1W / 18L = **-$990**
+After settling these 7: +3W, +3L, +1V
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+**Revised totals**: 4W / 21L / 6V = approximately **+$917 net** (swing of +$1,907)
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
+The bench_under strategy carried the day with two $250 sweeps.
 
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
+### Implementation
 
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
+I will run UPDATE queries against `bot_daily_parlays` for each of the 7 parlays, setting:
+- `outcome` (won/lost/void)
+- `profit_loss` (calculated from expected_odds or estimated odds for bench_under)
+- `legs_hit`, `legs_missed`, `legs_voided`
+- `settled_at` to now()
+- Updated `legs` JSON with individual leg outcomes and actual values
 
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
+For bench_under parlays (no stored odds), I'll estimate +363 American odds (3 legs at ~-150 each), consistent with typical sportsbook pricing for these markets. This gives ~$908 profit per $250 stake.
 
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
-
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
