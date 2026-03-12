@@ -284,6 +284,70 @@ serve(async (req) => {
 
     console.log(`[Mispriced] Defense data loaded: ${Object.keys(teamToOpponent).length / 2} games, ${defenseStats?.length || 0} defense entries, ${playerTeams?.length || 0} player-team mappings`);
 
+    // ==================== INTELLIGENCE UPGRADE DATA ====================
+    const fourteenDaysAgo = new Date(now);
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+    const fourteenDaysAgoStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(fourteenDaysAgo);
+
+    const [sweetSpotsRes, allPropsRes, feedbackRes] = await Promise.all([
+      supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, l10_hit_rate, recommended_side')
+        .eq('analysis_date', today)
+        .not('l10_hit_rate', 'is', null),
+      supabase
+        .from('unified_props')
+        .select('player_name, prop_type, current_line, bookmaker')
+        .gt('commence_time', now.toISOString())
+        .not('player_name', 'is', null)
+        .not('current_line', 'is', null),
+      supabase
+        .from('mispriced_lines')
+        .select('prop_type, signal, outcome, sport')
+        .gte('analysis_date', fourteenDaysAgoStr)
+        .not('outcome', 'is', null),
+    ]);
+
+    // Sweet spots map: "player_lower|prop_type" → l10_hit_rate
+    const sweetSpotHitRates = new Map<string, number>();
+    for (const ss of sweetSpotsRes.data || []) {
+      const key = `${(ss.player_name || '').toLowerCase()}|${ss.prop_type}`;
+      sweetSpotHitRates.set(key, ss.l10_hit_rate || 0);
+    }
+
+    // Cross-book consensus map: "player_lower|prop_type" → median line
+    const consensusMap = new Map<string, number>();
+    const linesByKey = new Map<string, number[]>();
+    for (const p of allPropsRes.data || []) {
+      const key = `${(p.player_name || '').toLowerCase()}|${p.prop_type}`;
+      if (!linesByKey.has(key)) linesByKey.set(key, []);
+      linesByKey.get(key)!.push(Number(p.current_line));
+    }
+    for (const [key, lines] of linesByKey) {
+      if (lines.length < 2) continue;
+      lines.sort((a, b) => a - b);
+      const mid = Math.floor(lines.length / 2);
+      consensusMap.set(key, lines.length % 2 === 0 ? (lines[mid - 1] + lines[mid]) / 2 : lines[mid]);
+    }
+
+    // Outcome feedback map: "prop_type|sport" → accuracy %
+    const feedbackMap = new Map<string, { hits: number; total: number }>();
+    for (const f of feedbackRes.data || []) {
+      const key = `${f.prop_type}|${f.sport}`;
+      if (!feedbackMap.has(key)) feedbackMap.set(key, { hits: 0, total: 0 });
+      const entry = feedbackMap.get(key)!;
+      entry.total++;
+      if (f.outcome === 'hit') entry.hits++;
+    }
+    const feedbackAccuracy = new Map<string, number>();
+    for (const [key, val] of feedbackMap) {
+      if (val.total >= 5) feedbackAccuracy.set(key, Math.round((val.hits / val.total) * 100));
+    }
+
+    console.log(`[Mispriced] Intelligence data: ${sweetSpotHitRates.size} sweet spots, ${consensusMap.size} consensus lines, ${feedbackAccuracy.size} feedback categories`);
+
     if (nbaProps && nbaProps.length > 0) {
       const uniqueNbaPlayers = [...new Set(nbaProps.map(p => p.player_name).filter(Boolean))];
       const nbaPlayerLogs: Record<string, any[]> = {};
