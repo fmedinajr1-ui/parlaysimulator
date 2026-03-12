@@ -769,11 +769,6 @@ serve(async (req) => {
         const mlbFinalTier = getConfidenceTier(edgePct, seasonValues.length);
         if (Math.abs(edgePct) < 3) continue;
 
-        // (remove trailing brace from original L3 block — handled above)
-        if (false) {
-          }
-        }
-
         const mlbEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -791,8 +786,14 @@ serve(async (req) => {
             season_avg: Math.round(avgSeason * 10) / 10,
             trend_pct: Math.round(trendEdge * 10) / 10,
             games_analyzed: seasonValues.length,
+            variance_cv: Math.round(mlbCV * 1000) / 1000,
+            historical_hit_rate: mlbHitRate,
+            consensus_line: mlbConsensus,
+            consensus_deviation_pct: mlbConsDev !== null ? Math.round(mlbConsDev * 10) / 10 : undefined,
+            feedback_accuracy: mlbAccuracy,
+            feedback_multiplier: mlbFbMult !== 1.0 ? mlbFbMult : undefined,
           },
-          confidence_tier: confidenceTier,
+          confidence_tier: mlbFinalTier,
           analysis_date: today,
           sport: 'baseball_mlb',
         };
