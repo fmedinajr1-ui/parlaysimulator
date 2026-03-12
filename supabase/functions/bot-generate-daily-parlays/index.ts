@@ -7891,6 +7891,21 @@ async function generateTierParlays(
         }
       }
       
+      // === GRIND+OVER HARD-BLOCK: prevent OVER picks in GRIND-cluster games with tough defense ===
+      const pickSideForGrind = pick.recommended_side || pick.side || '';
+      const grindCtx = (pick as any)._gameContext as PickGameContext | undefined;
+      if (
+        pickSideForGrind.toLowerCase() === 'over' &&
+        grindCtx?.envCluster === 'GRIND' &&
+        grindCtx?.defenseStrength === 'tough' &&
+        strategyName !== 'bench_under' &&
+        strategyName !== 'grind_under_core'
+      ) {
+        console.log(`[GrindOverBlock] Skipped: ${pick.player_name || 'unknown'} OVER in GRIND+tough defense game`);
+        rejectionCounters.envCluster = (rejectionCounters.envCluster || 0) + 1;
+        continue;
+      }
+      
       // === ANTI-CORRELATION BLOCKING: prevent contradictory legs ===
       const antiCorr = hasAntiCorrelation(pick, legs);
       if (antiCorr.blocked) {
