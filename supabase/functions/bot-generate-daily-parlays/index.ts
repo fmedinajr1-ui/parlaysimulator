@@ -8382,9 +8382,9 @@ async function generateTierParlays(
         } else {
           const playerPick = pool.sweetSpots.find(p => p.id === leg.id);
           if (playerPick) markPickUsed(playerPick, tracker);
-          // Track global player+prop exposure
+          // Track global player+prop+side exposure (canonical key must match canUsePickGlobally check)
           if (leg.player_name && leg.prop_type) {
-            const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
+            const globalKey = `${(leg.player_name || '').toLowerCase().trim()}|${normalizePropType(leg.prop_type || '')}|${(leg.side || 'over').toLowerCase()}`;
             globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
           }
         }
