@@ -161,16 +161,18 @@ Deno.serve(async (req) => {
     // Log failure to activity log
     await supabase.from('bot_activity_log').insert({
       event_type: 'integrity_check_fail',
-      message: `Integrity check FAILED for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg parlays found`,
+      message: `Integrity check FAILED for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg, ${dupLegTotal} duplicate-leg combos`,
       severity: 'error',
       metadata: {
         date: targetDate,
         one_leg_count: oneLeg.length,
         two_leg_count: twoLeg.length,
+        duplicate_leg_count: dupLegTotal,
         total,
         excluded_exploration: excludedCount,
         strategy_counts: strategyCounts,
         violation_ids: realViolations.map(v => v.id),
+        top_duplicate_legs: duplicateLegs.sort((a, b) => b.count - a.count).slice(0, 10).map(d => ({ key: d.key, count: d.count })),
       },
     });
 
@@ -180,6 +182,8 @@ Deno.serve(async (req) => {
         violations: total,
         one_leg: oneLeg.length,
         two_leg: twoLeg.length,
+        duplicate_legs: dupLegTotal,
+        top_duplicate_legs: duplicateLegs.sort((a, b) => b.count - a.count).slice(0, 10),
         excluded_exploration: excludedCount,
         strategy_counts: strategyCounts,
         date: targetDate,
