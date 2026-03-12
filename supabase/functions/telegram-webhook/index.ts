@@ -4446,6 +4446,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/rankings") return await handleRankings(chatId, args);
   if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
     if (cmd === "/sweetspots") { await handleSweetSpots(chatId); return null; }
+    if (cmd === "/scanlines") { await handleScanLines(chatId); return null; }
+    if (cmd === "/pipeline") { await handlePipelineSummary(chatId); return null; }
     if (cmd === "/rankings") return await handleRankings(chatId, args);
     if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
 
