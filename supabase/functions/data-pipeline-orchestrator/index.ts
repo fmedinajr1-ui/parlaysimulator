@@ -212,6 +212,12 @@ serve(async (req) => {
       
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });
       
+      // Diversity rebalance: enforce player+prop+side exposure caps across entire slate
+      await runFunction('bot-daily-diversity-rebalance', {});
+      
+      // Integrity check: verify no duplicate legs or short parlays
+      await runFunction('bot-parlay-integrity-check', {});
+      
       // Lottery parlay scanner: generates high-odds parlays from yesterday's near-misses
       await runFunction('nba-mega-parlay-scanner', {});
     }
@@ -246,6 +252,11 @@ serve(async (req) => {
         }
         
         await runFunction('bot-review-and-optimize', { source: 'regen' });
+        
+        // Diversity rebalance after mid-day regen
+        await runFunction('bot-daily-diversity-rebalance', {});
+        await runFunction('bot-parlay-integrity-check', {});
+        
         results['mid_day_regen'] = { success: true, message: `Re-triggered: had ${parlayCount} parlays`, duration: 0 };
       } else {
         console.log(`[Pipeline] ✅ Sufficient parlays (${parlayCount}) for ${today}, skipping re-gen.`);

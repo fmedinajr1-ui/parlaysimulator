@@ -69,6 +69,7 @@ export function useBotPipeline() {
         .from("bot_daily_parlays")
         .select("*")
         .eq("parlay_date", today)
+        .eq("outcome", "pending")
         .order("created_at", { ascending: true });
 
       if (error) throw error;

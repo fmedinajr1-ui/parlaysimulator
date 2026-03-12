@@ -3433,15 +3433,15 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     if (hitRatePercent < 70) return false;
   }
   
-  // === GLOBAL SLATE EXPOSURE CAP (max 1 per player globally, max 2 if double/triple confirmed) ===
+  // === GLOBAL SLATE EXPOSURE CAP (max 1 per player+prop+side globally, max 2 if double/triple confirmed) ===
   if ('player_name' in pick) {
-    const playerKey = (pick.player_name || '').toLowerCase().trim();
+    const playerPropSideKey = `${(pick.player_name || '').toLowerCase().trim()}|${normalizePropType((pick as any).prop_type || '')}|${((pick as any).recommended_side || (pick as any).side || 'over').toLowerCase()}`;
     // Check if this pick is double/triple confirmed (appears in multiple engines)
     const isDoubleConfirmed = (pick as any).double_confirmed || (pick as any).triple_confirmed || 
       ((pick as any).engine_count && (pick as any).engine_count >= 2) ||
       (strategyName && (strategyName.includes('double_confirmed') || strategyName.includes('triple_confirmed') || strategyName.includes('consensus')));
     const PLAYER_CAP = isDoubleConfirmed ? 2 : 1;
-    const currentUsage = globalSlatePlayerPropUsage.get(playerKey) || 0;
+    const currentUsage = globalSlatePlayerPropUsage.get(playerPropSideKey) || 0;
     if (currentUsage >= PLAYER_CAP) {
       return false;
     }
@@ -8382,9 +8382,9 @@ async function generateTierParlays(
         } else {
           const playerPick = pool.sweetSpots.find(p => p.id === leg.id);
           if (playerPick) markPickUsed(playerPick, tracker);
-          // Track global player+prop exposure
+          // Track global player+prop+side exposure (canonical key must match canUsePickGlobally check)
           if (leg.player_name && leg.prop_type) {
-            const globalKey = `${(leg.player_name || '').toLowerCase()}|${(leg.prop_type || '').toLowerCase()}`;
+            const globalKey = `${(leg.player_name || '').toLowerCase().trim()}|${normalizePropType(leg.prop_type || '')}|${(leg.side || 'over').toLowerCase()}`;
             globalSlatePlayerPropUsage.set(globalKey, (globalSlatePlayerPropUsage.get(globalKey) || 0) + 1);
           }
         }
@@ -10022,12 +10022,12 @@ Deno.serve(async (req) => {
         // Mirror blocking is scoped to within THIS run only to prevent cross-run over-blocking
         globalFingerprints.add(createParlayFingerprint(legs));
         
-        // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player-prop usage from PENDING parlays ===
+        // === CROSS-ATTEMPT EXPOSURE CAP: pre-populate player+prop+side usage from PENDING parlays ===
         if (p.outcome === 'pending') {
           for (const leg of legs) {
-            if (leg.player_name) {
-              const playerKey = (leg.player_name || '').toLowerCase().trim();
-              globalSlatePlayerPropUsage.set(playerKey, (globalSlatePlayerPropUsage.get(playerKey) || 0) + 1);
+            if (leg.player_name && leg.prop_type) {
+              const playerPropSideKey = `${(leg.player_name || '').toLowerCase().trim()}|${normalizePropType(leg.prop_type || '')}|${(leg.side || 'over').toLowerCase()}`;
+              globalSlatePlayerPropUsage.set(playerPropSideKey, (globalSlatePlayerPropUsage.get(playerPropSideKey) || 0) + 1);
             }
           }
         }

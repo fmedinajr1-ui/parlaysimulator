@@ -488,8 +488,20 @@ Deno.serve(async (req) => {
     });
 
     const genResult = await genResponse.json();
-
     console.log(`[Review] Generation complete:`, genResult);
+
+    // Run diversity rebalance to enforce player+prop+side exposure caps
+    try {
+      console.log(`[Review] Running diversity rebalance...`);
+      await fetch(`${supabaseUrl}/functions/v1/bot-daily-diversity-rebalance`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      console.log(`[Review] Diversity rebalance completed`);
+    } catch (rebalErr) {
+      console.warn(`[Review] Diversity rebalance failed:`, rebalErr);
+    }
 
     return new Response(
       JSON.stringify({

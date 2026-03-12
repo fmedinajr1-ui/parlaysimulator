@@ -554,6 +554,19 @@ serve(async (req) => {
 
     console.log(`[ForceFresh] Inserted ${inserted?.length || 0} parlays`);
 
+    // Run diversity rebalance to enforce player+prop+side exposure caps
+    try {
+      console.log(`[ForceFresh] Running diversity rebalance...`);
+      await fetch(`${supabaseUrl}/functions/v1/bot-daily-diversity-rebalance`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      console.log(`[ForceFresh] Diversity rebalance completed`);
+    } catch (rebalErr) {
+      console.warn(`[ForceFresh] Diversity rebalance failed:`, rebalErr);
+    }
+
     // Step 6: Send to Telegram
     const telegramData = {
       parlays: parlays.map((parlay, idx) => ({

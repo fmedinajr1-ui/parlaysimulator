@@ -39,21 +39,32 @@ function getStrategyFamily(strategyName: string): string {
 }
 
 function normalizePropType(propType: string): string {
-  return (propType || '').replace(/^player_/i, '').toLowerCase().trim();
+  const lower = (propType || '').replace(/^player_/i, '').toLowerCase().trim();
+  const map: Record<string, string> = {
+    'points': 'points', 'pts': 'points',
+    'rebounds': 'rebounds', 'reb': 'rebounds',
+    'assists': 'assists', 'ast': 'assists',
+    'threes': 'threes', '3pm': 'threes', 'three_pointers': 'threes',
+    'blocks': 'blocks', 'blk': 'blocks',
+    'steals': 'steals', 'stl': 'steals',
+    'turnovers': 'turnovers', 'to': 'turnovers',
+  };
+  return map[lower] || lower;
 }
 
 function normalizePlayerName(name: string): string {
   return (name || '').toLowerCase().trim();
 }
 
-function extractPlayerPropKeys(legs: any): string[] {
+function extractPlayerPropSideKeys(legs: any): string[] {
   const keys: string[] = [];
   if (!Array.isArray(legs)) return keys;
   for (const leg of legs) {
     const player = normalizePlayerName(leg.player_name || leg.playerName || leg.player || '');
     const prop = normalizePropType(leg.prop_type || leg.propType || leg.prop || leg.market || '');
+    const side = (leg.side || leg.recommended_side || 'over').toLowerCase().trim();
     if (player && prop) {
-      keys.push(`${player}|${prop}`);
+      keys.push(`${player}|${prop}|${side}`);
     }
   }
   return keys;
@@ -154,11 +165,11 @@ Deno.serve(async (req) => {
 
     if (err2) throw err2;
 
-    // Build map: player|prop → list of parlay IDs (sorted by probability desc)
+    // Build map: player|prop|side → list of parlay IDs (sorted by probability desc)
     const playerPropMap = new Map<string, string[]>();
 
     for (const parlay of (remainingParlays || [])) {
-      const keys = extractPlayerPropKeys(parlay.legs);
+      const keys = extractPlayerPropSideKeys(parlay.legs);
       for (const key of keys) {
         const list = playerPropMap.get(key) || [];
         if (!list.includes(parlay.id)) {

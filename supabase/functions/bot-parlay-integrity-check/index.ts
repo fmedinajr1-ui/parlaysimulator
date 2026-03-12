@@ -34,8 +34,23 @@ Deno.serve(async (req) => {
 
     console.log(`[Integrity] Checking parlays for ${targetDate}`);
 
+    // Query all pending parlays (for both leg-count and duplicate-leg checks)
+    const { data: allPending, error: pendingErr } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, leg_count, strategy_name, tier, legs')
+      .eq('parlay_date', targetDate)
+      .eq('outcome', 'pending');
+
+    if (pendingErr) {
+      console.error('[Integrity] Query error:', pendingErr);
+      throw pendingErr;
+    }
+
+    // ═══════════ CHECK 1: 1-leg or 2-leg parlays ═══════════
+    const violations = (allPending || []).filter(p => p.leg_count === 1 || p.leg_count === 2);
+
     // Query for any 1-leg or 2-leg parlays
-    const { data: violations, error } = await supabase
+    const { data: shortViolations, error } = await supabase
       .from('bot_daily_parlays')
       .select('id, leg_count, strategy_name, tier')
       .eq('parlay_date', targetDate)
@@ -63,7 +78,34 @@ Deno.serve(async (req) => {
 
     const oneLeg = realViolations.filter(p => p.leg_count === 1);
     const twoLeg = realViolations.filter(p => p.leg_count === 2);
-    const total = oneLeg.length + twoLeg.length;
+    const legCountTotal = oneLeg.length + twoLeg.length;
+
+    // ═══════════ CHECK 2: Duplicate legs across pending parlays ═══════════
+    // Detect same player+prop+side appearing in more than 1 pending parlay
+    const legKeyToParlayIds = new Map<string, string[]>();
+    for (const parlay of (allPending || [])) {
+      const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+      for (const leg of legs) {
+        const player = (leg.player_name || leg.playerName || '').toLowerCase().trim();
+        const prop = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+        const side = (leg.side || leg.recommended_side || 'over').toLowerCase().trim();
+        if (!player || !prop) continue;
+        const key = `${player}|${prop}|${side}`;
+        const list = legKeyToParlayIds.get(key) || [];
+        list.push(parlay.id);
+        legKeyToParlayIds.set(key, list);
+      }
+    }
+
+    const duplicateLegs: { key: string; count: number; parlayIds: string[] }[] = [];
+    for (const [key, ids] of legKeyToParlayIds) {
+      if (ids.length > 1) {
+        duplicateLegs.push({ key, count: ids.length, parlayIds: ids });
+      }
+    }
+    const dupLegTotal = duplicateLegs.length;
+
+    const total = legCountTotal + dupLegTotal;
 
     if (total === 0) {
       // Silent pass — log to activity log only, no Telegram
@@ -71,13 +113,13 @@ Deno.serve(async (req) => {
         event_type: 'integrity_check_pass',
         message: `Integrity check passed for ${targetDate}: 0 violations (${excludedCount} excluded exploration strategies)`,
         severity: 'info',
-        metadata: { date: targetDate, violations: 0, excluded_exploration: excludedCount },
+        metadata: { date: targetDate, violations: 0, excluded_exploration: excludedCount, duplicate_legs: 0 },
       });
 
-      console.log(`[Integrity] ✅ All clear for ${targetDate} (${excludedCount} exploration strategies excluded)`);
+      console.log(`[Integrity] ✅ All clear for ${targetDate} (${excludedCount} exploration strategies excluded, 0 duplicate legs)`);
 
       return new Response(
-        JSON.stringify({ clean: true, violations: 0, excluded_exploration: excludedCount, date: targetDate }),
+        JSON.stringify({ clean: true, violations: 0, duplicate_legs: 0, excluded_exploration: excludedCount, date: targetDate }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -89,7 +131,7 @@ Deno.serve(async (req) => {
       strategyCounts[name] = (strategyCounts[name] || 0) + 1;
     }
 
-    console.error(`[Integrity] ❌ ${total} violations found for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg`);
+    console.error(`[Integrity] ❌ ${total} violations found for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg, ${dupLegTotal} duplicate-leg combos`);
 
     // Fire Telegram integrity alert — bypasses quiet hours via type='integrity_alert'
     try {
@@ -105,6 +147,8 @@ Deno.serve(async (req) => {
             date: targetDate,
             oneLegCount: oneLeg.length,
             twoLegCount: twoLeg.length,
+            duplicateLegCount: dupLegTotal,
+            topDuplicates: duplicateLegs.sort((a, b) => b.count - a.count).slice(0, 5).map(d => `${d.key} (×${d.count})`),
             total,
             strategyCounts,
           },
@@ -117,16 +161,18 @@ Deno.serve(async (req) => {
     // Log failure to activity log
     await supabase.from('bot_activity_log').insert({
       event_type: 'integrity_check_fail',
-      message: `Integrity check FAILED for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg parlays found`,
+      message: `Integrity check FAILED for ${targetDate}: ${oneLeg.length} one-leg, ${twoLeg.length} two-leg, ${dupLegTotal} duplicate-leg combos`,
       severity: 'error',
       metadata: {
         date: targetDate,
         one_leg_count: oneLeg.length,
         two_leg_count: twoLeg.length,
+        duplicate_leg_count: dupLegTotal,
         total,
         excluded_exploration: excludedCount,
         strategy_counts: strategyCounts,
         violation_ids: realViolations.map(v => v.id),
+        top_duplicate_legs: duplicateLegs.sort((a, b) => b.count - a.count).slice(0, 10).map(d => ({ key: d.key, count: d.count })),
       },
     });
 
@@ -136,6 +182,8 @@ Deno.serve(async (req) => {
         violations: total,
         one_leg: oneLeg.length,
         two_leg: twoLeg.length,
+        duplicate_legs: dupLegTotal,
+        top_duplicate_legs: duplicateLegs.sort((a, b) => b.count - a.count).slice(0, 10),
         excluded_exploration: excludedCount,
         strategy_counts: strategyCounts,
         date: targetDate,
