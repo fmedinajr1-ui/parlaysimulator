@@ -1,54 +1,33 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+## Add Defensive Matchup Filter: Block OVER Stacking in GRIND-Cluster Games
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+### Problem
+Yesterday's losses were concentrated in GRIND-cluster games (DEN/HOU, CLE/ORL) where overs got crushed by tough defenses. The system currently penalizes these via coherence scoring (-8 per tough defense, -8 per slow pace) but doesn't hard-block them, so they still get through.
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+### Solution
+Add a **GRIND+OVER hard-block** at the individual pick level during leg selection, preventing OVER picks in confirmed GRIND-cluster games with tough defense from entering parlays. This is more effective than coherence penalties because it stops the pick before it's even considered.
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+### Changes
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+**`supabase/functions/bot-generate-daily-parlays/index.ts`** — Two modifications:
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+1. **New filter in the pick selection loop (~line 7893, after the GodModeMatchup check)**:
+   - When a pick is OVER and its `_gameContext.envCluster === 'GRIND'` AND `defenseStrength === 'tough'`, skip it entirely
+   - Applies to ALL tiers (not just execution) since GRIND+tough defense+OVER is a fundamentally bad combination
+   - Exception: bench_under and grind_under_core strategies are exempt (they're already under-focused)
+   - Log skipped picks for tracking: `[GrindOverBlock] Skipped: {player} OVER in GRIND+tough defense game`
+   - Increment the existing `rejectionCounters.envCluster` counter
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+2. **Strengthen coherence penalties for OVER legs in GRIND games (~line 1666-1672)**:
+   - When an OVER leg has `envCluster === 'GRIND'` AND `defenseStrength === 'tough'`, apply a -20 penalty (up from -8 + -8 = -16)
+   - This catches any OVER+GRIND legs that slip through in mixed-cluster parlays
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+### Technical Detail
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+The filter checks two fields already attached to every pick during enrichment:
+- `pick._gameContext.envCluster` — classified by `classifyEnvironmentCluster()` using pace, defense, vegas total, team total signals
+- `pick._gameContext.defenseStrength` — classified by `classifyDefense()` (rank ≤ 10 = tough)
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+Both are already computed and attached before the selection loop, so no additional data fetching is needed.
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
-
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
-
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
-
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
-
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
-
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
