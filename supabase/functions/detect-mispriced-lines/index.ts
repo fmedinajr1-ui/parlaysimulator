@@ -1108,6 +1108,31 @@ serve(async (req) => {
           console.log(`[Mispriced] NHL ${prop.player_name} ${prop.prop_type}: raw=${Math.round(rawEdgePct)}% → adj=${Math.round(edgePct)}% (vs #${oppDefRank} DEF, x${defMultiplier}) l3=${l3Confirms}`);
         }
 
+        // === NHL INTELLIGENCE UPGRADES ===
+        const nhlCV = calcCV(l10Values);
+        const nhlVarDamp = getVarianceDampener(nhlCV);
+        if (nhlVarDamp < 1.0) edgePct *= nhlVarDamp;
+
+        const nhlSSKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const nhlHitRate = sweetSpotHitRates.get(nhlSSKey) ?? null;
+        if (nhlHitRate !== null && nhlHitRate < 60) edgePct *= 0.70;
+
+        const nhlConsKey = `${prop.player_name.toLowerCase()}|${prop.prop_type}`;
+        const nhlConsensus = consensusMap.get(nhlConsKey) ?? null;
+        let nhlConsDev: number | null = null;
+        if (nhlConsensus !== null && nhlConsensus > 0) {
+          nhlConsDev = Math.abs(line - nhlConsensus) / nhlConsensus * 100;
+          if (nhlConsDev > 5) edgePct *= 1.15;
+        }
+
+        const nhlFbKey = `${prop.prop_type}|icehockey_nhl`;
+        const nhlAccuracy = feedbackAccuracy.get(nhlFbKey) ?? null;
+        const nhlFbMult = getFeedbackMultiplier(nhlAccuracy);
+        if (nhlFbMult !== 1.0) edgePct *= nhlFbMult;
+
+        const nhlFinalTier = getConfidenceTier(edgePct, l10Values.length);
+        if (Math.abs(edgePct) < 3) continue;
+
         const nhlEntry = {
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -1126,8 +1151,14 @@ serve(async (req) => {
             trend_pct: Math.round(trendEdge * 10) / 10,
             games_analyzed: allValues.length,
             defense_multiplier: defMultiplier !== 1.0 ? defMultiplier : undefined,
+            variance_cv: Math.round(nhlCV * 1000) / 1000,
+            historical_hit_rate: nhlHitRate,
+            consensus_line: nhlConsensus,
+            consensus_deviation_pct: nhlConsDev !== null ? Math.round(nhlConsDev * 10) / 10 : undefined,
+            feedback_accuracy: nhlAccuracy,
+            feedback_multiplier: nhlFbMult !== 1.0 ? nhlFbMult : undefined,
           },
-          confidence_tier: confidenceTier,
+          confidence_tier: nhlFinalTier,
           analysis_date: today,
           sport: 'icehockey_nhl',
           defense_adjusted_avg: defMultiplier !== 1.0 ? Math.round(adjustedAvg * 100) / 100 : null,
