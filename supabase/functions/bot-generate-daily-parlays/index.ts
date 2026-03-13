@@ -954,7 +954,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   execution: {
     count: 50,
     iterations: 25000,
-    maxPlayerUsage: 1,
+    maxPlayerUsage: 5,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 65,
