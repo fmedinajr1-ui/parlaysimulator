@@ -1885,9 +1885,15 @@ async function handleScanLines(chatId: string) {
         msg += `${tierIcon} *${gm.player_name}*\n`;
         if (gm.prop_type === 'game_moneyline') {
           const mlSide = ctx?.ml_side || 'HOME';
+          const homeOdds = ctx?.home_odds ? (ctx.home_odds > 0 ? `+${ctx.home_odds}` : `${ctx.home_odds}`) : '?';
+          const awayOdds = ctx?.away_odds ? (ctx.away_odds > 0 ? `+${ctx.away_odds}` : `${ctx.away_odds}`) : '?';
           msg += `   ML ${mlSide} | Edge: ${edgeStr}\n`;
+          msg += `   Home: ${homeOdds} | Away: ${awayOdds}\n`;
         } else {
+          const overOdds = ctx?.over_odds ? (ctx.over_odds > 0 ? `+${ctx.over_odds}` : `${ctx.over_odds}`) : '?';
+          const underOdds = ctx?.under_odds ? (ctx.under_odds > 0 ? `+${ctx.under_odds}` : `${ctx.under_odds}`) : '?';
           msg += `   ${typeLabel} ${(gm.signal || '').toUpperCase()} ${gm.book_line || ''} | Edge: ${edgeStr}\n`;
+          msg += `   O: ${overOdds} | U: ${underOdds}\n`;
         }
 
         // KenPom context for NCAAB
