@@ -1993,11 +1993,11 @@ Deno.serve(async (req) => {
             if (stats) {
               // Count categories with 10+
               let cats10 = 0;
-              if (stats.pts >= 10) cats10++;
-              if (stats.reb >= 10) cats10++;
-              if (stats.ast >= 10) cats10++;
-              if (stats.blk >= 10) cats10++;
-              if (stats.stl >= 10) cats10++;
+              if (stats.points >= 10) cats10++;
+              if (stats.rebounds >= 10) cats10++;
+              if (stats.assists >= 10) cats10++;
+              if (stats.blocks >= 10) cats10++;
+              if (stats.steals >= 10) cats10++;
 
               const predType = (pred.prediction_type || '').toUpperCase();
               if (predType === 'DD' && cats10 >= 2) {
