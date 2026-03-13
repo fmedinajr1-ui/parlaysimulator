@@ -1800,123 +1800,209 @@ async function handleExport(chatId: string, dateStr: string) {
 // ==================== SCANLINES HANDLER ====================
 
 async function handleScanLines(chatId: string) {
-  await sendMessage(chatId, "⏳ Scanning lines with intelligence filters...", "Markdown");
+  await sendMessage(chatId, "⏳ Scanning lines + game markets...", "Markdown");
 
-  // Trigger the edge function
-  try {
-    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/detect-mispriced-lines`, {
+  // Trigger both scanners in parallel
+  const scanPromises = [
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/detect-mispriced-lines`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
       body: JSON.stringify({}),
-    });
-    if (!resp.ok) {
-      const errText = await resp.text();
-      await sendMessage(chatId, `❌ Scan failed (${resp.status}): ${errText.slice(0, 200)}`);
-      return;
-    }
-    await resp.text(); // consume body
-  } catch (err) {
-    await sendMessage(chatId, `❌ Scan error: ${err instanceof Error ? err.message : String(err)}`);
-    return;
+    }).then(r => r.text()).catch(e => console.error('[Scanlines] detect-mispriced error:', e)),
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/scanlines-game-markets`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then(r => r.text()).catch(e => console.error('[Scanlines] game-markets error:', e)),
+  ];
+  await Promise.allSettled(scanPromises);
+
+  const today = getEasternDate();
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+
+  // ==================== GAME MARKETS SECTION ====================
+  const { data: gameMarkets } = await supabase
+    .from('mispriced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
+    .eq('analysis_date', today)
+    .in('prop_type', ['game_total', 'game_moneyline'])
+    .order('edge_pct', { ascending: false })
+    .limit(12);
+
+  // Get snapshot trails for drift display
+  const { data: gmSnapshots } = await supabase
+    .from('game_market_snapshots')
+    .select('game_id, bet_type, fanduel_line, fanduel_home_odds, scan_time')
+    .eq('analysis_date', today)
+    .order('scan_time', { ascending: true });
+
+  const gmTrailMap = new Map<string, { time: string; line: number | null; odds: number | null }[]>();
+  for (const s of gmSnapshots || []) {
+    const key = `${s.game_id}|${s.bet_type}`;
+    if (!gmTrailMap.has(key)) gmTrailMap.set(key, []);
+    const timeStr = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', hour12: true
+    }).format(new Date(s.scan_time)).toLowerCase();
+    gmTrailMap.get(key)!.push({ time: timeStr, line: s.fanduel_line, odds: s.fanduel_home_odds });
   }
 
-  // Fetch results
-  const today = getEasternDate();
+  let msg = `🔍 *SCANLINES — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Game Markets
+  if (gameMarkets && gameMarkets.length > 0) {
+    const SPORT_EMOJI: Record<string, string> = {
+      'basketball_ncaab': '🏀', 'basketball_nba': '🏀', 'icehockey_nhl': '🏒',
+      'baseball_mlb': '⚾', 'americanfootball_nfl': '🏈',
+    };
+    const SPORT_LABEL: Record<string, string> = {
+      'basketball_ncaab': 'NCAAB', 'basketball_nba': 'NBA', 'icehockey_nhl': 'NHL',
+      'baseball_mlb': 'MLB', 'americanfootball_nfl': 'NFL',
+    };
+
+    // Group by sport
+    const bySport = new Map<string, typeof gameMarkets>();
+    for (const gm of gameMarkets) {
+      const sport = gm.sport || 'unknown';
+      if (!bySport.has(sport)) bySport.set(sport, []);
+      bySport.get(sport)!.push(gm);
+    }
+
+    msg += `🎯 *GAME MARKETS (FanDuel)*\n\n`;
+
+    for (const [sport, markets] of bySport.entries()) {
+      const emoji = SPORT_EMOJI[sport] || '🎯';
+      const label = SPORT_LABEL[sport] || sport;
+      msg += `${emoji} *${label}*\n`;
+
+      for (let i = 0; i < markets.length; i++) {
+        const gm = markets[i];
+        const ctx = gm.shooting_context as Record<string, any> | null;
+        const tierIcon = gm.confidence_tier === 'ELITE' ? '💎' : gm.confidence_tier === 'HIGH' ? '🔥' : '📊';
+        const typeLabel = gm.prop_type === 'game_total' ? 'TOTAL' : 'ML';
+        const edgeStr = `+${(gm.edge_pct || 0).toFixed(0)}%`;
+
+        msg += `${tierIcon} *${gm.player_name}*\n`;
+        msg += `   ${typeLabel} ${(gm.signal || '').toUpperCase()} ${gm.book_line || ''} | Edge: ${edgeStr}\n`;
+
+        // KenPom context for NCAAB
+        if (ctx && gm.player_avg_l10 && sport.includes('ncaab') && gm.prop_type === 'game_total') {
+          msg += `   KenPom proj: ${gm.player_avg_l10} | Tempo: ${ctx.tempo_label || '?'}\n`;
+        }
+
+        // Drift trail
+        if (ctx?.drift_amount && ctx.drift_amount > 0) {
+          const driftIcon = ctx.drift_direction === 'DOWN' ? '📉' : '📈';
+          const dramatic = (gm.prop_type === 'game_total' && ctx.drift_amount >= 1.5) ||
+                          (gm.prop_type === 'game_moneyline' && ctx.drift_amount >= 15);
+          msg += `   ${driftIcon} Drift: ${ctx.drift_amount.toFixed(1)} pts${dramatic ? ' (DRAMATIC)' : ''}\n`;
+        }
+
+        // Whale convergence
+        if (ctx?.whale_convergence) {
+          msg += `   🐋 Whale convergence confirmed\n`;
+        }
+
+        // Game time
+        if (ctx?.commence_time) {
+          const tipTime = new Intl.DateTimeFormat('en-US', {
+            hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', hour12: true
+          }).format(new Date(ctx.commence_time));
+          msg += `   ⏰ ${tipTime} ET\n`;
+        }
+      }
+      msg += '\n';
+    }
+  }
+
+  // ==================== PLAYER PROPS SECTION ====================
   const { data: lines } = await supabase
     .from('mispriced_lines')
     .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
     .eq('analysis_date', today)
+    .not('prop_type', 'in', '("game_total","game_moneyline")')
     .order('edge_pct', { ascending: true })
     .limit(15);
 
-  if (!lines || lines.length === 0) {
-    await sendMessage(chatId, "📭 Scan complete — no mispriced lines detected today.");
-    return;
-  }
+  if (lines && lines.length > 0) {
+    // Fetch snapshot history for movement trail
+    const { data: snapshots } = await supabase
+      .from('mispriced_line_snapshots')
+      .select('player_name, prop_type, book_line, edge_pct, scan_time')
+      .eq('analysis_date', today)
+      .order('scan_time', { ascending: true });
 
-  // Fetch snapshot history for movement trail
-  const { data: snapshots } = await supabase
-    .from('mispriced_line_snapshots')
-    .select('player_name, prop_type, book_line, edge_pct, scan_time')
-    .eq('analysis_date', today)
-    .order('scan_time', { ascending: true });
-
-  // Build snapshot trail map: "player|prop" → [{time, line, edge}]
-  const snapshotTrail = new Map<string, { time: string; line: number; edge: number }[]>();
-  for (const s of snapshots || []) {
-    const key = `${s.player_name}|${s.prop_type}`;
-    if (!snapshotTrail.has(key)) snapshotTrail.set(key, []);
-    const timeStr = new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', hour12: true
-    }).format(new Date(s.scan_time)).toLowerCase();
-    snapshotTrail.get(key)!.push({ time: timeStr, line: Number(s.book_line), edge: Number(s.edge_pct) });
-  }
-
-  // Fetch verdicts for whale signals
-  const { data: verdicts } = await supabase
-    .from('mispriced_line_verdicts')
-    .select('player_name, prop_type, whale_signal, verdict, verdict_reason')
-    .eq('analysis_date', today);
-
-  const verdictMap = new Map<string, { whale_signal: string; verdict: string; verdict_reason: string }>();
-  for (const v of verdicts || []) {
-    verdictMap.set(`${v.player_name}|${v.prop_type}`, v);
-  }
-
-  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
-  let msg = `🔍 *SCANLINES — ${dateLabel}*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `${lines.length} lines found\n\n`;
-
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    const side = (l.signal || 'UNDER').toUpperCase().charAt(0);
-    const propLabel = normalizePropType(l.prop_type || '').toUpperCase();
-    const edgeStr = (l.edge_pct || 0) >= 0 ? `+${(l.edge_pct || 0).toFixed(0)}%` : `${(l.edge_pct || 0).toFixed(0)}%`;
-    const tierEmoji = l.confidence_tier === 'ELITE' ? '💎' : l.confidence_tier === 'HIGH' ? '🔥' : '📊';
-
-    msg += `${i + 1}. ${tierEmoji} *${l.player_name}* — ${propLabel} ${side} ${l.book_line}\n`;
-    msg += `   Edge: ${edgeStr} | L10: ${l.player_avg_l10?.toFixed(1) || '?'}\n`;
-
-    // Show snapshot movement trail if multiple scans exist
-    const trail = snapshotTrail.get(`${l.player_name}|${l.prop_type}`);
-    if (trail && trail.length >= 2) {
-      const trailStr = trail.map(t => `${t.time}: ${t.line}`).join(' → ');
-      const firstLine = trail[0].line;
-      const lastLine = trail[trail.length - 1].line;
-      const moved = lastLine - firstLine;
-      const moveIcon = moved < 0 ? '📉' : moved > 0 ? '📈' : '➡️';
-      msg += `   ${moveIcon} _${trailStr}_\n`;
+    const snapshotTrail = new Map<string, { time: string; line: number; edge: number }[]>();
+    for (const s of snapshots || []) {
+      const key = `${s.player_name}|${s.prop_type}`;
+      if (!snapshotTrail.has(key)) snapshotTrail.set(key, []);
+      const timeStr = new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', hour12: true
+      }).format(new Date(s.scan_time)).toLowerCase();
+      snapshotTrail.get(key)!.push({ time: timeStr, line: Number(s.book_line), edge: Number(s.edge_pct) });
     }
 
-    // Show whale verdict if available
-    const vKey = `${l.player_name}|${l.prop_type}`;
-    const verd = verdictMap.get(vKey);
-    if (verd && verd.verdict !== 'HOLD') {
-      const vIcon = verd.verdict === 'SHARP_CONFIRMED' ? '🐋' : '⚠️';
-      msg += `   ${vIcon} *${verd.verdict}* — ${verd.verdict_reason}\n`;
+    const { data: verdicts } = await supabase
+      .from('mispriced_line_verdicts')
+      .select('player_name, prop_type, whale_signal, verdict, verdict_reason')
+      .eq('analysis_date', today);
+
+    const verdictMap = new Map<string, { whale_signal: string; verdict: string; verdict_reason: string }>();
+    for (const v of verdicts || []) {
+      verdictMap.set(`${v.player_name}|${v.prop_type}`, v);
     }
 
-    // Intelligence filter details from shooting_context
-    const ctx = l.shooting_context as Record<string, any> | null;
-    if (ctx) {
-      const flags: string[] = [];
-      if (ctx.variance_cv != null) flags.push(`CV:${ctx.variance_cv.toFixed(2)}`);
-      if (ctx.historical_hit_rate != null) flags.push(`HR:${Math.round(ctx.historical_hit_rate * 100)}%`);
-      if (ctx.consensus_deviation_pct != null && ctx.consensus_deviation_pct > 5) flags.push(`CD:${ctx.consensus_deviation_pct.toFixed(0)}%↑`);
-      if (ctx.feedback_multiplier != null && ctx.feedback_multiplier !== 1) flags.push(`FB:${ctx.feedback_multiplier.toFixed(2)}x`);
-      if (ctx.minutes_stability != null && ctx.minutes_stability < 0.8) flags.push(`⚠️MIN`);
-      if (flags.length > 0) {
-        msg += `   _${flags.join(' | ')}_\n`;
+    msg += `📋 *PLAYER PROPS*\n\n`;
+
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const side = (l.signal || 'UNDER').toUpperCase().charAt(0);
+      const propLabel = normalizePropType(l.prop_type || '').toUpperCase();
+      const edgeStr = (l.edge_pct || 0) >= 0 ? `+${(l.edge_pct || 0).toFixed(0)}%` : `${(l.edge_pct || 0).toFixed(0)}%`;
+      const tierEmoji = l.confidence_tier === 'ELITE' ? '💎' : l.confidence_tier === 'HIGH' ? '🔥' : '📊';
+
+      msg += `${i + 1}. ${tierEmoji} *${l.player_name}* — ${propLabel} ${side} ${l.book_line}\n`;
+      msg += `   Edge: ${edgeStr} | L10: ${l.player_avg_l10?.toFixed(1) || '?'}\n`;
+
+      const trail = snapshotTrail.get(`${l.player_name}|${l.prop_type}`);
+      if (trail && trail.length >= 2) {
+        const trailStr = trail.map(t => `${t.time}: ${t.line}`).join(' → ');
+        const firstLine = trail[0].line;
+        const lastLine = trail[trail.length - 1].line;
+        const moved = lastLine - firstLine;
+        const moveIcon = moved < 0 ? '📉' : moved > 0 ? '📈' : '➡️';
+        msg += `   ${moveIcon} _${trailStr}_\n`;
+      }
+
+      const vKey = `${l.player_name}|${l.prop_type}`;
+      const verd = verdictMap.get(vKey);
+      if (verd && verd.verdict !== 'HOLD') {
+        const vIcon = verd.verdict === 'SHARP_CONFIRMED' ? '🐋' : '⚠️';
+        msg += `   ${vIcon} *${verd.verdict}* — ${verd.verdict_reason}\n`;
+      }
+
+      const ctx = l.shooting_context as Record<string, any> | null;
+      if (ctx) {
+        const flags: string[] = [];
+        if (ctx.variance_cv != null) flags.push(`CV:${ctx.variance_cv.toFixed(2)}`);
+        if (ctx.historical_hit_rate != null) flags.push(`HR:${Math.round(ctx.historical_hit_rate * 100)}%`);
+        if (ctx.consensus_deviation_pct != null && ctx.consensus_deviation_pct > 5) flags.push(`CD:${ctx.consensus_deviation_pct.toFixed(0)}%↑`);
+        if (ctx.feedback_multiplier != null && ctx.feedback_multiplier !== 1) flags.push(`FB:${ctx.feedback_multiplier.toFixed(2)}x`);
+        if (ctx.minutes_stability != null && ctx.minutes_stability < 0.8) flags.push(`⚠️MIN`);
+        if (flags.length > 0) {
+          msg += `   _${flags.join(' | ')}_\n`;
+        }
       }
     }
   }
 
+  if ((!gameMarkets || gameMarkets.length === 0) && (!lines || lines.length === 0)) {
+    await sendMessage(chatId, "📭 Scan complete — no signals detected today.");
+    return;
+  }
+
   await sendLongMessage(chatId, msg, "Markdown");
-  await logActivity("telegram_scanlines", `Admin ran /scanlines`, { chatId, count: lines.length });
+  await logActivity("telegram_scanlines", `Admin ran /scanlines`, { chatId, game_markets: gameMarkets?.length || 0, props: lines?.length || 0 });
 }
 
 // ==================== LEG RESULTS HANDLER ====================
