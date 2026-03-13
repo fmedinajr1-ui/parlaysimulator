@@ -1,109 +1,109 @@
-# Active Plans & Recent Changes
 
-See `.lovable/archive/` for completed features prior to March 9, 2026.
 
-# Universal Recency Decline Flag (L3 Gate) — IMPLEMENTED ✅ (March 9, 2026)
+# Scanlines v2: FanDuel Game Markets + Pre-Game Alerts
 
-## Problem
-Picks like Naji Marshall Over 14.5 PTS passed filters because L10 avg (17.0) cleared the line, but his last 4 games were 8, 13, 6, 4.
+## What you want
+- Scan FanDuel **moneylines and totals** (not player props) across all sports
+- Track **whale drift** (dramatic line movement through the day)
+- Filter through existing data: KenPom for NCAAB, composite scores, whale signals
+- **30 minutes before each game**, bot auto-sends a recommendation for the best matchup games
 
-## Solution
-Added `l3_avg` column + universal recency decline filter across ALL engines.
+## What exists today
+- `whale-signal-detector` already analyzes `game_bets` spreads/totals/moneylines for cross-book divergence → writes to `whale_picks`
+- `detect-mispriced-lines` has a team moneyline block (lines 810-907) but averages ALL books, doesn't isolate FanDuel, no totals analysis, no drift
+- `game_bets` stores FanDuel data with `bookmaker` field and `commence_time` per game
+- `ncaab_team_stats` has KenPom (AdjO, AdjD, tempo, ATS, O/U records)
+- `team-bets-scoring-engine` already computes composite scores per game
+- No per-game timed alerts exist — everything runs on fixed cron schedules
 
-### Thresholds
-- **HARD BLOCK (OVER)**: `l3_avg < l10_avg * 0.75` (25%+ decline)
-- **HARD BLOCK (UNDER)**: `l3_avg > l10_avg * 1.25` (25%+ surge)
-- **WARNING FLAG**: `l3_avg < l10_avg * 0.85` (15%+ decline, shown in broadcasts as 📉)
+## Implementation Plan
 
-# NHL Matchup Intelligence Filter — IMPLEMENTED ✅ (March 11, 2026)
+### 1. New table: `game_market_snapshots`
+Stores timestamped FanDuel lines for drift tracking.
 
-## Problem
-NHL prop scanner fetched `nhl_team_defense_rankings` but **hardcoded matchupAdjustment to 0**. Floor lock picked purely on L10 hit rate — ignoring whether the player faces the league's best or worst defense.
+```sql
+CREATE TABLE game_market_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id text NOT NULL,
+  sport text NOT NULL,
+  bet_type text NOT NULL, -- 'moneyline', 'total', 'spread'
+  home_team text,
+  away_team text,
+  fanduel_line numeric,
+  fanduel_home_odds integer,
+  fanduel_away_odds integer,
+  fanduel_over_odds integer,
+  fanduel_under_odds integer,
+  commence_time timestamptz,
+  scan_time timestamptz DEFAULT now(),
+  analysis_date date NOT NULL
+);
+CREATE INDEX idx_gms_date_game ON game_market_snapshots(analysis_date, game_id);
+```
 
-## Solution
-Wired prop-specific defensive/offensive matchup scoring into the scanner and floor lock orchestrator.
+### 2. New edge function: `scanlines-game-markets`
+Dedicated function (keeps `detect-mispriced-lines` focused on player props). Runs on cron 3x daily (10am, 12:30pm, 3pm ET — same as existing scan schedule).
 
-# Prop Type Normalization — IMPLEMENTED ✅ (March 11, 2026)
+**Logic:**
+1. Query `game_bets` WHERE `bookmaker ILIKE '%fanduel%'` AND `commence_time > now()` for moneylines + totals
+2. Insert snapshots into `game_market_snapshots`
+3. Calculate drift by comparing current vs earliest snapshot for each game
+4. For NCAAB: load `ncaab_team_stats` → compute KenPom projected total (`(AdjO + AdjD + AdjO_opp + AdjD_opp) / 2 * tempo_factor`) → edge vs FanDuel total
+5. For all sports: cross-ref `whale_picks` for same game → convergence tag
+6. Score each game market: base edge + drift magnitude + whale convergence + KenPom/data backing
+7. Store top results to `mispriced_lines` with `prop_type = 'game_total'` or `'game_moneyline'` for scanlines reporting
 
-## Problem
-`bot_player_performance` stored `threes` and `player_threes` as separate records, causing split "serial loser" / "proven winner" tracking.
+### 3. New edge function: `pregame-scanlines-alert`
+**The key new piece** — timed alerts 30 min before each game.
 
-## Solution
-Added `normalizePropType()` to settlement, hit-rate rebuild, and parlay generation. Ran one-time SQL merge of existing split records.
+**Logic:**
+1. Query `game_market_snapshots` for games with `commence_time` between `now()` and `now() + 45 minutes`
+2. For each qualifying game, pull latest snapshot + earliest snapshot → drift analysis
+3. Cross-ref `whale_picks` for convergence
+4. For NCAAB: enrich with KenPom projected total, seed/rank context, ATS/O-U records
+5. If game has a strong signal (edge ≥ 5%, or whale convergence, or dramatic drift ≥ 1.5pts), send Telegram alert
 
-# Streak Penalty in Weight Calibration — IMPLEMENTED ✅ (March 11, 2026)
+**Telegram output format:**
+```
+⏰ PRE-GAME ALERT — 30 min to tip
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-## Problem
-`calculateWeight()` ignored `current_streak`. Categories like `THREE_POINT_SHOOTER` kept weight 1.30 during a -12 cold streak.
+🏀 12-McNeese vs 5-Clemson (7:00 PM ET)
+📊 TOTAL UNDER 138.5 | Edge: +12%
+   KenPom proj: 131.2 | Tempo: LOW
+   📉 Drift: 141 → 138.5 (DRAMATIC)
+   🐋 Whale convergence confirmed
 
-## Solution
-Added `calculateStreakPenalty()` to `calibrate-bot-weights`:
-- Streak ≤ -3: penalty = streak × 0.02
-- Streak ≤ -8: penalty = streak × 0.03
-- Streak ≤ -15: auto-block regardless of hit rate
-- Example: -12 streak → -0.36 penalty, weight drops from ~1.22 to ~0.86
+💰 ML McNeese +260 | Edge: +8%
+   KenPom gap: 22 (upset zone)
+   📈 Drift: +310 → +260 (steam)
+```
 
-# Admin Bankroll Sync & Telegram Cleanup — IMPLEMENTED ✅ (March 11, 2026)
+**Cron:** Runs every 15 minutes from 11am-11pm ET. Only sends alerts for games 25-35 min away that have actionable signals. Dedup: tracks sent alerts in a simple `Set` or DB flag to avoid repeats.
 
-## Problem
-1. Admin's `bot_authorized_users.bankroll` stuck at $9,041 while authoritative `simulated_bankroll` was $67,861
-2. Telegram spammed admin with raw JSON dumps for `custom` type and noisy internal types
+### 4. Update `/scanlines` Telegram handler
+Add a "Game Markets" section to the existing `/scanlines` output:
+- Query `game_market_snapshots` for today + `whale_picks` + `ncaab_team_stats`
+- Display FanDuel moneylines and totals with drift trails
+- Show convergence picks (data + drift + whale) first
+- Keep existing player prop scanlines section below
 
-## Solution
-- **Settlement sync**: After `bot_activation_status` upsert, admin's `bot_authorized_users.bankroll` now syncs to `finalBankroll`
-- **Telegram cleanup**: Suppressed `weight_change`, `quality_regen_report`, `hit_rate_evaluation`; clean `doctor_report` (0 problems) silenced; `custom` type extracts `data.message` cleanly; default case no longer dumps raw JSON
+### 5. Cron schedule additions
+- **Every 15 min (11am-11pm ET):** `pregame-scanlines-alert` — checks for games starting in ~30 min
+- **10am, 12:30pm, 3pm ET:** `scanlines-game-markets` — snapshot FanDuel game lines (piggyback on existing scan schedule)
 
-# Mispriced Lines Intelligence Tightening — IMPLEMENTED ✅ (March 12, 2026)
+## Files to create/edit
+1. **DB migration**: `game_market_snapshots` table
+2. **New**: `supabase/functions/scanlines-game-markets/index.ts` — FanDuel game market scanner + snapshot writer + drift calc + KenPom enrichment
+3. **New**: `supabase/functions/pregame-scanlines-alert/index.ts` — per-game timed Telegram alerts 30 min before tip
+4. **Edit**: `supabase/functions/telegram-webhook/index.ts` — add game markets section to `handleScanLines`
+5. **Cron jobs**: 2 new scheduled jobs
 
-## Problem
-`detect-mispriced-lines` scored edges purely on L10/L20 averages vs book line, ignoring player consistency, historical hit rates, minutes volatility, cross-book consensus, and its own track record.
+## Sports coverage
+| Sport | Moneyline | Totals | KenPom/Data | Whale Drift | Pre-Game Alert |
+|-------|-----------|--------|-------------|-------------|----------------|
+| NCAAB | Yes | Yes | KenPom + ATS | Yes | Yes |
+| NBA | Yes | Yes | Composite scores | Yes | Yes |
+| NHL | Yes | Yes | Pace stats | Yes | Yes |
+| MLB | Yes | Yes | — | Yes | Yes |
 
-## Solution
-Added 5 intelligence upgrades to the existing engine:
-
-1. **Variance/Consistency Filter**: CV (stdDev/mean) dampens edge 20-40% for volatile players (CV > 0.35)
-2. **Historical Hit-Rate Cross-Ref**: Cross-references `category_sweet_spots` L10 hit rate — dampens edge 30% if hit rate < 60%
-3. **Minutes Stability Check** (NBA only): Compares L3 vs L10 avg minutes — dampens edge 25% if ratio < 0.80
-4. **Cross-Book Consensus**: Calculates median line across all bookmakers — boosts edge 15% when a single book deviates > 5% from consensus
-5. **Outcome Feedback Loop**: Last 14 days of settled mispriced_lines accuracy → applies 0.8x-1.2x multiplier per prop type
-
-All fields persisted to `shooting_context` for transparency: `variance_cv`, `historical_hit_rate`, `minutes_stability`, `consensus_line`, `consensus_deviation_pct`, `feedback_accuracy`, `feedback_multiplier`.
-
-# Scanlines Line-Movement Tracking & Whale Verdicts — IMPLEMENTED ✅ (March 13, 2026)
-
-## Problem
-`detect-mispriced-lines` ran daily but **overwrote** results each scan — no history of how lines moved throughout the day. Couldn't detect whale activity (e.g., +100 → -150 = sharp money).
-
-## Solution
-Built a time-series snapshot + pre-game verdict system:
-
-### New Tables
-- **`mispriced_line_snapshots`**: Every scan inserts timestamped rows (never overwrites). Stores player, prop, line, edge, confidence, shooting_context.
-- **`mispriced_line_verdicts`**: Pre-game final assessment comparing first vs last snapshot. Stores line_movement, whale_signal (STEAM/FREEZE/NONE), verdict (SHARP_CONFIRMED/TRAP/HOLD).
-
-### Updated `detect-mispriced-lines`
-- After existing upsert to `mispriced_lines`, now **also inserts** all results (mispriced + correct-priced) into `mispriced_line_snapshots` with timestamp.
-
-### New Edge Function: `finalize-mispriced-verdicts`
-- Compares earliest vs latest snapshots for each player-prop
-- Line moved in favor + edge strengthened → **SHARP_CONFIRMED** (whale money)
-- Line moved against ≥1pt → **TRAP** (market faded)
-- Minimal movement → **HOLD**
-- Sends Telegram alert with actionable verdicts
-
-### Cron Schedule (3 daily scans + 1 verdict)
-- **10:00 AM ET** — existing morning scan (via `refresh-l10-and-rebuild`)
-- **12:30 PM ET** — midday re-scan
-- **3:00 PM ET** — pre-tip re-scan
-- **5:30 PM ET** — `finalize-mispriced-verdicts` (whale verdict before 7pm games)
-
-### Telegram `/scanlines` Enhancement
-- Shows snapshot movement trail: `10:00am: 24.5 → 12:30pm: 23.5 → 3:00pm: 22.5`
-- Displays whale verdict inline: `🐋 SHARP_CONFIRMED — Line moved 2.0 pts in favor`
-
-# Bidirectional Scanner Dedup + L3 Filter + /legresults — IMPLEMENTED ✅ (March 13, 2026)
-
-## Problems Fixed
-1. **Duplicate Leg Bug**: `strongUnders` could contain same player multiple times → deduped by `player_name::prop_type` keeping highest L10 hit rate, plus same-player guard in parlay assembly
-2. **L3 Contradiction**: Players like Desmond Bane recommended UNDER despite L3 avg being 10%+ above line → added L3 contradiction filter in `bot-matchup-defense-scanner` that skips players whose L3 strongly contradicts the recommended side
-3. **Individual Leg Visibility**: Added `/legresults` Telegram command showing per-leg wins/losses with actual values for any date
