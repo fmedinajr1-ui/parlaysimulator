@@ -87,7 +87,13 @@ Deno.serve(async (req) => {
       const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
       for (const leg of legs) {
         const player = (leg.player_name || leg.playerName || '').toLowerCase().trim();
-        const prop = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+        const rawProp = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+        // Normalize prop aliases to match diversity-rebalance canonical keys
+        const propNormMap: Record<string, string> = {
+          'pts': 'points', '3pm': 'threes', 'three_pointers': 'threes', 'three_pointers_made': 'threes',
+          'reb': 'rebounds', 'ast': 'assists', 'blk': 'blocks', 'stl': 'steals', 'to': 'turnovers',
+        };
+        const prop = propNormMap[rawProp] || rawProp;
         const side = (leg.side || leg.recommended_side || 'over').toLowerCase().trim();
         if (!player || !prop) continue;
         const key = `${player}|${prop}|${side}`;
