@@ -239,12 +239,16 @@ Deno.serve(async (req) => {
           const cs = m.composite_score || 50;
           edgePct = Math.max(0, (cs - 50) * 0.5); // 60 → 5%, 70 → 10%, 80 → 15%
           signal = (m.recommended_side || 'over').toUpperCase();
+          if (signal !== 'OVER' && signal !== 'UNDER') signal = 'OVER';
         }
       } else if (m.bet_type === 'moneyline') {
         // Moneyline edge from composite score (0-100 scale)
         const cs = m.composite_score || 50;
         edgePct = Math.max(0, (cs - 50) * 0.5); // 60 → 5%, 70 → 10%
-        signal = (m.recommended_side || 'home').toUpperCase();
+        // mispriced_lines only allows OVER/UNDER — store real side in shooting_context
+        const realSide = (m.recommended_side || 'home').toUpperCase();
+        signal = 'OVER'; // placeholder, real side in context
+        kenpomContext = { ...(kenpomContext || {}), ml_side: realSide };
 
         // NCAAB: boost edge for upset-zone matchups
         if (m.sport?.includes('ncaab')) {
