@@ -247,17 +247,38 @@ Deno.serve(async (req) => {
       }
     }
 
-    log(`Found ${strongUnders.length} strong under targets (80%+ L10 hit rate)`);
+    // Deduplicate strongUnders by player_name + prop_type (keep highest l10_hit_rate)
+    const dedupMap = new Map<string, any>();
+    for (const u of strongUnders) {
+      const key = `${u.player_name}::${u.prop_type}`;
+      if (!dedupMap.has(key) || u.l10_hit_rate > dedupMap.get(key).l10_hit_rate) {
+        dedupMap.set(key, u);
+      }
+    }
+    const dedupedUnders = [...dedupMap.values()];
+
+    log(`Found ${strongUnders.length} raw strong under targets → ${dedupedUnders.length} after dedup`);
 
     // Build 3-leg parlays from strong unders
     let underParlaysInserted = 0;
-    if (strongUnders.length >= 3) {
-      strongUnders.sort((a: any, b: any) => (b.l10_hit_rate || 0) - (a.l10_hit_rate || 0));
+    if (dedupedUnders.length >= 3) {
+      dedupedUnders.sort((a: any, b: any) => (b.l10_hit_rate || 0) - (a.l10_hit_rate || 0));
 
       const usedPlayers = new Set<string>();
-      for (let parlayIdx = 0; parlayIdx < 2 && strongUnders.length >= 3; parlayIdx++) {
-        const available = strongUnders.filter((u: any) => !usedPlayers.has(u.player_name));
+      for (let parlayIdx = 0; parlayIdx < 2 && dedupedUnders.length >= 3; parlayIdx++) {
+        const available = dedupedUnders.filter((u: any) => !usedPlayers.has(u.player_name));
         if (available.length < 3) break;
+
+        // Same-player guard: ensure unique player names in selected legs
+        const selected: any[] = [];
+        const selectedPlayers = new Set<string>();
+        for (const u of available) {
+          if (selectedPlayers.has(u.player_name)) continue;
+          selected.push(u);
+          selectedPlayers.add(u.player_name);
+          if (selected.length >= 3) break;
+        }
+        if (selected.length < 3) break;
 
         const selected = available.slice(0, 3);
         const legs = selected.map((u: any) => ({
