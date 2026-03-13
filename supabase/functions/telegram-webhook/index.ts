@@ -2789,6 +2789,26 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
   } else if (data === 'fix:cancel') {
     await answerCallbackQuery(callbackQueryId, 'Cancelled');
     await sendMessage(chatId, '❌ Action cancelled.');
+  } else if (data === 'integrity_void_bad') {
+    await answerCallbackQuery(callbackQueryId, 'Voiding bad parlays...');
+    const today = getEasternDate();
+    const { data: badParlays } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, leg_count')
+      .eq('parlay_date', today)
+      .eq('outcome', 'pending')
+      .lt('leg_count', 3);
+    if (badParlays && badParlays.length > 0) {
+      const ids = badParlays.map(p => p.id);
+      await supabase.from('bot_daily_parlays').update({
+        outcome: 'void',
+        lesson_learned: 'Voided by integrity alert button (< 3 legs)',
+      }).in('id', ids);
+      await logActivity('integrity_void_bad', `Admin voided ${ids.length} bad parlays via integrity alert`, { count: ids.length, ids });
+      await sendMessage(chatId, `✅ Voided *${ids.length}* bad parlays (< 3 legs) for today.`);
+    } else {
+      await sendMessage(chatId, `✅ No bad parlays found — slate is clean.`);
+    }
   } else if (data.startsWith('approve_parlay:')) {
     const parlayId = data.slice('approve_parlay:'.length);
     await supabase.from('bot_daily_parlays').update({ approval_status: 'approved' }).eq('id', parlayId);
