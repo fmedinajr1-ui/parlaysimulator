@@ -1964,22 +1964,22 @@ Deno.serve(async (req) => {
         // Fetch game logs for those dates
         const { data: gameLogs, error: logsErr } = await supabase
           .from('nba_player_game_logs')
-          .select('player_name, game_date, pts, reb, ast, blk, stl')
+          .select('player_name, game_date, points, rebounds, assists, blocks, steals')
           .in('game_date', uniqueDates);
 
         if (logsErr) {
           console.error('[Bot Settle] Game logs fetch error:', logsErr);
         } else {
           // Build lookup: lowercase player_name + date -> stats
-          const logLookup = new Map<string, { pts: number; reb: number; ast: number; blk: number; stl: number }>();
+          const logLookup = new Map<string, { points: number; rebounds: number; assists: number; blocks: number; steals: number }>();
           for (const log of (gameLogs || [])) {
             const key = `${(log.player_name || '').toLowerCase().trim()}_${log.game_date}`;
             logLookup.set(key, {
-              pts: log.pts || 0,
-              reb: log.reb || 0,
-              ast: log.ast || 0,
-              blk: log.blk || 0,
-              stl: log.stl || 0,
+              points: log.points || 0,
+              rebounds: log.rebounds || 0,
+              assists: log.assists || 0,
+              blocks: log.blocks || 0,
+              steals: log.steals || 0,
             });
           }
 
