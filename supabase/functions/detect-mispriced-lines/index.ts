@@ -1219,6 +1219,35 @@ serve(async (req) => {
       }
       console.log(`[Mispriced] Inserted ${inserted} mispriced lines`);
 
+      // ==================== WRITE SNAPSHOTS ====================
+      const allResults = [...mispricedResults, ...correctPricedResults];
+      const snapshotRows = allResults.map(r => ({
+        player_name: r.player_name,
+        prop_type: r.prop_type,
+        sport: r.sport,
+        book_line: r.book_line,
+        edge_pct: r.edge_pct,
+        signal: r.signal,
+        confidence_tier: r.confidence_tier,
+        shooting_context: r.shooting_context,
+        scan_time: new Date().toISOString(),
+        analysis_date: today,
+      }));
+
+      let snapshotInserted = 0;
+      for (let i = 0; i < snapshotRows.length; i += chunkSize) {
+        const chunk = snapshotRows.slice(i, i + chunkSize);
+        const { error: snapErr } = await supabase
+          .from('mispriced_line_snapshots')
+          .insert(chunk);
+        if (snapErr) {
+          console.error(`[Mispriced] Snapshot insert error:`, snapErr.message);
+        } else {
+          snapshotInserted += chunk.length;
+        }
+      }
+      console.log(`[Mispriced] Inserted ${snapshotInserted} snapshots`);
+
       // Trigger Telegram report
       try {
         const topByTier: Record<string, any[]> = { ELITE: [], HIGH: [], MEDIUM: [] };
