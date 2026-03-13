@@ -1883,7 +1883,12 @@ async function handleScanLines(chatId: string) {
         const edgeStr = `+${(gm.edge_pct || 0).toFixed(0)}%`;
 
         msg += `${tierIcon} *${gm.player_name}*\n`;
-        msg += `   ${typeLabel} ${(gm.signal || '').toUpperCase()} ${gm.book_line || ''} | Edge: ${edgeStr}\n`;
+        if (gm.prop_type === 'game_moneyline') {
+          const mlSide = ctx?.ml_side || 'HOME';
+          msg += `   ML ${mlSide} | Edge: ${edgeStr}\n`;
+        } else {
+          msg += `   ${typeLabel} ${(gm.signal || '').toUpperCase()} ${gm.book_line || ''} | Edge: ${edgeStr}\n`;
+        }
 
         // KenPom context for NCAAB
         if (ctx && gm.player_avg_l10 && sport.includes('ncaab') && gm.prop_type === 'game_total') {
