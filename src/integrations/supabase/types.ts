@@ -3715,6 +3715,66 @@ export type Database = {
         }
         Relationships: []
       }
+      game_market_snapshots: {
+        Row: {
+          alert_sent: boolean | null
+          analysis_date: string
+          away_team: string | null
+          bet_type: string
+          commence_time: string | null
+          drift_amount: number | null
+          drift_direction: string | null
+          fanduel_away_odds: number | null
+          fanduel_home_odds: number | null
+          fanduel_line: number | null
+          fanduel_over_odds: number | null
+          fanduel_under_odds: number | null
+          game_id: string
+          home_team: string | null
+          id: string
+          scan_time: string | null
+          sport: string
+        }
+        Insert: {
+          alert_sent?: boolean | null
+          analysis_date: string
+          away_team?: string | null
+          bet_type: string
+          commence_time?: string | null
+          drift_amount?: number | null
+          drift_direction?: string | null
+          fanduel_away_odds?: number | null
+          fanduel_home_odds?: number | null
+          fanduel_line?: number | null
+          fanduel_over_odds?: number | null
+          fanduel_under_odds?: number | null
+          game_id: string
+          home_team?: string | null
+          id?: string
+          scan_time?: string | null
+          sport: string
+        }
+        Update: {
+          alert_sent?: boolean | null
+          analysis_date?: string
+          away_team?: string | null
+          bet_type?: string
+          commence_time?: string | null
+          drift_amount?: number | null
+          drift_direction?: string | null
+          fanduel_away_odds?: number | null
+          fanduel_home_odds?: number | null
+          fanduel_line?: number | null
+          fanduel_over_odds?: number | null
+          fanduel_under_odds?: number | null
+          game_id?: string
+          home_team?: string | null
+          id?: string
+          scan_time?: string | null
+          sport?: string
+        }
+        Relationships: []
+      }
       game_news_feed: {
         Row: {
           affected_props: Json | null
