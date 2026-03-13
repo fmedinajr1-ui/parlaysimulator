@@ -3417,21 +3417,19 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     key = createPickKey(playerPick.player_name, playerPick.prop_type, playerPick.recommended_side);
   }
   
-  if (tracker.usedPicks.has(key)) return false;
+  // Per-tier usedPicks check REMOVED — the global exposure cap (max 3 per player+prop+side)
+  // handles cross-parlay dedup. The old check blocked each pick after 1 use within a tier,
+  // limiting each tier to ~9 parlays with only ~28 unique picks.
   
   if ('player_name' in pick) {
     const playerCount = tracker.playerUsageCount.get(pick.player_name) || 0;
     if (playerCount >= tierConfig.maxPlayerUsage) return false;
   }
   
-  // === HIT RATE SCORE GATE ===
-  // Sweet spot profiles: skip this gate entirely (engine already pre-vetted quality)
-  // Other profiles: require 70% minimum
-  if (!isSweetSpotProfile) {
-    const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
-    const hitRatePercent = pickConfidence * 100;
-    if (hitRatePercent < 70) return false;
-  }
+  // === CONFIDENCE GATE REMOVED ===
+  // Tier-specific gates handle quality: Execution uses 80% L10 hit rate gate,
+  // Validation uses minConfidence 0.52, Exploration uses minConfidence 0.45.
+  // The redundant 70% global gate was starving all tiers of picks.
   
    // === GLOBAL SLATE EXPOSURE CAP (max 3 per player+prop+side globally) ===
   if ('player_name' in pick) {
