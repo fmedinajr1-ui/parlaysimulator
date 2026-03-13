@@ -336,15 +336,15 @@ Deno.serve(async (req) => {
     }));
 
     if (mispricedRows.length > 0) {
-      // Delete old game market entries for today before inserting
-      await supabase
+      // Upsert game market entries (unique constraint: player_name, prop_type, analysis_date)
+      const { error } = await supabase
         .from('mispriced_lines')
-        .delete()
-        .eq('analysis_date', today)
-        .in('prop_type', ['game_total', 'game_moneyline']);
-
-      const { error } = await supabase.from('mispriced_lines').insert(mispricedRows);
-      if (error) console.error('[ScanlineGM] mispriced_lines insert error:', error.message);
+        .upsert(mispricedRows, { onConflict: 'player_name,prop_type,analysis_date' });
+      if (error) {
+        console.error('[ScanlineGM] mispriced_lines upsert error:', error.message, error.details, error.hint);
+      } else {
+        console.log(`[ScanlineGM] Upserted ${mispricedRows.length} game market rows to mispriced_lines`);
+      }
     }
 
     // Update drift on snapshots
