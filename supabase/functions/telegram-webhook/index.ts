@@ -4455,6 +4455,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /deletebystrat [name] — Void by strategy
 /sweetspots — Active sweet spot picks
 /scanlines — Run & view mispriced line scan
+/legresults — Individual leg wins/losses
 /pipeline — Today's parlay pipeline summary
 /fixpipeline — Run full pipeline
 /regenparlay — Void & regenerate
