@@ -86,6 +86,8 @@ Deno.serve(async (req) => {
     let hits = 0;
     let misses = 0;
     let noLog = 0;
+    const hitDetails: string[] = [];
+    const missDetails: string[] = [];
 
     for (const pred of pendingDDTD) {
       const playerLower = (pred.player_name || '').toLowerCase().trim();
@@ -93,27 +95,34 @@ Deno.serve(async (req) => {
       const stats = logLookup.get(key);
 
       let outcome = 'miss';
+      const predType = (pred.prediction_type || '').toUpperCase();
 
       if (!stats) {
         noLog++;
-        console.log(`[settle-dd-td] No game log for ${pred.player_name} on ${pred.prediction_date} -> miss (DNP)`);
+        missDetails.push(`❌ ${pred.player_name} (${predType}) — DNP/no data`);
       } else {
-        // Count categories with 10+
         let cats10 = 0;
-        if (stats.points >= 10) cats10++;
-        if (stats.rebounds >= 10) cats10++;
-        if (stats.assists >= 10) cats10++;
-        if (stats.blocks >= 10) cats10++;
-        if (stats.steals >= 10) cats10++;
+        const catNames: string[] = [];
+        if (stats.points >= 10) { cats10++; catNames.push(`${stats.points}pts`); }
+        if (stats.rebounds >= 10) { cats10++; catNames.push(`${stats.rebounds}reb`); }
+        if (stats.assists >= 10) { cats10++; catNames.push(`${stats.assists}ast`); }
+        if (stats.blocks >= 10) { cats10++; catNames.push(`${stats.blocks}blk`); }
+        if (stats.steals >= 10) { cats10++; catNames.push(`${stats.steals}stl`); }
 
-        const predType = (pred.prediction_type || '').toUpperCase();
         if (predType === 'DD' && cats10 >= 2) {
           outcome = 'hit';
         } else if (predType === 'TD' && cats10 >= 3) {
           outcome = 'hit';
         }
 
-        console.log(`[settle-dd-td] ${pred.player_name} (${predType}) on ${pred.prediction_date}: PTS=${stats.points} REB=${stats.rebounds} AST=${stats.assists} BLK=${stats.blocks} STL=${stats.steals} -> cats10=${cats10} -> ${outcome}`);
+        const statLine = `${stats.points}p/${stats.rebounds}r/${stats.assists}a/${stats.blocks}b/${stats.steals}s`;
+        if (outcome === 'hit') {
+          hitDetails.push(`✅ ${pred.player_name} (${predType}) — ${catNames.join('/')} [${statLine}]`);
+        } else {
+          missDetails.push(`❌ ${pred.player_name} (${predType}) — ${cats10} cats [${statLine}]`);
+        }
+
+        console.log(`[settle-dd-td] ${pred.player_name} (${predType}): ${statLine} -> cats10=${cats10} -> ${outcome}`);
       }
 
       const { error: updateErr } = await supabase
@@ -132,6 +141,41 @@ Deno.serve(async (req) => {
 
     const summary = `Graded ${graded} predictions: ${hits} hits, ${misses} misses (${noLog} had no game log)`;
     console.log(`[settle-dd-td] ${summary}`);
+
+    // Send Telegram summary if any were graded
+    if (graded > 0) {
+      try {
+        const hitRate = graded > 0 ? ((hits / graded) * 100).toFixed(1) : '0.0';
+        let msg = `🏀 DD/TD Grading Results\n\n`;
+        msg += `📊 ${hits}/${graded} hit (${hitRate}%)\n`;
+        msg += `${noLog > 0 ? `⚠️ ${noLog} players had no game log (DNP)\n` : ''}`;
+        msg += `\n`;
+
+        if (hitDetails.length > 0) {
+          msg += `🎯 Hits:\n${hitDetails.join('\n')}\n\n`;
+        }
+        if (missDetails.length > 0) {
+          // Show max 10 misses to avoid overly long messages
+          const shownMisses = missDetails.slice(0, 10);
+          msg += `Misses:\n${shownMisses.join('\n')}`;
+          if (missDetails.length > 10) {
+            msg += `\n...and ${missDetails.length - 10} more`;
+          }
+        }
+
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({ message: msg }),
+        });
+        console.log('[settle-dd-td] Telegram summary sent');
+      } catch (teleErr) {
+        console.error('[settle-dd-td] Telegram send error:', teleErr);
+      }
+    }
 
     return new Response(JSON.stringify({ graded, hits, misses, noLog, summary }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
