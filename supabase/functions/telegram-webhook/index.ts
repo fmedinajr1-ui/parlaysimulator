@@ -1935,6 +1935,20 @@ async function handleScanLines(chatId: string) {
     .order('edge_pct', { ascending: true })
     .limit(15);
 
+  // Fetch FanDuel odds for player props
+  let fdOddsMap = new Map<string, { over_price: number | null; under_price: number | null }>();
+  if (lines && lines.length > 0) {
+    const playerNames = lines.map(l => l.player_name);
+    const { data: fdProps } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, over_price, under_price')
+      .ilike('bookmaker', '%fanduel%')
+      .in('player_name', playerNames);
+    for (const fp of fdProps || []) {
+      fdOddsMap.set(`${fp.player_name}|${fp.prop_type}`, { over_price: fp.over_price, under_price: fp.under_price });
+    }
+  }
+
   if (lines && lines.length > 0) {
     // Fetch snapshot history for movement trail
     const { data: snapshots } = await supabase
