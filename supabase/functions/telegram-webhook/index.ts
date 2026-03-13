@@ -2951,20 +2951,80 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
   } else if (data === 'integrity_void_bad') {
     await answerCallbackQuery(callbackQueryId, 'Voiding bad parlays...');
     const today = getEasternDate();
-    const { data: badParlays } = await supabase
+    const MAX_PLAYER_PROP_USAGE = 2; // Must match diversity-rebalance exposure cap
+    let shortVoided = 0;
+    let exposureVoided = 0;
+
+    // 1. Void short parlays (< 3 legs)
+    const { data: shortParlays } = await supabase
       .from('bot_daily_parlays')
-      .select('id, leg_count')
+      .select('id')
       .eq('parlay_date', today)
       .eq('outcome', 'pending')
       .lt('leg_count', 3);
-    if (badParlays && badParlays.length > 0) {
-      const ids = badParlays.map(p => p.id);
+    if (shortParlays && shortParlays.length > 0) {
+      const ids = shortParlays.map(p => p.id);
       await supabase.from('bot_daily_parlays').update({
         outcome: 'void',
         lesson_learned: 'Voided by integrity alert button (< 3 legs)',
       }).in('id', ids);
-      await logActivity('integrity_void_bad', `Admin voided ${ids.length} bad parlays via integrity alert`, { count: ids.length, ids });
-      await sendMessage(chatId, `✅ Voided *${ids.length}* bad parlays (< 3 legs) for today.`);
+      shortVoided = ids.length;
+    }
+
+    // 2. Void excess duplicate legs (> MAX_PLAYER_PROP_USAGE per player-prop-side)
+    const { data: allPending } = await supabase
+      .from('bot_daily_parlays')
+      .select('id, legs, combined_probability')
+      .eq('parlay_date', today)
+      .eq('outcome', 'pending')
+      .order('combined_probability', { ascending: false });
+
+    if (allPending && allPending.length > 0) {
+      const playerPropMap = new Map<string, { id: string; prob: number }[]>();
+      for (const parlay of allPending) {
+        const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+        for (const leg of legs as any[]) {
+          const player = (leg.player_name || leg.playerName || '').toLowerCase().trim();
+          const prop = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+          const side = (leg.side || leg.recommended_side || 'over').toLowerCase().trim();
+          if (!player || !prop) continue;
+          const key = `${player}|${prop}|${side}`;
+          const list = playerPropMap.get(key) || [];
+          if (!list.some(e => e.id === parlay.id)) {
+            list.push({ id: parlay.id, prob: parlay.combined_probability });
+          }
+          playerPropMap.set(key, list);
+        }
+      }
+
+      const idsToVoid = new Set<string>();
+      for (const [, entries] of playerPropMap) {
+        if (entries.length <= MAX_PLAYER_PROP_USAGE) continue;
+        // Keep top N by probability (already sorted desc), void the rest
+        const excess = entries.slice(MAX_PLAYER_PROP_USAGE);
+        for (const e of excess) idsToVoid.add(e.id);
+      }
+
+      if (idsToVoid.size > 0) {
+        const voidIds = Array.from(idsToVoid);
+        for (let i = 0; i < voidIds.length; i += 50) {
+          const chunk = voidIds.slice(i, i + 50);
+          await supabase.from('bot_daily_parlays').update({
+            outcome: 'void',
+            lesson_learned: 'Voided by integrity alert button (exposure cap exceeded)',
+          }).in('id', chunk).eq('outcome', 'pending');
+        }
+        exposureVoided = voidIds.length;
+      }
+    }
+
+    const totalVoided = shortVoided + exposureVoided;
+    if (totalVoided > 0) {
+      const parts: string[] = [];
+      if (shortVoided > 0) parts.push(`${shortVoided} short (<3 legs)`);
+      if (exposureVoided > 0) parts.push(`${exposureVoided} excess exposure`);
+      await logActivity('integrity_void_bad', `Admin voided ${totalVoided} bad parlays via integrity alert`, { shortVoided, exposureVoided });
+      await sendMessage(chatId, `✅ Voided *${totalVoided}* bad parlays: ${parts.join(', ')}.`);
     } else {
       await sendMessage(chatId, `✅ No bad parlays found — slate is clean.`);
     }
