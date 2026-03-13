@@ -1919,6 +1919,117 @@ async function handleScanLines(chatId: string) {
   await logActivity("telegram_scanlines", `Admin ran /scanlines`, { chatId, count: lines.length });
 }
 
+// ==================== LEG RESULTS HANDLER ====================
+
+async function handleLegResults(chatId: string, args: string) {
+  // Default to yesterday, or parse a date argument
+  let targetDate: string;
+  if (args && args.trim()) {
+    targetDate = args.trim();
+  } else {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    targetDate = yesterday.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  }
+
+  await sendMessage(chatId, `⏳ Fetching individual leg results for ${targetDate}...`, "Markdown");
+
+  // Query daily_elite_leg_outcomes for the target date via parlay date
+  const { data: parlays } = await supabase
+    .from("daily_elite_parlays")
+    .select("id, parlay_date, strategy_name, outcome")
+    .eq("parlay_date", targetDate);
+
+  if (!parlays || parlays.length === 0) {
+    await sendMessage(chatId, `No parlays found for ${targetDate}.`, "Markdown");
+    return;
+  }
+
+  const parlayIds = parlays.map((p: any) => p.id);
+  const { data: legs } = await supabase
+    .from("daily_elite_leg_outcomes")
+    .select("*")
+    .in("parlay_id", parlayIds)
+    .order("leg_index", { ascending: true });
+
+  if (!legs || legs.length === 0) {
+    // Fall back: check bot_daily_parlays for settled legs
+    const { data: botParlays } = await supabase
+      .from("bot_daily_parlays")
+      .select("id, legs, outcome, parlay_date, strategy_name")
+      .eq("parlay_date", targetDate)
+      .in("outcome", ["won", "lost"]);
+
+    if (!botParlays || botParlays.length === 0) {
+      await sendMessage(chatId, `No settled leg data found for ${targetDate}.`, "Markdown");
+      return;
+    }
+
+    // Extract legs from bot_daily_parlays
+    let msg = `📊 *LEG RESULTS — ${targetDate}*\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `_(from settled parlays, no individual outcomes tracked)_\n\n`;
+
+    for (const p of botParlays) {
+      const legs = (p.legs || []) as any[];
+      const emoji = p.outcome === "won" ? "✅" : "❌";
+      msg += `${emoji} *${p.strategy_name}* (${p.outcome})\n`;
+      for (const leg of legs) {
+        const player = leg.player || leg.playerName || "Unknown";
+        const prop = leg.prop || leg.propType || leg.stat_type || "";
+        const side = leg.side || "";
+        const line = leg.line || "";
+        msg += `  • ${player} ${prop} ${side} ${line}\n`;
+      }
+      msg += `\n`;
+    }
+
+    await sendLongMessage(chatId, msg, "Markdown");
+    return;
+  }
+
+  // Group by outcome
+  const hits = legs.filter((l: any) => l.outcome === "hit");
+  const misses = legs.filter((l: any) => l.outcome === "miss");
+  const pushes = legs.filter((l: any) => l.outcome === "push");
+  const unknown = legs.filter((l: any) => !["hit", "miss", "push"].includes(l.outcome || ""));
+
+  let msg = `📊 *LEG RESULTS — ${targetDate}*\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `${hits.length}/${legs.length} legs hit (${legs.length > 0 ? Math.round(hits.length / legs.length * 100) : 0}%)\n\n`;
+
+  if (hits.length > 0) {
+    msg += `✅ *HITS:*\n`;
+    for (const l of hits) {
+      const actual = l.actual_value !== null ? ` → ${l.actual_value}` : "";
+      msg += `  ${l.player_name} ${l.prop_type} ${l.side} ${l.line}${actual}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (misses.length > 0) {
+    msg += `❌ *MISSES:*\n`;
+    for (const l of misses) {
+      const actual = l.actual_value !== null ? ` → ${l.actual_value}` : "";
+      msg += `  ${l.player_name} ${l.prop_type} ${l.side} ${l.line}${actual}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (pushes.length > 0) {
+    msg += `🔄 *PUSHES:*\n`;
+    for (const l of pushes) {
+      msg += `  ${l.player_name} ${l.prop_type} ${l.side} ${l.line}\n`;
+    }
+    msg += `\n`;
+  }
+
+  if (unknown.length > 0) {
+    msg += `⚪ *UNSETTLED:* ${unknown.length} legs\n\n`;
+  }
+
+  await sendLongMessage(chatId, msg, "Markdown");
+  await logActivity("telegram_legresults", `Admin ran /legresults`, { chatId, date: targetDate, total: legs.length, hits: hits.length });
+}
+
 // ==================== PIPELINE SUMMARY HANDLER ====================
 
 async function handlePipelineSummary(chatId: string) {
