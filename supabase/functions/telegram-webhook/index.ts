@@ -3026,7 +3026,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       await logActivity('integrity_void_bad', `Admin voided ${totalVoided} bad parlays via integrity alert`, { shortVoided, exposureVoided });
       await sendMessage(chatId, `✅ Voided *${totalVoided}* bad parlays: ${parts.join(', ')}.`);
     } else {
-      await sendMessage(chatId, `✅ No bad parlays found — slate is clean.`);
+      await sendMessage(chatId, `✅ Slate is already clean — likely auto-resolved by diversity rebalance before you tapped. No action needed.`);
     }
   } else if (data.startsWith('approve_parlay:')) {
     const parlayId = data.slice('approve_parlay:'.length);
