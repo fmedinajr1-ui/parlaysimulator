@@ -681,7 +681,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   exploration: {
     count: 150,
     iterations: 2000,
-    maxPlayerUsage: 1,
+    maxPlayerUsage: 5,
     maxTeamUsage: 3,
     maxCategoryUsage: 6,
     minHitRate: 45,
@@ -875,7 +875,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   validation: {
     count: 50,
     iterations: 10000,
-    maxPlayerUsage: 1,
+    maxPlayerUsage: 5,
     maxTeamUsage: 2,
     maxCategoryUsage: 3,
     minHitRate: 52,
@@ -954,7 +954,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   execution: {
     count: 50,
     iterations: 25000,
-    maxPlayerUsage: 1,
+    maxPlayerUsage: 5,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 65,
@@ -6623,7 +6623,7 @@ let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
 let globalTeamUsage: Map<string, number> | undefined;
 let globalSlatePlayerPropUsage: Map<string, number> = new Map();
-const MAX_GLOBAL_PLAYER_PROP_USAGE = 1;
+const MAX_GLOBAL_PLAYER_PROP_USAGE = 3;
 
 async function generateTierParlays(
   supabase: any,
@@ -7836,17 +7836,16 @@ async function generateTierParlays(
     // === COHERENCE-AWARE SELECTION: re-rank candidates after each leg ===
     let remainingCandidates = [...candidatePicks];
     
-    // Shuffle top candidates for exploration tier OR when profile uses 'shuffle' sortBy
-    if (tier === 'exploration' || profile.sortBy === 'shuffle') {
-      const shufflePct = profile.sortBy === 'shuffle' ? 1.0 : 0.7;
-      const shuffleCount = Math.floor(remainingCandidates.length * shufflePct);
-      const topSlice = remainingCandidates.slice(0, shuffleCount);
-      for (let i = topSlice.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [topSlice[i], topSlice[j]] = [topSlice[j], topSlice[i]];
-      }
-      remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
+    // Light shuffle for ALL tiers to prevent deterministic duplicate parlays
+    // For explicit 'shuffle' sortBy: shuffle 100%. For others: shuffle top 30% to preserve quality ranking.
+    const shufflePct = profile.sortBy === 'shuffle' ? 1.0 : (tier === 'exploration' ? 0.7 : 0.3);
+    const shuffleCount = Math.max(3, Math.floor(remainingCandidates.length * shufflePct));
+    const topSlice = remainingCandidates.slice(0, shuffleCount);
+    for (let i = topSlice.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [topSlice[i], topSlice[j]] = [topSlice[j], topSlice[i]];
     }
+    remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
     
     while (legs.length < effectiveMaxLegs && remainingCandidates.length > 0) {
       // After the first leg, re-sort remaining candidates by coherence bonus
