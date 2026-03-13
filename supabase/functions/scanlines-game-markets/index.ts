@@ -234,13 +234,16 @@ Deno.serve(async (req) => {
             };
           }
         } else {
-          // For other sports: use composite score as edge proxy
-          edgePct = Math.abs(m.composite_score || 0);
+          // For other sports: composite_score is 0-100, scale to edge %
+          // A score of 60+ is strong (treat as ~8% edge), 50 is neutral
+          const cs = m.composite_score || 50;
+          edgePct = Math.max(0, (cs - 50) * 0.5); // 60 → 5%, 70 → 10%, 80 → 15%
           signal = (m.recommended_side || 'over').toUpperCase();
         }
       } else if (m.bet_type === 'moneyline') {
-        // Moneyline edge from composite score
-        edgePct = Math.abs(m.composite_score || 0);
+        // Moneyline edge from composite score (0-100 scale)
+        const cs = m.composite_score || 50;
+        edgePct = Math.max(0, (cs - 50) * 0.5); // 60 → 5%, 70 → 10%
         signal = (m.recommended_side || 'home').toUpperCase();
 
         // NCAAB: boost edge for upset-zone matchups
