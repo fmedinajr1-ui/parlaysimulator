@@ -2009,7 +2009,7 @@ Deno.serve(async (req) => {
 
             const { error: updateErr } = await supabase
               .from('dd_td_predictions')
-              .update({ outcome, settled_at: new Date().toISOString() })
+              .update({ outcome })
               .eq('id', pred.id);
 
             if (!updateErr) {
