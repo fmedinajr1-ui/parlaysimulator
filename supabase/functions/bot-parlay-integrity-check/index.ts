@@ -97,9 +97,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    const MAX_PLAYER_PROP_USAGE = 2; // Must match diversity-rebalance exposure cap
     const duplicateLegs: { key: string; count: number; parlayIds: string[] }[] = [];
     for (const [key, ids] of legKeyToParlayIds) {
-      if (ids.length > 1) {
+      if (ids.length > MAX_PLAYER_PROP_USAGE) {
         duplicateLegs.push({ key, count: ids.length, parlayIds: ids });
       }
     }
