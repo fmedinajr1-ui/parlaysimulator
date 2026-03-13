@@ -11077,18 +11077,27 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] Skipping Telegram notification for ${generationSource} (quality regen suppressed)`);
     }
 
-    // Step 11: Run integrity check — alerts Telegram if any 1-leg or 2-leg parlays slipped through
-    try {
-      await fetch(`${supabaseUrl}/functions/v1/bot-parlay-integrity-check`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${supabaseKey}`,
-        },
-        body: JSON.stringify({ date: targetDate }),
-      });
-    } catch (integrityError) {
-      console.error('[Bot v2] Integrity check failed:', integrityError);
+    // Step 11: Run integrity check — SKIP for pipeline sub-sources that are followed by rebalance
+    // (quality_regen, smart_review, review_optimize — these get integrity checked post-rebalance)
+    const SKIP_INTEGRITY_SOURCES = ['quality_regen', 'smart_review', 'review_optimize', 'curated_pipeline', 'refresh_rebuild'];
+    const shouldSkipIntegrity = SKIP_INTEGRITY_SOURCES.some(prefix => generationSource.startsWith(prefix));
+    
+    if (!shouldSkipIntegrity) {
+      try {
+        console.log(`[Bot v2] Running integrity check for standalone source: ${generationSource}`);
+        await fetch(`${supabaseUrl}/functions/v1/bot-parlay-integrity-check`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({ date: targetDate }),
+        });
+      } catch (integrityError) {
+        console.error('[Bot v2] Integrity check failed:', integrityError);
+      }
+    } else {
+      console.log(`[Bot v2] Skipping integrity check for ${generationSource} (will run post-rebalance)`);
     }
 
     return new Response(
