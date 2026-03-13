@@ -383,6 +383,7 @@ serve(async (req) => {
     function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
       const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
       const targets: PlayerTarget[] = [];
+      const logField = STAT_TO_LOG_FIELD[statKey] || statKey;
 
       // Get the team's spread for blowout tagging
       const teamSpread = spreadMap.get(teamAbbrev) ?? null;
@@ -404,19 +405,24 @@ serve(async (req) => {
           const l10HitRate = ss.l10_hit_rate ?? 0;
           const l10Min = ss.l10_min ?? 0;
           const recSide = (ss.recommended_side || '').toLowerCase();
-          const l3Avg = ss.l3_avg ?? null;
+          
+          // L3: use sweet_spots l3_avg first, fall back to game logs cache
+          let l3Avg: number | null = ss.l3_avg ?? null;
+          if (l3Avg === null) {
+            const cached = l3Cache.get(playerName);
+            if (cached && cached._games >= 2) {
+              l3Avg = cached[logField] ?? null;
+            }
+          }
 
-          // NO MORE HARD BLOCKS — everything passes, risk tags inform instead
           // Build risk tags for this player target
           const { tags: riskTags, trend: l3Trend } = buildRiskTags(side, l3Avg, l10Avg, line, teamSpread);
 
           // L3 contradiction filter: skip if L3 strongly contradicts recommended side
           if (side === 'over' && l3Avg !== null && l3Avg < line * 0.90) {
-            // L3 avg is 10%+ below line — contradicts OVER recommendation
             continue;
           }
           if (side === 'under' && l3Avg !== null && l3Avg > line * 1.10) {
-            // L3 avg is 10%+ above line — contradicts UNDER recommendation
             continue;
           }
 
@@ -453,9 +459,20 @@ serve(async (req) => {
         }
       }
 
+      // === SOURCE-LEVEL DEDUP: collapse by player_name, keep best entry ===
+      const dedupTargets = new Map<string, PlayerTarget>();
+      for (const t of targets) {
+        const existing = dedupTargets.get(t.player_name);
+        if (!existing || t.l10_hit_rate > existing.l10_hit_rate ||
+            (t.l10_hit_rate === existing.l10_hit_rate && t.margin > existing.margin)) {
+          dedupTargets.set(t.player_name, t);
+        }
+      }
+      const uniqueTargets = [...dedupTargets.values()];
+
       // Sort by margin (strongest first), take top 5
-      targets.sort((a, b) => b.margin - a.margin);
-      return targets.slice(0, 5);
+      uniqueTargets.sort((a, b) => b.margin - a.margin);
+      return uniqueTargets.slice(0, 5);
     }
 
     const allMatchups: GameMatchupMap[] = [];
