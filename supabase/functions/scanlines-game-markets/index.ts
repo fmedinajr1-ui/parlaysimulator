@@ -53,6 +53,10 @@ interface ScoredMarket {
   whale_convergence: boolean;
   kenpom_projected?: number;
   kenpom_context?: Record<string, any>;
+  home_odds?: number | null;
+  away_odds?: number | null;
+  over_odds?: number | null;
+  under_odds?: number | null;
 }
 
 Deno.serve(async (req) => {
