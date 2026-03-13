@@ -7836,17 +7836,16 @@ async function generateTierParlays(
     // === COHERENCE-AWARE SELECTION: re-rank candidates after each leg ===
     let remainingCandidates = [...candidatePicks];
     
-    // Shuffle top candidates for exploration tier OR when profile uses 'shuffle' sortBy
-    if (tier === 'exploration' || profile.sortBy === 'shuffle') {
-      const shufflePct = profile.sortBy === 'shuffle' ? 1.0 : 0.7;
-      const shuffleCount = Math.floor(remainingCandidates.length * shufflePct);
-      const topSlice = remainingCandidates.slice(0, shuffleCount);
-      for (let i = topSlice.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [topSlice[i], topSlice[j]] = [topSlice[j], topSlice[i]];
-      }
-      remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
+    // Light shuffle for ALL tiers to prevent deterministic duplicate parlays
+    // For explicit 'shuffle' sortBy: shuffle 100%. For others: shuffle top 30% to preserve quality ranking.
+    const shufflePct = profile.sortBy === 'shuffle' ? 1.0 : (tier === 'exploration' ? 0.7 : 0.3);
+    const shuffleCount = Math.max(3, Math.floor(remainingCandidates.length * shufflePct));
+    const topSlice = remainingCandidates.slice(0, shuffleCount);
+    for (let i = topSlice.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [topSlice[i], topSlice[j]] = [topSlice[j], topSlice[i]];
     }
+    remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
     
     while (legs.length < effectiveMaxLegs && remainingCandidates.length > 0) {
       // After the first leg, re-sort remaining candidates by coherence bonus
