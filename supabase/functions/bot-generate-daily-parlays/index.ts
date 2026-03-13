@@ -681,7 +681,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   exploration: {
     count: 150,
     iterations: 2000,
-    maxPlayerUsage: 1,
+    maxPlayerUsage: 5,
     maxTeamUsage: 3,
     maxCategoryUsage: 6,
     minHitRate: 45,
