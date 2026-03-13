@@ -2985,7 +2985,13 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
         const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
         for (const leg of legs as any[]) {
           const player = (leg.player_name || leg.playerName || '').toLowerCase().trim();
-          const prop = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+          const rawProp = (leg.prop_type || leg.propType || '').replace(/^player_/i, '').toLowerCase().trim();
+          // Normalize prop aliases to match diversity-rebalance canonical keys
+          const propNormMap: Record<string, string> = {
+            'pts': 'points', '3pm': 'threes', 'three_pointers': 'threes', 'three_pointers_made': 'threes',
+            'reb': 'rebounds', 'ast': 'assists', 'blk': 'blocks', 'stl': 'steals', 'to': 'turnovers',
+          };
+          const prop = propNormMap[rawProp] || rawProp;
           const side = (leg.side || leg.recommended_side || 'over').toLowerCase().trim();
           if (!player || !prop) continue;
           const key = `${player}|${prop}|${side}`;
@@ -3026,7 +3032,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       await logActivity('integrity_void_bad', `Admin voided ${totalVoided} bad parlays via integrity alert`, { shortVoided, exposureVoided });
       await sendMessage(chatId, `✅ Voided *${totalVoided}* bad parlays: ${parts.join(', ')}.`);
     } else {
-      await sendMessage(chatId, `✅ No bad parlays found — slate is clean.`);
+      await sendMessage(chatId, `✅ Slate is already clean — likely auto-resolved by diversity rebalance before you tapped. No action needed.`);
     }
   } else if (data.startsWith('approve_parlay:')) {
     const parlayId = data.slice('approve_parlay:'.length);

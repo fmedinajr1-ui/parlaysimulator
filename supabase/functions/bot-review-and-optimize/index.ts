@@ -503,6 +503,20 @@ Deno.serve(async (req) => {
       console.warn(`[Review] Diversity rebalance failed:`, rebalErr);
     }
 
+    // Run integrity check AFTER rebalance — this is the single, final verdict
+    try {
+      console.log(`[Review] Running post-rebalance integrity check...`);
+      const integrityResp = await fetch(`${supabaseUrl}/functions/v1/bot-parlay-integrity-check`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const integrityResult = await integrityResp.json();
+      console.log(`[Review] Integrity check result:`, integrityResult);
+    } catch (integrityErr) {
+      console.warn(`[Review] Post-rebalance integrity check failed:`, integrityErr);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
