@@ -345,6 +345,16 @@ serve(async (req) => {
           // Build risk tags for this player target
           const { tags: riskTags, trend: l3Trend } = buildRiskTags(side, l3Avg, l10Avg, line, teamSpread);
 
+          // L3 contradiction filter: skip if L3 strongly contradicts recommended side
+          if (side === 'over' && l3Avg !== null && l3Avg < line * 0.90) {
+            // L3 avg is 10%+ below line — contradicts OVER recommendation
+            continue;
+          }
+          if (side === 'under' && l3Avg !== null && l3Avg > line * 1.10) {
+            // L3 avg is 10%+ above line — contradicts UNDER recommendation
+            continue;
+          }
+
           // For OVER recommendations: l10_avg must comfortably clear the line
           if (side === 'over' && recSide === 'over' && l10Avg > line + 0.3 && l10HitRate >= 0.6) {
             targets.push({
