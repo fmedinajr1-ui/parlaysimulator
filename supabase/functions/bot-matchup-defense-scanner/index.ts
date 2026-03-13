@@ -360,17 +360,22 @@ serve(async (req) => {
             entry.blocks += (log.blocks ?? 0);
             entry._games += 1;
           }
-          // Convert sums to averages
-          for (const [name, entry] of l3Cache) {
-            if (entry._games > 0) {
-              entry.points = Math.round((entry.points / entry._games) * 10) / 10;
-              entry.assists = Math.round((entry.assists / entry._games) * 10) / 10;
-              entry.rebounds = Math.round((entry.rebounds / entry._games) * 10) / 10;
-              entry.threes = Math.round((entry.threes / entry._games) * 10) / 10;
-              entry.blocks = Math.round((entry.blocks / entry._games) * 10) / 10;
-            }
-          }
         }
+      }
+      // Convert sums to averages ONCE after all chunks are processed
+      for (const [name, entry] of l3Cache) {
+        if (entry._games > 0) {
+          entry.points = Math.round((entry.points / entry._games) * 10) / 10;
+          entry.assists = Math.round((entry.assists / entry._games) * 10) / 10;
+          entry.rebounds = Math.round((entry.rebounds / entry._games) * 10) / 10;
+          entry.threes = Math.round((entry.threes / entry._games) * 10) / 10;
+          entry.blocks = Math.round((entry.blocks / entry._games) * 10) / 10;
+        }
+      }
+      // Log sample L3 cache entries for debugging
+      const sampleEntries = [...l3Cache.entries()].slice(0, 5);
+      for (const [name, entry] of sampleEntries) {
+        console.log(`[L3 Cache Sample] ${name}: PTS=${entry.points} AST=${entry.assists} REB=${entry.rebounds} 3PM=${entry.threes} BLK=${entry.blocks} (${entry._games} games)`);
       }
     }
     console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players from nba_player_game_logs`);
