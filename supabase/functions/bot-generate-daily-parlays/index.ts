@@ -3417,7 +3417,9 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
     key = createPickKey(playerPick.player_name, playerPick.prop_type, playerPick.recommended_side);
   }
   
-  if (tracker.usedPicks.has(key)) return false;
+  // Per-tier usedPicks check REMOVED — the global exposure cap (max 3 per player+prop+side)
+  // handles cross-parlay dedup. The old check blocked each pick after 1 use within a tier,
+  // limiting each tier to ~9 parlays with only ~28 unique picks.
   
   if ('player_name' in pick) {
     const playerCount = tracker.playerUsageCount.get(pick.player_name) || 0;
