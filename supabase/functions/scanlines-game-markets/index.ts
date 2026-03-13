@@ -53,6 +53,10 @@ interface ScoredMarket {
   whale_convergence: boolean;
   kenpom_projected?: number;
   kenpom_context?: Record<string, any>;
+  home_odds?: number | null;
+  away_odds?: number | null;
+  over_odds?: number | null;
+  under_odds?: number | null;
 }
 
 Deno.serve(async (req) => {
@@ -300,6 +304,10 @@ Deno.serve(async (req) => {
           whale_convergence: whaleConvergence,
           kenpom_projected: kenpomProjected,
           kenpom_context: kenpomContext,
+          home_odds: m.home_odds,
+          away_odds: m.away_odds,
+          over_odds: m.over_odds,
+          under_odds: m.under_odds,
         });
       }
     }
@@ -331,20 +339,24 @@ Deno.serve(async (req) => {
         drift_direction: s.drift_direction,
         whale_convergence: s.whale_convergence,
         commence_time: s.commence_time,
+        home_odds: s.home_odds ? Math.round(s.home_odds) : null,
+        away_odds: s.away_odds ? Math.round(s.away_odds) : null,
+        over_odds: s.over_odds ? Math.round(s.over_odds) : null,
+        under_odds: s.under_odds ? Math.round(s.under_odds) : null,
         ...(s.kenpom_context || {}),
       },
     }));
 
     if (mispricedRows.length > 0) {
-      // Delete old game market entries for today before inserting
-      await supabase
+      // Upsert game market entries (unique constraint: player_name, prop_type, analysis_date)
+      const { error } = await supabase
         .from('mispriced_lines')
-        .delete()
-        .eq('analysis_date', today)
-        .in('prop_type', ['game_total', 'game_moneyline']);
-
-      const { error } = await supabase.from('mispriced_lines').insert(mispricedRows);
-      if (error) console.error('[ScanlineGM] mispriced_lines insert error:', error.message);
+        .upsert(mispricedRows, { onConflict: 'player_name,prop_type,analysis_date' });
+      if (error) {
+        console.error('[ScanlineGM] mispriced_lines upsert error:', error.message, error.details, error.hint);
+      } else {
+        console.log(`[ScanlineGM] Upserted ${mispricedRows.length} game market rows to mispriced_lines`);
+      }
     }
 
     // Update drift on snapshots

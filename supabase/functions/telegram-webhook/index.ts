@@ -1885,9 +1885,15 @@ async function handleScanLines(chatId: string) {
         msg += `${tierIcon} *${gm.player_name}*\n`;
         if (gm.prop_type === 'game_moneyline') {
           const mlSide = ctx?.ml_side || 'HOME';
+          const homeOdds = ctx?.home_odds ? (ctx.home_odds > 0 ? `+${ctx.home_odds}` : `${ctx.home_odds}`) : '?';
+          const awayOdds = ctx?.away_odds ? (ctx.away_odds > 0 ? `+${ctx.away_odds}` : `${ctx.away_odds}`) : '?';
           msg += `   ML ${mlSide} | Edge: ${edgeStr}\n`;
+          msg += `   Home: ${homeOdds} | Away: ${awayOdds}\n`;
         } else {
+          const overOdds = ctx?.over_odds ? (ctx.over_odds > 0 ? `+${ctx.over_odds}` : `${ctx.over_odds}`) : '?';
+          const underOdds = ctx?.under_odds ? (ctx.under_odds > 0 ? `+${ctx.under_odds}` : `${ctx.under_odds}`) : '?';
           msg += `   ${typeLabel} ${(gm.signal || '').toUpperCase()} ${gm.book_line || ''} | Edge: ${edgeStr}\n`;
+          msg += `   O: ${overOdds} | U: ${underOdds}\n`;
         }
 
         // KenPom context for NCAAB
@@ -1929,6 +1935,20 @@ async function handleScanLines(chatId: string) {
     .order('edge_pct', { ascending: true })
     .limit(15);
 
+  // Fetch FanDuel odds for player props
+  let fdOddsMap = new Map<string, { over_price: number | null; under_price: number | null }>();
+  if (lines && lines.length > 0) {
+    const playerNames = lines.map(l => l.player_name);
+    const { data: fdProps } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, over_price, under_price')
+      .ilike('bookmaker', '%fanduel%')
+      .in('player_name', playerNames);
+    for (const fp of fdProps || []) {
+      fdOddsMap.set(`${fp.player_name}|${fp.prop_type}`, { over_price: fp.over_price, under_price: fp.under_price });
+    }
+  }
+
   if (lines && lines.length > 0) {
     // Fetch snapshot history for movement trail
     const { data: snapshots } = await supabase
@@ -1966,7 +1986,17 @@ async function handleScanLines(chatId: string) {
       const edgeStr = (l.edge_pct || 0) >= 0 ? `+${(l.edge_pct || 0).toFixed(0)}%` : `${(l.edge_pct || 0).toFixed(0)}%`;
       const tierEmoji = l.confidence_tier === 'ELITE' ? '💎' : l.confidence_tier === 'HIGH' ? '🔥' : '📊';
 
-      msg += `${i + 1}. ${tierEmoji} *${l.player_name}* — ${propLabel} ${side} ${l.book_line}\n`;
+      // FanDuel odds
+      const fdKey = `${l.player_name}|${l.prop_type}`;
+      const fdOdds = fdOddsMap.get(fdKey);
+      let oddsStr = '';
+      if (fdOdds) {
+        const oP = fdOdds.over_price ? (fdOdds.over_price > 0 ? `+${fdOdds.over_price}` : `${fdOdds.over_price}`) : '?';
+        const uP = fdOdds.under_price ? (fdOdds.under_price > 0 ? `+${fdOdds.under_price}` : `${fdOdds.under_price}`) : '?';
+        oddsStr = ` (${oP}/${uP})`;
+      }
+
+      msg += `${i + 1}. ${tierEmoji} *${l.player_name}* — ${propLabel} ${side} ${l.book_line}${oddsStr}\n`;
       msg += `   Edge: ${edgeStr} | L10: ${l.player_avg_l10?.toFixed(1) || '?'}\n`;
 
       const trail = snapshotTrail.get(`${l.player_name}|${l.prop_type}`);
