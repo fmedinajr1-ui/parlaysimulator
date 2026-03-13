@@ -300,6 +300,10 @@ Deno.serve(async (req) => {
           whale_convergence: whaleConvergence,
           kenpom_projected: kenpomProjected,
           kenpom_context: kenpomContext,
+          home_odds: m.home_odds,
+          away_odds: m.away_odds,
+          over_odds: m.over_odds,
+          under_odds: m.under_odds,
         });
       }
     }
