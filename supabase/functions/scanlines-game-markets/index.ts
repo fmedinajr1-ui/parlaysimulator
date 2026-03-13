@@ -234,14 +234,21 @@ Deno.serve(async (req) => {
             };
           }
         } else {
-          // For other sports: use composite score as edge proxy
-          edgePct = Math.abs(m.composite_score || 0);
+          // For other sports: composite_score is 0-100, scale to edge %
+          // A score of 60+ is strong (treat as ~8% edge), 50 is neutral
+          const cs = m.composite_score || 50;
+          edgePct = Math.max(0, (cs - 50) * 0.5); // 60 → 5%, 70 → 10%, 80 → 15%
           signal = (m.recommended_side || 'over').toUpperCase();
+          if (signal !== 'OVER' && signal !== 'UNDER') signal = 'OVER';
         }
       } else if (m.bet_type === 'moneyline') {
-        // Moneyline edge from composite score
-        edgePct = Math.abs(m.composite_score || 0);
-        signal = (m.recommended_side || 'home').toUpperCase();
+        // Moneyline edge from composite score (0-100 scale)
+        const cs = m.composite_score || 50;
+        edgePct = Math.max(0, (cs - 50) * 0.5); // 60 → 5%, 70 → 10%
+        // mispriced_lines only allows OVER/UNDER — store real side in shooting_context
+        const realSide = (m.recommended_side || 'home').toUpperCase();
+        signal = 'OVER'; // placeholder, real side in context
+        kenpomContext = { ...(kenpomContext || {}), ml_side: realSide };
 
         // NCAAB: boost edge for upset-zone matchups
         if (m.sport?.includes('ncaab')) {
@@ -314,7 +321,7 @@ Deno.serve(async (req) => {
       signal: s.signal,
       edge_pct: s.edge_pct,
       confidence_tier: s.confidence_tier,
-      book_line: s.fanduel_line,
+      book_line: s.fanduel_line ?? (s.bet_type === 'moneyline' ? 0 : 0),
       player_avg_l10: s.kenpom_projected || null,
       sport: s.sport,
       analysis_date: today,
