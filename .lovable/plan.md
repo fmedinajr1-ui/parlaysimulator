@@ -107,3 +107,48 @@ Built a time-series snapshot + pre-game verdict system:
 1. **Duplicate Leg Bug**: `strongUnders` could contain same player multiple times → deduped by `player_name::prop_type` keeping highest L10 hit rate, plus same-player guard in parlay assembly
 2. **L3 Contradiction**: Players like Desmond Bane recommended UNDER despite L3 avg being 10%+ above line → added L3 contradiction filter in `bot-matchup-defense-scanner` that skips players whose L3 strongly contradicts the recommended side
 3. **Individual Leg Visibility**: Added `/legresults` Telegram command showing per-leg wins/losses with actual values for any date
+
+# Scanlines v2: FanDuel Game Markets + Pre-Game Alerts — IMPLEMENTED ✅ (March 13, 2026)
+
+## Problem
+Scanlines only analyzed player props. No FanDuel-specific game market scanning (moneylines/totals), no line drift tracking, and no timed pre-game alerts.
+
+## Solution
+Built a 3-layer game market intelligence system:
+
+### New Table: `game_market_snapshots`
+Stores timestamped FanDuel lines for drift tracking with `drift_amount`, `drift_direction`, and `alert_sent` dedup flag.
+
+### New Edge Function: `scanlines-game-markets`
+- Scans FanDuel moneylines + totals from `game_bets`
+- Inserts timestamped snapshots for drift calculation
+- Cross-refs KenPom data for NCAAB (projected totals from AdjO/AdjD/tempo)
+- Cross-refs `whale_picks` for convergence detection
+- Scores markets: base edge + drift magnitude (1.15x boost) + whale convergence (1.2x boost)
+- Stores top signals to `mispriced_lines` with `prop_type = 'game_total'` or `'game_moneyline'`
+
+### New Edge Function: `pregame-scanlines-alert`
+- Runs every 15 minutes via cron
+- Finds games starting in 25-45 minute window
+- Sends Telegram alerts for games with edge ≥ 5%, whale convergence, or dramatic drift (≥1.5pts totals, ≥15 odds moneylines)
+- Dedup via `alert_sent` flag on snapshots
+
+### Updated `/scanlines` Telegram Handler
+- Now triggers both `detect-mispriced-lines` AND `scanlines-game-markets` in parallel
+- Shows "GAME MARKETS (FanDuel)" section first with drift trails, KenPom context, whale tags
+- Player props section follows below
+- Grouped by sport with emoji labels
+
+### Cron Schedule
+- **10:00 AM ET**: `scanlines-game-markets` (morning scan)
+- **12:30 PM ET**: `scanlines-game-markets` (midday scan)
+- **3:00 PM ET**: `scanlines-game-markets` (pre-tip scan)
+- **Every 15 min**: `pregame-scanlines-alert` (pre-game alerts ~30 min before tip)
+
+### Sports Coverage
+| Sport | Moneyline | Totals | KenPom/Data | Whale Drift | Pre-Game Alert |
+|-------|-----------|--------|-------------|-------------|----------------|
+| NCAAB | ✅ | ✅ | KenPom + ATS | ✅ | ✅ |
+| NBA | ✅ | ✅ | Composite | ✅ | ✅ |
+| NHL | ✅ | ✅ | — | ✅ | ✅ |
+| MLB | ✅ | ✅ | — | ✅ | ✅ |
