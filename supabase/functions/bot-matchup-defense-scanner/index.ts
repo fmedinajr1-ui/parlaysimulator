@@ -314,10 +314,76 @@ serve(async (req) => {
     }
     console.log(`[MatchupScanner] Loaded ${sweetSpots?.length || 0} active sweet spots, indexed by prop_type (${sweetSpotsByPropType.size} unique prop types: ${[...sweetSpotsByPropType.keys()].join(', ')})`);
 
+    // === L3 CACHE: Batch-fetch last 3 games for all players on today's teams ===
+    // This fills in L3 data for bench players missing l3_avg in category_sweet_spots
+    const todayTeams = new Set<string>();
+    for (const game of games) {
+      todayTeams.add(resolveTeamAbbrev(game.home_team || ''));
+      todayTeams.add(resolveTeamAbbrev(game.away_team || ''));
+    }
+    // Find all player names on today's teams
+    const playersOnTodayTeams: string[] = [];
+    for (const [name, team] of playerTeamMap) {
+      if (todayTeams.has(team)) playersOnTodayTeams.push(name);
+    }
+
+    // Fetch last 3 game logs per player (ordered by date desc, limit 3 per player via overfetch)
+    const l3Cache = new Map<string, Record<string, number>>();
+    if (playersOnTodayTeams.length > 0) {
+      // Batch in chunks of 100 players
+      const CHUNK = 100;
+      for (let i = 0; i < playersOnTodayTeams.length; i += CHUNK) {
+        const chunk = playersOnTodayTeams.slice(i, i + CHUNK);
+        const { data: gameLogs } = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, points, assists, rebounds, threes_made, blocks, min, game_date')
+          .in('player_name', chunk)
+          .order('game_date', { ascending: false })
+          .limit(chunk.length * 3);
+
+        if (gameLogs) {
+          const countMap = new Map<string, number>();
+          for (const log of gameLogs) {
+            const name = log.player_name;
+            const count = countMap.get(name) || 0;
+            if (count >= 3) continue; // only take 3 most recent
+            countMap.set(name, count + 1);
+
+            if (!l3Cache.has(name)) {
+              l3Cache.set(name, { points: 0, assists: 0, rebounds: 0, threes: 0, blocks: 0, _games: 0 });
+            }
+            const entry = l3Cache.get(name)!;
+            entry.points += (log.points ?? 0);
+            entry.assists += (log.assists ?? 0);
+            entry.rebounds += (log.rebounds ?? 0);
+            entry.threes += (log.threes_made ?? 0);
+            entry.blocks += (log.blocks ?? 0);
+            entry._games += 1;
+          }
+          // Convert sums to averages
+          for (const [name, entry] of l3Cache) {
+            if (entry._games > 0) {
+              entry.points = Math.round((entry.points / entry._games) * 10) / 10;
+              entry.assists = Math.round((entry.assists / entry._games) * 10) / 10;
+              entry.rebounds = Math.round((entry.rebounds / entry._games) * 10) / 10;
+              entry.threes = Math.round((entry.threes / entry._games) * 10) / 10;
+              entry.blocks = Math.round((entry.blocks / entry._games) * 10) / 10;
+            }
+          }
+        }
+      }
+    }
+    console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players from nba_player_game_logs`);
+
+    // Map stat keys to game log field names for L3 cache lookup
+    const STAT_TO_LOG_FIELD: Record<string, string> = {
+      points: 'points', threes: 'threes', rebounds: 'rebounds', assists: 'assists', blocks: 'blocks',
+    };
     // Helper: find player targets for a team + stat category
     function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
       const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
       const targets: PlayerTarget[] = [];
+      const logField = STAT_TO_LOG_FIELD[statKey] || statKey;
 
       // Get the team's spread for blowout tagging
       const teamSpread = spreadMap.get(teamAbbrev) ?? null;
@@ -339,19 +405,24 @@ serve(async (req) => {
           const l10HitRate = ss.l10_hit_rate ?? 0;
           const l10Min = ss.l10_min ?? 0;
           const recSide = (ss.recommended_side || '').toLowerCase();
-          const l3Avg = ss.l3_avg ?? null;
+          
+          // L3: use sweet_spots l3_avg first, fall back to game logs cache
+          let l3Avg: number | null = ss.l3_avg ?? null;
+          if (l3Avg === null) {
+            const cached = l3Cache.get(playerName);
+            if (cached && cached._games >= 2) {
+              l3Avg = cached[logField] ?? null;
+            }
+          }
 
-          // NO MORE HARD BLOCKS — everything passes, risk tags inform instead
           // Build risk tags for this player target
           const { tags: riskTags, trend: l3Trend } = buildRiskTags(side, l3Avg, l10Avg, line, teamSpread);
 
           // L3 contradiction filter: skip if L3 strongly contradicts recommended side
           if (side === 'over' && l3Avg !== null && l3Avg < line * 0.90) {
-            // L3 avg is 10%+ below line — contradicts OVER recommendation
             continue;
           }
           if (side === 'under' && l3Avg !== null && l3Avg > line * 1.10) {
-            // L3 avg is 10%+ above line — contradicts UNDER recommendation
             continue;
           }
 
@@ -388,9 +459,20 @@ serve(async (req) => {
         }
       }
 
+      // === SOURCE-LEVEL DEDUP: collapse by player_name, keep best entry ===
+      const dedupTargets = new Map<string, PlayerTarget>();
+      for (const t of targets) {
+        const existing = dedupTargets.get(t.player_name);
+        if (!existing || t.l10_hit_rate > existing.l10_hit_rate ||
+            (t.l10_hit_rate === existing.l10_hit_rate && t.margin > existing.margin)) {
+          dedupTargets.set(t.player_name, t);
+        }
+      }
+      const uniqueTargets = [...dedupTargets.values()];
+
       // Sort by margin (strongest first), take top 5
-      targets.sort((a, b) => b.margin - a.margin);
-      return targets.slice(0, 5);
+      uniqueTargets.sort((a, b) => b.margin - a.margin);
+      return uniqueTargets.slice(0, 5);
     }
 
     const allMatchups: GameMatchupMap[] = [];
@@ -544,7 +626,7 @@ serve(async (req) => {
       relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
-        engine_version: 'bidirectional_v3_risk_tags',
+        engine_version: 'bidirectional_v4_dedup_l3cache',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
         elite_opportunities: eliteCount,
@@ -582,7 +664,7 @@ serve(async (req) => {
 
     const result = {
       scan_date: today,
-      engine_version: 'bidirectional_v3_risk_tags',
+      engine_version: 'bidirectional_v4_dedup_l3cache',
       games_scanned: games.length,
       games_with_matchups: allMatchups.length,
       elite: eliteCount,
