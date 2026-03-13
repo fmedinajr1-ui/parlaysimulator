@@ -3,7 +3,7 @@
  * 
  * Post-rebuild pass that:
  * 1. Caps any single strategy family at 40% of the total pending daily slate
- * 2. Enforces max-3-per-player-prop across ALL pending parlays (global exposure cap)
+ * 2. Enforces max-2-per-player-prop across ALL pending parlays (global exposure cap)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const maxPct = body.max_strategy_pct ?? 0.40;
-    const maxPlayerPropUsage = body.max_player_prop_usage ?? 3;
+    const maxPlayerPropUsage = body.max_player_prop_usage ?? 2;
     const today = body.date || getEasternDate();
 
     console.log(`[DiversityRebalance] ${VERSION} | date=${today}`);

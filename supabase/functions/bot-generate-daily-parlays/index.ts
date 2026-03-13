@@ -6623,7 +6623,7 @@ let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
 let globalTeamUsage: Map<string, number> | undefined;
 let globalSlatePlayerPropUsage: Map<string, number> = new Map();
-const MAX_GLOBAL_PLAYER_PROP_USAGE = 3;
+const MAX_GLOBAL_PLAYER_PROP_USAGE = 2;
 
 async function generateTierParlays(
   supabase: any,
