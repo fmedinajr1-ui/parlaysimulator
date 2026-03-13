@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const maxPct = body.max_strategy_pct ?? 0.40;
-    const maxPlayerPropUsage = body.max_player_prop_usage ?? 3;
+    const maxPlayerPropUsage = body.max_player_prop_usage ?? 2;
     const today = body.date || getEasternDate();
 
     console.log(`[DiversityRebalance] ${VERSION} | date=${today}`);
