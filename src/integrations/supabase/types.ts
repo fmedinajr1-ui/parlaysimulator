@@ -5938,6 +5938,111 @@ export type Database = {
           },
         ]
       }
+      mispriced_line_snapshots: {
+        Row: {
+          analysis_date: string
+          book_line: number
+          confidence_tier: string
+          edge_pct: number
+          id: string
+          over_price: number | null
+          player_name: string
+          prop_type: string
+          scan_time: string
+          shooting_context: Json | null
+          signal: string
+          sport: string
+          under_price: number | null
+        }
+        Insert: {
+          analysis_date?: string
+          book_line: number
+          confidence_tier?: string
+          edge_pct?: number
+          id?: string
+          over_price?: number | null
+          player_name: string
+          prop_type: string
+          scan_time?: string
+          shooting_context?: Json | null
+          signal?: string
+          sport?: string
+          under_price?: number | null
+        }
+        Update: {
+          analysis_date?: string
+          book_line?: number
+          confidence_tier?: string
+          edge_pct?: number
+          id?: string
+          over_price?: number | null
+          player_name?: string
+          prop_type?: string
+          scan_time?: string
+          shooting_context?: Json | null
+          signal?: string
+          sport?: string
+          under_price?: number | null
+        }
+        Relationships: []
+      }
+      mispriced_line_verdicts: {
+        Row: {
+          analysis_date: string
+          commence_time: string | null
+          created_at: string
+          final_scan_line: number | null
+          final_scan_price: number | null
+          first_scan_line: number | null
+          first_scan_price: number | null
+          id: string
+          line_movement: number | null
+          player_name: string
+          price_movement: number | null
+          prop_type: string
+          sport: string
+          verdict: string
+          verdict_reason: string | null
+          whale_signal: string
+        }
+        Insert: {
+          analysis_date?: string
+          commence_time?: string | null
+          created_at?: string
+          final_scan_line?: number | null
+          final_scan_price?: number | null
+          first_scan_line?: number | null
+          first_scan_price?: number | null
+          id?: string
+          line_movement?: number | null
+          player_name: string
+          price_movement?: number | null
+          prop_type: string
+          sport?: string
+          verdict?: string
+          verdict_reason?: string | null
+          whale_signal?: string
+        }
+        Update: {
+          analysis_date?: string
+          commence_time?: string | null
+          created_at?: string
+          final_scan_line?: number | null
+          final_scan_price?: number | null
+          first_scan_line?: number | null
+          first_scan_price?: number | null
+          id?: string
+          line_movement?: number | null
+          player_name?: string
+          price_movement?: number | null
+          prop_type?: string
+          sport?: string
+          verdict?: string
+          verdict_reason?: string | null
+          whale_signal?: string
+        }
+        Relationships: []
+      }
       mispriced_lines: {
         Row: {
           actual_value: number | null

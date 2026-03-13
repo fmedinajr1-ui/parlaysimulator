@@ -1837,6 +1837,35 @@ async function handleScanLines(chatId: string) {
     return;
   }
 
+  // Fetch snapshot history for movement trail
+  const { data: snapshots } = await supabase
+    .from('mispriced_line_snapshots')
+    .select('player_name, prop_type, book_line, edge_pct, scan_time')
+    .eq('analysis_date', today)
+    .order('scan_time', { ascending: true });
+
+  // Build snapshot trail map: "player|prop" → [{time, line, edge}]
+  const snapshotTrail = new Map<string, { time: string; line: number; edge: number }[]>();
+  for (const s of snapshots || []) {
+    const key = `${s.player_name}|${s.prop_type}`;
+    if (!snapshotTrail.has(key)) snapshotTrail.set(key, []);
+    const timeStr = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', hour12: true
+    }).format(new Date(s.scan_time)).toLowerCase();
+    snapshotTrail.get(key)!.push({ time: timeStr, line: Number(s.book_line), edge: Number(s.edge_pct) });
+  }
+
+  // Fetch verdicts for whale signals
+  const { data: verdicts } = await supabase
+    .from('mispriced_line_verdicts')
+    .select('player_name, prop_type, whale_signal, verdict, verdict_reason')
+    .eq('analysis_date', today);
+
+  const verdictMap = new Map<string, { whale_signal: string; verdict: string; verdict_reason: string }>();
+  for (const v of verdicts || []) {
+    verdictMap.set(`${v.player_name}|${v.prop_type}`, v);
+  }
+
   const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
   let msg = `🔍 *SCANLINES — ${dateLabel}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -1851,6 +1880,25 @@ async function handleScanLines(chatId: string) {
 
     msg += `${i + 1}. ${tierEmoji} *${l.player_name}* — ${propLabel} ${side} ${l.book_line}\n`;
     msg += `   Edge: ${edgeStr} | L10: ${l.player_avg_l10?.toFixed(1) || '?'}\n`;
+
+    // Show snapshot movement trail if multiple scans exist
+    const trail = snapshotTrail.get(`${l.player_name}|${l.prop_type}`);
+    if (trail && trail.length >= 2) {
+      const trailStr = trail.map(t => `${t.time}: ${t.line}`).join(' → ');
+      const firstLine = trail[0].line;
+      const lastLine = trail[trail.length - 1].line;
+      const moved = lastLine - firstLine;
+      const moveIcon = moved < 0 ? '📉' : moved > 0 ? '📈' : '➡️';
+      msg += `   ${moveIcon} _${trailStr}_\n`;
+    }
+
+    // Show whale verdict if available
+    const vKey = `${l.player_name}|${l.prop_type}`;
+    const verd = verdictMap.get(vKey);
+    if (verd && verd.verdict !== 'HOLD') {
+      const vIcon = verd.verdict === 'SHARP_CONFIRMED' ? '🐋' : '⚠️';
+      msg += `   ${vIcon} *${verd.verdict}* — ${verd.verdict_reason}\n`;
+    }
 
     // Intelligence filter details from shooting_context
     const ctx = l.shooting_context as Record<string, any> | null;
