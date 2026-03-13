@@ -2042,6 +2042,9 @@ Deno.serve(async (req) => {
         isRealModeReady,
         newBankroll,
         sweetSpotSynced,
+        ddTdGraded,
+        ddTdHits,
+        ddTdMisses,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
