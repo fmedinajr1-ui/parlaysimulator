@@ -3,7 +3,7 @@
  * 
  * Post-rebuild pass that:
  * 1. Caps any single strategy family at 40% of the total pending daily slate
- * 2. Enforces max-3-per-player-prop across ALL pending parlays (global exposure cap)
+ * 2. Enforces max-2-per-player-prop across ALL pending parlays (global exposure cap)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
