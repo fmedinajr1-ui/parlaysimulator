@@ -68,3 +68,35 @@ Added 5 intelligence upgrades to the existing engine:
 5. **Outcome Feedback Loop**: Last 14 days of settled mispriced_lines accuracy → applies 0.8x-1.2x multiplier per prop type
 
 All fields persisted to `shooting_context` for transparency: `variance_cv`, `historical_hit_rate`, `minutes_stability`, `consensus_line`, `consensus_deviation_pct`, `feedback_accuracy`, `feedback_multiplier`.
+
+# Scanlines Line-Movement Tracking & Whale Verdicts — IMPLEMENTED ✅ (March 13, 2026)
+
+## Problem
+`detect-mispriced-lines` ran daily but **overwrote** results each scan — no history of how lines moved throughout the day. Couldn't detect whale activity (e.g., +100 → -150 = sharp money).
+
+## Solution
+Built a time-series snapshot + pre-game verdict system:
+
+### New Tables
+- **`mispriced_line_snapshots`**: Every scan inserts timestamped rows (never overwrites). Stores player, prop, line, edge, confidence, shooting_context.
+- **`mispriced_line_verdicts`**: Pre-game final assessment comparing first vs last snapshot. Stores line_movement, whale_signal (STEAM/FREEZE/NONE), verdict (SHARP_CONFIRMED/TRAP/HOLD).
+
+### Updated `detect-mispriced-lines`
+- After existing upsert to `mispriced_lines`, now **also inserts** all results (mispriced + correct-priced) into `mispriced_line_snapshots` with timestamp.
+
+### New Edge Function: `finalize-mispriced-verdicts`
+- Compares earliest vs latest snapshots for each player-prop
+- Line moved in favor + edge strengthened → **SHARP_CONFIRMED** (whale money)
+- Line moved against ≥1pt → **TRAP** (market faded)
+- Minimal movement → **HOLD**
+- Sends Telegram alert with actionable verdicts
+
+### Cron Schedule (3 daily scans + 1 verdict)
+- **10:00 AM ET** — existing morning scan (via `refresh-l10-and-rebuild`)
+- **12:30 PM ET** — midday re-scan
+- **3:00 PM ET** — pre-tip re-scan
+- **5:30 PM ET** — `finalize-mispriced-verdicts` (whale verdict before 7pm games)
+
+### Telegram `/scanlines` Enhancement
+- Shows snapshot movement trail: `10:00am: 24.5 → 12:30pm: 23.5 → 3:00pm: 22.5`
+- Displays whale verdict inline: `🐋 SHARP_CONFIRMED — Line moved 2.0 pts in favor`
