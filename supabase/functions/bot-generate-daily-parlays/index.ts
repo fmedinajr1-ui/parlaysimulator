@@ -875,7 +875,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   validation: {
     count: 50,
     iterations: 10000,
-    maxPlayerUsage: 1,
+    maxPlayerUsage: 5,
     maxTeamUsage: 2,
     maxCategoryUsage: 3,
     minHitRate: 52,
