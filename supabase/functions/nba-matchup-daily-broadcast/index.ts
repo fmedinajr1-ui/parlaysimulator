@@ -280,7 +280,6 @@ Deno.serve(async (req) => {
         }
         if (selected.length < 3) break;
 
-        const selected = available.slice(0, 3);
         const legs = selected.map((u: any) => ({
           player: u.player_name,
           prop: u.prop_type,
