@@ -626,7 +626,7 @@ serve(async (req) => {
       relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
-        engine_version: 'bidirectional_v3_risk_tags',
+        engine_version: 'bidirectional_v4_dedup_l3cache',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
         elite_opportunities: eliteCount,
