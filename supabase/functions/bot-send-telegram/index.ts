@@ -1004,14 +1004,15 @@ function formatDiagnosticReport(data: Record<string, any>, dateStr: string): { t
   return { text: msg, reply_markup };
 }
 
-function formatIntegrityAlert(data: Record<string, any>, dateStr: string): string {
-  const { oneLegCount, twoLegCount, total, strategyCounts } = data;
+function formatIntegrityAlert(data: Record<string, any>, dateStr: string): { text: string; reply_markup?: object } {
+  const { oneLegCount, twoLegCount, duplicateLegCount, total, strategyCounts, topDuplicates } = data;
 
   let msg = `⚠️ *PARLAY INTEGRITY ALERT — ${dateStr}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
   msg += `🚨 Leak detected in today's parlays:\n`;
   if (oneLegCount > 0) msg += `  • 1-leg singles: *${oneLegCount} parlays*\n`;
   if (twoLegCount > 0) msg += `  • 2-leg minis:   *${twoLegCount} parlays*\n`;
+  if (duplicateLegCount > 0) msg += `  • Duplicate legs: *${duplicateLegCount} combos*\n`;
   msg += `  Total violations: *${total}*\n\n`;
 
   if (strategyCounts && Object.keys(strategyCounts).length > 0) {
@@ -1022,10 +1023,24 @@ function formatIntegrityAlert(data: Record<string, any>, dateStr: string): strin
     msg += `\n`;
   }
 
-  msg += `⚡ *Action required:* Review bot-generate-daily-parlays\n`;
-  msg += `Run /admin cleanup to remove bad parlays`;
+  if (topDuplicates && Array.isArray(topDuplicates) && topDuplicates.length > 0) {
+    msg += `Top duplicates:\n`;
+    for (const d of topDuplicates.slice(0, 3)) {
+      msg += `  • ${d}\n`;
+    }
+    msg += `\n`;
+  }
 
-  return msg;
+  msg += `⚡ *Action required:* Tap below to fix`;
+
+  const inline_keyboard = [
+    [
+      { text: '🗑 Void Bad Parlays', callback_data: 'integrity_void_bad' },
+      { text: '📋 View Admin', callback_data: 'admin_status' },
+    ],
+  ];
+
+  return { text: msg, reply_markup: { inline_keyboard } };
 }
 
 function formatPreflightAlert(data: Record<string, any>, dateStr: string): string {
