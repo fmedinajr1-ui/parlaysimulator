@@ -317,7 +317,7 @@ Deno.serve(async (req) => {
       signal: s.signal,
       edge_pct: s.edge_pct,
       confidence_tier: s.confidence_tier,
-      book_line: s.fanduel_line,
+      book_line: s.fanduel_line ?? (s.bet_type === 'moneyline' ? 0 : 0),
       player_avg_l10: s.kenpom_projected || null,
       sport: s.sport,
       analysis_date: today,
