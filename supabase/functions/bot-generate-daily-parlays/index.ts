@@ -3437,7 +3437,7 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
   if ('player_name' in pick) {
     const playerPropSideKey = `${(pick.player_name || '').toLowerCase().trim()}|${normalizePropType((pick as any).prop_type || '')}|${((pick as any).recommended_side || (pick as any).side || 'over').toLowerCase()}`;
     const currentUsage = globalSlatePlayerPropUsage.get(playerPropSideKey) || 0;
-    if (currentUsage >= 1) {
+    if (currentUsage >= 3) {
       return false;
     }
   }
