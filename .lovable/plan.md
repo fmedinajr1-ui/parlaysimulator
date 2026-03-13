@@ -100,3 +100,10 @@ Built a time-series snapshot + pre-game verdict system:
 ### Telegram `/scanlines` Enhancement
 - Shows snapshot movement trail: `10:00am: 24.5 → 12:30pm: 23.5 → 3:00pm: 22.5`
 - Displays whale verdict inline: `🐋 SHARP_CONFIRMED — Line moved 2.0 pts in favor`
+
+# Bidirectional Scanner Dedup + L3 Filter + /legresults — IMPLEMENTED ✅ (March 13, 2026)
+
+## Problems Fixed
+1. **Duplicate Leg Bug**: `strongUnders` could contain same player multiple times → deduped by `player_name::prop_type` keeping highest L10 hit rate, plus same-player guard in parlay assembly
+2. **L3 Contradiction**: Players like Desmond Bane recommended UNDER despite L3 avg being 10%+ above line → added L3 contradiction filter in `bot-matchup-defense-scanner` that skips players whose L3 strongly contradicts the recommended side
+3. **Individual Leg Visibility**: Added `/legresults` Telegram command showing per-leg wins/losses with actual values for any date
