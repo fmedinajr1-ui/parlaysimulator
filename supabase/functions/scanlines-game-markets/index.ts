@@ -335,6 +335,10 @@ Deno.serve(async (req) => {
         drift_direction: s.drift_direction,
         whale_convergence: s.whale_convergence,
         commence_time: s.commence_time,
+        home_odds: s.home_odds ? Math.round(s.home_odds) : null,
+        away_odds: s.away_odds ? Math.round(s.away_odds) : null,
+        over_odds: s.over_odds ? Math.round(s.over_odds) : null,
+        under_odds: s.under_odds ? Math.round(s.under_odds) : null,
         ...(s.kenpom_context || {}),
       },
     }));
