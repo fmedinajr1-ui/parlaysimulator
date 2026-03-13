@@ -314,6 +314,71 @@ serve(async (req) => {
     }
     console.log(`[MatchupScanner] Loaded ${sweetSpots?.length || 0} active sweet spots, indexed by prop_type (${sweetSpotsByPropType.size} unique prop types: ${[...sweetSpotsByPropType.keys()].join(', ')})`);
 
+    // === L3 CACHE: Batch-fetch last 3 games for all players on today's teams ===
+    // This fills in L3 data for bench players missing l3_avg in category_sweet_spots
+    const todayTeams = new Set<string>();
+    for (const game of games) {
+      todayTeams.add(resolveTeamAbbrev(game.home_team || ''));
+      todayTeams.add(resolveTeamAbbrev(game.away_team || ''));
+    }
+    // Find all player names on today's teams
+    const playersOnTodayTeams: string[] = [];
+    for (const [name, team] of playerTeamMap) {
+      if (todayTeams.has(team)) playersOnTodayTeams.push(name);
+    }
+
+    // Fetch last 3 game logs per player (ordered by date desc, limit 3 per player via overfetch)
+    const l3Cache = new Map<string, Record<string, number>>();
+    if (playersOnTodayTeams.length > 0) {
+      // Batch in chunks of 100 players
+      const CHUNK = 100;
+      for (let i = 0; i < playersOnTodayTeams.length; i += CHUNK) {
+        const chunk = playersOnTodayTeams.slice(i, i + CHUNK);
+        const { data: gameLogs } = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, points, assists, rebounds, threes_made, blocks, min, game_date')
+          .in('player_name', chunk)
+          .order('game_date', { ascending: false })
+          .limit(chunk.length * 3);
+
+        if (gameLogs) {
+          const countMap = new Map<string, number>();
+          for (const log of gameLogs) {
+            const name = log.player_name;
+            const count = countMap.get(name) || 0;
+            if (count >= 3) continue; // only take 3 most recent
+            countMap.set(name, count + 1);
+
+            if (!l3Cache.has(name)) {
+              l3Cache.set(name, { points: 0, assists: 0, rebounds: 0, threes: 0, blocks: 0, _games: 0 });
+            }
+            const entry = l3Cache.get(name)!;
+            entry.points += (log.points ?? 0);
+            entry.assists += (log.assists ?? 0);
+            entry.rebounds += (log.rebounds ?? 0);
+            entry.threes += (log.threes_made ?? 0);
+            entry.blocks += (log.blocks ?? 0);
+            entry._games += 1;
+          }
+          // Convert sums to averages
+          for (const [name, entry] of l3Cache) {
+            if (entry._games > 0) {
+              entry.points = Math.round((entry.points / entry._games) * 10) / 10;
+              entry.assists = Math.round((entry.assists / entry._games) * 10) / 10;
+              entry.rebounds = Math.round((entry.rebounds / entry._games) * 10) / 10;
+              entry.threes = Math.round((entry.threes / entry._games) * 10) / 10;
+              entry.blocks = Math.round((entry.blocks / entry._games) * 10) / 10;
+            }
+          }
+        }
+      }
+    }
+    console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players from nba_player_game_logs`);
+
+    // Map stat keys to game log field names for L3 cache lookup
+    const STAT_TO_LOG_FIELD: Record<string, string> = {
+      points: 'points', threes: 'threes', rebounds: 'rebounds', assists: 'assists', blocks: 'blocks',
+    };
     // Helper: find player targets for a team + stat category
     function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
       const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
