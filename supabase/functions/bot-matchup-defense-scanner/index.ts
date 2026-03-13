@@ -154,21 +154,39 @@ function buildRiskTags(
     else if (ratio > 1.15) trend = 'hot';
     else trend = 'steady';
 
-    // Severe decline/surge warnings
-    if (ratio < 0.80) tags.push('L3_DECLINE');
-    if (ratio > 1.20 && side === 'under') tags.push('L3_SURGE');
+    // Check confirmation first to allow mutual exclusion
+    let confirmed = false;
+    if (side === 'over' && l3Avg > line && ratio >= 0.90) {
+      confirmed = true;
+    } else if (side === 'under' && l3Avg < line && ratio <= 1.10) {
+      confirmed = true;
+    }
+
+    // Severe decline/surge warnings — suppress if trend HELPS the side (confirmed)
+    const declineFires = ratio < 0.80;
+    const surgeFires = ratio > 1.20;
+
+    if (declineFires && !(confirmed && side === 'under')) {
+      tags.push('L3_DECLINE');
+    }
+    if (surgeFires && side === 'under' && !confirmed) {
+      tags.push('L3_SURGE');
+    }
+    if (surgeFires && side === 'over' && confirmed) {
+      // surge on an over is good — suppress, confirmation covers it
+    } else if (surgeFires && side === 'over' && !confirmed) {
+      // surge on over but not confirmed (l3 still below line?) — no tag needed
+    }
 
     // L3 vs line directional signal
     if (side === 'over' && l3Avg < line) {
-      tags.push(`L3_BELOW_LINE`);
+      tags.push('L3_BELOW_LINE');
     } else if (side === 'under' && l3Avg > line) {
-      tags.push(`L3_ABOVE_LINE`);
+      tags.push('L3_ABOVE_LINE');
     }
 
-    // Confirmation signal
-    if (side === 'over' && l3Avg > line && ratio >= 0.90) {
-      tags.push('L3_CONFIRMED');
-    } else if (side === 'under' && l3Avg < line && ratio <= 1.10) {
+    // Confirmation tag
+    if (confirmed) {
       tags.push('L3_CONFIRMED');
     }
   }
