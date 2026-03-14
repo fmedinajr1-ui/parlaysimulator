@@ -202,9 +202,12 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           paceMult,
           l10Avg: s.l10Stats?.avg,
           gameProgress: s.liveData?.gameProgress ?? 50,
+          // Quarter + H2H data from edge function
+          quarterAvgs: quarterProfiles?.players?.[s.playerName]?.quarterAvgs?.[s.propType],
+          h2hVsOpponent: quarterProfiles?.players?.[s.playerName]?.h2h?.[s.propType],
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles]);
 
   // Run MC simulations when mode is ON
   useEffect(() => {
