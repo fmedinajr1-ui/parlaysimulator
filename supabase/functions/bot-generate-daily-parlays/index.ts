@@ -10076,7 +10076,7 @@ Deno.serve(async (req) => {
     // ============= ENVIRONMENT-CLUSTERED PARLAY ASSEMBLY =============
     // Pre-cluster picks by game environment and build parlays within each cluster FIRST
     const clusterParlays: any[] = [];
-    if (tiersToGenerate.includes('execution')) {
+    if (tiersToGenerate.includes('execution') && !isLightSlateMode) {
       const allPicks = [...pool.playerPicks];
       const shootoutPicks = allPicks.filter(p => {
         const ctx = (p as any)._gameContext as PickGameContext | undefined;
