@@ -229,8 +229,18 @@ Deno.serve(async (req) => {
     for (const [key, stats] of categoryMap) {
       const existing = existingMap.get(key);
       const currentStreak = existing?.current_streak ?? 0;
-      const newWeight = calculateWeight(stats.hit_rate, stats.total_picks, currentStreak);
-      const blockStatus = shouldBlock(stats.hit_rate, stats.total_picks, currentStreak);
+      let newWeight = calculateWeight(stats.hit_rate, stats.total_picks, currentStreak);
+      let blockStatus = shouldBlock(stats.hit_rate, stats.total_picks, currentStreak);
+
+      // Apply force-block overrides
+      if (FORCE_BLOCKED.has(key)) {
+        blockStatus = { blocked: true, reason: 'Force-blocked: historically unprofitable' };
+      }
+
+      // Apply force-boost overrides (only if not blocked)
+      if (!blockStatus.blocked && FORCE_BOOST[key] !== undefined) {
+        newWeight = FORCE_BOOST[key];
+      }
 
       if (blockStatus.blocked) blocked++;
 
@@ -294,6 +304,46 @@ Deno.serve(async (req) => {
           created++;
         }
       }
+    }
+
+    // Sweep pass: force-block any DB categories with poor stats not in current categoryMap
+    let sweepBlocked = 0;
+    const { data: allWeights, error: allWeightsError } = await supabase
+      .from('bot_category_weights')
+      .select('id, category, side, current_hit_rate, total_picks, current_streak, is_blocked')
+      .eq('is_blocked', false);
+
+    if (!allWeightsError && allWeights) {
+      for (const w of allWeights) {
+        const sweepKey = `${w.category}__${w.side}`;
+        const shouldSweepBlock =
+          (w.total_picks >= BLOCK_MIN_SAMPLES && (w.current_hit_rate ?? 100) < 45) ||
+          (w.current_streak !== null && w.current_streak <= STREAK_BLOCK_THRESHOLD) ||
+          FORCE_BLOCKED.has(sweepKey);
+
+        if (shouldSweepBlock) {
+          let reason = 'Sweep-blocked: ';
+          if (FORCE_BLOCKED.has(sweepKey)) {
+            reason += 'force-blocked category';
+          } else if (w.current_streak !== null && w.current_streak <= STREAK_BLOCK_THRESHOLD) {
+            reason += `streak ${w.current_streak} <= ${STREAK_BLOCK_THRESHOLD}`;
+          } else {
+            reason += `hit rate ${(w.current_hit_rate ?? 0).toFixed(1)}% < 45% with ${w.total_picks} picks`;
+          }
+
+          const { error: sweepError } = await supabase
+            .from('bot_category_weights')
+            .update({ weight: 0, is_blocked: true, block_reason: reason, updated_at: new Date().toISOString() })
+            .eq('id', w.id);
+
+          if (!sweepError) sweepBlocked++;
+        }
+      }
+    }
+
+    if (sweepBlocked > 0) {
+      console.log(`[Calibrate] Sweep pass blocked ${sweepBlocked} additional categories`);
+      blocked += sweepBlocked;
     }
 
     // 4. Log the calibration run
