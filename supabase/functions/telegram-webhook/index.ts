@@ -1932,8 +1932,14 @@ async function handleScanLines(chatId: string) {
     .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
     .eq('analysis_date', today)
     .not('prop_type', 'in', '("game_total","game_moneyline")')
-    .order('edge_pct', { ascending: true })
-    .limit(15);
+    .order('edge_pct', { ascending: false })
+    .limit(30);
+
+  // Sort by absolute edge and take top 15 for a mix of OVER and UNDER
+  if (lines && lines.length > 0) {
+    lines.sort((a, b) => Math.abs(b.edge_pct || 0) - Math.abs(a.edge_pct || 0));
+    lines.splice(15);
+  }
 
   // Fetch FanDuel odds for player props
   let fdOddsMap = new Map<string, { over_price: number | null; under_price: number | null }>();
@@ -2006,7 +2012,15 @@ async function handleScanLines(chatId: string) {
         const lastLine = trail[trail.length - 1].line;
         const moved = lastLine - firstLine;
         const moveIcon = moved < 0 ? '📉' : moved > 0 ? '📈' : '➡️';
-        msg += `   ${moveIcon} _${trailStr}_\n`;
+        // Append current FanDuel odds to trail
+        const fdTrail = fdOddsMap.get(`${l.player_name}|${l.prop_type}`);
+        let trailOdds = '';
+        if (fdTrail) {
+          const oP = fdTrail.over_price ? (fdTrail.over_price > 0 ? `+${fdTrail.over_price}` : `${fdTrail.over_price}`) : '?';
+          const uP = fdTrail.under_price ? (fdTrail.under_price > 0 ? `+${fdTrail.under_price}` : `${fdTrail.under_price}`) : '?';
+          trailOdds = ` (O:${oP}/U:${uP})`;
+        }
+        msg += `   ${moveIcon} _${trailStr}${trailOdds}_\n`;
       }
 
       const vKey = `${l.player_name}|${l.prop_type}`;
