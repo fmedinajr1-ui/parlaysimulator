@@ -204,7 +204,13 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           l10Avg: s.l10Stats?.avg,
           gameProgress: s.liveData?.gameProgress ?? 50,
           // Quarter + H2H + Q1 FanDuel data from edge function
-          quarterAvgs: quarterProfiles?.players?.[s.playerName]?.quarterAvgs?.[s.propType],
+          quarterAvgs: quarterProfiles?.players?.[s.playerName]?.quarterAvgs?.[s.propType]
+            ?? (s.l10Stats?.avg ? {
+              q1: Math.round(s.l10Stats.avg * 0.25 * 10) / 10,
+              q2: Math.round(s.l10Stats.avg * 0.26 * 10) / 10,
+              q3: Math.round(s.l10Stats.avg * 0.26 * 10) / 10,
+              q4: Math.round(s.l10Stats.avg * 0.23 * 10) / 10,
+            } : undefined),
           h2hVsOpponent: quarterProfiles?.players?.[s.playerName]?.h2h?.[s.propType],
           q1FanDuelLine: quarterProfiles?.players?.[s.playerName]?.q1Lines?.[s.propType],
         };
