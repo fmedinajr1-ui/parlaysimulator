@@ -30,6 +30,7 @@ interface QuarterProfileData {
   players: Record<string, {
     quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }>;
     h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }>;
+    q1Lines?: Record<string, { line: number; overPrice: number; underPrice: number }>;
   }>;
 }
 
