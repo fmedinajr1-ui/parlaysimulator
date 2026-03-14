@@ -33,16 +33,6 @@ interface QuarterProfileData {
   }>;
 }
 
-import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
-import { CustomerAIWhisper } from '../CustomerAIWhisper';
-import { WarRoomPropCard, type WarRoomPropData } from './WarRoomPropCard';
-import { HedgeModeTable } from './HedgeModeTable';
-import { HedgeStatusAccuracyCard } from '@/components/sweetspots/HedgeStatusAccuracyCard';
-import { HedgeSlideIn, type HedgeOpportunity } from './HedgeSlideIn';
-import { AdvancedMetricsPanel } from './AdvancedMetricsPanel';
-import { WarRoomGameStrip, type PropsGame } from './WarRoomGameStrip';
-import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
-import type { ScoutGameContext } from '@/pages/Scout';
 
 interface WarRoomLayoutProps {
   gameContext: ScoutGameContext;
