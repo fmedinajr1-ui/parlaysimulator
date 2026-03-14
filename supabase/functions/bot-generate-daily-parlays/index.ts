@@ -7956,14 +7956,15 @@ async function generateTierParlays(
       const l10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
       const effectiveHitRateForStorage = ('player_name' in pick && l10Pct > 0) ? l10Pct : hitRatePercent;
       
-      // === EXECUTION TIER 80% L10 HIT RATE GATE ===
-      // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
+      // === EXECUTION TIER L10 HIT RATE GATE ===
+      // Execution tier requires L10 hit rate >= 80% for player props (85% on light slates)
       // EXEMPT: floor_lock and ceiling_shot strategies have their own dedicated gates
       const isFloorCeilingStrategy = isFloorLockProfile || isCeilingShotProfile;
       if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
-        if (l10HrPct < 80) {
+        const execL10Gate = isLightSlateMode ? 85 : 80;
+        if (l10HrPct < execL10Gate) {
           continue;
         }
       }
