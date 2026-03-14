@@ -9922,7 +9922,35 @@ Deno.serve(async (req) => {
     const isVolumeMode = (playerPropCount || 0) > 0 && (playerPropCount || 0) < 30;
     const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
     if (isLightSlateMode) {
-      console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports. Lowering ML Sniper floor to 55, relaxing constraints.`);
+      console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports.`);
+
+      // === LIGHT-SLATE VOLUME THROTTLE ===
+      // On thin game days, REDUCE volume and stakes instead of relaxing quality gates.
+      // This prevents high-volume Execution-tier losses on Wednesdays and other light days.
+      const origExecCount = TIER_CONFIG.execution.count;
+      const origExecStake = TIER_CONFIG.execution.stake;
+      const origValCount = TIER_CONFIG.validation.count;
+      const origValStake = TIER_CONFIG.validation.stake;
+
+      TIER_CONFIG.execution.count = Math.min(TIER_CONFIG.execution.count, 15);
+      TIER_CONFIG.execution.stake = Math.round(TIER_CONFIG.execution.stake * 0.5);
+      TIER_CONFIG.validation.count = Math.min(TIER_CONFIG.validation.count, 10);
+      TIER_CONFIG.validation.stake = Math.round(TIER_CONFIG.validation.stake * 0.5);
+
+      // Filter execution profiles to high-conviction strategies only
+      const HIGH_CONVICTION_STRATEGIES = new Set([
+        'double_confirmed_conviction', 'triple_confirmed_conviction',
+        'multi_engine_consensus', 'optimal_combo', 'floor_lock',
+        'cross_sport_4', 'god_mode_lock', 'sweet_spot_core',
+        'mixed_conviction_stack', 'cash_lock', 'golden_lock',
+        'hot_streak_lock', 'ncaab_unders_only',
+      ]);
+      const origExecProfiles = TIER_CONFIG.execution.profiles.length;
+      TIER_CONFIG.execution.profiles = TIER_CONFIG.execution.profiles.filter(
+        p => HIGH_CONVICTION_STRATEGIES.has(p.strategy)
+      );
+
+      console.log(`[Bot v2] 🚦 LIGHT-SLATE THROTTLE: exec ${origExecCount}→${TIER_CONFIG.execution.count} parlays (stake $${origExecStake}→$${TIER_CONFIG.execution.stake}), val ${origValCount}→${TIER_CONFIG.validation.count} (stake $${origValStake}→$${TIER_CONFIG.validation.stake}), exec profiles ${origExecProfiles}→${TIER_CONFIG.execution.profiles.length}`);
     }
     if (isVolumeMode) {
       console.log(`[Bot v2] 📈 VOLUME MODE: Only ${playerPropCount} player props — relaxing usage caps for more parlays.`);
