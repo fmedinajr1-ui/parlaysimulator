@@ -132,6 +132,7 @@ export function getHedgeActionLabel(params: {
   riskFlags?: string[];
   liveBookLine?: number;
   lineMovement?: number;
+  q1FanDuelLine?: { line: number };
 }): HedgeActionLabel {
   const {
     currentValue,
