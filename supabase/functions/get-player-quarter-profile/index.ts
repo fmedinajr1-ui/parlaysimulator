@@ -12,6 +12,12 @@ const TIER_DISTRIBUTIONS: Record<string, { q1: number; q2: number; q3: number; q
   role_player: { q1: 0.26, q2: 0.26, q3: 0.24, q4: 0.24 },
 };
 
+const Q1_PROP_MAP: Record<string, string> = {
+  player_points_q1: 'points',
+  player_rebounds_q1: 'rebounds',
+  player_assists_q1: 'assists',
+};
+
 function getPlayerTier(avgMinutes: number): string {
   if (avgMinutes >= 32) return 'star';
   if (avgMinutes >= 24) return 'starter';
@@ -46,8 +52,8 @@ Deno.serve(async (req) => {
       blocks: 'blocks', rebounds: 'rebounds',
     };
 
-    // Fetch L10 game logs + matchup history in parallel
-    const [logsResult, matchupResult, baselinesResult] = await Promise.all([
+    // Fetch L10 game logs + matchup history + baselines + Q1 FanDuel lines in parallel
+    const [logsResult, matchupResult, baselinesResult, q1LinesResult] = await Promise.all([
       supabase
         .from('nba_player_game_logs')
         .select('player_name, points, assists, threes_made, blocks, rebounds, minutes_played, game_date')
@@ -67,6 +73,14 @@ Deno.serve(async (req) => {
         .from('player_quarter_baselines')
         .select('player_name, prop_type, q1_avg, q2_avg, q3_avg, q4_avg, q1_pct, q2_pct, q3_pct, q4_pct, player_tier')
         .in('player_name', playerNames),
+
+      // Fetch Q1 FanDuel lines from unified_props
+      supabase
+        .from('unified_props')
+        .select('player_name, prop_type, current_line, over_price, under_price')
+        .in('prop_type', ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1'])
+        .eq('bookmaker', 'fanduel')
+        .gte('scraped_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()),
     ]);
 
     if (logsResult.error) {
@@ -76,6 +90,7 @@ Deno.serve(async (req) => {
     const gameLogs = logsResult.data || [];
     const matchups = matchupResult.data || [];
     const baselines = baselinesResult.data || [];
+    const q1Lines = q1LinesResult.data || [];
 
     // Group logs by player (max 10 per player)
     const logsByPlayer = new Map<string, typeof gameLogs>();
@@ -85,37 +100,50 @@ Deno.serve(async (req) => {
       logsByPlayer.set(log.player_name, arr);
     }
 
-    // Build baseline lookup: playerName_propType -> baseline row
+    // Build baseline lookup
     const baselineMap = new Map<string, any>();
     for (const b of baselines) {
       baselineMap.set(`${b.player_name}_${b.prop_type}`, b);
     }
 
-    // Build matchup lookup: playerName_propType -> matchup row
+    // Build matchup lookup
     const matchupMap = new Map<string, any>();
     for (const m of matchups) {
       matchupMap.set(`${m.player_name}_${m.prop_type}`, m);
+    }
+
+    // Build Q1 lines lookup: playerName_propType -> { line, overPrice, underPrice }
+    const q1LineMap = new Map<string, { line: number; overPrice: number; underPrice: number }>();
+    for (const row of q1Lines) {
+      const mappedProp = Q1_PROP_MAP[row.prop_type];
+      if (mappedProp) {
+        q1LineMap.set(`${row.player_name}_${mappedProp}`, {
+          line: row.current_line,
+          overPrice: row.over_price ?? -110,
+          underPrice: row.under_price ?? -110,
+        });
+      }
     }
 
     // Build response per player
     const players: Record<string, {
       quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }>;
       h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }>;
+      q1Lines: Record<string, { line: number; overPrice: number; underPrice: number }>;
     }> = {};
 
     for (const playerName of playerNames) {
       const logs = logsByPlayer.get(playerName) || [];
       const quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }> = {};
       const h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }> = {};
+      const playerQ1Lines: Record<string, { line: number; overPrice: number; underPrice: number }> = {};
 
       if (logs.length >= 3) {
         const avgMinutes = logs.reduce((s, l) => s + (l.minutes_played || 0), 0) / logs.length;
         const tier = getPlayerTier(avgMinutes);
         const dist = TIER_DISTRIBUTIONS[tier];
 
-        // Calculate quarter avgs for each prop type
         for (const [propType, field] of Object.entries(PROP_MAP)) {
-          // Check if we have pre-calculated baselines first
           const baseline = baselineMap.get(`${playerName}_${propType}`);
           if (baseline && baseline.q1_avg > 0) {
             quarterAvgs[propType] = {
@@ -125,7 +153,6 @@ Deno.serve(async (req) => {
               q4: Math.round(baseline.q4_avg * 10) / 10,
             };
           } else {
-            // Estimate from L10 game logs + tier distribution
             const gameAvg = logs.reduce((s, l) => s + ((l as any)[field] || 0), 0) / logs.length;
             if (gameAvg > 0) {
               quarterAvgs[propType] = {
@@ -153,7 +180,15 @@ Deno.serve(async (req) => {
         }
       }
 
-      players[playerName] = { quarterAvgs, h2h };
+      // Add Q1 FanDuel lines
+      for (const propType of ['points', 'rebounds', 'assists']) {
+        const q1 = q1LineMap.get(`${playerName}_${propType}`);
+        if (q1) {
+          playerQ1Lines[propType] = q1;
+        }
+      }
+
+      players[playerName] = { quarterAvgs, h2h, q1Lines: playerQ1Lines };
     }
 
     return new Response(JSON.stringify({ players }), {

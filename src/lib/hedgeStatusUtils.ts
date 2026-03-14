@@ -166,6 +166,18 @@ export function getHedgeActionLabel(params: {
   if (hasBlowout && gameProgress > 60) return 'HEDGE NOW';
   if (hasBlowout && hasFoulTrouble) return 'HEDGE NOW';
 
+  // Q1-aware early signal
+  if (gameProgress < 25 && q1FanDuelLine) {
+    const q1Line = q1FanDuelLine.line;
+    if (isOver) {
+      if (currentValue >= q1Line) return 'HOLD';
+      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'HEDGE ALERT';
+    } else {
+      if (currentValue >= q1Line) return 'HEDGE ALERT';
+      if (currentValue < q1Line * 0.5) return 'HOLD';
+    }
+  }
+
   // Pace override for OVER bets
   const buffer = isOver ? projectedFinal - line : line - projectedFinal;
   const hasSignificantBuffer = buffer >= 2;

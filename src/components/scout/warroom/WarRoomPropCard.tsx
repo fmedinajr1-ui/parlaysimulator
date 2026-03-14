@@ -286,7 +286,7 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
       </div>
 
       {/* Quarter Breakdown */}
-      {quarterAvgs && <QuarterBreakdown quarters={quarterAvgs} line={line} />}
+      {quarterAvgs && <QuarterBreakdown quarters={quarterAvgs} line={line} q1Line={q1FanDuelLine} />}
 
       {/* H2H Matchup */}
       {h2hVsOpponent && h2hVsOpponent.gamesPlayed > 0 && (
