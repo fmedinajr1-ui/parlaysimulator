@@ -152,3 +152,23 @@ Stores timestamped FanDuel lines for drift tracking with `drift_amount`, `drift_
 | NBA | ✅ | ✅ | Composite | ✅ | ✅ |
 | NHL | ✅ | ✅ | — | ✅ | ✅ |
 | MLB | ✅ | ✅ | — | ✅ | ✅ |
+
+# Light-Slate Volume Throttle — IMPLEMENTED ✅ (March 14, 2026)
+
+## Problem
+On light game days (Wednesdays, Tuesdays), the bot generated the same high volume of Execution-tier parlays ($250+ stakes) despite fewer games. `grind_stack` and `shootout_stack` went 0-14 on recent Wednesdays. The system previously *relaxed* constraints on light slates (opposite of correct behavior).
+
+## Solution
+Added a light-slate throttle in `bot-generate-daily-parlays/index.ts` that **reduces** volume and stakes when `isLightSlateMode` is true.
+
+### Changes
+| Setting | Normal Slate | Light Slate |
+|---|---|---|
+| Execution max parlays | 50 | 15 |
+| Execution stake | 100% | 50% |
+| Validation max parlays | 50 | 10 |
+| Validation stake | 100% | 50% |
+| Cluster stacks (shootout/grind) | Enabled | **Disabled** |
+| Monster parlays | Enabled | **Disabled** |
+| Execution profiles | All (~90) | High-conviction only (~50) |
+| Execution L10 hit rate gate | 80% | **85%** |
