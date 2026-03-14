@@ -423,7 +423,8 @@ export function useDeepSweetSpots() {
       // Fetch live lines from unified_props
       const { data: propsData, error: propsError } = await supabase
         .from('unified_props')
-        .select('id, player_name, prop_type, current_line, over_price, under_price, game_description, commence_time')
+        .select('id, player_name, prop_type, current_line, over_price, under_price, game_description, commence_time, bookmaker')
+        .eq('bookmaker', 'fanduel')
         .gte('commence_time', todayStart.toISOString())
         .lt('commence_time', tomorrowStart.toISOString())
         .not('current_line', 'is', null);
