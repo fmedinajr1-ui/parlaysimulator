@@ -13,6 +13,25 @@ import { useMonteCarloWorker } from '@/hooks/useMonteCarloWorker';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useMinutesStability } from '@/hooks/useMinutesStability';
+import type { QuarterAvgs, H2HMatchup } from './WarRoomPropCard';
+
+import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
+import { CustomerAIWhisper } from '../CustomerAIWhisper';
+import { WarRoomPropCard, type WarRoomPropData } from './WarRoomPropCard';
+import { HedgeModeTable } from './HedgeModeTable';
+import { HedgeStatusAccuracyCard } from '@/components/sweetspots/HedgeStatusAccuracyCard';
+import { HedgeSlideIn, type HedgeOpportunity } from './HedgeSlideIn';
+import { AdvancedMetricsPanel } from './AdvancedMetricsPanel';
+import { WarRoomGameStrip, type PropsGame } from './WarRoomGameStrip';
+import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
+import type { ScoutGameContext } from '@/pages/Scout';
+
+interface QuarterProfileData {
+  players: Record<string, {
+    quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }>;
+    h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }>;
+  }>;
+}
 
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
