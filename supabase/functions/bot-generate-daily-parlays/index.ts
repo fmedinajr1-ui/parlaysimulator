@@ -7956,14 +7956,15 @@ async function generateTierParlays(
       const l10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
       const effectiveHitRateForStorage = ('player_name' in pick && l10Pct > 0) ? l10Pct : hitRatePercent;
       
-      // === EXECUTION TIER 80% L10 HIT RATE GATE ===
-      // Execution tier requires L10 hit rate >= 80% for player props (the strongest reliability filter)
+      // === EXECUTION TIER L10 HIT RATE GATE ===
+      // Execution tier requires L10 hit rate >= 80% for player props (85% on light slates)
       // EXEMPT: floor_lock and ceiling_shot strategies have their own dedicated gates
       const isFloorCeilingStrategy = isFloorLockProfile || isCeilingShotProfile;
       if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
-        if (l10HrPct < 80) {
+        const execL10Gate = isLightSlateMode ? 85 : 80;
+        if (l10HrPct < execL10Gate) {
           continue;
         }
       }
@@ -9922,7 +9923,35 @@ Deno.serve(async (req) => {
     const isVolumeMode = (playerPropCount || 0) > 0 && (playerPropCount || 0) < 30;
     const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
     if (isLightSlateMode) {
-      console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports. Lowering ML Sniper floor to 55, relaxing constraints.`);
+      console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports.`);
+
+      // === LIGHT-SLATE VOLUME THROTTLE ===
+      // On thin game days, REDUCE volume and stakes instead of relaxing quality gates.
+      // This prevents high-volume Execution-tier losses on Wednesdays and other light days.
+      const origExecCount = TIER_CONFIG.execution.count;
+      const origExecStake = TIER_CONFIG.execution.stake;
+      const origValCount = TIER_CONFIG.validation.count;
+      const origValStake = TIER_CONFIG.validation.stake;
+
+      TIER_CONFIG.execution.count = Math.min(TIER_CONFIG.execution.count, 15);
+      TIER_CONFIG.execution.stake = Math.round(TIER_CONFIG.execution.stake * 0.5);
+      TIER_CONFIG.validation.count = Math.min(TIER_CONFIG.validation.count, 10);
+      TIER_CONFIG.validation.stake = Math.round(TIER_CONFIG.validation.stake * 0.5);
+
+      // Filter execution profiles to high-conviction strategies only
+      const HIGH_CONVICTION_STRATEGIES = new Set([
+        'double_confirmed_conviction', 'triple_confirmed_conviction',
+        'multi_engine_consensus', 'optimal_combo', 'floor_lock',
+        'cross_sport_4', 'god_mode_lock', 'sweet_spot_core',
+        'mixed_conviction_stack', 'cash_lock', 'golden_lock',
+        'hot_streak_lock', 'ncaab_unders_only',
+      ]);
+      const origExecProfiles = TIER_CONFIG.execution.profiles.length;
+      TIER_CONFIG.execution.profiles = TIER_CONFIG.execution.profiles.filter(
+        p => HIGH_CONVICTION_STRATEGIES.has(p.strategy)
+      );
+
+      console.log(`[Bot v2] 🚦 LIGHT-SLATE THROTTLE: exec ${origExecCount}→${TIER_CONFIG.execution.count} parlays (stake $${origExecStake}→$${TIER_CONFIG.execution.stake}), val ${origValCount}→${TIER_CONFIG.validation.count} (stake $${origValStake}→$${TIER_CONFIG.validation.stake}), exec profiles ${origExecProfiles}→${TIER_CONFIG.execution.profiles.length}`);
     }
     if (isVolumeMode) {
       console.log(`[Bot v2] 📈 VOLUME MODE: Only ${playerPropCount} player props — relaxing usage caps for more parlays.`);
@@ -10048,7 +10077,7 @@ Deno.serve(async (req) => {
     // ============= ENVIRONMENT-CLUSTERED PARLAY ASSEMBLY =============
     // Pre-cluster picks by game environment and build parlays within each cluster FIRST
     const clusterParlays: any[] = [];
-    if (tiersToGenerate.includes('execution')) {
+    if (tiersToGenerate.includes('execution') && !isLightSlateMode) {
       const allPicks = [...pool.playerPicks];
       const shootoutPicks = allPicks.filter(p => {
         const ctx = (p as any)._gameContext as PickGameContext | undefined;
@@ -10184,11 +10213,15 @@ Deno.serve(async (req) => {
       allParlays = [...allParlays, ...result.parlays];
     }
 
-    // === MONSTER PARLAY (big-slate only) ===
-    const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll, stakeConfig ? { exploration_stake: stakeConfig.exploration_stake } : undefined);
-    if (monsterParlays.length > 0) {
-      allParlays.push(...monsterParlays);
-      console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
+    // === MONSTER PARLAY (big-slate only — disabled on light slates) ===
+    if (!isLightSlateMode) {
+      const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll, stakeConfig ? { exploration_stake: stakeConfig.exploration_stake } : undefined);
+      if (monsterParlays.length > 0) {
+        allParlays.push(...monsterParlays);
+        console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
+      }
+    } else {
+      console.log(`[Bot v2] 🚦 Monster parlays SKIPPED (light-slate mode)`);
     }
 
     // === MULTI-LEG ROLE-STACKED TICKET BUILDER (5-leg and 8-leg) ===
