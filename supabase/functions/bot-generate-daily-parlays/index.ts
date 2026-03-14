@@ -10212,11 +10212,15 @@ Deno.serve(async (req) => {
       allParlays = [...allParlays, ...result.parlays];
     }
 
-    // === MONSTER PARLAY (big-slate only) ===
-    const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll, stakeConfig ? { exploration_stake: stakeConfig.exploration_stake } : undefined);
-    if (monsterParlays.length > 0) {
-      allParlays.push(...monsterParlays);
-      console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
+    // === MONSTER PARLAY (big-slate only — disabled on light slates) ===
+    if (!isLightSlateMode) {
+      const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll, stakeConfig ? { exploration_stake: stakeConfig.exploration_stake } : undefined);
+      if (monsterParlays.length > 0) {
+        allParlays.push(...monsterParlays);
+        console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
+      }
+    } else {
+      console.log(`[Bot v2] 🚦 Monster parlays SKIPPED (light-slate mode)`);
     }
 
     // === MULTI-LEG ROLE-STACKED TICKET BUILDER (5-leg and 8-leg) ===
