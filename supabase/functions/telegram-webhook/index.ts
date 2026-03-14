@@ -2012,7 +2012,15 @@ async function handleScanLines(chatId: string) {
         const lastLine = trail[trail.length - 1].line;
         const moved = lastLine - firstLine;
         const moveIcon = moved < 0 ? '📉' : moved > 0 ? '📈' : '➡️';
-        msg += `   ${moveIcon} _${trailStr}_\n`;
+        // Append current FanDuel odds to trail
+        const fdTrail = fdOddsMap.get(`${l.player_name}|${l.prop_type}`);
+        let trailOdds = '';
+        if (fdTrail) {
+          const oP = fdTrail.over_price ? (fdTrail.over_price > 0 ? `+${fdTrail.over_price}` : `${fdTrail.over_price}`) : '?';
+          const uP = fdTrail.under_price ? (fdTrail.under_price > 0 ? `+${fdTrail.under_price}` : `${fdTrail.under_price}`) : '?';
+          trailOdds = ` (O:${oP}/U:${uP})`;
+        }
+        msg += `   ${moveIcon} _${trailStr}${trailOdds}_\n`;
       }
 
       const vKey = `${l.player_name}|${l.prop_type}`;
