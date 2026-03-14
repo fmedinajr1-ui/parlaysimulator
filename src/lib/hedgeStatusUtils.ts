@@ -145,6 +145,7 @@ export function getHedgeActionLabel(params: {
     riskFlags = [],
     liveBookLine,
     lineMovement,
+    q1FanDuelLine,
   } = params;
 
   const isOver = side.toUpperCase() !== 'UNDER';
