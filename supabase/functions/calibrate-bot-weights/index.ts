@@ -34,15 +34,29 @@ const LARGE_SAMPLE_BONUS = 0.10;
 const MEDIUM_SAMPLE_BONUS = 0.05;
 
 // Blocking thresholds
-const BLOCK_HIT_RATE_THRESHOLD = 0.40; // Block if hit rate < 40%
+const BLOCK_HIT_RATE_THRESHOLD = 0.45; // Block if hit rate < 45%
 const BLOCK_MIN_SAMPLES = 10; // Need at least 10 samples to block
 
 // Streak penalty constants
 const STREAK_MILD_THRESHOLD = -3;
 const STREAK_SEVERE_THRESHOLD = -8;
-const STREAK_BLOCK_THRESHOLD = -15;
+const STREAK_BLOCK_THRESHOLD = -5; // Tightened: block after 5 consecutive misses
 const STREAK_MILD_PENALTY_PER = 0.02;
 const STREAK_SEVERE_PENALTY_PER = 0.03;
+
+// Hard overrides — categories that must be blocked regardless of calculated stats
+const FORCE_BLOCKED: Set<string> = new Set([
+  'ML_FAVORITE__home',
+  'ML_FAVORITE__away',
+]);
+
+// Categories with proven high hit rates — boost weight to 1.40-1.50
+const FORCE_BOOST: Record<string, number> = {
+  'THREE_POINT_SHOOTER__over': 1.45,
+  'LOW_SCORER_UNDER__under': 1.45,
+  'HIGH_ASSIST__under': 1.20,  // Capped — actual hit rate is only 47%
+  'LOW_LINE_REBOUNDER__under': 1.45,
+};
 
 interface CategoryStats {
   category: string;
