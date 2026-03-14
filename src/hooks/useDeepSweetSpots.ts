@@ -567,13 +567,13 @@ export function useDeepSweetSpots() {
         const edge = calculateEdge(l10Stats.avg, line, optimalSide);
         const hitRateL10 = l10Stats.gamesPlayed > 0 ? l10Stats.hitCount / l10Stats.gamesPlayed : 0;
         
-        // NEW: Skip high variance OVER picks (CV > 0.4 = too inconsistent)
-        if (optimalSide === 'over' && coeffOfVariation > 0.4) {
+        // Skip high variance OVER picks (CV > 0.55 = too inconsistent)
+        if (optimalSide === 'over' && coeffOfVariation > 0.55) {
           continue; // Too risky - player is inconsistent
         }
         
-        // NEW: Require minimum edge for OVERs (L10 avg must exceed line by 10%)
-        if (optimalSide === 'over' && edge < line * 0.10) {
+        // Require minimum edge for OVERs (L10 avg must exceed line by 5%)
+        if (optimalSide === 'over' && edge < line * 0.05) {
           continue; // Edge too small - books have priced this in
         }
         

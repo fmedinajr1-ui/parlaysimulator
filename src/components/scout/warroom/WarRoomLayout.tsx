@@ -13,6 +13,7 @@ import { useMonteCarloWorker } from '@/hooks/useMonteCarloWorker';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useMinutesStability } from '@/hooks/useMinutesStability';
+import type { QuarterAvgs, H2HMatchup } from './WarRoomPropCard';
 
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
@@ -24,6 +25,14 @@ import { AdvancedMetricsPanel } from './AdvancedMetricsPanel';
 import { WarRoomGameStrip, type PropsGame } from './WarRoomGameStrip';
 import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
 import type { ScoutGameContext } from '@/pages/Scout';
+
+interface QuarterProfileData {
+  players: Record<string, {
+    quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }>;
+    h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }>;
+  }>;
+}
+
 
 interface WarRoomLayoutProps {
   gameContext: ScoutGameContext;
@@ -44,6 +53,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const [viewMode, setViewMode] = useState<ViewMode>('game');
   const [useMonteCarloMode, setUseMonteCarloMode] = useState(false);
   const [mcResults, setMcResults] = useState<Map<string, number>>(new Map());
+  const [quarterProfiles, setQuarterProfiles] = useState<QuarterProfileData | null>(null);
   const { homeTeam, awayTeam } = gameContext;
 
   // Data hooks
@@ -95,6 +105,22 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
       return desc.includes(homeTeam) && desc.includes(awayTeam);
     });
   }, [allEnrichedSpots, homeTeam, awayTeam]);
+
+  // Fetch quarter profiles + H2H data for players in the selected game
+  useEffect(() => {
+    if (enrichedSpots.length === 0) return;
+    const names = [...new Set(enrichedSpots.map(s => s.playerName))];
+    const opponent = awayTeam || homeTeam || undefined;
+    supabase.functions.invoke('get-player-quarter-profile', {
+      body: { playerNames: names, opponent },
+    }).then(({ data, error }) => {
+      if (error) {
+        console.error('[WarRoom] quarter profile fetch error:', error);
+        return;
+      }
+      if (data) setQuarterProfiles(data as QuarterProfileData);
+    });
+  }, [enrichedSpots.length, homeTeam, awayTeam]);
 
   const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
@@ -176,9 +202,12 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           paceMult,
           l10Avg: s.l10Stats?.avg,
           gameProgress: s.liveData?.gameProgress ?? 50,
+          // Quarter + H2H data from edge function
+          quarterAvgs: quarterProfiles?.players?.[s.playerName]?.quarterAvgs?.[s.propType],
+          h2hVsOpponent: quarterProfiles?.players?.[s.playerName]?.h2h?.[s.propType],
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles]);
 
   // Run MC simulations when mode is ON
   useEffect(() => {

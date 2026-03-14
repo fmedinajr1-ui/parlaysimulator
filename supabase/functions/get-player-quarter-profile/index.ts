@@ -1,0 +1,170 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+};
+
+// Quarter distribution patterns by player tier (based on NBA research)
+const TIER_DISTRIBUTIONS: Record<string, { q1: number; q2: number; q3: number; q4: number }> = {
+  star:        { q1: 0.23, q2: 0.27, q3: 0.27, q4: 0.23 },
+  starter:     { q1: 0.25, q2: 0.26, q3: 0.26, q4: 0.23 },
+  role_player: { q1: 0.26, q2: 0.26, q3: 0.24, q4: 0.24 },
+};
+
+function getPlayerTier(avgMinutes: number): string {
+  if (avgMinutes >= 32) return 'star';
+  if (avgMinutes >= 24) return 'starter';
+  return 'role_player';
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { playerNames, opponent, propTypes } = await req.json() as {
+      playerNames: string[];
+      opponent?: string;
+      propTypes?: string[];
+    };
+
+    if (!playerNames || playerNames.length === 0) {
+      return new Response(JSON.stringify({ players: {} }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    const STAT_FIELDS = ['points', 'assists', 'threes_made', 'blocks', 'rebounds'];
+    const PROP_MAP: Record<string, string> = {
+      points: 'points', assists: 'assists', threes: 'threes_made',
+      blocks: 'blocks', rebounds: 'rebounds',
+    };
+
+    // Fetch L10 game logs + matchup history in parallel
+    const [logsResult, matchupResult, baselinesResult] = await Promise.all([
+      supabase
+        .from('nba_player_game_logs')
+        .select('player_name, points, assists, threes_made, blocks, rebounds, minutes_played, game_date')
+        .in('player_name', playerNames)
+        .order('game_date', { ascending: false })
+        .limit(playerNames.length * 10),
+
+      opponent
+        ? supabase
+            .from('matchup_history')
+            .select('player_name, prop_type, opponent, avg_stat, games_played, hit_rate_over, hit_rate_under')
+            .in('player_name', playerNames)
+            .eq('opponent', opponent)
+        : Promise.resolve({ data: [], error: null }),
+
+      supabase
+        .from('player_quarter_baselines')
+        .select('player_name, prop_type, q1_avg, q2_avg, q3_avg, q4_avg, q1_pct, q2_pct, q3_pct, q4_pct, player_tier')
+        .in('player_name', playerNames),
+    ]);
+
+    if (logsResult.error) {
+      console.error('[get-player-quarter-profile] logs error:', logsResult.error);
+    }
+
+    const gameLogs = logsResult.data || [];
+    const matchups = matchupResult.data || [];
+    const baselines = baselinesResult.data || [];
+
+    // Group logs by player (max 10 per player)
+    const logsByPlayer = new Map<string, typeof gameLogs>();
+    for (const log of gameLogs) {
+      const arr = logsByPlayer.get(log.player_name) || [];
+      if (arr.length < 10) arr.push(log);
+      logsByPlayer.set(log.player_name, arr);
+    }
+
+    // Build baseline lookup: playerName_propType -> baseline row
+    const baselineMap = new Map<string, any>();
+    for (const b of baselines) {
+      baselineMap.set(`${b.player_name}_${b.prop_type}`, b);
+    }
+
+    // Build matchup lookup: playerName_propType -> matchup row
+    const matchupMap = new Map<string, any>();
+    for (const m of matchups) {
+      matchupMap.set(`${m.player_name}_${m.prop_type}`, m);
+    }
+
+    // Build response per player
+    const players: Record<string, {
+      quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }>;
+      h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }>;
+    }> = {};
+
+    for (const playerName of playerNames) {
+      const logs = logsByPlayer.get(playerName) || [];
+      const quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }> = {};
+      const h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }> = {};
+
+      if (logs.length >= 3) {
+        const avgMinutes = logs.reduce((s, l) => s + (l.minutes_played || 0), 0) / logs.length;
+        const tier = getPlayerTier(avgMinutes);
+        const dist = TIER_DISTRIBUTIONS[tier];
+
+        // Calculate quarter avgs for each prop type
+        for (const [propType, field] of Object.entries(PROP_MAP)) {
+          // Check if we have pre-calculated baselines first
+          const baseline = baselineMap.get(`${playerName}_${propType}`);
+          if (baseline && baseline.q1_avg > 0) {
+            quarterAvgs[propType] = {
+              q1: Math.round(baseline.q1_avg * 10) / 10,
+              q2: Math.round(baseline.q2_avg * 10) / 10,
+              q3: Math.round(baseline.q3_avg * 10) / 10,
+              q4: Math.round(baseline.q4_avg * 10) / 10,
+            };
+          } else {
+            // Estimate from L10 game logs + tier distribution
+            const gameAvg = logs.reduce((s, l) => s + ((l as any)[field] || 0), 0) / logs.length;
+            if (gameAvg > 0) {
+              quarterAvgs[propType] = {
+                q1: Math.round(gameAvg * dist.q1 * 10) / 10,
+                q2: Math.round(gameAvg * dist.q2 * 10) / 10,
+                q3: Math.round(gameAvg * dist.q3 * 10) / 10,
+                q4: Math.round(gameAvg * dist.q4 * 10) / 10,
+              };
+            }
+          }
+        }
+      }
+
+      // Add H2H data
+      for (const [propType] of Object.entries(PROP_MAP)) {
+        const m = matchupMap.get(`${playerName}_${propType}`);
+        if (m) {
+          h2h[propType] = {
+            opponent: m.opponent,
+            avgStat: m.avg_stat,
+            gamesPlayed: m.games_played,
+            hitRateOver: m.hit_rate_over ?? 0,
+            hitRateUnder: m.hit_rate_under ?? 0,
+          };
+        }
+      }
+
+      players[playerName] = { quarterAvgs, h2h };
+    }
+
+    return new Response(JSON.stringify({ players }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[get-player-quarter-profile] Error:', msg);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});
