@@ -22,6 +22,12 @@ export interface H2HMatchup {
   hitRateUnder: number;
 }
 
+export interface Q1FanDuelLine {
+  line: number;
+  overPrice: number;
+  underPrice: number;
+}
+
 export interface WarRoomPropData {
   id: string;
   playerName: string;
@@ -50,6 +56,8 @@ export interface WarRoomPropData {
   // v7: Quarter + H2H
   quarterAvgs?: QuarterAvgs;
   h2hVsOpponent?: H2HMatchup;
+  // v8: Q1 FanDuel line
+  q1FanDuelLine?: Q1FanDuelLine;
 }
 
 const PROP_SHORT: Record<string, string> = {
