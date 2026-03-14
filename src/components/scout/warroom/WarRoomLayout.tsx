@@ -13,7 +13,7 @@ import { useMonteCarloWorker } from '@/hooks/useMonteCarloWorker';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useMinutesStability } from '@/hooks/useMinutesStability';
-import type { QuarterAvgs, H2HMatchup } from './WarRoomPropCard';
+import type { QuarterAvgs, H2HMatchup, Q1FanDuelLine } from './WarRoomPropCard';
 
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
