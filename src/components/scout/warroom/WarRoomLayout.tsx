@@ -122,6 +122,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     });
   }, [enrichedSpots.length, homeTeam, awayTeam]);
 
+  const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
   const { games } = useUnifiedLiveFeed({ enabled: true });
   const { data: whaleSignals } = useCustomerWhaleSignals();
