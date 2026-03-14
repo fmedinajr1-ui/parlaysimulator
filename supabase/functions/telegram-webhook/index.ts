@@ -1932,8 +1932,14 @@ async function handleScanLines(chatId: string) {
     .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
     .eq('analysis_date', today)
     .not('prop_type', 'in', '("game_total","game_moneyline")')
-    .order('edge_pct', { ascending: true })
-    .limit(15);
+    .order('edge_pct', { ascending: false })
+    .limit(30);
+
+  // Sort by absolute edge and take top 15 for a mix of OVER and UNDER
+  if (lines && lines.length > 0) {
+    lines.sort((a, b) => Math.abs(b.edge_pct || 0) - Math.abs(a.edge_pct || 0));
+    lines.splice(15);
+  }
 
   // Fetch FanDuel odds for player props
   let fdOddsMap = new Map<string, { over_price: number | null; under_price: number | null }>();
