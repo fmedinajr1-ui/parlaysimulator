@@ -63,6 +63,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const [viewMode, setViewMode] = useState<ViewMode>('game');
   const [useMonteCarloMode, setUseMonteCarloMode] = useState(false);
   const [mcResults, setMcResults] = useState<Map<string, number>>(new Map());
+  const [quarterProfiles, setQuarterProfiles] = useState<QuarterProfileData | null>(null);
   const { homeTeam, awayTeam } = gameContext;
 
   // Data hooks
