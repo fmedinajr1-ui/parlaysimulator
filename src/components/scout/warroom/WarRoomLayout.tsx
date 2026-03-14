@@ -106,7 +106,22 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     });
   }, [allEnrichedSpots, homeTeam, awayTeam]);
 
-  const { data: fatigueData } = useFatigueData();
+  // Fetch quarter profiles + H2H data for players in the selected game
+  useEffect(() => {
+    if (enrichedSpots.length === 0) return;
+    const names = [...new Set(enrichedSpots.map(s => s.playerName))];
+    const opponent = awayTeam || homeTeam || undefined;
+    supabase.functions.invoke('get-player-quarter-profile', {
+      body: { playerNames: names, opponent },
+    }).then(({ data, error }) => {
+      if (error) {
+        console.error('[WarRoom] quarter profile fetch error:', error);
+        return;
+      }
+      if (data) setQuarterProfiles(data as QuarterProfileData);
+    });
+  }, [enrichedSpots.length, homeTeam, awayTeam]);
+
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
   const { games } = useUnifiedLiveFeed({ enabled: true });
   const { data: whaleSignals } = useCustomerWhaleSignals();
