@@ -22,6 +22,12 @@ export interface H2HMatchup {
   hitRateUnder: number;
 }
 
+export interface Q1FanDuelLine {
+  line: number;
+  overPrice: number;
+  underPrice: number;
+}
+
 export interface WarRoomPropData {
   id: string;
   playerName: string;
@@ -50,6 +56,8 @@ export interface WarRoomPropData {
   // v7: Quarter + H2H
   quarterAvgs?: QuarterAvgs;
   h2hVsOpponent?: H2HMatchup;
+  // v8: Q1 FanDuel line
+  q1FanDuelLine?: Q1FanDuelLine;
 }
 
 const PROP_SHORT: Record<string, string> = {
@@ -68,30 +76,55 @@ function HelpTip({ children, tip, side = 'top' }: { children: React.ReactNode; t
   );
 }
 
-function QuarterBreakdown({ quarters, line }: { quarters: QuarterAvgs; line: number }) {
+function formatOdds(price: number): string {
+  return price >= 0 ? `+${price}` : `${price}`;
+}
+
+function QuarterBreakdown({ quarters, line, q1Line }: { quarters: QuarterAvgs; line: number; q1Line?: Q1FanDuelLine }) {
   const vals = [quarters.q1, quarters.q2, quarters.q3, quarters.q4];
   const peak = Math.max(...vals);
   const cumulative = [vals[0], vals[0] + vals[1], vals[0] + vals[1] + vals[2], vals[0] + vals[1] + vals[2] + vals[3]];
+  const q1HasValue = q1Line && vals[0] > 0;
+  const q1OverValue = q1HasValue ? vals[0] > q1Line!.line : false;
 
   return (
-    <div className="grid grid-cols-4 gap-1 text-center">
-      {(['Q1', 'Q2', 'Q3', 'Q4'] as const).map((label, i) => {
-        const isPeak = vals[i] === peak && peak > 0;
-        const hitsByQ = cumulative[i] >= line;
-        return (
-          <HelpTip key={label} tip={`${label}: ~${vals[i].toFixed(1)} avg. Cumulative by ${label}: ${cumulative[i].toFixed(1)}${hitsByQ ? ' ✓ hits line' : ''}`}>
-            <div className={cn(
-              'rounded px-1 py-0.5 text-[9px] font-mono cursor-help transition-colors',
-              isPeak
-                ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] font-bold'
-                : 'bg-muted/50 text-muted-foreground'
+    <div className="space-y-1">
+      <div className="grid grid-cols-4 gap-1 text-center">
+        {(['Q1', 'Q2', 'Q3', 'Q4'] as const).map((label, i) => {
+          const isPeak = vals[i] === peak && peak > 0;
+          const hitsByQ = cumulative[i] >= line;
+          return (
+            <HelpTip key={label} tip={`${label}: ~${vals[i].toFixed(1)} avg. Cumulative by ${label}: ${cumulative[i].toFixed(1)}${hitsByQ ? ' ✓ hits line' : ''}`}>
+              <div className={cn(
+                'rounded px-1 py-0.5 text-[9px] font-mono cursor-help transition-colors',
+                isPeak
+                  ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] font-bold'
+                  : 'bg-muted/50 text-muted-foreground'
+              )}>
+                <div className="text-[8px] text-muted-foreground/70">{label}</div>
+                <div>{vals[i].toFixed(1)}</div>
+              </div>
+            </HelpTip>
+          );
+        })}
+      </div>
+      {q1Line && (
+        <HelpTip tip={`FanDuel Q1 line: ${q1Line.line} (Over ${formatOdds(q1Line.overPrice)} / Under ${formatOdds(q1Line.underPrice)}). Your Q1 avg: ${vals[0].toFixed(1)}${q1OverValue ? ' — value on OVER' : ''}`}>
+          <div className="flex items-center gap-1.5 text-[9px] cursor-help px-0.5">
+            <span className="text-muted-foreground font-medium">FD Q1:</span>
+            <span className="font-bold tabular-nums text-foreground">O/U {q1Line.line}</span>
+            <span className="text-muted-foreground/60">({formatOdds(q1Line.overPrice)})</span>
+            <span className={cn(
+              'ml-auto font-bold tabular-nums',
+              q1OverValue
+                ? 'text-[hsl(var(--warroom-green))]'
+                : 'text-[hsl(var(--warroom-danger))]'
             )}>
-              <div className="text-[8px] text-muted-foreground/70">{label}</div>
-              <div>{vals[i].toFixed(1)}</div>
-            </div>
-          </HelpTip>
-        );
-      })}
+              avg {vals[0].toFixed(1)}
+            </span>
+          </div>
+        </HelpTip>
+      )}
     </div>
   );
 }
@@ -132,6 +165,7 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
     projectedFinal, confidence, paceRating, fatiguePercent,
     regression, hasHedgeOpportunity, hitRateL10,
     pOver, pUnder, edgeScore, quarterAvgs, h2hVsOpponent,
+    q1FanDuelLine,
   } = data;
 
   const progressPct = line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
@@ -252,7 +286,7 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
       </div>
 
       {/* Quarter Breakdown */}
-      {quarterAvgs && <QuarterBreakdown quarters={quarterAvgs} line={line} />}
+      {quarterAvgs && <QuarterBreakdown quarters={quarterAvgs} line={line} q1Line={q1FanDuelLine} />}
 
       {/* H2H Matchup */}
       {h2hVsOpponent && h2hVsOpponent.gamesPlayed > 0 && (

@@ -13,7 +13,7 @@ import { useMonteCarloWorker } from '@/hooks/useMonteCarloWorker';
 import { CustomerLiveGamePanel } from '../CustomerLiveGamePanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useMinutesStability } from '@/hooks/useMinutesStability';
-import type { QuarterAvgs, H2HMatchup } from './WarRoomPropCard';
+import type { QuarterAvgs, H2HMatchup, Q1FanDuelLine } from './WarRoomPropCard';
 
 import { CustomerConfidenceDashboard } from '../CustomerConfidenceDashboard';
 import { CustomerAIWhisper } from '../CustomerAIWhisper';
@@ -30,6 +30,7 @@ interface QuarterProfileData {
   players: Record<string, {
     quarterAvgs: Record<string, { q1: number; q2: number; q3: number; q4: number }>;
     h2h: Record<string, { opponent: string; avgStat: number; gamesPlayed: number; hitRateOver: number; hitRateUnder: number }>;
+    q1Lines?: Record<string, { line: number; overPrice: number; underPrice: number }>;
   }>;
 }
 
@@ -202,9 +203,10 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           paceMult,
           l10Avg: s.l10Stats?.avg,
           gameProgress: s.liveData?.gameProgress ?? 50,
-          // Quarter + H2H data from edge function
+          // Quarter + H2H + Q1 FanDuel data from edge function
           quarterAvgs: quarterProfiles?.players?.[s.playerName]?.quarterAvgs?.[s.propType],
           h2hVsOpponent: quarterProfiles?.players?.[s.playerName]?.h2h?.[s.propType],
+          q1FanDuelLine: quarterProfiles?.players?.[s.playerName]?.q1Lines?.[s.propType],
         };
       });
   }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles]);
