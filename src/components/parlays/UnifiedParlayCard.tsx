@@ -140,11 +140,6 @@ export function UnifiedParlayCard({ parlay }: UnifiedParlayCardProps) {
             <Icon className={cn("h-5 w-5", style.iconColor)} />
             <CardTitle className="text-sm font-semibold">
               {style.label}
-              {parlay.tier && parlay.type === 'LOTTERY' && (
-                <span className="text-[10px] text-muted-foreground ml-1">
-                  ({parlay.tier.replace(/_/g, ' ')})
-                </span>
-              )}
             </CardTitle>
           </div>
           <Badge variant="outline" className="text-xs">
