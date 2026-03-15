@@ -41,6 +41,8 @@ interface QuarterSnapshot {
   assists: number | null;
   rebounds: number | null;
   threes: number | null;
+  steals: number | null;
+  blocks: number | null;
 }
 
 type LiveQuarterMap = Record<string, Record<string, number[]>>; // playerName -> propType -> [q1, q2, q3, q4]
@@ -143,7 +145,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     const fetchSnapshots = async () => {
       const { data: snapshots, error } = await supabase
         .from('quarter_player_snapshots')
-        .select('player_name, quarter, points, assists, rebounds, threes')
+        .select('player_name, quarter, points, assists, rebounds, threes, steals, blocks')
         .eq('event_id', eventId)
         .order('quarter', { ascending: true });
 
@@ -151,7 +153,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
 
       const map: LiveQuarterMap = {};
       const propKeys: Record<string, keyof QuarterSnapshot> = {
-        points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes',
+        points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes', steals: 'steals', blocks: 'blocks',
       };
 
       for (const snap of snapshots as QuarterSnapshot[]) {

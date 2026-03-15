@@ -15,6 +15,8 @@ interface PlayerStats {
   rebounds: number;
   assists: number;
   threes: number;
+  steals: number;
+  blocks: number;
   turnovers: number;
   fouls: number;
   minutes: string;
@@ -67,6 +69,8 @@ async function fetchPlayerBoxScore(eventId: string): Promise<PlayerStats[]> {
             rebounds: parseInt(rawStats.reb) || 0,
             assists: parseInt(rawStats.ast) || 0,
             threes: parseInt(rawStats['3pm'] || rawStats.threes || '0') || 0,
+            steals: parseInt(rawStats.stl) || 0,
+            blocks: parseInt(rawStats.blk) || 0,
             turnovers: parseInt(rawStats.to) || 0,
             fouls: parseInt(rawStats.pf) || 0,
             minutes,
@@ -186,16 +190,18 @@ serve(async (req) => {
         .order('quarter', { ascending: true });
 
       // Build cumulative totals per player from existing snapshots
-      const playerCumulatives: Record<string, { points: number; rebounds: number; assists: number; threes: number; turnovers: number; fouls: number; minutes: number }> = {};
+      const playerCumulatives: Record<string, { points: number; rebounds: number; assists: number; threes: number; steals: number; blocks: number; turnovers: number; fouls: number; minutes: number }> = {};
       for (const snap of (allSnapshots || [])) {
         const key = snap.player_name;
         if (!playerCumulatives[key]) {
-          playerCumulatives[key] = { points: 0, rebounds: 0, assists: 0, threes: 0, turnovers: 0, fouls: 0, minutes: 0 };
+          playerCumulatives[key] = { points: 0, rebounds: 0, assists: 0, threes: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0, minutes: 0 };
         }
         playerCumulatives[key].points += snap.points || 0;
         playerCumulatives[key].rebounds += snap.rebounds || 0;
         playerCumulatives[key].assists += snap.assists || 0;
         playerCumulatives[key].threes += snap.threes || 0;
+        playerCumulatives[key].steals += snap.steals || 0;
+        playerCumulatives[key].blocks += snap.blocks || 0;
         playerCumulatives[key].turnovers += snap.turnovers || 0;
         playerCumulatives[key].fouls += snap.fouls || 0;
         playerCumulatives[key].minutes += parseMinutesToNumber(String(snap.minutes_played || '0'));
@@ -208,7 +214,7 @@ serve(async (req) => {
       const rows: any[] = [];
 
       for (const player of cumulativeStats) {
-        const prev = playerCumulatives[player.playerName] || { points: 0, rebounds: 0, assists: 0, threes: 0, turnovers: 0, fouls: 0, minutes: 0 };
+        const prev = playerCumulatives[player.playerName] || { points: 0, rebounds: 0, assists: 0, threes: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0, minutes: 0 };
 
         // Total delta from cumulative ESPN stats minus what we've already captured
         const totalDelta = {
@@ -216,6 +222,8 @@ serve(async (req) => {
           rebounds: Math.max(0, player.rebounds - prev.rebounds),
           assists: Math.max(0, player.assists - prev.assists),
           threes: Math.max(0, player.threes - prev.threes),
+          steals: Math.max(0, player.steals - prev.steals),
+          blocks: Math.max(0, player.blocks - prev.blocks),
           turnovers: Math.max(0, player.turnovers - prev.turnovers),
           fouls: Math.max(0, player.fouls - prev.fouls),
           minutes: Math.max(0, parseMinutesToNumber(player.minutes) - prev.minutes),
@@ -234,6 +242,8 @@ serve(async (req) => {
             rebounds: Math.round(totalDelta.rebounds / qCount),
             assists: Math.round(totalDelta.assists / qCount),
             threes: Math.round(totalDelta.threes / qCount),
+            steals: Math.round(totalDelta.steals / qCount),
+            blocks: Math.round(totalDelta.blocks / qCount),
             turnovers: Math.round(totalDelta.turnovers / qCount),
             fouls: Math.round(totalDelta.fouls / qCount),
             minutes_played: Math.round((totalDelta.minutes / qCount) * 10) / 10,

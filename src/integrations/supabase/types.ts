@@ -9857,6 +9857,7 @@ export type Database = {
       quarter_player_snapshots: {
         Row: {
           assists: number | null
+          blocks: number | null
           captured_at: string
           created_at: string
           effort_score: number | null
@@ -9880,6 +9881,7 @@ export type Database = {
           slow_recovery_count: number | null
           speed_index: number | null
           sprint_count: number | null
+          steals: number | null
           team: string | null
           threes: number | null
           turnovers: number | null
@@ -9887,6 +9889,7 @@ export type Database = {
         }
         Insert: {
           assists?: number | null
+          blocks?: number | null
           captured_at?: string
           created_at?: string
           effort_score?: number | null
@@ -9910,6 +9913,7 @@ export type Database = {
           slow_recovery_count?: number | null
           speed_index?: number | null
           sprint_count?: number | null
+          steals?: number | null
           team?: string | null
           threes?: number | null
           turnovers?: number | null
@@ -9917,6 +9921,7 @@ export type Database = {
         }
         Update: {
           assists?: number | null
+          blocks?: number | null
           captured_at?: string
           created_at?: string
           effort_score?: number | null
@@ -9940,6 +9945,7 @@ export type Database = {
           slow_recovery_count?: number | null
           speed_index?: number | null
           sprint_count?: number | null
+          steals?: number | null
           team?: string | null
           threes?: number | null
           turnovers?: number | null
