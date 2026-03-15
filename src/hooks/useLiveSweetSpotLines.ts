@@ -117,7 +117,8 @@ export function useLiveSweetSpotLines(
       }
       
       if (!data?.success || !data?.results) {
-        console.warn('[LiveLines] No results from batch endpoint');
+        console.warn('[LiveLines] ⚠️ No results from batch endpoint. Response:', JSON.stringify(data).slice(0, 200));
+        setError('Batch endpoint returned no results');
         setIsLoading(false);
         return;
       }
