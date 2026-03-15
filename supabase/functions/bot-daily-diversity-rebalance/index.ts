@@ -5,6 +5,7 @@
  * 1. Caps any single strategy family at 40% (60% on light slates) of the total pending daily slate
  * 2. Enforces max-2-per-player-prop (max-3 on light slates) across ALL pending parlays
  * 3. Auto-detects light-slate conditions (≤8 unique players in pending parlays)
+ * 4. Volume-aware stake scaling: reduces stakes when few parlays survive (≤3 → 0.5×, ≤6 → 0.75×)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
