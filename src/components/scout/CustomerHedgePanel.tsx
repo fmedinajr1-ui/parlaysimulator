@@ -14,7 +14,7 @@ interface CustomerHedgePanelProps {
 }
 
 const TIER_LABELS: Record<CustomerTier, { label: string; className: string }> = {
-  on_track: { label: 'ON TRACK', className: 'bg-chart-2/15 text-chart-2 border-chart-2/30' },
+  on_track: { label: 'HOLD', className: 'bg-chart-2/15 text-chart-2 border-chart-2/30' },
   caution: { label: 'CAUTION', className: 'bg-chart-3/15 text-chart-3 border-chart-3/30' },
   action_needed: { label: 'ACTION NEEDED', className: 'bg-destructive/15 text-destructive border-destructive/30' },
 };

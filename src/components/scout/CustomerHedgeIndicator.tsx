@@ -20,8 +20,8 @@ const TIER_CONFIG: Record<CustomerTier, {
   className: string;
 }> = {
   on_track: {
-    label: 'ON TRACK',
-    message: 'Looking good',
+    label: 'HOLD',
+    message: 'On pace — no action needed',
     icon: CheckCircle2,
     className: 'bg-chart-2/15 text-chart-2 border-chart-2/30',
   },

@@ -478,7 +478,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   // ON TRACK: Looking good
   else {
     status = 'on_track';
-    headline = '✓ ON TRACK';
+    headline = '✓ HOLD';
     message = `Projected ${projectedFinal.toFixed(1)} clears ${side.toUpperCase()} ${hedgeLine} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
     
     if (zoneInsight && hasZoneAdvantage) {

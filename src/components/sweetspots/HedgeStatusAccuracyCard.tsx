@@ -29,7 +29,7 @@ interface HedgeSideRow {
 }
 
 const STATUS_CONFIG = {
-  on_track: { label: 'On Track', icon: CheckCircle2, color: 'text-green-400', bgColor: 'bg-green-500/10' },
+  on_track: { label: 'Hold', icon: CheckCircle2, color: 'text-green-400', bgColor: 'bg-green-500/10' },
   monitor: { label: 'Monitor', icon: Zap, color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
   alert: { label: 'Alert', icon: AlertTriangle, color: 'text-orange-400', bgColor: 'bg-orange-500/10' },
   urgent: { label: 'Urgent', icon: AlertCircle, color: 'text-red-400', bgColor: 'bg-red-500/10' },

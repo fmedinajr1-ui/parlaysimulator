@@ -14,7 +14,7 @@ interface ScoutHedgePanelProps {
 }
 
 const STATUS_LABELS: Record<HedgeStatus, { label: string; className: string }> = {
-  on_track: { label: 'ON TRACK', className: 'bg-chart-2/15 text-chart-2 border-chart-2/30' },
+  on_track: { label: 'HOLD', className: 'bg-chart-2/15 text-chart-2 border-chart-2/30' },
   monitor: { label: 'MONITOR', className: 'bg-chart-3/15 text-chart-3 border-chart-3/30' },
   alert: { label: 'ALERT', className: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
   urgent: { label: 'URGENT', className: 'bg-destructive/15 text-destructive border-destructive/30' },
