@@ -263,9 +263,22 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
             } : undefined),
           h2hVsOpponent: quarterProfiles?.players?.[s.playerName]?.h2h?.[s.propType],
           q1FanDuelLine: quarterProfiles?.players?.[s.playerName]?.q1Lines?.[s.propType],
+          // Live quarter stats from snapshots
+          liveQuarterStats: (() => {
+            const playerQData = liveQuarterMap[s.playerName]?.[s.propType];
+            if (!playerQData || playerQData.length === 0) return undefined;
+            const currentGame = games.find(g => g.status === 'in_progress');
+            return {
+              currentQuarter: currentGame?.period ?? 1,
+              quarterActuals: playerQData,
+              isLive: !!currentGame,
+              clock: currentGame?.clock,
+              period: currentGame ? `Q${currentGame.period}` : undefined,
+            };
+          })(),
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles, liveQuarterMap, games]);
 
   // Run MC simulations when mode is ON
   useEffect(() => {
