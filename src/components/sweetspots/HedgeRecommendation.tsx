@@ -485,7 +485,18 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
       message += ` ${zoneInsight} provides additional support.`;
     }
     
-    action = `Hold position. No hedge needed currently.`;
+    // Smart line suggestion when live line is significantly different
+    if (hasLiveLine && Math.abs(hedgeLine - line) >= 1.5) {
+      const isOverBet = side === 'over';
+      const lineFavorsUser = (isOverBet && hedgeLine < line) || (!isOverBet && hedgeLine > line);
+      if (lineFavorsUser) {
+        action = `Hold position. Smart line: Lock at ${hedgeLine} for higher probability.`;
+      } else {
+        action = `Hold position. Live line moved against you (${hedgeLine}) — watch closely.`;
+      }
+    } else {
+      action = `Hold position. No hedge needed currently.`;
+    }
     urgency = 'none';
   }
   

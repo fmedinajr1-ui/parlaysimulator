@@ -12901,6 +12901,25 @@ export type Database = {
           wins: number
         }[]
       }
+      get_hedge_accuracy_with_alt_lines: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_gap_to_line: number
+          avg_line_movement: number
+          avg_live_book_line: number
+          avg_projected_final: number
+          hedge_status: string
+          hit_rate_at_live_line: number
+          hit_rate_original: number
+          hits_at_live_line: number
+          hits_original: number
+          misses_at_live_line: number
+          misses_original: number
+          quarter: number
+          side: string
+          total_picks: number
+        }[]
+      }
       get_hedge_probability_calibration: {
         Args: { days_back?: number }
         Returns: {

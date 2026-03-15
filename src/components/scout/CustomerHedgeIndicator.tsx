@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, Flame, Snowflake } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Flame, Snowflake, ArrowRightLeft } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { DeepSweetSpot, HedgeStatus } from '@/types/sweetSpot';
@@ -63,6 +63,9 @@ export function CustomerHedgeIndicator({ spot, signal }: CustomerHedgeIndicatorP
   const signalBadge = signal ? SIGNAL_BADGES[signal] : null;
   const SignalIcon = signalBadge?.icon;
 
+  const liveBookLine = spot.liveData?.liveBookLine;
+  const hasSmartLine = liveBookLine !== undefined && liveBookLine !== line && Math.abs(liveBookLine - line) >= 1.5;
+
   return (
     <div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-1.5">
@@ -70,6 +73,12 @@ export function CustomerHedgeIndicator({ spot, signal }: CustomerHedgeIndicatorP
           <Icon className="w-3 h-3" />
           {config.label}
         </Badge>
+        {hasSmartLine && (
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 gap-0.5 bg-violet-500/15 text-violet-400 border-violet-500/30">
+            <ArrowRightLeft className="w-3 h-3" />
+            SMART LINE
+          </Badge>
+        )}
         {signalBadge && SignalIcon && (
           <Badge variant="outline" className={cn('text-[10px] px-1.5 py-0.5 gap-0.5', signalBadge.className)}>
             <SignalIcon className="w-3 h-3" />
@@ -79,6 +88,7 @@ export function CustomerHedgeIndicator({ spot, signal }: CustomerHedgeIndicatorP
       </div>
       <span className="text-xs text-muted-foreground">
         {config.message} · {currentValue} of {line}
+        {hasSmartLine && <span className="text-violet-400"> (live: {liveBookLine})</span>}
       </span>
     </div>
   );
