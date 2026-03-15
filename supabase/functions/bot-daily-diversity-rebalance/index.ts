@@ -89,12 +89,12 @@ Deno.serve(async (req) => {
     console.log(`[DiversityRebalance] ${VERSION} | date=${today}`);
 
     // ═══════════════════════════════════════════════════════════════
-    // PASS 1: Strategy Family Cap (30%)
+    // Fetch pending parlays + detect light-slate
     // ═══════════════════════════════════════════════════════════════
 
     const { data: pending, error } = await supabase
       .from('bot_daily_parlays')
-      .select('id, strategy_name, combined_probability, tier, created_at')
+      .select('id, strategy_name, combined_probability, tier, created_at, legs')
       .eq('parlay_date', today)
       .eq('outcome', 'pending')
       .order('combined_probability', { ascending: false });
@@ -108,8 +108,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    const maxPerFamily = Math.max(2, Math.ceil(totalCount * maxPct));
-    console.log(`[DiversityRebalance] ${totalCount} pending parlays, max per family: ${maxPerFamily} (${(maxPct * 100).toFixed(0)}%)`);
+    // Count unique players across all pending parlays
+    const uniquePlayers = new Set<string>();
+    for (const p of pending!) {
+      if (Array.isArray(p.legs)) {
+        for (const leg of p.legs as any[]) {
+          const name = normalizePlayerName(leg.player_name || leg.playerName || leg.player || '');
+          if (name) uniquePlayers.add(name);
+        }
+      }
+    }
+
+    const isLightSlate = uniquePlayers.size <= 8;
+    const effectiveMaxPct = isLightSlate ? 0.60 : maxPct;
+    const effectiveMaxPlayerPropUsage = isLightSlate ? 3 : maxPlayerPropUsage;
+    const effectiveMinFloor = isLightSlate ? 3 : 2;
+
+    console.log(`[DiversityRebalance] ${totalCount} pending, ${uniquePlayers.size} unique players → ${isLightSlate ? 'LIGHT-SLATE' : 'NORMAL'} mode`);
+
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 1: Strategy Family Cap
+    // ═══════════════════════════════════════════════════════════════
+
+    const maxPerFamily = Math.max(effectiveMinFloor, Math.ceil(totalCount * effectiveMaxPct));
+    console.log(`[DiversityRebalance] max per family: ${maxPerFamily} (${(effectiveMaxPct * 100).toFixed(0)}%, floor=${effectiveMinFloor})`);
 
     // Count by family
     const familyCounts = new Map<string, { kept: number; toVoid: string[] }>();
