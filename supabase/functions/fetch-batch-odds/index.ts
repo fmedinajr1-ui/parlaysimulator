@@ -1,5 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -7,7 +5,6 @@ const corsHeaders = {
 
 const PRIORITY_BOOKMAKERS = ['hardrockbet', 'fanduel', 'draftkings'];
 const FALLBACK_BOOKMAKERS = ['betmgm', 'caesars', 'pointsbet', 'bovada', 'williamhill_us'];
-
 const normalizeName = (name: string) => {
   return name.toLowerCase()
     .replace(/\./g, '')
@@ -54,7 +51,7 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -96,20 +93,45 @@ serve(async (req) => {
 
     const bookmakersToSearch = [...preferred_bookmakers, ...FALLBACK_BOOKMAKERS];
     const bookmakerParam = bookmakersToSearch.join(',');
+    const marketsParam = Array.from(marketGroups.keys()).join(',');
 
-    // First we need to get active events for this sport
-    const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds?apiKey=${apiKey}&regions=us&markets=${Array.from(marketGroups.keys()).join(',')}&oddsFormat=american&bookmakers=${bookmakerParam}`;
-
-    console.log(`[fetch-batch-odds] Fetching ${marketGroups.size} markets across all events`);
+    // Step 1: Get active events for this sport (no markets needed here)
+    const eventsListUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}`;
+    console.log(`[fetch-batch-odds] Fetching active events for ${sport}`);
     
-    const response = await fetchWithTimeout(eventsUrl);
+    const eventsListResp = await fetchWithTimeout(eventsListUrl);
+    if (!eventsListResp.ok) {
+      throw new Error(`Events list API returned ${eventsListResp.status}: ${await eventsListResp.text()}`);
+    }
+    const activeEvents: any[] = await eventsListResp.json();
+    console.log(`[fetch-batch-odds] Got ${activeEvents.length} active events`);
 
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}: ${await response.text()}`);
+    if (activeEvents.length === 0) {
+      return new Response(JSON.stringify({ success: true, results: [], events_searched: 0 }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
-    const events: any[] = await response.json();
-    console.log(`[fetch-batch-odds] Got ${events.length} events`);
+    // Step 2: Fetch player prop odds per event (player props require event-level endpoint)
+    const allEvents: any[] = [];
+    const eventFetches = activeEvents.map(async (ev: any) => {
+      try {
+        const url = `https://api.the-odds-api.com/v4/sports/${sport}/events/${ev.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american&bookmakers=${bookmakerParam}`;
+        const resp = await fetchWithTimeout(url, {}, 8000);
+        if (resp.ok) {
+          const data = await resp.json();
+          allEvents.push(data);
+        } else {
+          console.warn(`[fetch-batch-odds] Event ${ev.id} failed: ${resp.status}`);
+        }
+      } catch (e) {
+        console.warn(`[fetch-batch-odds] Event ${ev.id} fetch error:`, e);
+      }
+    });
+    
+    await Promise.all(eventFetches);
+    const events = allEvents;
+    console.log(`[fetch-batch-odds] Got odds from ${events.length}/${activeEvents.length} events`);
 
     // For each player, find their odds across all events and bookmakers
     const results: PlayerResult[] = [];
