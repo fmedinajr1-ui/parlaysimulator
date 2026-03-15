@@ -166,6 +166,14 @@ export function useLiveSweetSpotLines(
             });
           }
           
+          // Find the closest line to the original across all books
+          const sorted = [...allBookLines].sort(
+            (a, b) => Math.abs(a.line - spot.line) - Math.abs(b.line - spot.line)
+          );
+          const closest = sorted[0];
+          const closestDelta = closest ? closest.line - spot.line : 0;
+          const isScanning = closest ? Math.abs(closestDelta) > SCANNING_THRESHOLD : true;
+          
           const liveData: LiveLineData = {
             liveBookLine,
             lineMovement,
@@ -174,20 +182,33 @@ export function useLiveSweetSpotLines(
             overPrice: result.odds.over_price,
             underPrice: result.odds.under_price,
             allBookLines,
+            closestLine: closest?.line,
+            closestBookmaker: closest?.bookmaker,
+            closestDelta,
+            isScanning,
           };
           
           // Update cache
           cacheRef.current.set(getCacheKey(spot), { data: liveData, fetchedAt: Date.now() });
           newMap.set(spot.id, liveData);
           
-          console.log(`[LiveLines] ${spot.playerName} ${spot.propType}: ${spot.line} → ${liveBookLine} (${lineMovement >= 0 ? '+' : ''}${lineMovement.toFixed(1)})`);
+          console.log(`[LiveLines] ${spot.playerName} ${spot.propType}: orig=${spot.line} closest=${closest?.line} (Δ${closestDelta >= 0 ? '+' : ''}${closestDelta.toFixed(1)}) from ${BOOK_SHORT_LOG[closest?.bookmaker || ''] || closest?.bookmaker}${isScanning ? ' [scanning]' : ' [matched]'}`);
         }
         
         return newMap;
       });
       
+      // Check if all spots have a close match → slow down polling
+      setAllMatched(() => {
+        return spotsToFetch.every(spot => {
+          const cached = cacheRef.current.get(getCacheKey(spot));
+          if (!cached) return false;
+          return Math.abs(cached.data.closestDelta ?? 99) <= MATCH_THRESHOLD;
+        });
+      });
+      
       setLastFetchTime(new Date());
-      console.log(`[LiveLines] Batch complete: ${data.results.filter((r: any) => r.success).length}/${spotsToFetch.length} found`);
+      console.log(`[LiveLines] Batch complete: ${data.results.filter((r: any) => r.success).length}/${spotsToFetch.length} found (allMatched: ${allMatched})`);
       
     } catch (err) {
       console.error('[LiveLines] Fetch error:', err);
