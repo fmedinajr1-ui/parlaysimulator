@@ -29,7 +29,7 @@ const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
     ['player_points', 'player_rebounds', 'player_assists'],
     ['player_threes', 'player_blocks', 'player_steals'],
     ['player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists', 'player_rebounds_assists'],
-    ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1'],
+    ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1', 'player_threes_q1', 'player_steals_q1'],
   ],
   'basketball_wnba': [
     ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],

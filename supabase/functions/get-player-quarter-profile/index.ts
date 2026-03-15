@@ -16,6 +16,8 @@ const Q1_PROP_MAP: Record<string, string> = {
   player_points_q1: 'points',
   player_rebounds_q1: 'rebounds',
   player_assists_q1: 'assists',
+  player_threes_q1: 'threes',
+  player_steals_q1: 'steals',
 };
 
 function getPlayerTier(avgMinutes: number): string {
@@ -78,7 +80,7 @@ Deno.serve(async (req) => {
       supabase
         .from('unified_props')
         .select('player_name, prop_type, current_line, over_price, under_price')
-        .in('prop_type', ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1'])
+        .in('prop_type', ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1', 'player_threes_q1', 'player_steals_q1'])
         .eq('bookmaker', 'fanduel')
         .gte('scraped_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()),
     ]);
@@ -181,7 +183,7 @@ Deno.serve(async (req) => {
       }
 
       // Add Q1 FanDuel lines
-      for (const propType of ['points', 'rebounds', 'assists']) {
+      for (const propType of ['points', 'rebounds', 'assists', 'threes', 'steals']) {
         const q1 = q1LineMap.get(`${playerName}_${propType}`);
         if (q1) {
           playerQ1Lines[propType] = q1;
