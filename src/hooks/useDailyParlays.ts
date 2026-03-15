@@ -384,7 +384,9 @@ export function useDailyParlays() {
     
     const strategyName = (parlay.strategy_name || '').toLowerCase();
     const isLottery = strategyName.includes('lottery') || strategyName.includes('mega');
-    const type: DailyParlay['type'] = isLottery ? 'LOTTERY' : 'CURATED';
+    // Skip lottery parlays entirely — tier disabled
+    if (isLottery) return;
+    const type: DailyParlay['type'] = 'CURATED';
     
     // Detect sport from strategy name
     const isNHL = strategyName.startsWith('nhl_');
