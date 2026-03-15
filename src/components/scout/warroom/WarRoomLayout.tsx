@@ -150,7 +150,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
       if (error || !snapshots) return;
 
       const map: LiveQuarterMap = {};
-      const propKeys: Record<string, string> = {
+      const propKeys: Record<string, keyof QuarterSnapshot> = {
         points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes',
       };
 
