@@ -69,6 +69,8 @@ async function fetchPlayerBoxScore(eventId: string): Promise<PlayerStats[]> {
             rebounds: parseInt(rawStats.reb) || 0,
             assists: parseInt(rawStats.ast) || 0,
             threes: parseInt(rawStats['3pm'] || rawStats.threes || '0') || 0,
+            steals: parseInt(rawStats.stl) || 0,
+            blocks: parseInt(rawStats.blk) || 0,
             turnovers: parseInt(rawStats.to) || 0,
             fouls: parseInt(rawStats.pf) || 0,
             minutes,
