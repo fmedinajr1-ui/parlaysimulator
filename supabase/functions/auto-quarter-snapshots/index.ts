@@ -190,16 +190,18 @@ serve(async (req) => {
         .order('quarter', { ascending: true });
 
       // Build cumulative totals per player from existing snapshots
-      const playerCumulatives: Record<string, { points: number; rebounds: number; assists: number; threes: number; turnovers: number; fouls: number; minutes: number }> = {};
+      const playerCumulatives: Record<string, { points: number; rebounds: number; assists: number; threes: number; steals: number; blocks: number; turnovers: number; fouls: number; minutes: number }> = {};
       for (const snap of (allSnapshots || [])) {
         const key = snap.player_name;
         if (!playerCumulatives[key]) {
-          playerCumulatives[key] = { points: 0, rebounds: 0, assists: 0, threes: 0, turnovers: 0, fouls: 0, minutes: 0 };
+          playerCumulatives[key] = { points: 0, rebounds: 0, assists: 0, threes: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0, minutes: 0 };
         }
         playerCumulatives[key].points += snap.points || 0;
         playerCumulatives[key].rebounds += snap.rebounds || 0;
         playerCumulatives[key].assists += snap.assists || 0;
         playerCumulatives[key].threes += snap.threes || 0;
+        playerCumulatives[key].steals += snap.steals || 0;
+        playerCumulatives[key].blocks += snap.blocks || 0;
         playerCumulatives[key].turnovers += snap.turnovers || 0;
         playerCumulatives[key].fouls += snap.fouls || 0;
         playerCumulatives[key].minutes += parseMinutesToNumber(String(snap.minutes_played || '0'));
