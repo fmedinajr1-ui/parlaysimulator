@@ -173,10 +173,10 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PASS 2: Player-Prop Exposure Cap (max 1 per player-prop combo)
+    // PASS 2: Player-Prop Exposure Cap
     // ═══════════════════════════════════════════════════════════════
 
-    console.log(`[DiversityRebalance] Starting player-prop exposure pass (max ${maxPlayerPropUsage} per combo)...`);
+    console.log(`[DiversityRebalance] Starting player-prop exposure pass (max ${effectiveMaxPlayerPropUsage} per combo)...`);
 
     // Re-fetch remaining pending parlays WITH legs data
     const { data: remainingParlays, error: err2 } = await supabase
