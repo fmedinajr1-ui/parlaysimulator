@@ -41,6 +41,8 @@ interface QuarterSnapshot {
   assists: number | null;
   rebounds: number | null;
   threes: number | null;
+  steals: number | null;
+  blocks: number | null;
 }
 
 type LiveQuarterMap = Record<string, Record<string, number[]>>; // playerName -> propType -> [q1, q2, q3, q4]
