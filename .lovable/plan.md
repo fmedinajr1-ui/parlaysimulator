@@ -172,3 +172,23 @@ Added a light-slate throttle in `bot-generate-daily-parlays/index.ts` that **red
 | Monster parlays | Enabled | **Disabled** |
 | Execution profiles | All (~90) | High-conviction only (~50) |
 | Execution L10 hit rate gate | 80% | **85%** |
+
+# NBA Stats API Per-Quarter Backfill — IMPLEMENTED ✅ (March 15, 2026)
+
+## Problem
+Quarter averages in the player profile relied on snapshot deltas (timing-dependent, often inaccurate) or synthetic tier-based splits from L3 game logs. Russell Westbrook's 28.5 PTS line showed quarter avgs totaling only ~19.2 because of small L3 sample.
+
+## Solution
+New `backfill-quarter-stats` edge function that fetches **exact per-quarter player stats** directly from the NBA Stats API (`boxscoretraditionalv2` with `RangeType=2`).
+
+### How It Works
+1. Queries `live_game_scores` for today's final NBA games
+2. Maps ESPN event IDs to NBA game IDs via `cdn.nba.com` scoreboard
+3. Fetches actual Q1/Q2/Q3/Q4 box scores per player (PTS, REB, AST, FG3M, STL, BLK)
+4. Deletes any inaccurate delta-based snapshots and inserts accurate data into `quarter_player_snapshots`
+5. Skips games already backfilled (≥8 Q1 rows = already processed)
+
+### Schedule
+- Cron: every 30 minutes (`*/30 * * * *`)
+- Live games still use `auto-quarter-snapshots` for real-time progression
+- After final, `backfill-quarter-stats` overwrites with exact NBA API data
