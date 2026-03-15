@@ -44,6 +44,10 @@ export interface WarRoomPropData {
   hitRateL10: number;
   liveBookLine: number;
   allBookLines?: { line: number; bookmaker: string; overPrice?: number; underPrice?: number }[];
+  closestLine?: number;
+  closestBookmaker?: string;
+  closestDelta?: number;
+  isScanning?: boolean;
   // v6: Intelligence fields
   pOver?: number;
   pUnder?: number;
