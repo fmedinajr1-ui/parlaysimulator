@@ -9934,7 +9934,7 @@ Deno.serve(async (req) => {
       const origValStake = TIER_CONFIG.validation.stake;
 
       TIER_CONFIG.execution.count = Math.min(TIER_CONFIG.execution.count, 15);
-      TIER_CONFIG.execution.stake = Math.round(TIER_CONFIG.execution.stake * 0.5);
+      // Execution stays flat $100 even on light slates — no halving
       TIER_CONFIG.validation.count = Math.min(TIER_CONFIG.validation.count, 10);
       TIER_CONFIG.validation.stake = Math.round(TIER_CONFIG.validation.stake * 0.5);
 
