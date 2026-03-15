@@ -29,17 +29,24 @@ function parseSummaryRow(markdown: string): { ppg: number; rpg: number; apg: num
     if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
     const cells = rawCells.map(c => cleanCell(c).toUpperCase());
 
-    // Look for PPG or PTS as anchor
+    // Look for PPG as anchor (prefer per-game averages over totals)
     if (cells.includes('PPG') || cells.includes('PTS')) {
       headerIdx = i;
       for (let j = 0; j < cells.length; j++) {
         const c = cells[j];
-        if (c === 'PPG' || c === 'PTS') colIndices['PPG'] = j;
-        if (c === 'RPG' || c === 'REB') colIndices['RPG'] = j;
-        if (c === 'APG' || c === 'AST') colIndices['APG'] = j;
-        if (c === 'SPG' || c === 'STL') colIndices['SPG'] = j;
-        if (c === 'BPG' || c === 'BLK') colIndices['BPG'] = j;
-        if (c === '3PM' || c === '3PT' || c === '3PPG') colIndices['3PM'] = j;
+        // Prefer PPG over PTS (PTS is season totals, PPG is per-game avg)
+        if (c === 'PPG') colIndices['PPG'] = j;
+        if (c === 'PTS' && colIndices['PPG'] === undefined) colIndices['PPG'] = j;
+        if (c === 'RPG') colIndices['RPG'] = j;
+        if (c === 'REB' && colIndices['RPG'] === undefined) colIndices['RPG'] = j;
+        if (c === 'APG') colIndices['APG'] = j;
+        if (c === 'AST' && colIndices['APG'] === undefined) colIndices['APG'] = j;
+        if (c === 'SPG') colIndices['SPG'] = j;
+        if (c === 'STL' && colIndices['SPG'] === undefined) colIndices['SPG'] = j;
+        if (c === 'BPG') colIndices['BPG'] = j;
+        if (c === 'BLK' && colIndices['BPG'] === undefined) colIndices['BPG'] = j;
+        if (c === '3PM' && colIndices['3PM'] === undefined) colIndices['3PM'] = j;
+        if (c === '3PT' || c === '3PPG') colIndices['3PM'] = j;
       }
       break;
     }
