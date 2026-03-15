@@ -171,6 +171,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     fetchSnapshots();
     const interval = setInterval(fetchSnapshots, 30000);
     return () => clearInterval(interval);
+  }, [gameContext.eventId]);
 
   const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
