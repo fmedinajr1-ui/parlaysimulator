@@ -202,9 +202,9 @@ export function useLiveSweetSpotLines(
     if (!enabled || liveSpots.length === 0) return;
     
     fetchAllLines();
-    const interval = setInterval(fetchAllLines, intervalMs);
+    const interval = setInterval(fetchAllLines, effectiveInterval);
     return () => clearInterval(interval);
-  }, [enabled, liveSpots.length, intervalMs, fetchAllLines]);
+  }, [enabled, liveSpots.length, effectiveInterval, fetchAllLines]);
   
   const getLineData = useCallback((spotId: string): LiveLineData | undefined => {
     return lineData.get(spotId);
