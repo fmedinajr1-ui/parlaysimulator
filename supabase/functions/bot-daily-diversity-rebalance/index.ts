@@ -272,9 +272,11 @@ Deno.serve(async (req) => {
       metadata: {
         version: VERSION,
         date: today,
-        maxPct,
+        maxPct: effectiveMaxPct,
         maxPerFamily,
-        maxPlayerPropUsage,
+        maxPlayerPropUsage: effectiveMaxPlayerPropUsage,
+        isLightSlate,
+        uniquePlayerCount: uniquePlayers.size,
         totalBefore: totalCount,
         totalAfter,
         strategyVoided: totalStrategyVoided,
