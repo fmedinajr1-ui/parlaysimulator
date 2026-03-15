@@ -9562,7 +9562,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (stakeConfig) {
-      TIER_CONFIG.execution.stake = stakeConfig.execution_stake ?? 300;
+      TIER_CONFIG.execution.stake = 100; // Flat $100 — ignore DB value for execution
       TIER_CONFIG.validation.stake = stakeConfig.validation_stake ?? 150;
       TIER_CONFIG.exploration.stake = stakeConfig.exploration_stake ?? 50;
       console.log(`[Bot v2] Loaded stake config: exec=$${stakeConfig.execution_stake}, val=$${stakeConfig.validation_stake}, expl=$${stakeConfig.exploration_stake}, block2leg=${stakeConfig.block_two_leg_parlays}`);
