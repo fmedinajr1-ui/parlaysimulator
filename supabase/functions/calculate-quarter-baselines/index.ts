@@ -50,7 +50,7 @@ async function fetchNBAPlayerStats(period: number, season: string, lastNGames: n
     try {
       console.log(`[quarter-baselines] Fetching Period=${period} (attempt ${attempt})...`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
       const resp = await fetch(url, { headers: NBA_STATS_HEADERS, signal: controller.signal });
       clearTimeout(timeoutId);
 
