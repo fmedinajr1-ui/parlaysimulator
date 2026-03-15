@@ -229,24 +229,26 @@ serve(async (req) => {
           minutes: Math.max(0, parseMinutesToNumber(player.minutes) - prev.minutes),
         };
 
-        // If capturing multiple quarters at once, distribute evenly
-        const qCount = quartersToCapture.length;
+        // Assign all delta to the LATEST completed quarter only
+        // Earlier missed quarters get zeros — more honest than making all wrong
+        const lastQ = quartersToCapture[quartersToCapture.length - 1];
         for (const q of quartersToCapture) {
+          const isLastQuarter = q === lastQ;
           rows.push({
             event_id: eventId,
             espn_event_id: eventId,
             player_name: player.playerName,
             team: player.team,
             quarter: q,
-            points: Math.round(totalDelta.points / qCount),
-            rebounds: Math.round(totalDelta.rebounds / qCount),
-            assists: Math.round(totalDelta.assists / qCount),
-            threes: Math.round(totalDelta.threes / qCount),
-            steals: Math.round(totalDelta.steals / qCount),
-            blocks: Math.round(totalDelta.blocks / qCount),
-            turnovers: Math.round(totalDelta.turnovers / qCount),
-            fouls: Math.round(totalDelta.fouls / qCount),
-            minutes_played: Math.round((totalDelta.minutes / qCount) * 10) / 10,
+            points: isLastQuarter ? totalDelta.points : 0,
+            rebounds: isLastQuarter ? totalDelta.rebounds : 0,
+            assists: isLastQuarter ? totalDelta.assists : 0,
+            threes: isLastQuarter ? totalDelta.threes : 0,
+            steals: isLastQuarter ? totalDelta.steals : 0,
+            blocks: isLastQuarter ? totalDelta.blocks : 0,
+            turnovers: isLastQuarter ? totalDelta.turnovers : 0,
+            fouls: isLastQuarter ? totalDelta.fouls : 0,
+            minutes_played: isLastQuarter ? Math.round(totalDelta.minutes * 10) / 10 : 0,
             captured_at: now,
           });
         }
