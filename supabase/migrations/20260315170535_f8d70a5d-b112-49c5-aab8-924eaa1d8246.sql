@@ -1,0 +1,1 @@
+ALTER TABLE public.player_quarter_baselines ADD COLUMN IF NOT EXISTS data_source text DEFAULT 'tier_estimate';
