@@ -10,6 +10,11 @@ const PROP_TO_MARKET: Record<PropType, string> = {
   blocks: 'player_blocks',
 };
 
+const BOOK_SHORT_LOG: Record<string, string> = {
+  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
+  betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
+};
+
 export interface BookLine {
   line: number;
   bookmaker: string;
