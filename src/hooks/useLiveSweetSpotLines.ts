@@ -69,10 +69,8 @@ export function useLiveSweetSpotLines(
   const [error, setError] = useState<string | null>(null);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   
-  // Track which spots are live games
-  const liveSpots = useMemo(() => {
-    return spots.filter(s => s.liveData?.isLive || s.liveData?.gameStatus === 'halftime');
-  }, [spots]);
+  // Use all spots — liveData isn't populated yet at this stage
+  const liveSpots = useMemo(() => spots, [spots]);
   
   // Cache ref
   const cacheRef = useRef<Map<string, { data: LiveLineData; fetchedAt: number }>>(new Map());
