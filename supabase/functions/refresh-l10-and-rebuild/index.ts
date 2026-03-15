@@ -64,11 +64,8 @@ Deno.serve(async (req) => {
     
     const slatePlayers = [...new Set((slateProps || []).map(p => p.player_name).filter(Boolean))];
     if (slatePlayers.length > 0) {
-      // Batch into groups of 10 to stay within Firecrawl limits
-      const batches = [];
-      for (let i = 0; i < slatePlayers.length; i += 10) {
-        batches.push(slatePlayers.slice(i, i + 10));
-      }
+      // Process 1 player per call to avoid edge function timeouts (~20s/player × 4 quarters)
+      const batches = slatePlayers.map(p => [p]);
       for (let i = 0; i < batches.length; i++) {
         await invokeStep(
           `StatMuse quarter stats batch ${i + 1}/${batches.length}`,
