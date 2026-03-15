@@ -34,6 +34,17 @@ interface QuarterProfileData {
   }>;
 }
 
+interface QuarterSnapshot {
+  player_name: string;
+  quarter: number;
+  points: number | null;
+  assists: number | null;
+  rebounds: number | null;
+  threes: number | null;
+}
+
+type LiveQuarterMap = Record<string, Record<string, number[]>>; // playerName -> propType -> [q1, q2, q3, q4]
+
 
 interface WarRoomLayoutProps {
   gameContext: ScoutGameContext;
