@@ -36,6 +36,16 @@ Deno.serve(async (req) => {
   };
 
   try {
+    // === PHASE 0: Refresh lineup/injury data ===
+    log("=== PHASE 0: Refreshing lineup & injury data ===");
+    await invokeStep(
+      "Refreshing lineups & injuries",
+      "firecrawl-lineup-scraper",
+      {}
+    );
+    // Brief delay to let injury data propagate
+    await new Promise(r => setTimeout(r, 5000));
+
     // === PHASE 1: Refresh game logs ===
     log("=== PHASE 1: Syncing fresh NBA game logs ===");
     await invokeStep(
