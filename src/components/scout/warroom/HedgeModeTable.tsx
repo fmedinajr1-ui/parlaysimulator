@@ -118,6 +118,11 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                   <span className="cursor-help border-b border-dotted border-muted-foreground/30">Need</span>
                 </HelpTip>
               </th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="Current live book line vs your original. Green = line moved in your favor, red = moved against you.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Alt Line</span>
+                </HelpTip>
+              </th>
               <th className="text-left font-medium p-2 pl-4 w-24">
                 <HelpTip tip="Visual tracker: how close the player is to clearing the line.">
                   <span className="cursor-help border-b border-dotted border-muted-foreground/30">Progress</span>
@@ -202,6 +207,23 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                   </td>
                   <td className="text-right p-2 tabular-nums text-muted-foreground">
                     {p.line}
+                  </td>
+                  <td className="text-right p-2 tabular-nums text-[11px]">
+                    {(() => {
+                      const liveLine = p.liveBookLine;
+                      if (!liveLine || Math.abs(liveLine - p.line) < 0.5) {
+                        return <span className="text-muted-foreground">—</span>;
+                      }
+                      const delta = p.line - liveLine;
+                      // For OVER: line dropping is favorable. For UNDER: line rising is favorable.
+                      const favorable = isOver ? delta > 0 : delta < 0;
+                      const arrow = delta > 0 ? '↓' : '↑';
+                      return (
+                        <span className={favorable ? 'text-[hsl(var(--warroom-green))] font-bold' : 'text-[hsl(var(--warroom-danger))] font-bold'}>
+                          {liveLine} <span className="text-[9px]">{arrow}{Math.abs(delta).toFixed(1)}</span>
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="p-2 pl-4">
                     <div className="h-1.5 w-full rounded-full bg-[hsl(var(--warroom-card-border)/0.5)] overflow-hidden">
