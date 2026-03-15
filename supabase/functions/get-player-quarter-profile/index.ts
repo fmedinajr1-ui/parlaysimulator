@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
       supabase
         .from('unified_props')
         .select('player_name, prop_type, current_line, over_price, under_price')
-        .in('prop_type', ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1'])
+        .in('prop_type', ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1', 'player_threes_q1', 'player_steals_q1'])
         .eq('bookmaker', 'fanduel')
         .gte('scraped_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()),
     ]);
