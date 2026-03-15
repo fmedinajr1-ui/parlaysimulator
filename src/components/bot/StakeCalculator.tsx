@@ -156,9 +156,8 @@ export function StakeCalculator() {
                   <th className="text-left py-2 font-medium">Bankroll</th>
                   <th className="text-right py-2 font-medium">Execution</th>
                   <th className="text-right py-2 font-medium">Validation</th>
-                  <th className="text-right py-2 font-medium">Exploration</th>
-                  <th className="text-right py-2 font-medium">Lottery</th>
-                  <th className="text-right py-2 font-medium">Daily EV</th>
+                   <th className="text-right py-2 font-medium">Exploration</th>
+                   <th className="text-right py-2 font-medium">Daily EV</th>
                   <th className="text-right py-2 font-medium">Monthly</th>
                 </tr>
               </thead>
