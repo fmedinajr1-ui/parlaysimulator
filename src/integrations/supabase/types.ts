@@ -8860,6 +8860,7 @@ export type Database = {
       player_quarter_baselines: {
         Row: {
           created_at: string
+          data_source: string | null
           game_avg: number
           h1_pct: number
           h2_pct: number
@@ -8885,6 +8886,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          data_source?: string | null
           game_avg?: number
           h1_pct?: number
           h2_pct?: number
@@ -8910,6 +8912,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          data_source?: string | null
           game_avg?: number
           h1_pct?: number
           h2_pct?: number
