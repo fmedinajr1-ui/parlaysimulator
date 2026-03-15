@@ -1,41 +1,44 @@
 
 
-# Update March 14 `bot_activation_status` Row
+# Root Cause: Zero Parlays on March 15
 
-## Current State (March 14 row)
-| Field | Current | Correct |
-|-------|---------|---------|
-| daily_profit_loss | 36 | **2,188.76** |
-| parlays_won | 1 | **4** |
-| parlays_lost | 4 | **5** |
-| parlays_generated | 5 | **21** |
-| is_profitable_day | true | true |
-| simulated_bankroll | 88,922.48 | **91,075.24** (+2,152.76 delta) |
+## Diagnosis
 
-**Note:** The actual settled P&L from the database is **+$2,188.76** (4W for +$2,648.76, 5L for -$460), not +$1,924.76. There is also still **1 pending** parlay remaining.
+This is **not an API issue**. All external APIs succeeded:
+- ESPN: 631 game log records fetched, 0 API errors
+- BDL: 300 records, 567/600 rate limit remaining
+- The Odds API: 501 props in `unified_props` for today's 7 games
 
-## Changes
+**Two bugs** are blocking every parlay engine:
 
-### 1. Update March 14 row via data update tool
+### Bug 1: `category_sweet_spots` query missing date filter (PRIMARY BLOCKER)
+The `sharp-parlay-builder`, `heat-prop-engine`, and `bot-generate-daily-parlays` all load category recommendations with:
 ```sql
-UPDATE bot_activation_status 
-SET daily_profit_loss = 2188.76,
-    parlays_won = 4,
-    parlays_lost = 5,
-    parlays_generated = 21,
-    simulated_bankroll = 91075.2366207307
-WHERE check_date = '2026-03-14';
+SELECT ... FROM category_sweet_spots WHERE l10_hit_rate >= 0.7
 ```
+This returns **22,430 rows** across all historical dates, but only 2,619 have `l3_avg` populated. The code builds an in-memory map keyed by `player_proptype` — so older records with NULL `l3_avg` **overwrite** today's valid records. Every player then fails the L3 gate and gets skipped.
 
-### 2. Cascade bankroll to March 15
-The March 15 row's `simulated_bankroll` must also shift by the same +2,152.76 delta:
-```sql
-UPDATE bot_activation_status 
-SET simulated_bankroll = 90829.2366207307
-WHERE check_date = '2026-03-15';
-```
-(March 15 P&L is 0, so bankroll = March 14 bankroll - March 14's old contribution + new contribution. Specifically: current 88676.48 + 2152.76 = 90829.24)
+**Fix:** Add `analysis_date = today` filter to `loadCategoryRecommendations()` in all 4 affected engines:
+- `sharp-parlay-builder/index.ts` (line ~55)
+- `heat-prop-engine/index.ts` (same pattern)
+- `bot-curated-pipeline/index.ts` (line ~154)
+- `bot-generate-daily-parlays/index.ts` (line ~4820 area)
 
-### 3. Update `bot-public-stats` edge function
-No code changes needed — the stats function already reads directly from `bot_activation_status`.
+### Bug 2: `game_bets` not populated for today's games
+The `bot-curated-pipeline` queries `game_bets` for today's games but the latest entry is from `2026-03-15 02:40:00+00` (last night). Today's 7 games (MIN@OKC, DAL@CLE, IND@MIL, DET@TOR, POR@PHI, GSW@NYK, UTA@SAC) exist in `unified_props` but not in `game_bets`. The whale-odds-scraper either didn't run or didn't write to `game_bets`.
+
+**Fix:** Re-run the whale-odds-scraper to populate `game_bets`, OR update `bot-curated-pipeline` to fall back to `unified_props` for game discovery.
+
+## Implementation Plan
+
+### Step 1: Fix L3 date filter in all 4 engines
+Add `analysis_date = today` to the `category_sweet_spots` query in each function's `loadCategoryRecommendations()`. This reduces the result set from 22,430 to ~400 rows, all with valid L3 data.
+
+### Step 2: Populate `game_bets` for today
+Invoke the whale-odds-scraper to refresh `game_bets` with today's NBA games.
+
+### Step 3: Re-run the parlay pipeline
+Trigger a Clean & Rebuild to regenerate parlays with the fixed data.
+
+### Step 4: Deploy all 4 updated edge functions
 
