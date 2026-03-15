@@ -112,30 +112,27 @@ function parseStatMuseTable(markdown: string): Array<{
   return rows;
 }
 
-/** Calculate L10 per-quarter averages from parsed rows */
+/** Calculate L10 per-quarter averages from parsed rows.
+ * StatMuse groups rows by quarter (all Q1 rows, then all Q2, etc.),
+ * so we need to collect unique game dates PER quarter and average separately. */
 function calculateQuarterAverages(
   rows: ReturnType<typeof parseStatMuseTable>,
   maxGames: number = 10
 ): Record<string, { q1: number; q2: number; q3: number; q4: number; game_avg: number }> | null {
   if (rows.length === 0) return null;
 
-  // Group by date to identify distinct games
-  const gamesByDate = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const key = row.date || `idx-${rows.indexOf(row)}`;
-    const arr = gamesByDate.get(key) || [];
-    arr.push(row);
-    gamesByDate.set(key, arr);
-  }
+  // Get unique game dates across ALL quarters, take most recent maxGames
+  const allDates = new Set<string>();
+  for (const r of rows) if (r.date) allDates.add(r.date);
+  // Sort dates descending (most recent first) then take top N
+  const sortedDates = [...allDates].sort((a, b) => b.localeCompare(a)).slice(0, maxGames);
+  const dateSet = new Set(sortedDates);
 
-  // Take last maxGames dates (StatMuse returns recent first)
-  const dates = [...gamesByDate.keys()].slice(0, maxGames);
-  const filteredRows = rows.filter(r => {
-    const key = r.date || `idx-${rows.indexOf(r)}`;
-    return dates.includes(key);
-  });
+  // Filter rows to only include those games
+  const filteredRows = rows.filter(r => r.date && dateSet.has(r.date));
+  if (filteredRows.length < 2) return null;
 
-  if (filteredRows.length < 4) return null;
+  console.log(`[statmuse] Using ${sortedDates.length} games, ${filteredRows.length} total quarter rows`);
 
   const stats = ['pts', 'reb', 'ast', 'stl', 'blk', 'threes'] as const;
   const propNames = ['points', 'rebounds', 'assists', 'steals', 'blocks', 'threes'];
