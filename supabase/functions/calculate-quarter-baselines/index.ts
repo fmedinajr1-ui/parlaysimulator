@@ -5,98 +5,104 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Prop type configurations
-const PROP_CONFIGS = [
-  { propType: 'points', gameLogField: 'points' },
-  { propType: 'assists', gameLogField: 'assists' },
-  { propType: 'threes', gameLogField: 'threes_made' },
-  { propType: 'blocks', gameLogField: 'blocks' },
-];
-
-// Quarter distribution patterns based on player tier and NBA research
-// Stars tend to pace in Q1, peak Q2/Q3, and conserve/close in Q4
-// Role players more affected by garbage time in Q4
-const TIER_DISTRIBUTIONS = {
-  star: { q1: 0.24, q2: 0.26, q3: 0.26, q4: 0.24 },      // 32+ min
-  starter: { q1: 0.25, q2: 0.25, q3: 0.26, q4: 0.24 },   // 24-32 min
-  role_player: { q1: 0.26, q2: 0.26, q3: 0.24, q4: 0.24 }, // <24 min
+const NBA_STATS_HEADERS = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Origin': 'https://www.nba.com',
+  'Referer': 'https://www.nba.com/',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'x-nba-stats-origin': 'stats',
+  'x-nba-stats-token': 'true',
 };
 
-// Determine player tier based on average minutes
+// Map prop types to NBA stats column names
+const PROP_CONFIGS = [
+  { propType: 'points', column: 'PTS' },
+  { propType: 'assists', column: 'AST' },
+  { propType: 'threes', column: 'FG3M' },
+  { propType: 'blocks', column: 'BLK' },
+  { propType: 'rebounds', column: 'REB' },
+  { propType: 'steals', column: 'STL' },
+];
+
 function getPlayerTier(avgMinutes: number): 'star' | 'starter' | 'role_player' {
   if (avgMinutes >= 32) return 'star';
   if (avgMinutes >= 24) return 'starter';
   return 'role_player';
 }
 
-// Calculate baselines for a single player from their L10 game logs
-function calculatePlayerBaselines(
-  playerName: string,
-  gameLogs: any[],
-  propType: string,
-  gameLogField: string
-) {
-  if (!gameLogs || gameLogs.length === 0) return null;
+function getCurrentSeason(): string {
+  const now = new Date();
+  const year = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${year}-${String(year + 1).slice(2)}`;
+}
 
-  // Calculate L10 averages
-  const sampleSize = gameLogs.length;
-  let totalStat = 0;
-  let totalMinutes = 0;
+interface PlayerRow {
+  name: string;
+  stats: Record<string, number>; // column -> value
+  minutes: number;
+}
 
-  for (const log of gameLogs) {
-    totalStat += log[gameLogField] || 0;
-    totalMinutes += log.minutes_played || 0;
+async function fetchNBAPlayerStats(period: number, season: string, lastNGames: number): Promise<PlayerRow[]> {
+  const url = `https://stats.nba.com/stats/leaguedashplayerstats?Conference=&DateFrom=&DateTo=&Division=&GameScope=&GameSegment=&Height=&ISTRound=&LastNGames=${lastNGames}&LeagueID=00&Location=&MeasureType=Base&Month=0&OpponentTeamID=0&Outcome=&PORound=0&PaceAdjust=N&PerMode=PerGame&Period=${period}&PlayerExperience=&PlayerPosition=&PlusMinus=N&Rank=N&Season=${season}&SeasonSegment=&SeasonType=Regular+Season&ShotClockRange=&StarterBench=&TeamID=0&TwoWay=0&VsConference=&VsDivision=`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      console.log(`[quarter-baselines] Fetching Period=${period} (attempt ${attempt})...`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const resp = await fetch(url, { headers: NBA_STATS_HEADERS, signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!resp.ok) {
+        console.error(`[quarter-baselines] NBA.com returned ${resp.status} for Period=${period}`);
+        if (attempt < 3) { await new Promise(r => setTimeout(r, 1500 * attempt)); continue; }
+        return [];
+      }
+
+      const json = await resp.json();
+      const headers: string[] = json.resultSets?.[0]?.headers || [];
+      const rows: any[][] = json.resultSets?.[0]?.rowSet || [];
+
+      if (!headers.length || !rows.length) {
+        console.warn(`[quarter-baselines] Empty result for Period=${period}`);
+        return [];
+      }
+
+      const idx = (name: string) => headers.indexOf(name);
+      const nameIdx = idx('PLAYER_NAME');
+      const minIdx = idx('MIN');
+      const gpIdx = idx('GP');
+
+      const result: PlayerRow[] = [];
+      for (const row of rows) {
+        const name = row[nameIdx] as string;
+        const gp = Number(row[gpIdx]) || 0;
+        if (!name || gp < 3) continue;
+
+        const stats: Record<string, number> = {};
+        for (const cfg of PROP_CONFIGS) {
+          stats[cfg.column] = Number(row[idx(cfg.column)]) || 0;
+        }
+
+        result.push({
+          name,
+          stats,
+          minutes: Number(row[minIdx]) || 0,
+        });
+      }
+
+      console.log(`[quarter-baselines] Period=${period}: ${result.length} players`);
+      return result;
+    } catch (err) {
+      console.error(`[quarter-baselines] Fetch error Period=${period} attempt ${attempt}:`, err);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+    }
   }
-
-  const gameAvg = totalStat / sampleSize;
-  const minutesAvg = totalMinutes / sampleSize;
-  const tier = getPlayerTier(minutesAvg);
-  const distribution = TIER_DISTRIBUTIONS[tier];
-
-  // Calculate quarter averages based on distribution
-  const q1Avg = gameAvg * distribution.q1;
-  const q2Avg = gameAvg * distribution.q2;
-  const q3Avg = gameAvg * distribution.q3;
-  const q4Avg = gameAvg * distribution.q4;
-
-  // Calculate per-minute rates (assuming 12 min quarters)
-  const avgMinutesPerQuarter = minutesAvg / 4;
-  const q1Rate = avgMinutesPerQuarter > 0 ? q1Avg / avgMinutesPerQuarter : 0;
-  const q2Rate = avgMinutesPerQuarter > 0 ? q2Avg / avgMinutesPerQuarter : 0;
-  const q3Rate = avgMinutesPerQuarter > 0 ? q3Avg / avgMinutesPerQuarter : 0;
-  const q4Rate = avgMinutesPerQuarter > 0 ? q4Avg / avgMinutesPerQuarter : 0;
-
-  // Half distributions
-  const h1Pct = distribution.q1 + distribution.q2;
-  const h2Pct = distribution.q3 + distribution.q4;
-
-  return {
-    player_name: playerName,
-    prop_type: propType,
-    q1_pct: distribution.q1,
-    q2_pct: distribution.q2,
-    q3_pct: distribution.q3,
-    q4_pct: distribution.q4,
-    q1_avg: Math.round(q1Avg * 100) / 100,
-    q2_avg: Math.round(q2Avg * 100) / 100,
-    q3_avg: Math.round(q3Avg * 100) / 100,
-    q4_avg: Math.round(q4Avg * 100) / 100,
-    h1_pct: h1Pct,
-    h2_pct: h2Pct,
-    q1_rate: Math.round(q1Rate * 10000) / 10000,
-    q2_rate: Math.round(q2Rate * 10000) / 10000,
-    q3_rate: Math.round(q3Rate * 10000) / 10000,
-    q4_rate: Math.round(q4Rate * 10000) / 10000,
-    game_avg: Math.round(gameAvg * 100) / 100,
-    sample_size: sampleSize,
-    minutes_avg: Math.round(minutesAvg * 100) / 100,
-    player_tier: tier,
-    updated_at: new Date().toISOString(),
-  };
+  return [];
 }
 
 Deno.serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -106,112 +112,123 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('[calculate-quarter-baselines] Starting baseline calculation...');
+    const season = getCurrentSeason();
+    const lastNGames = 10; // L10 window
+    console.log(`[quarter-baselines] Starting real NBA data fetch for ${season}, L${lastNGames}...`);
 
-    // Get all unique players from recent game logs (L10 window)
-    const { data: players, error: playersError } = await supabase
-      .from('nba_player_game_logs')
-      .select('player_name')
-      .gte('game_date', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]) // Last 30 days
-      .order('player_name');
+    // Fetch all 5 periods with delays between calls
+    const periodData: Map<number, Map<string, PlayerRow>> = new Map();
 
-    if (playersError) {
-      console.error('[calculate-quarter-baselines] Error fetching players:', playersError);
-      throw playersError;
+    for (const period of [0, 1, 2, 3, 4]) {
+      if (period > 0) await new Promise(r => setTimeout(r, 1200)); // rate limit
+      const players = await fetchNBAPlayerStats(period, season, lastNGames);
+      const map = new Map<string, PlayerRow>();
+      for (const p of players) map.set(p.name, p);
+      periodData.set(period, map);
     }
 
-    // Get unique player names
-    const uniquePlayers = [...new Set(players?.map(p => p.player_name) || [])];
-    console.log(`[calculate-quarter-baselines] Found ${uniquePlayers.length} unique players`);
+    const fullGamePlayers = periodData.get(0)!;
+    console.log(`[quarter-baselines] Full game: ${fullGamePlayers.size} players`);
 
     const allBaselines: any[] = [];
-    const batchSize = 10;
 
-    // Process players in batches to avoid timeout
-    for (let i = 0; i < uniquePlayers.length; i += batchSize) {
-      const batch = uniquePlayers.slice(i, i + batchSize);
-      
-      await Promise.all(batch.map(async (playerName) => {
-        // Fetch L10 game logs for this player
-        const { data: gameLogs, error: logsError } = await supabase
-          .from('nba_player_game_logs')
-          .select('player_name, points, assists, threes_made, blocks, minutes_played, game_date')
-          .eq('player_name', playerName)
-          .order('game_date', { ascending: false })
-          .limit(10);
+    for (const [playerName, fullGame] of fullGamePlayers) {
+      const q1 = periodData.get(1)?.get(playerName);
+      const q2 = periodData.get(2)?.get(playerName);
+      const q3 = periodData.get(3)?.get(playerName);
+      const q4 = periodData.get(4)?.get(playerName);
 
-        if (logsError) {
-          console.warn(`[calculate-quarter-baselines] Error fetching logs for ${playerName}:`, logsError);
-          return;
-        }
+      // Need at least Q1-Q4 data
+      if (!q1 || !q2 || !q3 || !q4) continue;
 
-        if (!gameLogs || gameLogs.length < 3) {
-          // Skip players with insufficient data
-          return;
-        }
+      const tier = getPlayerTier(fullGame.minutes);
+      const avgMinutesPerQuarter = fullGame.minutes / 4;
 
-        // Calculate baselines for each prop type
-        for (const config of PROP_CONFIGS) {
-          const baseline = calculatePlayerBaselines(
-            playerName,
-            gameLogs,
-            config.propType,
-            config.gameLogField
-          );
-          
-          if (baseline && baseline.game_avg > 0) {
-            allBaselines.push(baseline);
-          }
-        }
-      }));
+      for (const cfg of PROP_CONFIGS) {
+        const gameAvg = fullGame.stats[cfg.column];
+        if (gameAvg <= 0) continue;
 
-      console.log(`[calculate-quarter-baselines] Processed batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(uniquePlayers.length / batchSize)}`);
+        const q1Avg = q1.stats[cfg.column];
+        const q2Avg = q2.stats[cfg.column];
+        const q3Avg = q3.stats[cfg.column];
+        const q4Avg = q4.stats[cfg.column];
+
+        // Real percentages from actual quarter data
+        const q1Pct = gameAvg > 0 ? q1Avg / gameAvg : 0.25;
+        const q2Pct = gameAvg > 0 ? q2Avg / gameAvg : 0.25;
+        const q3Pct = gameAvg > 0 ? q3Avg / gameAvg : 0.25;
+        const q4Pct = gameAvg > 0 ? q4Avg / gameAvg : 0.25;
+
+        // Per-minute rates
+        const q1Min = q1.minutes > 0 ? q1.minutes : avgMinutesPerQuarter;
+        const q2Min = q2.minutes > 0 ? q2.minutes : avgMinutesPerQuarter;
+        const q3Min = q3.minutes > 0 ? q3.minutes : avgMinutesPerQuarter;
+        const q4Min = q4.minutes > 0 ? q4.minutes : avgMinutesPerQuarter;
+
+        allBaselines.push({
+          player_name: playerName,
+          prop_type: cfg.propType,
+          q1_pct: Math.round(q1Pct * 10000) / 10000,
+          q2_pct: Math.round(q2Pct * 10000) / 10000,
+          q3_pct: Math.round(q3Pct * 10000) / 10000,
+          q4_pct: Math.round(q4Pct * 10000) / 10000,
+          q1_avg: Math.round(q1Avg * 100) / 100,
+          q2_avg: Math.round(q2Avg * 100) / 100,
+          q3_avg: Math.round(q3Avg * 100) / 100,
+          q4_avg: Math.round(q4Avg * 100) / 100,
+          h1_pct: Math.round((q1Pct + q2Pct) * 10000) / 10000,
+          h2_pct: Math.round((q3Pct + q4Pct) * 10000) / 10000,
+          q1_rate: Math.round((q1Avg / q1Min) * 10000) / 10000,
+          q2_rate: Math.round((q2Avg / q2Min) * 10000) / 10000,
+          q3_rate: Math.round((q3Avg / q3Min) * 10000) / 10000,
+          q4_rate: Math.round((q4Avg / q4Min) * 10000) / 10000,
+          game_avg: Math.round(gameAvg * 100) / 100,
+          sample_size: lastNGames,
+          minutes_avg: Math.round(fullGame.minutes * 100) / 100,
+          player_tier: tier,
+          updated_at: new Date().toISOString(),
+        });
+      }
     }
 
-    console.log(`[calculate-quarter-baselines] Generated ${allBaselines.length} baseline records`);
+    console.log(`[quarter-baselines] Generated ${allBaselines.length} baseline records from real data`);
 
-    // Upsert all baselines
-    if (allBaselines.length > 0) {
-      // Process in chunks to avoid payload limits
-      const chunkSize = 50;
-      let upsertedCount = 0;
+    // Upsert in chunks
+    let upsertedCount = 0;
+    const chunkSize = 50;
+    for (let i = 0; i < allBaselines.length; i += chunkSize) {
+      const chunk = allBaselines.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from('player_quarter_baselines')
+        .upsert(chunk, { onConflict: 'player_name,prop_type', ignoreDuplicates: false });
 
-      for (let i = 0; i < allBaselines.length; i += chunkSize) {
-        const chunk = allBaselines.slice(i, i + chunkSize);
-        
-        const { error: upsertError } = await supabase
-          .from('player_quarter_baselines')
-          .upsert(chunk, { 
-            onConflict: 'player_name,prop_type',
-            ignoreDuplicates: false 
-          });
-
-        if (upsertError) {
-          console.error(`[calculate-quarter-baselines] Upsert error for chunk ${i}:`, upsertError);
-        } else {
-          upsertedCount += chunk.length;
-        }
+      if (error) {
+        console.error(`[quarter-baselines] Upsert error chunk ${i}:`, error);
+      } else {
+        upsertedCount += chunk.length;
       }
-
-      console.log(`[calculate-quarter-baselines] Upserted ${upsertedCount} baseline records`);
     }
 
     const result = {
       success: true,
-      playersProcessed: uniquePlayers.length,
+      source: 'nba_stats_api',
+      season,
+      lastNGames,
+      playersProcessed: fullGamePlayers.size,
       baselinesGenerated: allBaselines.length,
+      baselinesUpserted: upsertedCount,
+      propTypes: PROP_CONFIGS.map(c => c.propType),
       timestamp: new Date().toISOString(),
     };
 
-    console.log('[calculate-quarter-baselines] Complete:', result);
+    console.log('[quarter-baselines] Complete:', result);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[calculate-quarter-baselines] Error:', errorMessage);
+    console.error('[quarter-baselines] Error:', errorMessage);
     return new Response(
       JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
