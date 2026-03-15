@@ -54,6 +54,33 @@ Deno.serve(async (req) => {
       { mode: "sync", daysBack: 5, useESPN: true, includeParlayPlayers: true }
     );
 
+    // === PHASE 1.5: Scrape real quarter stats from StatMuse ===
+    log("=== PHASE 1.5: Scraping real quarter stats (StatMuse) ===");
+    // Get today's slate players from unified_props
+    const { data: slateProps } = await supabase
+      .from("unified_props")
+      .select("player_name")
+      .gte("scraped_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
+    
+    const slatePlayers = [...new Set((slateProps || []).map(p => p.player_name).filter(Boolean))];
+    if (slatePlayers.length > 0) {
+      // Batch into groups of 10 to stay within Firecrawl limits
+      const batches = [];
+      for (let i = 0; i < slatePlayers.length; i += 10) {
+        batches.push(slatePlayers.slice(i, i + 10));
+      }
+      for (let i = 0; i < batches.length; i++) {
+        await invokeStep(
+          `StatMuse quarter stats batch ${i + 1}/${batches.length}`,
+          "scrape-statmuse-quarter-stats",
+          { playerNames: batches[i] }
+        );
+      }
+      log(`StatMuse: scraped ${slatePlayers.length} slate players in ${batches.length} batches`);
+    } else {
+      log("No slate players found, skipping StatMuse scrape");
+    }
+
     // === PHASE 2: Recompute L10 stats ===
     log("=== PHASE 2: Recomputing category sweet spots ===");
     await invokeStep(
