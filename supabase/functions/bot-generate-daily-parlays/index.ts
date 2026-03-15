@@ -10339,7 +10339,7 @@ Deno.serve(async (req) => {
         }, 1);
         const combinedAmerican = combinedDecimal >= 2 ? Math.round((combinedDecimal - 1) * 100) : Math.round(-100 / (combinedDecimal - 1));
         const combinedProb = 1 / combinedDecimal;
-        const stake = legCount <= 5 ? 50 : 25;
+        const stake = legCount <= 5 ? 100 : 25; // Execution-tier role-stacked = flat $100
         const payout = Math.round(stake * combinedDecimal);
 
         const fingerprint = selectedLegs.map(l => `${l.player_name}_${l.prop_type}_${l.side}`).sort().join('|');
