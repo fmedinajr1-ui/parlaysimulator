@@ -135,6 +135,43 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     });
   }, [enrichedSpots.length, homeTeam, awayTeam]);
 
+  // Fetch live quarter snapshots for current event
+  useEffect(() => {
+    const eventId = gameContext.eventId;
+    if (!eventId) return;
+
+    const fetchSnapshots = async () => {
+      const { data: snapshots, error } = await supabase
+        .from('quarter_player_snapshots')
+        .select('player_name, quarter, points, assists, rebounds, threes')
+        .eq('event_id', eventId)
+        .order('quarter', { ascending: true });
+
+      if (error || !snapshots) return;
+
+      const map: LiveQuarterMap = {};
+      const propKeys: Record<string, keyof QuarterSnapshot> = {
+        points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes',
+      };
+
+      for (const snap of snapshots as QuarterSnapshot[]) {
+        const name = snap.player_name;
+        if (!map[name]) map[name] = {};
+        for (const [prop, col] of Object.entries(propKeys)) {
+          if (!map[name][prop]) map[name][prop] = [];
+          const qi = snap.quarter - 1;
+          if (qi >= 0 && qi < 4) {
+            map[name][prop][qi] = (snap[col] as number) ?? 0;
+          }
+        }
+      }
+      setLiveQuarterMap(map);
+    };
+
+    fetchSnapshots();
+    const interval = setInterval(fetchSnapshots, 30000);
+    return () => clearInterval(interval);
+
   const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
   const { games } = useUnifiedLiveFeed({ enabled: true });
