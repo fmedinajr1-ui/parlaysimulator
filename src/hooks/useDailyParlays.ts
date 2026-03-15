@@ -421,7 +421,6 @@ export function useDailyParlays() {
       'BALANCED': 4,
       'UPSIDE': 5,
       'HEAT_UPSIDE': 6,
-      'LOTTERY': 7,
     };
     
     const priorityDiff = typePriority[a.type] - typePriority[b.type];

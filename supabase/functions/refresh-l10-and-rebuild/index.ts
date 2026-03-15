@@ -79,7 +79,6 @@ Deno.serve(async (req) => {
       ["Scanning heat tracker", "heat-prop-engine", { action: "scan" }],
       ["Building heat parlays", "heat-prop-engine", { action: "build" }],
       ["Ladder challenge", "nba-ladder-challenge", {}],
-      ["Scanning lottery parlays", "nba-mega-parlay-scanner", {}],
       ["Diversity rebalance", "bot-daily-diversity-rebalance", {}],
       ["Sending slate status", "bot-slate-status-update", {}],
     ];

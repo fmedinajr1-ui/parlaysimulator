@@ -366,7 +366,6 @@ export function StakeConfigPanel() {
               {field("execution_stake", "Execution", "$", "High-confidence 3-leg parlays")}
               {field("validation_stake", "Validation", "$", "Confirmed pattern parlays")}
               {field("exploration_stake", "Exploration", "$", "Edge discovery parlays")}
-              {field("bankroll_doubler_stake", "Bankroll Doubler", "$", "6-leg mega parlay")}
             </div>
           </div>
 

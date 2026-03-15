@@ -178,7 +178,7 @@ export function StakeCalculator() {
         </div>
 
         <p className="text-xs text-center text-muted-foreground">
-          Stakes = 2% execution / 1% validation / 0.4% exploration / 0.2% lottery · Half-Kelly sizing · Projections based on live 9-day P&L
+          Stakes = 2% execution / 1% validation / 0.4% exploration · Half-Kelly sizing · Projections based on live 9-day P&L
         </p>
       </CardContent>
     </Card>
