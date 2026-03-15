@@ -151,7 +151,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
 
       const map: LiveQuarterMap = {};
       const propKeys: Record<string, keyof QuarterSnapshot> = {
-        points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes',
+        points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes', steals: 'steals', blocks: 'blocks',
       };
 
       for (const snap of snapshots as QuarterSnapshot[]) {

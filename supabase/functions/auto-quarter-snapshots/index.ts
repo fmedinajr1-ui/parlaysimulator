@@ -242,6 +242,8 @@ serve(async (req) => {
             rebounds: Math.round(totalDelta.rebounds / qCount),
             assists: Math.round(totalDelta.assists / qCount),
             threes: Math.round(totalDelta.threes / qCount),
+            steals: Math.round(totalDelta.steals / qCount),
+            blocks: Math.round(totalDelta.blocks / qCount),
             turnovers: Math.round(totalDelta.turnovers / qCount),
             fouls: Math.round(totalDelta.fouls / qCount),
             minutes_played: Math.round((totalDelta.minutes / qCount) * 10) / 10,
