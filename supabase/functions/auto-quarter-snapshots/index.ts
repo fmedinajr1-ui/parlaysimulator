@@ -15,6 +15,8 @@ interface PlayerStats {
   rebounds: number;
   assists: number;
   threes: number;
+  steals: number;
+  blocks: number;
   turnovers: number;
   fouls: number;
   minutes: string;
