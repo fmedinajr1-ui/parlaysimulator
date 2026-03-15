@@ -1,14 +1,15 @@
 /**
- * bot-daily-diversity-rebalance v2.1
+ * bot-daily-diversity-rebalance v2.2
  * 
  * Post-rebuild pass that:
- * 1. Caps any single strategy family at 40% of the total pending daily slate
- * 2. Enforces max-2-per-player-prop across ALL pending parlays (global exposure cap)
+ * 1. Caps any single strategy family at 40% (60% on light slates) of the total pending daily slate
+ * 2. Enforces max-2-per-player-prop (max-3 on light slates) across ALL pending parlays
+ * 3. Auto-detects light-slate conditions (≤8 unique players in pending parlays)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VERSION = 'diversity-rebalance-v2.1';
+const VERSION = 'diversity-rebalance-v2.2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -88,12 +89,12 @@ Deno.serve(async (req) => {
     console.log(`[DiversityRebalance] ${VERSION} | date=${today}`);
 
     // ═══════════════════════════════════════════════════════════════
-    // PASS 1: Strategy Family Cap (30%)
+    // Fetch pending parlays + detect light-slate
     // ═══════════════════════════════════════════════════════════════
 
     const { data: pending, error } = await supabase
       .from('bot_daily_parlays')
-      .select('id, strategy_name, combined_probability, tier, created_at')
+      .select('id, strategy_name, combined_probability, tier, created_at, legs')
       .eq('parlay_date', today)
       .eq('outcome', 'pending')
       .order('combined_probability', { ascending: false });
@@ -107,8 +108,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    const maxPerFamily = Math.max(2, Math.ceil(totalCount * maxPct));
-    console.log(`[DiversityRebalance] ${totalCount} pending parlays, max per family: ${maxPerFamily} (${(maxPct * 100).toFixed(0)}%)`);
+    // Count unique players across all pending parlays
+    const uniquePlayers = new Set<string>();
+    for (const p of pending!) {
+      if (Array.isArray(p.legs)) {
+        for (const leg of p.legs as any[]) {
+          const name = normalizePlayerName(leg.player_name || leg.playerName || leg.player || '');
+          if (name) uniquePlayers.add(name);
+        }
+      }
+    }
+
+    const isLightSlate = uniquePlayers.size <= 8;
+    const effectiveMaxPct = isLightSlate ? 0.60 : maxPct;
+    const effectiveMaxPlayerPropUsage = isLightSlate ? 3 : maxPlayerPropUsage;
+    const effectiveMinFloor = isLightSlate ? 3 : 2;
+
+    console.log(`[DiversityRebalance] ${totalCount} pending, ${uniquePlayers.size} unique players → ${isLightSlate ? 'LIGHT-SLATE' : 'NORMAL'} mode`);
+
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 1: Strategy Family Cap
+    // ═══════════════════════════════════════════════════════════════
+
+    const maxPerFamily = Math.max(effectiveMinFloor, Math.ceil(totalCount * effectiveMaxPct));
+    console.log(`[DiversityRebalance] max per family: ${maxPerFamily} (${(effectiveMaxPct * 100).toFixed(0)}%, floor=${effectiveMinFloor})`);
 
     // Count by family
     const familyCounts = new Map<string, { kept: number; toVoid: string[] }>();
@@ -150,10 +173,10 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PASS 2: Player-Prop Exposure Cap (max 1 per player-prop combo)
+    // PASS 2: Player-Prop Exposure Cap
     // ═══════════════════════════════════════════════════════════════
 
-    console.log(`[DiversityRebalance] Starting player-prop exposure pass (max ${maxPlayerPropUsage} per combo)...`);
+    console.log(`[DiversityRebalance] Starting player-prop exposure pass (max ${effectiveMaxPlayerPropUsage} per combo)...`);
 
     // Re-fetch remaining pending parlays WITH legs data
     const { data: remainingParlays, error: err2 } = await supabase
@@ -186,17 +209,16 @@ Deno.serve(async (req) => {
     const exposureDetails: Record<string, { kept: number; voided: number }> = {};
 
     for (const [key, parlayIds] of playerPropMap) {
-      if (parlayIds.length <= maxPlayerPropUsage) continue;
+      if (parlayIds.length <= effectiveMaxPlayerPropUsage) continue;
       
-      const toVoid = parlayIds.slice(maxPlayerPropUsage);
+      const toVoid = parlayIds.slice(effectiveMaxPlayerPropUsage);
       for (const id of toVoid) {
         exposureCandidatesRaw.add(id);
-        // Only add if NOT already voided by strategy pass
         if (!strategyVoidedIds.has(id)) {
           exposureVoidSet.add(id);
         }
       }
-      exposureDetails[key] = { kept: maxPlayerPropUsage, voided: toVoid.length };
+      exposureDetails[key] = { kept: effectiveMaxPlayerPropUsage, voided: toVoid.length };
     }
 
     const exposureAlreadyVoidedByStrategy = exposureCandidatesRaw.size - exposureVoidSet.size;
@@ -250,9 +272,11 @@ Deno.serve(async (req) => {
       metadata: {
         version: VERSION,
         date: today,
-        maxPct,
+        maxPct: effectiveMaxPct,
         maxPerFamily,
-        maxPlayerPropUsage,
+        maxPlayerPropUsage: effectiveMaxPlayerPropUsage,
+        isLightSlate,
+        uniquePlayerCount: uniquePlayers.size,
         totalBefore: totalCount,
         totalAfter,
         strategyVoided: totalStrategyVoided,
@@ -278,7 +302,9 @@ Deno.serve(async (req) => {
       exposureAlreadyVoidedByStrategy,
       exposureVoided,
       maxPerFamily,
-      maxPlayerPropUsage,
+      maxPlayerPropUsage: effectiveMaxPlayerPropUsage,
+      isLightSlate,
+      uniquePlayerCount: uniquePlayers.size,
       voidDetails,
       exposureDetails,
       familySummary,
