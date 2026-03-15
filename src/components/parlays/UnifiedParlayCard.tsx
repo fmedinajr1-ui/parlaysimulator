@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   Trophy, Shield, Target, Rocket, Flame, TrendingUp,
-  ChevronDown, ChevronUp, Plus, Check, Ticket, Star
+  ChevronDown, ChevronUp, Plus, Check, Star
 } from "lucide-react";
 import { DailyParlay, UnifiedParlayLeg } from "@/hooks/useDailyParlays";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
