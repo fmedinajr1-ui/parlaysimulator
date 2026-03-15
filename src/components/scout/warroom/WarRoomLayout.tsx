@@ -268,7 +268,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
           liveQuarterStats: (() => {
             const playerQData = liveQuarterMap[s.playerName]?.[s.propType];
             if (!playerQData || playerQData.length === 0) return undefined;
-            const currentGame = games.find(g => g.status === 'in_progress');
+            const currentGame = games.find(g => g.status === 'in_progress' && (g.eventId === gameContext?.eventId || g.homeTeam === homeTeam || g.awayTeam === awayTeam)) || games.find(g => g.status === 'in_progress');
             return {
               currentQuarter: currentGame?.period ?? 1,
               quarterActuals: playerQData,
