@@ -117,10 +117,17 @@ export interface LivePropData {
   halftimeRecalibration?: HalftimeRecalibration;
   
   // Live line tracking (v7.2)
-  liveBookLine?: number;        // Current book line (may differ from original)
-  lineMovement?: number;        // liveBookLine - originalLine (+ = line went up, - = dropped)
-  lastLineUpdate?: string;      // ISO timestamp of last line fetch
-  bookmaker?: string;           // Which book the line is from (e.g., "fanduel")
+  liveBookLine?: number;
+  lineMovement?: number;
+  lastLineUpdate?: string;
+  bookmaker?: string;
+  
+  // Closest-line matching (v7.4)
+  closestLine?: number;
+  closestBookmaker?: string;
+  closestDelta?: number;
+  isScanning?: boolean;
+  allBookLines?: { line: number; bookmaker: string; overPrice?: number; underPrice?: number }[];
   
   // Computed hedge status (v8.2)
   hedgeStatus?: HedgeStatus;    // on_track, monitor, alert, urgent, profit_lock
