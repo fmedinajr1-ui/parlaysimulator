@@ -17,7 +17,6 @@ const TIERS = [
   { label: "Execution", winRate: 0.37, odds: 7.0, parlaysPerDay: 5, key: "execution" },
   { label: "Validation", winRate: 0.33, odds: 8.0, parlaysPerDay: 8, key: "validation" },
   { label: "Exploration", winRate: 0.30, odds: 9.0, parlaysPerDay: 10, key: "exploration" },
-  { label: "Bankroll Doubler", winRate: 0.15, odds: 50.0, parlaysPerDay: 2, key: "bankroll_doubler" },
 ];
 
 // Proven strategy data from live performance (9-day track record)
