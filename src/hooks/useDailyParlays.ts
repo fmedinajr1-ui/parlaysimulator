@@ -403,7 +403,7 @@ export function useDailyParlays() {
       combinedOdds: parlay.expected_odds || 300,
       winProbability: parlay.combined_probability || 0.50,
       patterns: extractPatterns(legs),
-      riskLevel: isLottery ? 'HIGH' : 'LOW',
+      riskLevel: 'LOW',
       parlayDate: parlay.parlay_date,
       outcome: (parlay.outcome as 'pending' | 'won' | 'lost') || 'pending',
       tier: parlay.tier || undefined,
