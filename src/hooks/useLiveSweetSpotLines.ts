@@ -38,8 +38,10 @@ interface UseLiveSweetSpotLinesOptions {
 }
 
 const TURBO_INTERVAL = 6000;
-const NORMAL_INTERVAL = 10000;
-const CACHE_TTL = 8000;
+const NORMAL_INTERVAL = 15000;
+const MATCH_THRESHOLD = 0.5;  // ±0.5 = "perfect match"
+const SCANNING_THRESHOLD = 1.5; // >1.5 = still scanning
+const CACHE_TTL = 5000;
 
 /**
  * Fetches live book lines for active Sweet Spot picks
