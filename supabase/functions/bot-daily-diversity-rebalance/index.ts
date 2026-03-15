@@ -301,7 +301,7 @@ Deno.serve(async (req) => {
 
     await supabase.from('bot_activity_log').insert({
       event_type: 'diversity_rebalance',
-      message: `Rebalanced: ${totalCount} → ${totalAfter} parlays (strategy voided ${totalStrategyVoided}, exposure voided ${exposureVoided})`,
+      message: `Rebalanced: ${totalCount} → ${totalAfter} parlays (strategy voided ${totalStrategyVoided}, exposure voided ${exposureVoided}, stake multiplier ${volumeMultiplier}×)`,
       metadata: {
         version: VERSION,
         date: today,
@@ -317,6 +317,8 @@ Deno.serve(async (req) => {
         exposureAlreadyVoidedByStrategy,
         exposureCandidatesAfterStrategyFilter: exposureVoidSet.size,
         exposureVoided,
+        volumeMultiplier,
+        stakesAdjusted,
         voidDetails,
         exposureDetails,
         familySummary,
