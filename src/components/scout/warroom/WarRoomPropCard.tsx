@@ -356,6 +356,30 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
         <H2HRow h2h={h2hVsOpponent} line={line} side={side} />
       )}
 
+      {/* Live vs Original Line comparison */}
+      {data.liveBookLine !== undefined && data.liveBookLine !== line && (
+        <div className="flex items-center gap-1.5 text-[10px] px-0.5 py-1 rounded bg-muted/30">
+          <HelpTip tip={`Original line: ${side} ${line}. Current live book line: ${data.liveBookLine}. Movement: ${(data.liveBookLine - line) > 0 ? '+' : ''}${(data.liveBookLine - line).toFixed(1)}`}>
+            <div className="flex items-center gap-1.5 cursor-help w-full">
+              <span className="text-muted-foreground font-medium">Lines:</span>
+              <span className="font-mono font-bold text-foreground">{side} {line}</span>
+              <span className="text-muted-foreground">→</span>
+              <span className={cn(
+                'font-mono font-bold',
+                ((side === 'OVER' && data.liveBookLine < line) || (side === 'UNDER' && data.liveBookLine > line))
+                  ? 'text-[hsl(var(--warroom-green))]'
+                  : 'text-[hsl(var(--warroom-danger))]'
+              )}>
+                {data.liveBookLine}
+              </span>
+              <Badge variant="outline" className="text-[8px] px-1 py-0 border-violet-500/30 text-violet-400 ml-auto">
+                SMART LINE
+              </Badge>
+            </div>
+          </HelpTip>
+        </div>
+      )}
+
       {/* Bottom metrics row */}
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <HelpTip tip="Game pace compared to league average.">

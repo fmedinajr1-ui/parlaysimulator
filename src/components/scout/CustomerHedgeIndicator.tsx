@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, Flame, Snowflake } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Flame, Snowflake, ArrowRightLeft } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { DeepSweetSpot, HedgeStatus } from '@/types/sweetSpot';
