@@ -167,9 +167,8 @@ export function StakeCalculator() {
                     <td className="py-2 font-semibold">${plan.bankroll.toLocaleString()}</td>
                     <td className="text-right py-2">${plan.execution}</td>
                     <td className="text-right py-2">${plan.validation}</td>
-                    <td className="text-right py-2">${plan.exploration}</td>
-                    <td className="text-right py-2">${plan.lottery}</td>
-                    <td className="text-right py-2 text-primary font-medium">+${plan.dailyEV.toLocaleString()}</td>
+                     <td className="text-right py-2">${plan.exploration}</td>
+                     <td className="text-right py-2 text-primary font-medium">+${plan.dailyEV.toLocaleString()}</td>
                     <td className="text-right py-2 text-primary font-bold">+${plan.monthlyEV.toLocaleString()}</td>
                   </tr>
                 ))}
