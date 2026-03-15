@@ -58,6 +58,14 @@ export interface WarRoomPropData {
   h2hVsOpponent?: H2HMatchup;
   // v8: Q1 FanDuel line
   q1FanDuelLine?: Q1FanDuelLine;
+  // v9: Live quarter stats
+  liveQuarterStats?: {
+    currentQuarter: number;
+    quarterActuals: number[];
+    isLive: boolean;
+    clock?: string;
+    period?: string;
+  };
 }
 
 const PROP_SHORT: Record<string, string> = {
