@@ -66,13 +66,6 @@ const CARD_STYLES: Record<DailyParlay['type'], {
     bgGradient: 'bg-gradient-to-br from-orange-500/10 to-background',
     label: 'Heat Upside',
   },
-  LOTTERY: {
-    icon: Ticket,
-    iconColor: 'text-yellow-400',
-    borderColor: 'border-yellow-400/30',
-    bgGradient: 'bg-gradient-to-br from-yellow-400/10 to-background',
-    label: 'Lottery',
-  },
   CURATED: {
     icon: Star,
     iconColor: 'text-cyan-400',
