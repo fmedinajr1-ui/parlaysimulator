@@ -228,7 +228,7 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
     projectedFinal, confidence, paceRating, fatiguePercent,
     regression, hasHedgeOpportunity, hitRateL10,
     pOver, pUnder, edgeScore, quarterAvgs, h2hVsOpponent,
-    q1FanDuelLine,
+    q1FanDuelLine, liveQuarterStats,
   } = data;
 
   const progressPct = line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
