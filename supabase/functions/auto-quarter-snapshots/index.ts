@@ -214,7 +214,7 @@ serve(async (req) => {
       const rows: any[] = [];
 
       for (const player of cumulativeStats) {
-        const prev = playerCumulatives[player.playerName] || { points: 0, rebounds: 0, assists: 0, threes: 0, turnovers: 0, fouls: 0, minutes: 0 };
+        const prev = playerCumulatives[player.playerName] || { points: 0, rebounds: 0, assists: 0, threes: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0, minutes: 0 };
 
         // Total delta from cumulative ESPN stats minus what we've already captured
         const totalDelta = {
@@ -222,6 +222,8 @@ serve(async (req) => {
           rebounds: Math.max(0, player.rebounds - prev.rebounds),
           assists: Math.max(0, player.assists - prev.assists),
           threes: Math.max(0, player.threes - prev.threes),
+          steals: Math.max(0, player.steals - prev.steals),
+          blocks: Math.max(0, player.blocks - prev.blocks),
           turnovers: Math.max(0, player.turnovers - prev.turnovers),
           fouls: Math.max(0, player.fouls - prev.fouls),
           minutes: Math.max(0, parseMinutesToNumber(player.minutes) - prev.minutes),
