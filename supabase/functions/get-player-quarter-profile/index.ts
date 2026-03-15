@@ -16,6 +16,8 @@ const Q1_PROP_MAP: Record<string, string> = {
   player_points_q1: 'points',
   player_rebounds_q1: 'rebounds',
   player_assists_q1: 'assists',
+  player_threes_q1: 'threes',
+  player_steals_q1: 'steals',
 };
 
 function getPlayerTier(avgMinutes: number): string {
