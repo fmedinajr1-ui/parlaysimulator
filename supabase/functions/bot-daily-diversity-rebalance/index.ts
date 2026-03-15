@@ -1,14 +1,15 @@
 /**
- * bot-daily-diversity-rebalance v2.1
+ * bot-daily-diversity-rebalance v2.2
  * 
  * Post-rebuild pass that:
- * 1. Caps any single strategy family at 40% of the total pending daily slate
- * 2. Enforces max-2-per-player-prop across ALL pending parlays (global exposure cap)
+ * 1. Caps any single strategy family at 40% (60% on light slates) of the total pending daily slate
+ * 2. Enforces max-2-per-player-prop (max-3 on light slates) across ALL pending parlays
+ * 3. Auto-detects light-slate conditions (≤8 unique players in pending parlays)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VERSION = 'diversity-rebalance-v2.1';
+const VERSION = 'diversity-rebalance-v2.2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
