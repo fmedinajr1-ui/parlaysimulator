@@ -1,5 +1,5 @@
 /**
- * bot-daily-diversity-rebalance v2.2
+ * bot-daily-diversity-rebalance v2.3
  * 
  * Post-rebuild pass that:
  * 1. Caps any single strategy family at 40% (60% on light slates) of the total pending daily slate
