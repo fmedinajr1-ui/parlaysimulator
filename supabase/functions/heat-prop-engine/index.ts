@@ -89,6 +89,7 @@ async function loadCategoryRecommendations(supabase: any): Promise<void> {
   const { data } = await supabase
     .from("category_sweet_spots")
     .select("player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l3_avg")
+    .eq("analysis_date", today)
     .gte("l10_hit_rate", 0.7); // Only use high-confidence categories (70%+)
 
   categoryRecommendations.clear();

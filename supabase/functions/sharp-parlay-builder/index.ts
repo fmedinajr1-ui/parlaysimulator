@@ -52,9 +52,11 @@ let categoryRecommendations: Map<string, { side: string; hit_rate: number }> = n
 let projectionMap: Map<string, { projectedValue: number; actualLine: number }> = new Map();
 
 async function loadCategoryRecommendations(supabase: any): Promise<void> {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const { data } = await supabase
     .from("category_sweet_spots")
     .select("player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l3_avg")
+    .eq("analysis_date", today)
     .gte("l10_hit_rate", 0.7); // Only use high-confidence categories (70%+)
 
   categoryRecommendations.clear();
