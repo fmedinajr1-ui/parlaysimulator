@@ -143,16 +143,15 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
     const fetchSnapshots = async () => {
       const { data: snapshots, error } = await supabase
         .from('quarter_player_snapshots')
-        .select('player_name, quarter, points, assists, rebounds, threes, steals, blocks')
+        .select('player_name, quarter, points, assists, rebounds, threes')
         .eq('event_id', eventId)
         .order('quarter', { ascending: true });
 
       if (error || !snapshots) return;
 
       const map: LiveQuarterMap = {};
-      const propKeys: Record<string, keyof QuarterSnapshot> = {
+      const propKeys: Record<string, string> = {
         points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes',
-        steals: 'steals' as keyof QuarterSnapshot, blocks: 'blocks' as keyof QuarterSnapshot,
       };
 
       for (const snap of snapshots as QuarterSnapshot[]) {
