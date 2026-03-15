@@ -52,7 +52,7 @@ function getRecommendedStakes(accuracyScore: number, bankroll: number) {
   const edgeFactor = Math.max(0.5, (accuracyScore - 50) / 50); // 0.5–1.0
   const execBase = Math.round(bankroll * 0.025 * edgeFactor / 50) * 50; // ~2.5% bankroll
   return {
-    execution: Math.max(200, Math.min(1000, execBase)),
+    execution: 100, // Flat $100 — standardized
     validation: Math.max(100, Math.min(400, Math.round(execBase * 0.4 / 25) * 25)),
     exploration: Math.max(50, Math.min(150, Math.round(execBase * 0.15 / 25) * 25)),
   };

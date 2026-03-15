@@ -9562,7 +9562,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (stakeConfig) {
-      TIER_CONFIG.execution.stake = stakeConfig.execution_stake ?? 300;
+      TIER_CONFIG.execution.stake = 100; // Flat $100 — ignore DB value for execution
       TIER_CONFIG.validation.stake = stakeConfig.validation_stake ?? 150;
       TIER_CONFIG.exploration.stake = stakeConfig.exploration_stake ?? 50;
       console.log(`[Bot v2] Loaded stake config: exec=$${stakeConfig.execution_stake}, val=$${stakeConfig.validation_stake}, expl=$${stakeConfig.exploration_stake}, block2leg=${stakeConfig.block_two_leg_parlays}`);
@@ -9934,7 +9934,7 @@ Deno.serve(async (req) => {
       const origValStake = TIER_CONFIG.validation.stake;
 
       TIER_CONFIG.execution.count = Math.min(TIER_CONFIG.execution.count, 15);
-      TIER_CONFIG.execution.stake = Math.round(TIER_CONFIG.execution.stake * 0.5);
+      // Execution stays flat $100 even on light slates — no halving
       TIER_CONFIG.validation.count = Math.min(TIER_CONFIG.validation.count, 10);
       TIER_CONFIG.validation.stake = Math.round(TIER_CONFIG.validation.stake * 0.5);
 
@@ -10339,7 +10339,7 @@ Deno.serve(async (req) => {
         }, 1);
         const combinedAmerican = combinedDecimal >= 2 ? Math.round((combinedDecimal - 1) * 100) : Math.round(-100 / (combinedDecimal - 1));
         const combinedProb = 1 / combinedDecimal;
-        const stake = legCount <= 5 ? 50 : 25;
+        const stake = legCount <= 5 ? 100 : 25; // Execution-tier role-stacked = flat $100
         const payout = Math.round(stake * combinedDecimal);
 
         const fingerprint = selectedLegs.map(l => `${l.player_name}_${l.prop_type}_${l.side}`).sort().join('|');
