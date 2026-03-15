@@ -1,15 +1,16 @@
 /**
- * bot-daily-diversity-rebalance v2.2
+ * bot-daily-diversity-rebalance v2.3
  * 
  * Post-rebuild pass that:
  * 1. Caps any single strategy family at 40% (60% on light slates) of the total pending daily slate
  * 2. Enforces max-2-per-player-prop (max-3 on light slates) across ALL pending parlays
  * 3. Auto-detects light-slate conditions (≤8 unique players in pending parlays)
+ * 4. Volume-aware stake scaling: reduces stakes when few parlays survive (≤3 → 0.5×, ≤6 → 0.75×)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VERSION = 'diversity-rebalance-v2.2';
+const VERSION = 'diversity-rebalance-v2.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -261,6 +262,39 @@ Deno.serve(async (req) => {
 
     const totalAfter = finalPendingCount ?? (totalCount - totalStrategyVoided - exposureVoided);
 
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 3: Volume-Aware Stake Scaling
+    // ═══════════════════════════════════════════════════════════════
+
+    let volumeMultiplier = 1.0;
+    if (totalAfter <= 3) {
+      volumeMultiplier = 0.5;
+    } else if (totalAfter <= 6) {
+      volumeMultiplier = 0.75;
+    }
+
+    let stakesAdjusted = 0;
+    if (volumeMultiplier < 1.0) {
+      const { data: survivors } = await supabase
+        .from('bot_daily_parlays')
+        .select('id, simulated_stake, simulated_payout')
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending');
+
+      for (const s of (survivors || [])) {
+        const newStake = Math.round(((s.simulated_stake || 0) * volumeMultiplier) * 100) / 100;
+        const newPayout = Math.round(((s.simulated_payout || 0) * volumeMultiplier) * 100) / 100;
+        if (newStake !== s.simulated_stake || newPayout !== s.simulated_payout) {
+          await supabase
+            .from('bot_daily_parlays')
+            .update({ simulated_stake: newStake, simulated_payout: newPayout })
+            .eq('id', s.id);
+          stakesAdjusted++;
+        }
+      }
+      console.log(`[DiversityRebalance] Volume-scaled stakes: ${totalAfter} active parlays → ${volumeMultiplier}× multiplier (${stakesAdjusted} adjusted)`);
+    }
+
     const familySummary: Record<string, number> = {};
     for (const [family, entry] of familyCounts) {
       familySummary[family] = entry.kept;
@@ -268,7 +302,7 @@ Deno.serve(async (req) => {
 
     await supabase.from('bot_activity_log').insert({
       event_type: 'diversity_rebalance',
-      message: `Rebalanced: ${totalCount} → ${totalAfter} parlays (strategy voided ${totalStrategyVoided}, exposure voided ${exposureVoided})`,
+      message: `Rebalanced: ${totalCount} → ${totalAfter} parlays (strategy voided ${totalStrategyVoided}, exposure voided ${exposureVoided}, stake multiplier ${volumeMultiplier}×)`,
       metadata: {
         version: VERSION,
         date: today,
@@ -284,6 +318,8 @@ Deno.serve(async (req) => {
         exposureAlreadyVoidedByStrategy,
         exposureCandidatesAfterStrategyFilter: exposureVoidSet.size,
         exposureVoided,
+        volumeMultiplier,
+        stakesAdjusted,
         voidDetails,
         exposureDetails,
         familySummary,
@@ -305,6 +341,8 @@ Deno.serve(async (req) => {
       maxPlayerPropUsage: effectiveMaxPlayerPropUsage,
       isLightSlate,
       uniquePlayerCount: uniquePlayers.size,
+      volumeMultiplier,
+      stakesAdjusted,
       voidDetails,
       exposureDetails,
       familySummary,
