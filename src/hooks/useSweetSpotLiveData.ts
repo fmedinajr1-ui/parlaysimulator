@@ -164,6 +164,11 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         lineMovement: liveLineData?.lineMovement,
         lastLineUpdate: liveLineData?.lastUpdate,
         bookmaker: liveLineData?.bookmaker,
+        closestLine: liveLineData?.closestLine,
+        closestBookmaker: liveLineData?.closestBookmaker,
+        closestDelta: liveLineData?.closestDelta,
+        isScanning: liveLineData?.isScanning,
+        allBookLines: liveLineData?.allBookLines,
       };
       
       return { ...spot, liveData };
