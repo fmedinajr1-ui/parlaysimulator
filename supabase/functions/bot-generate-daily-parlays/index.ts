@@ -3676,13 +3676,26 @@ async function fetchInjuryBlocklist(
 
   const { data, error } = await supabase
     .from('lineup_alerts')
-    .select('player_name, alert_type')
+    .select('player_name, alert_type, updated_at')
     .gte('game_date', yesterdayStr)
     .lte('game_date', gameDate);
 
   if (error) {
     console.error('[AvailabilityGate] Error fetching injury blocklist:', error);
     return { blocklist, penalties };
+  }
+
+  // Log freshness of injury data
+  if (data && data.length > 0) {
+    const mostRecent = data.reduce((latest: string, a: any) => a.updated_at > latest ? a.updated_at : latest, '');
+    const ageMs = Date.now() - new Date(mostRecent).getTime();
+    const ageHours = (ageMs / 3600000).toFixed(1);
+    console.log(`[AvailabilityGate] Injury data freshness: most recent update ${ageHours}h ago (${mostRecent})`);
+    if (ageMs > 3 * 3600000) {
+      console.warn(`[AvailabilityGate] ⚠️ WARNING: Injury data is ${ageHours}h stale — lineup scraper may not have run recently`);
+    }
+  } else {
+    console.warn('[AvailabilityGate] ⚠️ No injury alerts found for today — lineup scraper may not have run');
   }
 
   const blockedNames: string[] = [];
