@@ -340,6 +340,8 @@ Deno.serve(async (req) => {
       maxPlayerPropUsage: effectiveMaxPlayerPropUsage,
       isLightSlate,
       uniquePlayerCount: uniquePlayers.size,
+      volumeMultiplier,
+      stakesAdjusted,
       voidDetails,
       exposureDetails,
       familySummary,
