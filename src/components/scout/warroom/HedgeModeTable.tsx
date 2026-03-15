@@ -118,6 +118,11 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                   <span className="cursor-help border-b border-dotted border-muted-foreground/30">Need</span>
                 </HelpTip>
               </th>
+              <th className="text-right font-medium p-2">
+                <HelpTip tip="Current live book line vs your original. Green = line moved in your favor, red = moved against you.">
+                  <span className="cursor-help border-b border-dotted border-muted-foreground/30">Alt Line</span>
+                </HelpTip>
+              </th>
               <th className="text-left font-medium p-2 pl-4 w-24">
                 <HelpTip tip="Visual tracker: how close the player is to clearing the line.">
                   <span className="cursor-help border-b border-dotted border-muted-foreground/30">Progress</span>
