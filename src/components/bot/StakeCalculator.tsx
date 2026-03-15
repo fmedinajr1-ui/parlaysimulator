@@ -30,11 +30,11 @@ const STRATEGIES = [
 
 // Pre-computed stake plans at common bankroll levels
 const BANKROLL_PLANS = [
-  { bankroll: 1000, execution: 20, validation: 10, exploration: 5, lottery: 2, dailyEV: 85, monthlyEV: 1700 },
-  { bankroll: 2500, execution: 50, validation: 25, exploration: 10, lottery: 5, dailyEV: 212, monthlyEV: 4240 },
-  { bankroll: 5000, execution: 100, validation: 50, exploration: 20, lottery: 10, dailyEV: 425, monthlyEV: 8500 },
-  { bankroll: 10000, execution: 200, validation: 100, exploration: 40, lottery: 20, dailyEV: 850, monthlyEV: 17000 },
-  { bankroll: 25000, execution: 500, validation: 250, exploration: 100, lottery: 50, dailyEV: 2125, monthlyEV: 42500 },
+  { bankroll: 1000, execution: 20, validation: 10, exploration: 5, dailyEV: 85, monthlyEV: 1700 },
+  { bankroll: 2500, execution: 50, validation: 25, exploration: 10, dailyEV: 212, monthlyEV: 4240 },
+  { bankroll: 5000, execution: 100, validation: 50, exploration: 20, dailyEV: 425, monthlyEV: 8500 },
+  { bankroll: 10000, execution: 200, validation: 100, exploration: 40, dailyEV: 850, monthlyEV: 17000 },
+  { bankroll: 25000, execution: 500, validation: 250, exploration: 100, dailyEV: 2125, monthlyEV: 42500 },
 ];
 
 export function StakeCalculator() {
