@@ -210,17 +210,40 @@ export function HedgeModeTable({ props }: HedgeModeTableProps) {
                   </td>
                   <td className="text-right p-2 tabular-nums text-[11px]">
                     {(() => {
-                      const liveLine = p.liveBookLine;
-                      if (!liveLine || Math.abs(liveLine - p.line) < 0.5) {
-                        return <span className="text-muted-foreground">—</span>;
+                      // Use closest line if available, otherwise fall back to liveBookLine
+                      const displayLine = p.closestLine ?? p.liveBookLine;
+                      const displayBook = p.closestBookmaker ?? '';
+                      const scanning = p.isScanning ?? false;
+                      
+                      if (!displayLine || Math.abs(displayLine - p.line) < 0.1) {
+                        return scanning ? (
+                          <span className="flex items-center justify-end gap-1 text-muted-foreground">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--warroom-gold))] animate-pulse" />
+                            <span className="text-[10px]">scanning</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        );
                       }
-                      const delta = p.line - liveLine;
+                      const delta = displayLine - p.line;
                       // For OVER: line dropping is favorable. For UNDER: line rising is favorable.
-                      const favorable = isOver ? delta > 0 : delta < 0;
-                      const arrow = delta > 0 ? '↓' : '↑';
+                      const favorable = isOver ? delta < 0 : delta > 0;
+                      const arrow = delta > 0 ? '↑' : '↓';
+                      const bookShort = BOOK_SHORT[displayBook] || '';
                       return (
-                        <span className={favorable ? 'text-[hsl(var(--warroom-green))] font-bold' : 'text-[hsl(var(--warroom-danger))] font-bold'}>
-                          {liveLine} <span className="text-[9px]">{arrow}{Math.abs(delta).toFixed(1)}</span>
+                        <span className="flex items-center justify-end gap-1">
+                          {scanning && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--warroom-gold))] animate-pulse" />
+                          )}
+                          <span className={favorable ? 'text-[hsl(var(--warroom-green))] font-bold' : 'text-[hsl(var(--warroom-danger))] font-bold'}>
+                            {displayLine}
+                          </span>
+                          <span className={cn('text-[9px]', favorable ? 'text-[hsl(var(--warroom-green))]' : 'text-[hsl(var(--warroom-danger))]')}>
+                            {arrow}{Math.abs(delta).toFixed(1)}
+                          </span>
+                          {bookShort && (
+                            <span className="text-[8px] text-muted-foreground font-medium">{bookShort}</span>
+                          )}
                         </span>
                       );
                     })()}

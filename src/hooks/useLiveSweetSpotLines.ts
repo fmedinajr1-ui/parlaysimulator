@@ -10,6 +10,11 @@ const PROP_TO_MARKET: Record<PropType, string> = {
   blocks: 'player_blocks',
 };
 
+const BOOK_SHORT_LOG: Record<string, string> = {
+  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
+  betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
+};
+
 export interface BookLine {
   line: number;
   bookmaker: string;
@@ -25,6 +30,10 @@ export interface LiveLineData {
   overPrice?: number;
   underPrice?: number;
   allBookLines?: BookLine[];
+  closestLine?: number;
+  closestBookmaker?: string;
+  closestDelta?: number;
+  isScanning?: boolean;
 }
 
 interface UseLiveSweetSpotLinesOptions {
@@ -34,19 +43,26 @@ interface UseLiveSweetSpotLinesOptions {
 }
 
 const TURBO_INTERVAL = 6000;
-const NORMAL_INTERVAL = 10000;
-const CACHE_TTL = 8000;
+const NORMAL_INTERVAL = 15000;
+const MATCH_THRESHOLD = 0.5;  // ±0.5 = "perfect match"
+const SCANNING_THRESHOLD = 1.5; // >1.5 = still scanning
+const CACHE_TTL = 5000;
 
 /**
  * Fetches live book lines for active Sweet Spot picks
- * v7.3: Uses fetch-batch-odds for single API call, turbo mode for hedge alerts
+ * v7.4: Closest-line matching with adaptive turbo polling
  */
 export function useLiveSweetSpotLines(
   spots: DeepSweetSpot[],
   options: UseLiveSweetSpotLinesOptions = {}
 ) {
   const { enabled = true, turboMode = false } = options;
-  const intervalMs = options.intervalMs ?? (turboMode ? TURBO_INTERVAL : NORMAL_INTERVAL);
+  
+  // Adaptive polling: turbo until all spots have a close match
+  const [allMatched, setAllMatched] = useState(false);
+  const effectiveInterval = options.intervalMs ?? (
+    turboMode || !allMatched ? TURBO_INTERVAL : NORMAL_INTERVAL
+  );
   
   const [lineData, setLineData] = useState<Map<string, LiveLineData>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
@@ -155,6 +171,14 @@ export function useLiveSweetSpotLines(
             });
           }
           
+          // Find the closest line to the original across all books
+          const sorted = [...allBookLines].sort(
+            (a, b) => Math.abs(a.line - spot.line) - Math.abs(b.line - spot.line)
+          );
+          const closest = sorted[0];
+          const closestDelta = closest ? closest.line - spot.line : 0;
+          const isScanning = closest ? Math.abs(closestDelta) > SCANNING_THRESHOLD : true;
+          
           const liveData: LiveLineData = {
             liveBookLine,
             lineMovement,
@@ -163,20 +187,33 @@ export function useLiveSweetSpotLines(
             overPrice: result.odds.over_price,
             underPrice: result.odds.under_price,
             allBookLines,
+            closestLine: closest?.line,
+            closestBookmaker: closest?.bookmaker,
+            closestDelta,
+            isScanning,
           };
           
           // Update cache
           cacheRef.current.set(getCacheKey(spot), { data: liveData, fetchedAt: Date.now() });
           newMap.set(spot.id, liveData);
           
-          console.log(`[LiveLines] ${spot.playerName} ${spot.propType}: ${spot.line} → ${liveBookLine} (${lineMovement >= 0 ? '+' : ''}${lineMovement.toFixed(1)})`);
+          console.log(`[LiveLines] ${spot.playerName} ${spot.propType}: orig=${spot.line} closest=${closest?.line} (Δ${closestDelta >= 0 ? '+' : ''}${closestDelta.toFixed(1)}) from ${BOOK_SHORT_LOG[closest?.bookmaker || ''] || closest?.bookmaker}${isScanning ? ' [scanning]' : ' [matched]'}`);
         }
         
         return newMap;
       });
       
+      // Check if all spots have a close match → slow down polling
+      setAllMatched(() => {
+        return spotsToFetch.every(spot => {
+          const cached = cacheRef.current.get(getCacheKey(spot));
+          if (!cached) return false;
+          return Math.abs(cached.data.closestDelta ?? 99) <= MATCH_THRESHOLD;
+        });
+      });
+      
       setLastFetchTime(new Date());
-      console.log(`[LiveLines] Batch complete: ${data.results.filter((r: any) => r.success).length}/${spotsToFetch.length} found`);
+      console.log(`[LiveLines] Batch complete: ${data.results.filter((r: any) => r.success).length}/${spotsToFetch.length} found (allMatched: ${allMatched})`);
       
     } catch (err) {
       console.error('[LiveLines] Fetch error:', err);
@@ -191,9 +228,9 @@ export function useLiveSweetSpotLines(
     if (!enabled || liveSpots.length === 0) return;
     
     fetchAllLines();
-    const interval = setInterval(fetchAllLines, intervalMs);
+    const interval = setInterval(fetchAllLines, effectiveInterval);
     return () => clearInterval(interval);
-  }, [enabled, liveSpots.length, intervalMs, fetchAllLines]);
+  }, [enabled, liveSpots.length, effectiveInterval, fetchAllLines]);
   
   const getLineData = useCallback((spotId: string): LiveLineData | undefined => {
     return lineData.get(spotId);
