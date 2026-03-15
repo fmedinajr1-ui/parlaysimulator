@@ -45,7 +45,7 @@ const CACHE_TTL = 5000;
 
 /**
  * Fetches live book lines for active Sweet Spot picks
- * v7.3: Uses fetch-batch-odds for single API call, turbo mode for hedge alerts
+ * v7.4: Closest-line matching with adaptive turbo polling
  */
 export function useLiveSweetSpotLines(
   spots: DeepSweetSpot[],
