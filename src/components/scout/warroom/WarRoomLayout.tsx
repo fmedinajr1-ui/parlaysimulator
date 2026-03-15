@@ -34,6 +34,17 @@ interface QuarterProfileData {
   }>;
 }
 
+interface QuarterSnapshot {
+  player_name: string;
+  quarter: number;
+  points: number | null;
+  assists: number | null;
+  rebounds: number | null;
+  threes: number | null;
+}
+
+type LiveQuarterMap = Record<string, Record<string, number[]>>; // playerName -> propType -> [q1, q2, q3, q4]
+
 
 interface WarRoomLayoutProps {
   gameContext: ScoutGameContext;
@@ -55,6 +66,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const [useMonteCarloMode, setUseMonteCarloMode] = useState(false);
   const [mcResults, setMcResults] = useState<Map<string, number>>(new Map());
   const [quarterProfiles, setQuarterProfiles] = useState<QuarterProfileData | null>(null);
+  const [liveQuarterMap, setLiveQuarterMap] = useState<LiveQuarterMap>({});
   const { homeTeam, awayTeam } = gameContext;
 
   // Data hooks
@@ -122,6 +134,44 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
       if (data) setQuarterProfiles(data as QuarterProfileData);
     });
   }, [enrichedSpots.length, homeTeam, awayTeam]);
+
+  // Fetch live quarter snapshots for current event
+  useEffect(() => {
+    const eventId = gameContext.eventId;
+    if (!eventId) return;
+
+    const fetchSnapshots = async () => {
+      const { data: snapshots, error } = await supabase
+        .from('quarter_player_snapshots')
+        .select('player_name, quarter, points, assists, rebounds, threes')
+        .eq('event_id', eventId)
+        .order('quarter', { ascending: true });
+
+      if (error || !snapshots) return;
+
+      const map: LiveQuarterMap = {};
+      const propKeys: Record<string, keyof QuarterSnapshot> = {
+        points: 'points', assists: 'assists', rebounds: 'rebounds', threes: 'threes',
+      };
+
+      for (const snap of snapshots as QuarterSnapshot[]) {
+        const name = snap.player_name;
+        if (!map[name]) map[name] = {};
+        for (const [prop, col] of Object.entries(propKeys)) {
+          if (!map[name][prop]) map[name][prop] = [];
+          const qi = snap.quarter - 1;
+          if (qi >= 0 && qi < 4) {
+            map[name][prop][qi] = (snap[col] as number) ?? 0;
+          }
+        }
+      }
+      setLiveQuarterMap(map);
+    };
+
+    fetchSnapshots();
+    const interval = setInterval(fetchSnapshots, 30000);
+    return () => clearInterval(interval);
+  }, [gameContext.eventId]);
 
   const { data: fatigueData } = useFatigueData();
   const { alerts: regressionAlerts, getPlayerRegression } = useRegressionDetection();
@@ -213,9 +263,22 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
             } : undefined),
           h2hVsOpponent: quarterProfiles?.players?.[s.playerName]?.h2h?.[s.propType],
           q1FanDuelLine: quarterProfiles?.players?.[s.playerName]?.q1Lines?.[s.propType],
+          // Live quarter stats from snapshots
+          liveQuarterStats: (() => {
+            const playerQData = liveQuarterMap[s.playerName]?.[s.propType];
+            if (!playerQData || playerQData.length === 0) return undefined;
+            const currentGame = games.find(g => g.status === 'in_progress');
+            return {
+              currentQuarter: currentGame?.period ?? 1,
+              quarterActuals: playerQData,
+              isLive: !!currentGame,
+              clock: currentGame?.clock,
+              period: currentGame ? `Q${currentGame.period}` : undefined,
+            };
+          })(),
         };
       });
-  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles]);
+  }, [enrichedSpots, fatigueData, homeTeam, getPlayerRegression, getStability, paceMult, pbpData?.pace, mcResults, quarterProfiles, liveQuarterMap, games]);
 
   // Run MC simulations when mode is ON
   useEffect(() => {

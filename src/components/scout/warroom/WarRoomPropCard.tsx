@@ -58,6 +58,14 @@ export interface WarRoomPropData {
   h2hVsOpponent?: H2HMatchup;
   // v8: Q1 FanDuel line
   q1FanDuelLine?: Q1FanDuelLine;
+  // v9: Live quarter stats
+  liveQuarterStats?: {
+    currentQuarter: number;
+    quarterActuals: number[];
+    isLive: boolean;
+    clock?: string;
+    period?: string;
+  };
 }
 
 const PROP_SHORT: Record<string, string> = {
@@ -80,12 +88,20 @@ function formatOdds(price: number): string {
   return price >= 0 ? `+${price}` : `${price}`;
 }
 
-function QuarterBreakdown({ quarters, line, q1Line }: { quarters: QuarterAvgs; line: number; q1Line?: Q1FanDuelLine }) {
+function QuarterBreakdown({ quarters, line, q1Line, liveStats }: { 
+  quarters: QuarterAvgs; 
+  line: number; 
+  q1Line?: Q1FanDuelLine;
+  liveStats?: WarRoomPropData['liveQuarterStats'];
+}) {
   const vals = [quarters.q1, quarters.q2, quarters.q3, quarters.q4];
   const peak = Math.max(...vals);
   const cumulative = [vals[0], vals[0] + vals[1], vals[0] + vals[1] + vals[2], vals[0] + vals[1] + vals[2] + vals[3]];
   const q1HasValue = q1Line && vals[0] > 0;
   const q1OverValue = q1HasValue ? vals[0] > q1Line!.line : false;
+
+  const actuals = liveStats?.quarterActuals ?? [];
+  const liveTotal = actuals.reduce((a, b) => a + b, 0);
 
   return (
     <div className="space-y-1">
@@ -93,21 +109,68 @@ function QuarterBreakdown({ quarters, line, q1Line }: { quarters: QuarterAvgs; l
         {(['Q1', 'Q2', 'Q3', 'Q4'] as const).map((label, i) => {
           const isPeak = vals[i] === peak && peak > 0;
           const hitsByQ = cumulative[i] >= line;
+          const isCurrentQ = liveStats?.isLive && liveStats.currentQuarter === i + 1;
+          const hasActual = actuals[i] !== undefined && actuals[i] !== null;
+          const actualVal = actuals[i] ?? 0;
+          const beatsAvg = hasActual && actualVal >= vals[i];
+
           return (
-            <HelpTip key={label} tip={`${label}: ~${vals[i].toFixed(1)} avg. Cumulative by ${label}: ${cumulative[i].toFixed(1)}${hitsByQ ? ' ✓ hits line' : ''}`}>
+            <HelpTip key={label} tip={`${label}: ~${vals[i].toFixed(1)} avg${hasActual ? ` / actual: ${actualVal}` : ''}. Cumulative by ${label}: ${cumulative[i].toFixed(1)}${hitsByQ ? ' ✓ hits line' : ''}`}>
               <div className={cn(
-                'rounded px-1 py-0.5 text-[9px] font-mono cursor-help transition-colors',
-                isPeak
-                  ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] font-bold'
-                  : 'bg-muted/50 text-muted-foreground'
+                'rounded px-1 py-0.5 text-[9px] font-mono cursor-help transition-all',
+                isCurrentQ
+                  ? 'ring-1 ring-[hsl(var(--warroom-green))] animate-pulse bg-[hsl(var(--warroom-green)/0.08)]'
+                  : isPeak
+                    ? 'bg-[hsl(var(--warroom-green)/0.15)] text-[hsl(var(--warroom-green))] font-bold'
+                    : 'bg-muted/50 text-muted-foreground'
               )}>
                 <div className="text-[8px] text-muted-foreground/70">{label}</div>
                 <div>{vals[i].toFixed(1)}</div>
+                {hasActual && (
+                  <div className={cn(
+                    'text-[9px] font-bold tabular-nums mt-0.5 border-t border-muted-foreground/10 pt-0.5',
+                    beatsAvg
+                      ? 'text-[hsl(var(--warroom-green))]'
+                      : 'text-[hsl(var(--warroom-danger))]'
+                  )}>
+                    {actualVal}
+                  </div>
+                )}
+                {isCurrentQ && liveStats?.clock && (
+                  <div className="text-[7px] text-[hsl(var(--warroom-green))] font-medium">{liveStats.clock}</div>
+                )}
               </div>
             </HelpTip>
           );
         })}
       </div>
+
+      {/* Live cumulative progress */}
+      {liveStats?.isLive && liveTotal > 0 && (
+        <div className="flex items-center gap-1.5 text-[9px] px-0.5">
+          <span className="text-muted-foreground font-medium">Live:</span>
+          <span className={cn(
+            'font-bold tabular-nums',
+            liveTotal >= line
+              ? 'text-[hsl(var(--warroom-green))]'
+              : 'text-foreground'
+          )}>
+            {liveTotal} / {line}
+          </span>
+          <div className="flex-1 h-1 bg-muted/50 rounded-full overflow-hidden">
+            <div
+              className={cn(
+                'h-full rounded-full transition-all duration-500',
+                liveTotal >= line
+                  ? 'bg-[hsl(var(--warroom-green))]'
+                  : 'bg-primary'
+              )}
+              style={{ width: `${Math.min((liveTotal / line) * 100, 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {q1Line && (
         <HelpTip tip={`FanDuel Q1 line: ${q1Line.line} (Over ${formatOdds(q1Line.overPrice)} / Under ${formatOdds(q1Line.underPrice)}). Your Q1 avg: ${vals[0].toFixed(1)}${q1OverValue ? ' — value on OVER' : ''}`}>
           <div className="flex items-center gap-1.5 text-[9px] cursor-help px-0.5">
@@ -165,7 +228,7 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
     projectedFinal, confidence, paceRating, fatiguePercent,
     regression, hasHedgeOpportunity, hitRateL10,
     pOver, pUnder, edgeScore, quarterAvgs, h2hVsOpponent,
-    q1FanDuelLine,
+    q1FanDuelLine, liveQuarterStats,
   } = data;
 
   const progressPct = line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
@@ -286,7 +349,7 @@ export function WarRoomPropCard({ data }: { data: WarRoomPropData }) {
       </div>
 
       {/* Quarter Breakdown */}
-      {quarterAvgs && <QuarterBreakdown quarters={quarterAvgs} line={line} q1Line={q1FanDuelLine} />}
+      {quarterAvgs && <QuarterBreakdown quarters={quarterAvgs} line={line} q1Line={q1FanDuelLine} liveStats={liveQuarterStats} />}
 
       {/* H2H Matchup */}
       {h2hVsOpponent && h2hVsOpponent.gamesPlayed > 0 && (
