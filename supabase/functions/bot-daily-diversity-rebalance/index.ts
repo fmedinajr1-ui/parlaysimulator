@@ -261,6 +261,39 @@ Deno.serve(async (req) => {
 
     const totalAfter = finalPendingCount ?? (totalCount - totalStrategyVoided - exposureVoided);
 
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 3: Volume-Aware Stake Scaling
+    // ═══════════════════════════════════════════════════════════════
+
+    let volumeMultiplier = 1.0;
+    if (totalAfter <= 3) {
+      volumeMultiplier = 0.5;
+    } else if (totalAfter <= 6) {
+      volumeMultiplier = 0.75;
+    }
+
+    let stakesAdjusted = 0;
+    if (volumeMultiplier < 1.0) {
+      const { data: survivors } = await supabase
+        .from('bot_daily_parlays')
+        .select('id, simulated_stake, simulated_payout')
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending');
+
+      for (const s of (survivors || [])) {
+        const newStake = Math.round(((s.simulated_stake || 0) * volumeMultiplier) * 100) / 100;
+        const newPayout = Math.round(((s.simulated_payout || 0) * volumeMultiplier) * 100) / 100;
+        if (newStake !== s.simulated_stake || newPayout !== s.simulated_payout) {
+          await supabase
+            .from('bot_daily_parlays')
+            .update({ simulated_stake: newStake, simulated_payout: newPayout })
+            .eq('id', s.id);
+          stakesAdjusted++;
+        }
+      }
+      console.log(`[DiversityRebalance] Volume-scaled stakes: ${totalAfter} active parlays → ${volumeMultiplier}× multiplier (${stakesAdjusted} adjusted)`);
+    }
+
     const familySummary: Record<string, number> = {};
     for (const [family, entry] of familyCounts) {
       familySummary[family] = entry.kept;
