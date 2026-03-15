@@ -209,17 +209,16 @@ Deno.serve(async (req) => {
     const exposureDetails: Record<string, { kept: number; voided: number }> = {};
 
     for (const [key, parlayIds] of playerPropMap) {
-      if (parlayIds.length <= maxPlayerPropUsage) continue;
+      if (parlayIds.length <= effectiveMaxPlayerPropUsage) continue;
       
-      const toVoid = parlayIds.slice(maxPlayerPropUsage);
+      const toVoid = parlayIds.slice(effectiveMaxPlayerPropUsage);
       for (const id of toVoid) {
         exposureCandidatesRaw.add(id);
-        // Only add if NOT already voided by strategy pass
         if (!strategyVoidedIds.has(id)) {
           exposureVoidSet.add(id);
         }
       }
-      exposureDetails[key] = { kept: maxPlayerPropUsage, voided: toVoid.length };
+      exposureDetails[key] = { kept: effectiveMaxPlayerPropUsage, voided: toVoid.length };
     }
 
     const exposureAlreadyVoidedByStrategy = exposureCandidatesRaw.size - exposureVoidSet.size;
