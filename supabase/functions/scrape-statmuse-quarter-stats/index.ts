@@ -9,161 +9,153 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-/** Strip markdown links/images from a cell, return plain text */
 function cleanCell(cell: string): string {
-  // Remove markdown images: ![alt](url)
   let c = cell.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
-  // Remove markdown links but keep text: [text](url) → text
   c = c.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-  // Remove extra whitespace
   return c.replace(/\s+/g, ' ').trim();
 }
 
-/** Parse StatMuse markdown table into per-quarter, per-game rows */
-function parseStatMuseTable(markdown: string): Array<{
-  quarter: number;
-  date: string;
-  pts: number;
-  reb: number;
-  ast: number;
-  stl: number;
-  blk: number;
-  threes: number;
-}> {
+/** Parse StatMuse game-by-quarter table, return stat averages from all rows */
+function parseQuarterAvgs(markdown: string): { pts: number; reb: number; ast: number; stl: number; blk: number; threes: number } | null {
   const lines = markdown.split('\n');
-  const rows: Array<any> = [];
-
-  // Find header row with QUARTER column
-  let headerIdx = -1;
   let colIndices: Record<string, number> = {};
+  let headerIdx = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line.startsWith('|')) continue;
-
-    const rawCells = line.split('|').slice(1); // skip first empty from leading |
-    // Remove trailing empty from trailing |
+    const rawCells = line.split('|').slice(1);
     if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
-
     const cells = rawCells.map(c => cleanCell(c).toUpperCase());
 
-    if (cells.includes('QUARTER') || cells.includes('QTR')) {
+    // Look for PTS column as anchor
+    if (cells.includes('PTS') || cells.includes('POINTS')) {
       headerIdx = i;
       for (let j = 0; j < cells.length; j++) {
         const c = cells[j];
-        if (c === 'QUARTER' || c === 'QTR') colIndices['QUARTER'] = j;
-        if (c === 'DATE') colIndices['DATE'] = j;
-        if (c === 'PTS') colIndices['PTS'] = j;
-        if (c === 'REB') colIndices['REB'] = j;
-        if (c === 'AST') colIndices['AST'] = j;
-        if (c === 'STL') colIndices['STL'] = j;
-        if (c === 'BLK') colIndices['BLK'] = j;
+        if (c === 'PTS' || c === 'POINTS') colIndices['PTS'] = j;
+        if (c === 'REB' || c === 'REBOUNDS') colIndices['REB'] = j;
+        if (c === 'AST' || c === 'ASSISTS') colIndices['AST'] = j;
+        if (c === 'STL' || c === 'STEALS') colIndices['STL'] = j;
+        if (c === 'BLK' || c === 'BLOCKS') colIndices['BLK'] = j;
         if (c === '3PM' || c === '3PT' || c === '3P') colIndices['3PM'] = j;
       }
       break;
     }
   }
 
-  if (headerIdx < 0 || colIndices['QUARTER'] === undefined || colIndices['PTS'] === undefined) {
-    console.log('[statmuse] Could not find table header. Looking for fallback...');
-    return [];
-  }
+  if (headerIdx < 0 || colIndices['PTS'] === undefined) return null;
 
-  console.log(`[statmuse] Found header at line ${headerIdx}, columns:`, JSON.stringify(colIndices));
+  let totalPts = 0, totalReb = 0, totalAst = 0, totalStl = 0, totalBlk = 0, totalThrees = 0;
+  let count = 0;
 
-  // Parse data rows
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line.startsWith('|')) continue;
-    if (line.includes('---')) continue; // separator
+    if (line.includes('---')) continue;
 
     const rawCells = line.split('|').slice(1);
     if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
+    if (rawCells.length < (colIndices['PTS'] + 1)) continue;
 
-    if (rawCells.length < Math.max(...Object.values(colIndices)) + 1) continue;
-
-    const quarterStr = cleanCell(rawCells[colIndices['QUARTER']] || '');
-    // Quarter format: "1Q", "2Q", "3Q", "4Q"
-    const qMatch = quarterStr.match(/(\d)Q/i) || quarterStr.match(/^(\d)$/);
-    if (!qMatch) continue;
-    const quarter = parseInt(qMatch[1]);
-    if (quarter < 1 || quarter > 4) continue;
-
-    const dateStr = colIndices['DATE'] !== undefined ? cleanCell(rawCells[colIndices['DATE']] || '') : '';
-    
     const getNum = (key: string) => {
       if (colIndices[key] === undefined) return 0;
-      const val = cleanCell(rawCells[colIndices[key]] || '');
-      return parseFloat(val) || 0;
+      return parseFloat(cleanCell(rawCells[colIndices[key]] || '')) || 0;
     };
 
-    rows.push({
-      quarter,
-      date: dateStr,
-      pts: getNum('PTS'),
-      reb: getNum('REB'),
-      ast: getNum('AST'),
-      stl: getNum('STL'),
-      blk: getNum('BLK'),
-      threes: getNum('3PM'),
-    });
+    const pts = getNum('PTS');
+    // Skip rows that look like headers or don't have numeric PTS
+    if (isNaN(parseFloat(cleanCell(rawCells[colIndices['PTS']] || '')))) continue;
+
+    totalPts += pts;
+    totalReb += getNum('REB');
+    totalAst += getNum('AST');
+    totalStl += getNum('STL');
+    totalBlk += getNum('BLK');
+    totalThrees += getNum('3PM');
+    count++;
   }
 
-  return rows;
+  if (count < 3) return null;
+
+  // Take last 10 games only (StatMuse shows most recent first)
+  // Actually we already parsed all — the averages above are from ALL rows
+  // But we want L10, so cap at 10
+  // Since we're iterating and can't easily slice, let's re-parse with a limit
+  return null; // Will use the limited version below
 }
 
-/** Calculate L10 per-quarter averages from parsed rows.
- * StatMuse groups rows by quarter (all Q1 rows, then all Q2, etc.),
- * so we need to collect unique game dates PER quarter and average separately. */
-function calculateQuarterAverages(
-  rows: ReturnType<typeof parseStatMuseTable>,
-  maxGames: number = 10
-): Record<string, { q1: number; q2: number; q3: number; q4: number; game_avg: number }> | null {
-  if (rows.length === 0) return null;
+/** Parse up to maxGames rows and return averages */
+function parseQuarterAvgsLimited(markdown: string, maxGames: number = 10): { pts: number; reb: number; ast: number; stl: number; blk: number; threes: number; games: number } | null {
+  const lines = markdown.split('\n');
+  let colIndices: Record<string, number> = {};
+  let headerIdx = -1;
 
-  // Get unique game dates across ALL quarters, take most recent maxGames
-  const allDates = new Set<string>();
-  for (const r of rows) if (r.date) allDates.add(r.date);
-  // Sort dates descending (most recent first) then take top N
-  const sortedDates = [...allDates].sort((a, b) => b.localeCompare(a)).slice(0, maxGames);
-  const dateSet = new Set(sortedDates);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line.startsWith('|')) continue;
+    const rawCells = line.split('|').slice(1);
+    if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
+    const cells = rawCells.map(c => cleanCell(c).toUpperCase());
 
-  // Filter rows to only include those games
-  const filteredRows = rows.filter(r => r.date && dateSet.has(r.date));
-  if (filteredRows.length < 2) return null;
-
-  console.log(`[statmuse] Using ${sortedDates.length} games, ${filteredRows.length} total quarter rows`);
-
-  const stats = ['pts', 'reb', 'ast', 'stl', 'blk', 'threes'] as const;
-  const propNames = ['points', 'rebounds', 'assists', 'steals', 'blocks', 'threes'];
-  const result: Record<string, { q1: number; q2: number; q3: number; q4: number; game_avg: number }> = {};
-
-  for (let s = 0; s < stats.length; s++) {
-    const stat = stats[s];
-    const propName = propNames[s];
-    const qSums = [0, 0, 0, 0];
-    const qCounts = [0, 0, 0, 0];
-
-    for (const row of filteredRows) {
-      const idx = row.quarter - 1;
-      qSums[idx] += (row as any)[stat] || 0;
-      qCounts[idx]++;
-    }
-
-    if (qCounts[0] === 0 && qCounts[1] === 0) continue;
-
-    const q1 = qCounts[0] > 0 ? Math.round((qSums[0] / qCounts[0]) * 10) / 10 : 0;
-    const q2 = qCounts[1] > 0 ? Math.round((qSums[1] / qCounts[1]) * 10) / 10 : 0;
-    const q3 = qCounts[2] > 0 ? Math.round((qSums[2] / qCounts[2]) * 10) / 10 : 0;
-    const q4 = qCounts[3] > 0 ? Math.round((qSums[3] / qCounts[3]) * 10) / 10 : 0;
-    const game_avg = Math.round((q1 + q2 + q3 + q4) * 100) / 100;
-
-    if (game_avg > 0) {
-      result[propName] = { q1, q2, q3, q4, game_avg };
+    if (cells.includes('PTS') || cells.includes('POINTS')) {
+      headerIdx = i;
+      for (let j = 0; j < cells.length; j++) {
+        const c = cells[j];
+        if (c === 'PTS' || c === 'POINTS') colIndices['PTS'] = j;
+        if (c === 'PPG') colIndices['PTS'] = j; // Some formats use PPG
+        if (c === 'REB' || c === 'REBOUNDS' || c === 'RPG') colIndices['REB'] = j;
+        if (c === 'AST' || c === 'ASSISTS' || c === 'APG') colIndices['AST'] = j;
+        if (c === 'STL' || c === 'STEALS' || c === 'SPG') colIndices['STL'] = j;
+        if (c === 'BLK' || c === 'BLOCKS' || c === 'BPG') colIndices['BLK'] = j;
+        if (c === '3PM' || c === '3PT' || c === '3P' || c === '3PPG') colIndices['3PM'] = j;
+      }
+      break;
     }
   }
 
-  return Object.keys(result).length > 0 ? result : null;
+  if (headerIdx < 0 || colIndices['PTS'] === undefined) return null;
+
+  let totalPts = 0, totalReb = 0, totalAst = 0, totalStl = 0, totalBlk = 0, totalThrees = 0;
+  let count = 0;
+
+  for (let i = headerIdx + 1; i < lines.length && count < maxGames; i++) {
+    const line = lines[i].trim();
+    if (!line.startsWith('|')) continue;
+    if (line.includes('---')) continue;
+
+    const rawCells = line.split('|').slice(1);
+    if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
+    if (rawCells.length < (colIndices['PTS'] + 1)) continue;
+
+    const ptsStr = cleanCell(rawCells[colIndices['PTS']] || '');
+    if (!/^\d/.test(ptsStr)) continue; // Skip non-numeric rows
+
+    const getNum = (key: string) => {
+      if (colIndices[key] === undefined) return 0;
+      return parseFloat(cleanCell(rawCells[colIndices[key]] || '')) || 0;
+    };
+
+    totalPts += getNum('PTS');
+    totalReb += getNum('REB');
+    totalAst += getNum('AST');
+    totalStl += getNum('STL');
+    totalBlk += getNum('BLK');
+    totalThrees += getNum('3PM');
+    count++;
+  }
+
+  if (count < 3) return null;
+
+  return {
+    pts: Math.round((totalPts / count) * 10) / 10,
+    reb: Math.round((totalReb / count) * 10) / 10,
+    ast: Math.round((totalAst / count) * 10) / 10,
+    stl: Math.round((totalStl / count) * 10) / 10,
+    blk: Math.round((totalBlk / count) * 10) / 10,
+    threes: Math.round((totalThrees / count) * 10) / 10,
+    games: count,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -191,59 +183,87 @@ Deno.serve(async (req) => {
     const results: Record<string, string> = {};
     let upsertCount = 0;
 
+    const quarters = ['first', 'second', 'third', 'fourth'];
+    const quarterNums = [1, 2, 3, 4];
+
     for (const playerName of playerNames) {
       try {
         const slug = slugify(playerName);
-        const url = `https://www.statmuse.com/nba/ask/${slug}-stats-by-quarter-this-season`;
-        log(`Scraping: ${playerName} → ${url}`);
+        const quarterAvgs: Record<number, { pts: number; reb: number; ast: number; stl: number; blk: number; threes: number }> = {};
 
-        const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${firecrawlKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, waitFor: 3000 }),
-        });
+        // Scrape each quarter separately
+        for (let qi = 0; qi < 4; qi++) {
+          const qWord = quarters[qi];
+          const url = `https://www.statmuse.com/nba/ask/${slug}-stats-in-the-${qWord}-quarter-this-season`;
+          log(`Scraping: ${playerName} Q${qi + 1} → ${url}`);
 
-        const scrapeData = await scrapeRes.json();
-        const markdown = scrapeData?.data?.markdown || scrapeData?.markdown || '';
+          const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${firecrawlKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, waitFor: 2000 }),
+          });
 
-        if (!markdown) {
-          log(`⚠ No markdown for ${playerName}`);
-          results[playerName] = 'no_data';
+          const scrapeData = await scrapeRes.json();
+          const markdown = scrapeData?.data?.markdown || scrapeData?.markdown || '';
+
+          if (!markdown) {
+            log(`⚠ No markdown for ${playerName} Q${qi + 1}`);
+            continue;
+          }
+
+          const avgs = parseQuarterAvgsLimited(markdown, 10);
+          if (avgs) {
+            quarterAvgs[qi + 1] = avgs;
+            log(`✅ ${playerName} Q${qi + 1}: ${avgs.pts} pts, ${avgs.reb} reb, ${avgs.ast} ast (${avgs.games} games)`);
+          } else {
+            log(`⚠ Could not parse Q${qi + 1} for ${playerName}`);
+          }
+
+          // Rate limit between quarter scrapes
+          await new Promise(r => setTimeout(r, 1000));
+        }
+
+        // Build baselines from quarter data
+        if (Object.keys(quarterAvgs).length < 2) {
+          results[playerName] = `insufficient_quarters (${Object.keys(quarterAvgs).length}/4)`;
           continue;
         }
 
-        const rows = parseStatMuseTable(markdown);
-        log(`Parsed ${rows.length} quarter rows for ${playerName}`);
+        const statProps = [
+          { stat: 'pts', prop: 'points' },
+          { stat: 'reb', prop: 'rebounds' },
+          { stat: 'ast', prop: 'assists' },
+          { stat: 'stl', prop: 'steals' },
+          { stat: 'blk', prop: 'blocks' },
+          { stat: 'threes', prop: 'threes' },
+        ];
 
-        if (rows.length === 0) {
-          results[playerName] = 'no_quarter_rows';
-          continue;
-        }
+        const upsertRows = statProps.map(({ stat, prop }) => {
+          const q1 = quarterAvgs[1]?.[stat as keyof typeof quarterAvgs[1]] ?? 0;
+          const q2 = quarterAvgs[2]?.[stat as keyof typeof quarterAvgs[2]] ?? 0;
+          const q3 = quarterAvgs[3]?.[stat as keyof typeof quarterAvgs[3]] ?? 0;
+          const q4 = quarterAvgs[4]?.[stat as keyof typeof quarterAvgs[4]] ?? 0;
+          const game_avg = Math.round((q1 + q2 + q3 + q4) * 100) / 100;
 
-        const averages = calculateQuarterAverages(rows, 10);
-        if (!averages) {
-          results[playerName] = 'insufficient_data';
-          continue;
-        }
-
-        const upsertRows = Object.entries(averages).map(([propType, avgs]) => ({
-          player_name: playerName,
-          prop_type: propType,
-          q1_avg: avgs.q1,
-          q2_avg: avgs.q2,
-          q3_avg: avgs.q3,
-          q4_avg: avgs.q4,
-          q1_pct: avgs.game_avg > 0 ? Math.round((avgs.q1 / avgs.game_avg) * 10000) / 10000 : 0.25,
-          q2_pct: avgs.game_avg > 0 ? Math.round((avgs.q2 / avgs.game_avg) * 10000) / 10000 : 0.25,
-          q3_pct: avgs.game_avg > 0 ? Math.round((avgs.q3 / avgs.game_avg) * 10000) / 10000 : 0.25,
-          q4_pct: avgs.game_avg > 0 ? Math.round((avgs.q4 / avgs.game_avg) * 10000) / 10000 : 0.25,
-          game_avg: avgs.game_avg,
-          data_source: 'statmuse',
-          updated_at: new Date().toISOString(),
-        }));
+          return {
+            player_name: playerName,
+            prop_type: prop,
+            q1_avg: q1,
+            q2_avg: q2,
+            q3_avg: q3,
+            q4_avg: q4,
+            q1_pct: game_avg > 0 ? Math.round((q1 / game_avg) * 10000) / 10000 : 0.25,
+            q2_pct: game_avg > 0 ? Math.round((q2 / game_avg) * 10000) / 10000 : 0.25,
+            q3_pct: game_avg > 0 ? Math.round((q3 / game_avg) * 10000) / 10000 : 0.25,
+            q4_pct: game_avg > 0 ? Math.round((q4 / game_avg) * 10000) / 10000 : 0.25,
+            game_avg,
+            data_source: 'statmuse',
+            updated_at: new Date().toISOString(),
+          };
+        }).filter(r => r.game_avg > 0);
 
         const { error } = await supabase
           .from('player_quarter_baselines')
@@ -254,12 +274,13 @@ Deno.serve(async (req) => {
           results[playerName] = `upsert_error: ${error.message}`;
         } else {
           upsertCount += upsertRows.length;
-          results[playerName] = `ok (${upsertRows.length} props)`;
-          log(`✅ ${playerName}: ${upsertRows.length} prop baselines saved`);
+          const qCount = Object.keys(quarterAvgs).length;
+          results[playerName] = `ok (${upsertRows.length} props, ${qCount}/4 quarters)`;
+          log(`✅ ${playerName}: ${upsertRows.length} baselines saved (${qCount}/4 Q)`);
         }
 
-        // Rate limit
-        await new Promise(r => setTimeout(r, 1200));
+        // Delay between players
+        await new Promise(r => setTimeout(r, 500));
       } catch (e) {
         log(`❌ Exception for ${playerName}: ${e.message}`);
         results[playerName] = `exception: ${e.message}`;
