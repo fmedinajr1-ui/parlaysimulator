@@ -183,7 +183,7 @@ Deno.serve(async (req) => {
       }
 
       // Add Q1 FanDuel lines
-      for (const propType of ['points', 'rebounds', 'assists']) {
+      for (const propType of ['points', 'rebounds', 'assists', 'threes', 'steals']) {
         const q1 = q1LineMap.get(`${playerName}_${propType}`);
         if (q1) {
           playerQ1Lines[propType] = q1;
