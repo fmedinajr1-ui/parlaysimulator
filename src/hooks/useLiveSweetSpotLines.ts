@@ -25,6 +25,10 @@ export interface LiveLineData {
   overPrice?: number;
   underPrice?: number;
   allBookLines?: BookLine[];
+  closestLine?: number;
+  closestBookmaker?: string;
+  closestDelta?: number;
+  isScanning?: boolean;
 }
 
 interface UseLiveSweetSpotLinesOptions {
