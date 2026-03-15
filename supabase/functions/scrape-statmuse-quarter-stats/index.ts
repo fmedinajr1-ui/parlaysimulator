@@ -5,18 +5,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const STAT_COLUMNS = ['PTS', 'REB', 'AST', 'STL', 'BLK', '3PM'] as const;
-const STAT_TO_PROP: Record<string, string> = {
-  PTS: 'points',
-  REB: 'rebounds',
-  AST: 'assists',
-  STL: 'steals',
-  BLK: 'blocks',
-  '3PM': 'threes',
-};
-
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+/** Strip markdown links/images from a cell, return plain text */
+function cleanCell(cell: string): string {
+  // Remove markdown images: ![alt](url)
+  let c = cell.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+  // Remove markdown links but keep text: [text](url) → text
+  c = c.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  // Remove extra whitespace
+  return c.replace(/\s+/g, ' ').trim();
 }
 
 /** Parse StatMuse markdown table into per-quarter, per-game rows */
@@ -33,63 +33,79 @@ function parseStatMuseTable(markdown: string): Array<{
   const lines = markdown.split('\n');
   const rows: Array<any> = [];
 
-  // Find the header row containing quarter stats columns
+  // Find header row with QUARTER column
   let headerIdx = -1;
-  let colMap: Record<string, number> = {};
+  let colIndices: Record<string, number> = {};
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line.startsWith('|')) continue;
 
-    const cells = line.split('|').map(c => c.trim()).filter(Boolean);
-    // Look for header with QUARTER or QTR and stat columns
-    const upperCells = cells.map(c => c.toUpperCase());
-    
-    if ((upperCells.includes('QUARTER') || upperCells.includes('QTR') || upperCells.includes('Q')) &&
-        (upperCells.includes('PTS') || upperCells.includes('POINTS'))) {
+    const rawCells = line.split('|').slice(1); // skip first empty from leading |
+    // Remove trailing empty from trailing |
+    if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
+
+    const cells = rawCells.map(c => cleanCell(c).toUpperCase());
+
+    if (cells.includes('QUARTER') || cells.includes('QTR')) {
       headerIdx = i;
       for (let j = 0; j < cells.length; j++) {
-        const upper = cells[j].toUpperCase();
-        if (upper === 'QUARTER' || upper === 'QTR' || upper === 'Q') colMap['QUARTER'] = j;
-        if (upper === 'DATE' || upper === 'GAME') colMap['DATE'] = j;
-        if (upper === 'PTS' || upper === 'POINTS') colMap['PTS'] = j;
-        if (upper === 'REB' || upper === 'REBOUNDS') colMap['REB'] = j;
-        if (upper === 'AST' || upper === 'ASSISTS') colMap['AST'] = j;
-        if (upper === 'STL' || upper === 'STEALS') colMap['STL'] = j;
-        if (upper === 'BLK' || upper === 'BLOCKS') colMap['BLK'] = j;
-        if (upper === '3PM' || upper === '3PT' || upper === '3P' || upper === 'THREES') colMap['3PM'] = j;
+        const c = cells[j];
+        if (c === 'QUARTER' || c === 'QTR') colIndices['QUARTER'] = j;
+        if (c === 'DATE') colIndices['DATE'] = j;
+        if (c === 'PTS') colIndices['PTS'] = j;
+        if (c === 'REB') colIndices['REB'] = j;
+        if (c === 'AST') colIndices['AST'] = j;
+        if (c === 'STL') colIndices['STL'] = j;
+        if (c === 'BLK') colIndices['BLK'] = j;
+        if (c === '3PM' || c === '3PT' || c === '3P') colIndices['3PM'] = j;
       }
       break;
     }
   }
 
-  if (headerIdx < 0 || colMap['QUARTER'] === undefined) {
-    console.log('[statmuse] Could not find quarter stats table header');
+  if (headerIdx < 0 || colIndices['QUARTER'] === undefined || colIndices['PTS'] === undefined) {
+    console.log('[statmuse] Could not find table header. Looking for fallback...');
     return [];
   }
 
-  // Parse data rows after header (skip separator line)
+  console.log(`[statmuse] Found header at line ${headerIdx}, columns:`, JSON.stringify(colIndices));
+
+  // Parse data rows
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line.startsWith('|')) continue;
     if (line.includes('---')) continue; // separator
 
-    const cells = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cells.length < 3) continue;
+    const rawCells = line.split('|').slice(1);
+    if (rawCells.length > 0 && rawCells[rawCells.length - 1].trim() === '') rawCells.pop();
 
-    const qStr = cells[colMap['QUARTER']]?.replace(/[^0-9]/g, '');
-    const quarter = parseInt(qStr);
-    if (isNaN(quarter) || quarter < 1 || quarter > 4) continue;
+    if (rawCells.length < Math.max(...Object.values(colIndices)) + 1) continue;
+
+    const quarterStr = cleanCell(rawCells[colIndices['QUARTER']] || '');
+    // Quarter format: "1Q", "2Q", "3Q", "4Q"
+    const qMatch = quarterStr.match(/(\d)Q/i) || quarterStr.match(/^(\d)$/);
+    if (!qMatch) continue;
+    const quarter = parseInt(qMatch[1]);
+    if (quarter < 1 || quarter > 4) continue;
+
+    const dateStr = colIndices['DATE'] !== undefined ? cleanCell(rawCells[colIndices['DATE']] || '') : '';
+    
+    const getNum = (key: string) => {
+      if (colIndices[key] === undefined) return 0;
+      const val = cleanCell(rawCells[colIndices[key]] || '');
+      return parseFloat(val) || 0;
+    };
 
     rows.push({
       quarter,
-      date: cells[colMap['DATE']] || '',
-      pts: parseFloat(cells[colMap['PTS']] || '0') || 0,
-      reb: parseFloat(cells[colMap['REB']] || '0') || 0,
-      ast: parseFloat(cells[colMap['AST']] || '0') || 0,
-      stl: parseFloat(cells[colMap['STL']] || '0') || 0,
-      blk: parseFloat(cells[colMap['BLK']] || '0') || 0,
-      threes: parseFloat(cells[colMap['3PM']] || '0') || 0,
+      date: dateStr,
+      pts: getNum('PTS'),
+      reb: getNum('REB'),
+      ast: getNum('AST'),
+      stl: getNum('STL'),
+      blk: getNum('BLK'),
+      threes: getNum('3PM'),
     });
   }
 
@@ -103,20 +119,23 @@ function calculateQuarterAverages(
 ): Record<string, { q1: number; q2: number; q3: number; q4: number; game_avg: number }> | null {
   if (rows.length === 0) return null;
 
-  // Group by date to identify distinct games, take last N
+  // Group by date to identify distinct games
   const gamesByDate = new Map<string, typeof rows>();
   for (const row of rows) {
-    const key = row.date || `row-${rows.indexOf(row)}`;
+    const key = row.date || `idx-${rows.indexOf(row)}`;
     const arr = gamesByDate.get(key) || [];
     arr.push(row);
     gamesByDate.set(key, arr);
   }
 
-  // Take last maxGames dates
+  // Take last maxGames dates (StatMuse returns recent first)
   const dates = [...gamesByDate.keys()].slice(0, maxGames);
-  const filteredRows = rows.filter(r => dates.includes(r.date || `row-${rows.indexOf(r)}`));
+  const filteredRows = rows.filter(r => {
+    const key = r.date || `idx-${rows.indexOf(r)}`;
+    return dates.includes(key);
+  });
 
-  if (filteredRows.length < 4) return null; // Need at least 1 full game
+  if (filteredRows.length < 4) return null;
 
   const stats = ['pts', 'reb', 'ast', 'stl', 'blk', 'threes'] as const;
   const propNames = ['points', 'rebounds', 'assists', 'steals', 'blocks', 'threes'];
@@ -134,7 +153,6 @@ function calculateQuarterAverages(
       qCounts[idx]++;
     }
 
-    // Only include if we have data
     if (qCounts[0] === 0 && qCounts[1] === 0) continue;
 
     const q1 = qCounts[0] > 0 ? Math.round((qSums[0] / qCounts[0]) * 10) / 10 : 0;
@@ -167,16 +185,11 @@ Deno.serve(async (req) => {
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
     if (!firecrawlKey) {
       return new Response(JSON.stringify({ success: false, error: 'Firecrawl not configured' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
-
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const log = (msg: string) => console.log(`[statmuse-quarter] ${msg}`);
     const results: Record<string, string> = {};
     let upsertCount = 0;
@@ -193,30 +206,22 @@ Deno.serve(async (req) => {
             'Authorization': `Bearer ${firecrawlKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            url,
-            formats: ['markdown'],
-            onlyMainContent: true,
-            waitFor: 3000,
-          }),
+          body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, waitFor: 3000 }),
         });
 
         const scrapeData = await scrapeRes.json();
         const markdown = scrapeData?.data?.markdown || scrapeData?.markdown || '';
 
         if (!markdown) {
-          log(`⚠ No markdown returned for ${playerName}`);
+          log(`⚠ No markdown for ${playerName}`);
           results[playerName] = 'no_data';
           continue;
         }
 
-        // Parse the table
         const rows = parseStatMuseTable(markdown);
         log(`Parsed ${rows.length} quarter rows for ${playerName}`);
 
         if (rows.length === 0) {
-          // Try alternative: sometimes StatMuse shows aggregate averages instead of game-by-game
-          log(`⚠ No parseable quarter rows for ${playerName}, checking for summary stats`);
           results[playerName] = 'no_quarter_rows';
           continue;
         }
@@ -227,7 +232,6 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Upsert into player_quarter_baselines
         const upsertRows = Object.entries(averages).map(([propType, avgs]) => ({
           player_name: playerName,
           prop_type: propType,
@@ -257,7 +261,7 @@ Deno.serve(async (req) => {
           log(`✅ ${playerName}: ${upsertRows.length} prop baselines saved`);
         }
 
-        // Rate limit: 1 request per second
+        // Rate limit
         await new Promise(r => setTimeout(r, 1200));
       } catch (e) {
         log(`❌ Exception for ${playerName}: ${e.message}`);
@@ -266,21 +270,14 @@ Deno.serve(async (req) => {
     }
 
     log(`Done. Upserted ${upsertCount} baselines for ${playerNames.length} players.`);
-
-    return new Response(JSON.stringify({
-      success: true,
-      processed: playerNames.length,
-      upserted: upsertCount,
-      results,
-    }), {
+    return new Response(JSON.stringify({ success: true, processed: playerNames.length, upserted: upsertCount, results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('[statmuse-quarter] Fatal:', msg);
     return new Response(JSON.stringify({ success: false, error: msg }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });
