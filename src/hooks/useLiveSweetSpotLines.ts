@@ -52,7 +52,12 @@ export function useLiveSweetSpotLines(
   options: UseLiveSweetSpotLinesOptions = {}
 ) {
   const { enabled = true, turboMode = false } = options;
-  const intervalMs = options.intervalMs ?? (turboMode ? TURBO_INTERVAL : NORMAL_INTERVAL);
+  
+  // Adaptive polling: turbo until all spots have a close match
+  const [allMatched, setAllMatched] = useState(false);
+  const effectiveInterval = options.intervalMs ?? (
+    turboMode || !allMatched ? TURBO_INTERVAL : NORMAL_INTERVAL
+  );
   
   const [lineData, setLineData] = useState<Map<string, LiveLineData>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
