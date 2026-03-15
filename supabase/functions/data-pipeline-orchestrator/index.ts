@@ -218,8 +218,8 @@ serve(async (req) => {
       // Integrity check: verify no duplicate legs or short parlays
       await runFunction('bot-parlay-integrity-check', {});
       
-      // Lottery parlay scanner: generates high-odds parlays from yesterday's near-misses
-      await runFunction('nba-mega-parlay-scanner', {});
+      // Lottery tier DISABLED — 0% win rate, pure capital burn
+      // await runFunction('nba-mega-parlay-scanner', {});
     }
 
     // ============ PHASE 3B: MID-DAY RE-GENERATION CHECK ============

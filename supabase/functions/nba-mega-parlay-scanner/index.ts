@@ -169,6 +169,12 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // LOTTERY TIER DISABLED — 0% win rate, pure capital burn
+  console.log("[mega-parlay-scanner] Lottery tier disabled. Returning early.");
+  return new Response(JSON.stringify({ success: true, disabled: true, message: "Lottery tier disabled — 0 wins, pure loss" }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const apiKey = Deno.env.get('THE_ODDS_API_KEY');

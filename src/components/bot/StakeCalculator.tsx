@@ -17,7 +17,6 @@ const TIERS = [
   { label: "Execution", winRate: 0.37, odds: 7.0, parlaysPerDay: 5, key: "execution" },
   { label: "Validation", winRate: 0.33, odds: 8.0, parlaysPerDay: 8, key: "validation" },
   { label: "Exploration", winRate: 0.30, odds: 9.0, parlaysPerDay: 10, key: "exploration" },
-  { label: "Bankroll Doubler", winRate: 0.15, odds: 50.0, parlaysPerDay: 2, key: "bankroll_doubler" },
 ];
 
 // Proven strategy data from live performance (9-day track record)
@@ -31,11 +30,11 @@ const STRATEGIES = [
 
 // Pre-computed stake plans at common bankroll levels
 const BANKROLL_PLANS = [
-  { bankroll: 1000, execution: 20, validation: 10, exploration: 5, lottery: 2, dailyEV: 85, monthlyEV: 1700 },
-  { bankroll: 2500, execution: 50, validation: 25, exploration: 10, lottery: 5, dailyEV: 212, monthlyEV: 4240 },
-  { bankroll: 5000, execution: 100, validation: 50, exploration: 20, lottery: 10, dailyEV: 425, monthlyEV: 8500 },
-  { bankroll: 10000, execution: 200, validation: 100, exploration: 40, lottery: 20, dailyEV: 850, monthlyEV: 17000 },
-  { bankroll: 25000, execution: 500, validation: 250, exploration: 100, lottery: 50, dailyEV: 2125, monthlyEV: 42500 },
+  { bankroll: 1000, execution: 20, validation: 10, exploration: 5, dailyEV: 85, monthlyEV: 1700 },
+  { bankroll: 2500, execution: 50, validation: 25, exploration: 10, dailyEV: 212, monthlyEV: 4240 },
+  { bankroll: 5000, execution: 100, validation: 50, exploration: 20, dailyEV: 425, monthlyEV: 8500 },
+  { bankroll: 10000, execution: 200, validation: 100, exploration: 40, dailyEV: 850, monthlyEV: 17000 },
+  { bankroll: 25000, execution: 500, validation: 250, exploration: 100, dailyEV: 2125, monthlyEV: 42500 },
 ];
 
 export function StakeCalculator() {
@@ -157,9 +156,8 @@ export function StakeCalculator() {
                   <th className="text-left py-2 font-medium">Bankroll</th>
                   <th className="text-right py-2 font-medium">Execution</th>
                   <th className="text-right py-2 font-medium">Validation</th>
-                  <th className="text-right py-2 font-medium">Exploration</th>
-                  <th className="text-right py-2 font-medium">Lottery</th>
-                  <th className="text-right py-2 font-medium">Daily EV</th>
+                   <th className="text-right py-2 font-medium">Exploration</th>
+                   <th className="text-right py-2 font-medium">Daily EV</th>
                   <th className="text-right py-2 font-medium">Monthly</th>
                 </tr>
               </thead>
@@ -169,9 +167,8 @@ export function StakeCalculator() {
                     <td className="py-2 font-semibold">${plan.bankroll.toLocaleString()}</td>
                     <td className="text-right py-2">${plan.execution}</td>
                     <td className="text-right py-2">${plan.validation}</td>
-                    <td className="text-right py-2">${plan.exploration}</td>
-                    <td className="text-right py-2">${plan.lottery}</td>
-                    <td className="text-right py-2 text-primary font-medium">+${plan.dailyEV.toLocaleString()}</td>
+                     <td className="text-right py-2">${plan.exploration}</td>
+                     <td className="text-right py-2 text-primary font-medium">+${plan.dailyEV.toLocaleString()}</td>
                     <td className="text-right py-2 text-primary font-bold">+${plan.monthlyEV.toLocaleString()}</td>
                   </tr>
                 ))}
@@ -181,7 +178,7 @@ export function StakeCalculator() {
         </div>
 
         <p className="text-xs text-center text-muted-foreground">
-          Stakes = 2% execution / 1% validation / 0.4% exploration / 0.2% lottery · Half-Kelly sizing · Projections based on live 9-day P&L
+          Stakes = 2% execution / 1% validation / 0.4% exploration · Half-Kelly sizing · Projections based on live 9-day P&L
         </p>
       </CardContent>
     </Card>

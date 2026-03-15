@@ -28,7 +28,7 @@ export interface UnifiedParlayLeg {
 // Unified parlay structure
 export interface DailyParlay {
   id: string;
-  type: 'OPTIMAL' | 'SAFE' | 'BALANCED' | 'UPSIDE' | 'CORE' | 'HEAT_UPSIDE' | 'LOTTERY' | 'CURATED';
+  type: 'OPTIMAL' | 'SAFE' | 'BALANCED' | 'UPSIDE' | 'CORE' | 'HEAT_UPSIDE' | 'CURATED';
   source: 'sweet-spot' | 'sharp' | 'heat' | 'bot';
   sport?: 'nba' | 'nhl' | 'cross';
   legCount: number;
@@ -384,7 +384,9 @@ export function useDailyParlays() {
     
     const strategyName = (parlay.strategy_name || '').toLowerCase();
     const isLottery = strategyName.includes('lottery') || strategyName.includes('mega');
-    const type: DailyParlay['type'] = isLottery ? 'LOTTERY' : 'CURATED';
+    // Skip lottery parlays entirely — tier disabled
+    if (isLottery) return;
+    const type: DailyParlay['type'] = 'CURATED';
     
     // Detect sport from strategy name
     const isNHL = strategyName.startsWith('nhl_');
@@ -401,7 +403,7 @@ export function useDailyParlays() {
       combinedOdds: parlay.expected_odds || 300,
       winProbability: parlay.combined_probability || 0.50,
       patterns: extractPatterns(legs),
-      riskLevel: isLottery ? 'HIGH' : 'LOW',
+      riskLevel: 'LOW',
       parlayDate: parlay.parlay_date,
       outcome: (parlay.outcome as 'pending' | 'won' | 'lost') || 'pending',
       tier: parlay.tier || undefined,
@@ -419,7 +421,6 @@ export function useDailyParlays() {
       'BALANCED': 4,
       'UPSIDE': 5,
       'HEAT_UPSIDE': 6,
-      'LOTTERY': 7,
     };
     
     const priorityDiff = typePriority[a.type] - typePriority[b.type];
