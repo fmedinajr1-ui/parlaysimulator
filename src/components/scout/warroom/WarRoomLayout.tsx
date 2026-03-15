@@ -66,6 +66,7 @@ export function WarRoomLayout({ gameContext, isDemo = false, adminEventId, onGam
   const [useMonteCarloMode, setUseMonteCarloMode] = useState(false);
   const [mcResults, setMcResults] = useState<Map<string, number>>(new Map());
   const [quarterProfiles, setQuarterProfiles] = useState<QuarterProfileData | null>(null);
+  const [liveQuarterMap, setLiveQuarterMap] = useState<LiveQuarterMap>({});
   const { homeTeam, awayTeam } = gameContext;
 
   // Data hooks
