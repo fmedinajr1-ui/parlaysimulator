@@ -11093,7 +11093,13 @@ Deno.serve(async (req) => {
             // Conflict detection
             const isConflict = (side === 'over' && composite < line) || (side === 'under' && composite > line);
             if (isConflict) {
-              const propLabel = PROP_LABELS[normProp] || PROP_LABELS[(leg.prop_type || '').toLowerCase()] || leg.prop_type;
+              const propLabelMap: Record<string, string> = {
+                player_points: 'PTS', points: 'PTS', player_rebounds: 'REB', rebounds: 'REB',
+                player_assists: 'AST', assists: 'AST', player_threes: '3PT', threes: '3PT',
+                player_steals: 'STL', steals: 'STL', player_blocks: 'BLK', blocks: 'BLK',
+                player_turnovers: 'TO', turnovers: 'TO', player_pra: 'PRA', pra: 'PRA',
+              };
+              const propLabel = propLabelMap[normProp] || propLabelMap[(leg.prop_type || '').toLowerCase()] || leg.prop_type;
               compositeConflicts.push({
                 player_name: playerName,
                 prop_type: propLabel,
