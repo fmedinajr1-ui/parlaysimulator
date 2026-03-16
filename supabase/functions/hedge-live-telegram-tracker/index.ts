@@ -106,10 +106,21 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[HedgeTracker] Found ${picks.length} unsettled picks`);
+    // Filter to NBA-only prop types (quarter baselines + live feeds are NBA-exclusive)
+    const NBA_PROP_TYPES = ['points', 'rebounds', 'assists', 'threes', 'steals', 'blocks', 'pra',
+      'player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_steals', 'player_blocks'];
+    const nbaPicks = picks.filter((p: any) => NBA_PROP_TYPES.includes((p.prop_type || '').toLowerCase()));
+
+    console.log(`[HedgeTracker] Found ${picks.length} total picks, ${nbaPicks.length} NBA picks`);
+
+    if (nbaPicks.length === 0) {
+      return new Response(JSON.stringify({ success: true, message: 'No NBA picks to track' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // 2. Get unique player names
-    const playerNames = [...new Set(picks.map((p: any) => p.player_name))];
+    const playerNames = [...new Set(nbaPicks.map((p: any) => p.player_name))];
 
     // 3. Fetch StatMuse quarter baselines + behavior profiles in parallel
     const [baselinesRes, profilesRes, trackerRes] = await Promise.all([
