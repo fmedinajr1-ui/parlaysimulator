@@ -102,6 +102,7 @@ type NotificationType =
   | 'leg_swap_report'
   | 'hedge_pregame_scout'
   | 'hedge_live_update'
+  | 'composite_conflict_report'
   | 'custom'
   | 'test';
 
@@ -189,6 +190,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return data.message || '🏀 Pre-game scout update';
     case 'hedge_live_update':
       return data.message || '🎯 Hedge status update';
+    case 'composite_conflict_report':
+      return formatCompositeConflictReport(data, dateStr);
     case 'custom':
       // Extract clean message from adaptive intelligence and other custom senders
       return data.message || data.text || data.summary || '📌 Bot update received';
@@ -199,6 +202,29 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       console.log(`[Telegram] Unknown notification type: ${type}`, JSON.stringify(data).slice(0, 200));
       return `📌 Bot Update (${type})`;
   }
+}
+
+function formatCompositeConflictReport(data: Record<string, any>, dateStr: string): string {
+  const conflicts = data.conflicts || [];
+  if (conflicts.length === 0) return '';
+  
+  const parlayCount = new Set(conflicts.map((c: any) => c.parlay_id)).size;
+  let msg = `⚠️ *COMPOSITE CONFLICT REPORT* — ${dateStr}\n\n`;
+  msg += `📋 *${conflicts.length} legs flagged* across ${parlayCount} parlays\n\n`;
+
+  for (let i = 0; i < conflicts.length; i++) {
+    const c = conflicts[i];
+    const num = i + 1;
+    const direction = c.side === 'OVER' ? '<' : '>';
+    const h2hStr = c.h2h_avg != null ? `H2H: ${c.h2h_avg} (${c.h2h_games}g)` : `H2H: N/A`;
+    
+    msg += `${num}️⃣ *${c.player_name}* ${c.prop_type} ${c.side} ${c.line}\n`;
+    msg += `   L10: ${c.l10_avg} | L5: ${c.l5_avg} | L3: ${c.l3_avg} | ${h2hStr}\n`;
+    msg += `   Composite: ${c.composite} ${direction} line ${c.line} ❌\n`;
+    msg += `   Parlay: #${c.parlay_id} (${c.parlay_tier}) vs ${c.opponent}\n\n`;
+  }
+
+  return msg.trim();
 }
 
 function formatLadderChallengeResult(data: Record<string, any>): string {

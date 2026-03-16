@@ -10985,6 +10985,145 @@ Deno.serve(async (req) => {
         console.log(`[Bot v2] 🧹 Dedup: skipped ${skippedDupes} duplicate parlays at insert time`);
       }
 
+      // === COMPOSITE AVERAGE FILTER: L10/L5/L3/H2H conflict detection ===
+      const compositeConflicts: any[] = [];
+      try {
+        // Collect all unique NBA player names across all deduped parlays
+        const NBA_PROP_TYPES_COMPOSITE = ['player_points', 'player_rebounds', 'player_assists', 'player_threes',
+          'player_steals', 'player_blocks', 'player_turnovers', 'player_pra', 'player_pts_rebs', 'player_pts_asts',
+          'player_rebs_asts', 'points', 'rebounds', 'assists', 'threes', 'steals', 'blocks', 'turnovers', 'pra'];
+        
+        const allLegs: { leg: any; parlayIndex: number; parlayTier: string; parlayId: string }[] = [];
+        for (let pi = 0; pi < dedupedParlays.length; pi++) {
+          const p = dedupedParlays[pi];
+          const legs = Array.isArray(p.legs) ? p.legs : [];
+          for (const leg of legs) {
+            const normProp = normalizePropType(leg.prop_type || '');
+            if (NBA_PROP_TYPES_COMPOSITE.includes(normProp) || NBA_PROP_TYPES_COMPOSITE.includes((leg.prop_type || '').toLowerCase())) {
+              allLegs.push({ leg, parlayIndex: pi, parlayTier: p.tier || p.strategy_name || 'unknown', parlayId: String(pi + 1) });
+            }
+          }
+        }
+
+        if (allLegs.length > 0) {
+          const uniquePlayerNames = [...new Set(allLegs.map(l => l.leg.player_name).filter(Boolean))];
+          console.log(`[CompositeFilter] Checking ${allLegs.length} NBA legs across ${dedupedParlays.length} parlays for ${uniquePlayerNames.length} players`);
+
+          // Batch-fetch last 10 game logs for all players
+          const playerGameLogs = new Map<string, any[]>();
+          const batchSize = 50;
+          for (let i = 0; i < uniquePlayerNames.length; i += batchSize) {
+            const batch = uniquePlayerNames.slice(i, i + batchSize);
+            const { data: logs } = await supabase
+              .from('nba_player_game_logs')
+              .select('player_name, game_date, points, rebounds, assists, steals, blocks, threes_made, turnovers, opponent')
+              .in('player_name', batch)
+              .order('game_date', { ascending: false })
+              .limit(batch.length * 15); // enough for 10 games + H2H lookback
+            
+            if (logs) {
+              for (const log of logs) {
+                const name = log.player_name;
+                if (!playerGameLogs.has(name)) playerGameLogs.set(name, []);
+                playerGameLogs.get(name)!.push(log);
+              }
+            }
+          }
+
+          // Prop type to game log column mapping
+          const propToColumn: Record<string, string> = {
+            player_points: 'points', points: 'points',
+            player_rebounds: 'rebounds', rebounds: 'rebounds',
+            player_assists: 'assists', assists: 'assists',
+            player_threes: 'threes_made', threes: 'threes_made',
+            player_steals: 'steals', steals: 'steals',
+            player_blocks: 'blocks', blocks: 'blocks',
+            player_turnovers: 'turnovers', turnovers: 'turnovers',
+            player_pra: '_pra', pra: '_pra',
+          };
+
+          for (const { leg, parlayIndex, parlayTier, parlayId } of allLegs) {
+            const playerName = leg.player_name;
+            const logs = playerGameLogs.get(playerName);
+            if (!logs || logs.length < 3) continue;
+
+            const normProp = normalizePropType(leg.prop_type || '');
+            const col = propToColumn[normProp] || propToColumn[(leg.prop_type || '').toLowerCase()];
+            if (!col) continue;
+
+            const line = leg.line ?? leg.recommended_line ?? 0;
+            if (line <= 0) continue;
+            const side = (leg.side || leg.recommended_side || '').toLowerCase();
+            if (side !== 'over' && side !== 'under') continue;
+
+            // Extract stat values from logs
+            const getVal = (log: any) => {
+              if (col === '_pra') return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
+              return log[col] || 0;
+            };
+
+            const l10Games = logs.slice(0, 10);
+            const l5Games = logs.slice(0, 5);
+            const l3Games = logs.slice(0, 3);
+
+            const avg = (arr: any[]) => arr.length === 0 ? 0 : arr.reduce((s, g) => s + getVal(g), 0) / arr.length;
+            const l10Avg = avg(l10Games);
+            const l5Avg = avg(l5Games);
+            const l3Avg = avg(l3Games);
+
+            // H2H: find games vs today's opponent
+            const playerTeam = playerTeamMap.get((playerName || '').toLowerCase().trim());
+            const teamCtx = playerTeam ? teamGameContextMap.get(playerTeam) : null;
+            const todayOpponent = teamCtx?.opponentAbbrev || '';
+            const h2hGames = todayOpponent ? logs.filter((g: any) => 
+              (g.opponent || '').toLowerCase().includes(todayOpponent.toLowerCase()) ||
+              todayOpponent.toLowerCase().includes((g.opponent || '').toLowerCase())
+            ) : [];
+            const h2hAvg = avg(h2hGames);
+            const h2hCount = h2hGames.length;
+
+            // Weighted composite
+            let composite: number;
+            if (h2hCount >= 2) {
+              composite = (l10Avg * 0.20) + (l5Avg * 0.25) + (l3Avg * 0.30) + (h2hAvg * 0.25);
+            } else {
+              composite = (l10Avg * 0.25) + (l5Avg * 0.30) + (l3Avg * 0.45);
+            }
+
+            // Conflict detection
+            const isConflict = (side === 'over' && composite < line) || (side === 'under' && composite > line);
+            if (isConflict) {
+              const propLabelMap: Record<string, string> = {
+                player_points: 'PTS', points: 'PTS', player_rebounds: 'REB', rebounds: 'REB',
+                player_assists: 'AST', assists: 'AST', player_threes: '3PT', threes: '3PT',
+                player_steals: 'STL', steals: 'STL', player_blocks: 'BLK', blocks: 'BLK',
+                player_turnovers: 'TO', turnovers: 'TO', player_pra: 'PRA', pra: 'PRA',
+              };
+              const propLabel = propLabelMap[normProp] || propLabelMap[(leg.prop_type || '').toLowerCase()] || leg.prop_type;
+              compositeConflicts.push({
+                player_name: playerName,
+                prop_type: propLabel,
+                side: side.toUpperCase(),
+                line,
+                l10_avg: Math.round(l10Avg * 100) / 100,
+                l5_avg: Math.round(l5Avg * 100) / 100,
+                l3_avg: Math.round(l3Avg * 100) / 100,
+                h2h_avg: h2hCount >= 2 ? Math.round(h2hAvg * 100) / 100 : null,
+                h2h_games: h2hCount,
+                composite: Math.round(composite * 100) / 100,
+                parlay_id: parlayId,
+                parlay_tier: parlayTier,
+                opponent: todayOpponent || 'N/A',
+              });
+              console.log(`[CompositeFilter] ❌ CONFLICT: ${playerName} ${propLabel} ${side.toUpperCase()} ${line} | L10:${l10Avg.toFixed(1)} L5:${l5Avg.toFixed(1)} L3:${l3Avg.toFixed(1)} H2H:${h2hCount >= 2 ? h2hAvg.toFixed(1) : 'N/A'}(${h2hCount}g) | Composite:${composite.toFixed(1)} vs line ${line}`);
+            }
+          }
+          console.log(`[CompositeFilter] Scan complete: ${compositeConflicts.length} conflicts found across ${allLegs.length} NBA legs`);
+        }
+      } catch (compErr) {
+        console.error('[CompositeFilter] Error during composite check:', compErr);
+      }
+
       if (dedupedParlays.length === 0) {
         console.log(`[Bot v2] All ${allParlays.length} parlays were duplicates — nothing to insert`);
       } else {
@@ -11030,6 +11169,30 @@ Deno.serve(async (req) => {
         }
       } catch (approvalErr) {
         console.error('[Bot v2] Failed to send approval request:', approvalErr);
+      }
+
+      // Send composite conflict report to admin if any conflicts found
+      if (compositeConflicts.length > 0) {
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              type: 'composite_conflict_report',
+              admin_only: true,
+              data: {
+                conflicts: compositeConflicts,
+                date: targetDate,
+              },
+            }),
+          });
+          console.log(`[CompositeFilter] Sent ${compositeConflicts.length} conflicts to admin Telegram`);
+        } catch (compTgErr) {
+          console.error('[CompositeFilter] Failed to send Telegram report:', compTgErr);
+        }
       }
 
       // Mark research findings as consumed
