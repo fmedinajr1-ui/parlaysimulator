@@ -1,0 +1,1 @@
+ALTER TABLE public.category_sweet_spots ADD COLUMN IF NOT EXISTS requires_bounce_back_check boolean DEFAULT false;
