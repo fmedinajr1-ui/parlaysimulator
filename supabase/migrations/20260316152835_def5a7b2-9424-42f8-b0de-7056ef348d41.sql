@@ -1,0 +1,1 @@
+ALTER TABLE public.category_sweet_spots ADD COLUMN IF NOT EXISTS l5_avg numeric;
