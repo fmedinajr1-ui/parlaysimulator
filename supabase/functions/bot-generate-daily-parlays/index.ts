@@ -3427,7 +3427,7 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
   }
   
   // === CONFIDENCE GATE REMOVED ===
-  // Tier-specific gates handle quality: Execution uses 80% L10 hit rate gate,
+  // Tier-specific gates handle quality: Execution uses 70% L10 hit rate gate (65% thin pool, 75% light slate),
   // Validation uses minConfidence 0.52, Exploration uses minConfidence 0.45.
   // The redundant 70% global gate was starving all tiers of picks.
   
