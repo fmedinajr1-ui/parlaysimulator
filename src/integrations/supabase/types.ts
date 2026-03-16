@@ -4383,6 +4383,51 @@ export type Database = {
         }
         Relationships: []
       }
+      hedge_telegram_tracker: {
+        Row: {
+          analysis_date: string
+          created_at: string
+          id: string
+          last_quarter_sent: number | null
+          last_status_sent: string | null
+          line: number
+          pick_id: string | null
+          player_name: string
+          pregame_sent: boolean | null
+          prop_type: string
+          side: string
+          updated_at: string
+        }
+        Insert: {
+          analysis_date?: string
+          created_at?: string
+          id?: string
+          last_quarter_sent?: number | null
+          last_status_sent?: string | null
+          line: number
+          pick_id?: string | null
+          player_name: string
+          pregame_sent?: boolean | null
+          prop_type: string
+          side?: string
+          updated_at?: string
+        }
+        Update: {
+          analysis_date?: string
+          created_at?: string
+          id?: string
+          last_quarter_sent?: number | null
+          last_status_sent?: string | null
+          line?: number
+          pick_id?: string | null
+          player_name?: string
+          pregame_sent?: boolean | null
+          prop_type?: string
+          side?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       high_conviction_results: {
         Row: {
           actual_value: number | null
