@@ -3663,7 +3663,7 @@ async function fetchTeamsPlayingToday(
   const { data: activeProps } = await supabase
     .from('unified_props')
     .select('player_name')
-    .gte('scraped_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .gte('created_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .limit(1000);
 
   if (activeProps && activeProps.length > 0) {
