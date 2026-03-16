@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
       .from('category_sweet_spots')
       .select('id, player_name, prop_type, recommended_line, recommended_side, l10_avg, confidence_score, analysis_date')
       .eq('analysis_date', today)
-      .is('outcome', null)
+      .or('outcome.is.null,outcome.eq.pending')
       .not('recommended_line', 'is', null);
 
     if (picksErr || !picks || picks.length === 0) {
