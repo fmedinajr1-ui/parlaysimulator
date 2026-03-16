@@ -102,6 +102,7 @@ type NotificationType =
   | 'leg_swap_report'
   | 'hedge_pregame_scout'
   | 'hedge_live_update'
+  | 'composite_conflict_report'
   | 'custom'
   | 'test';
 
