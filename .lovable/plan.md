@@ -192,3 +192,29 @@ New `backfill-quarter-stats` edge function that fetches **exact per-quarter play
 - Cron: every 30 minutes (`*/30 * * * *`)
 - Live games still use `auto-quarter-snapshots` for real-time progression
 - After final, `backfill-quarter-stats` overwrites with exact NBA API data
+
+# Live Hedge Telegram Tracker — IMPLEMENTED ✅ (March 16, 2026)
+
+## Problem
+War Room hedge recommendations were only visible in the UI during games. No pre-game context on player roles (starter vs bench) or StatMuse quarter averages, and no real-time Telegram alerts when hedge status changed.
+
+## Solution
+Built a complete Telegram-based hedge tracking system:
+
+### New Table: `hedge_telegram_tracker`
+Tracks notification state per pick (last_status_sent, last_quarter_sent, pregame_sent) to prevent duplicate messages.
+
+### New Edge Function: `hedge-live-telegram-tracker`
+Runs every 5 minutes via cron. Flow:
+1. Fetches today's unsettled `category_sweet_spots` picks
+2. Queries `player_quarter_baselines` (StatMuse-sourced) for Q1–Q4 averages
+3. Queries `player_nba_profiles` for avg_minutes → role classification (STARTER ≥28min, BENCH ≥20min, BENCH_FRINGE <15min)
+4. Calls `unified-player-feed` for live stats, pace, projections
+5. Calculates hedge status using progress-aware buffer thresholds
+6. Sends pre-game scout (role + quarter avgs + fade signals for bench players)
+7. Sends live updates on status changes or quarter completions
+
+### Updated `bot-send-telegram`
+Added `hedge_pregame_scout` and `hedge_live_update` notification types.
+
+### Cron: Every 5 minutes (`*/5 * * * *`)
