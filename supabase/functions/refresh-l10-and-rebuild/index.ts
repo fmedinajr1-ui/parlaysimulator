@@ -36,12 +36,18 @@ Deno.serve(async (req) => {
   };
 
   try {
-    // === PHASE 0: Refresh lineup/injury data ===
+    // === PHASE 0: Refresh lineup/injury data & games cache ===
     log("=== PHASE 0: Refreshing lineup & injury data ===");
     await invokeStep(
       "Refreshing lineups & injuries",
       "firecrawl-lineup-scraper",
       {}
+    );
+    // Refresh upcoming_games_cache so GameSchedule filter has fresh team data
+    await invokeStep(
+      "Refreshing games cache",
+      "game-news-aggregator",
+      { sport: "basketball_nba" }
     );
     // Brief delay to let injury data propagate
     await new Promise(r => setTimeout(r, 5000));
