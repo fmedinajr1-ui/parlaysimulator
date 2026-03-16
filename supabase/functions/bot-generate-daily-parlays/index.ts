@@ -8279,9 +8279,9 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs (with 3-leg fallback for small pools)
     if (legs.length < profile.legs) {
-      if (legs.length >= 3 && pool.playerPicks.length < 60) {
+      if (legs.length >= 3 && (pool.playerPicks.length < 100 || isThinPool)) {
         // Accept as 3-leg fallback when pool is too small for requested leg count
-        console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool too small for ${profile.legs})`);
+        console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool ${pool.playerPicks.length} picks, thin pool mode)`);
       } else {
         rejectionCounters.notEnoughLegs++;
         console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
