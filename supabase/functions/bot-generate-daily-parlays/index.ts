@@ -3474,14 +3474,14 @@ function canUsePickInParlay(
   const categoryCount = parlayCategoryCount.get(category) || 0;
   if (categoryCount >= tierConfig.maxCategoryUsage) return false;
   
-  // === PROP TYPE CONCENTRATION CAP (40% max per parlay) ===
+  // === PROP TYPE CONCENTRATION CAP (40% max per parlay, 60% in volume/thin pool mode) ===
   if (parlayPropTypeCount && totalLegs) {
     const propType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) : 
                      'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
     const currentCount = parlayPropTypeCount.get(propType) || 0;
     const maxPropTypeLegs = volumeMode 
       ? Math.max(2, Math.floor(totalLegs * 0.67))  // Volume mode: allow 2 of same type in 3-leg
-      : Math.max(1, Math.floor(totalLegs * 0.4));   // Normal: keep existing 40% cap
+      : Math.max(1, Math.floor(totalLegs * 0.6));   // Relaxed from 0.4 to 0.6: allow 2 of same type in 3-leg parlays
     if (currentCount >= maxPropTypeLegs) {
       console.log(`[PropTypeCap] Blocked ${('player_name' in pick ? pick.player_name : pick.home_team)} - ${propType} already at ${currentCount}/${maxPropTypeLegs} max for ${totalLegs}-leg parlay`);
       return false;
@@ -6672,7 +6672,8 @@ async function generateTierParlays(
   winningPatterns: any = null,
   isLightSlateMode: boolean = false,
   volumeMode: boolean = false,
-  dynamicArchetypes: { categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[] } = { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [] }
+  dynamicArchetypes: { categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[] } = { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [] },
+  isThinPool: boolean = false
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
@@ -7995,7 +7996,7 @@ async function generateTierParlays(
       if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
-        const execL10Gate = isLightSlateMode ? 85 : 80;
+        const execL10Gate = isLightSlateMode ? 85 : (isThinPool ? 70 : 80);
         if (l10HrPct < execL10Gate) {
           continue;
         }
@@ -8278,9 +8279,9 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs (with 3-leg fallback for small pools)
     if (legs.length < profile.legs) {
-      if (legs.length >= 3 && pool.playerPicks.length < 60) {
+      if (legs.length >= 3 && (pool.playerPicks.length < 100 || isThinPool)) {
         // Accept as 3-leg fallback when pool is too small for requested leg count
-        console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool too small for ${profile.legs})`);
+        console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool ${pool.playerPicks.length} picks, thin pool mode)`);
       } else {
         rejectionCounters.notEnoughLegs++;
         console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
@@ -8300,7 +8301,8 @@ async function generateTierParlays(
 
       // Golden category gate — enabled for execution tier (Feb 11 analysis)
       // Team legs are exempt from the golden gate check (they don't have sweet-spot categories)
-      const ENFORCE_GOLDEN_GATE = true;
+      // THIN POOL BYPASS: disable golden gate when pool is too small (< 100 picks)
+      const ENFORCE_GOLDEN_GATE = !isThinPool;
       const skipGoldenGate = isHybridProfile || isTeamProfile;
       if (ENFORCE_GOLDEN_GATE && !skipGoldenGate && tier === 'execution' && goldenCategories.size > 0) {
         const playerLegs = legs.filter(l => l.type !== 'team');
@@ -10042,6 +10044,12 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] 🔶 THIN SLATE MODE: ${pool.totalPool} picks. Relaxing validation gates.`);
     }
 
+    // 5b. Detect thin pool mode — player pick pool survived all filters but is too small for parlay assembly
+    const isThinPool = pool.playerPicks.length < 100;
+    if (isThinPool) {
+      console.log(`[Bot v2] 🟠 THIN POOL MODE: Only ${pool.playerPicks.length} player picks survived filters (< 100). Relaxing parlay assembly gates.`);
+    }
+
     // Generate parlays for each tier
     // Reduce exposure if bankroll is near floor
     const isLowBankroll = bankroll < BANKROLL_FLOOR * 1.2; // Below $1,200
@@ -10239,7 +10247,8 @@ Deno.serve(async (req) => {
         winningPatterns,
         isLightSlateMode,
         isVolumeMode,
-        dynamicArchetypes
+        dynamicArchetypes,
+        isThinPool
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
