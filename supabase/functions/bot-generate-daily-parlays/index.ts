@@ -10042,6 +10042,12 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] 🔶 THIN SLATE MODE: ${pool.totalPool} picks. Relaxing validation gates.`);
     }
 
+    // 5b. Detect thin pool mode — player pick pool survived all filters but is too small for parlay assembly
+    const isThinPool = pool.playerPicks.length < 100;
+    if (isThinPool) {
+      console.log(`[Bot v2] 🟠 THIN POOL MODE: Only ${pool.playerPicks.length} player picks survived filters (< 100). Relaxing parlay assembly gates.`);
+    }
+
     // Generate parlays for each tier
     // Reduce exposure if bankroll is near floor
     const isLowBankroll = bankroll < BANKROLL_FLOOR * 1.2; // Below $1,200
