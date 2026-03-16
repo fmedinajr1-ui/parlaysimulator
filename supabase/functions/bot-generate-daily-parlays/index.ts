@@ -11153,6 +11153,38 @@ Deno.serve(async (req) => {
             }
           }
           console.log(`[CompositeFilter] Scan complete: ${compositeConflicts.length} conflicts found across ${allLegs.length} NBA legs`);
+
+          // === DEMOTION: Parlays with >50% conflicting legs get demoted from execution → exploration ===
+          if (compositeConflicts.length > 0) {
+            // Build a map: parlayIndex → number of conflicting legs
+            const conflictCountByParlay = new Map<number, number>();
+            for (const c of compositeConflicts) {
+              // parlayId is 1-indexed string of parlayIndex+1
+              const idx = parseInt(c.parlay_id, 10) - 1;
+              conflictCountByParlay.set(idx, (conflictCountByParlay.get(idx) || 0) + 1);
+            }
+
+            let demotedCount = 0;
+            for (const [parlayIdx, conflictCount] of conflictCountByParlay.entries()) {
+              const parlay = dedupedParlays[parlayIdx];
+              if (!parlay) continue;
+              const totalLegs = Array.isArray(parlay.legs) ? parlay.legs.length : 0;
+              if (totalLegs === 0) continue;
+              const conflictRatio = conflictCount / totalLegs;
+              
+              if (conflictRatio > 0.50 && parlay.tier === 'execution') {
+                parlay.tier = 'exploration';
+                parlay.is_simulated = true;
+                parlay.strategy_name = (parlay.strategy_name || '').replace('_execution_', '_exploration_');
+                parlay.selection_rationale = `⚠️ DEMOTED (composite conflict ${conflictCount}/${totalLegs} legs): ${parlay.selection_rationale || ''}`;
+                demotedCount++;
+                console.log(`[CompositeFilter] 📉 Demoted parlay #${parlayIdx + 1} from execution → exploration (${conflictCount}/${totalLegs} legs conflicting)`);
+              }
+            }
+            if (demotedCount > 0) {
+              console.log(`[CompositeFilter] Demoted ${demotedCount} parlays from execution → exploration`);
+            }
+          }
         }
       } catch (compErr) {
         console.error('[CompositeFilter] Error during composite check:', compErr);
