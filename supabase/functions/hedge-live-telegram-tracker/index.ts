@@ -360,7 +360,8 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
-      picks: picks.length,
+      totalPicks: picks.length,
+      nbaPicks: nbaPicks.length,
       pregamesSent: pregameMessages.length,
       liveUpdatesSent: liveUpdateMessages.length,
       hasLiveGames,
