@@ -6672,7 +6672,8 @@ async function generateTierParlays(
   winningPatterns: any = null,
   isLightSlateMode: boolean = false,
   volumeMode: boolean = false,
-  dynamicArchetypes: { categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[] } = { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [] }
+  dynamicArchetypes: { categories: Set<string>; ranked: { category: string; winRate: number; appearances: number }[] } = { categories: new Set(FALLBACK_ARCHETYPE_CATEGORIES), ranked: [] },
+  isThinPool: boolean = false
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
