@@ -8301,7 +8301,8 @@ async function generateTierParlays(
 
       // Golden category gate — enabled for execution tier (Feb 11 analysis)
       // Team legs are exempt from the golden gate check (they don't have sweet-spot categories)
-      const ENFORCE_GOLDEN_GATE = true;
+      // THIN POOL BYPASS: disable golden gate when pool is too small (< 100 picks)
+      const ENFORCE_GOLDEN_GATE = !isThinPool;
       const skipGoldenGate = isHybridProfile || isTeamProfile;
       if (ENFORCE_GOLDEN_GATE && !skipGoldenGate && tier === 'execution' && goldenCategories.size > 0) {
         const playerLegs = legs.filter(l => l.type !== 'team');
