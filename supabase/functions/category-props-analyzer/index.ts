@@ -1372,31 +1372,9 @@ serve(async (req) => {
           const l3Values = statValues.slice(0, 3);
           const l3Avg = l3Values.length >= 3 ? Math.round((l3Values.reduce((a, b) => a + b, 0) / l3Values.length) * 10) / 10 : null;
 
-          // v11.0: UNIVERSAL RECENCY DECLINE BLOCK
-          if (l3Avg !== null && l10Avg > 0) {
-            const declineRatio = l3Avg / l10Avg;
-            if (effectiveSide === 'over' && declineRatio < 0.75) {
-              console.log(`[Recency Block] 📉 ${playerName} ${config.propType} OVER blocked: L3 avg ${l3Avg} is ${((1 - declineRatio) * 100).toFixed(0)}% below L10 avg ${l10Avg.toFixed(1)}`);
-              continue;
-            }
-            if (effectiveSide === 'under' && declineRatio > 1.25) {
-              console.log(`[Recency Block] 📈 ${playerName} ${config.propType} UNDER blocked: L3 avg ${l3Avg} is ${((declineRatio - 1) * 100).toFixed(0)}% above L10 avg ${l10Avg.toFixed(1)}`);
-              continue;
-            }
-          }
-
-          sweetSpots.push({
-            category: catKey,
-            player_name: playerName,
-            prop_type: config.propType,
-            recommended_line: bestLine,
-            recommended_side: effectiveSide,
-            l10_hit_rate: Math.round(bestHitRate * 100) / 100,
-            l10_avg: Math.round(l10Avg * 10) / 10,
-            l10_min: l10Min,
-            l10_max: l10Max,
-            l10_median: Math.round(l10Median * 10) / 10,
-            l3_avg: l3Avg, // v11.0: Recency signal
+          // v12.0: Compute L5 average for composite filter
+          const l5Values = statValues.slice(0, 5);
+          const l5Avg = l5Values.length >= 5 ? Math.round((l5Values.reduce((a, b) => a + b, 0) / l5Values.length) * 10) / 10 : null;
             games_played: l10Logs.length,
             archetype: getPlayerArchetype(playerName), // v3.0: Store actual archetype
             confidence_score: Math.round(confidenceScore * 100) / 100,
