@@ -10246,7 +10246,8 @@ Deno.serve(async (req) => {
         winningPatterns,
         isLightSlateMode,
         isVolumeMode,
-        dynamicArchetypes
+        dynamicArchetypes,
+        isThinPool
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
