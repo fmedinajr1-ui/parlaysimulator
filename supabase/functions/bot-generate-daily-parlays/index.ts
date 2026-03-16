@@ -11171,6 +11171,30 @@ Deno.serve(async (req) => {
         console.error('[Bot v2] Failed to send approval request:', approvalErr);
       }
 
+      // Send composite conflict report to admin if any conflicts found
+      if (compositeConflicts.length > 0) {
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              type: 'composite_conflict_report',
+              admin_only: true,
+              data: {
+                conflicts: compositeConflicts,
+                date: targetDate,
+              },
+            }),
+          });
+          console.log(`[CompositeFilter] Sent ${compositeConflicts.length} conflicts to admin Telegram`);
+        } catch (compTgErr) {
+          console.error('[CompositeFilter] Failed to send Telegram report:', compTgErr);
+        }
+      }
+
       // Mark research findings as consumed
       await markResearchConsumed(supabase, targetDate);
     }
