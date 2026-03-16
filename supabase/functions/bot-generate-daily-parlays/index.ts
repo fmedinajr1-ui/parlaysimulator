@@ -3474,14 +3474,14 @@ function canUsePickInParlay(
   const categoryCount = parlayCategoryCount.get(category) || 0;
   if (categoryCount >= tierConfig.maxCategoryUsage) return false;
   
-  // === PROP TYPE CONCENTRATION CAP (40% max per parlay) ===
+  // === PROP TYPE CONCENTRATION CAP (40% max per parlay, 60% in volume/thin pool mode) ===
   if (parlayPropTypeCount && totalLegs) {
     const propType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) : 
                      'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
     const currentCount = parlayPropTypeCount.get(propType) || 0;
     const maxPropTypeLegs = volumeMode 
       ? Math.max(2, Math.floor(totalLegs * 0.67))  // Volume mode: allow 2 of same type in 3-leg
-      : Math.max(1, Math.floor(totalLegs * 0.4));   // Normal: keep existing 40% cap
+      : Math.max(1, Math.floor(totalLegs * 0.6));   // Relaxed from 0.4 to 0.6: allow 2 of same type in 3-leg parlays
     if (currentCount >= maxPropTypeLegs) {
       console.log(`[PropTypeCap] Blocked ${('player_name' in pick ? pick.player_name : pick.home_team)} - ${propType} already at ${currentCount}/${maxPropTypeLegs} max for ${totalLegs}-leg parlay`);
       return false;
