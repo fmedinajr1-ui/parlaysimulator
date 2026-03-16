@@ -10267,7 +10267,14 @@ Deno.serve(async (req) => {
       }
     }
 
+    const _tierLoopStartTime = Date.now();
     for (const tier of tiersToGenerate) {
+      // Global timeout guard: ensure composite filter + DB insert can still run
+      const _tierElapsed = Date.now() - _tierLoopStartTime;
+      if (_tierElapsed > 120_000) {
+        console.log(`[Bot v2] ⏰ Global timeout approaching (${_tierElapsed}ms elapsed), skipping remaining tiers: ${tiersToGenerate.slice(tiersToGenerate.indexOf(tier)).join(', ')}`);
+        break;
+      }
       const result = await generateTierParlays(
         supabase,
         tier,
@@ -10288,6 +10295,7 @@ Deno.serve(async (req) => {
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
+      console.log(`[Bot v2] ✅ Tier '${tier}' completed in ${Date.now() - _tierLoopStartTime}ms total (${result.parlays.length} parlays)`);
     }
 
     // === MONSTER PARLAY (big-slate only — disabled on light slates) ===
