@@ -1788,6 +1788,7 @@ export type Database = {
           recommendation: string | null
           recommended_line: number | null
           recommended_side: string | null
+          requires_bounce_back_check: boolean | null
           risk_level: string | null
           season_avg: number | null
           settled_at: string | null
@@ -1833,6 +1834,7 @@ export type Database = {
           recommendation?: string | null
           recommended_line?: number | null
           recommended_side?: string | null
+          requires_bounce_back_check?: boolean | null
           risk_level?: string | null
           season_avg?: number | null
           settled_at?: string | null
@@ -1878,6 +1880,7 @@ export type Database = {
           recommendation?: string | null
           recommended_line?: number | null
           recommended_side?: string | null
+          requires_bounce_back_check?: boolean | null
           risk_level?: string | null
           season_avg?: number | null
           settled_at?: string | null
