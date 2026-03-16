@@ -8021,7 +8021,7 @@ async function generateTierParlays(
       if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
-        const execL10Gate = isLightSlateMode ? 85 : (isThinPool ? 70 : 80);
+        const execL10Gate = isLightSlateMode ? 75 : (isThinPool ? 65 : 70);
         if (l10HrPct < execL10Gate) {
           continue;
         }
