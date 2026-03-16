@@ -3658,6 +3658,31 @@ async function fetchTeamsPlayingToday(
     if (g.away_team) teams.add(g.away_team.toLowerCase().trim());
   });
 
+  // Source 3: Derive teams from unified_props active players + bdl_player_cache
+  // This ensures correct detection even when upcoming_games_cache is stale
+  const { data: activeProps } = await supabase
+    .from('unified_props')
+    .select('player_name')
+    .gte('scraped_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .limit(1000);
+
+  if (activeProps && activeProps.length > 0) {
+    const playerNames = [...new Set((activeProps as any[]).map((p: any) => p.player_name).filter(Boolean))];
+    // Batch in chunks of 200 to avoid query limits
+    for (let i = 0; i < playerNames.length; i += 200) {
+      const batch = playerNames.slice(i, i + 200);
+      const { data: playerTeams } = await supabase
+        .from('bdl_player_cache')
+        .select('player_name, team_name')
+        .in('player_name', batch);
+
+      (playerTeams || []).forEach((p: any) => {
+        if (p.team_name) teams.add(p.team_name.toLowerCase().trim());
+      });
+    }
+    console.log(`[GameSchedule] After unified_props cross-ref: ${teams.size} teams playing today (from ${playerNames.length} active players)`);
+  }
+
   console.log(`[GameSchedule] ${teams.size} teams playing today`);
   return teams;
 }
