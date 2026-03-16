@@ -401,7 +401,7 @@ serve(async (req) => {
     const globalPlayerPropCount = new Map<string, number>(); // global exposure cap
     const MAX_PARLAYS = 10; // Capped from 25 to prevent flooding
     const LEGS_PER_PARLAY = 3;
-    const MAX_PLAYER_PROP_EXPOSURE = 1;
+    const MAX_PLAYER_PROP_EXPOSURE = 2;
 
     // Try to build parlays
     for (let attempt = 0; attempt < MAX_PARLAYS * 3 && parlays.length < MAX_PARLAYS; attempt++) {
