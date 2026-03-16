@@ -185,6 +185,10 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatNewStrategiesBroadcast(data, dateStr);
     case 'leg_swap_report':
       return formatLegSwapReport(data, dateStr);
+    case 'hedge_pregame_scout':
+      return data.message || '🏀 Pre-game scout update';
+    case 'hedge_live_update':
+      return data.message || '🎯 Hedge status update';
     case 'custom':
       // Extract clean message from adaptive intelligence and other custom senders
       return data.message || data.text || data.summary || '📌 Bot update received';
