@@ -401,7 +401,7 @@ serve(async (req) => {
     const globalPlayerPropCount = new Map<string, number>(); // global exposure cap
     const MAX_PARLAYS = 10; // Capped from 25 to prevent flooding
     const LEGS_PER_PARLAY = 3;
-    const MAX_PLAYER_PROP_EXPOSURE = 1;
+    const MAX_PLAYER_PROP_EXPOSURE = 2;
 
     // Try to build parlays
     for (let attempt = 0; attempt < MAX_PARLAYS * 3 && parlays.length < MAX_PARLAYS; attempt++) {
@@ -428,7 +428,7 @@ serve(async (req) => {
         // Rule 3: Max 1 player per team (if team known)
         if (pick.team && usedTeams.has(pick.team.toLowerCase())) continue;
 
-        // Rule 4: Global exposure cap (max 5 per player+prop across all parlays)
+        // Rule 4: Global exposure cap (max 2 per player+prop across all parlays)
         if ((globalPlayerPropCount.get(globalKey) || 0) >= MAX_PLAYER_PROP_EXPOSURE) continue;
 
         // Limit player+prop reuse across parlays (max 2 per parlay index)
