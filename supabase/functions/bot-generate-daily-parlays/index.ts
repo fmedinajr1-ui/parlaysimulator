@@ -3427,7 +3427,7 @@ function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: Usag
   }
   
   // === CONFIDENCE GATE REMOVED ===
-  // Tier-specific gates handle quality: Execution uses 80% L10 hit rate gate,
+  // Tier-specific gates handle quality: Execution uses 70% L10 hit rate gate (65% thin pool, 75% light slate),
   // Validation uses minConfidence 0.52, Exploration uses minConfidence 0.45.
   // The redundant 70% global gate was starving all tiers of picks.
   
@@ -7625,11 +7625,11 @@ async function generateTierParlays(
         const compareLine = p.line || (p as any).recommended_line;
         if (!compareLine || compareLine <= 0) return false;
         // FLOOR GATE: L10 min must clear at least 85% of the line (relaxed — strict 100% finds 0 candidates with real sportsbook lines)
-        // Safety backstop: require l10_hit_rate >= 80% to ensure consistency
+        // Safety backstop: require l10_hit_rate >= 70% to ensure consistency
         const l10Min = (p as any).l10_min;
         const l10Hr = p.l10_hit_rate || p.confidence_score || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
-        if (l10HrPct < 80) return false; // Must clear line 80%+ of the time
+        if (l10HrPct < 70) return false; // Must clear line 70%+ of the time
         const side = (p.recommended_side || 'over').toLowerCase();
         if (side === 'over') {
           return l10Min != null && l10Min > 0 && l10Min >= compareLine * 0.85;
@@ -8021,7 +8021,7 @@ async function generateTierParlays(
       if (tier === 'execution' && 'player_name' in pick && !isFloorCeilingStrategy && !isSweetSpotL3Profile) {
         const l10Hr = (pick as any).l10_hit_rate || 0;
         const l10HrPct = l10Hr <= 1 ? l10Hr * 100 : l10Hr;
-        const execL10Gate = isLightSlateMode ? 85 : (isThinPool ? 70 : 80);
+        const execL10Gate = isLightSlateMode ? 75 : (isThinPool ? 65 : 70);
         if (l10HrPct < execL10Gate) {
           continue;
         }
@@ -10176,11 +10176,11 @@ Deno.serve(async (req) => {
             const pName = (pick.player_name || '').toLowerCase();
             if (usedPlayers.has(pName)) continue;
             
-            // === 80% L10 HIT RATE GATE for cluster builder ===
+            // === 70% L10 HIT RATE GATE for cluster builder ===
             const clusterL10Hr = (pick as any).l10_hit_rate || 0;
             const clusterL10HrPct = clusterL10Hr <= 1 ? clusterL10Hr * 100 : clusterL10Hr;
-            if (clusterL10HrPct < 80) {
-              console.log(`[EnvCluster] ❌ L10 GATE: ${pick.player_name} ${pick.prop_type} L10=${clusterL10HrPct.toFixed(0)}% conf=${((pick.confidence_score || 0) * 100).toFixed(0)}% < 80%`);
+            if (clusterL10HrPct < 70) {
+              console.log(`[EnvCluster] ❌ L10 GATE: ${pick.player_name} ${pick.prop_type} L10=${clusterL10HrPct.toFixed(0)}% conf=${((pick.confidence_score || 0) * 100).toFixed(0)}% < 70%`);
               continue;
             }
 
