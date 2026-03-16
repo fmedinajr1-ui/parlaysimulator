@@ -189,7 +189,7 @@ Deno.serve(async (req) => {
     const liveUpdateMessages: string[] = [];
     const trackerUpserts: any[] = [];
 
-    for (const pick of picks) {
+    for (const pick of nbaPicks) {
       const key = `${pick.player_name}::${pick.prop_type}`;
       const tracker = trackerByKey[key];
       const playerBaselines = baselinesByPlayer[pick.player_name] || [];
