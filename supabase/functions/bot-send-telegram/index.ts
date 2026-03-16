@@ -204,6 +204,29 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
   }
 }
 
+function formatCompositeConflictReport(data: Record<string, any>, dateStr: string): string {
+  const conflicts = data.conflicts || [];
+  if (conflicts.length === 0) return '';
+  
+  const parlayCount = new Set(conflicts.map((c: any) => c.parlay_id)).size;
+  let msg = `⚠️ *COMPOSITE CONFLICT REPORT* — ${dateStr}\n\n`;
+  msg += `📋 *${conflicts.length} legs flagged* across ${parlayCount} parlays\n\n`;
+
+  for (let i = 0; i < conflicts.length; i++) {
+    const c = conflicts[i];
+    const num = i + 1;
+    const direction = c.side === 'OVER' ? '<' : '>';
+    const h2hStr = c.h2h_avg != null ? `H2H: ${c.h2h_avg} (${c.h2h_games}g)` : `H2H: N/A`;
+    
+    msg += `${num}️⃣ *${c.player_name}* ${c.prop_type} ${c.side} ${c.line}\n`;
+    msg += `   L10: ${c.l10_avg} | L5: ${c.l5_avg} | L3: ${c.l3_avg} | ${h2hStr}\n`;
+    msg += `   Composite: ${c.composite} ${direction} line ${c.line} ❌\n`;
+    msg += `   Parlay: #${c.parlay_id} (${c.parlay_tier}) vs ${c.opponent}\n\n`;
+  }
+
+  return msg.trim();
+}
+
 function formatLadderChallengeResult(data: Record<string, any>): string {
   const { outcome, playerName, propLabel, line, side, actualValue, stake, profitLoss, odds, dayNumber, wins, losses, runningPnl, winRate } = data;
 
