@@ -1,4 +1,4 @@
-// v3.0 — aligned hit_rate storage with L10 gate metric 2026-03-04
+// v3.1 — force redeploy: composite filter + thin-slate timeout prevention 2026-03-16
 /**
  * bot-generate-daily-parlays (v2.1 - Tiered System)
  * 

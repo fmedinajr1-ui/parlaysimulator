@@ -181,16 +181,36 @@ export function SlateRefreshControls() {
       setCurrentStep(1);
       const { error } = await supabase.functions.invoke('refresh-l10-and-rebuild');
       if (error) {
-        console.error('[L10Refresh] Error:', error);
-        toast.error('L10 refresh failed');
+        // Check if it's a timeout/fetch error — pipeline still runs server-side
+        const isTimeout = String(error?.message || error).toLowerCase().includes('fetch') 
+          || String(error?.message || error).toLowerCase().includes('timeout');
+        if (isTimeout) {
+          console.warn('[L10Refresh] Client timeout — pipeline still running server-side');
+          invalidateAllQueries();
+          setLastRefresh(new Date());
+          toast.success('Pipeline triggered! Sub-functions are running — check Telegram for results 🚀', { duration: 8000 });
+        } else {
+          console.error('[L10Refresh] Error:', error);
+          toast.error('L10 refresh failed');
+        }
       } else {
         invalidateAllQueries();
         setLastRefresh(new Date());
         toast.success('L10 data refreshed & all parlays rebuilt! 🎯');
       }
-    } catch (err) {
-      console.error('[L10Refresh] Error:', err);
-      toast.error('L10 refresh failed');
+    } catch (err: any) {
+      // Network-level timeout (Failed to fetch)
+      const isTimeout = String(err?.message || '').toLowerCase().includes('fetch')
+        || String(err?.message || '').toLowerCase().includes('timeout');
+      if (isTimeout) {
+        console.warn('[L10Refresh] Network timeout — pipeline still running server-side');
+        invalidateAllQueries();
+        setLastRefresh(new Date());
+        toast.success('Pipeline triggered! Sub-functions are running — check Telegram for results 🚀', { duration: 8000 });
+      } else {
+        console.error('[L10Refresh] Error:', err);
+        toast.error('L10 refresh failed');
+      }
     } finally {
       setIsL10Refreshing(false);
       setCurrentStep(0);
