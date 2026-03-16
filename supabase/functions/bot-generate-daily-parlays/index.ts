@@ -10075,6 +10075,17 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] 🟠 THIN POOL MODE: Only ${pool.playerPicks.length} player picks survived filters (< 100). Relaxing parlay assembly gates.`);
     }
 
+    // 5c. TIMEOUT PREVENTION: Reduce tier targets on thin slates/pools so all tiers + composite filter complete within 150s
+    if (isThinPool || isThinSlate) {
+      const origExpCount = TIER_CONFIG.exploration.count;
+      const origExpIter = TIER_CONFIG.exploration.iterations;
+      TIER_CONFIG.exploration.count = Math.min(TIER_CONFIG.exploration.count, 30);
+      TIER_CONFIG.exploration.iterations = Math.min(TIER_CONFIG.exploration.iterations, 800);
+      TIER_CONFIG.validation.count = Math.min(TIER_CONFIG.validation.count, 15);
+      TIER_CONFIG.execution.count = Math.min(TIER_CONFIG.execution.count, 15);
+      console.log(`[Bot v2] ⏱️ TIMEOUT PREVENTION: Thin slate tier reduction — exp ${origExpCount}→${TIER_CONFIG.exploration.count} (iter ${origExpIter}→${TIER_CONFIG.exploration.iterations}), val→${TIER_CONFIG.validation.count}, exec→${TIER_CONFIG.execution.count}`);
+    }
+
     // Generate parlays for each tier
     // Reduce exposure if bankroll is near floor
     const isLowBankroll = bankroll < BANKROLL_FLOOR * 1.2; // Below $1,200
@@ -10256,7 +10267,14 @@ Deno.serve(async (req) => {
       }
     }
 
+    const _tierLoopStartTime = Date.now();
     for (const tier of tiersToGenerate) {
+      // Global timeout guard: ensure composite filter + DB insert can still run
+      const _tierElapsed = Date.now() - _tierLoopStartTime;
+      if (_tierElapsed > 120_000) {
+        console.log(`[Bot v2] ⏰ Global timeout approaching (${_tierElapsed}ms elapsed), skipping remaining tiers: ${tiersToGenerate.slice(tiersToGenerate.indexOf(tier)).join(', ')}`);
+        break;
+      }
       const result = await generateTierParlays(
         supabase,
         tier,
@@ -10277,6 +10295,7 @@ Deno.serve(async (req) => {
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
+      console.log(`[Bot v2] ✅ Tier '${tier}' completed in ${Date.now() - _tierLoopStartTime}ms total (${result.parlays.length} parlays)`);
     }
 
     // === MONSTER PARLAY (big-slate only — disabled on light slates) ===
