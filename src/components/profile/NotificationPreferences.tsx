@@ -24,6 +24,8 @@ export function NotificationPreferences() {
   const [juicedPicksEmail, setJuicedPicksEmail] = useState(true);
   const [releaseNotifications, setReleaseNotifications] = useState(true);
   const [pushReleaseNotifications, setPushReleaseNotifications] = useState(true);
+  const [pushHedgeAlerts, setPushHedgeAlerts] = useState(true);
+  const [emailHedgeSummary, setEmailHedgeSummary] = useState(false);
   const [minConfidence, setMinConfidence] = useState(0.5);
   const [favoriteSports, setFavoriteSports] = useState<string[]>([]);
   const [email, setEmail] = useState("");
