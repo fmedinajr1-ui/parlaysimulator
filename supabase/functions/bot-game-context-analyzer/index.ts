@@ -195,6 +195,22 @@ Deno.serve(async (req) => {
 
     console.log(`[GameContext] Found ${contextFlags.length} context flags: ${insights.join('; ')}`);
 
+    // === TRIGGER SLATE ADVISORY NOTIFICATIONS ===
+    try {
+      await supabase.functions.invoke('send-slate-advisory', {
+        body: {
+          date: today,
+          gameCount,
+          sports: [...uniqueSports],
+          contextFlags,
+          thinSlate,
+        },
+      });
+      console.log('[GameContext] Slate advisory dispatched');
+    } catch (advErr) {
+      console.error('[GameContext] Slate advisory error:', advErr);
+    }
+
     return new Response(JSON.stringify({
       success: true,
       date: today,

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target, Rocket, Shield } from "lucide-react";
+import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target, Rocket, Shield, BarChart3 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,7 @@ export function NotificationPreferences() {
   const [pushReleaseNotifications, setPushReleaseNotifications] = useState(true);
   const [pushHedgeAlerts, setPushHedgeAlerts] = useState(true);
   const [emailHedgeSummary, setEmailHedgeSummary] = useState(false);
+  const [pushSlateAdvisory, setPushSlateAdvisory] = useState(true);
   const [minConfidence, setMinConfidence] = useState(0.5);
   const [favoriteSports, setFavoriteSports] = useState<string[]>([]);
   const [email, setEmail] = useState("");
@@ -57,6 +58,7 @@ export function NotificationPreferences() {
         setPushReleaseNotifications((data as any).push_release_notifications ?? true);
         setPushHedgeAlerts((data as any).push_hedge_alerts ?? true);
         setEmailHedgeSummary((data as any).email_hedge_summary ?? false);
+        setPushSlateAdvisory((data as any).push_slate_advisory ?? true);
         setMinConfidence(data.min_confidence_threshold);
         setFavoriteSports(data.favorite_sports || []);
         setEmail(data.email);
@@ -85,6 +87,7 @@ export function NotificationPreferences() {
         push_release_notifications: pushReleaseNotifications,
         push_hedge_alerts: pushHedgeAlerts,
         email_hedge_summary: emailHedgeSummary,
+        push_slate_advisory: pushSlateAdvisory,
         min_confidence_threshold: minConfidence,
         favorite_sports: favoriteSports,
       };
@@ -279,6 +282,26 @@ export function NotificationPreferences() {
                 id="hedge-email"
                 checked={emailHedgeSummary}
                 onCheckedChange={setEmailHedgeSummary}
+              />
+            </div>
+
+            {/* Slate Day Advisory Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="slate-advisory" className="text-sm font-medium">
+                    Slate Day Advisory
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Get notified about daily slate strength (thin/light/heavy) with stake guidance
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="slate-advisory"
+                checked={pushSlateAdvisory}
+                onCheckedChange={setPushSlateAdvisory}
               />
             </div>
 

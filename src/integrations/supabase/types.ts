@@ -7975,6 +7975,7 @@ export type Database = {
           min_confidence_threshold: number
           push_hedge_alerts: boolean
           push_release_notifications: boolean
+          push_slate_advisory: boolean
           release_notifications: boolean
           updated_at: string
           user_id: string
@@ -7992,6 +7993,7 @@ export type Database = {
           min_confidence_threshold?: number
           push_hedge_alerts?: boolean
           push_release_notifications?: boolean
+          push_slate_advisory?: boolean
           release_notifications?: boolean
           updated_at?: string
           user_id: string
@@ -8009,6 +8011,7 @@ export type Database = {
           min_confidence_threshold?: number
           push_hedge_alerts?: boolean
           push_release_notifications?: boolean
+          push_slate_advisory?: boolean
           release_notifications?: boolean
           updated_at?: string
           user_id?: string
