@@ -35,6 +35,7 @@ export function PushNotificationToggle() {
 
   const [selectedSport, setSelectedSport] = useState("all");
   const [sharpOnly, setSharpOnly] = useState(true);
+  const [hedgeAlerts, setHedgeAlerts] = useState(true);
 
   const handleToggle = async () => {
     if (isSubscribed) {
