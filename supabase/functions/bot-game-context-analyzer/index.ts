@@ -74,6 +74,32 @@ Deno.serve(async (req) => {
 
     console.log(`[GameContext] ${todayGames.length} games today, ${fatigueData.length} fatigue records, ${recentGames.length} recent games`);
 
+    // === GAME_BETS STALENESS ALERT ===
+    if (todayGames.length === 0) {
+      // Check if unified_props has data (meaning game_bets feed is stale, not an actual off-day)
+      const { count: propsToday } = await supabase
+        .from('unified_props')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .gte('commence_time', todayStart)
+        .lt('commence_time', todayEnd);
+
+      if ((propsToday || 0) > 0) {
+        console.log(`[GameContext] ⚠️ game_bets is EMPTY but ${propsToday} unified_props exist — feed is stale!`);
+        try {
+          await supabase.functions.invoke('bot-send-telegram', {
+            body: {
+              message: `⚠️ *game\\_bets Feed Stale*\n\ngame\\_bets has 0 rows for ${today} but ${propsToday} active props exist in unified\\_props.\n\nOdds API may be returning errors. Parlay generation will proceed using props fallback.`,
+              parse_mode: 'Markdown',
+              admin_only: true,
+            },
+          });
+        } catch (tgErr) {
+          console.error('[GameContext] Staleness alert telegram error:', tgErr);
+        }
+      }
+    }
+
     const fatigueMap = new Map<string, any>();
     for (const f of fatigueData) {
       fatigueMap.set(f.team_name.toLowerCase(), f);
