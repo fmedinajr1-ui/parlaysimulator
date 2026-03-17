@@ -9936,14 +9936,13 @@ Deno.serve(async (req) => {
     }
 
     // 4. Pre-detect light-slate mode (before pool building so ML Sniper can adapt)
-    // Quick check: count player props available today
+    // Quick check: count player props available today — use analysis_date instead of created_at
     const { startUtc: preStartUtc, endUtc: preEndUtc } = getEasternDateRange();
     const { count: playerPropCount } = await supabase
       .from('category_sweet_spots')
       .select('*', { count: 'exact', head: true })
       .eq('is_active', true)
-      .gte('created_at', preStartUtc)
-      .lte('created_at', preEndUtc);
+      .eq('analysis_date', targetDate);
 
     const { count: sportCount } = await supabase
       .from('game_bets')
@@ -9951,15 +9950,47 @@ Deno.serve(async (req) => {
       .gte('commence_time', preStartUtc)
       .lte('commence_time', preEndUtc);
 
+    // === ZERO-GAME FALLBACK: Check unified_props if game_bets is empty ===
+    let effectiveSportCount = sportCount || 0;
+    if (effectiveSportCount === 0) {
+      console.log(`[Bot v2] ⚠️ game_bets returned 0 games — checking unified_props fallback...`);
+      const { count: propsCount } = await supabase
+        .from('unified_props')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .gte('commence_time', preStartUtc)
+        .lt('commence_time', preEndUtc);
+
+      if ((propsCount || 0) > 0) {
+        // Derive sport count from unified_props
+        const { data: propSports } = await supabase
+          .from('unified_props')
+          .select('sport')
+          .eq('is_active', true)
+          .gte('commence_time', preStartUtc)
+          .lt('commence_time', preEndUtc)
+          .limit(500);
+        const uniqueSports = new Set((propSports || []).map((p: any) => p.sport).filter(Boolean));
+        effectiveSportCount = uniqueSports.size || 1;
+        console.log(`[Bot v2] ✅ Props fallback: ${propsCount} active props across ${effectiveSportCount} sport(s). Proceeding.`);
+        await supabase.from('bot_activity_log').insert({
+          event_type: 'game_bets_stale_props_fallback',
+          message: `game_bets empty but ${propsCount} unified_props found. Proceeding with generation.`,
+          severity: 'warning',
+          metadata: { date: targetDate, propsCount, sportCount: effectiveSportCount },
+        });
+      }
+    }
+
     // === ZERO-GAME GRACEFUL MODE ===
-    // If 0 games scheduled, skip generation entirely and notify
-    if ((sportCount || 0) === 0) {
-      console.log(`[Bot v2] 🚫 ZERO-GAME MODE: No games scheduled for ${targetDate}. Skipping generation.`);
+    // Only skip if BOTH game_bets AND unified_props have nothing
+    if (effectiveSportCount === 0 && (playerPropCount || 0) === 0) {
+      console.log(`[Bot v2] 🚫 ZERO-GAME MODE: No games or props for ${targetDate}. Skipping generation.`);
       await supabase.from('bot_activity_log').insert({
         event_type: 'zero_game_day',
-        message: `No games scheduled for ${targetDate}. Generation skipped.`,
+        message: `No games or props found for ${targetDate}. Generation skipped.`,
         severity: 'info',
-        metadata: { date: targetDate, playerProps: playerPropCount || 0 },
+        metadata: { date: targetDate, playerProps: 0, gameBets: 0, unifiedProps: 0 },
       });
       try {
         await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
