@@ -1667,7 +1667,8 @@ Deno.serve(async (req) => {
     // Handle raw message passthrough (used by matchup broadcast, nhl floor lock, etc.)
     if (reqBody.message && !reqBody.type) {
       const rawMessage = reqBody.message as string;
-      console.log(`[Telegram] Raw message passthrough (${rawMessage.length} chars)`);
+      const parseMode = reqBody.parse_mode as string | undefined;
+      console.log(`[Telegram] Raw message passthrough (${rawMessage.length} chars, parse_mode=${parseMode || 'none'})`);
 
       const sendRaw = async (text: string, targetChatId: string) => {
         const body: Record<string, any> = {
@@ -1675,6 +1676,7 @@ Deno.serve(async (req) => {
           text,
           disable_web_page_preview: true,
         };
+        if (parseMode) body.parse_mode = parseMode;
         let resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1696,10 +1698,12 @@ Deno.serve(async (req) => {
           }
           if (current) chunks.push(current);
           for (const chunk of chunks) {
+            const chunkBody: Record<string, any> = { chat_id: targetChatId, text: chunk, disable_web_page_preview: true };
+            if (parseMode) chunkBody.parse_mode = parseMode;
             resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: targetChatId, text: chunk, disable_web_page_preview: true }),
+              body: JSON.stringify(chunkBody),
             });
             result = await resp.json();
           }

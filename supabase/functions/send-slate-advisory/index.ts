@@ -82,25 +82,43 @@ Deno.serve(async (req) => {
     const fatigueCount = contextFlags.filter((f: any) => f.type === 'b2b_fatigue').length;
     const blowoutCount = contextFlags.filter((f: any) => f.type === 'blowout_risk').length;
 
+    const sportsLabel = sports.join(', ');
+    const guidanceLines = classification.level === 'thin'
+      ? [
+          `→ Cut your stakes in half`,
+          `→ Keep parlays to ${classification.maxLegs} legs max`,
+          `→ Be extra selective with picks`,
+        ]
+      : classification.level === 'light'
+      ? [
+          `→ Dial back stakes ~25%`,
+          `→ Cap parlays at ${classification.maxLegs} legs`,
+          `→ Prioritize quality over volume`,
+        ]
+      : [
+          `→ Full volume — let it fly`,
+          `→ Up to ${classification.maxLegs} legs per parlay`,
+          `→ Plenty of edges to work with`,
+        ];
+
     const adminMessage = [
-      `${classification.emoji} <b>SLATE ADVISORY — ${date}</b>`,
+      `${classification.emoji} *SLATE ADVISORY — ${date}*`,
       ``,
-      `<b>Classification:</b> ${classification.label}`,
-      `<b>Games:</b> ${gameCount} across ${sports.join(', ')}`,
-      `<b>Stake Multiplier:</b> ${classification.stakeMultiplier}x`,
-      `<b>Max Legs:</b> ${classification.maxLegs}`,
-      `<b>Guidance:</b> ${classification.stakeGuidance}`,
+      `📊 *${classification.label}*`,
+      `Only ${gameCount} game${gameCount !== 1 ? 's' : ''} on the board today (${sportsLabel})`,
       ``,
-      `<b>Context Flags:</b>`,
-      `• ${revengeCount} revenge games`,
-      `• ${fatigueCount} B2B fatigue flags`,
-      `• ${blowoutCount} blowout risk games`,
-      `• ${contextFlags.length} total flags`,
+      `⚠️ *What This Means*`,
+      ...guidanceLines,
+      ``,
+      `🔍 *Flags to Watch*`,
+      `🔁 ${revengeCount} revenge matchup${revengeCount !== 1 ? 's' : ''}`,
+      `😴 ${fatigueCount} team${fatigueCount !== 1 ? 's' : ''} on a back-to-back`,
+      `💥 ${blowoutCount} blowout risk${blowoutCount !== 1 ? 's' : ''}`,
     ].join('\n');
 
     try {
       await supabase.functions.invoke('bot-send-telegram', {
-        body: { message: adminMessage, parse_mode: 'HTML' },
+        body: { message: adminMessage, parse_mode: 'Markdown' },
       });
       console.log('[SlateAdvisory] Admin Telegram sent');
     } catch (err) {
@@ -108,9 +126,11 @@ Deno.serve(async (req) => {
     }
 
     // === CUSTOMER NOTIFICATIONS ===
-    const customerMessage = `${classification.emoji} ${classification.label} Day — ${gameCount} games across ${sports.join('/')}.${
-      classification.level !== 'heavy' ? ` ${classification.stakeGuidance}.` : ' Full volume today!'
-    }`;
+    const customerMessage = classification.level === 'thin'
+      ? `🔴 Light day — only ${gameCount} games. Go easy on stakes and keep parlays short.`
+      : classification.level === 'light'
+      ? `🟡 Moderate slate — ${gameCount} games today across ${sports.join('/')}. Dial back stakes a bit.`
+      : `🟢 Loaded slate — ${gameCount} games across ${sports.join('/')}. Full send today!`;
 
     // Get opted-in customers
     const { data: prefs } = await supabase
