@@ -430,32 +430,57 @@ Deno.serve(async (req) => {
     // === FALLBACK: If Odds API failed, load from unified_props ===
     if (rawProps.length === 0) {
       console.log(`[MegaParlay] Odds API returned 0 props, falling back to unified_props...`);
-      const { data: dbProps } = await supabase
+      const { data: dbProps, error: dbPropsErr } = await supabase
         .from('unified_props')
-        .select('player_name, prop_type, side, odds, line, bookmaker, event_id, game_description, sport')
+        .select('player_name, prop_type, recommended_side, over_price, under_price, current_line, bookmaker, event_id, game_description, sport')
         .eq('is_active', true)
-        .eq('sport', 'basketball_nba')
-        .gte('odds', 100);
+        .eq('sport', 'basketball_nba');
 
-      if (dbProps && dbProps.length > 0) {
+      if (dbPropsErr) {
+        console.error(`[MegaParlay] unified_props fallback error:`, dbPropsErr.message);
+      } else if (dbProps && dbProps.length > 0) {
         for (const dp of dbProps) {
           const gameDesc = dp.game_description || '';
           const marketType = getMarketType(dp.prop_type || '');
+          const side = (dp.recommended_side || 'OVER').toUpperCase();
+          const odds = side === 'OVER' ? (dp.over_price || 100) : (dp.under_price || 100);
+          if (odds < 100) continue; // skip heavy favorites
+          const parts = gameDesc.split(/\s+(?:vs\.?|@)\s+/i);
           rawProps.push({
             player_name: dp.player_name || '',
             prop_type: dp.prop_type || '',
-            side: (dp.side || 'OVER').toUpperCase(),
-            odds: dp.odds || 100,
-            line: dp.line || 0,
+            side,
+            odds,
+            line: dp.current_line || 0,
             bookmaker: dp.bookmaker || 'unknown',
             event_id: dp.event_id || '',
-            home_team: gameDesc.split(/\s+(?:vs\.?|@)\s+/i)[1]?.trim() || '',
-            away_team: gameDesc.split(/\s+(?:vs\.?|@)\s+/i)[0]?.trim() || '',
+            home_team: parts[1]?.trim() || '',
+            away_team: parts[0]?.trim() || '',
             game: gameDesc,
             market_type: marketType,
           });
+          // Also add the opposite side if it has good odds
+          const oppSide = side === 'OVER' ? 'UNDER' : 'OVER';
+          const oppOdds = oppSide === 'OVER' ? (dp.over_price || 0) : (dp.under_price || 0);
+          if (oppOdds >= 100) {
+            rawProps.push({
+              player_name: dp.player_name || '',
+              prop_type: dp.prop_type || '',
+              side: oppSide,
+              odds: oppOdds,
+              line: dp.current_line || 0,
+              bookmaker: dp.bookmaker || 'unknown',
+              event_id: dp.event_id || '',
+              home_team: parts[1]?.trim() || '',
+              away_team: parts[0]?.trim() || '',
+              game: gameDesc,
+              market_type: marketType,
+            });
+          }
         }
         console.log(`[MegaParlay] Loaded ${rawProps.length} props from unified_props fallback`);
+      } else {
+        console.log(`[MegaParlay] unified_props fallback returned 0 props`);
       }
     }
 
