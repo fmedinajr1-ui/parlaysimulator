@@ -427,6 +427,38 @@ Deno.serve(async (req) => {
       }
     }
 
+    // === FALLBACK: If Odds API failed, load from unified_props ===
+    if (rawProps.length === 0) {
+      console.log(`[MegaParlay] Odds API returned 0 props, falling back to unified_props...`);
+      const { data: dbProps } = await supabase
+        .from('unified_props')
+        .select('player_name, prop_type, side, odds, line, bookmaker, event_id, game_description, sport')
+        .eq('is_active', true)
+        .eq('sport', 'basketball_nba')
+        .gte('odds', 100);
+
+      if (dbProps && dbProps.length > 0) {
+        for (const dp of dbProps) {
+          const gameDesc = dp.game_description || '';
+          const marketType = getMarketType(dp.prop_type || '');
+          rawProps.push({
+            player_name: dp.player_name || '',
+            prop_type: dp.prop_type || '',
+            side: (dp.side || 'OVER').toUpperCase(),
+            odds: dp.odds || 100,
+            line: dp.line || 0,
+            bookmaker: dp.bookmaker || 'unknown',
+            event_id: dp.event_id || '',
+            home_team: gameDesc.split(/\s+(?:vs\.?|@)\s+/i)[1]?.trim() || '',
+            away_team: gameDesc.split(/\s+(?:vs\.?|@)\s+/i)[0]?.trim() || '',
+            game: gameDesc,
+            market_type: marketType,
+          });
+        }
+        console.log(`[MegaParlay] Loaded ${rawProps.length} props from unified_props fallback`);
+      }
+    }
+
     const exoticCount = rawProps.filter(p => p.market_type === 'exotic_player').length;
     const teamBetCount = rawProps.filter(p => p.market_type === 'team_bet').length;
     console.log(`[MegaParlay] Found ${rawProps.length} total props (${exoticCount} exotic, ${teamBetCount} team bets)`);
