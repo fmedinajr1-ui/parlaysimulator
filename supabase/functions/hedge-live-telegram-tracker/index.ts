@@ -347,11 +347,43 @@ Deno.serve(async (req) => {
     }
 
     // Live updates (send each status change individually for urgency)
+    const hedgePushAlerts: any[] = [];
+
     for (const msg of liveUpdateMessages) {
       await supabase.functions.invoke('bot-send-telegram', {
         body: { type: 'hedge_live_update', data: { message: msg } },
       });
       messagesSent++;
+    }
+
+    // Collect hedge alerts for customer push notifications
+    for (const upsert of trackerUpserts) {
+      if (upsert.last_status_sent && ['HEDGE ALERT', 'HEDGE NOW', 'LOCK'].includes(upsert.last_status_sent)) {
+        hedgePushAlerts.push({
+          playerName: upsert.player_name,
+          propType: upsert.prop_type,
+          line: upsert.line,
+          side: upsert.side,
+          hedgeAction: upsert.last_status_sent,
+          previousStatus: null, // tracked via transition in message
+          currentValue: 0, // approximate from tracker
+          projectedFinal: 0,
+          gameProgress: 0,
+          quarter: upsert.last_quarter_sent || 1,
+        });
+      }
+    }
+
+    // Send customer push notifications for hedge status changes
+    if (hedgePushAlerts.length > 0) {
+      try {
+        await supabase.functions.invoke('send-hedge-push-notification', {
+          body: { alerts: hedgePushAlerts },
+        });
+        console.log(`[HedgeTracker] Sent ${hedgePushAlerts.length} customer hedge push alerts`);
+      } catch (pushErr) {
+        console.error('[HedgeTracker] Customer push notification error:', pushErr);
+      }
     }
 
     if (liveUpdateMessages.length > 0) {

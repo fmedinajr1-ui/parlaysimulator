@@ -35,6 +35,7 @@ export function PushNotificationToggle() {
 
   const [selectedSport, setSelectedSport] = useState("all");
   const [sharpOnly, setSharpOnly] = useState(true);
+  const [hedgeAlerts, setHedgeAlerts] = useState(true);
 
   const handleToggle = async () => {
     if (isSubscribed) {
@@ -109,6 +110,14 @@ export function PushNotificationToggle() {
               <Switch
                 checked={sharpOnly}
                 onCheckedChange={setSharpOnly}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-muted-foreground">Hedge alerts</label>
+              <Switch
+                checked={hedgeAlerts}
+                onCheckedChange={setHedgeAlerts}
               />
             </div>
           </div>

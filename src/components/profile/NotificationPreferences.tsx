@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target, Rocket } from "lucide-react";
+import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target, Rocket, Shield } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,8 @@ export function NotificationPreferences() {
   const [juicedPicksEmail, setJuicedPicksEmail] = useState(true);
   const [releaseNotifications, setReleaseNotifications] = useState(true);
   const [pushReleaseNotifications, setPushReleaseNotifications] = useState(true);
+  const [pushHedgeAlerts, setPushHedgeAlerts] = useState(true);
+  const [emailHedgeSummary, setEmailHedgeSummary] = useState(false);
   const [minConfidence, setMinConfidence] = useState(0.5);
   const [favoriteSports, setFavoriteSports] = useState<string[]>([]);
   const [email, setEmail] = useState("");
@@ -53,6 +55,8 @@ export function NotificationPreferences() {
         setJuicedPicksEmail(data.juiced_picks_email ?? true);
         setReleaseNotifications((data as any).release_notifications ?? true);
         setPushReleaseNotifications((data as any).push_release_notifications ?? true);
+        setPushHedgeAlerts((data as any).push_hedge_alerts ?? true);
+        setEmailHedgeSummary((data as any).email_hedge_summary ?? false);
         setMinConfidence(data.min_confidence_threshold);
         setFavoriteSports(data.favorite_sports || []);
         setEmail(data.email);
@@ -79,6 +83,8 @@ export function NotificationPreferences() {
         juiced_picks_email: juicedPicksEmail,
         release_notifications: releaseNotifications,
         push_release_notifications: pushReleaseNotifications,
+        push_hedge_alerts: pushHedgeAlerts,
+        email_hedge_summary: emailHedgeSummary,
         min_confidence_threshold: minConfidence,
         favorite_sports: favoriteSports,
       };
@@ -233,6 +239,46 @@ export function NotificationPreferences() {
                 id="release-push"
                 checked={pushReleaseNotifications}
                 onCheckedChange={setPushReleaseNotifications}
+              />
+            </div>
+
+            {/* Hedge Alert Push Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="hedge-push" className="text-sm font-medium">
+                    Hedge Alerts (Push)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Get push alerts for HEDGE ALERT, HEDGE NOW, and LOCK statuses
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="hedge-push"
+                checked={pushHedgeAlerts}
+                onCheckedChange={setPushHedgeAlerts}
+              />
+            </div>
+
+            {/* Hedge Summary Email Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Mail className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="hedge-email" className="text-sm font-medium">
+                    Hedge Summary Email
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Receive a post-game hedge summary email after games complete
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="hedge-email"
+                checked={emailHedgeSummary}
+                onCheckedChange={setEmailHedgeSummary}
               />
             </div>
 

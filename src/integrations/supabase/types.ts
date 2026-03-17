@@ -2304,6 +2304,54 @@ export type Database = {
         }
         Relationships: []
       }
+      customer_hedge_notifications: {
+        Row: {
+          created_at: string
+          current_value: number | null
+          hedge_action: string
+          id: string
+          line: number
+          message: string
+          player_name: string
+          projected_final: number | null
+          prop_type: string
+          read: boolean
+          side: string
+          status_transition: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_value?: number | null
+          hedge_action: string
+          id?: string
+          line: number
+          message: string
+          player_name: string
+          projected_final?: number | null
+          prop_type: string
+          read?: boolean
+          side: string
+          status_transition?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          current_value?: number | null
+          hedge_action?: string
+          id?: string
+          line?: number
+          message?: string
+          player_name?: string
+          projected_final?: number | null
+          prop_type?: string
+          read?: boolean
+          side?: string
+          status_transition?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       daily_elite_leg_outcomes: {
         Row: {
           actual_value: number | null
@@ -7917,6 +7965,7 @@ export type Database = {
         Row: {
           created_at: string
           email: string
+          email_hedge_summary: boolean
           email_notifications: boolean
           favorite_sports: string[] | null
           id: string
@@ -7924,6 +7973,7 @@ export type Database = {
           last_juiced_email_at: string | null
           last_notified_at: string | null
           min_confidence_threshold: number
+          push_hedge_alerts: boolean
           push_release_notifications: boolean
           release_notifications: boolean
           updated_at: string
@@ -7932,6 +7982,7 @@ export type Database = {
         Insert: {
           created_at?: string
           email: string
+          email_hedge_summary?: boolean
           email_notifications?: boolean
           favorite_sports?: string[] | null
           id?: string
@@ -7939,6 +7990,7 @@ export type Database = {
           last_juiced_email_at?: string | null
           last_notified_at?: string | null
           min_confidence_threshold?: number
+          push_hedge_alerts?: boolean
           push_release_notifications?: boolean
           release_notifications?: boolean
           updated_at?: string
@@ -7947,6 +7999,7 @@ export type Database = {
         Update: {
           created_at?: string
           email?: string
+          email_hedge_summary?: boolean
           email_notifications?: boolean
           favorite_sports?: string[] | null
           id?: string
@@ -7954,6 +8007,7 @@ export type Database = {
           last_juiced_email_at?: string | null
           last_notified_at?: string | null
           min_confidence_threshold?: number
+          push_hedge_alerts?: boolean
           push_release_notifications?: boolean
           release_notifications?: boolean
           updated_at?: string
