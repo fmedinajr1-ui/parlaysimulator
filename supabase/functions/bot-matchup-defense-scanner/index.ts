@@ -230,10 +230,10 @@ serve(async (req) => {
     if (!rawGames || rawGames.length === 0) {
       console.log('[MatchupScanner] game_bets empty — falling back to unified_props');
 
-      // Derive games from unified_props event descriptions
+      // Derive games from unified_props game_description
       const { data: propEvents } = await supabase
         .from('unified_props')
-        .select('event_name, sport, commence_time')
+        .select('game_description, sport, commence_time')
         .eq('is_active', true)
         .in('sport', ['basketball_nba', 'basketball_wnba', 'basketball_ncaab'])
         .gte('commence_time', startUtc)
