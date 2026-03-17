@@ -626,11 +626,20 @@ Deno.serve(async (req) => {
       // Role-stat alignment (skip for exotic/team bets)
       if (prop.market_type === 'player_prop' && !roleStatAligned(position, prop.prop_type)) continue;
 
-      // === GLOBAL POISON FLIP GATE ===
+      // === CONDITIONAL POISON FLIP GATE (data-driven) ===
       const normPropFlip = normalizePropType(prop.prop_type);
       const forcedSide = POISON_FLIP_MAP[normPropFlip];
       if (forcedSide && prop.side?.toLowerCase() !== forcedSide) {
-        continue; // Skip poison-side lottery legs
+        // Only enforce flip if L10 avg supports it; if L10 avg is ABOVE the line, respect OVER
+        const flipKey = `${nameNorm}|${normPropFlip}`;
+        const flipGl = gameLogMap.get(flipKey);
+        const flipL10 = flipGl?.l10_avg ?? null;
+        if (forcedSide === 'under' && flipL10 !== null && flipL10 > prop.line * 1.05) {
+          // L10 avg is well above the line — data says OVER is correct, skip the flip
+          console.log(`[MegaParlay] POISON FLIP OVERRIDE: ${prop.player_name} ${normPropFlip} L10=${flipL10} > line=${prop.line}, keeping OVER`);
+        } else {
+          continue; // Enforce the flip — skip OVER side
+        }
       }
 
       // Hit rate from sweet spots, with game-log fallback
