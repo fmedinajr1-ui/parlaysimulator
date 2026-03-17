@@ -249,13 +249,13 @@ serve(async (req) => {
       // Parse unique games from event names (format: "Team A vs Team B" or "Away @ Home")
       const seenMatchups = new Set<string>();
       for (const ev of propEvents) {
-        if (!ev.event_name) continue;
-        const eventKey = ev.event_name.toLowerCase().trim();
+        if (!ev.game_description) continue;
+        const eventKey = ev.game_description.toLowerCase().trim();
         if (seenMatchups.has(eventKey)) continue;
         seenMatchups.add(eventKey);
 
         // Try "Away vs Home" or "Away @ Home"
-        const parts = ev.event_name.split(/\s+(?:vs\.?|@)\s+/i);
+        const parts = ev.game_description.split(/\s+(?:vs\.?|@)\s+/i);
         if (parts.length === 2) {
           const awayName = parts[0].trim();
           const homeName = parts[1].trim();
