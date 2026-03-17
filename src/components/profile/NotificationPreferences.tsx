@@ -285,6 +285,26 @@ export function NotificationPreferences() {
               />
             </div>
 
+            {/* Slate Day Advisory Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="slate-advisory" className="text-sm font-medium">
+                    Slate Day Advisory
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Get notified about daily slate strength (thin/light/heavy) with stake guidance
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="slate-advisory"
+                checked={pushSlateAdvisory}
+                onCheckedChange={setPushSlateAdvisory}
+              />
+            </div>
+
             {/* Confidence Threshold */}
             <div className="space-y-2 pt-2">
               <div className="flex items-center justify-between">
