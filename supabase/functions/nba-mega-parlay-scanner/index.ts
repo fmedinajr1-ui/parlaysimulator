@@ -1066,17 +1066,21 @@ Deno.serve(async (req) => {
         console.log(`[MegaParlay] STANDARD GREAT: ${greatCandidates[0].player_name} +${greatCandidates[0].odds}`);
       }
 
-      // Fill to 4 legs if combined odds < 500
-      while (legs.length < 4 && calcCombinedOdds(legs) < 500) {
+      // Fill to 4 legs if combined odds < 500 — max 1 filler, require 70% hit rate + L10 data
+      const fillerCount = legs.filter(l => l.leg_role === 'filler').length;
+      if (fillerCount < 1 && legs.length < 4 && calcCombinedOdds(legs) < 500) {
         const filler = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
-          if (p.hitRate < 65) return false;
+          if (p.hitRate < 70) return false;
           if (p.l10Avg == null) return false;
+          if (p.edgePct < 3) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
         });
-        if (!filler) break;
-        addLeg(filler, legs, gc, used, 'filler', 'standard');
+        if (filler) {
+          addLeg(filler, legs, gc, used, 'filler', 'standard');
+          console.log(`[MegaParlay] STANDARD FILLER: ${filler.player_name} +${filler.odds} (hitRate=${filler.hitRate}%, edge=${filler.edgePct}%)`);
+        }
       }
 
       // Relaxed fallback if < 2 legs
