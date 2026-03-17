@@ -87,6 +87,7 @@ export function NotificationPreferences() {
         push_release_notifications: pushReleaseNotifications,
         push_hedge_alerts: pushHedgeAlerts,
         email_hedge_summary: emailHedgeSummary,
+        push_slate_advisory: pushSlateAdvisory,
         min_confidence_threshold: minConfidence,
         favorite_sports: favoriteSports,
       };
