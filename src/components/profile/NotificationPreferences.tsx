@@ -83,6 +83,8 @@ export function NotificationPreferences() {
         juiced_picks_email: juicedPicksEmail,
         release_notifications: releaseNotifications,
         push_release_notifications: pushReleaseNotifications,
+        push_hedge_alerts: pushHedgeAlerts,
+        email_hedge_summary: emailHedgeSummary,
         min_confidence_threshold: minConfidence,
         favorite_sports: favoriteSports,
       };
