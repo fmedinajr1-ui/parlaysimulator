@@ -218,3 +218,35 @@ Runs every 5 minutes via cron. Flow:
 Added `hedge_pregame_scout` and `hedge_live_update` notification types.
 
 ### Cron: Every 5 minutes (`*/5 * * * *`)
+
+# Fix Zero-Game False Positive + Pre-Tip Generation — IMPLEMENTED ✅ (March 17, 2026)
+
+## Problem
+Pipeline reported "zero game day" daily despite full NBA slates because `game_bets` was empty (Odds API 401/422 errors) and the zero-game check only queried `game_bets`, ignoring 1,783+ active props in `unified_props`. Also, 10 AM ET generation was 7+ hours before tip-off, causing late-scratch invalidation.
+
+## Solution
+
+### 1. Unified Props Fallback
+Modified `bot-generate-daily-parlays/index.ts` zero-game detection:
+- If `game_bets` returns 0, now checks `unified_props` for active props
+- If props exist, derives sport count from props and proceeds with generation
+- Logs `game_bets_stale_props_fallback` event for tracking
+- Only triggers true zero-game mode if BOTH sources are empty
+
+### 2. Fixed Sweet Spots Query
+Changed `playerPropCount` query from `created_at` timestamp range to `analysis_date = targetDate` — prevents timezone mismatches where sweet spots created before noon ET cutoff were excluded.
+
+### 3. Pre-Tip Generation Schedule
+- **Moved** `refresh-l10-and-rebuild` from 10:00 AM ET → **5:30 PM ET** (cron: `30 22 * * *`)
+- **Added** `morning-prep-pipeline` at 10:00 AM ET (cron: `0 15 * * *`) — runs odds scraper, category analyzer, matchup scanner, and game context analyzer without generating parlays
+- Morning gives customers the slate advisory; parlays generate ~90 min before tip with confirmed lineups
+
+### 4. Game Bets Staleness Alert
+Added detection in `bot-game-context-analyzer`: if `game_bets` has 0 rows but `unified_props` has data, sends admin Telegram warning about stale feed.
+
+### Schedule (Updated)
+| Time (ET) | Job | Purpose |
+|-----------|-----|---------|
+| 8:00 AM | `morning-data-refresh` | Game logs (NBA, NHL, MLB) |
+| 10:00 AM | `morning-prep-pipeline` | Odds, analysis, matchups, slate advisory |
+| 5:30 PM | `refresh-l10-and-rebuild` | Full parlay generation (pre-tip) |
