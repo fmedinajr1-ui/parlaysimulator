@@ -10009,7 +10009,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const isLightSlateMode = (playerPropCount || 0) === 0 || (sportCount || 0) <= 2;
+    const isLightSlateMode = (playerPropCount || 0) === 0 || effectiveSportCount <= 2;
     const isVolumeMode = (playerPropCount || 0) > 0 && (playerPropCount || 0) < 30;
     const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
     if (isLightSlateMode) {
