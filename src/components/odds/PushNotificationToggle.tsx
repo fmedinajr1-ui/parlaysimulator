@@ -112,6 +112,14 @@ export function PushNotificationToggle() {
                 onCheckedChange={setSharpOnly}
               />
             </div>
+
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-muted-foreground">Hedge alerts</label>
+              <Switch
+                checked={hedgeAlerts}
+                onCheckedChange={setHedgeAlerts}
+              />
+            </div>
           </div>
         )}
 

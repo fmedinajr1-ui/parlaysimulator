@@ -242,6 +242,46 @@ export function NotificationPreferences() {
               />
             </div>
 
+            {/* Hedge Alert Push Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="hedge-push" className="text-sm font-medium">
+                    Hedge Alerts (Push)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Get push alerts for HEDGE ALERT, HEDGE NOW, and LOCK statuses
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="hedge-push"
+                checked={pushHedgeAlerts}
+                onCheckedChange={setPushHedgeAlerts}
+              />
+            </div>
+
+            {/* Hedge Summary Email Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Mail className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="hedge-email" className="text-sm font-medium">
+                    Hedge Summary Email
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Receive a post-game hedge summary email after games complete
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="hedge-email"
+                checked={emailHedgeSummary}
+                onCheckedChange={setEmailHedgeSummary}
+              />
+            </div>
+
             {/* Confidence Threshold */}
             <div className="space-y-2 pt-2">
               <div className="flex items-center justify-between">
