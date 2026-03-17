@@ -278,14 +278,15 @@ serve(async (req) => {
       }
     } else {
 
-    const seenEvents = new Set<string>();
-    const games = rawGames.filter(g => {
-      if (seenEvents.has(g.game_id)) return false;
-      seenEvents.add(g.game_id);
-      return true;
-    });
+      const seenEvents = new Set<string>();
+      games = rawGames.filter(g => {
+        if (seenEvents.has(g.game_id)) return false;
+        seenEvents.add(g.game_id);
+        return true;
+      });
 
-    console.log(`[MatchupScanner] ${games.length} unique games (from ${rawGames.length} rows)`);
+      console.log(`[MatchupScanner] ${games.length} unique games (from ${rawGames.length} rows)`);
+    }
 
     // Load BOTH offense + defense rankings
     const { data: rankData } = await supabase
