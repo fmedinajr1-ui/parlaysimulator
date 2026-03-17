@@ -55,6 +55,8 @@ export function NotificationPreferences() {
         setJuicedPicksEmail(data.juiced_picks_email ?? true);
         setReleaseNotifications((data as any).release_notifications ?? true);
         setPushReleaseNotifications((data as any).push_release_notifications ?? true);
+        setPushHedgeAlerts((data as any).push_hedge_alerts ?? true);
+        setEmailHedgeSummary((data as any).email_hedge_summary ?? false);
         setMinConfidence(data.min_confidence_threshold);
         setFavoriteSports(data.favorite_sports || []);
         setEmail(data.email);
