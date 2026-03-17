@@ -225,12 +225,58 @@ serve(async (req) => {
       .gte('commence_time', startUtc)
       .lte('commence_time', endUtc);
 
+    let games: Array<{ home_team: string; away_team: string; game_id: string; sport: string }> = [];
+
     if (!rawGames || rawGames.length === 0) {
-      console.log('[MatchupScanner] No games found');
-      return new Response(JSON.stringify({ message: 'No games today', games: 0 }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+      console.log('[MatchupScanner] game_bets empty — falling back to unified_props');
+
+      // Derive games from unified_props event descriptions
+      const { data: propEvents } = await supabase
+        .from('unified_props')
+        .select('event_name, sport, commence_time')
+        .eq('is_active', true)
+        .in('sport', ['basketball_nba', 'basketball_wnba', 'basketball_ncaab'])
+        .gte('commence_time', startUtc)
+        .lte('commence_time', endUtc);
+
+      if (!propEvents || propEvents.length === 0) {
+        console.log('[MatchupScanner] No games found in game_bets or unified_props');
+        return new Response(JSON.stringify({ message: 'No games today', games: 0 }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Parse unique games from event names (format: "Team A vs Team B" or "Away @ Home")
+      const seenMatchups = new Set<string>();
+      for (const ev of propEvents) {
+        if (!ev.event_name) continue;
+        const eventKey = ev.event_name.toLowerCase().trim();
+        if (seenMatchups.has(eventKey)) continue;
+        seenMatchups.add(eventKey);
+
+        // Try "Away vs Home" or "Away @ Home"
+        const parts = ev.event_name.split(/\s+(?:vs\.?|@)\s+/i);
+        if (parts.length === 2) {
+          const awayName = parts[0].trim();
+          const homeName = parts[1].trim();
+          const awayAbbrev = resolveTeamAbbrev(awayName);
+          const homeAbbrev = resolveTeamAbbrev(homeName);
+          games.push({
+            home_team: homeAbbrev || homeName,
+            away_team: awayAbbrev || awayName,
+            game_id: `props_${awayAbbrev}_${homeAbbrev}_${today}`,
+            sport: ev.sport || 'basketball_nba',
+          });
+        }
+      }
+
+      console.log(`[MatchupScanner] Derived ${games.length} games from unified_props fallback`);
+      if (games.length === 0) {
+        return new Response(JSON.stringify({ message: 'Could not parse games from props', games: 0 }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    } else {
 
     const seenEvents = new Set<string>();
     const games = rawGames.filter(g => {
