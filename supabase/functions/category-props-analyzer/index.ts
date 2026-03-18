@@ -1346,7 +1346,7 @@ serve(async (req) => {
         
         // v4.0: BREAKOUT PLAYER DETECTION - Block rising stars from UNDER categories
         // Prevents picks like "Evan Mobley UNDER 18.5" when he's on an upward trend
-        if (effectiveSide === 'under') {
+        if (playerEffectiveSide === 'under') {
           const l5Logs = l10Logs.slice(0, 5);
           const l5Values = l5Logs.map(log => getStatValue(log, config.propType));
           const l5Avg = l5Values.reduce((a, b) => a + b, 0) / l5Values.length;
