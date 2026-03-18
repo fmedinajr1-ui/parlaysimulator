@@ -128,7 +128,6 @@ Deno.serve(async (req) => {
 
     // Check ET hour — only run during game hours (roughly 6 PM - 1 AM ET)
     const etHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
-    // Allow pre-game scouts from 5 PM ET, live updates until 2 AM ET
     const isGameHours = etHour >= 17 || etHour < 2;
 
     // 1. Fetch today's unsettled sweet spot picks
@@ -146,7 +145,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Filter to NBA-only prop types (quarter baselines + live feeds are NBA-exclusive)
+    // Filter to NBA-only prop types
     const NBA_PROP_TYPES = ['points', 'rebounds', 'assists', 'threes', 'steals', 'blocks', 'pra',
       'player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_steals', 'player_blocks'];
     const nbaPicks = picks.filter((p: any) => NBA_PROP_TYPES.includes((p.prop_type || '').toLowerCase()));
@@ -162,8 +161,8 @@ Deno.serve(async (req) => {
     // 2. Get unique player names
     const playerNames = [...new Set(nbaPicks.map((p: any) => p.player_name))];
 
-    // 3. Fetch StatMuse quarter baselines + behavior profiles in parallel
-    const [baselinesRes, profilesRes, trackerRes] = await Promise.all([
+    // 3. Fetch baselines, profiles, tracker state, AND baseline FG% in parallel
+    const [baselinesRes, profilesRes, trackerRes, fgBaselineRes] = await Promise.all([
       supabase
         .from('player_quarter_baselines')
         .select('player_name, prop_type, q1_avg, q2_avg, q3_avg, q4_avg, data_source')
@@ -177,11 +176,19 @@ Deno.serve(async (req) => {
         .from('hedge_telegram_tracker')
         .select('*')
         .eq('analysis_date', today),
+      // Signal 3: Fetch L10 FG baseline from game logs
+      supabase
+        .from('nba_player_game_logs')
+        .select('player_name, field_goals_made, field_goals_attempted')
+        .in('player_name', playerNames)
+        .order('game_date', { ascending: false })
+        .limit(playerNames.length * 10), // L10 per player
     ]);
 
     const baselines = baselinesRes.data || [];
     const profiles = profilesRes.data || [];
     const trackerRows = trackerRes.data || [];
+    const fgLogs = fgBaselineRes.data || [];
 
     // Build lookup maps
     const baselinesByPlayer: Record<string, any[]> = {};
@@ -199,6 +206,29 @@ Deno.serve(async (req) => {
     for (const t of trackerRows) {
       trackerByKey[`${t.player_name}::${t.prop_type}`] = t;
     }
+
+    // Build baseline FG% map from L10 game logs
+    const baselineFgByPlayer: Record<string, number> = {};
+    const playerFgAccum: Record<string, { fgm: number; fga: number; games: number }> = {};
+    for (const log of fgLogs) {
+      if (!log.player_name || log.field_goals_attempted == null) continue;
+      if (!playerFgAccum[log.player_name]) {
+        playerFgAccum[log.player_name] = { fgm: 0, fga: 0, games: 0 };
+      }
+      const accum = playerFgAccum[log.player_name];
+      if (accum.games < 10) {
+        accum.fgm += log.field_goals_made || 0;
+        accum.fga += log.field_goals_attempted || 0;
+        accum.games++;
+      }
+    }
+    for (const [name, accum] of Object.entries(playerFgAccum)) {
+      if (accum.fga > 0) {
+        baselineFgByPlayer[name] = accum.fgm / accum.fga;
+      }
+    }
+
+    console.log(`[HedgeTracker] Baseline FG% computed for ${Object.keys(baselineFgByPlayer).length} players`);
 
     // 4. Fetch live stats from unified-player-feed
     let liveData: any = null;
@@ -228,6 +258,8 @@ Deno.serve(async (req) => {
     const pregameMessages: string[] = [];
     const liveUpdateMessages: string[] = [];
     const trackerUpserts: any[] = [];
+    // Store computed live values for push notifications
+    const liveComputedByKey: Record<string, { currentValue: number; projectedFinal: number; gameProgress: number; quarter: number }> = {};
 
     for (const pick of nbaPicks) {
       const key = `${pick.player_name}::${pick.prop_type}`;
@@ -291,17 +323,29 @@ Deno.serve(async (req) => {
         const ratePerMin = projection?.ratePerMinute ?? 0;
         const remainingMinutes = player.estimatedRemaining ?? 0;
         
-        // Use tri-signal blended projection
+        // Signal 2: Use recommended_line from sweet spots as book anchor
+        const liveBookLine = pick.recommended_line || undefined;
+        
+        // Signal 3: Get baseline FG% from L10 game logs
+        const baselineFg = baselineFgByPlayer[pick.player_name];
+        const liveFgPct = player.currentStats?.fgPct;
+        
+        // Use tri-signal blended projection with all three signals
         const projectedFinal = triSignalProjection({
           currentValue,
           ratePerMinute: ratePerMin,
           remainingMinutes,
           gameProgress,
           propType: pick.prop_type || '',
-          liveBookLine: undefined, // Could be fetched from live-lines in future
-          fgPct: player.currentStats?.fgPct,
-          baselineFgPct: undefined, // L10 baseline not yet available server-side
+          liveBookLine,
+          fgPct: liveFgPct,
+          baselineFgPct: baselineFg,
         });
+
+        console.log(`[HedgeTracker] ${pick.player_name} ${statKey}: curr=${currentValue}, proj=${projectedFinal}, book=${liveBookLine}, fgLive=${liveFgPct?.toFixed(3)}, fgBase=${baselineFg?.toFixed(3)}`);
+
+        // Store computed values for push notifications
+        liveComputedByKey[key] = { currentValue, projectedFinal, gameProgress, quarter: currentQuarter };
 
         // Calculate hedge status with tri-signal projection
         const hedgeAction = calculateHedgeAction({
@@ -318,6 +362,35 @@ Deno.serve(async (req) => {
         const statusChanged = prevStatus !== hedgeAction;
         const newQuarter = currentQuarter > prevQuarter;
 
+        // Record hedge snapshot at every quarter boundary
+        if (newQuarter) {
+          try {
+            await supabase.functions.invoke('record-hedge-snapshot', {
+              body: {
+                sweet_spot_id: pick.id,
+                player_name: pick.player_name,
+                prop_type: pick.prop_type,
+                line,
+                side: (pick.recommended_side || 'over').toLowerCase(),
+                quarter: currentQuarter,
+                game_progress: gameProgress,
+                hedge_status: hedgeAction,
+                hit_probability: Math.round(gameProgress > 50 ? 60 : 50),
+                current_value: currentValue,
+                projected_final: projectedFinal,
+                rate_per_minute: ratePerMin,
+                rate_needed: remainingMinutes > 0 ? (line - currentValue) / remainingMinutes : undefined,
+                gap_to_line: projectedFinal - line,
+                live_book_line: liveBookLine,
+                analysis_date: today,
+              },
+            });
+            console.log(`[HedgeTracker] Recorded Q${currentQuarter} snapshot for ${pick.player_name}`);
+          } catch (snapErr) {
+            console.error(`[HedgeTracker] Snapshot recording error:`, snapErr);
+          }
+        }
+
         if (statusChanged || newQuarter) {
           const statusEmoji = getStatusEmoji(hedgeAction);
           const prevStatusEmoji = prevStatus ? getStatusEmoji(prevStatus as HedgeAction) : '';
@@ -326,7 +399,6 @@ Deno.serve(async (req) => {
             : `${statusEmoji} ${hedgeAction}`;
 
           // Calculate needed rate
-          const remainingMinutes = player.estimatedRemaining || 0;
           const remaining = line - currentValue;
           const neededRate = remainingMinutes > 0 ? (remaining / remainingMinutes).toFixed(2) : '?';
 
@@ -339,7 +411,6 @@ Deno.serve(async (req) => {
 
           // Show actual quarter results if available
           if (currentQuarter > 1 && player.currentStats) {
-            // We show total accumulated vs quarter expectation
             const qBaseline = playerBaselines.find((b: any) => {
               const bp = (b.prop_type || '').toLowerCase().replace('player_', '');
               return bp === statKey;
@@ -408,20 +479,22 @@ Deno.serve(async (req) => {
       messagesSent++;
     }
 
-    // Collect hedge alerts for customer push notifications
+    // Collect hedge alerts for customer push notifications — use actual computed values
     for (const upsert of trackerUpserts) {
       if (upsert.last_status_sent && ['HEDGE ALERT', 'HEDGE NOW', 'LOCK'].includes(upsert.last_status_sent)) {
+        const upsertKey = `${upsert.player_name}::${upsert.prop_type}`;
+        const computed = liveComputedByKey[upsertKey];
         hedgePushAlerts.push({
           playerName: upsert.player_name,
           propType: upsert.prop_type,
           line: upsert.line,
           side: upsert.side,
           hedgeAction: upsert.last_status_sent,
-          previousStatus: null, // tracked via transition in message
-          currentValue: 0, // approximate from tracker
-          projectedFinal: 0,
-          gameProgress: 0,
-          quarter: upsert.last_quarter_sent || 1,
+          previousStatus: null,
+          currentValue: computed?.currentValue ?? 0,
+          projectedFinal: computed?.projectedFinal ?? 0,
+          gameProgress: computed?.gameProgress ?? 0,
+          quarter: computed?.quarter ?? upsert.last_quarter_sent ?? 1,
         });
       }
     }
@@ -449,6 +522,7 @@ Deno.serve(async (req) => {
       pregamesSent: pregameMessages.length,
       liveUpdatesSent: liveUpdateMessages.length,
       hasLiveGames,
+      baselineFgPlayers: Object.keys(baselineFgByPlayer).length,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
