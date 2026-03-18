@@ -36,6 +36,8 @@ interface GameLog {
   assists: number | null;
   threes_made: number | null;
   blocks: number | null;
+  rebounds: number | null;
+  steals: number | null;
   minutes_played: number | null;
   usage_rate: number | null;
 }
