@@ -1248,6 +1248,72 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_daily_pick_pool: {
+        Row: {
+          category: string | null
+          composite_score: number | null
+          confidence_score: number | null
+          created_at: string | null
+          historical_over_rate: number | null
+          historical_samples: number | null
+          historical_under_rate: number | null
+          id: string
+          l10_avg: number | null
+          l10_hit_rate: number | null
+          l3_avg: number | null
+          pick_date: string
+          player_name: string
+          projected_value: number | null
+          prop_type: string | null
+          recommended_line: number | null
+          recommended_side: string | null
+          rejection_reason: string | null
+          was_used_in_parlay: boolean | null
+        }
+        Insert: {
+          category?: string | null
+          composite_score?: number | null
+          confidence_score?: number | null
+          created_at?: string | null
+          historical_over_rate?: number | null
+          historical_samples?: number | null
+          historical_under_rate?: number | null
+          id?: string
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          l3_avg?: number | null
+          pick_date: string
+          player_name: string
+          projected_value?: number | null
+          prop_type?: string | null
+          recommended_line?: number | null
+          recommended_side?: string | null
+          rejection_reason?: string | null
+          was_used_in_parlay?: boolean | null
+        }
+        Update: {
+          category?: string | null
+          composite_score?: number | null
+          confidence_score?: number | null
+          created_at?: string | null
+          historical_over_rate?: number | null
+          historical_samples?: number | null
+          historical_under_rate?: number | null
+          id?: string
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          l3_avg?: number | null
+          pick_date?: string
+          player_name?: string
+          projected_value?: number | null
+          prop_type?: string | null
+          recommended_line?: number | null
+          recommended_side?: string | null
+          rejection_reason?: string | null
+          was_used_in_parlay?: boolean | null
+        }
+        Relationships: []
+      }
       bot_diagnostic_runs: {
         Row: {
           checks_failed: number

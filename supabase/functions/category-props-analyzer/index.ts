@@ -1213,12 +1213,39 @@ serve(async (req) => {
     const sweetSpots: any[] = [];
     let archetypeBlockedCount = 0;
 
+    // v13.0: DETERMINISTIC SIDE SELECTION — per-player per-prop historical outcome analysis
+    // Query all settled outcomes to build per-player hit rate maps
+    const { data: historicalOutcomes } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, prop_type, recommended_side, outcome')
+      .not('outcome', 'is', null)
+      .not('settled_at', 'is', null)
+      .in('outcome', ['hit', 'miss']);
+
+    // Build per-player per-prop side hit rate map
+    const playerSideHistory = new Map<string, { overHits: number; overTotal: number; underHits: number; underTotal: number }>();
+    for (const row of (historicalOutcomes || [])) {
+      const key = `${(row.player_name || '').toLowerCase().trim()}|${(row.prop_type || '').toLowerCase().trim()}`;
+      let entry = playerSideHistory.get(key);
+      if (!entry) { entry = { overHits: 0, overTotal: 0, underHits: 0, underTotal: 0 }; playerSideHistory.set(key, entry); }
+      const side = (row.recommended_side || 'over').toLowerCase();
+      if (side === 'over') {
+        entry.overTotal++;
+        if (row.outcome === 'hit') entry.overHits++;
+      } else {
+        entry.underTotal++;
+        if (row.outcome === 'hit') entry.underHits++;
+      }
+    }
+
+    const deterministicFlips: string[] = [];
+
     for (const catKey of categoriesToAnalyze) {
       const config = CATEGORIES[catKey];
       if (!config) continue;
 
       // v9.0: Apply side override from bot_category_weights (flipped categories)
-      const effectiveSide = sideOverrideMap.get(catKey) || config.side;
+      let effectiveSide = sideOverrideMap.get(catKey) || config.side;
 
       // v7.0: Skip disabled categories
       if (config.disabled) {
@@ -1259,16 +1286,54 @@ serve(async (req) => {
           continue; // Skip this player for this category
         }
 
-        // v7.1: STAR PLAYER BLOCK - Never recommend UNDER on star players
+        // v13.0: DETERMINISTIC SIDE SELECTION — override effectiveSide based on per-player history
+        const histKey = `${playerName.toLowerCase().trim()}|${config.propType.toLowerCase().trim()}`;
+        const hist = playerSideHistory.get(histKey);
+        let playerEffectiveSide = effectiveSide;
+        let historicalOverRate: number | null = null;
+        let historicalUnderRate: number | null = null;
+        let historicalSamples = 0;
+
+        if (hist) {
+          historicalSamples = hist.overTotal + hist.underTotal;
+          if (historicalSamples >= 10) {
+            const totalGraded = hist.overTotal + hist.underTotal;
+            historicalOverRate = hist.overTotal > 0 ? hist.overHits / hist.overTotal : null;
+            historicalUnderRate = hist.underTotal > 0 ? hist.underHits / hist.underTotal : null;
+
+            // If over hit rate < 45% AND under > 55%, force under
+            if (historicalOverRate !== null && historicalOverRate < 0.45 && 
+                historicalUnderRate !== null && historicalUnderRate > 0.55) {
+              if (playerEffectiveSide !== 'under') {
+                const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → UNDER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
+                console.log(`[Category Analyzer] ${flipMsg}`);
+                deterministicFlips.push(flipMsg);
+                playerEffectiveSide = 'under';
+              }
+            }
+            // If under hit rate < 45% AND over > 55%, force over
+            else if (historicalUnderRate !== null && historicalUnderRate < 0.45 && 
+                     historicalOverRate !== null && historicalOverRate > 0.55) {
+              if (playerEffectiveSide !== 'over') {
+                const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → OVER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
+                console.log(`[Category Analyzer] ${flipMsg}`);
+                deterministicFlips.push(flipMsg);
+                playerEffectiveSide = 'over';
+              }
+            }
+          }
+        }
+
+
         // If they're slow during live game, hedge system will alert
-        if (effectiveSide === 'under' && isStarPlayer(playerName)) {
+        if (playerEffectiveSide === 'under' && isStarPlayer(playerName)) {
           console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} excluded from ${catKey} - use hedge system for live adjustments`);
           continue;
         }
 
         // v7.0: STARTER PROTECTION - Block starters from points UNDER categories
         // Players averaging 28+ minutes are starters who can explode any night
-        if (config.propType === 'points' && effectiveSide === 'under') {
+        if (config.propType === 'points' && playerEffectiveSide === 'under') {
           const avgMinutes = l10Logs.reduce((sum, g) => sum + (g.minutes_played || 0), 0) / l10Logs.length;
           if (avgMinutes >= 28) {
             if (blockedByMinutes < 5) {
@@ -1281,7 +1346,7 @@ serve(async (req) => {
         
         // v4.0: BREAKOUT PLAYER DETECTION - Block rising stars from UNDER categories
         // Prevents picks like "Evan Mobley UNDER 18.5" when he's on an upward trend
-        if (effectiveSide === 'under') {
+        if (playerEffectiveSide === 'under') {
           const l5Logs = l10Logs.slice(0, 5);
           const l5Values = l5Logs.map(log => getStatValue(log, config.propType));
           const l5Avg = l5Values.reduce((a, b) => a + b, 0) / l5Values.length;
@@ -1335,7 +1400,7 @@ serve(async (req) => {
         let bestHitRate = 0;
 
         for (const line of config.lines) {
-          const hitRate = calculateHitRate(statValues, line, effectiveSide);
+          const hitRate = calculateHitRate(statValues, line, playerEffectiveSide);
           
           if (hitRate >= (minHitRate || config.minHitRate) && hitRate > bestHitRate) {
             bestHitRate = hitRate;
@@ -1352,7 +1417,7 @@ serve(async (req) => {
         const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
         
         // v5.0: TIGHTENED UNDER CRITERIA - UNDERs hit at 63.6% vs 78% for OVERs
-        if (effectiveSide === 'under') {
+        if (playerEffectiveSide === 'under') {
           const underMinHitRate = 0.65; // Higher threshold for unders
           const maxVarianceRatio = 0.30; // Variance must be < 30% of avg
           const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
@@ -1385,7 +1450,7 @@ serve(async (req) => {
           // Add variance penalty, side-specific bonus, sample size bonus
           const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
           const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
-          const sideBonus = effectiveSide === 'over' ? 0.06 : 0; // OVERs historically hit higher
+          const sideBonus = playerEffectiveSide === 'over' ? 0.06 : 0; // OVERs historically hit higher
           const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
           const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
 
@@ -1400,11 +1465,11 @@ serve(async (req) => {
           // v11.0: UNIVERSAL RECENCY DECLINE BLOCK
           if (l3Avg !== null && l10Avg > 0) {
             const declineRatio = l3Avg / l10Avg;
-            if (effectiveSide === 'over' && declineRatio < 0.75) {
+            if (playerEffectiveSide === 'over' && declineRatio < 0.75) {
               console.log(`[Recency Block] 📉 ${playerName} ${config.propType} OVER blocked: L3 avg ${l3Avg} is ${((1 - declineRatio) * 100).toFixed(0)}% below L10 avg ${l10Avg.toFixed(1)}`);
               continue;
             }
-            if (effectiveSide === 'under' && declineRatio > 1.25) {
+            if (playerEffectiveSide === 'under' && declineRatio > 1.25) {
               console.log(`[Recency Block] 📈 ${playerName} ${config.propType} UNDER blocked: L3 avg ${l3Avg} is ${((declineRatio - 1) * 100).toFixed(0)}% above L10 avg ${l10Avg.toFixed(1)}`);
               continue;
             }
@@ -1415,7 +1480,7 @@ serve(async (req) => {
             player_name: playerName,
             prop_type: config.propType,
             recommended_line: bestLine,
-            recommended_side: effectiveSide,
+            recommended_side: playerEffectiveSide,
             l10_hit_rate: Math.round(bestHitRate * 100) / 100,
             l10_avg: Math.round(l10Avg * 10) / 10,
             l10_min: l10Min,
@@ -1438,7 +1503,7 @@ serve(async (req) => {
             player_name: playerName,
             prop_type: config.propType,
             recommended_line: null, // Will be set during validation
-            recommended_side: effectiveSide,
+            recommended_side: playerEffectiveSide,
             l10_hit_rate: null,
             l10_avg: Math.round(l10Avg * 10) / 10,
             l10_min: l10Min,
@@ -2139,6 +2204,17 @@ serve(async (req) => {
       grouped[spot.category].push(spot);
     }
 
+    // v13.0: Log deterministic flips
+    if (deterministicFlips.length > 0) {
+      console.log(`[Category Analyzer] 🔄 ${deterministicFlips.length} deterministic side flips applied`);
+      await supabase.from('bot_activity_log').insert({
+        event_type: 'deterministic_side_flips',
+        message: `Applied ${deterministicFlips.length} per-player deterministic side flips based on historical outcomes`,
+        metadata: { flips: deterministicFlips },
+        severity: 'info',
+      });
+    }
+
     return new Response(JSON.stringify({
       success: true,
       data: activeSpots,
@@ -2149,6 +2225,7 @@ serve(async (req) => {
       noUpcomingGame: noGameCount,
       bounceBackPicks: bounceBackCount,
       lineEligiblePicks: lineEligibleCount,
+      deterministicFlips: deterministicFlips.length,
       categories: Object.keys(grouped),
       analyzedAt: new Date().toISOString()
     }), {

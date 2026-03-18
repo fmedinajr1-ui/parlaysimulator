@@ -103,6 +103,7 @@ type NotificationType =
   | 'hedge_pregame_scout'
   | 'hedge_live_update'
   | 'composite_conflict_report'
+  | 'bench_picks_digest'
   | 'custom'
   | 'test';
 
@@ -192,6 +193,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return data.message || '🎯 Hedge status update';
     case 'composite_conflict_report':
       return formatCompositeConflictReport(data, dateStr);
+    case 'bench_picks_digest':
+      return formatBenchPicksDigest(data, dateStr);
     case 'custom':
       // Extract clean message from adaptive intelligence and other custom senders
       return data.message || data.text || data.summary || '📌 Bot update received';
@@ -226,6 +229,39 @@ function formatCompositeConflictReport(data: Record<string, any>, dateStr: strin
 
   return msg.trim();
 }
+
+function formatBenchPicksDigest(data: Record<string, any>, dateStr: string): string {
+  const benchPicks = data.benchPicks || [];
+  const totalPool = data.totalPool || 0;
+  const usedCount = data.usedCount || 0;
+  const benchCount = data.benchCount || 0;
+
+  let msg = `📋 *BENCH PICKS DIGEST* — ${dateStr}\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Pool: ${totalPool} total | ✅ ${usedCount} used | 🪑 ${benchCount} bench\n\n`;
+
+  if (benchPicks.length === 0) {
+    msg += `No bench picks available today.\n`;
+  } else {
+    msg += `*Top ${benchPicks.length} Unused Picks:*\n\n`;
+    for (let i = 0; i < benchPicks.length; i++) {
+      const pick = benchPicks[i];
+      const propLabel = PROP_LABELS[(pick.prop_type || '').toLowerCase()] || pick.prop_type || '?';
+      const side = (pick.recommended_side || 'over').toUpperCase().charAt(0);
+      const line = pick.recommended_line != null ? pick.recommended_line : '?';
+      const conf = pick.confidence_score ? `${(pick.confidence_score * 100).toFixed(0)}%` : '?';
+      const l10 = pick.l10_avg ? `L10: ${pick.l10_avg}` : '';
+      const reason = pick.rejection_reason ? ` (${pick.rejection_reason})` : '';
+
+      msg += `${i + 1}. *${pick.player_name}* ${propLabel} ${side}${line}\n`;
+      msg += `   🎯 Conf: ${conf} | ${l10}${reason}\n`;
+    }
+  }
+
+  msg += `\n_These picks passed quality gates but weren't selected for parlays._`;
+  return msg;
+}
+
 
 function formatLadderChallengeResult(data: Record<string, any>): string {
   const { outcome, playerName, propLabel, line, side, actualValue, stake, profitLoss, odds, dayNumber, wins, losses, runningPnl, winRate } = data;

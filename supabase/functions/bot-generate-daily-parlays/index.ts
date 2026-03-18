@@ -11397,7 +11397,100 @@ Deno.serve(async (req) => {
       severity: 'success',
     });
 
-    // 10. Send Telegram notification with top picks preview
+    // 9b. Dump full pick pool to bot_daily_pick_pool for visibility
+    try {
+      // Collect all player picks that were considered
+      const allPoolPicks = [
+        ...pool.playerPicks.map((p: any) => ({ ...p, pickType: 'player' })),
+        ...pool.sweetSpots.map((p: any) => ({ ...p, pickType: 'sweet_spot' })),
+      ];
+
+      // Build set of picks that made it into parlays
+      const usedPickKeys = new Set<string>();
+      for (const p of allParlays) {
+        const legs = Array.isArray(p.legs) ? p.legs : [];
+        for (const leg of legs) {
+          const key = `${(leg.player_name || '').toLowerCase().trim()}|${(leg.prop_type || '').toLowerCase().trim()}|${(leg.side || 'over').toLowerCase()}`;
+          usedPickKeys.add(key);
+        }
+      }
+
+      // Deduplicate pool picks
+      const seenPoolKeys = new Set<string>();
+      const poolRows: any[] = [];
+
+      for (const pick of allPoolPicks) {
+        const playerName = (pick.player_name || pick.playerName || '').toString();
+        const propType = (pick.prop_type || pick.propType || '').toString();
+        const side = (pick.side || pick.recommended_side || 'over').toString();
+        const key = `${playerName.toLowerCase().trim()}|${propType.toLowerCase().trim()}|${side.toLowerCase()}`;
+        
+        if (seenPoolKeys.has(key) || !playerName) continue;
+        seenPoolKeys.add(key);
+
+        const wasUsed = usedPickKeys.has(key);
+
+        poolRows.push({
+          pick_date: targetDate,
+          player_name: playerName,
+          prop_type: propType,
+          recommended_side: side,
+          recommended_line: pick.line || pick.actual_line || pick.recommended_line || null,
+          l10_hit_rate: pick.l10_hit_rate || pick.hit_rate || null,
+          l10_avg: pick.l10_avg || pick.l10_average || null,
+          l3_avg: pick.l3_avg || null,
+          confidence_score: pick.confidence_score || pick.composite_score || null,
+          composite_score: pick.composite_score || null,
+          projected_value: pick.projected_value || null,
+          rejection_reason: wasUsed ? null : 'not_selected',
+          was_used_in_parlay: wasUsed,
+          category: pick.category || null,
+        });
+      }
+
+      if (poolRows.length > 0) {
+        // Delete old pool for this date first
+        await supabase.from('bot_daily_pick_pool').delete().eq('pick_date', targetDate);
+
+        // Insert in batches
+        for (let i = 0; i < poolRows.length; i += 100) {
+          const batch = poolRows.slice(i, i + 100);
+          await supabase.from('bot_daily_pick_pool').insert(batch);
+        }
+        console.log(`[Bot v2] 📋 Pick pool logged: ${poolRows.length} picks (${poolRows.filter(r => r.was_used_in_parlay).length} used, ${poolRows.filter(r => !r.was_used_in_parlay).length} bench)`);
+      }
+
+      // Send bench picks digest via Telegram (top 10 unused)
+      const benchPicks = poolRows
+        .filter(r => !r.was_used_in_parlay)
+        .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
+        .slice(0, 10);
+
+      if (benchPicks.length > 0 && !generationSource.startsWith('quality_regen')) {
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+            body: JSON.stringify({
+              type: 'bench_picks_digest',
+              admin_only: true,
+              data: {
+                benchPicks,
+                totalPool: poolRows.length,
+                usedCount: poolRows.filter(r => r.was_used_in_parlay).length,
+                benchCount: poolRows.filter(r => !r.was_used_in_parlay).length,
+                date: targetDate,
+              },
+            }),
+          });
+        } catch (tgErr) {
+          console.error('[Bot v2] Bench picks Telegram failed:', tgErr);
+        }
+      }
+    } catch (poolErr) {
+      console.error('[Bot v2] Pick pool logging failed:', poolErr);
+    }
+
     // SKIP during quality regen attempts — the regen loop sends its own summary
     if (!generationSource.startsWith('quality_regen')) {
       try {
