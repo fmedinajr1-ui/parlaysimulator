@@ -258,8 +258,8 @@ Deno.serve(async (req) => {
         }
       }
 
-      // === EXPOSURE DEDUP: void excess parlays when any player appears more than 1 time (2 for double-confirmed) ===
-      const EXPOSURE_CAP = 2;
+      // === EXPOSURE DEDUP: void excess parlays when any player appears more than 1 time ===
+      const EXPOSURE_CAP = 1;
       const EXPOSURE_CAP_DOUBLE_CONFIRMED = 2;
       const { data: postDedupPending } = await supabase
         .from('bot_daily_parlays')
