@@ -1307,14 +1307,31 @@ serve(async (req) => {
 
         if (hist) {
           historicalSamples = hist.overTotal + hist.underTotal;
-          if (historicalSamples >= 10) {
+          if (historicalSamples >= 7) {
             const totalGraded = hist.overTotal + hist.underTotal;
             historicalOverRate = hist.overTotal > 0 ? hist.overHits / hist.overTotal : null;
             historicalUnderRate = hist.underTotal > 0 ? hist.underHits / hist.underTotal : null;
 
-            // If over hit rate < 45% AND under > 55%, force under
-            if (historicalOverRate !== null && historicalOverRate < 0.45 && 
-                historicalUnderRate !== null && historicalUnderRate > 0.55) {
+            // v13.1: FORCE RULE — if either side has 60%+ hit rate with 7+ samples, force it
+            if (historicalOverRate !== null && historicalOverRate >= 0.60 && hist.overTotal >= 7) {
+              if (playerEffectiveSide !== 'over') {
+                const flipMsg = `🔄 FORCE FLIP: ${playerName} ${config.propType} → OVER (over: ${(historicalOverRate * 100).toFixed(0)}% hit rate, ${hist.overTotal} samples)`;
+                console.log(`[Category Analyzer] ${flipMsg}`);
+                deterministicFlips.push(flipMsg);
+                playerEffectiveSide = 'over';
+              }
+            }
+            else if (historicalUnderRate !== null && historicalUnderRate >= 0.60 && hist.underTotal >= 7) {
+              if (playerEffectiveSide !== 'under') {
+                const flipMsg = `🔄 FORCE FLIP: ${playerName} ${config.propType} → UNDER (under: ${(historicalUnderRate * 100).toFixed(0)}% hit rate, ${hist.underTotal} samples)`;
+                console.log(`[Category Analyzer] ${flipMsg}`);
+                deterministicFlips.push(flipMsg);
+                playerEffectiveSide = 'under';
+              }
+            }
+            // v13.1: Tighter gap — 48/52 instead of 45/55
+            else if (historicalOverRate !== null && historicalOverRate < 0.48 && 
+                historicalUnderRate !== null && historicalUnderRate > 0.52) {
               if (playerEffectiveSide !== 'under') {
                 const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → UNDER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
                 console.log(`[Category Analyzer] ${flipMsg}`);
@@ -1322,9 +1339,9 @@ serve(async (req) => {
                 playerEffectiveSide = 'under';
               }
             }
-            // If under hit rate < 45% AND over > 55%, force over
-            else if (historicalUnderRate !== null && historicalUnderRate < 0.45 && 
-                     historicalOverRate !== null && historicalOverRate > 0.55) {
+            // If under hit rate < 48% AND over > 52%, force over
+            else if (historicalUnderRate !== null && historicalUnderRate < 0.48 && 
+                     historicalOverRate !== null && historicalOverRate > 0.52) {
               if (playerEffectiveSide !== 'over') {
                 const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → OVER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
                 console.log(`[Category Analyzer] ${flipMsg}`);

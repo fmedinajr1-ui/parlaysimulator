@@ -259,8 +259,8 @@ Deno.serve(async (req) => {
       }
 
       // === EXPOSURE CAP: SWAP-NOT-VOID — replace exposed legs with bench picks ===
-      const EXPOSURE_CAP = 1;
-      const EXPOSURE_CAP_DOUBLE_CONFIRMED = 2;
+      const EXPOSURE_CAP = 3;
+      const EXPOSURE_CAP_DOUBLE_CONFIRMED = 4;
       const { data: postDedupPending } = await supabase
         .from('bot_daily_parlays')
         .select('id, legs, combined_probability, strategy_name')
@@ -341,7 +341,7 @@ Deno.serve(async (req) => {
               const alreadyInParlay = legs.some((l: any) => 
                 (l.player_name || '').toLowerCase().trim() === bpPlayer
               );
-              return !alreadyInParlay && bp.confidence_score > 0.4;
+              return !alreadyInParlay && bp.confidence_score > 0.25;
             });
 
             if (replacement) {
@@ -402,8 +402,8 @@ Deno.serve(async (req) => {
         console.log(`[QualityRegen] 🔄 Exposure resolution: ${swapsPerformed} swaps, ${voidedBecauseNoSwap} voided (no candidates), bench remaining: ${availableBench.length}`);
       }
 
-      // === DAILY PARLAY CAP (15 total — v6.0 tightened from 25) ===
-      const DAILY_PARLAY_CAP = 15;
+      // === DAILY PARLAY CAP (20 total — v6.1 raised from 15) ===
+      const DAILY_PARLAY_CAP = 20;
       const { data: postCapPending } = await supabase
         .from('bot_daily_parlays')
         .select('id, combined_probability')
