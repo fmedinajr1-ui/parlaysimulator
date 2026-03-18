@@ -566,7 +566,7 @@ serve(async (req) => {
       points: 'points', threes: 'threes', rebounds: 'rebounds', assists: 'assists', blocks: 'blocks',
     };
     // Helper: find player targets for a team + stat category
-    function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
+    function findPlayerTargets(teamAbbrev: string, statKey: string, side: string, defenderAbbrev?: string): PlayerTarget[] {
       const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
       const targets: PlayerTarget[] = [];
       const logField = STAT_TO_LOG_FIELD[statKey] || statKey;
