@@ -1417,7 +1417,7 @@ serve(async (req) => {
         const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
         
         // v5.0: TIGHTENED UNDER CRITERIA - UNDERs hit at 63.6% vs 78% for OVERs
-        if (effectiveSide === 'under') {
+        if (playerEffectiveSide === 'under') {
           const underMinHitRate = 0.65; // Higher threshold for unders
           const maxVarianceRatio = 0.30; // Variance must be < 30% of avg
           const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
