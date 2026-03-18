@@ -1852,11 +1852,24 @@ serve(async (req) => {
         }
         
         // v4.1: Calculate TRUE PROJECTION using correct upcoming opponent
+        // v7.1: Pass seasonAvg so FG efficiency gate can fire
+        const playerSeasonStatsForProjection = seasonStatsMap.get(spot.player_name.toLowerCase().trim());
+        let seasonAvgForProjection = 0;
+        if (playerSeasonStatsForProjection) {
+          switch (spot.prop_type) {
+            case 'points': seasonAvgForProjection = playerSeasonStatsForProjection.avg_points || 0; break;
+            case 'rebounds': seasonAvgForProjection = playerSeasonStatsForProjection.avg_rebounds || 0; break;
+            case 'assists': seasonAvgForProjection = playerSeasonStatsForProjection.avg_assists || 0; break;
+            case 'threes': seasonAvgForProjection = playerSeasonStatsForProjection.avg_threes || 0; break;
+          }
+        }
         const projection = calculateTrueProjection(
           spot.player_name,
           spot.prop_type,
           statValues,
-          upcomingOpponent
+          upcomingOpponent,
+          seasonAvgForProjection > 0 ? seasonAvgForProjection : undefined,
+          l10StdDev
         );
         
         // v6.0: NEVER store NULL projected_value - use fallback chain
