@@ -286,12 +286,24 @@ Deno.serve(async (req) => {
         const statKey = (pick.prop_type || '').toLowerCase().replace('player_', '');
         const currentValue = player.currentStats?.[statKey] ?? 0;
 
-        // Get projection
+        // Get projection + apply tri-signal
         const projection = player.projections?.[statKey];
-        const projectedFinal = projection?.projected ?? 0;
         const ratePerMin = projection?.ratePerMinute ?? 0;
+        const remainingMinutes = player.estimatedRemaining ?? 0;
+        
+        // Use tri-signal blended projection
+        const projectedFinal = triSignalProjection({
+          currentValue,
+          ratePerMinute: ratePerMin,
+          remainingMinutes,
+          gameProgress,
+          propType: pick.prop_type || '',
+          liveBookLine: undefined, // Could be fetched from live-lines in future
+          fgPct: player.currentStats?.fgPct,
+          baselineFgPct: undefined, // L10 baseline not yet available server-side
+        });
 
-        // Calculate hedge status
+        // Calculate hedge status with tri-signal projection
         const hedgeAction = calculateHedgeAction({
           currentValue,
           projectedFinal,
