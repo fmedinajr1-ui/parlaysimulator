@@ -429,19 +429,32 @@ serve(async (req) => {
           for (const log of gameLogs) {
             const name = log.player_name;
             const count = countMap.get(name) || 0;
-            if (count >= 3) continue; // only take 3 most recent
+            if (count >= 10) continue; // take up to 10 most recent
             countMap.set(name, count + 1);
 
-            if (!l3Cache.has(name)) {
-              l3Cache.set(name, { points: 0, assists: 0, rebounds: 0, threes: 0, blocks: 0, _games: 0 });
+            // L3 cache (first 3 games only)
+            if (count < 3) {
+              if (!l3Cache.has(name)) {
+                l3Cache.set(name, { points: 0, assists: 0, rebounds: 0, threes: 0, blocks: 0, _games: 0 });
+              }
+              const entry = l3Cache.get(name)!;
+              entry.points += (log.points ?? 0);
+              entry.assists += (log.assists ?? 0);
+              entry.rebounds += (log.rebounds ?? 0);
+              entry.threes += (log.threes_made ?? 0);
+              entry.blocks += (log.blocks ?? 0);
+              entry._games += 1;
             }
-            const entry = l3Cache.get(name)!;
-            entry.points += (log.points ?? 0);
-            entry.assists += (log.assists ?? 0);
-            entry.rebounds += (log.rebounds ?? 0);
-            entry.threes += (log.threes_made ?? 0);
-            entry.blocks += (log.blocks ?? 0);
-            entry._games += 1;
+
+            // L10 shooting cache (all 10 games)
+            if (!l10ShootingCache.has(name)) {
+              l10ShootingCache.set(name, { fga: 0, fgm: 0, threes_att: 0, games: 0 });
+            }
+            const shooting = l10ShootingCache.get(name)!;
+            shooting.fga += (log.field_goals_attempted ?? 0);
+            shooting.fgm += (log.field_goals_made ?? 0);
+            shooting.threes_att += (log.threes_attempted ?? 0);
+            shooting.games += 1;
           }
         }
       }
