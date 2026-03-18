@@ -1218,7 +1218,7 @@ serve(async (req) => {
       if (!config) continue;
 
       // v9.0: Apply side override from bot_category_weights (flipped categories)
-      const effectiveSide = sideOverrideMap.get(catKey) || config.side;
+      let effectiveSide = sideOverrideMap.get(catKey) || config.side;
 
       // v7.0: Skip disabled categories
       if (config.disabled) {
