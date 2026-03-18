@@ -419,10 +419,10 @@ serve(async (req) => {
         const chunk = playersOnTodayTeams.slice(i, i + CHUNK);
         const { data: gameLogs } = await supabase
           .from('nba_player_game_logs')
-          .select('player_name, points, assists, rebounds, threes_made, blocks, min, game_date')
+          .select('player_name, points, assists, rebounds, threes_made, blocks, min, game_date, field_goals_attempted, field_goals_made, threes_attempted')
           .in('player_name', chunk)
           .order('game_date', { ascending: false })
-          .limit(chunk.length * 3);
+          .limit(chunk.length * 10);
 
         if (gameLogs) {
           const countMap = new Map<string, number>();
