@@ -72,6 +72,8 @@ interface TeamProfile {
   off_rebounds_rank: number | null;
   off_assists_rank: number | null;
   off_pace_rank: number | null;
+  opp_rebounds_allowed_pg: number | null;
+  opp_assists_allowed_pg: number | null;
 }
 
 interface PlayerTarget {
