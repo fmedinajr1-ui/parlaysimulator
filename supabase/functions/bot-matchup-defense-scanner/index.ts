@@ -697,7 +697,7 @@ serve(async (req) => {
 
         if (label !== 'neutral') {
           const side = label === 'avoid' ? 'under' : 'over';
-          const playerTargets = findPlayerTargets(attackerAbbrev, stat.key, side);
+          const playerTargets = findPlayerTargets(attackerAbbrev, stat.key, side, defenderAbbrev);
 
           const rec: MatchupRecommendation = {
             attacking_team: attackerAbbrev,
