@@ -1326,7 +1326,7 @@ serve(async (req) => {
 
 
         // If they're slow during live game, hedge system will alert
-        if (effectiveSide === 'under' && isStarPlayer(playerName)) {
+        if (playerEffectiveSide === 'under' && isStarPlayer(playerName)) {
           console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} excluded from ${catKey} - use hedge system for live adjustments`);
           continue;
         }
