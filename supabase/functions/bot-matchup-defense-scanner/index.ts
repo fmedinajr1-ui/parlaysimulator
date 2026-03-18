@@ -715,8 +715,7 @@ serve(async (req) => {
           allRecommendations.push(rec);
 
           if (playerTargets.length > 0) {
-            const tagSummary = playerTargets.flatMap(t => t.risk_tags).filter(Boolean);
-            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} player targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%${t.risk_tags.length > 0 ? ' ⚠️' + t.risk_tags.join(',') : ''})`).join(', ')}`);
+            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%${t.ffg ? ` FFG:${t.ffg.ffg_score}[${t.ffg.ffg_label}]` : ''}${t.risk_tags.length > 0 ? ' ⚠️' + t.risk_tags.join(',') : ''})`).join(', ')}`);
           } else if (label === 'elite' || label === 'prime') {
             console.log(`[MatchupScanner] ⚠️ ${attackerAbbrev} ${stat.key} ${side} — NO player targets found (environment only)`);
           }
