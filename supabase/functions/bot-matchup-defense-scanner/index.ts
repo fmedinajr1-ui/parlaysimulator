@@ -491,7 +491,7 @@ serve(async (req) => {
       const l103pa = Math.round((shooting.threes_att / shooting.games) * 10) / 10;
       const l10FgPct = shooting.fga > 0 ? shooting.fgm / shooting.fga : 0;
       const l103pPct = shooting.threes_att > 0
-        ? (l3Cache.get(playerName)?.threes ?? 0) / (shooting.threes_att / shooting.games)
+        ? shooting.threes_made / shooting.threes_att
         : 0;
 
       const defProfile = profileMap.get(defenderAbbrev);
