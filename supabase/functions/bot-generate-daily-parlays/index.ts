@@ -7824,7 +7824,16 @@ async function generateTierParlays(
           if (source === 'projected' || source === 'synthetic_dry_run') return false;
         }
         // SIDE FILTER: grind_under_core and similar profiles enforce recommended_side
-        if (profile.side) {
+        // CONTRARIAN: flip the recommended side for scenario diversity
+        if (profile.contrarian) {
+          const pickSide = ((p as any).recommended_side || '').toLowerCase();
+          const flippedSide = pickSide === 'over' ? 'under' : 'over';
+          // Override the pick's side for this profile — attach flipped side
+          (p as any)._contrarianFlippedSide = flippedSide;
+          // Only include picks where the flipped side still has reasonable data
+          const hitRate = (p as any).l10_hit_rate || 0;
+          if (hitRate < 0.40 && hitRate < 40) return false; // skip if original hit rate too low to flip
+        } else if (profile.side) {
           const pickSide = ((p as any).recommended_side || '').toLowerCase();
           if (pickSide !== profile.side.toLowerCase()) return false;
         }
