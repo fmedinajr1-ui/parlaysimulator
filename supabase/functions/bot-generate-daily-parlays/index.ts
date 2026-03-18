@@ -669,12 +669,14 @@ interface ParlayProfile {
   useAltLines?: boolean;
   minBufferMultiplier?: number;
   preferPlusMoney?: boolean;
-  sortBy?: 'composite' | 'hit_rate' | 'shuffle' | 'env_cluster_shootout' | 'env_cluster_grind';
+  sortBy?: 'composite' | 'hit_rate' | 'shuffle' | 'env_cluster_shootout' | 'env_cluster_grind' | 'l3_score' | 'combined_l3_matchup' | 'combined';
   side?: 'over' | 'under';
   boostLegs?: number;
   allowTeamLegs?: number;
   maxMlLegs?: number;
   preferCategories?: string[];
+  contrarian?: boolean; // When true, flip the recommended_side from sweet spots
+  maxCategoryUsage?: number;
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
