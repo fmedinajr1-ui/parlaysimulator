@@ -1400,7 +1400,7 @@ serve(async (req) => {
         let bestHitRate = 0;
 
         for (const line of config.lines) {
-          const hitRate = calculateHitRate(statValues, line, effectiveSide);
+          const hitRate = calculateHitRate(statValues, line, playerEffectiveSide);
           
           if (hitRate >= (minHitRate || config.minHitRate) && hitRate > bestHitRate) {
             bestHitRate = hitRate;
