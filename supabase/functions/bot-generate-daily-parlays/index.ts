@@ -872,6 +872,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 60, sortBy: 'composite', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
+      // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 40, sortBy: 'shuffle', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'composite', contrarian: true },
+      { legs: 4, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 38, sortBy: 'shuffle', contrarian: true },
     ],
   },
   validation: {
