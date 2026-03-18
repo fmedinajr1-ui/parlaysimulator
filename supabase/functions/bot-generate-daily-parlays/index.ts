@@ -2900,6 +2900,14 @@ interface UsageTracker {
   categoryUsageInParlay: Map<string, number>;
 }
 
+interface BlowoutGameInfo {
+  home_team: string;
+  away_team: string;
+  spread: number; // negative = home favored, positive = away favored
+  underdog: string; // team abbreviation of the underdog
+  favorite: string; // team abbreviation of the favorite
+}
+
 interface PropPool {
   playerPicks: EnrichedPick[];
   teamPicks: EnrichedTeamPick[];
@@ -2914,6 +2922,7 @@ interface PropPool {
   defenseDetailMap: Map<string, any>;
   oddsMap: Map<string, any>;
   playerProps: any[];
+  blowoutGames: BlowoutGameInfo[];
 }
 
 // ============= HELPER FUNCTIONS =============
