@@ -677,6 +677,7 @@ interface ParlayProfile {
   preferCategories?: string[];
   contrarian?: boolean; // When true, flip the recommended_side from sweet spots
   maxCategoryUsage?: number;
+  gameFilter?: 'blowout'; // When set, restrict to games matching this filter
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
