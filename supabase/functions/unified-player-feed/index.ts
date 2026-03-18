@@ -331,7 +331,12 @@ function processGameData(data: any, eventId: string): UnifiedGame | null {
 
             // Calculate projections for all stat types
             const projections: Record<string, PlayerProjection> = {};
-            const currentStats = { points, rebounds, assists, steals, blocks, threes };
+            const currentStats: Record<string, number> = {
+              points, rebounds, assists, steals, blocks, threes,
+              fgm, fga, fgPct: fga > 0 ? fgm / fga : 0,
+              threePm, threePa, threePtPct: threePa > 0 ? threePm / threePa : 0,
+              ftm, fta, ftPct: fta > 0 ? ftm / fta : 0,
+            };
 
             for (const statType of PROP_STATS) {
               projections[statType] = calculateProjection(
