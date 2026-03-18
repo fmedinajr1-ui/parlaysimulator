@@ -8223,7 +8223,7 @@ async function generateTierParlays(
           team_name: playerPick.team_name,
           prop_type: playerPick.prop_type,
           line: snapLine(selectedLine.line, playerPick.prop_type),
-          side: playerPick.recommended_side || 'over',
+          side: (playerPick as any)._contrarianFlippedSide || playerPick.recommended_side || 'over',
           category: playerPick.category,
           weight,
           hit_rate: effectiveHitRateForStorage,
