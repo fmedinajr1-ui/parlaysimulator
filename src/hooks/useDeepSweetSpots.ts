@@ -478,7 +478,7 @@ export function useDeepSweetSpots() {
       // Fetch L10 game logs for all players
       const { data: logsData, error: logsError } = await supabase
         .from('nba_player_game_logs')
-        .select('player_name, game_date, points, assists, threes_made, blocks, minutes_played, usage_rate')
+        .select('player_name, game_date, points, assists, threes_made, blocks, rebounds, steals, minutes_played, usage_rate')
         .in('player_name', playerNames)
         .order('game_date', { ascending: false })
         .limit(playerNames.length * 15); // Get extra to ensure L10 for each
