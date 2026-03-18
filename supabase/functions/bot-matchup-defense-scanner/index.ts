@@ -794,10 +794,14 @@ serve(async (req) => {
     const riskTaggedCount = allTargets.filter(t => t.risk_tags && t.risk_tags.length > 0).length;
     const blowoutTaggedCount = allTargets.filter(t => t.risk_tags?.some(tag => tag.startsWith('BLOWOUT'))).length;
     const l3ConfirmedCount = allTargets.filter(t => t.risk_tags?.includes('L3_CONFIRMED')).length;
+    const ffgEliteCount = allTargets.filter(t => t.ffg?.ffg_label === 'elite').length;
+    const ffgStrongCount = allTargets.filter(t => t.ffg?.ffg_label === 'strong').length;
+    const ffgWeakCount = allTargets.filter(t => t.ffg?.ffg_label === 'weak').length;
 
     console.log(`[MatchupScanner] Results: ${allMatchups.length} games | ${eliteCount} elite, ${primeCount} prime, ${favorableCount} favorable, ${avoidCount} avoid`);
     console.log(`[MatchupScanner] Player validation: ${playerBackedCount} player-backed, ${envOnlyCount} environment-only`);
     console.log(`[MatchupScanner] Risk tags: ${riskTaggedCount} tagged, ${blowoutTaggedCount} blowout risk, ${l3ConfirmedCount} L3 confirmed`);
+    console.log(`[MatchupScanner] FFG formula: ${ffgEliteCount} elite, ${ffgStrongCount} strong, ${ffgWeakCount} weak`);
 
     // Build summary
     const summaryLines = allMatchups.map(m => {
