@@ -6,7 +6,7 @@ import { CustomerScoutView } from '@/components/scout/CustomerScoutView';
 import { WarRoomGameStrip, type PropsGame } from '@/components/scout/warroom/WarRoomGameStrip';
 import { useDeepSweetSpots } from '@/hooks/useDeepSweetSpots';
 import { useSweetSpotLiveData } from '@/hooks/useSweetSpotLiveData';
-import { ArrowLeft, Gamepad2 } from 'lucide-react';
+import { ArrowLeft, Gamepad2, Loader2, AlertCircle } from 'lucide-react';
 import type { ScoutGameContext } from '@/pages/Scout';
 
 export function AdminWarRoomView() {
@@ -14,7 +14,7 @@ export function AdminWarRoomView() {
   const latestResolveRef = useRef<string>('');
 
   // Fetch sweet spots to build game list for picker
-  const { data: sweetSpotData } = useDeepSweetSpots();
+  const { data: sweetSpotData, isLoading: spotsLoading, error: spotsError } = useDeepSweetSpots();
   const rawSpots = sweetSpotData?.spots ?? [];
   const { spots: allEnrichedSpots } = useSweetSpotLiveData(rawSpots);
 
@@ -75,7 +75,17 @@ export function AdminWarRoomView() {
               Choose a game below to load the War Room with live prop intelligence.
             </p>
           </div>
-          {availableGames.length > 0 ? (
+          {spotsLoading ? (
+            <div className="flex flex-col items-center gap-2 py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              <p className="text-xs text-muted-foreground">Loading props data...</p>
+            </div>
+          ) : spotsError ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-destructive">
+              <AlertCircle className="w-6 h-6" />
+              <p className="text-xs">Failed to load props: {(spotsError as Error).message}</p>
+            </div>
+          ) : availableGames.length > 0 ? (
             <div className="w-full max-w-2xl">
               <WarRoomGameStrip
                 propsGames={availableGames}

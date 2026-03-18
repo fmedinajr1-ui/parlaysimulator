@@ -4,7 +4,7 @@
  * Now includes Shot Chart vs Defense analysis
  */
 
-export type PropType = 'points' | 'assists' | 'threes' | 'blocks';
+export type PropType = 'points' | 'assists' | 'threes' | 'blocks' | 'rebounds' | 'steals';
 
 export type ZoneType = 'restricted_area' | 'paint' | 'mid_range' | 'corner_3' | 'above_break_3';
 
@@ -322,6 +322,18 @@ export const PROP_TYPE_CONFIG: Record<PropType, {
     matchupKey: 'player_blocks',
     label: 'Blocks',
     shortLabel: 'BLK'
+  },
+  rebounds: { 
+    gameLogField: 'rebounds', 
+    matchupKey: 'player_rebounds',
+    label: 'Rebounds',
+    shortLabel: 'REB'
+  },
+  steals: { 
+    gameLogField: 'steals', 
+    matchupKey: 'player_steals',
+    label: 'Steals',
+    shortLabel: 'STL'
   },
 };
 

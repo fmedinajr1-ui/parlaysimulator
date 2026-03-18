@@ -36,6 +36,8 @@ interface GameLog {
   assists: number | null;
   threes_made: number | null;
   blocks: number | null;
+  rebounds: number | null;
+  steals: number | null;
   minutes_played: number | null;
   usage_rate: number | null;
 }
@@ -63,12 +65,25 @@ interface PlayerProfile {
 }
 
 // Map unified_props prop_type to our PropType
+// Combo prop types that should be excluded (combined lines don't match individual stats)
+const COMBO_PROP_TYPES = [
+  'player_points_assists', 'player_points_rebounds', 'player_points_rebounds_assists',
+  'player_rebounds_assists', 'player_assists_rebounds',
+  'points_assists', 'points_rebounds', 'points_rebounds_assists', 'rebounds_assists',
+];
+
 function mapPropType(propType: string): PropType | null {
-  const normalized = propType.toLowerCase().replace(/[_\s]/g, '');
+  // Filter out combo types first
+  const lower = propType.toLowerCase();
+  if (COMBO_PROP_TYPES.some(combo => lower.includes(combo) || lower === combo)) return null;
+  
+  const normalized = lower.replace(/[_\s]/g, '');
   if (normalized.includes('point') || normalized === 'pts') return 'points';
   if (normalized.includes('assist') || normalized === 'ast') return 'assists';
   if (normalized.includes('three') || normalized.includes('3pt') || normalized === '3pm') return 'threes';
   if (normalized.includes('block') || normalized === 'blk') return 'blocks';
+  if (normalized.includes('rebound') || normalized === 'reb') return 'rebounds';
+  if (normalized.includes('steal') || normalized === 'stl') return 'steals';
   return null;
 }
 
@@ -452,7 +467,7 @@ export function useDeepSweetSpots() {
             standardCount: 0,
             avoidCount: 0,
             uniqueTeams: 0,
-            byPropType: { points: 0, assists: 0, threes: 0, blocks: 0 },
+            byPropType: { points: 0, assists: 0, threes: 0, blocks: 0, rebounds: 0, steals: 0 },
           }
         };
       }
@@ -463,7 +478,7 @@ export function useDeepSweetSpots() {
       // Fetch L10 game logs for all players
       const { data: logsData, error: logsError } = await supabase
         .from('nba_player_game_logs')
-        .select('player_name, game_date, points, assists, threes_made, blocks, minutes_played, usage_rate')
+        .select('player_name, game_date, points, assists, threes_made, blocks, rebounds, steals, minutes_played, usage_rate')
         .in('player_name', playerNames)
         .order('game_date', { ascending: false })
         .limit(playerNames.length * 15); // Get extra to ensure L10 for each
@@ -779,6 +794,8 @@ export function useDeepSweetSpots() {
           assists: dedupedSpots.filter(s => s.propType === 'assists').length,
           threes: dedupedSpots.filter(s => s.propType === 'threes').length,
           blocks: dedupedSpots.filter(s => s.propType === 'blocks').length,
+          rebounds: dedupedSpots.filter(s => s.propType === 'rebounds').length,
+          steals: dedupedSpots.filter(s => s.propType === 'steals').length,
         },
       };
       
