@@ -614,6 +614,7 @@ serve(async (req) => {
 
           // For OVER recommendations: l10_avg must comfortably clear the line
           if (side === 'over' && recSide === 'over' && l10Avg > line + 0.3 && l10HitRate >= 0.6) {
+            const ffg = defenderAbbrev ? computeFFG(playerName, statKey, side, defenderAbbrev) : null;
             targets.push({
               player_name: playerName,
               line,
@@ -625,10 +626,12 @@ serve(async (req) => {
               risk_tags: riskTags,
               l3_trend: l3Trend,
               spread: teamSpread,
+              ffg,
             });
           }
           // For UNDER recommendations
           if (side === 'under' && recSide === 'under' && l10Avg < line - 0.3 && l10HitRate >= 0.6) {
+            const ffg = defenderAbbrev ? computeFFG(playerName, statKey, side, defenderAbbrev) : null;
             targets.push({
               player_name: playerName,
               line,
@@ -640,6 +643,7 @@ serve(async (req) => {
               risk_tags: riskTags,
               l3_trend: l3Trend,
               spread: teamSpread,
+              ffg,
             });
           }
         }
