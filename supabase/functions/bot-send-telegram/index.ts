@@ -193,6 +193,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return data.message || '🎯 Hedge status update';
     case 'composite_conflict_report':
       return formatCompositeConflictReport(data, dateStr);
+    case 'bench_picks_digest':
+      return formatBenchPicksDigest(data, dateStr);
     case 'custom':
       // Extract clean message from adaptive intelligence and other custom senders
       return data.message || data.text || data.summary || '📌 Bot update received';
