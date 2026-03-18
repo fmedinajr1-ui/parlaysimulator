@@ -1465,7 +1465,7 @@ serve(async (req) => {
           // v11.0: UNIVERSAL RECENCY DECLINE BLOCK
           if (l3Avg !== null && l10Avg > 0) {
             const declineRatio = l3Avg / l10Avg;
-            if (effectiveSide === 'over' && declineRatio < 0.75) {
+            if (playerEffectiveSide === 'over' && declineRatio < 0.75) {
               console.log(`[Recency Block] 📉 ${playerName} ${config.propType} OVER blocked: L3 avg ${l3Avg} is ${((1 - declineRatio) * 100).toFixed(0)}% below L10 avg ${l10Avg.toFixed(1)}`);
               continue;
             }
