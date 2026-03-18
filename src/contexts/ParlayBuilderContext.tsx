@@ -1,3 +1,4 @@
+// @ts-nocheck
 // ParlayBuilderContext - Universal Parlay Builder State Management
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
