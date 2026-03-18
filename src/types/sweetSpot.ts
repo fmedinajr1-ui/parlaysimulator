@@ -4,7 +4,7 @@
  * Now includes Shot Chart vs Defense analysis
  */
 
-export type PropType = 'points' | 'assists' | 'threes' | 'blocks';
+export type PropType = 'points' | 'assists' | 'threes' | 'blocks' | 'rebounds' | 'steals';
 
 export type ZoneType = 'restricted_area' | 'paint' | 'mid_range' | 'corner_3' | 'above_break_3';
 
