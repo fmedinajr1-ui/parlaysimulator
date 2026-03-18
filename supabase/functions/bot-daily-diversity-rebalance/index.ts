@@ -11,7 +11,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VERSION = 'diversity-rebalance-v2.3';
+const VERSION = 'diversity-rebalance-v3.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
