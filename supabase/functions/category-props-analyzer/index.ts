@@ -1450,7 +1450,7 @@ serve(async (req) => {
           // Add variance penalty, side-specific bonus, sample size bonus
           const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
           const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
-          const sideBonus = effectiveSide === 'over' ? 0.06 : 0; // OVERs historically hit higher
+          const sideBonus = playerEffectiveSide === 'over' ? 0.06 : 0; // OVERs historically hit higher
           const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
           const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
 
