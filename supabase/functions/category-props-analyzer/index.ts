@@ -1286,7 +1286,45 @@ serve(async (req) => {
           continue; // Skip this player for this category
         }
 
-        // v7.1: STAR PLAYER BLOCK - Never recommend UNDER on star players
+        // v13.0: DETERMINISTIC SIDE SELECTION — override effectiveSide based on per-player history
+        const histKey = `${playerName.toLowerCase().trim()}|${config.propType.toLowerCase().trim()}`;
+        const hist = playerSideHistory.get(histKey);
+        let playerEffectiveSide = effectiveSide;
+        let historicalOverRate: number | null = null;
+        let historicalUnderRate: number | null = null;
+        let historicalSamples = 0;
+
+        if (hist) {
+          historicalSamples = hist.overTotal + hist.underTotal;
+          if (historicalSamples >= 10) {
+            const totalGraded = hist.overTotal + hist.underTotal;
+            historicalOverRate = hist.overTotal > 0 ? hist.overHits / hist.overTotal : null;
+            historicalUnderRate = hist.underTotal > 0 ? hist.underHits / hist.underTotal : null;
+
+            // If over hit rate < 45% AND under > 55%, force under
+            if (historicalOverRate !== null && historicalOverRate < 0.45 && 
+                historicalUnderRate !== null && historicalUnderRate > 0.55) {
+              if (playerEffectiveSide !== 'under') {
+                const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → UNDER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
+                console.log(`[Category Analyzer] ${flipMsg}`);
+                deterministicFlips.push(flipMsg);
+                playerEffectiveSide = 'under';
+              }
+            }
+            // If under hit rate < 45% AND over > 55%, force over
+            else if (historicalUnderRate !== null && historicalUnderRate < 0.45 && 
+                     historicalOverRate !== null && historicalOverRate > 0.55) {
+              if (playerEffectiveSide !== 'over') {
+                const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → OVER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
+                console.log(`[Category Analyzer] ${flipMsg}`);
+                deterministicFlips.push(flipMsg);
+                playerEffectiveSide = 'over';
+              }
+            }
+          }
+        }
+
+
         // If they're slow during live game, hedge system will alert
         if (effectiveSide === 'under' && isStarPlayer(playerName)) {
           console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} excluded from ${catKey} - use hedge system for live adjustments`);
