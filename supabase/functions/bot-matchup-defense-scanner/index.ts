@@ -544,8 +544,8 @@ serve(async (req) => {
       ffgScore = Math.round(ffgScore * 10) / 10;
 
       const ffgLabel = ffgScore >= 4 ? 'elite'
-        : ffgScore >= 2 ? 'strong'
-        : ffgScore >= -1 ? 'neutral'
+        : ffgScore >= 1.5 ? 'strong'
+        : ffgScore >= -1.5 ? 'neutral'
         : 'weak';
 
       return {
