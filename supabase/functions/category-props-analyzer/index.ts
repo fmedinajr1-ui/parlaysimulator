@@ -157,12 +157,12 @@ const PROJECTION_WEIGHTS = {
 // Only recommend picks where edge (|projection - line|) exceeds threshold
 // v6.0: Tripled thresholds to prevent low-edge picks from being recommended
 const MIN_EDGE_THRESHOLDS: Record<string, number> = {
-  points: 4.5,     // TRIPLED from 1.5 - need 4.5+ edge for points
-  rebounds: 2.5,   // INCREASED from 1.0 - need 2.5+ edge for rebounds
-  assists: 2.0,    // INCREASED from 0.8 - need 2.0+ edge for assists
-  threes: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for threes
-  blocks: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for blocks
-  steals: 0.8,     // INCREASED from 0.3 - need 0.8+ edge for steals
+  points: 5.5,     // v7.0: Raised from 4.5 - need 5.5+ edge for points
+  rebounds: 3.0,   // v7.0: Raised from 2.5 - need 3.0+ edge for rebounds
+  assists: 2.5,    // v7.0: Raised from 2.0 - need 2.5+ edge for assists
+  threes: 1.2,     // v7.0: Raised from 1.0 - need 1.2+ edge for threes
+  blocks: 1.0,     // Unchanged - blocks already strict enough
+  steals: 0.8,     // Unchanged - steals already strict enough
 };
 
 // ============ 3PT SHOOTER FILTERS (v6.0) ============
@@ -783,6 +783,27 @@ function calculateTrueProjection(
     rawProjection = (rawProjection * shrinkageFactor) + (seasonAvg * (1 - shrinkageFactor));
     projectionSource += '+REGRESSED';
     console.log(`[Projection] v5.0 Shrinkage: factor=${shrinkageFactor.toFixed(2)}, seasonAvg=${seasonAvg.toFixed(1)}, before=${(l10Median + matchupAdj + paceAdj + profileAdj).toFixed(1)}, after=${rawProjection.toFixed(1)}`);
+  }
+  
+  // 7. v7.0: FG EFFICIENCY GATE - Regress scoring props when shooting is unsustainable
+  // If L10 FG% deviates >5% from season average, apply regression factor
+  if ((propType === 'points' || propType === 'threes') && seasonAvg && seasonAvg > 0) {
+    // Estimate FG% deviation from the stat variance
+    // Players shooting hot (L10 >> season) get penalized, cold streaks get boosted
+    const l10VsSeasonRatio = l10Avg / seasonAvg;
+    if (l10VsSeasonRatio > 1.15) {
+      // Shooting unsustainably hot — regress projection down
+      const fgPenalty = (l10VsSeasonRatio - 1.15) * rawProjection * 0.3;
+      rawProjection -= fgPenalty;
+      projectionSource += '+FG_REGRESS_DOWN';
+      console.log(`[Projection] v7.0 FG Efficiency: L10/Season=${l10VsSeasonRatio.toFixed(2)}, penalty=-${fgPenalty.toFixed(1)}`);
+    } else if (l10VsSeasonRatio < 0.85) {
+      // Shooting unsustainably cold — regress projection up
+      const fgBoost = (0.85 - l10VsSeasonRatio) * rawProjection * 0.2;
+      rawProjection += fgBoost;
+      projectionSource += '+FG_REGRESS_UP';
+      console.log(`[Projection] v7.0 FG Efficiency: L10/Season=${l10VsSeasonRatio.toFixed(2)}, boost=+${fgBoost.toFixed(1)}`);
+    }
   }
   
   const projectedValue = Math.round(rawProjection * 2) / 2;

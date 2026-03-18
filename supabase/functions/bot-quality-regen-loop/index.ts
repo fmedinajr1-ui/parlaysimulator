@@ -258,8 +258,8 @@ Deno.serve(async (req) => {
         }
       }
 
-      // === EXPOSURE DEDUP: void excess parlays when any player appears more than 1 time (2 for double-confirmed) ===
-      const EXPOSURE_CAP = 2;
+      // === EXPOSURE DEDUP: void excess parlays when any player appears more than 1 time ===
+      const EXPOSURE_CAP = 1;
       const EXPOSURE_CAP_DOUBLE_CONFIRMED = 2;
       const { data: postDedupPending } = await supabase
         .from('bot_daily_parlays')
@@ -321,8 +321,8 @@ Deno.serve(async (req) => {
         }
       }
 
-      // === DAILY PARLAY CAP (25 total) ===
-      const DAILY_PARLAY_CAP = 25;
+      // === DAILY PARLAY CAP (15 total — v6.0 tightened from 25) ===
+      const DAILY_PARLAY_CAP = 15;
       const { data: postCapPending } = await supabase
         .from('bot_daily_parlays')
         .select('id, combined_probability')
