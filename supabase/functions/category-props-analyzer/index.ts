@@ -1333,7 +1333,7 @@ serve(async (req) => {
 
         // v7.0: STARTER PROTECTION - Block starters from points UNDER categories
         // Players averaging 28+ minutes are starters who can explode any night
-        if (config.propType === 'points' && effectiveSide === 'under') {
+        if (config.propType === 'points' && playerEffectiveSide === 'under') {
           const avgMinutes = l10Logs.reduce((sum, g) => sum + (g.minutes_played || 0), 0) / l10Logs.length;
           if (avgMinutes >= 28) {
             if (blockedByMinutes < 5) {
