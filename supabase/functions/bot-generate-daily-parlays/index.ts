@@ -1072,6 +1072,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
+      // ============= BLOWOUT SCRIPT EXECUTION: underdog starters PRA unders + garbage time plays =============
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', gameFilter: 'blowout' },
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', gameFilter: 'blowout' },
       // ============= GRIND UNDER: NBA under plays — proven winners from March 3rd analysis =============
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
