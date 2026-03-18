@@ -957,6 +957,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle', side: 'under' },
+      // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'shuffle', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 42, sortBy: 'composite', contrarian: true },
     ],
   },
   execution: {
