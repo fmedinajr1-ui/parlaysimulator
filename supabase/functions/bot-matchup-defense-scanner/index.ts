@@ -474,7 +474,92 @@ serve(async (req) => {
         console.log(`[L3 Cache Sample] ${name}: PTS=${entry.points} AST=${entry.assists} REB=${entry.rebounds} 3PM=${entry.threes} BLK=${entry.blocks} (${entry._games} games)`);
       }
     }
-    console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players from nba_player_game_logs`);
+    console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players, L10 shooting cache for ${l10ShootingCache.size} players`);
+
+    // === FFG FORMULA: Compute per-player shooting efficiency vs defensive matchup ===
+    function computeFFG(
+      playerName: string,
+      statKey: string,
+      side: string,
+      defenderAbbrev: string
+    ): FFGData | null {
+      const shooting = l10ShootingCache.get(playerName);
+      if (!shooting || shooting.games < 3) return null;
+
+      const l10Fga = Math.round((shooting.fga / shooting.games) * 10) / 10;
+      const l10Fgm = Math.round((shooting.fgm / shooting.games) * 10) / 10;
+      const l103pa = Math.round((shooting.threes_att / shooting.games) * 10) / 10;
+      const l10FgPct = shooting.fga > 0 ? shooting.fgm / shooting.fga : 0;
+      const l103pPct = shooting.threes_att > 0
+        ? (l3Cache.get(playerName)?.threes ?? 0) / (shooting.threes_att / shooting.games)
+        : 0;
+
+      const defProfile = profileMap.get(defenderAbbrev);
+      const oppRebAllowed = defProfile?.opp_rebounds_allowed_pg ?? null;
+      const oppAstAllowed = defProfile?.opp_assists_allowed_pg ?? null;
+
+      // FFG composite score: measures how much volume + efficiency advantage exists
+      // Positive = player has edge, Negative = defense has edge
+      let ffgScore = 0;
+
+      // Volume factor: high FGA = more opportunities to score
+      if (statKey === 'points' || statKey === 'threes') {
+        const volumeBonus = statKey === 'threes'
+          ? Math.min(3, (l103pa - 4) * 0.8) // bonus if 3PA > 4
+          : Math.min(3, (l10Fga - 12) * 0.3); // bonus if FGA > 12
+        ffgScore += volumeBonus;
+      }
+
+      // Efficiency factor: FG% relative to league avg (~46%)
+      const efficiencyDelta = (l10FgPct - 0.46) * 10; // scaled
+      ffgScore += Math.max(-3, Math.min(3, efficiencyDelta));
+
+      // Defensive matchup factor using ranks
+      if (defProfile) {
+        const defRank = statKey === 'points' ? defProfile.opp_points_rank
+          : statKey === 'threes' ? defProfile.opp_threes_rank
+          : statKey === 'rebounds' ? defProfile.opp_rebounds_rank
+          : statKey === 'assists' ? defProfile.opp_assists_rank
+          : defProfile.overall_rank;
+        if (defRank != null) {
+          // Higher rank = worse defense = more allowed
+          // Rank 30 = worst defense → +2 bonus; Rank 1 = best → -2 penalty
+          ffgScore += ((defRank - 15) / 15) * 2;
+        }
+      }
+
+      // Rebounds/assists allowed per game factor
+      if (statKey === 'rebounds' && oppRebAllowed != null) {
+        // League avg ~43.5 reb allowed
+        ffgScore += Math.max(-2, Math.min(2, (oppRebAllowed - 43.5) * 0.4));
+      }
+      if (statKey === 'assists' && oppAstAllowed != null) {
+        // League avg ~25 ast allowed
+        ffgScore += Math.max(-2, Math.min(2, (oppAstAllowed - 25) * 0.5));
+      }
+
+      // Flip for unders: negative FFG = good for under
+      if (side === 'under') ffgScore = -ffgScore;
+
+      ffgScore = Math.round(ffgScore * 10) / 10;
+
+      const ffgLabel = ffgScore >= 4 ? 'elite'
+        : ffgScore >= 2 ? 'strong'
+        : ffgScore >= -1 ? 'neutral'
+        : 'weak';
+
+      return {
+        l10_fga: l10Fga,
+        l10_3pa: l103pa,
+        l10_fgm: l10Fgm,
+        l10_fg_pct: Math.round(l10FgPct * 1000) / 10, // as percentage e.g. 48.5
+        l10_3p_pct: Math.round(l103pPct * 1000) / 10,
+        opp_reb_allowed: oppRebAllowed,
+        opp_ast_allowed: oppAstAllowed,
+        ffg_score: ffgScore,
+        ffg_label: ffgLabel,
+      };
+    }
 
     // Map stat keys to game log field names for L3 cache lookup
     const STAT_TO_LOG_FIELD: Record<string, string> = {
