@@ -110,6 +110,24 @@ Deno.serve(async (req) => {
           // Base line with L10 stats
           let playerLine = `      ✅ ${p.player_name} ${i.side.toUpperCase()} ${p.line} (L10: ${p.l10_avg} avg, ${p.l10_hit_rate}% hit, floor ${p.l10_min})`;
 
+          // FFG data
+          const ffgScore = p.ffg_score ?? p.metadata?.ffg_score ?? null;
+          const ffgLabel = p.ffg_label ?? p.metadata?.ffg_label ?? null;
+          const l10Fga = p.l10_fga ?? p.metadata?.l10_fga ?? null;
+          const l10_3pa = p.l10_3pa ?? p.metadata?.l10_3pa ?? null;
+
+          if (ffgScore !== null && ffgLabel) {
+            const ffgEmoji = ffgLabel === 'elite' ? '🔥' : ffgLabel === 'strong' ? '💪' : ffgLabel === 'weak' ? '⬇️' : '➖';
+            let ffgPart = `FFG: ${ffgScore > 0 ? '+' : ''}${ffgScore} ${ffgEmoji} ${capitalize(ffgLabel)}`;
+            if (l10Fga !== null || l10_3pa !== null) {
+              const volParts: string[] = [];
+              if (l10Fga !== null) volParts.push(`${l10Fga} FGA`);
+              if (l10_3pa !== null) volParts.push(`${l10_3pa} 3PA`);
+              ffgPart += ` (${volParts.join(', ')})`;
+            }
+            playerLine += ` | ${ffgPart}`;
+          }
+
           // Risk tag rendering
           const riskTags: string[] = p.risk_tags || [];
           const l3Avg = p.l3_avg;
