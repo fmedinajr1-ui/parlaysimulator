@@ -259,8 +259,8 @@ Deno.serve(async (req) => {
       }
 
       // === EXPOSURE CAP: SWAP-NOT-VOID — replace exposed legs with bench picks ===
-      const EXPOSURE_CAP = 1;
-      const EXPOSURE_CAP_DOUBLE_CONFIRMED = 2;
+      const EXPOSURE_CAP = 3;
+      const EXPOSURE_CAP_DOUBLE_CONFIRMED = 4;
       const { data: postDedupPending } = await supabase
         .from('bot_daily_parlays')
         .select('id, legs, combined_probability, strategy_name')
