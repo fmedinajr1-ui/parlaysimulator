@@ -6913,6 +6913,8 @@ async function generateTierParlays(
     const isL3MatchupComboProfile = profile.strategy === 'l3_matchup_combo';
     // L3 SWEET + MISPRICED HYBRID: 2 sweet spot legs + 3 L3-confirmed mispriced legs
     const isL3SweetMispricedHybridProfile = profile.strategy === 'l3_sweet_mispriced_hybrid';
+    // BLOWOUT SCRIPT: same-game underdog unders + garbage time plays
+    const isBlowoutScriptProfile = profile.strategy === 'blowout_script';
 
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
