@@ -72,6 +72,20 @@ interface TeamProfile {
   off_rebounds_rank: number | null;
   off_assists_rank: number | null;
   off_pace_rank: number | null;
+  opp_rebounds_allowed_pg: number | null;
+  opp_assists_allowed_pg: number | null;
+}
+
+interface FFGData {
+  l10_fga: number;      // Avg field goal attempts L10
+  l10_3pa: number;      // Avg 3-point attempts L10
+  l10_fgm: number;      // Avg field goals made L10
+  l10_fg_pct: number;   // FG% L10 (0-1)
+  l10_3p_pct: number;   // 3P% L10 (0-1)
+  opp_reb_allowed: number | null;  // Opponent rebounds allowed per game
+  opp_ast_allowed: number | null;  // Opponent assists allowed per game
+  ffg_score: number;    // Composite FFG score (-10 to +10)
+  ffg_label: 'elite' | 'strong' | 'neutral' | 'weak';
 }
 
 interface PlayerTarget {
@@ -81,11 +95,13 @@ interface PlayerTarget {
   l10_hit_rate: number;
   l10_min: number;
   margin: number; // l10_avg - line
-  // NEW: risk context fields
+  // Risk context fields
   l3_avg: number | null;
   risk_tags: string[];
   l3_trend: 'hot' | 'cold' | 'steady' | null;
   spread: number | null;
+  // FFG formula data
+  ffg: FFGData | null;
 }
 
 interface MatchupRecommendation {
@@ -291,7 +307,7 @@ serve(async (req) => {
     // Load BOTH offense + defense rankings
     const { data: rankData } = await supabase
       .from('team_defense_rankings')
-      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank, off_points_rank, off_threes_rank, off_rebounds_rank, off_assists_rank, off_pace_rank')
+      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank, off_points_rank, off_threes_rank, off_rebounds_rank, off_assists_rank, off_pace_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg')
       .eq('is_current', true);
 
     const profileMap = new Map<string, TeamProfile>();
@@ -394,6 +410,8 @@ serve(async (req) => {
 
     // Fetch last 3 game logs per player (ordered by date desc, limit 3 per player via overfetch)
     const l3Cache = new Map<string, Record<string, number>>();
+    // L10 shooting cache for FFG formula (FGA, 3PA, FGM)
+    const l10ShootingCache = new Map<string, { fga: number; fgm: number; threes_att: number; games: number }>();
     if (playersOnTodayTeams.length > 0) {
       // Batch in chunks of 100 players
       const CHUNK = 100;
@@ -401,29 +419,42 @@ serve(async (req) => {
         const chunk = playersOnTodayTeams.slice(i, i + CHUNK);
         const { data: gameLogs } = await supabase
           .from('nba_player_game_logs')
-          .select('player_name, points, assists, rebounds, threes_made, blocks, min, game_date')
+          .select('player_name, points, assists, rebounds, threes_made, blocks, min, game_date, field_goals_attempted, field_goals_made, threes_attempted')
           .in('player_name', chunk)
           .order('game_date', { ascending: false })
-          .limit(chunk.length * 3);
+          .limit(chunk.length * 10);
 
         if (gameLogs) {
           const countMap = new Map<string, number>();
           for (const log of gameLogs) {
             const name = log.player_name;
             const count = countMap.get(name) || 0;
-            if (count >= 3) continue; // only take 3 most recent
+            if (count >= 10) continue; // take up to 10 most recent
             countMap.set(name, count + 1);
 
-            if (!l3Cache.has(name)) {
-              l3Cache.set(name, { points: 0, assists: 0, rebounds: 0, threes: 0, blocks: 0, _games: 0 });
+            // L3 cache (first 3 games only)
+            if (count < 3) {
+              if (!l3Cache.has(name)) {
+                l3Cache.set(name, { points: 0, assists: 0, rebounds: 0, threes: 0, blocks: 0, _games: 0 });
+              }
+              const entry = l3Cache.get(name)!;
+              entry.points += (log.points ?? 0);
+              entry.assists += (log.assists ?? 0);
+              entry.rebounds += (log.rebounds ?? 0);
+              entry.threes += (log.threes_made ?? 0);
+              entry.blocks += (log.blocks ?? 0);
+              entry._games += 1;
             }
-            const entry = l3Cache.get(name)!;
-            entry.points += (log.points ?? 0);
-            entry.assists += (log.assists ?? 0);
-            entry.rebounds += (log.rebounds ?? 0);
-            entry.threes += (log.threes_made ?? 0);
-            entry.blocks += (log.blocks ?? 0);
-            entry._games += 1;
+
+            // L10 shooting cache (all 10 games)
+            if (!l10ShootingCache.has(name)) {
+              l10ShootingCache.set(name, { fga: 0, fgm: 0, threes_att: 0, games: 0 });
+            }
+            const shooting = l10ShootingCache.get(name)!;
+            shooting.fga += (log.field_goals_attempted ?? 0);
+            shooting.fgm += (log.field_goals_made ?? 0);
+            shooting.threes_att += (log.threes_attempted ?? 0);
+            shooting.games += 1;
           }
         }
       }
@@ -443,14 +474,99 @@ serve(async (req) => {
         console.log(`[L3 Cache Sample] ${name}: PTS=${entry.points} AST=${entry.assists} REB=${entry.rebounds} 3PM=${entry.threes} BLK=${entry.blocks} (${entry._games} games)`);
       }
     }
-    console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players from nba_player_game_logs`);
+    console.log(`[MatchupScanner] L3 cache built for ${l3Cache.size} players, L10 shooting cache for ${l10ShootingCache.size} players`);
+
+    // === FFG FORMULA: Compute per-player shooting efficiency vs defensive matchup ===
+    function computeFFG(
+      playerName: string,
+      statKey: string,
+      side: string,
+      defenderAbbrev: string
+    ): FFGData | null {
+      const shooting = l10ShootingCache.get(playerName);
+      if (!shooting || shooting.games < 3) return null;
+
+      const l10Fga = Math.round((shooting.fga / shooting.games) * 10) / 10;
+      const l10Fgm = Math.round((shooting.fgm / shooting.games) * 10) / 10;
+      const l103pa = Math.round((shooting.threes_att / shooting.games) * 10) / 10;
+      const l10FgPct = shooting.fga > 0 ? shooting.fgm / shooting.fga : 0;
+      const l103pPct = shooting.threes_att > 0
+        ? (l3Cache.get(playerName)?.threes ?? 0) / (shooting.threes_att / shooting.games)
+        : 0;
+
+      const defProfile = profileMap.get(defenderAbbrev);
+      const oppRebAllowed = defProfile?.opp_rebounds_allowed_pg ?? null;
+      const oppAstAllowed = defProfile?.opp_assists_allowed_pg ?? null;
+
+      // FFG composite score: measures how much volume + efficiency advantage exists
+      // Positive = player has edge, Negative = defense has edge
+      let ffgScore = 0;
+
+      // Volume factor: high FGA = more opportunities to score
+      if (statKey === 'points' || statKey === 'threes') {
+        const volumeBonus = statKey === 'threes'
+          ? Math.min(3, (l103pa - 4) * 0.8) // bonus if 3PA > 4
+          : Math.min(3, (l10Fga - 12) * 0.3); // bonus if FGA > 12
+        ffgScore += volumeBonus;
+      }
+
+      // Efficiency factor: FG% relative to league avg (~46%)
+      const efficiencyDelta = (l10FgPct - 0.46) * 10; // scaled
+      ffgScore += Math.max(-3, Math.min(3, efficiencyDelta));
+
+      // Defensive matchup factor using ranks
+      if (defProfile) {
+        const defRank = statKey === 'points' ? defProfile.opp_points_rank
+          : statKey === 'threes' ? defProfile.opp_threes_rank
+          : statKey === 'rebounds' ? defProfile.opp_rebounds_rank
+          : statKey === 'assists' ? defProfile.opp_assists_rank
+          : defProfile.overall_rank;
+        if (defRank != null) {
+          // Higher rank = worse defense = more allowed
+          // Rank 30 = worst defense → +2 bonus; Rank 1 = best → -2 penalty
+          ffgScore += ((defRank - 15) / 15) * 2;
+        }
+      }
+
+      // Rebounds/assists allowed per game factor
+      if (statKey === 'rebounds' && oppRebAllowed != null) {
+        // League avg ~43.5 reb allowed
+        ffgScore += Math.max(-2, Math.min(2, (oppRebAllowed - 43.5) * 0.4));
+      }
+      if (statKey === 'assists' && oppAstAllowed != null) {
+        // League avg ~25 ast allowed
+        ffgScore += Math.max(-2, Math.min(2, (oppAstAllowed - 25) * 0.5));
+      }
+
+      // Flip for unders: negative FFG = good for under
+      if (side === 'under') ffgScore = -ffgScore;
+
+      ffgScore = Math.round(ffgScore * 10) / 10;
+
+      const ffgLabel = ffgScore >= 4 ? 'elite'
+        : ffgScore >= 2 ? 'strong'
+        : ffgScore >= -1 ? 'neutral'
+        : 'weak';
+
+      return {
+        l10_fga: l10Fga,
+        l10_3pa: l103pa,
+        l10_fgm: l10Fgm,
+        l10_fg_pct: Math.round(l10FgPct * 1000) / 10, // as percentage e.g. 48.5
+        l10_3p_pct: Math.round(l103pPct * 1000) / 10,
+        opp_reb_allowed: oppRebAllowed,
+        opp_ast_allowed: oppAstAllowed,
+        ffg_score: ffgScore,
+        ffg_label: ffgLabel,
+      };
+    }
 
     // Map stat keys to game log field names for L3 cache lookup
     const STAT_TO_LOG_FIELD: Record<string, string> = {
       points: 'points', threes: 'threes', rebounds: 'rebounds', assists: 'assists', blocks: 'blocks',
     };
     // Helper: find player targets for a team + stat category
-    function findPlayerTargets(teamAbbrev: string, statKey: string, side: string): PlayerTarget[] {
+    function findPlayerTargets(teamAbbrev: string, statKey: string, side: string, defenderAbbrev?: string): PlayerTarget[] {
       const propTypes = STAT_TO_PROP_TYPES[statKey] || [];
       const targets: PlayerTarget[] = [];
       const logField = STAT_TO_LOG_FIELD[statKey] || statKey;
@@ -498,6 +614,7 @@ serve(async (req) => {
 
           // For OVER recommendations: l10_avg must comfortably clear the line
           if (side === 'over' && recSide === 'over' && l10Avg > line + 0.3 && l10HitRate >= 0.6) {
+            const ffg = defenderAbbrev ? computeFFG(playerName, statKey, side, defenderAbbrev) : null;
             targets.push({
               player_name: playerName,
               line,
@@ -509,10 +626,12 @@ serve(async (req) => {
               risk_tags: riskTags,
               l3_trend: l3Trend,
               spread: teamSpread,
+              ffg,
             });
           }
           // For UNDER recommendations
           if (side === 'under' && recSide === 'under' && l10Avg < line - 0.3 && l10HitRate >= 0.6) {
+            const ffg = defenderAbbrev ? computeFFG(playerName, statKey, side, defenderAbbrev) : null;
             targets.push({
               player_name: playerName,
               line,
@@ -524,6 +643,7 @@ serve(async (req) => {
               risk_tags: riskTags,
               l3_trend: l3Trend,
               spread: teamSpread,
+              ffg,
             });
           }
         }
@@ -577,7 +697,7 @@ serve(async (req) => {
 
         if (label !== 'neutral') {
           const side = label === 'avoid' ? 'under' : 'over';
-          const playerTargets = findPlayerTargets(attackerAbbrev, stat.key, side);
+          const playerTargets = findPlayerTargets(attackerAbbrev, stat.key, side, defenderAbbrev);
 
           const rec: MatchupRecommendation = {
             attacking_team: attackerAbbrev,
@@ -595,15 +715,14 @@ serve(async (req) => {
           allRecommendations.push(rec);
 
           if (playerTargets.length > 0) {
-            const tagSummary = playerTargets.flatMap(t => t.risk_tags).filter(Boolean);
-            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} player targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%${t.risk_tags.length > 0 ? ' ⚠️' + t.risk_tags.join(',') : ''})`).join(', ')}`);
+            console.log(`[MatchupScanner] ✅ ${attackerAbbrev} ${stat.key} ${side} — ${playerTargets.length} targets: ${playerTargets.map(t => `${t.player_name}(${t.l10_avg}avg/${t.l10_hit_rate}%${t.ffg ? ` FFG:${t.ffg.ffg_score}[${t.ffg.ffg_label}]` : ''}${t.risk_tags.length > 0 ? ' ⚠️' + t.risk_tags.join(',') : ''})`).join(', ')}`);
           } else if (label === 'elite' || label === 'prime') {
             console.log(`[MatchupScanner] ⚠️ ${attackerAbbrev} ${stat.key} ${side} — NO player targets found (environment only)`);
           }
 
           // Bench player UNDER scan
           if (label !== 'avoid') {
-            const underTargets = findPlayerTargets(attackerAbbrev, stat.key, 'under');
+            const underTargets = findPlayerTargets(attackerAbbrev, stat.key, 'under', defenderAbbrev);
             if (underTargets.length > 0) {
               const benchUnderRec: MatchupRecommendation = {
                 attacking_team: attackerAbbrev,
@@ -675,10 +794,14 @@ serve(async (req) => {
     const riskTaggedCount = allTargets.filter(t => t.risk_tags && t.risk_tags.length > 0).length;
     const blowoutTaggedCount = allTargets.filter(t => t.risk_tags?.some(tag => tag.startsWith('BLOWOUT'))).length;
     const l3ConfirmedCount = allTargets.filter(t => t.risk_tags?.includes('L3_CONFIRMED')).length;
+    const ffgEliteCount = allTargets.filter(t => t.ffg?.ffg_label === 'elite').length;
+    const ffgStrongCount = allTargets.filter(t => t.ffg?.ffg_label === 'strong').length;
+    const ffgWeakCount = allTargets.filter(t => t.ffg?.ffg_label === 'weak').length;
 
     console.log(`[MatchupScanner] Results: ${allMatchups.length} games | ${eliteCount} elite, ${primeCount} prime, ${favorableCount} favorable, ${avoidCount} avoid`);
     console.log(`[MatchupScanner] Player validation: ${playerBackedCount} player-backed, ${envOnlyCount} environment-only`);
     console.log(`[MatchupScanner] Risk tags: ${riskTaggedCount} tagged, ${blowoutTaggedCount} blowout risk, ${l3ConfirmedCount} L3 confirmed`);
+    console.log(`[MatchupScanner] FFG formula: ${ffgEliteCount} elite, ${ffgStrongCount} strong, ${ffgWeakCount} weak`);
 
     // Build summary
     const summaryLines = allMatchups.map(m => {
@@ -696,7 +819,7 @@ serve(async (req) => {
       relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
-        engine_version: 'bidirectional_v4_dedup_l3cache',
+        engine_version: 'bidirectional_v5_ffg',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
         elite_opportunities: eliteCount,
@@ -708,12 +831,16 @@ serve(async (req) => {
         risk_tagged_count: riskTaggedCount,
         blowout_tagged_count: blowoutTaggedCount,
         l3_confirmed_count: l3ConfirmedCount,
+        ffg_elite_count: ffgEliteCount,
+        ffg_strong_count: ffgStrongCount,
+        ffg_weak_count: ffgWeakCount,
         scoring_formula: 'oppDefRank*0.6 + (31-teamOffRank)*0.4',
+        ffg_formula: 'volume(FGA/3PA) + efficiency(FG%) + defMatchup(rank+allowed_pg)',
         thresholds: { elite: '>=22', prime: '>=18', favorable: '>=14', avoid: '<=8' },
         matchups: allMatchups,
         recommendations: allRecommendations,
       },
-      sources: ['team_defense_rankings(offense+defense)', 'game_bets', 'category_sweet_spots', 'whale_picks(spreads)'],
+      sources: ['team_defense_rankings(offense+defense+allowed_pg)', 'game_bets', 'category_sweet_spots', 'whale_picks(spreads)', 'nba_player_game_logs(FGA/3PA/FGM)'],
       updated_at: new Date().toISOString(),
     };
 
@@ -734,7 +861,7 @@ serve(async (req) => {
 
     const result = {
       scan_date: today,
-      engine_version: 'bidirectional_v4_dedup_l3cache',
+      engine_version: 'bidirectional_v5_ffg',
       games_scanned: games.length,
       games_with_matchups: allMatchups.length,
       elite: eliteCount,
