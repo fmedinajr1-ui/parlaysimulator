@@ -307,7 +307,7 @@ serve(async (req) => {
     // Load BOTH offense + defense rankings
     const { data: rankData } = await supabase
       .from('team_defense_rankings')
-      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank, off_points_rank, off_threes_rank, off_rebounds_rank, off_assists_rank, off_pace_rank')
+      .select('team_abbreviation, overall_rank, opp_points_rank, opp_threes_rank, opp_rebounds_rank, opp_assists_rank, off_points_rank, off_threes_rank, off_rebounds_rank, off_assists_rank, off_pace_rank, opp_rebounds_allowed_pg, opp_assists_allowed_pg')
       .eq('is_current', true);
 
     const profileMap = new Map<string, TeamProfile>();
