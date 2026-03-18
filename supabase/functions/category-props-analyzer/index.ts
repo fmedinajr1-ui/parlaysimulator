@@ -1213,6 +1213,33 @@ serve(async (req) => {
     const sweetSpots: any[] = [];
     let archetypeBlockedCount = 0;
 
+    // v13.0: DETERMINISTIC SIDE SELECTION — per-player per-prop historical outcome analysis
+    // Query all settled outcomes to build per-player hit rate maps
+    const { data: historicalOutcomes } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, prop_type, recommended_side, outcome')
+      .not('outcome', 'is', null)
+      .not('settled_at', 'is', null)
+      .in('outcome', ['hit', 'miss']);
+
+    // Build per-player per-prop side hit rate map
+    const playerSideHistory = new Map<string, { overHits: number; overTotal: number; underHits: number; underTotal: number }>();
+    for (const row of (historicalOutcomes || [])) {
+      const key = `${(row.player_name || '').toLowerCase().trim()}|${(row.prop_type || '').toLowerCase().trim()}`;
+      let entry = playerSideHistory.get(key);
+      if (!entry) { entry = { overHits: 0, overTotal: 0, underHits: 0, underTotal: 0 }; playerSideHistory.set(key, entry); }
+      const side = (row.recommended_side || 'over').toLowerCase();
+      if (side === 'over') {
+        entry.overTotal++;
+        if (row.outcome === 'hit') entry.overHits++;
+      } else {
+        entry.underTotal++;
+        if (row.outcome === 'hit') entry.underHits++;
+      }
+    }
+
+    const deterministicFlips: string[] = [];
+
     for (const catKey of categoriesToAnalyze) {
       const config = CATEGORIES[catKey];
       if (!config) continue;
