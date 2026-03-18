@@ -8,6 +8,8 @@ const PROP_TO_MARKET: Record<PropType, string> = {
   assists: 'player_assists',
   threes: 'player_threes',
   blocks: 'player_blocks',
+  rebounds: 'player_rebounds',
+  steals: 'player_steals',
 };
 
 const BOOK_SHORT_LOG: Record<string, string> = {
