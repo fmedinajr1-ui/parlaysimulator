@@ -454,6 +454,7 @@ serve(async (req) => {
             shooting.fga += (log.field_goals_attempted ?? 0);
             shooting.fgm += (log.field_goals_made ?? 0);
             shooting.threes_att += (log.threes_attempted ?? 0);
+            shooting.threes_made += (log.threes_made ?? 0);
             shooting.games += 1;
           }
         }
