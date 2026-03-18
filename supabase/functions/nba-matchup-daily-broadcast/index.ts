@@ -218,8 +218,17 @@ Deno.serve(async (req) => {
     const envOnlyTotal = recommendations.length - playerBackedTotal;
     const riskTaggedTotal = recommendations.flatMap((r: any) => r.player_targets || []).filter((t: any) => t.risk_tags?.length > 0).length;
 
+    // FFG summary counts
+    const allPlayerTargets = recommendations.flatMap((r: any) => r.player_targets || []);
+    const ffgEliteCount = allPlayerTargets.filter((t: any) => (t.ffg_label ?? t.metadata?.ffg_label) === 'elite').length;
+    const ffgStrongCount = allPlayerTargets.filter((t: any) => (t.ffg_label ?? t.metadata?.ffg_label) === 'strong').length;
+    const ffgSummary = (ffgEliteCount + ffgStrongCount) > 0
+      ? `🎯 FFG: ${ffgEliteCount} elite, ${ffgStrongCount} strong volume targets\n`
+      : '';
+
     const message = `🏀📊 NBA BIDIRECTIONAL MATCHUP SCAN — ${today}\n\n` +
       `${recommendations.length} matchups | ${playerBackedTotal} player-backed | ${riskTaggedTotal} risk-tagged\n` +
+      ffgSummary +
       `Score = (OppDefRank × 0.6) + ((31-TeamOffRank) × 0.4)\n\n` +
       formatSection("🔥", "ELITE (Score ≥22)", elite) +
       formatSection("⭐", "PRIME (Score 18-22)", prime) +
@@ -228,7 +237,8 @@ Deno.serve(async (req) => {
       formatBenchUndersSection(benchUnders) +
       `📋 Summary: ${elite.length} elite, ${prime.length} prime, ${favorable.length} favorable, ${avoid.length} avoid, ${benchUnders.length} bench unders\n` +
       `🎯 Player-backed signals validated against L10 data\n` +
-      `⚠️ Risk tags: check L3 trend + spread before placing`;
+      `⚠️ Risk tags: check L3 trend + spread before placing\n` +
+      `📊 FFG = Field Goal volume + efficiency vs defense gap`;
 
     await supabase.functions.invoke("bot-send-telegram", {
       body: { message, bypass_quiet_hours: true },
