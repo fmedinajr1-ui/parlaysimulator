@@ -418,7 +418,7 @@ Deno.serve(async (req) => {
           const chunk = excessIds.slice(i, i + 100);
           const { count } = await supabase
             .from('bot_daily_parlays')
-            .update({ outcome: 'void', lesson_learned: 'daily_cap_25' })
+            .update({ outcome: 'void', lesson_learned: 'daily_cap_15' })
             .in('id', chunk)
             .eq('outcome', 'pending')
             .select('*', { count: 'exact', head: true });
