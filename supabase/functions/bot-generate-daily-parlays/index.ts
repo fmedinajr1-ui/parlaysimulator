@@ -4606,7 +4606,32 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     });
   });
 
-  const homeCourtMap = new Map<string, HomeCourtData>();
+  // Supplement blowout game info from envMap spread data (for games not caught by context analyzer)
+  for (const [key, env] of envMap.entries()) {
+    const [homeAbbrev, awayAbbrev] = key.split('_');
+    if (!homeAbbrev || !awayAbbrev) continue;
+    if (Math.abs(env.vegas_spread) >= 8) {
+      const alreadyTracked = blowoutGameInfos.some(
+        bg => (bg.home_team === homeAbbrev.toLowerCase() || bg.away_team === homeAbbrev.toLowerCase())
+      );
+      if (!alreadyTracked) {
+        // vegas_spread convention: negative = home favored
+        const underdog = env.vegas_spread < 0 ? awayAbbrev.toLowerCase() : homeAbbrev.toLowerCase();
+        const favorite = env.vegas_spread < 0 ? homeAbbrev.toLowerCase() : awayAbbrev.toLowerCase();
+        blowoutGameInfos.push({
+          home_team: homeAbbrev.toLowerCase(),
+          away_team: awayAbbrev.toLowerCase(),
+          spread: env.vegas_spread,
+          underdog,
+          favorite,
+        });
+      }
+    }
+  }
+  if (blowoutGameInfos.length > 0) {
+    console.log(`[Bot] 💥 Blowout games detected: ${blowoutGameInfos.map(bg => `${bg.underdog} (+${Math.abs(bg.spread).toFixed(1)}) vs ${bg.favorite}`).join(', ')}`);
+  }
+
   (homeCourtResult.data || []).forEach((h: any) => {
     homeCourtMap.set(h.team_name, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
     const abbrev = nameToAbbrev.get(h.team_name);
