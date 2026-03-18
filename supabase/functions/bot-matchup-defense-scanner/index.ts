@@ -861,7 +861,7 @@ serve(async (req) => {
 
     const result = {
       scan_date: today,
-      engine_version: 'bidirectional_v4_dedup_l3cache',
+      engine_version: 'bidirectional_v5_ffg',
       games_scanned: games.length,
       games_with_matchups: allMatchups.length,
       elite: eliteCount,
