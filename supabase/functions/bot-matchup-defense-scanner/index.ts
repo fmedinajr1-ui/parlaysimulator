@@ -411,7 +411,7 @@ serve(async (req) => {
     // Fetch last 3 game logs per player (ordered by date desc, limit 3 per player via overfetch)
     const l3Cache = new Map<string, Record<string, number>>();
     // L10 shooting cache for FFG formula (FGA, 3PA, FGM)
-    const l10ShootingCache = new Map<string, { fga: number; fgm: number; threes_att: number; games: number }>();
+    const l10ShootingCache = new Map<string, { fga: number; fgm: number; threes_att: number; threes_made: number; games: number }>();
     if (playersOnTodayTeams.length > 0) {
       // Batch in chunks of 100 players
       const CHUNK = 100;
