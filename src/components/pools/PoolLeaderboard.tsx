@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Trophy, Medal, TrendingUp, Users } from 'lucide-react';

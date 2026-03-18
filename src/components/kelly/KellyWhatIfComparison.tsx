@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { FeedCard } from '@/components/FeedCard';

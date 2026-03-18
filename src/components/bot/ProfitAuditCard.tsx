@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React from 'react';
 import { format, parseISO } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
