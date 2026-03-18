@@ -258,7 +258,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      // === EXPOSURE DEDUP: void excess parlays when any player appears more than 1 time ===
+      // === EXPOSURE CAP: SWAP-NOT-VOID — replace exposed legs with bench picks ===
       const EXPOSURE_CAP = 1;
       const EXPOSURE_CAP_DOUBLE_CONFIRMED = 2;
       const { data: postDedupPending } = await supabase
@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
         .order('combined_probability', { ascending: false }); // Keep highest-probability ones
 
       if (postDedupPending && postDedupPending.length > 1) {
-        const playerPropUsage = new Map<string, string[]>(); // key → [parlay IDs in order of probability]
+        const playerPropUsage = new Map<string, string[]>(); // playerKey → [parlay IDs in probability order]
         
         for (const p of postDedupPending) {
           const legs = Array.isArray(p.legs) ? p.legs : [];
@@ -284,9 +284,32 @@ Deno.serve(async (req) => {
           }
         }
 
-        const exposureVoidIds = new Set<string>();
+        // Collect all players already used in pending parlays (for replacement exclusion)
+        const allUsedPlayers = new Set<string>();
+        for (const p of postDedupPending) {
+          const legs = Array.isArray(p.legs) ? p.legs : [];
+          for (const leg of legs) {
+            if (leg.player_name) allUsedPlayers.add((leg.player_name || '').toLowerCase().trim());
+          }
+        }
+
+        // Fetch available bench picks from today's sweet spots NOT already in pending parlays
+        const { data: benchPicks } = await supabase
+          .from('category_sweet_spots')
+          .select('player_name, prop_type, recommended_side, actual_line, confidence_score, projected_value, l10_hit_rate, l10_avg, category')
+          .eq('analysis_date', today)
+          .eq('is_active', true)
+          .order('confidence_score', { ascending: false });
+
+        const availableBench = (benchPicks || []).filter((bp: any) => {
+          const bpPlayer = (bp.player_name || '').toLowerCase().trim();
+          return !allUsedPlayers.has(bpPlayer);
+        });
+
+        let swapsPerformed = 0;
+        let voidedBecauseNoSwap = 0;
+
         for (const [playerKey, parlayIds] of playerPropUsage.entries()) {
-          // Check if any parlay with this player is double-confirmed
           const isDoubleConfirmed = postDedupPending.some(p => 
             parlayIds.includes(p.id) && (
               (p as any).strategy_name?.includes('double_confirmed') || 
@@ -295,30 +318,88 @@ Deno.serve(async (req) => {
             )
           );
           const cap = isDoubleConfirmed ? EXPOSURE_CAP_DOUBLE_CONFIRMED : EXPOSURE_CAP;
-          if (parlayIds.length > cap) {
-            const toVoid = parlayIds.slice(cap);
-            for (const id of toVoid) exposureVoidIds.add(id);
-            console.log(`[QualityRegen] 🔒 Exposure cap: player ${playerKey} in ${parlayIds.length} parlays (cap=${cap}), voiding ${toVoid.length} lowest-prob`);
+          if (parlayIds.length <= cap) continue;
+
+          // Parlays to fix (lowest probability ones)
+          const toFixIds = parlayIds.slice(cap);
+          
+          for (const parlayId of toFixIds) {
+            const parlay = postDedupPending.find(p => p.id === parlayId);
+            if (!parlay) continue;
+            
+            const legs = Array.isArray(parlay.legs) ? [...parlay.legs] : [];
+            const exposedLegIdx = legs.findIndex((l: any) => 
+              (l.player_name || '').toLowerCase().trim() === playerKey
+            );
+            
+            if (exposedLegIdx === -1) continue;
+
+            // Try to find a replacement from bench
+            const replacement = availableBench.find((bp: any) => {
+              const bpPlayer = (bp.player_name || '').toLowerCase().trim();
+              // Not already in THIS parlay
+              const alreadyInParlay = legs.some((l: any) => 
+                (l.player_name || '').toLowerCase().trim() === bpPlayer
+              );
+              return !alreadyInParlay && bp.confidence_score > 0.4;
+            });
+
+            if (replacement) {
+              // Swap the leg
+              const oldLeg = legs[exposedLegIdx];
+              legs[exposedLegIdx] = {
+                ...oldLeg,
+                player_name: replacement.player_name,
+                prop_type: replacement.prop_type,
+                side: replacement.recommended_side || 'over',
+                line: replacement.actual_line,
+                confidence_score: replacement.confidence_score,
+                projected_value: replacement.projected_value,
+                l10_hit_rate: replacement.l10_hit_rate,
+                l10_avg: replacement.l10_avg,
+                category: replacement.category,
+                swapped_from: oldLeg.player_name,
+                swap_reason: 'exposure_cap',
+              };
+
+              // Recalculate combined probability (simple average of confidence scores)
+              const avgConf = legs.reduce((sum: number, l: any) => sum + (l.confidence_score || 0.5), 0) / legs.length;
+
+              await supabase
+                .from('bot_daily_parlays')
+                .update({ 
+                  legs, 
+                  combined_probability: Math.round(avgConf * 1000) / 1000,
+                  lesson_learned: `leg_swapped:${oldLeg.player_name}→${replacement.player_name}`,
+                  legs_swapped: (parlay as any).legs_swapped ? (parlay as any).legs_swapped + 1 : 1,
+                })
+                .eq('id', parlayId);
+
+              // Remove used replacement from available bench
+              const repIdx = availableBench.findIndex((bp: any) => 
+                bp.player_name === replacement.player_name && bp.prop_type === replacement.prop_type
+              );
+              if (repIdx >= 0) availableBench.splice(repIdx, 1);
+              
+              // Track that this player is now used
+              allUsedPlayers.add((replacement.player_name || '').toLowerCase().trim());
+              
+              swapsPerformed++;
+              console.log(`[QualityRegen] 🔄 SWAPPED: ${playerKey} → ${replacement.player_name} in parlay ${parlayId} (confidence: ${replacement.confidence_score})`);
+            } else {
+              // No replacement available — void as last resort
+              await supabase
+                .from('bot_daily_parlays')
+                .update({ outcome: 'void', lesson_learned: 'exposure_cap_no_swap_available' })
+                .eq('id', parlayId)
+                .eq('outcome', 'pending');
+              voidedBecauseNoSwap++;
+              console.log(`[QualityRegen] ❌ No swap available for ${playerKey} in parlay ${parlayId} — voided`);
+            }
           }
         }
 
-        if (exposureVoidIds.size > 0) {
-          const voidArr = Array.from(exposureVoidIds);
-          let totalExposureVoided = 0;
-          for (let i = 0; i < voidArr.length; i += 100) {
-            const chunk = voidArr.slice(i, i + 100);
-            const { count } = await supabase
-              .from('bot_daily_parlays')
-              .update({ outcome: 'void', lesson_learned: 'exposure_cap_quality_regen' })
-              .in('id', chunk)
-              .eq('outcome', 'pending')
-              .select('*', { count: 'exact', head: true });
-            totalExposureVoided += (count || 0);
-          }
-          console.log(`[QualityRegen] 🔒 Exposure dedup: voided ${totalExposureVoided} excess parlays (cap=${EXPOSURE_CAP} per player, ${EXPOSURE_CAP_DOUBLE_CONFIRMED} for double-confirmed)`);
-        } else {
-          console.log(`[QualityRegen] ✅ No exposure cap violations found`);
-        }
+        console.log(`[QualityRegen] 🔄 Exposure resolution: ${swapsPerformed} swaps, ${voidedBecauseNoSwap} voided (no candidates), bench remaining: ${availableBench.length}`);
       }
 
       // === DAILY PARLAY CAP (15 total — v6.0 tightened from 25) ===
