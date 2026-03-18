@@ -411,7 +411,7 @@ serve(async (req) => {
     // Fetch last 3 game logs per player (ordered by date desc, limit 3 per player via overfetch)
     const l3Cache = new Map<string, Record<string, number>>();
     // L10 shooting cache for FFG formula (FGA, 3PA, FGM)
-    const l10ShootingCache = new Map<string, { fga: number; fgm: number; threes_att: number; games: number }>();
+    const l10ShootingCache = new Map<string, { fga: number; fgm: number; threes_att: number; threes_made: number; games: number }>();
     if (playersOnTodayTeams.length > 0) {
       // Batch in chunks of 100 players
       const CHUNK = 100;
@@ -448,12 +448,13 @@ serve(async (req) => {
 
             // L10 shooting cache (all 10 games)
             if (!l10ShootingCache.has(name)) {
-              l10ShootingCache.set(name, { fga: 0, fgm: 0, threes_att: 0, games: 0 });
+              l10ShootingCache.set(name, { fga: 0, fgm: 0, threes_att: 0, threes_made: 0, games: 0 });
             }
             const shooting = l10ShootingCache.get(name)!;
             shooting.fga += (log.field_goals_attempted ?? 0);
             shooting.fgm += (log.field_goals_made ?? 0);
             shooting.threes_att += (log.threes_attempted ?? 0);
+            shooting.threes_made += (log.threes_made ?? 0);
             shooting.games += 1;
           }
         }
@@ -491,7 +492,7 @@ serve(async (req) => {
       const l103pa = Math.round((shooting.threes_att / shooting.games) * 10) / 10;
       const l10FgPct = shooting.fga > 0 ? shooting.fgm / shooting.fga : 0;
       const l103pPct = shooting.threes_att > 0
-        ? (l3Cache.get(playerName)?.threes ?? 0) / (shooting.threes_att / shooting.games)
+        ? shooting.threes_made / shooting.threes_att
         : 0;
 
       const defProfile = profileMap.get(defenderAbbrev);
@@ -544,8 +545,8 @@ serve(async (req) => {
       ffgScore = Math.round(ffgScore * 10) / 10;
 
       const ffgLabel = ffgScore >= 4 ? 'elite'
-        : ffgScore >= 2 ? 'strong'
-        : ffgScore >= -1 ? 'neutral'
+        : ffgScore >= 1.5 ? 'strong'
+        : ffgScore >= -1.5 ? 'neutral'
         : 'weak';
 
       return {
