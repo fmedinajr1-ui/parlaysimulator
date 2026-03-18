@@ -785,6 +785,27 @@ function calculateTrueProjection(
     console.log(`[Projection] v5.0 Shrinkage: factor=${shrinkageFactor.toFixed(2)}, seasonAvg=${seasonAvg.toFixed(1)}, before=${(l10Median + matchupAdj + paceAdj + profileAdj).toFixed(1)}, after=${rawProjection.toFixed(1)}`);
   }
   
+  // 7. v7.0: FG EFFICIENCY GATE - Regress scoring props when shooting is unsustainable
+  // If L10 FG% deviates >5% from season average, apply regression factor
+  if ((propType === 'points' || propType === 'threes') && seasonAvg && seasonAvg > 0) {
+    // Estimate FG% deviation from the stat variance
+    // Players shooting hot (L10 >> season) get penalized, cold streaks get boosted
+    const l10VsSeasonRatio = l10Avg / seasonAvg;
+    if (l10VsSeasonRatio > 1.15) {
+      // Shooting unsustainably hot — regress projection down
+      const fgPenalty = (l10VsSeasonRatio - 1.15) * rawProjection * 0.3;
+      rawProjection -= fgPenalty;
+      projectionSource += '+FG_REGRESS_DOWN';
+      console.log(`[Projection] v7.0 FG Efficiency: L10/Season=${l10VsSeasonRatio.toFixed(2)}, penalty=-${fgPenalty.toFixed(1)}`);
+    } else if (l10VsSeasonRatio < 0.85) {
+      // Shooting unsustainably cold — regress projection up
+      const fgBoost = (0.85 - l10VsSeasonRatio) * rawProjection * 0.2;
+      rawProjection += fgBoost;
+      projectionSource += '+FG_REGRESS_UP';
+      console.log(`[Projection] v7.0 FG Efficiency: L10/Season=${l10VsSeasonRatio.toFixed(2)}, boost=+${fgBoost.toFixed(1)}`);
+    }
+  }
+  
   const projectedValue = Math.round(rawProjection * 2) / 2;
   
   return {

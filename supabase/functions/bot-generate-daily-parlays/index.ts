@@ -11204,36 +11204,60 @@ Deno.serve(async (req) => {
           }
           console.log(`[CompositeFilter] Scan complete: ${compositeConflicts.length} conflicts found across ${allLegs.length} NBA legs`);
 
-          // === DEMOTION: Parlays with >50% conflicting legs get demoted from execution → exploration ===
+          // === v7.0 HARD BLOCK: Remove conflicting legs from parlays (not just demote) ===
           if (compositeConflicts.length > 0) {
-            // Build a map: parlayIndex → number of conflicting legs
-            const conflictCountByParlay = new Map<number, number>();
-            for (const c of compositeConflicts) {
-              // parlayId is 1-indexed string of parlayIndex+1
-              const idx = parseInt(c.parlay_id, 10) - 1;
-              conflictCountByParlay.set(idx, (conflictCountByParlay.get(idx) || 0) + 1);
-            }
+            // Build set of conflict keys: parlayIndex_legPlayerName_legPropType
+            const conflictKeys = new Set(
+              compositeConflicts.map(c => `${parseInt(c.parlay_id, 10) - 1}_${(c.player_name || '').toLowerCase()}_${(c.prop_type || '').toLowerCase()}`)
+            );
 
-            let demotedCount = 0;
-            for (const [parlayIdx, conflictCount] of conflictCountByParlay.entries()) {
-              const parlay = dedupedParlays[parlayIdx];
-              if (!parlay) continue;
-              const totalLegs = Array.isArray(parlay.legs) ? parlay.legs.length : 0;
-              if (totalLegs === 0) continue;
-              const conflictRatio = conflictCount / totalLegs;
+            let totalLegsDropped = 0;
+            let parlaysVoided = 0;
+            
+            for (let pi = 0; pi < dedupedParlays.length; pi++) {
+              const parlay = dedupedParlays[pi];
+              const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
               
-              if (conflictRatio > 0.50 && parlay.tier === 'execution') {
-                parlay.tier = 'exploration';
-                parlay.is_simulated = true;
-                parlay.strategy_name = (parlay.strategy_name || '').replace('_execution_', '_exploration_');
-                parlay.selection_rationale = `⚠️ DEMOTED (composite conflict ${conflictCount}/${totalLegs} legs): ${parlay.selection_rationale || ''}`;
-                demotedCount++;
-                console.log(`[CompositeFilter] 📉 Demoted parlay #${parlayIdx + 1} from execution → exploration (${conflictCount}/${totalLegs} legs conflicting)`);
+              // Check if this parlay has any conflicting legs
+              const cleanLegs = legs.filter((leg: any) => {
+                const normProp = normalizePropType(leg.prop_type || '');
+                const propLabelMap: Record<string, string> = {
+                  player_points: 'PTS', points: 'PTS', player_rebounds: 'REB', rebounds: 'REB',
+                  player_assists: 'AST', assists: 'AST', player_threes: '3PT', threes: '3PT',
+                  player_steals: 'STL', steals: 'STL', player_blocks: 'BLK', blocks: 'BLK',
+                  player_turnovers: 'TO', turnovers: 'TO', player_pra: 'PRA', pra: 'PRA',
+                };
+                const propLabel = propLabelMap[normProp] || propLabelMap[(leg.prop_type || '').toLowerCase()] || leg.prop_type;
+                const key = `${pi}_${(leg.player_name || '').toLowerCase()}_${(propLabel || '').toLowerCase()}`;
+                return !conflictKeys.has(key);
+              });
+              
+              const droppedCount = legs.length - cleanLegs.length;
+              if (droppedCount > 0) {
+                totalLegsDropped += droppedCount;
+                
+                if (cleanLegs.length < 2) {
+                  // Too few legs remaining — void the parlay
+                  parlay.outcome = 'void';
+                  parlay.lesson_learned = `composite_hard_block: ${droppedCount} conflicting legs dropped, ${cleanLegs.length} remaining < 2`;
+                  parlaysVoided++;
+                  console.log(`[CompositeFilter] 🚫 VOIDED parlay #${pi + 1}: ${droppedCount} legs dropped, only ${cleanLegs.length} remain`);
+                } else {
+                  // Update parlay with clean legs
+                  parlay.legs = cleanLegs;
+                  parlay.leg_count = cleanLegs.length;
+                  parlay.selection_rationale = `⚠️ ${droppedCount} composite-conflicting leg(s) hard-blocked: ${parlay.selection_rationale || ''}`;
+                  console.log(`[CompositeFilter] ✂️ Dropped ${droppedCount} conflicting legs from parlay #${pi + 1} (${cleanLegs.length} legs remaining)`);
+                }
               }
             }
-            if (demotedCount > 0) {
-              console.log(`[CompositeFilter] Demoted ${demotedCount} parlays from execution → exploration`);
-            }
+            
+            // Remove voided parlays from the insert batch
+            const beforeVoidCount = dedupedParlays.length;
+            const activeOnly = dedupedParlays.filter((p: any) => p.outcome !== 'void');
+            // Keep voided ones for insert too (to record the void)
+            
+            console.log(`[CompositeFilter] v7.0 HARD BLOCK: dropped ${totalLegsDropped} conflicting legs, voided ${parlaysVoided} parlays (${activeOnly.length}/${beforeVoidCount} active)`);
           }
         }
       } catch (compErr) {
