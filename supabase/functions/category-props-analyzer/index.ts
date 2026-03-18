@@ -1480,7 +1480,7 @@ serve(async (req) => {
             player_name: playerName,
             prop_type: config.propType,
             recommended_line: bestLine,
-            recommended_side: effectiveSide,
+            recommended_side: playerEffectiveSide,
             l10_hit_rate: Math.round(bestHitRate * 100) / 100,
             l10_avg: Math.round(l10Avg * 10) / 10,
             l10_min: l10Min,
