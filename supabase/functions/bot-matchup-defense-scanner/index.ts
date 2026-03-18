@@ -819,7 +819,7 @@ serve(async (req) => {
       relevance_score: Math.min(9.99, Math.max(1, Math.round(eliteCount * 3 + primeCount * 2 + favorableCount))),
       key_insights: {
         scan_date: today,
-        engine_version: 'bidirectional_v4_dedup_l3cache',
+        engine_version: 'bidirectional_v5_ffg',
         games_scanned: games.length,
         games_with_matchups: allMatchups.length,
         elite_opportunities: eliteCount,
@@ -831,12 +831,16 @@ serve(async (req) => {
         risk_tagged_count: riskTaggedCount,
         blowout_tagged_count: blowoutTaggedCount,
         l3_confirmed_count: l3ConfirmedCount,
+        ffg_elite_count: ffgEliteCount,
+        ffg_strong_count: ffgStrongCount,
+        ffg_weak_count: ffgWeakCount,
         scoring_formula: 'oppDefRank*0.6 + (31-teamOffRank)*0.4',
+        ffg_formula: 'volume(FGA/3PA) + efficiency(FG%) + defMatchup(rank+allowed_pg)',
         thresholds: { elite: '>=22', prime: '>=18', favorable: '>=14', avoid: '<=8' },
         matchups: allMatchups,
         recommendations: allRecommendations,
       },
-      sources: ['team_defense_rankings(offense+defense)', 'game_bets', 'category_sweet_spots', 'whale_picks(spreads)'],
+      sources: ['team_defense_rankings(offense+defense+allowed_pg)', 'game_bets', 'category_sweet_spots', 'whale_picks(spreads)', 'nba_player_game_logs(FGA/3PA/FGM)'],
       updated_at: new Date().toISOString(),
     };
 
