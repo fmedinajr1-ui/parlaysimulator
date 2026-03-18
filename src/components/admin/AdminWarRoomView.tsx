@@ -6,7 +6,7 @@ import { CustomerScoutView } from '@/components/scout/CustomerScoutView';
 import { WarRoomGameStrip, type PropsGame } from '@/components/scout/warroom/WarRoomGameStrip';
 import { useDeepSweetSpots } from '@/hooks/useDeepSweetSpots';
 import { useSweetSpotLiveData } from '@/hooks/useSweetSpotLiveData';
-import { ArrowLeft, Gamepad2 } from 'lucide-react';
+import { ArrowLeft, Gamepad2, Loader2, AlertCircle } from 'lucide-react';
 import type { ScoutGameContext } from '@/pages/Scout';
 
 export function AdminWarRoomView() {
@@ -14,7 +14,7 @@ export function AdminWarRoomView() {
   const latestResolveRef = useRef<string>('');
 
   // Fetch sweet spots to build game list for picker
-  const { data: sweetSpotData } = useDeepSweetSpots();
+  const { data: sweetSpotData, isLoading: spotsLoading, error: spotsError } = useDeepSweetSpots();
   const rawSpots = sweetSpotData?.spots ?? [];
   const { spots: allEnrichedSpots } = useSweetSpotLiveData(rawSpots);
 
