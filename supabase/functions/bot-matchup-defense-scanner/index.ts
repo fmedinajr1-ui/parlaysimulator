@@ -76,6 +76,18 @@ interface TeamProfile {
   opp_assists_allowed_pg: number | null;
 }
 
+interface FFGData {
+  l10_fga: number;      // Avg field goal attempts L10
+  l10_3pa: number;      // Avg 3-point attempts L10
+  l10_fgm: number;      // Avg field goals made L10
+  l10_fg_pct: number;   // FG% L10 (0-1)
+  l10_3p_pct: number;   // 3P% L10 (0-1)
+  opp_reb_allowed: number | null;  // Opponent rebounds allowed per game
+  opp_ast_allowed: number | null;  // Opponent assists allowed per game
+  ffg_score: number;    // Composite FFG score (-10 to +10)
+  ffg_label: 'elite' | 'strong' | 'neutral' | 'weak';
+}
+
 interface PlayerTarget {
   player_name: string;
   line: number;
@@ -83,11 +95,13 @@ interface PlayerTarget {
   l10_hit_rate: number;
   l10_min: number;
   margin: number; // l10_avg - line
-  // NEW: risk context fields
+  // Risk context fields
   l3_avg: number | null;
   risk_tags: string[];
   l3_trend: 'hot' | 'cold' | 'steady' | null;
   spread: number | null;
+  // FFG formula data
+  ffg: FFGData | null;
 }
 
 interface MatchupRecommendation {
