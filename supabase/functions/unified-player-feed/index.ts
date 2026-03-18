@@ -303,6 +303,17 @@ function processGameData(data: any, eventId: string): UnifiedGame | null {
             const blocks = parseInt(stats.blk) || 0;
             const threes = parseInt(stats['3pm'] || stats['3pt']?.split('-')?.[0]) || 0;
 
+            // Parse FG/3PT/FT shooting splits for tri-signal projection
+            const fgParts = (stats.fg || stats['fg'] || '0-0').split('-');
+            const fgm = parseInt(fgParts[0]) || 0;
+            const fga = parseInt(fgParts[1]) || 0;
+            const threeParts = (stats['3pt'] || '0-0').split('-');
+            const threePm = parseInt(threeParts[0]) || 0;
+            const threePa = parseInt(threeParts[1]) || 0;
+            const ftParts = (stats.ft || '0-0').split('-');
+            const ftm = parseInt(ftParts[0]) || 0;
+            const fta = parseInt(ftParts[1]) || 0;
+
             const role = determineRole(minutesPlayed, gameProgress);
             const riskFlags = detectRiskFlags(
               { homeScore, awayScore, period },
@@ -320,7 +331,12 @@ function processGameData(data: any, eventId: string): UnifiedGame | null {
 
             // Calculate projections for all stat types
             const projections: Record<string, PlayerProjection> = {};
-            const currentStats = { points, rebounds, assists, steals, blocks, threes };
+            const currentStats: Record<string, number> = {
+              points, rebounds, assists, steals, blocks, threes,
+              fgm, fga, fgPct: fga > 0 ? fgm / fga : 0,
+              threePm, threePa, threePtPct: threePa > 0 ? threePm / threePa : 0,
+              ftm, fta, ftPct: fta > 0 ? ftm / fta : 0,
+            };
 
             for (const statType of PROP_STATS) {
               projections[statType] = calculateProjection(

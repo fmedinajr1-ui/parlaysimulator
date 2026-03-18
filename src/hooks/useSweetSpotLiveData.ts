@@ -6,6 +6,7 @@ import { useHalftimeRecalibration } from './useHalftimeRecalibration';
 import { useLiveSweetSpotLines } from './useLiveSweetSpotLines';
 import { useHedgeStatusRecorder } from './useHedgeStatusRecorder';
 import { calculateHedgeStatus } from '@/lib/hedgeStatusUtils';
+import { calculateTriSignalProjection } from '@/lib/triSignalProjection';
 import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
@@ -144,20 +145,39 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       
       const currentQuarter = parseInt(String(game.period)) || 0;
       
+      // Tri-signal projection: blend rate, book line, and FG efficiency
+      const currentValue = projection?.current ?? 
+        (player.currentStats[PROP_TO_STAT_KEY[spot.propType]] ?? 0);
+      const rawProjected = projection?.projected ?? 0;
+      const ratePerMinute = projection?.ratePerMinute ?? 0;
+      const remainingMinutes = player.estimatedRemaining ?? 0;
+      
+      const triSignal = calculateTriSignalProjection({
+        currentValue,
+        ratePerMinute,
+        remainingMinutes,
+        gameProgress: game.gameProgress,
+        propType: spot.propType,
+        liveBookLine: liveLineData?.liveBookLine ?? liveLineData?.closestLine,
+        fgPct: player.currentStats?.fgPct,
+        baselineFgPct: undefined, // baseline from L10 can be added later
+      });
+      
+      const projectedFinal = triSignal.projectedFinal || rawProjected;
+
       const liveData: LivePropData = {
         isLive: true,
         gameStatus: game.status as 'in_progress' | 'halftime',
-        currentValue: projection?.current ?? 
-          (player.currentStats[PROP_TO_STAT_KEY[spot.propType]] ?? 0),
-        projectedFinal: projection?.projected ?? 0,
+        currentValue,
+        projectedFinal,
         gameProgress: game.gameProgress,
         period: String(game.period),
         clock: game.clock || '',
-        confidence: projection?.confidence ?? 50,
+        confidence: Math.max(projection?.confidence ?? 50, triSignal.confidence),
         riskFlags: player.riskFlags || [],
         trend: projection?.trend ?? 'stable',
         minutesPlayed: player.minutesPlayed ?? 0,
-        ratePerMinute: projection?.ratePerMinute ?? 0,
+        ratePerMinute,
         paceRating: game.pace ?? 100,
         shotChartMatchup,
         currentQuarter,

@@ -17,11 +17,51 @@ interface BufferThresholds { onTrack: number; monitor: number; alert: number; }
 function getBufferThresholds(gameProgress: number): BufferThresholds {
   if (gameProgress < 25) return { onTrack: 4, monitor: 1, alert: -2 };
   if (gameProgress < 50) return { onTrack: 3, monitor: 0.5, alert: -1.5 };
-  if (gameProgress < 75) return { onTrack: 2, monitor: 0, alert: -1 };
-  return { onTrack: 1.5, monitor: -0.5, alert: -1 };
+  if (gameProgress < 75) return { onTrack: 1.5, monitor: 0, alert: -0.5 };
+  return { onTrack: 1.0, monitor: -0.5, alert: -0.5 };
 }
 
 type HedgeAction = 'LOCK' | 'HOLD' | 'MONITOR' | 'HEDGE ALERT' | 'HEDGE NOW';
+
+// ── Tri-Signal Projection (server-side copy) ──
+const SCORING_PROPS = new Set(['points', 'threes', 'player_points', 'player_threes']);
+
+function getSignalWeights(gameProgress: number, hasFg: boolean) {
+  let rate: number, book: number, fg: number;
+  if (gameProgress < 25) { rate = 0.40; book = 0.45; fg = 0.15; }
+  else if (gameProgress < 50) { rate = 0.45; book = 0.35; fg = 0.20; }
+  else if (gameProgress < 75) { rate = 0.55; book = 0.25; fg = 0.20; }
+  else { rate = 0.70; book = 0.15; fg = 0.15; }
+  if (!hasFg) { rate += fg; fg = 0; }
+  return { rate, book, fg };
+}
+
+function triSignalProjection(params: {
+  currentValue: number; ratePerMinute: number; remainingMinutes: number;
+  gameProgress: number; propType: string;
+  liveBookLine?: number; fgPct?: number; baselineFgPct?: number;
+}): number {
+  const { currentValue, ratePerMinute, remainingMinutes, gameProgress, propType, liveBookLine, fgPct, baselineFgPct } = params;
+  const rateProj = currentValue + ratePerMinute * remainingMinutes;
+  const hasBook = liveBookLine != null && liveBookLine > 0;
+  const isScoringProp = SCORING_PROPS.has(propType.toLowerCase());
+  const hasFg = isScoringProp && fgPct != null && baselineFgPct != null && fgPct > 0;
+
+  let fgProj = rateProj;
+  if (hasFg) {
+    const factor = Math.max(0.7, Math.min(1.4, Math.pow(baselineFgPct! / fgPct!, 0.3)));
+    fgProj = currentValue + (ratePerMinute * factor) * remainingMinutes;
+  }
+
+  const w = getSignalWeights(gameProgress, hasFg);
+  let ew = { ...w };
+  if (!hasBook) { ew.rate += ew.book; ew.book = 0; }
+
+  let proj = ew.rate * rateProj;
+  if (hasBook) proj += ew.book * liveBookLine!;
+  if (hasFg) proj += ew.fg * fgProj;
+  return Math.round(proj * 10) / 10;
+}
 
 function calculateHedgeAction(params: {
   currentValue: number; projectedFinal: number; line: number;
@@ -246,12 +286,24 @@ Deno.serve(async (req) => {
         const statKey = (pick.prop_type || '').toLowerCase().replace('player_', '');
         const currentValue = player.currentStats?.[statKey] ?? 0;
 
-        // Get projection
+        // Get projection + apply tri-signal
         const projection = player.projections?.[statKey];
-        const projectedFinal = projection?.projected ?? 0;
         const ratePerMin = projection?.ratePerMinute ?? 0;
+        const remainingMinutes = player.estimatedRemaining ?? 0;
+        
+        // Use tri-signal blended projection
+        const projectedFinal = triSignalProjection({
+          currentValue,
+          ratePerMinute: ratePerMin,
+          remainingMinutes,
+          gameProgress,
+          propType: pick.prop_type || '',
+          liveBookLine: undefined, // Could be fetched from live-lines in future
+          fgPct: player.currentStats?.fgPct,
+          baselineFgPct: undefined, // L10 baseline not yet available server-side
+        });
 
-        // Calculate hedge status
+        // Calculate hedge status with tri-signal projection
         const hedgeAction = calculateHedgeAction({
           currentValue,
           projectedFinal,
