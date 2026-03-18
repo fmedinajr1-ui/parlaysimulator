@@ -1,6 +1,6 @@
-// v4 — forced redeploy for cross-attempt dedup 2026-03-04
+// v5 — swap-not-void: replace exposed legs instead of voiding parlays 2026-03-18
 /**
- * bot-quality-regen-loop v4 — 2026-03-04
+ * bot-quality-regen-loop v5 — 2026-03-18
  * 
  * Quality-gated regeneration loop that generates parlays up to 3 times
  * before 3PM ET. Each attempt is ADDITIVE (no voiding between attempts).
