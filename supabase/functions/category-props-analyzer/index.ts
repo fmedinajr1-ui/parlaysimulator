@@ -2204,6 +2204,17 @@ serve(async (req) => {
       grouped[spot.category].push(spot);
     }
 
+    // v13.0: Log deterministic flips
+    if (deterministicFlips.length > 0) {
+      console.log(`[Category Analyzer] 🔄 ${deterministicFlips.length} deterministic side flips applied`);
+      await supabase.from('bot_activity_log').insert({
+        event_type: 'deterministic_side_flips',
+        message: `Applied ${deterministicFlips.length} per-player deterministic side flips based on historical outcomes`,
+        metadata: { flips: deterministicFlips },
+        severity: 'info',
+      });
+    }
+
     return new Response(JSON.stringify({
       success: true,
       data: activeSpots,
@@ -2214,6 +2225,7 @@ serve(async (req) => {
       noUpcomingGame: noGameCount,
       bounceBackPicks: bounceBackCount,
       lineEligiblePicks: lineEligibleCount,
+      deterministicFlips: deterministicFlips.length,
       categories: Object.keys(grouped),
       analyzedAt: new Date().toISOString()
     }), {
