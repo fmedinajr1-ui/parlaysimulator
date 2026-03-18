@@ -448,7 +448,7 @@ serve(async (req) => {
 
             // L10 shooting cache (all 10 games)
             if (!l10ShootingCache.has(name)) {
-              l10ShootingCache.set(name, { fga: 0, fgm: 0, threes_att: 0, games: 0 });
+              l10ShootingCache.set(name, { fga: 0, fgm: 0, threes_att: 0, threes_made: 0, games: 0 });
             }
             const shooting = l10ShootingCache.get(name)!;
             shooting.fga += (log.field_goals_attempted ?? 0);
