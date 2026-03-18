@@ -879,6 +879,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
       { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'composite', contrarian: true },
       { legs: 4, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 38, sortBy: 'shuffle', contrarian: true },
+      // ============= BLOWOUT SCRIPT: underdog starters PRA unders + bench minutes plays =============
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'hit_rate', gameFilter: 'blowout' },
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', gameFilter: 'blowout' },
+      { legs: 4, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'hit_rate', gameFilter: 'blowout' },
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite', gameFilter: 'blowout' },
     ],
   },
   validation: {
