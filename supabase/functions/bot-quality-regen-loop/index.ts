@@ -402,8 +402,8 @@ Deno.serve(async (req) => {
         console.log(`[QualityRegen] 🔄 Exposure resolution: ${swapsPerformed} swaps, ${voidedBecauseNoSwap} voided (no candidates), bench remaining: ${availableBench.length}`);
       }
 
-      // === DAILY PARLAY CAP (15 total — v6.0 tightened from 25) ===
-      const DAILY_PARLAY_CAP = 15;
+      // === DAILY PARLAY CAP (20 total — v6.1 raised from 15) ===
+      const DAILY_PARLAY_CAP = 20;
       const { data: postCapPending } = await supabase
         .from('bot_daily_parlays')
         .select('id, combined_probability')
