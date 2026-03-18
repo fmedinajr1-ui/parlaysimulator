@@ -341,7 +341,7 @@ Deno.serve(async (req) => {
               const alreadyInParlay = legs.some((l: any) => 
                 (l.player_name || '').toLowerCase().trim() === bpPlayer
               );
-              return !alreadyInParlay && bp.confidence_score > 0.4;
+              return !alreadyInParlay && bp.confidence_score > 0.25;
             });
 
             if (replacement) {
