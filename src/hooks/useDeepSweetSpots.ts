@@ -467,7 +467,7 @@ export function useDeepSweetSpots() {
             standardCount: 0,
             avoidCount: 0,
             uniqueTeams: 0,
-            byPropType: { points: 0, assists: 0, threes: 0, blocks: 0 },
+            byPropType: { points: 0, assists: 0, threes: 0, blocks: 0, rebounds: 0, steals: 0 },
           }
         };
       }
