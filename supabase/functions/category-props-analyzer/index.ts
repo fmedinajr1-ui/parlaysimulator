@@ -1214,13 +1214,24 @@ serve(async (req) => {
     let archetypeBlockedCount = 0;
 
     // v13.0: DETERMINISTIC SIDE SELECTION — per-player per-prop historical outcome analysis
-    // Query all settled outcomes to build per-player hit rate maps
-    const { data: historicalOutcomes } = await supabase
-      .from('category_sweet_spots')
-      .select('player_name, prop_type, recommended_side, outcome')
-      .not('outcome', 'is', null)
-      .not('settled_at', 'is', null)
-      .in('outcome', ['hit', 'miss']);
+    // Query ALL settled outcomes (paginated to avoid 1000-row default limit)
+    let historicalOutcomes: any[] = [];
+    let hOffset = 0;
+    const H_PAGE = 1000;
+    while (true) {
+      const { data: hPage } = await supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, recommended_side, outcome')
+        .not('outcome', 'is', null)
+        .not('settled_at', 'is', null)
+        .in('outcome', ['hit', 'miss'])
+        .range(hOffset, hOffset + H_PAGE - 1);
+      if (!hPage || hPage.length === 0) break;
+      historicalOutcomes = historicalOutcomes.concat(hPage);
+      if (hPage.length < H_PAGE) break;
+      hOffset += H_PAGE;
+    }
+    console.log(`[Category Analyzer] Loaded ${historicalOutcomes.length} historical outcomes for deterministic side selection`);
 
     // Build per-player per-prop side hit rate map
     const playerSideHistory = new Map<string, { overHits: number; overTotal: number; underHits: number; underTotal: number }>();
