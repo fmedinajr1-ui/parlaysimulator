@@ -669,12 +669,14 @@ interface ParlayProfile {
   useAltLines?: boolean;
   minBufferMultiplier?: number;
   preferPlusMoney?: boolean;
-  sortBy?: 'composite' | 'hit_rate' | 'shuffle' | 'env_cluster_shootout' | 'env_cluster_grind';
+  sortBy?: 'composite' | 'hit_rate' | 'shuffle' | 'env_cluster_shootout' | 'env_cluster_grind' | 'l3_score' | 'combined_l3_matchup' | 'combined';
   side?: 'over' | 'under';
   boostLegs?: number;
   allowTeamLegs?: number;
   maxMlLegs?: number;
   preferCategories?: string[];
+  contrarian?: boolean; // When true, flip the recommended_side from sweet spots
+  maxCategoryUsage?: number;
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
@@ -870,6 +872,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 60, sortBy: 'composite', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
+      // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 40, sortBy: 'shuffle', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'composite', contrarian: true },
+      { legs: 4, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 38, sortBy: 'shuffle', contrarian: true },
     ],
   },
   validation: {
@@ -949,6 +957,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'env_cluster_grind', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 52, sortBy: 'shuffle', side: 'under' },
+      // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'shuffle', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 42, sortBy: 'composite', contrarian: true },
     ],
   },
   execution: {
@@ -1087,6 +1099,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'hit_rate' },
       // (floor_lock + ceiling_shot moved to TOP of execution profiles to avoid timeout)
+      // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', contrarian: true },
     ],
   },
 };
@@ -7809,7 +7824,16 @@ async function generateTierParlays(
           if (source === 'projected' || source === 'synthetic_dry_run') return false;
         }
         // SIDE FILTER: grind_under_core and similar profiles enforce recommended_side
-        if (profile.side) {
+        // CONTRARIAN: flip the recommended side for scenario diversity
+        if (profile.contrarian) {
+          const pickSide = ((p as any).recommended_side || '').toLowerCase();
+          const flippedSide = pickSide === 'over' ? 'under' : 'over';
+          // Override the pick's side for this profile — attach flipped side
+          (p as any)._contrarianFlippedSide = flippedSide;
+          // Only include picks where the flipped side still has reasonable data
+          const hitRate = (p as any).l10_hit_rate || 0;
+          if (hitRate < 0.40 && hitRate < 40) return false; // skip if original hit rate too low to flip
+        } else if (profile.side) {
           const pickSide = ((p as any).recommended_side || '').toLowerCase();
           if (pickSide !== profile.side.toLowerCase()) return false;
         }
@@ -8199,7 +8223,7 @@ async function generateTierParlays(
           team_name: playerPick.team_name,
           prop_type: playerPick.prop_type,
           line: snapLine(selectedLine.line, playerPick.prop_type),
-          side: playerPick.recommended_side || 'over',
+          side: (playerPick as any)._contrarianFlippedSide || playerPick.recommended_side || 'over',
           category: playerPick.category,
           weight,
           hit_rate: effectiveHitRateForStorage,

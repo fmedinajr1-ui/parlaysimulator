@@ -137,8 +137,8 @@ Deno.serve(async (req) => {
     // Step 3b: Risk engine (depends on matchups + mispriced)
     await invokeStep("Running risk engine", "nba-player-prop-risk-engine", { action: "analyze_slate", mode: "full_slate" });
 
-    // Step 3c: Generation (sequential — each depends on previous)
-    await invokeStep("Quality-gated generation", "bot-quality-regen-loop", { target_hit_rate: 35, max_attempts: 3, skip_void: true, adaptive_target: true });
+    // Step 3c: Wide generate → rank → select top 25 (v6.0 paradigm)
+    await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", { final_cap: 25 });
     await invokeStep("Running curated pipeline", "bot-curated-pipeline", {});
     await invokeStep("Force fresh mispriced parlays", "bot-force-fresh-parlays", {});
 
