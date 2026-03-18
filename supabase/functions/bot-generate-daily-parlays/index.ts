@@ -677,6 +677,7 @@ interface ParlayProfile {
   preferCategories?: string[];
   contrarian?: boolean; // When true, flip the recommended_side from sweet spots
   maxCategoryUsage?: number;
+  gameFilter?: 'blowout'; // When set, restrict to games matching this filter
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
@@ -878,6 +879,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
       { legs: 3, strategy: 'contrarian_flip', sports: ['all'], minHitRate: 40, sortBy: 'composite', contrarian: true },
       { legs: 4, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 38, sortBy: 'shuffle', contrarian: true },
+      // ============= BLOWOUT SCRIPT: underdog starters PRA unders + bench minutes plays =============
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'hit_rate', gameFilter: 'blowout' },
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', gameFilter: 'blowout' },
+      { legs: 4, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 42, sortBy: 'hit_rate', gameFilter: 'blowout' },
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 48, sortBy: 'composite', gameFilter: 'blowout' },
     ],
   },
   validation: {
@@ -1066,6 +1072,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'shuffle', useAltLines: false },
+      // ============= BLOWOUT SCRIPT EXECUTION: underdog starters PRA unders + garbage time plays =============
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', gameFilter: 'blowout' },
+      { legs: 3, strategy: 'blowout_script', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'shuffle', gameFilter: 'blowout' },
       // ============= GRIND UNDER: NBA under plays — proven winners from March 3rd analysis =============
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', side: 'under' },
       { legs: 3, strategy: 'grind_under_core', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', side: 'under' },
@@ -2894,6 +2903,14 @@ interface UsageTracker {
   categoryUsageInParlay: Map<string, number>;
 }
 
+interface BlowoutGameInfo {
+  home_team: string;
+  away_team: string;
+  spread: number; // negative = home favored, positive = away favored
+  underdog: string; // team abbreviation of the underdog
+  favorite: string; // team abbreviation of the favorite
+}
+
 interface PropPool {
   playerPicks: EnrichedPick[];
   teamPicks: EnrichedTeamPick[];
@@ -2908,6 +2925,7 @@ interface PropPool {
   defenseDetailMap: Map<string, any>;
   oddsMap: Map<string, any>;
   playerProps: any[];
+  blowoutGames: BlowoutGameInfo[];
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -4402,6 +4420,23 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }
   }
 
+  // Build blowout game info for blowout_script strategy
+  const blowoutGameInfos: BlowoutGameInfo[] = [];
+  for (const flag of gameContextFlags) {
+    if (flag.type === 'blowout_risk' && flag.home_team && flag.away_team) {
+      const spread = (flag as any).spread || 0;
+      // Determine underdog: positive spread = home is underdog, negative = away is underdog
+      // If no spread data in flag, we'll fill from envMap later
+      blowoutGameInfos.push({
+        home_team: flag.home_team.toLowerCase(),
+        away_team: flag.away_team.toLowerCase(),
+        spread,
+        underdog: spread >= 0 ? flag.home_team.toLowerCase() : flag.away_team.toLowerCase(),
+        favorite: spread >= 0 ? flag.away_team.toLowerCase() : flag.home_team.toLowerCase(),
+      });
+    }
+  }
+
   // 1. Sweet spot picks (analyzed player props) - no is_active filter, analysis_date is sufficient
   const { data: sweetSpots } = await supabase
     .from('category_sweet_spots')
@@ -4574,7 +4609,32 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     });
   });
 
-  const homeCourtMap = new Map<string, HomeCourtData>();
+  // Supplement blowout game info from envMap spread data (for games not caught by context analyzer)
+  for (const [key, env] of envMap.entries()) {
+    const [homeAbbrev, awayAbbrev] = key.split('_');
+    if (!homeAbbrev || !awayAbbrev) continue;
+    if (Math.abs(env.vegas_spread) >= 8) {
+      const alreadyTracked = blowoutGameInfos.some(
+        bg => (bg.home_team === homeAbbrev.toLowerCase() || bg.away_team === homeAbbrev.toLowerCase())
+      );
+      if (!alreadyTracked) {
+        // vegas_spread convention: negative = home favored
+        const underdog = env.vegas_spread < 0 ? awayAbbrev.toLowerCase() : homeAbbrev.toLowerCase();
+        const favorite = env.vegas_spread < 0 ? homeAbbrev.toLowerCase() : awayAbbrev.toLowerCase();
+        blowoutGameInfos.push({
+          home_team: homeAbbrev.toLowerCase(),
+          away_team: awayAbbrev.toLowerCase(),
+          spread: env.vegas_spread,
+          underdog,
+          favorite,
+        });
+      }
+    }
+  }
+  if (blowoutGameInfos.length > 0) {
+    console.log(`[Bot] 💥 Blowout games detected: ${blowoutGameInfos.map(bg => `${bg.underdog} (+${Math.abs(bg.spread).toFixed(1)}) vs ${bg.favorite}`).join(', ')}`);
+  }
+
   (homeCourtResult.data || []).forEach((h: any) => {
     homeCourtMap.set(h.team_name, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
     const abbrev = nameToAbbrev.get(h.team_name);
@@ -6644,6 +6704,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     defenseDetailMap,
     oddsMap,
     playerProps: playerProps || [],
+    blowoutGames: blowoutGameInfos,
   };
 }
 
@@ -6852,6 +6913,8 @@ async function generateTierParlays(
     const isL3MatchupComboProfile = profile.strategy === 'l3_matchup_combo';
     // L3 SWEET + MISPRICED HYBRID: 2 sweet spot legs + 3 L3-confirmed mispriced legs
     const isL3SweetMispricedHybridProfile = profile.strategy === 'l3_sweet_mispriced_hybrid';
+    // BLOWOUT SCRIPT: same-game underdog unders + garbage time plays
+    const isBlowoutScriptProfile = profile.strategy === 'blowout_script';
 
     // === OPTIMAL COMBO: Build pre-assembled combos via combinatorial optimization ===
     if (isOptimalComboProfile) {
@@ -7740,6 +7803,101 @@ async function generateTierParlays(
         continue;
       }
       console.log(`[Bot] ${tier}/ceiling_shot: 🎯 ${candidatePicks.length} ceiling picks with plus-money alt lines (sort=${sortBy})`);
+    } else if (isBlowoutScriptProfile) {
+      // === BLOWOUT SCRIPT: Build legs from blowout games (spread 8+) ===
+      // Underdog starters → UNDER on points, PRA, assists (benched Q4)
+      // Underdog role/bench → UNDER on all props (less opportunity)
+      // Favorite bench → OVER on points, rebounds (garbage time minutes)
+      const blowoutData = pool.blowoutGames || [];
+      if (blowoutData.length === 0) {
+        console.log(`[Bot] ${tier}/blowout_script: no blowout games detected (spread 8+), skipping`);
+        continue;
+      }
+
+      // Collect underdog and favorite team names/abbrevs
+      const underdogTeams = new Set(blowoutData.map(bg => bg.underdog));
+      const favoriteTeams = new Set(blowoutData.map(bg => bg.favorite));
+      // Also map full game keys for same-game correlation
+      const blowoutGameKeys = new Set<string>();
+      for (const bg of blowoutData) {
+        blowoutGameKeys.add([bg.home_team, bg.away_team].sort().join('__'));
+      }
+
+      // BLOWOUT PROP TYPES: props that are most affected by garbage time
+      const underdogStarProps = new Set(['player_points', 'points', 'player_assists', 'assists', 'pra', 'pts_rebs_asts', 'player_points_rebounds_assists']);
+      const underdogAllProps = new Set(['player_points', 'points', 'player_rebounds', 'rebounds', 'player_assists', 'assists', 'pra', 'pts_rebs_asts', 'player_points_rebounds_assists', 'player_threes', 'threes']);
+      const favoriteBenchProps = new Set(['player_points', 'points', 'player_rebounds', 'rebounds']);
+
+      const blowoutCandidates = pool.sweetSpots.filter(p => {
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport || 'basketball_nba')) return false;
+        const hr = p.l10_hit_rate || p.confidence_score || 0;
+        const hrPct = hr <= 1 ? hr * 100 : hr;
+        if (hrPct < (profile.minHitRate || 45)) return false;
+
+        const teamName = (p.team_name || '').toLowerCase();
+        const propType = normalizePropType(p.prop_type || '');
+        const pickSide = (p.recommended_side || '').toLowerCase();
+        const gameCtx = (p as any)._gameContext as PickGameContext | undefined;
+
+        // Check if this pick is from a blowout game
+        const isUnderdog = underdogTeams.has(teamName);
+        const isFavorite = favoriteTeams.has(teamName);
+        if (!isUnderdog && !isFavorite) return false;
+
+        // For underdog players: force UNDER side
+        if (isUnderdog) {
+          if (pickSide !== 'under') {
+            // Override: force to under for blowout script
+            (p as any)._blowoutOverride = 'under';
+          }
+          // Accept any prop type for underdogs (all should go under in blowout)
+          if (underdogAllProps.has(propType)) return true;
+          return false;
+        }
+
+        // For favorite bench players: force OVER on points/rebounds
+        if (isFavorite) {
+          if (pickSide !== 'over') {
+            (p as any)._blowoutOverride = 'over';
+          }
+          // Only select lower-line props (bench player indicators: line < 15 for points)
+          const line = p.line || 0;
+          if (favoriteBenchProps.has(propType) && line <= 18) return true;
+          return false;
+        }
+
+        return false;
+      });
+
+      // Apply blowout overrides to candidate side
+      for (const pick of blowoutCandidates) {
+        if ((pick as any)._blowoutOverride) {
+          (pick as any)._originalSide = pick.recommended_side;
+          pick.recommended_side = (pick as any)._blowoutOverride;
+        }
+      }
+
+      const sortBy = profile.sortBy || 'hit_rate';
+      if (sortBy === 'shuffle') {
+        candidatePicks = blowoutCandidates.sort(() => Math.random() - 0.5);
+      } else if (sortBy === 'hit_rate') {
+        candidatePicks = blowoutCandidates.sort((a, b) => {
+          const aHr = (a.l10_hit_rate || 0) <= 1 ? (a.l10_hit_rate || 0) * 100 : (a.l10_hit_rate || 0);
+          const bHr = (b.l10_hit_rate || 0) <= 1 ? (b.l10_hit_rate || 0) * 100 : (b.l10_hit_rate || 0);
+          return bHr - aHr;
+        });
+      } else {
+        candidatePicks = blowoutCandidates.sort((a, b) => b.compositeScore - a.compositeScore);
+      }
+
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/blowout_script: only ${candidatePicks.length} blowout picks available, need ${profile.legs}`);
+        continue;
+      }
+      const underdogCount = candidatePicks.filter(p => underdogTeams.has((p.team_name || '').toLowerCase())).length;
+      const favoriteCount = candidatePicks.filter(p => favoriteTeams.has((p.team_name || '').toLowerCase())).length;
+      console.log(`[Bot] ${tier}/blowout_script: 💥 ${candidatePicks.length} blowout picks (${underdogCount} underdog unders, ${favoriteCount} favorite overs) from ${blowoutData.length} blowout games (sort=${sortBy})`);
     } else if (isMispricedProfile) {
       candidatePicks = [...pool.mispricedPicks]
         .filter(p => {
