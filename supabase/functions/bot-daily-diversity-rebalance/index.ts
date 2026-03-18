@@ -204,52 +204,124 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Find parlays to void: for each player-prop, keep first N, void rest
-    // Explicitly exclude IDs already voided by strategy pass
-    const exposureVoidSet = new Set<string>();
-    const exposureCandidatesRaw = new Set<string>();
-    const exposureDetails: Record<string, { kept: number; voided: number }> = {};
+    // Find parlays to fix: for each player-prop, keep first N, swap rest
+    const exposureSwapSet = new Set<string>();
+    const exposureDetails: Record<string, { kept: number; swapped: number; voided: number }> = {};
+
+    // Fetch bench picks for swapping
+    const { data: benchPicksRaw } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, prop_type, recommended_side, actual_line, confidence_score, projected_value, l10_hit_rate, l10_avg, category')
+      .eq('analysis_date', today)
+      .eq('is_active', true)
+      .order('confidence_score', { ascending: false });
+
+    // Build set of all players currently in pending parlays
+    const allUsedPlayersDiv = new Set<string>();
+    for (const parlay of (remainingParlays || [])) {
+      const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+      for (const leg of legs as any[]) {
+        const name = normalizePlayerName(leg.player_name || leg.playerName || leg.player || '');
+        if (name) allUsedPlayersDiv.add(name);
+      }
+    }
+
+    const availableBenchDiv = (benchPicksRaw || []).filter((bp: any) => {
+      const bpPlayer = normalizePlayerName(bp.player_name || '');
+      return !allUsedPlayersDiv.has(bpPlayer);
+    });
+
+    let swapsPerformed = 0;
+    let voidedNoSwap = 0;
 
     for (const [key, parlayIds] of playerPropMap) {
       if (parlayIds.length <= effectiveMaxPlayerPropUsage) continue;
       
-      const toVoid = parlayIds.slice(effectiveMaxPlayerPropUsage);
-      for (const id of toVoid) {
-        exposureCandidatesRaw.add(id);
-        if (!strategyVoidedIds.has(id)) {
-          exposureVoidSet.add(id);
+      const toFixIds = parlayIds.slice(effectiveMaxPlayerPropUsage);
+      let swapped = 0;
+      let voided = 0;
+
+      for (const parlayId of toFixIds) {
+        if (strategyVoidedIds.has(parlayId)) continue; // already handled
+        
+        const parlay = (remainingParlays || []).find((p: any) => p.id === parlayId);
+        if (!parlay) continue;
+
+        const legs = Array.isArray(parlay.legs) ? [...(parlay.legs as any[])] : [];
+        const [playerName, propType, side] = key.split('|');
+        const exposedIdx = legs.findIndex((l: any) => {
+          const lPlayer = normalizePlayerName(l.player_name || l.playerName || l.player || '');
+          const lProp = normalizePropType(l.prop_type || l.propType || l.prop || l.market || '');
+          return lPlayer === playerName && lProp === propType;
+        });
+
+        if (exposedIdx === -1) continue;
+
+        // Find replacement — prefer different category for diversity
+        const replacement = availableBenchDiv.find((bp: any) => {
+          const bpPlayer = normalizePlayerName(bp.player_name || '');
+          const alreadyInParlay = legs.some((l: any) => 
+            normalizePlayerName(l.player_name || l.playerName || l.player || '') === bpPlayer
+          );
+          return !alreadyInParlay && (bp.confidence_score || 0) > 0.4;
+        });
+
+        if (replacement) {
+          const oldLeg = legs[exposedIdx];
+          legs[exposedIdx] = {
+            ...oldLeg,
+            player_name: replacement.player_name,
+            prop_type: replacement.prop_type,
+            side: replacement.recommended_side || 'over',
+            line: replacement.actual_line,
+            confidence_score: replacement.confidence_score,
+            projected_value: replacement.projected_value,
+            l10_hit_rate: replacement.l10_hit_rate,
+            l10_avg: replacement.l10_avg,
+            category: replacement.category,
+            swapped_from: oldLeg.player_name || oldLeg.playerName,
+            swap_reason: 'diversity_exposure_cap',
+          };
+
+          const avgConf = legs.reduce((sum: number, l: any) => sum + ((l as any).confidence_score || 0.5), 0) / legs.length;
+
+          await supabase
+            .from('bot_daily_parlays')
+            .update({ 
+              legs,
+              combined_probability: Math.round(avgConf * 1000) / 1000,
+              lesson_learned: `diversity_swap:${oldLeg.player_name || oldLeg.playerName}→${replacement.player_name}`,
+              legs_swapped: ((parlay as any).legs_swapped || 0) + 1,
+            })
+            .eq('id', parlayId);
+
+          // Remove from bench
+          const repIdx = availableBenchDiv.findIndex((bp: any) => 
+            bp.player_name === replacement.player_name && bp.prop_type === replacement.prop_type
+          );
+          if (repIdx >= 0) availableBenchDiv.splice(repIdx, 1);
+          allUsedPlayersDiv.add(normalizePlayerName(replacement.player_name || ''));
+
+          swapped++;
+          swapsPerformed++;
+          exposureSwapSet.add(parlayId);
+          console.log(`[DiversityRebalance] 🔄 SWAPPED: ${key} → ${replacement.player_name} ${replacement.prop_type} in parlay ${parlayId}`);
+        } else {
+          // No swap candidate — void as last resort
+          await supabase
+            .from('bot_daily_parlays')
+            .update({ outcome: 'void', lesson_learned: 'exposure_cap_no_swap' })
+            .eq('id', parlayId)
+            .eq('outcome', 'pending');
+          voided++;
+          voidedNoSwap++;
         }
       }
-      exposureDetails[key] = { kept: effectiveMaxPlayerPropUsage, voided: toVoid.length };
+
+      exposureDetails[key] = { kept: effectiveMaxPlayerPropUsage, swapped, voided };
     }
 
-    const exposureAlreadyVoidedByStrategy = exposureCandidatesRaw.size - exposureVoidSet.size;
-    let exposureVoided = 0;
-
-    if (exposureVoidSet.size > 0) {
-      const idsToVoid = Array.from(exposureVoidSet);
-      
-      for (let i = 0; i < idsToVoid.length; i += 50) {
-        const chunk = idsToVoid.slice(i, i + 50);
-        const { data: voidedRows } = await supabase
-          .from('bot_daily_parlays')
-          .update({ outcome: 'void', lesson_learned: 'exposure_cap_player_prop' })
-          .in('id', chunk)
-          .eq('outcome', 'pending')
-          .select('id');
-        exposureVoided += (voidedRows || []).length;
-      }
-
-      // Log top offenders
-      const sortedExposure = Object.entries(exposureDetails)
-        .sort((a, b) => b[1].voided - a[1].voided)
-        .slice(0, 10);
-      for (const [key, info] of sortedExposure) {
-        console.log(`[DiversityRebalance] Exposure: ${key} → kept ${info.kept}, voided ${info.voided}`);
-      }
-    }
-
-    console.log(`[DiversityRebalance] Exposure pass: raw candidates=${exposureCandidatesRaw.size}, already voided by strategy=${exposureAlreadyVoidedByStrategy}, actually voided=${exposureVoided}`);
+    const exposureVoided = voidedNoSwap;
 
     // ═══════════════════════════════════════════════════════════════
     // Final Summary — recount from DB for accuracy
