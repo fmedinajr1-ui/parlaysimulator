@@ -263,6 +263,7 @@ function formatBenchPicksDigest(data: Record<string, any>, dateStr: string): str
 }
 
 
+function formatLadderChallengeResult(data: Record<string, any>): string {
   const { outcome, playerName, propLabel, line, side, actualValue, stake, profitLoss, odds, dayNumber, wins, losses, runningPnl, winRate } = data;
 
   const won = outcome === 'won';
