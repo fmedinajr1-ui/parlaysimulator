@@ -1469,7 +1469,7 @@ serve(async (req) => {
               console.log(`[Recency Block] 📉 ${playerName} ${config.propType} OVER blocked: L3 avg ${l3Avg} is ${((1 - declineRatio) * 100).toFixed(0)}% below L10 avg ${l10Avg.toFixed(1)}`);
               continue;
             }
-            if (effectiveSide === 'under' && declineRatio > 1.25) {
+            if (playerEffectiveSide === 'under' && declineRatio > 1.25) {
               console.log(`[Recency Block] 📈 ${playerName} ${config.propType} UNDER blocked: L3 avg ${l3Avg} is ${((declineRatio - 1) * 100).toFixed(0)}% above L10 avg ${l10Avg.toFixed(1)}`);
               continue;
             }
