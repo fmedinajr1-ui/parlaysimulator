@@ -794,6 +794,8 @@ export function useDeepSweetSpots() {
           assists: dedupedSpots.filter(s => s.propType === 'assists').length,
           threes: dedupedSpots.filter(s => s.propType === 'threes').length,
           blocks: dedupedSpots.filter(s => s.propType === 'blocks').length,
+          rebounds: dedupedSpots.filter(s => s.propType === 'rebounds').length,
+          steals: dedupedSpots.filter(s => s.propType === 'steals').length,
         },
       };
       

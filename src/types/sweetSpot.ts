@@ -323,6 +323,18 @@ export const PROP_TYPE_CONFIG: Record<PropType, {
     label: 'Blocks',
     shortLabel: 'BLK'
   },
+  rebounds: { 
+    gameLogField: 'rebounds', 
+    matchupKey: 'player_rebounds',
+    label: 'Rebounds',
+    shortLabel: 'REB'
+  },
+  steals: { 
+    gameLogField: 'steals', 
+    matchupKey: 'player_steals',
+    label: 'Steals',
+    shortLabel: 'STL'
+  },
 };
 
 // Quality tier thresholds

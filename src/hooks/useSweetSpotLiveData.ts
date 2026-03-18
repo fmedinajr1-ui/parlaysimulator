@@ -14,6 +14,8 @@ const PROP_TO_STAT_KEY: Record<PropType, string> = {
   assists: 'assists',
   threes: 'threes',
   blocks: 'blocks',
+  rebounds: 'rebounds',
+  steals: 'steals',
 };
 
 /**

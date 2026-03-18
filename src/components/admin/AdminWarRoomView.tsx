@@ -75,7 +75,17 @@ export function AdminWarRoomView() {
               Choose a game below to load the War Room with live prop intelligence.
             </p>
           </div>
-          {availableGames.length > 0 ? (
+          {spotsLoading ? (
+            <div className="flex flex-col items-center gap-2 py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              <p className="text-xs text-muted-foreground">Loading props data...</p>
+            </div>
+          ) : spotsError ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-destructive">
+              <AlertCircle className="w-6 h-6" />
+              <p className="text-xs">Failed to load props: {(spotsError as Error).message}</p>
+            </div>
+          ) : availableGames.length > 0 ? (
             <div className="w-full max-w-2xl">
               <WarRoomGameStrip
                 propsGames={availableGames}
