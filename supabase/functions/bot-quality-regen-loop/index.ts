@@ -321,8 +321,8 @@ Deno.serve(async (req) => {
         }
       }
 
-      // === DAILY PARLAY CAP (25 total) ===
-      const DAILY_PARLAY_CAP = 25;
+      // === DAILY PARLAY CAP (15 total — v6.0 tightened from 25) ===
+      const DAILY_PARLAY_CAP = 15;
       const { data: postCapPending } = await supabase
         .from('bot_daily_parlays')
         .select('id, combined_probability')

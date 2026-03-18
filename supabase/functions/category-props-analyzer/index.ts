@@ -157,12 +157,12 @@ const PROJECTION_WEIGHTS = {
 // Only recommend picks where edge (|projection - line|) exceeds threshold
 // v6.0: Tripled thresholds to prevent low-edge picks from being recommended
 const MIN_EDGE_THRESHOLDS: Record<string, number> = {
-  points: 4.5,     // TRIPLED from 1.5 - need 4.5+ edge for points
-  rebounds: 2.5,   // INCREASED from 1.0 - need 2.5+ edge for rebounds
-  assists: 2.0,    // INCREASED from 0.8 - need 2.0+ edge for assists
-  threes: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for threes
-  blocks: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for blocks
-  steals: 0.8,     // INCREASED from 0.3 - need 0.8+ edge for steals
+  points: 5.5,     // v7.0: Raised from 4.5 - need 5.5+ edge for points
+  rebounds: 3.0,   // v7.0: Raised from 2.5 - need 3.0+ edge for rebounds
+  assists: 2.5,    // v7.0: Raised from 2.0 - need 2.5+ edge for assists
+  threes: 1.2,     // v7.0: Raised from 1.0 - need 1.2+ edge for threes
+  blocks: 1.0,     // Unchanged - blocks already strict enough
+  steals: 0.8,     // Unchanged - steals already strict enough
 };
 
 // ============ 3PT SHOOTER FILTERS (v6.0) ============

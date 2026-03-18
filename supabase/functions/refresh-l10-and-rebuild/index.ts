@@ -122,36 +122,10 @@ Deno.serve(async (req) => {
 
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
-    // Void stale pending parlays (with generation lock + engine scope)
-    if (hasTime()) {
-      // Check if we already generated recently (prevent double-void)
-      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-      const { count: recentCount } = await supabase
-        .from("bot_daily_parlays")
-        .select("*", { count: "exact", head: true })
-        .eq("parlay_date", today)
-        .gte("created_at", thirtyMinAgo)
-        .eq("outcome", "pending");
-
-      if (recentCount && recentCount > 0) {
-        log(`⏭ Skipping void — ${recentCount} parlays generated in last 30min (double-run protection)`);
-        results["void_pending"] = "skipped:recent_generation";
-      } else {
-        log("Voiding stale pending parlays (scoped to orchestrator strategies only)...");
-        const { error: voidError } = await supabase
-          .from("bot_daily_parlays")
-          .update({ outcome: "void", lesson_learned: "Voided for L10-fresh rebuild" })
-          .eq("parlay_date", today)
-          .or("outcome.eq.pending,outcome.is.null")
-          .not("strategy_name", "ilike", "%l3_cross%")
-          .not("strategy_name", "ilike", "%mega_lottery%")
-          .not("strategy_name", "ilike", "%ladder%")
-          .not("strategy_name", "ilike", "%heat%")
-          .not("strategy_name", "ilike", "%sharp%");
-        if (voidError) log(`Void error: ${JSON.stringify(voidError)}`);
-        results["void_pending"] = voidError ? "error" : "ok";
-      }
-    }
+    // v6.0: REMOVED blanket void — downstream quality regen loop handles dedup/exposure/daily caps
+    // Previously this voided ALL pending parlays before regenerating, causing 100% void rates
+    log("⏭ Skipping blanket void (v6.0) — quality regen loop handles caps & dedup");
+    results["void_pending"] = "skipped:v6_additive_generation";
 
     // Step 3a: Independent pre-generation tasks (parallel)
     await invokeParallel([
