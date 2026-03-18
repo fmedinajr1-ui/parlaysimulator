@@ -25,13 +25,12 @@ interface UseLockModeLineScannerResult {
 
 // Map PropType to fetch-current-odds prop_type
 const propTypeToOddsApiType: Record<PropType, string> = {
-  'Points': 'player_points',
-  'Rebounds': 'player_rebounds',
-  'Assists': 'player_assists',
-  'PRA': 'player_points_rebounds_assists',
-  'Threes': 'player_threes',
-  'Steals': 'player_steals',
-  'Blocks': 'player_blocks',
+  points: 'player_points',
+  rebounds: 'player_rebounds',
+  assists: 'player_assists',
+  threes: 'player_threes',
+  steals: 'player_steals',
+  blocks: 'player_blocks',
 };
 
 export function useLockModeLineScanner(
