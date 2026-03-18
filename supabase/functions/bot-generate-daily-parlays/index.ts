@@ -1099,6 +1099,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 4, strategy: 'cross_sport_4', sports: ['basketball_nba', 'basketball_ncaab'], minHitRate: 55, sortBy: 'hit_rate' },
       // (floor_lock + ceiling_shot moved to TOP of execution profiles to avoid timeout)
+      // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'hit_rate', contrarian: true },
+      { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'shuffle', contrarian: true },
     ],
   },
 };
