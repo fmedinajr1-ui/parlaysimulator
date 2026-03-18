@@ -441,6 +441,20 @@ Deno.serve(async (req) => {
             last_quarter_sent: currentQuarter,
             analysis_date: today,
           });
+        } else {
+          // Even if no Telegram message sent, update tracker quarter
+          // (but DON'T set last_status_sent so status transitions still trigger messages)
+          trackerUpserts.push({
+            player_name: pick.player_name,
+            prop_type: pick.prop_type,
+            line,
+            side: (pick.recommended_side || 'over').toLowerCase(),
+            pick_id: pick.id,
+            pregame_sent: tracker?.pregame_sent || true,
+            last_status_sent: tracker?.last_status_sent || null,
+            last_quarter_sent: currentQuarter,
+            analysis_date: today,
+          });
         }
       }
     }
