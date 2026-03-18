@@ -723,7 +723,7 @@ serve(async (req) => {
 
           // Bench player UNDER scan
           if (label !== 'avoid') {
-            const underTargets = findPlayerTargets(attackerAbbrev, stat.key, 'under');
+            const underTargets = findPlayerTargets(attackerAbbrev, stat.key, 'under', defenderAbbrev);
             if (underTargets.length > 0) {
               const benchUnderRec: MatchupRecommendation = {
                 attacking_team: attackerAbbrev,
