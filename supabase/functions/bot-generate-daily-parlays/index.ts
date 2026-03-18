@@ -6701,6 +6701,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     defenseDetailMap,
     oddsMap,
     playerProps: playerProps || [],
+    blowoutGames: blowoutGameInfos,
   };
 }
 
