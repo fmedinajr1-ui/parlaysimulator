@@ -103,6 +103,7 @@ type NotificationType =
   | 'hedge_pregame_scout'
   | 'hedge_live_update'
   | 'composite_conflict_report'
+  | 'bench_picks_digest'
   | 'custom'
   | 'test';
 
