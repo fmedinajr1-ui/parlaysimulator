@@ -6,6 +6,7 @@ import { useHalftimeRecalibration } from './useHalftimeRecalibration';
 import { useLiveSweetSpotLines } from './useLiveSweetSpotLines';
 import { useHedgeStatusRecorder } from './useHedgeStatusRecorder';
 import { calculateHedgeStatus } from '@/lib/hedgeStatusUtils';
+import { calculateTriSignalProjection } from '@/lib/triSignalProjection';
 import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
