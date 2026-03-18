@@ -362,33 +362,31 @@ Deno.serve(async (req) => {
         const statusChanged = prevStatus !== hedgeAction;
         const newQuarter = currentQuarter > prevQuarter;
 
-        // Record hedge snapshot at every quarter boundary
-        if (newQuarter) {
-          try {
-            await supabase.functions.invoke('record-hedge-snapshot', {
-              body: {
-                sweet_spot_id: pick.id,
-                player_name: pick.player_name,
-                prop_type: pick.prop_type,
-                line,
-                side: (pick.recommended_side || 'over').toLowerCase(),
-                quarter: currentQuarter,
-                game_progress: gameProgress,
-                hedge_status: hedgeAction,
-                hit_probability: Math.round(gameProgress > 50 ? 60 : 50),
-                current_value: currentValue,
-                projected_final: projectedFinal,
-                rate_per_minute: ratePerMin,
-                rate_needed: remainingMinutes > 0 ? (line - currentValue) / remainingMinutes : undefined,
-                gap_to_line: projectedFinal - line,
-                live_book_line: liveBookLine,
-                analysis_date: today,
-              },
-            });
-            console.log(`[HedgeTracker] Recorded Q${currentQuarter} snapshot for ${pick.player_name}`);
-          } catch (snapErr) {
-            console.error(`[HedgeTracker] Snapshot recording error:`, snapErr);
-          }
+        // Record hedge snapshot on EVERY cron tick (upsert deduplicates by composite key)
+        try {
+          await supabase.functions.invoke('record-hedge-snapshot', {
+            body: {
+              sweet_spot_id: pick.id,
+              player_name: pick.player_name,
+              prop_type: pick.prop_type,
+              line,
+              side: (pick.recommended_side || 'over').toLowerCase(),
+              quarter: currentQuarter,
+              game_progress: gameProgress,
+              hedge_status: hedgeAction,
+              hit_probability: Math.round(gameProgress > 50 ? 60 : 50),
+              current_value: currentValue,
+              projected_final: projectedFinal,
+              rate_per_minute: ratePerMin,
+              rate_needed: remainingMinutes > 0 ? (line - currentValue) / remainingMinutes : undefined,
+              gap_to_line: projectedFinal - line,
+              live_book_line: liveBookLine,
+              analysis_date: today,
+            },
+          });
+          console.log(`[HedgeTracker] Recorded Q${currentQuarter} snapshot for ${pick.player_name}`);
+        } catch (snapErr) {
+          console.error(`[HedgeTracker] Snapshot recording error:`, snapErr);
         }
 
         if (statusChanged || newQuarter) {
@@ -440,6 +438,20 @@ Deno.serve(async (req) => {
             pick_id: pick.id,
             pregame_sent: tracker?.pregame_sent || true,
             last_status_sent: hedgeAction,
+            last_quarter_sent: currentQuarter,
+            analysis_date: today,
+          });
+        } else {
+          // Even if no Telegram message sent, update tracker quarter
+          // (but DON'T set last_status_sent so status transitions still trigger messages)
+          trackerUpserts.push({
+            player_name: pick.player_name,
+            prop_type: pick.prop_type,
+            line,
+            side: (pick.recommended_side || 'over').toLowerCase(),
+            pick_id: pick.id,
+            pregame_sent: tracker?.pregame_sent || true,
+            last_status_sent: tracker?.last_status_sent || null,
             last_quarter_sent: currentQuarter,
             analysis_date: today,
           });
