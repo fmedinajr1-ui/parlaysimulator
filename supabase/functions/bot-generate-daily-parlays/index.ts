@@ -4417,6 +4417,23 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }
   }
 
+  // Build blowout game info for blowout_script strategy
+  const blowoutGameInfos: BlowoutGameInfo[] = [];
+  for (const flag of gameContextFlags) {
+    if (flag.type === 'blowout_risk' && flag.home_team && flag.away_team) {
+      const spread = (flag as any).spread || 0;
+      // Determine underdog: positive spread = home is underdog, negative = away is underdog
+      // If no spread data in flag, we'll fill from envMap later
+      blowoutGameInfos.push({
+        home_team: flag.home_team.toLowerCase(),
+        away_team: flag.away_team.toLowerCase(),
+        spread,
+        underdog: spread >= 0 ? flag.home_team.toLowerCase() : flag.away_team.toLowerCase(),
+        favorite: spread >= 0 ? flag.away_team.toLowerCase() : flag.home_team.toLowerCase(),
+      });
+    }
+  }
+
   // 1. Sweet spot picks (analyzed player props) - no is_active filter, analysis_date is sufficient
   const { data: sweetSpots } = await supabase
     .from('category_sweet_spots')
