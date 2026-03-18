@@ -59,10 +59,6 @@ export function FreeTrialBanner({ onSubscribe, isLoading }: FreeTrialBannerProps
               <span className="text-muted-foreground text-base">/month</span>
             </div>
             <p className="text-muted-foreground text-sm">Cancel anytime · 3-day free trial</p>
-            <p className="inline-flex items-center gap-1.5 text-destructive text-sm font-semibold animate-pulse mt-1">
-              <Clock className="w-4 h-4" />
-              Free trial ends March 12th
-            </p>
           </div>
 
           <Separator />
