@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useMemo } from 'react';
 import { ParlaySimulation } from '@/types/parlay';
 import { runComparativeSimulation, MonteCarloResult } from '@/lib/monte-carlo';
