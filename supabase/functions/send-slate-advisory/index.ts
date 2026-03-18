@@ -102,23 +102,24 @@ Deno.serve(async (req) => {
         ];
 
     const adminMessage = [
-      `${classification.emoji} *SLATE ADVISORY — ${date}*`,
+      `${classification.emoji} <b>SLATE ADVISORY — ${date}</b>`,
       ``,
-      `📊 *${classification.label}*`,
-      `Only ${gameCount} game${gameCount !== 1 ? 's' : ''} on the board today (${sportsLabel})`,
+      `<b>Classification:</b> ${classification.label}`,
+      `<b>Games:</b> ${gameCount} across ${sportsLabel}`,
+      `<b>Stake Multiplier:</b> ${classification.stakeMultiplier}x`,
+      `<b>Max Legs:</b> ${classification.maxLegs}`,
+      `<b>Guidance:</b> ${classification.stakeGuidance}`,
       ``,
-      `⚠️ *What This Means*`,
-      ...guidanceLines,
-      ``,
-      `🔍 *Flags to Watch*`,
-      `🔁 ${revengeCount} revenge matchup${revengeCount !== 1 ? 's' : ''}`,
-      `😴 ${fatigueCount} team${fatigueCount !== 1 ? 's' : ''} on a back-to-back`,
-      `💥 ${blowoutCount} blowout risk${blowoutCount !== 1 ? 's' : ''}`,
+      `<b>Context Flags:</b>`,
+      `• ${revengeCount} revenge game${revengeCount !== 1 ? 's' : ''}`,
+      `• ${fatigueCount} B2B fatigue flag${fatigueCount !== 1 ? 's' : ''}`,
+      `• ${blowoutCount} blowout risk game${blowoutCount !== 1 ? 's' : ''}`,
+      `• ${revengeCount + fatigueCount + blowoutCount} total flags`,
     ].join('\n');
 
     try {
       await supabase.functions.invoke('bot-send-telegram', {
-        body: { message: adminMessage, parse_mode: 'Markdown' },
+        body: { message: adminMessage, parse_mode: 'HTML' },
       });
       console.log('[SlateAdvisory] Admin Telegram sent');
     } catch (err) {
