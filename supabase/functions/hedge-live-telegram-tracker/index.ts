@@ -161,8 +161,8 @@ Deno.serve(async (req) => {
     // 2. Get unique player names
     const playerNames = [...new Set(nbaPicks.map((p: any) => p.player_name))];
 
-    // 3. Fetch baselines, profiles, tracker state, AND baseline FG% in parallel
-    const [baselinesRes, profilesRes, trackerRes, fgBaselineRes] = await Promise.all([
+    // 3. Fetch baselines, profiles, tracker state, baseline FG%, AND actual book lines in parallel
+    const [baselinesRes, profilesRes, trackerRes, fgBaselineRes, bookLinesRes] = await Promise.all([
       supabase
         .from('player_quarter_baselines')
         .select('player_name, prop_type, q1_avg, q2_avg, q3_avg, q4_avg, data_source')
@@ -183,6 +183,12 @@ Deno.serve(async (req) => {
         .in('player_name', playerNames)
         .order('game_date', { ascending: false })
         .limit(playerNames.length * 10), // L10 per player
+      // Fetch actual sportsbook lines from unified_props
+      supabase
+        .from('unified_props')
+        .select('player_name, prop_type, current_line, bookmaker, over_price, under_price')
+        .eq('is_active', true)
+        .in('player_name', playerNames),
     ]);
 
     const baselines = baselinesRes.data || [];
