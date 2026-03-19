@@ -1,61 +1,54 @@
 
 
-# Auto-Resume Pipeline on Timeout
+# Encode March 12 Winning Patterns into the Generator
 
-## Problem
-The orchestrator has a 240s budget but the full pipeline often exceeds this, causing downstream steps (curated pipeline, sharp builder, heat engine, etc.) to be skipped. Currently these skipped steps are just lost until the next scheduled run.
+## Key Takeaways from March 12 vs March 19
 
-## Solution
-Add a **continuation mechanism**: when the orchestrator finishes with skipped steps, it re-invokes itself with a `resume_after` parameter indicating which phase to start from. Each re-invocation gets a fresh 240s budget.
+| Pattern | March 12 Winners | March 19 Risk |
+|---------|-----------------|---------------|
+| Leg count | ALL 7 winners = 3-leg | 5-leg and 8-leg parlays = 100% loss rate |
+| Per-leg L10 hit rate | ALL winning legs had 100% L10 hit rate | Several legs at 70-90% caused losses |
+| Categories | THREE_POINT_SHOOTER, HIGH_ASSIST dominated | VOLUME_SCORER is already blocked |
 
-### How It Works
+## Changes (3 targeted fixes)
 
-1. Define all steps as an ordered list with phase IDs (e.g., `phase0`, `phase1`, `phase1.5`, `phase2`, `phase3a`, `phase3b`, etc.)
-2. Accept an optional `resume_after` param — if provided, skip all phases up to and including that phase
-3. Track a `run_id` (passed through re-invocations) and an `attempt` counter (max 4 attempts to prevent infinite loops)
-4. When the function finishes with skipped steps, it calls `supabase.functions.invoke("refresh-l10-and-rebuild", { body: { resume_after: lastCompletedPhase, run_id, attempt: attempt + 1 } })` — fire-and-forget (no await, so current invocation can return)
-5. Max 4 continuation attempts (covers the full pipeline even in worst case)
+### 1. Remove 5-leg and 8-leg role-stacked generation entirely
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-### File Changes
+The multi-leg ticket builder (lines ~10672-10687) creates 5-leg and 8-leg exploration parlays. These have a **0% historical win rate**. Remove or disable both `buildMultiLegTicket(5)` and `buildMultiLegTicket(8)` calls. Also remove the 4 `role_stacked_5leg` profiles from exploration tier (lines 870-874).
 
-**`supabase/functions/refresh-l10-and-rebuild/index.ts`** — Restructure into resumable phases:
+This keeps the 3-leg `role_stacked_3leg` profiles in execution tier, which match the winning pattern.
 
-```
-// Accept resume params
-const { resume_after, run_id, attempt } = await req.json().catch(() => ({}));
-const currentRunId = run_id || crypto.randomUUID();
-const currentAttempt = attempt || 1;
-const MAX_ATTEMPTS = 4;
+### 2. Raise per-leg L10 hit rate floor for execution tier
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-// Define phases as ordered array
-const ALL_PHASES = ["phase0","phase1","phase1_5","phase2","phase3a","phase3b","phase3c","phase3d","phase3e","phase3f","phase3g"];
+Currently execution `minHitRate` is 55-70% depending on strategy. The March 12 data shows **100% L10 hit rate on every winning leg**. Add a hard gate in the parlay assembly loop: for execution-tier parlays, reject any individual leg where L10 hit rate < 90%. This doesn't change profile-level `minHitRate` (which is an average threshold) — it adds a per-leg floor.
 
-// Skip completed phases on resume
-let startIndex = 0;
-if (resume_after) {
-  startIndex = ALL_PHASES.indexOf(resume_after) + 1;
-  log(`RESUMING run ${currentRunId} attempt ${currentAttempt} from phase ${ALL_PHASES[startIndex]}`);
-}
-
-// Run phases sequentially, tracking last completed
-let lastCompleted = resume_after || null;
-// ... execute each phase, update lastCompleted after success ...
-
-// At end: if skipped steps exist AND attempt < MAX_ATTEMPTS, self-invoke
-if (skipped.length > 0 && currentAttempt < MAX_ATTEMPTS) {
-  log(`Self-continuing: attempt ${currentAttempt + 1}, resuming after ${lastCompleted}`);
-  supabase.functions.invoke("refresh-l10-and-rebuild", {
-    body: { resume_after: lastCompleted, run_id: currentRunId, attempt: currentAttempt + 1 }
-  }); // fire-and-forget
+In the leg selection logic (around line ~7100-7200 in the greedy assembly loop), add:
+```typescript
+// WINNING PATTERN GATE: Execution tier requires 90%+ L10 hit rate per leg
+if (tier === 'execution') {
+  const legL10 = rawL10 <= 1 ? rawL10 * 100 : rawL10;
+  if (legL10 < 90) {
+    // Skip this leg — March 12 analysis shows sub-90% legs cause losses
+    continue;
+  }
 }
 ```
 
-### Safety Guards
-- **Max 4 attempts** — prevents infinite loops
-- **Same `run_id`** passed through all continuations for log tracing
-- **Fire-and-forget** — current invocation returns immediately, continuation runs independently
-- **Idempotent phases** — each sub-function is already safe to call independently
+### 3. Remove `sweet_spot_l3` 5-leg profiles from exploration
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-### No DB Table Needed
-State is passed via the request body between invocations — no extra table required.
+Lines 706-708 and 710-715 have 5-leg profiles (`sweet_spot_l3`, `l3_matchup_combo`, `l3_sweet_mispriced_hybrid`). Based on the 0% win rate on 5+ leg parlays, cap all exploration profiles at **4 legs max** by changing these from `legs: 5` to `legs: 4` (or removing them if 4-leg versions already exist).
+
+## What This Preserves
+- All 3-leg strategies (optimal_combo, floor_lock, ceiling_shot, sweet_spot_core, etc.)
+- All 4-leg strategies (cross_sport_4, sweet_spot_plus)
+- Exploration and validation tiers continue generating volume
+- The existing composite filter, matchup gates, and player performance blocks remain intact
+
+## Expected Impact
+- Eliminates the 5-leg and 8-leg parlays that have never won
+- Raises the quality floor for execution-tier legs to match March 12's 100% hit rate pattern
+- Keeps parlay volume high (3-leg and 4-leg dominate the profile list already)
 
