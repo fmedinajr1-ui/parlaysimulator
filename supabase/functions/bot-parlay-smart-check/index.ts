@@ -36,6 +36,7 @@ const TAG_SCORE_ADJUSTMENTS: Record<string, number> = {
   'AVOID_MATCHUP': -10,
   'NO_L3_DATA': -5,
   'NO_MATCHUP_DATA': 0,
+  'ROLE_PLAYER_VOLATILE': -15,
 };
 
 function computeQualityScore(riskTags: string[]): number {
