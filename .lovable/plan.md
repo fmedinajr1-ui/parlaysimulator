@@ -1,36 +1,45 @@
 
 
-# Tighten MONITOR → HEDGE ALERT Thresholds
+# Add Role-Player Volatility Flag to Smart Check
 
 ## Problem
-78% of props labeled MONITOR yesterday ended up missing. The current `monitor` buffer thresholds are too generous — props sitting near the line are given "watch" status when they should already be flagged for action.
+Sam Hauser had 100% L10 hit rate on 3.5 rebounds but put up 0 in-game. Bench players with low-floor props (rebounds, assists) are inherently volatile — high L10 hit rates mask the risk that they can easily post a zero on any given night.
 
-## Current Thresholds (buffer needed to stay in MONITOR)
+## Solution
+Add a `ROLE_PLAYER_VOLATILE` risk tag that fires when a player has a low line on a high-variance prop despite a strong L10 hit rate. This catches the "looks safe but isn't" trap.
 
-| Quarter | onTrack | monitor | alert |
-|---------|---------|---------|-------|
-| Q1 (<25%) | 4.0 | 1.0 | -2.0 |
-| Q2 (<50%) | 3.0 | 0.5 | -1.5 |
-| Q3 (<75%) | 1.5 | 0.0 | -0.5 |
-| Q4 (75%+) | 1.0 | -0.5 | -0.5 |
+## Detection Logic
+A leg gets flagged when ALL of these are true:
+- **Low line**: rebounds ≤ 4.5, assists ≤ 4.5, steals ≤ 1.5, blocks ≤ 1.5, threes ≤ 2.5
+- **High L10 hit rate**: ≥ 70%
+- **Low L10 average (thin margin)**: L10 avg is within 1.5× of the line (e.g., avg 4.2 on a 3.5 line)
+- **Side is OVER** (unders on low lines are less volatile)
 
-## Proposed Thresholds (raise monitor floor, tighten alert)
+## Changes
 
-| Quarter | onTrack | monitor (was) | monitor (new) | alert (was) | alert (new) |
-|---------|---------|---------------|---------------|-------------|-------------|
-| Q1 | 4.0 | 1.0 | **2.0** | -2.0 | **-1.0** |
-| Q2 | 3.0 | 0.5 | **1.5** | -1.5 | **-0.5** |
-| Q3 | 1.5 | 0.0 | **0.5** | -0.5 | **0.0** |
-| Q4 | 1.0 | -0.5 | **0.0** | -0.5 | **-0.25** |
+### File: `supabase/functions/bot-parlay-smart-check/index.ts`
 
-This means a prop needs a larger buffer to stay in MONITOR — anything with a thin margin now escalates to HEDGE ALERT earlier.
+1. **Add tag to score map** (~line 23-38):
+   - `'ROLE_PLAYER_VOLATILE': -15`
 
-## Files to Update (3 locations with identical thresholds)
+2. **Add volatility check** after the L3 check block (~line 252, before blowout check):
+   - Check if prop_type is a low-floor category (rebounds, assists, steals, blocks, threes)
+   - Check if line is at or below the volatile threshold for that prop
+   - Check if L10 hit rate is high (≥70%) but L10 avg margin over line is thin (< 1.5)
+   - If all conditions met and side is 'over': push `ROLE_PLAYER_VOLATILE` tag
+   - Set recommendation to `CAUTION` if currently `KEEP`
+   - Add detail: `volatile_reason: "Low-floor prop (3.5 reb) with thin margin (avg 4.2) — bench player variance risk"`
 
-| File | Change |
-|------|--------|
-| `src/lib/hedgeStatusUtils.ts` line 13-18 | Update `getBufferThresholds` monitor & alert values |
-| `supabase/functions/hedge-live-telegram-tracker/index.ts` line 17-21 | Same threshold update (duplicated copy) |
+### File: `supabase/functions/bot-matchup-defense-scanner/index.ts`
 
-No other code changes needed — all status logic flows through `getBufferThresholds`.
+3. **Add same tag in scanner risk tag generation** so the tag also appears in matchup broadcast recommendations, using the same logic against player L10 data already available in the scanner.
+
+### File: `src/components/parlay/ParlaySmartCheckPanel.tsx` (if tag rendering exists)
+
+4. **Render the new tag** with an appropriate icon/color — orange warning badge showing "ROLE PLAYER VOLATILE" with tooltip explaining the risk.
+
+## Tag Behavior
+- Score penalty: **-15** (same as BLOWOUT_RISK — meaningful but not a hard DROP)
+- Recommendation: escalates to **CAUTION** (doesn't auto-drop, just warns)
+- Works alongside existing tags — a volatile player in a blowout game stacks both penalties
 
