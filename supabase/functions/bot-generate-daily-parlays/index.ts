@@ -4635,6 +4635,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[Bot] 💥 Blowout games detected: ${blowoutGameInfos.map(bg => `${bg.underdog} (+${Math.abs(bg.spread).toFixed(1)}) vs ${bg.favorite}`).join(', ')}`);
   }
 
+  const homeCourtMap = new Map<string, HomeCourtData>();
   (homeCourtResult.data || []).forEach((h: any) => {
     homeCourtMap.set(h.team_name, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
     const abbrev = nameToAbbrev.get(h.team_name);
