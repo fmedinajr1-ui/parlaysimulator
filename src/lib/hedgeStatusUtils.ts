@@ -200,3 +200,16 @@ export function getHedgeActionLabel(params: {
 export function hedgeStatusToActionLabel(status: HedgeStatus): HedgeActionLabel {
   return STATUS_TO_ACTION[status] ?? 'MONITOR';
 }
+
+/**
+ * Detect Q1 flip candidates — props showing early dips that historically recover 75%+ of the time.
+ * UI/Telegram can display "FLIP OPPORTUNITY" instead of a warning signal.
+ */
+export function isQ1FlipCandidate(
+  gameProgress: number,
+  hedgeStatus: HedgeStatus | HedgeActionLabel | null | undefined
+): boolean {
+  if (gameProgress >= 25 || !hedgeStatus) return false;
+  const normalized = String(hedgeStatus).toLowerCase();
+  return normalized === 'monitor' || normalized === 'alert' || normalized === 'hedge alert';
+}

@@ -390,6 +390,19 @@ Deno.serve(async (req) => {
         }
 
         if (statusChanged || newQuarter) {
+          // Q1 Flip Logic: suppress MONITOR/HEDGE ALERT in Q1, reword as flip opportunity
+          const isQ1 = gameProgress < 25;
+          const isQ1Suppressible = isQ1 && (hedgeAction === 'MONITOR' || hedgeAction === 'HEDGE ALERT');
+
+          if (isQ1Suppressible) {
+            // Don't send a full hedge alert — send a flip opportunity note instead
+            const flipMsg = `🔄 Q1 FLIP OPPORTUNITY — ${pick.player_name} ${propLabel} ${sideChar}${line}\n\n`
+              + `📊 Status: ${getStatusEmoji(hedgeAction)} ${hedgeAction} (Q1 — historically 75% recover)\n`
+              + `📈 Current: ${currentValue} ${propLabel.toLowerCase()} | Projected: ${projectedFinal.toFixed(1)}\n`
+              + `⏱️ Q${currentQuarter} ${game.clock || ''} | Progress: ${Math.round(gameProgress)}%\n`
+              + `💡 HOLD recommended — Q1 signals are noisy. Wait for Q2 to decide.`;
+            liveUpdateMessages.push(flipMsg);
+          } else {
           const statusEmoji = getStatusEmoji(hedgeAction);
           const prevStatusEmoji = prevStatus ? getStatusEmoji(prevStatus as HedgeAction) : '';
           const statusTransition = prevStatus
@@ -429,6 +442,7 @@ Deno.serve(async (req) => {
           if (role.fadeSignal) msg += ` — ⚠️ may not get enough minutes`;
 
           liveUpdateMessages.push(msg);
+          }
 
           trackerUpserts.push({
             player_name: pick.player_name,
