@@ -1,19 +1,19 @@
 /**
- * bot-daily-diversity-rebalance v4.0 — Validation-Only Safety Net
+ * bot-daily-diversity-rebalance v5.0 — Minimal Safety Net (Reverted)
  * 
- * Since bot-quality-regen-loop v6.0 now handles selection from a wide pool,
- * this function is simplified to a lightweight post-selection sanity check:
+ * REVERTED from v4.0 aggressive caps based on backtest showing
+ * 82% void rate post-Mar12 (vs 42% pre-Mar12).
  * 
- * 1. Verify no player appears in more than 5 of the final parlays
- * 2. Verify no single strategy exceeds 40% of the total
- * 3. Volume-aware stake scaling (unchanged)
- * 
- * If violations exist, void the lowest-probability offenders.
+ * v5.0 changes:
+ * - Raised player appearance cap from 5 → 10
+ * - Raised strategy family cap from 40% → 60%
+ * - Only voids extreme outliers, NOT moderate duplicates
+ * - Volume-aware stake scaling unchanged
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VERSION = 'diversity-rebalance-v4.0-validation-only';
+const VERSION = 'diversity-rebalance-v5.0-minimal';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,10 +51,12 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const today = body.date || getEasternDate();
-    const maxPlayerAppearances = body.max_player_appearances ?? 5;
-    const maxStrategyPct = body.max_strategy_pct ?? 0.40;
+    // REVERTED: raised from 5 → 10
+    const maxPlayerAppearances = body.max_player_appearances ?? 10;
+    // REVERTED: raised from 40% → 60%
+    const maxStrategyPct = body.max_strategy_pct ?? 0.60;
 
-    console.log(`[DiversityRebalance] ${VERSION} | date=${today}`);
+    console.log(`[DiversityRebalance] ${VERSION} | date=${today} | playerCap=${maxPlayerAppearances} | stratPct=${maxStrategyPct}`);
 
     // Fetch pending parlays
     const { data: pending, error } = await supabase
@@ -79,9 +81,9 @@ Deno.serve(async (req) => {
     const voidReasons: Record<string, number> = {};
 
     // ═══════════════════════════════════════════════════════════
-    // PASS 1: Global Player Appearance Cap
+    // PASS 1: Global Player Appearance Cap (10)
     // ═══════════════════════════════════════════════════════════
-    const playerUsage = new Map<string, string[]>(); // player → [parlay IDs, sorted by probability desc]
+    const playerUsage = new Map<string, string[]>();
 
     for (const p of (pending || [])) {
       const legs = Array.isArray(p.legs) ? p.legs : [];
@@ -97,7 +99,6 @@ Deno.serve(async (req) => {
     const playerVoidIds = new Set<string>();
     for (const [player, parlayIds] of playerUsage) {
       if (parlayIds.length <= maxPlayerAppearances) continue;
-      // Void lowest-probability ones (already sorted by prob desc)
       const toVoid = parlayIds.slice(maxPlayerAppearances);
       for (const id of toVoid) {
         playerVoidIds.add(id);
@@ -111,7 +112,7 @@ Deno.serve(async (req) => {
         const chunk = ids.slice(i, i + 100);
         const { count } = await supabase
           .from('bot_daily_parlays')
-          .update({ outcome: 'void', lesson_learned: 'diversity_v4_player_cap' })
+          .update({ outcome: 'void', lesson_learned: 'diversity_v5_player_cap' })
           .in('id', chunk)
           .eq('outcome', 'pending')
           .select('*', { count: 'exact', head: true });
@@ -121,9 +122,8 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // PASS 2: Strategy Family Cap (40%)
+    // PASS 2: Strategy Family Cap (60%)
     // ═══════════════════════════════════════════════════════════
-    // Re-fetch after player cap pass
     const { data: remaining } = await supabase
       .from('bot_daily_parlays')
       .select('id, strategy_name, combined_probability')
@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
       .order('combined_probability', { ascending: false });
 
     const remainingCount = (remaining || []).length;
-    const maxPerFamily = Math.max(3, Math.ceil(remainingCount * maxStrategyPct));
+    const maxPerFamily = Math.max(5, Math.ceil(remainingCount * maxStrategyPct));
 
     const familyCounts = new Map<string, { kept: number; toVoid: string[] }>();
     for (const p of (remaining || [])) {
@@ -151,7 +151,7 @@ Deno.serve(async (req) => {
       if (entry.toVoid.length === 0) continue;
       const { count } = await supabase
         .from('bot_daily_parlays')
-        .update({ outcome: 'void', lesson_learned: `diversity_v4_strategy_cap_${maxPerFamily}` })
+        .update({ outcome: 'void', lesson_learned: `diversity_v5_strategy_cap_${maxPerFamily}` })
         .in('id', entry.toVoid)
         .eq('outcome', 'pending')
         .select('*', { count: 'exact', head: true });
