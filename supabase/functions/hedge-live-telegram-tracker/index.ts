@@ -161,8 +161,8 @@ Deno.serve(async (req) => {
     // 2. Get unique player names
     const playerNames = [...new Set(nbaPicks.map((p: any) => p.player_name))];
 
-    // 3. Fetch baselines, profiles, tracker state, AND baseline FG% in parallel
-    const [baselinesRes, profilesRes, trackerRes, fgBaselineRes] = await Promise.all([
+    // 3. Fetch baselines, profiles, tracker state, baseline FG%, AND actual book lines in parallel
+    const [baselinesRes, profilesRes, trackerRes, fgBaselineRes, bookLinesRes] = await Promise.all([
       supabase
         .from('player_quarter_baselines')
         .select('player_name, prop_type, q1_avg, q2_avg, q3_avg, q4_avg, data_source')
@@ -183,12 +183,31 @@ Deno.serve(async (req) => {
         .in('player_name', playerNames)
         .order('game_date', { ascending: false })
         .limit(playerNames.length * 10), // L10 per player
+      // Fetch actual sportsbook lines from unified_props
+      supabase
+        .from('unified_props')
+        .select('player_name, prop_type, current_line, bookmaker, over_price, under_price')
+        .eq('is_active', true)
+        .in('player_name', playerNames),
     ]);
 
     const baselines = baselinesRes.data || [];
     const profiles = profilesRes.data || [];
     const trackerRows = trackerRes.data || [];
     const fgLogs = fgBaselineRes.data || [];
+    const bookLines = bookLinesRes.data || [];
+
+    // Build actual sportsbook line lookup: player::prop_type -> { line, bookmaker, overPrice, underPrice }
+    const actualLineByKey: Record<string, { line: number; bookmaker: string; overPrice: number | null; underPrice: number | null }> = {};
+    for (const bl of bookLines) {
+      const normProp = (bl.prop_type || '').toLowerCase().replace('player_', '');
+      const key = `${bl.player_name}::${normProp}`;
+      // Keep the first match (or prefer fanduel if available)
+      if (!actualLineByKey[key] || bl.bookmaker === 'fanduel') {
+        actualLineByKey[key] = { line: bl.current_line, bookmaker: bl.bookmaker, overPrice: bl.over_price, underPrice: bl.under_price };
+      }
+    }
+    console.log(`[HedgeTracker] Fetched ${bookLines.length} active book lines, mapped ${Object.keys(actualLineByKey).length} unique`);
 
     // Build lookup maps
     const baselinesByPlayer: Record<string, any[]> = {};
@@ -323,8 +342,14 @@ Deno.serve(async (req) => {
         const ratePerMin = projection?.ratePerMinute ?? 0;
         const remainingMinutes = player.estimatedRemaining ?? 0;
         
-        // Signal 2: Use recommended_line from sweet spots as book anchor
-        const liveBookLine = pick.recommended_line || undefined;
+        // Signal 2: Use actual sportsbook line from unified_props, fall back to sweet spot line
+        const statKey2 = (pick.prop_type || '').toLowerCase().replace('player_', '');
+        const bookKey = `${pick.player_name}::${statKey2}`;
+        const actualBook = actualLineByKey[bookKey];
+        const liveBookLine = actualBook?.line ?? pick.recommended_line ?? undefined;
+        const liveBookmaker = actualBook?.bookmaker;
+        const liveOverPrice = actualBook?.overPrice;
+        const liveUnderPrice = actualBook?.underPrice;
         
         // Signal 3: Get baseline FG% from L10 game logs
         const baselineFg = baselineFgByPlayer[pick.player_name];
@@ -440,6 +465,18 @@ Deno.serve(async (req) => {
           msg += `💡 Role: ${role.emoji} ${role.label}`;
           if (role.playsAll4Q) msg += ` — expected to play closing minutes`;
           if (role.fadeSignal) msg += ` — ⚠️ may not get enough minutes`;
+
+          // Show actual sportsbook line info for hedge recommendations
+          if (actualBook && (hedgeAction === 'HEDGE ALERT' || hedgeAction === 'HEDGE NOW')) {
+            const oppSide = side === 'OVER' ? 'UNDER' : 'OVER';
+            const price = oppSide === 'UNDER' ? liveUnderPrice : liveOverPrice;
+            const priceStr = price ? ` (${price > 0 ? '+' : ''}${price})` : '';
+            const bookLabel = liveBookmaker ? ` on ${liveBookmaker.charAt(0).toUpperCase() + liveBookmaker.slice(1)}` : '';
+            msg += `\n\n🎰 Consider: ${oppSide} ${actualBook.line}${priceStr}${bookLabel}`;
+            if (actualBook.line !== line) {
+              msg += `\n   (Your line: ${sideChar}${line} | Book line: ${actualBook.line})`;
+            }
+          }
 
           liveUpdateMessages.push(msg);
           }

@@ -48,13 +48,15 @@ function calcHedgeStatus(edge: PropEdge): HedgeResult | null {
   const buffer = lean === 'OVER' ? projected - line : line - projected;
   const status = ACTION_TO_STATUS[actionLabel];
   const oppSide = lean === 'OVER' ? 'UNDER' : 'OVER';
+  // Use live book line when available, fall back to original line
+  const displayLine = (edge as any).liveBookLine ?? line;
 
   const details: Record<HedgeStatus, () => HedgeResult> = {
     lock: () => ({ status, label: 'LOCK', detail: `Projected to clear by ${buffer.toFixed(1)}`, icon: <Lock className="w-3 h-3" /> }),
     hold: () => ({ status, label: 'HOLD', detail: `On pace (+${buffer.toFixed(1)})`, icon: <CheckCircle2 className="w-3 h-3" /> }),
     monitor: () => ({ status, label: 'MONITOR', detail: `Thin margin (+${buffer.toFixed(1)})`, icon: <Eye className="w-3 h-3" /> }),
-    hedge_alert: () => ({ status, label: 'HEDGE ALERT', detail: `Consider ${oppSide} ${line}`, icon: <Shield className="w-3 h-3" /> }),
-    hedge_now: () => ({ status, label: 'HEDGE NOW', detail: `Bet ${oppSide} ${line}`, icon: <AlertTriangle className="w-3 h-3" /> }),
+    hedge_alert: () => ({ status, label: 'HEDGE ALERT', detail: `Consider ${oppSide} ${displayLine}`, icon: <Shield className="w-3 h-3" /> }),
+    hedge_now: () => ({ status, label: 'HEDGE NOW', detail: `Bet ${oppSide} ${displayLine}`, icon: <AlertTriangle className="w-3 h-3" /> }),
     already_hit: () => ({ status: 'already_hit', label: '✅ HIT', detail: '', icon: <CheckCircle2 className="w-3 h-3" /> }),
     line_exceeded: () => ({ status: 'line_exceeded', label: '❌ LOST', detail: '', icon: <AlertTriangle className="w-3 h-3" /> }),
   };
