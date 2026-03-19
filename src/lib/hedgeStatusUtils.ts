@@ -171,7 +171,7 @@ export function getHedgeActionLabel(params: {
     const q1Line = q1FanDuelLine.line;
     if (isOver) {
       if (currentValue >= q1Line) return 'HOLD';
-      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'HEDGE ALERT';
+      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'MONITOR';
     } else {
       if (currentValue >= q1Line) return 'HEDGE ALERT';
       if (currentValue < q1Line * 0.5) return 'HOLD';
