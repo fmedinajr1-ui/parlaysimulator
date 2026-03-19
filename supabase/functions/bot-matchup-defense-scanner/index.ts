@@ -228,7 +228,6 @@ const LOW_FLOOR_THRESHOLDS: Record<string, number> = {
   blocks: 1.5, blk: 1.5, player_blocks: 1.5,
   threes: 2.5, '3pm': 2.5, three_pointers: 2.5, player_threes: 2.5,
 };
-}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
