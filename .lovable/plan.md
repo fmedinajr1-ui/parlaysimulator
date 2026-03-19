@@ -1,60 +1,40 @@
 
 
-# Fix Hedge Recommendations to Use Actual Sportsbook Lines
+# Backtest: March 12th Filters vs Current Filters
 
-## Problem
-Hedge recommendations say "Bet UNDER 24.5" using the original sweet spot analysis line, not the actual FanDuel/live sportsbook line. Three places are affected:
+## What the Data Already Shows
 
-1. **Telegram Tracker** — uses `pick.recommended_line` as `liveBookLine` (line 327), never fetches actual market lines
-2. **PropHedgeIndicator** — displays "Consider UNDER {line}" / "Bet OVER {line}" using the original line, not the live book line
-3. **HedgeRecommendation.tsx** — already has live line data but some action text still references the original line
+From querying actual `bot_daily_parlays` results:
 
-## Solution
-Query `unified_props` for the actual FanDuel/market line and use it in all hedge recommendation text and logic.
+**Pre-March 12 (Mar 1–12): 416 settled, 97 won = 23.3% win rate**
+**Post-March 12 (Mar 13–18): 37 settled, 7 won = 18.9% win rate**
 
-## Changes
+### Strategy Breakdown — Pre vs Post March 12
 
-### 1. Telegram Tracker — Fetch Real Lines from `unified_props`
-**File**: `supabase/functions/hedge-live-telegram-tracker/index.ts`
+| Strategy | Pre-Mar12 WR | Post-Mar12 WR | Change |
+|----------|-------------|---------------|--------|
+| grind_stack (execution) | 43.6% (44/101) | 25.0% (1/4) | -18.6% |
+| optimal_combo (exploration) | 20.0% (13/65) | 16.7% (3/18) | -3.3% |
+| shootout_stack (execution) | 10.3% (9/87) | 33.3% (1/3) | +23.0% |
+| cross_sport_4 | 100% (6/6) | no data | — |
 
-- After fetching picks (~line 160), query `unified_props` for matching active props:
-  ```sql
-  SELECT player_name, prop_type, current_line, bookmaker, over_price, under_price
-  FROM unified_props WHERE is_active = true AND player_name IN (...)
-  ```
-- Build a lookup map `actualLineByKey[player::prop_type] = { line, bookmaker, prices }`
-- Replace line 327: use `actualLineByKey[key]?.line` as `liveBookLine` instead of `pick.recommended_line`
-- Update hedge message text (lines 416-420) to show the actual book line:
-  - "HEDGE ALERT — Consider UNDER 25.5 (FanDuel)" instead of just the sweet spot line
-  - Include the price when available: "UNDER 25.5 (-110)"
+**Key finding**: `grind_stack` was your best strategy at 43.6% pre-Mar12, dropped to 25% after. The high void rates post-Mar12 (43–90 voids/day) suggest new filters are killing too many parlays.
 
-### 2. PropHedgeIndicator — Accept and Display Live Line
-**File**: `src/components/scout/PropHedgeIndicator.tsx`
+## Plan
 
-- Update the `PropEdge` usage to check for a `liveBookLine` field (already exists on some edge objects)
-- Change line 56-57: when `liveBookLine` is available, show it instead of original line:
-  - `"Consider UNDER ${liveBookLine}"` instead of `"Consider UNDER ${line}"`
-  - `"Bet OVER ${liveBookLine}"` instead of `"Bet OVER ${line}"`
-- Fall back to original line when live line isn't available
+Since you already have `run-parlay-backtest` which compares v5 vs v6 filter configs, I'll:
 
-### 3. HedgeRecommendation — Ensure Action Text Uses Live Line
-**File**: `src/components/sweetspots/HedgeRecommendation.tsx`
+1. **Run a direct data analysis** using the database to produce a detailed comparison report — leg hit rates, strategy performance, void rates, and filter impact across the two periods
+2. **Query leg-level data** from the actual parlays to identify which specific filter changes (composite hard block, grind-over block, etc.) are causing the most damage
+3. **Output a report** to `/mnt/documents/` with actionable findings
 
-- Review action strings in the status determination block (lines 380+) to ensure all "hedge" / "bet opposite" recommendations reference `hedgeLine` (the live book line) rather than `line` (original)
-- Already partially done — verify completeness and fix any remaining references to original `line` in action strings
+This is a data task — I'll run it as a script rather than building UI.
 
-### 4. Telegram Message Format Enhancement
-When a real book line is available, messages will show:
-```
-🟠 HEDGE ALERT — LeBron James PTS O24.5
-
-📊 Status: 🟢 HOLD → 🟠 HEDGE ALERT
-📈 Current: 12 pts | Projected: 22.8
-⏱️ Q3 8:42 | Progress: 58%
-
-💡 Consider: UNDER 26.5 (-110) on FanDuel
-   (Your line: O24.5 | Book line: 26.5)
-```
-
-Instead of the current generic "Consider UNDER 24.5".
+### Deliverable
+A detailed comparison report (CSV + summary) showing:
+- Daily win rates pre vs post March 12
+- Strategy-level performance shifts
+- Void rate explosion analysis (which filter is voiding the most)
+- Leg hit rate comparison
+- Specific recommendations on which filters to revert
 
