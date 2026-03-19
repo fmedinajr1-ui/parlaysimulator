@@ -67,7 +67,7 @@ export function calculateHedgeStatus(spot: DeepSweetSpot): HedgeStatus | null {
       // Player already exceeded the Q1 line in Q1 → boost toward on_track
       if (currentValue >= q1Line) return 'on_track';
       // Well below Q1 pace (less than 50% of Q1 line with >15% of Q1 elapsed)
-      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'alert';
+      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'monitor';
     } else {
       // UNDER: player already hit Q1 line in Q1 → bad sign
       if (currentValue >= q1Line) return 'alert';
