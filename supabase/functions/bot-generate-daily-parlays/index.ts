@@ -8111,7 +8111,16 @@ async function generateTierParlays(
         continue;
       }
       
-      // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
+       // === WINNING PATTERN GATE: Execution tier requires 90%+ L10 hit rate per leg (March 12 analysis) ===
+       if (tier === 'execution') {
+         const rawL10 = (pick as any).l10_hit_rate || (pick as any).confidence_score || 0;
+         const legL10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
+         if (legL10Pct < 90) {
+           continue;
+         }
+       }
+       
+       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
       // BYPASS for L3 strategy — L3 recency is the primary signal, not matchup defense
       if (tier === 'execution' && 'player_name' in pick && !isSweetSpotL3Profile) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
