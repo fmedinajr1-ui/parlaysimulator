@@ -703,15 +703,15 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
       { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
       // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency (moved from execution) =============
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
-      // ============= L3 + MATCHUP COMBO: L3 recency + defensive matchup rankings =============
-      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
-      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      // ============= SWEET SPOT L3: capped at 4 legs (5+ leg parlays have 0% win rate) =============
+      { legs: 4, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
+      { legs: 4, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
+      { legs: 4, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
+      // ============= L3 + MATCHUP COMBO: capped at 4 legs =============
       { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
-      // ============= L3 SWEET + MISPRICED HYBRID: 2 sweet spot + 3 mispriced (L3-confirmed) =============
-      { legs: 5, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined' },
+      { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      // ============= L3 SWEET + MISPRICED HYBRID: capped at 4 legs =============
+      { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined' },
       { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined' },
       // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
