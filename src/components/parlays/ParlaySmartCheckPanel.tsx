@@ -255,11 +255,19 @@ export function ParlaySmartCheckPanel() {
 
                             {/* Risk Tags */}
                             <div className="flex flex-wrap gap-1">
-                              {leg.risk_tags.map((tag, i) => (
-                                <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0">
-                                  {tag}
-                                </Badge>
-                              ))}
+                              {leg.risk_tags.map((tag, i) => {
+                                const isVolatile = tag === 'ROLE_PLAYER_VOLATILE';
+                                return (
+                                  <Badge 
+                                    key={i} 
+                                    variant="outline" 
+                                    className={`text-[10px] px-1.5 py-0 ${isVolatile ? 'border-orange-500/50 bg-orange-500/10 text-orange-400' : ''}`}
+                                    title={isVolatile ? 'Low-floor prop with high L10 hit rate but thin margin — bench player variance risk' : undefined}
+                                  >
+                                    {isVolatile ? '⚠️ ' : ''}{tag}
+                                  </Badge>
+                                );
+                              })}
                             </div>
 
                             {/* Details */}
