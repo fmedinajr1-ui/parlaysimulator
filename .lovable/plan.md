@@ -1,5 +1,4 @@
 
-
 # Add Role-Player Volatility Flag to Smart Check
 
 ## Problem
@@ -42,4 +41,3 @@ A leg gets flagged when ALL of these are true:
 - Score penalty: **-15** (same as BLOWOUT_RISK — meaningful but not a hard DROP)
 - Recommendation: escalates to **CAUTION** (doesn't auto-drop, just warns)
 - Works alongside existing tags — a volatile player in a blowout game stacks both penalties
-
