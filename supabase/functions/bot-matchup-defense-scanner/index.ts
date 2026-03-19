@@ -217,7 +217,17 @@ function buildRiskTags(
     }
   }
 
-  return { tags, trend };
+  return { tags, trend }
+}
+
+// Role-player volatility thresholds for low-floor props
+const LOW_FLOOR_THRESHOLDS: Record<string, number> = {
+  rebounds: 4.5, reb: 4.5, total_rebounds: 4.5, player_rebounds: 4.5,
+  assists: 4.5, ast: 4.5, player_assists: 4.5,
+  steals: 1.5, stl: 1.5, player_steals: 1.5,
+  blocks: 1.5, blk: 1.5, player_blocks: 1.5,
+  threes: 2.5, '3pm': 2.5, three_pointers: 2.5, player_threes: 2.5,
+};
 }
 
 serve(async (req) => {
