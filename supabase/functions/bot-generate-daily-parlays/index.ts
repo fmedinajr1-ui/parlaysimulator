@@ -866,12 +866,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
-      // ============= ROLE-STACKED 5/8-LEG: moved from execution (0% win rate on 5+ leggers) =============
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      // BOOSTED: +2 role_stacked_5leg profiles (reallocated from validated_conservative)
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 60, sortBy: 'composite', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      // ============= ROLE-STACKED 5/8-LEG: REMOVED (0% historical win rate on 5+ leggers — March 12 analysis) =============
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
       // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
       { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
