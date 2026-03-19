@@ -703,15 +703,15 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
       { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
       // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency (moved from execution) =============
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
-      { legs: 5, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
-      // ============= L3 + MATCHUP COMBO: L3 recency + defensive matchup rankings =============
-      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
-      { legs: 5, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      // ============= SWEET SPOT L3: capped at 4 legs (5+ leg parlays have 0% win rate) =============
+      { legs: 4, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
+      { legs: 4, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
+      { legs: 4, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
+      // ============= L3 + MATCHUP COMBO: capped at 4 legs =============
       { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
-      // ============= L3 SWEET + MISPRICED HYBRID: 2 sweet spot + 3 mispriced (L3-confirmed) =============
-      { legs: 5, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined' },
+      { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      // ============= L3 SWEET + MISPRICED HYBRID: capped at 4 legs =============
+      { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined' },
       { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined' },
       // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
@@ -866,12 +866,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       { legs: 4, strategy: 'sweet_spot_plus', sports: ['all'], minHitRate: 55, sortBy: 'shuffle' },
-      // ============= ROLE-STACKED 5/8-LEG: moved from execution (0% win rate on 5+ leggers) =============
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      // BOOSTED: +2 role_stacked_5leg profiles (reallocated from validated_conservative)
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
-      { legs: 5, strategy: 'role_stacked_5leg', sports: ['all'], minHitRate: 60, sortBy: 'composite', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.3 },
+      // ============= ROLE-STACKED 5/8-LEG: REMOVED (0% historical win rate on 5+ leggers — March 12 analysis) =============
       // (floor_lock + ceiling_shot moved to TOP of exploration profiles to avoid timeout)
       // ============= CONTRARIAN PROFILES: flip side for scenario diversity =============
       { legs: 3, strategy: 'contrarian_flip', sports: ['basketball_nba'], minHitRate: 40, sortBy: 'hit_rate', contrarian: true },
@@ -8116,7 +8111,16 @@ async function generateTierParlays(
         continue;
       }
       
-      // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
+       // === WINNING PATTERN GATE: Execution tier requires 90%+ L10 hit rate per leg (March 12 analysis) ===
+       if (tier === 'execution') {
+         const rawL10 = (pick as any).l10_hit_rate || (pick as any).confidence_score || 0;
+         const legL10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
+         if (legL10Pct < 90) {
+           continue;
+         }
+       }
+       
+       // === GOD MODE MATCHUP HARD-BLOCK (execution tier) ===
       // BYPASS for L3 strategy — L3 recency is the primary signal, not matchup defense
       if (tier === 'execution' && 'player_name' in pick && !isSweetSpotL3Profile) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
@@ -10668,23 +10672,8 @@ Deno.serve(async (req) => {
         };
       };
 
-      // 5-leg and 8-leg role-stacked tickets moved to exploration only (execution capped at 3 legs)
-      if (multiLegCandidates.length >= 5) {
-        const fiveLeg = buildMultiLegTicket(5, 'Mid-Tier');
-        if (fiveLeg) {
-          fiveLeg.tier = 'exploration';
-          fiveLeg.is_simulated = true;
-          allParlays.push(fiveLeg);
-        }
-      }
-      if (multiLegCandidates.length >= 8) {
-        const eightLeg = buildMultiLegTicket(8, 'High Roller');
-        if (eightLeg) {
-          eightLeg.tier = 'exploration';
-          eightLeg.is_simulated = true;
-          allParlays.push(eightLeg);
-        }
-      }
+      // 5-leg and 8-leg role-stacked tickets REMOVED (0% historical win rate — March 12 analysis)
+      // Kept buildMultiLegTicket function for potential future use but no longer called
     } catch (multiLegErr) {
       console.error(`[MultiLeg] Error building multi-leg tickets:`, multiLegErr);
     }
