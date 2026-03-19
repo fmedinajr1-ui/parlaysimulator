@@ -342,8 +342,14 @@ Deno.serve(async (req) => {
         const ratePerMin = projection?.ratePerMinute ?? 0;
         const remainingMinutes = player.estimatedRemaining ?? 0;
         
-        // Signal 2: Use recommended_line from sweet spots as book anchor
-        const liveBookLine = pick.recommended_line || undefined;
+        // Signal 2: Use actual sportsbook line from unified_props, fall back to sweet spot line
+        const statKey2 = (pick.prop_type || '').toLowerCase().replace('player_', '');
+        const bookKey = `${pick.player_name}::${statKey2}`;
+        const actualBook = actualLineByKey[bookKey];
+        const liveBookLine = actualBook?.line ?? pick.recommended_line ?? undefined;
+        const liveBookmaker = actualBook?.bookmaker;
+        const liveOverPrice = actualBook?.overPrice;
+        const liveUnderPrice = actualBook?.underPrice;
         
         // Signal 3: Get baseline FG% from L10 game logs
         const baselineFg = baselineFgByPlayer[pick.player_name];
