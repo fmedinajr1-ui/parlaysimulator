@@ -1145,7 +1145,7 @@ Deno.serve(async (req) => {
       if (legs.length < 2) {
         for (const p of scoredProps) {
           if (legs.length >= 2) break;
-          if (p.hitRate < stdAdj.minHitRate) continue;
+          if (p.hitRate < 80) continue;
           if (allUsedPlayers.has(normalizeName(p.player_name))) continue;
           if (!passesBasicChecks(p, legs, gc)) continue;
           addLeg(p, legs, gc, used, 'fallback', 'standard');
