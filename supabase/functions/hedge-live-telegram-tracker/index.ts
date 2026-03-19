@@ -195,6 +195,19 @@ Deno.serve(async (req) => {
     const profiles = profilesRes.data || [];
     const trackerRows = trackerRes.data || [];
     const fgLogs = fgBaselineRes.data || [];
+    const bookLines = bookLinesRes.data || [];
+
+    // Build actual sportsbook line lookup: player::prop_type -> { line, bookmaker, overPrice, underPrice }
+    const actualLineByKey: Record<string, { line: number; bookmaker: string; overPrice: number | null; underPrice: number | null }> = {};
+    for (const bl of bookLines) {
+      const normProp = (bl.prop_type || '').toLowerCase().replace('player_', '');
+      const key = `${bl.player_name}::${normProp}`;
+      // Keep the first match (or prefer fanduel if available)
+      if (!actualLineByKey[key] || bl.bookmaker === 'fanduel') {
+        actualLineByKey[key] = { line: bl.current_line, bookmaker: bl.bookmaker, overPrice: bl.over_price, underPrice: bl.under_price };
+      }
+    }
+    console.log(`[HedgeTracker] Fetched ${bookLines.length} active book lines, mapped ${Object.keys(actualLineByKey).length} unique`);
 
     // Build lookup maps
     const baselinesByPlayer: Record<string, any[]> = {};
