@@ -217,7 +217,17 @@ function buildRiskTags(
     }
   }
 
-  return { tags, trend };
+  return { tags, trend }
+}
+
+// Role-player volatility thresholds for low-floor props
+const LOW_FLOOR_THRESHOLDS: Record<string, number> = {
+  rebounds: 4.5, reb: 4.5, total_rebounds: 4.5, player_rebounds: 4.5,
+  assists: 4.5, ast: 4.5, player_assists: 4.5,
+  steals: 1.5, stl: 1.5, player_steals: 1.5,
+  blocks: 1.5, blk: 1.5, player_blocks: 1.5,
+  threes: 2.5, '3pm': 2.5, three_pointers: 2.5, player_threes: 2.5,
+};
 }
 
 serve(async (req) => {
@@ -604,6 +614,15 @@ serve(async (req) => {
 
           // Build risk tags for this player target
           const { tags: riskTags, trend: l3Trend } = buildRiskTags(side, l3Avg, l10Avg, line, teamSpread);
+
+          // Role-player volatility: low-floor prop with high hit rate but thin margin
+          const volatileThreshold = LOW_FLOOR_THRESHOLDS[(ss.prop_type || '').toLowerCase()];
+          if (volatileThreshold != null && line <= volatileThreshold && side === 'over' && l10HitRate >= 0.70) {
+            const marginOverLine = l10Avg - line;
+            if (marginOverLine < 1.5) {
+              riskTags.push('ROLE_PLAYER_VOLATILE');
+            }
+          }
 
           // L3 contradiction filter: skip if L3 strongly contradicts recommended side
           if (side === 'over' && l3Avg !== null && l3Avg < line * 0.90) {
