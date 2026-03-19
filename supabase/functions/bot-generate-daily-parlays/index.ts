@@ -10663,23 +10663,8 @@ Deno.serve(async (req) => {
         };
       };
 
-      // 5-leg and 8-leg role-stacked tickets moved to exploration only (execution capped at 3 legs)
-      if (multiLegCandidates.length >= 5) {
-        const fiveLeg = buildMultiLegTicket(5, 'Mid-Tier');
-        if (fiveLeg) {
-          fiveLeg.tier = 'exploration';
-          fiveLeg.is_simulated = true;
-          allParlays.push(fiveLeg);
-        }
-      }
-      if (multiLegCandidates.length >= 8) {
-        const eightLeg = buildMultiLegTicket(8, 'High Roller');
-        if (eightLeg) {
-          eightLeg.tier = 'exploration';
-          eightLeg.is_simulated = true;
-          allParlays.push(eightLeg);
-        }
-      }
+      // 5-leg and 8-leg role-stacked tickets REMOVED (0% historical win rate — March 12 analysis)
+      // Kept buildMultiLegTicket function for potential future use but no longer called
     } catch (multiLegErr) {
       console.error(`[MultiLeg] Error building multi-leg tickets:`, multiLegErr);
     }
