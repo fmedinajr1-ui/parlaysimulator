@@ -1,54 +1,57 @@
 
 
-# Encode March 12 Winning Patterns into the Generator
+# Revert Lottery Scanner to March 1-4 Winning Logic
 
-## Key Takeaways from March 12 vs March 19
+## What Won (March 1 & March 4 — only 2 standard lottery wins ever)
 
-| Pattern | March 12 Winners | March 19 Risk |
-|---------|-----------------|---------------|
-| Leg count | ALL 7 winners = 3-leg | 5-leg and 8-leg parlays = 100% loss rate |
-| Per-leg L10 hit rate | ALL winning legs had 100% L10 hit rate | Several legs at 70-90% caused losses |
-| Categories | THREE_POINT_SHOOTER, HIGH_ASSIST dominated | VOLUME_SCORER is already blocked |
+Both winning tickets share an identical blueprint:
 
-## Changes (3 targeted fixes)
+| Attribute | March 1 Winner (+1052) | March 4 Winner (+1096) |
+|-----------|----------------------|----------------------|
+| Legs | 3 | 3 |
+| Anchor leg | Threes UNDER @ 1.5 line, 100% hit rate, +154 odds | Threes UNDER @ 1.5 line, 100% hit rate, +154 odds |
+| Filler hit rates | 89%, 100% | 90%, 88% |
+| Filler defense ranks | 25, 27 | 26, 26 |
+| Filler L10 avg vs line | 2.3 vs 1.5 (53% above), 5.6 vs 5.5 | 5.1 vs 5.5, 6.8 vs 6.5 |
+| All FanDuel | Yes | Yes |
 
-### 1. Remove 5-leg and 8-leg role-stacked generation entirely
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+## What Lost (March 5-13 — every ticket since)
 
-The multi-leg ticket builder (lines ~10672-10687) creates 5-leg and 8-leg exploration parlays. These have a **0% historical win rate**. Remove or disable both `buildMultiLegTicket(5)` and `buildMultiLegTicket(8)` calls. Also remove the 4 `role_stacked_5leg` profiles from exploration tier (lines 870-874).
+The losing legs share common flaws:
+- **Filler hit rates dropped to 70-80%** (Cade Cunningham 80% missed badly: 17 vs 24.5 line)
+- **Weak defense matchups ignored**: some filler legs had defense_rank 8-17 (strong defense = bad matchup for OVER)
+- **Tight margins**: L10 avg barely above line on OVER picks
 
-This keeps the 3-leg `role_stacked_3leg` profiles in execution tier, which match the winning pattern.
+## Root Cause: 3 filter thresholds are too loose
 
-### 2. Raise per-leg L10 hit rate floor for execution tier
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+The current code accepts:
+1. **Filler hit rate ≥ 70%** (line 1131) — winners needed **88%+**
+2. **No defense rank floor on fillers** — winners always had **defense_rank ≥ 22** (weak opponent)
+3. **Filler edge requirement ≥ 3%** — this is fine but masks the real issue above
 
-Currently execution `minHitRate` is 55-70% depending on strategy. The March 12 data shows **100% L10 hit rate on every winning leg**. Add a hard gate in the parlay assembly loop: for execution-tier parlays, reject any individual leg where L10 hit rate < 90%. This doesn't change profile-level `minHitRate` (which is an average threshold) — it adds a per-leg floor.
+## Changes (File: `supabase/functions/nba-mega-parlay-scanner/index.ts`)
 
-In the leg selection logic (around line ~7100-7200 in the greedy assembly loop), add:
-```typescript
-// WINNING PATTERN GATE: Execution tier requires 90%+ L10 hit rate per leg
-if (tier === 'execution') {
-  const legL10 = rawL10 <= 1 ? rawL10 * 100 : rawL10;
-  if (legL10 < 90) {
-    // Skip this leg — March 12 analysis shows sub-90% legs cause losses
-    continue;
-  }
-}
-```
+### Fix 1: Raise filler leg hit rate from 70% to 85%
+Line 1131: change `p.hitRate < 70` → `p.hitRate < 85`
 
-### 3. Remove `sweet_spot_l3` 5-leg profiles from exploration
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+### Fix 2: Require weak defense matchup on filler legs (defense_rank ≥ 20)
+Add after the existing filler hit rate check: `if (p.defenseRank !== null && p.defenseRank < 20) return false;`
 
-Lines 706-708 and 710-715 have 5-leg profiles (`sweet_spot_l3`, `l3_matchup_combo`, `l3_sweet_mispriced_hybrid`). Based on the 0% win rate on 5+ leg parlays, cap all exploration profiles at **4 legs max** by changing these from `legs: 5` to `legs: 4` (or removing them if 4-leg versions already exist).
+### Fix 3: Raise balanced leg hit rate from 60% to 75%
+Line 1099: change `p.hitRate < 60` → `p.hitRate < 75`
+
+### Fix 4: Require defense_rank ≥ 18 on balanced legs (already exists but at 18 — keep as-is)
+No change needed here — line 1101 already has `p.defenseRank < 18`.
+
+### Fix 5: Tighten fallback hit rate floor
+Line 1147: the fallback uses `stdAdj.minHitRate` (45%). Change the fallback to also require `p.hitRate >= 80` to prevent low-confidence legs sneaking in.
 
 ## What This Preserves
-- All 3-leg strategies (optimal_combo, floor_lock, ceiling_shot, sweet_spot_core, etc.)
-- All 4-leg strategies (cross_sport_4, sweet_spot_plus)
-- Exploration and validation tiers continue generating volume
-- The existing composite filter, matchup gates, and player performance blocks remain intact
+- The "great_odds" anchor leg selection (threes UNDER at +154) — unchanged
+- The SAFE leg criteria (70% hit rate + edge + sweet spot alignment) — unchanged
+- 3-leg structure, standard tier only — unchanged
+- All scoring, alt-line hunting, poison flip logic — unchanged
 
-## Expected Impact
-- Eliminates the 5-leg and 8-leg parlays that have never won
-- Raises the quality floor for execution-tier legs to match March 12's 100% hit rate pattern
-- Keeps parlay volume high (3-leg and 4-leg dominate the profile list already)
+## Expected Outcome
+Lottery tickets will only generate when there are enough high-confidence legs with favorable matchups — matching exactly the pattern that produced the two wins.
 
