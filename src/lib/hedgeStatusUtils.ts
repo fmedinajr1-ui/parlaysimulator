@@ -11,7 +11,7 @@ interface BufferThresholds {
 }
 
 export function getBufferThresholds(gameProgress: number): BufferThresholds {
-  if (gameProgress < 25) return { onTrack: 4, monitor: 2, alert: -1 };
+  if (gameProgress < 25) return { onTrack: 2, monitor: -1, alert: -4 };
   if (gameProgress < 50) return { onTrack: 3, monitor: 1.5, alert: -0.5 };
   if (gameProgress < 75) return { onTrack: 1.5, monitor: 0.5, alert: 0 };
   return { onTrack: 1.0, monitor: 0, alert: -0.25 };
