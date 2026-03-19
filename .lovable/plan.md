@@ -1,43 +1,60 @@
 
-# Add Role-Player Volatility Flag to Smart Check
+
+# Fix Hedge Recommendations to Use Actual Sportsbook Lines
 
 ## Problem
-Sam Hauser had 100% L10 hit rate on 3.5 rebounds but put up 0 in-game. Bench players with low-floor props (rebounds, assists) are inherently volatile — high L10 hit rates mask the risk that they can easily post a zero on any given night.
+Hedge recommendations say "Bet UNDER 24.5" using the original sweet spot analysis line, not the actual FanDuel/live sportsbook line. Three places are affected:
+
+1. **Telegram Tracker** — uses `pick.recommended_line` as `liveBookLine` (line 327), never fetches actual market lines
+2. **PropHedgeIndicator** — displays "Consider UNDER {line}" / "Bet OVER {line}" using the original line, not the live book line
+3. **HedgeRecommendation.tsx** — already has live line data but some action text still references the original line
 
 ## Solution
-Add a `ROLE_PLAYER_VOLATILE` risk tag that fires when a player has a low line on a high-variance prop despite a strong L10 hit rate. This catches the "looks safe but isn't" trap.
-
-## Detection Logic
-A leg gets flagged when ALL of these are true:
-- **Low line**: rebounds ≤ 4.5, assists ≤ 4.5, steals ≤ 1.5, blocks ≤ 1.5, threes ≤ 2.5
-- **High L10 hit rate**: ≥ 70%
-- **Low L10 average (thin margin)**: L10 avg is within 1.5× of the line (e.g., avg 4.2 on a 3.5 line)
-- **Side is OVER** (unders on low lines are less volatile)
+Query `unified_props` for the actual FanDuel/market line and use it in all hedge recommendation text and logic.
 
 ## Changes
 
-### File: `supabase/functions/bot-parlay-smart-check/index.ts`
+### 1. Telegram Tracker — Fetch Real Lines from `unified_props`
+**File**: `supabase/functions/hedge-live-telegram-tracker/index.ts`
 
-1. **Add tag to score map** (~line 23-38):
-   - `'ROLE_PLAYER_VOLATILE': -15`
+- After fetching picks (~line 160), query `unified_props` for matching active props:
+  ```sql
+  SELECT player_name, prop_type, current_line, bookmaker, over_price, under_price
+  FROM unified_props WHERE is_active = true AND player_name IN (...)
+  ```
+- Build a lookup map `actualLineByKey[player::prop_type] = { line, bookmaker, prices }`
+- Replace line 327: use `actualLineByKey[key]?.line` as `liveBookLine` instead of `pick.recommended_line`
+- Update hedge message text (lines 416-420) to show the actual book line:
+  - "HEDGE ALERT — Consider UNDER 25.5 (FanDuel)" instead of just the sweet spot line
+  - Include the price when available: "UNDER 25.5 (-110)"
 
-2. **Add volatility check** after the L3 check block (~line 252, before blowout check):
-   - Check if prop_type is a low-floor category (rebounds, assists, steals, blocks, threes)
-   - Check if line is at or below the volatile threshold for that prop
-   - Check if L10 hit rate is high (≥70%) but L10 avg margin over line is thin (< 1.5)
-   - If all conditions met and side is 'over': push `ROLE_PLAYER_VOLATILE` tag
-   - Set recommendation to `CAUTION` if currently `KEEP`
-   - Add detail: `volatile_reason: "Low-floor prop (3.5 reb) with thin margin (avg 4.2) — bench player variance risk"`
+### 2. PropHedgeIndicator — Accept and Display Live Line
+**File**: `src/components/scout/PropHedgeIndicator.tsx`
 
-### File: `supabase/functions/bot-matchup-defense-scanner/index.ts`
+- Update the `PropEdge` usage to check for a `liveBookLine` field (already exists on some edge objects)
+- Change line 56-57: when `liveBookLine` is available, show it instead of original line:
+  - `"Consider UNDER ${liveBookLine}"` instead of `"Consider UNDER ${line}"`
+  - `"Bet OVER ${liveBookLine}"` instead of `"Bet OVER ${line}"`
+- Fall back to original line when live line isn't available
 
-3. **Add same tag in scanner risk tag generation** so the tag also appears in matchup broadcast recommendations, using the same logic against player L10 data already available in the scanner.
+### 3. HedgeRecommendation — Ensure Action Text Uses Live Line
+**File**: `src/components/sweetspots/HedgeRecommendation.tsx`
 
-### File: `src/components/parlay/ParlaySmartCheckPanel.tsx` (if tag rendering exists)
+- Review action strings in the status determination block (lines 380+) to ensure all "hedge" / "bet opposite" recommendations reference `hedgeLine` (the live book line) rather than `line` (original)
+- Already partially done — verify completeness and fix any remaining references to original `line` in action strings
 
-4. **Render the new tag** with an appropriate icon/color — orange warning badge showing "ROLE PLAYER VOLATILE" with tooltip explaining the risk.
+### 4. Telegram Message Format Enhancement
+When a real book line is available, messages will show:
+```
+🟠 HEDGE ALERT — LeBron James PTS O24.5
 
-## Tag Behavior
-- Score penalty: **-15** (same as BLOWOUT_RISK — meaningful but not a hard DROP)
-- Recommendation: escalates to **CAUTION** (doesn't auto-drop, just warns)
-- Works alongside existing tags — a volatile player in a blowout game stacks both penalties
+📊 Status: 🟢 HOLD → 🟠 HEDGE ALERT
+📈 Current: 12 pts | Projected: 22.8
+⏱️ Q3 8:42 | Progress: 58%
+
+💡 Consider: UNDER 26.5 (-110) on FanDuel
+   (Your line: O24.5 | Book line: 26.5)
+```
+
+Instead of the current generic "Consider UNDER 24.5".
+
