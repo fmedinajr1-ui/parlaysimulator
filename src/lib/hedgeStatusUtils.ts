@@ -11,7 +11,7 @@ interface BufferThresholds {
 }
 
 export function getBufferThresholds(gameProgress: number): BufferThresholds {
-  if (gameProgress < 25) return { onTrack: 4, monitor: 2, alert: -1 };
+  if (gameProgress < 25) return { onTrack: 2, monitor: -1, alert: -4 };
   if (gameProgress < 50) return { onTrack: 3, monitor: 1.5, alert: -0.5 };
   if (gameProgress < 75) return { onTrack: 1.5, monitor: 0.5, alert: 0 };
   return { onTrack: 1.0, monitor: 0, alert: -0.25 };
@@ -67,10 +67,10 @@ export function calculateHedgeStatus(spot: DeepSweetSpot): HedgeStatus | null {
       // Player already exceeded the Q1 line in Q1 → boost toward on_track
       if (currentValue >= q1Line) return 'on_track';
       // Well below Q1 pace (less than 50% of Q1 line with >15% of Q1 elapsed)
-      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'alert';
+      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'monitor';
     } else {
       // UNDER: player already hit Q1 line in Q1 → bad sign
-      if (currentValue >= q1Line) return 'alert';
+      if (currentValue >= q1Line) return 'monitor';
       // UNDER: well below Q1 line → good sign
       if (currentValue < q1Line * 0.5) return 'on_track';
     }
@@ -171,9 +171,9 @@ export function getHedgeActionLabel(params: {
     const q1Line = q1FanDuelLine.line;
     if (isOver) {
       if (currentValue >= q1Line) return 'HOLD';
-      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'HEDGE ALERT';
+      if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'MONITOR';
     } else {
-      if (currentValue >= q1Line) return 'HEDGE ALERT';
+      if (currentValue >= q1Line) return 'MONITOR';
       if (currentValue < q1Line * 0.5) return 'HOLD';
     }
   }
@@ -199,4 +199,17 @@ export function getHedgeActionLabel(params: {
  */
 export function hedgeStatusToActionLabel(status: HedgeStatus): HedgeActionLabel {
   return STATUS_TO_ACTION[status] ?? 'MONITOR';
+}
+
+/**
+ * Detect Q1 flip candidates — props showing early dips that historically recover 75%+ of the time.
+ * UI/Telegram can display "FLIP OPPORTUNITY" instead of a warning signal.
+ */
+export function isQ1FlipCandidate(
+  gameProgress: number,
+  hedgeStatus: HedgeStatus | HedgeActionLabel | null | undefined
+): boolean {
+  if (gameProgress >= 25 || !hedgeStatus) return false;
+  const normalized = String(hedgeStatus).toLowerCase();
+  return normalized === 'monitor' || normalized === 'alert' || normalized === 'hedge alert';
 }
