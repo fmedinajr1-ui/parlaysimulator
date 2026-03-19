@@ -466,6 +466,18 @@ Deno.serve(async (req) => {
           if (role.playsAll4Q) msg += ` — expected to play closing minutes`;
           if (role.fadeSignal) msg += ` — ⚠️ may not get enough minutes`;
 
+          // Show actual sportsbook line info for hedge recommendations
+          if (actualBook && (hedgeAction === 'HEDGE ALERT' || hedgeAction === 'HEDGE NOW')) {
+            const oppSide = side === 'OVER' ? 'UNDER' : 'OVER';
+            const price = oppSide === 'UNDER' ? liveUnderPrice : liveOverPrice;
+            const priceStr = price ? ` (${price > 0 ? '+' : ''}${price})` : '';
+            const bookLabel = liveBookmaker ? ` on ${liveBookmaker.charAt(0).toUpperCase() + liveBookmaker.slice(1)}` : '';
+            msg += `\n\n🎰 Consider: ${oppSide} ${actualBook.line}${priceStr}${bookLabel}`;
+            if (actualBook.line !== line) {
+              msg += `\n   (Your line: ${sideChar}${line} | Book line: ${actualBook.line})`;
+            }
+          }
+
           liveUpdateMessages.push(msg);
           }
 
