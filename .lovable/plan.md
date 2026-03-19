@@ -1,45 +1,43 @@
 
 
-# Add Role-Player Volatility Flag to Smart Check
+# Q1 Flip Logic + Q2 Decision Point
 
-## Problem
-Sam Hauser had 100% L10 hit rate on 3.5 rebounds but put up 0 in-game. Bench players with low-floor props (rebounds, assists) are inherently volatile — high L10 hit rates mask the risk that they can easily post a zero on any given night.
-
-## Solution
-Add a `ROLE_PLAYER_VOLATILE` risk tag that fires when a player has a low line on a high-variance prop despite a strong L10 hit rate. This catches the "looks safe but isn't" trap.
-
-## Detection Logic
-A leg gets flagged when ALL of these are true:
-- **Low line**: rebounds ≤ 4.5, assists ≤ 4.5, steals ≤ 1.5, blocks ≤ 1.5, threes ≤ 2.5
-- **High L10 hit rate**: ≥ 70%
-- **Low L10 average (thin margin)**: L10 avg is within 1.5× of the line (e.g., avg 4.2 on a 3.5 line)
-- **Side is OVER** (unders on low lines are less volatile)
+## Concept
+Q1 data shows 75.5% of HEDGE ALERT props recovered — meaning Q1 negative signals are mostly noise. Instead of hedging in Q1, treat early warnings as **flip opportunities** (hold or even add exposure). Reserve real hedge decisions for Q2/halftime when signals stabilize.
 
 ## Changes
 
-### File: `supabase/functions/bot-parlay-smart-check/index.ts`
+### 1. Widen Q1 Buffers — `getBufferThresholds`
+**Files**: `src/lib/hedgeStatusUtils.ts` (line 14), `supabase/functions/hedge-live-telegram-tracker/index.ts` (line 18)
 
-1. **Add tag to score map** (~line 23-38):
-   - `'ROLE_PLAYER_VOLATILE': -15`
+Current Q1: `{ onTrack: 4, monitor: 2, alert: -1 }`
+New Q1: `{ onTrack: 2, monitor: -1, alert: -4 }`
 
-2. **Add volatility check** after the L3 check block (~line 252, before blowout check):
-   - Check if prop_type is a low-floor category (rebounds, assists, steals, blocks, threes)
-   - Check if line is at or below the volatile threshold for that prop
-   - Check if L10 hit rate is high (≥70%) but L10 avg margin over line is thin (< 1.5)
-   - If all conditions met and side is 'over': push `ROLE_PLAYER_VOLATILE` tag
-   - Set recommendation to `CAUTION` if currently `KEEP`
-   - Add detail: `volatile_reason: "Low-floor prop (3.5 reb) with thin margin (avg 4.2) — bench player variance risk"`
+This collapses Q1 into mostly HOLD territory. Only extreme cases (buffer < -4) hit HEDGE NOW. The middle ground (MONITOR/HEDGE ALERT) is nearly eliminated in Q1.
 
-### File: `supabase/functions/bot-matchup-defense-scanner/index.ts`
+### 2. Remove Q1 Early `alert` Return in `calculateHedgeStatus`
+**File**: `src/lib/hedgeStatusUtils.ts` (lines 62-77)
 
-3. **Add same tag in scanner risk tag generation** so the tag also appears in matchup broadcast recommendations, using the same logic against player L10 data already available in the scanner.
+The Q1-aware early signal block currently returns `'alert'` when a player is below 40% of their Q1 FanDuel line. Change this to return `'monitor'` instead — since Q1 alerts are unreliable, downgrade them to monitor so they don't trigger hedge actions.
 
-### File: `src/components/parlay/ParlaySmartCheckPanel.tsx` (if tag rendering exists)
+Similarly in `getHedgeActionLabel` (lines ~145-155), change the Q1 `'HEDGE ALERT'` returns to `'MONITOR'`.
 
-4. **Render the new tag** with an appropriate icon/color — orange warning badge showing "ROLE PLAYER VOLATILE" with tooltip explaining the risk.
+### 3. Add "FLIP" Label for Q1 MONITOR Status
+**File**: `src/lib/hedgeStatusUtils.ts`
 
-## Tag Behavior
-- Score penalty: **-15** (same as BLOWOUT_RISK — meaningful but not a hard DROP)
-- Recommendation: escalates to **CAUTION** (doesn't auto-drop, just warns)
-- Works alongside existing tags — a volatile player in a blowout game stacks both penalties
+Add a new export function `isQ1FlipCandidate(gameProgress, hedgeStatus)` that returns `true` when `gameProgress < 25` and status is `MONITOR` or `HEDGE ALERT`. UI/Telegram can use this to show "FLIP OPPORTUNITY" instead of a warning — signaling the user that Q1 dips are historically recoverable and could be exploited.
+
+### 4. Telegram Tracker — Suppress Q1 Hedge Alerts
+**File**: `supabase/functions/hedge-live-telegram-tracker/index.ts`
+
+In the status-transition message logic, when `gameProgress < 25` and the new status is `MONITOR` or `HEDGE ALERT`, either skip sending or reword the message to: "Q1 dip detected — historically 75% recover. HOLD or consider flip."
+
+Only send Q1 Telegram alerts for `HEDGE NOW` (extreme cases).
+
+### Summary of Behavior
+
+| Quarter | MONITOR | HEDGE ALERT | HEDGE NOW |
+|---------|---------|-------------|-----------|
+| Q1 | "Flip opportunity" / suppress | Nearly impossible (buffer < -4) | Fires only on extreme miss |
+| Q2+ | Normal escalation | Normal | Normal |
 
