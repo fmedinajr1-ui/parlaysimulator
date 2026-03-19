@@ -252,6 +252,30 @@ serve(async (req) => {
           }
         }
 
+        // Role-Player Volatility Check (low-floor props with deceptively high hit rates)
+        if (checks.includes('l3')) {
+          const LOW_FLOOR_THRESHOLDS: Record<string, number> = {
+            rebounds: 4.5, reb: 4.5, total_rebounds: 4.5, player_rebounds: 4.5,
+            assists: 4.5, ast: 4.5, player_assists: 4.5,
+            steals: 1.5, stl: 1.5, player_steals: 1.5,
+            blocks: 1.5, blk: 1.5, player_blocks: 1.5,
+            threes: 2.5, '3pm': 2.5, three_pointers: 2.5, player_threes: 2.5,
+          };
+          const volatileThreshold = LOW_FLOOR_THRESHOLDS[propType.toLowerCase()];
+          if (volatileThreshold != null && line <= volatileThreshold && side === 'over') {
+            const key = `${playerName}::${propType}`.toLowerCase();
+            const ss = sweetSpotMap.get(key);
+            if (ss && ss.l10_hit_rate != null && ss.l10_hit_rate >= 0.70 && ss.l10_avg != null) {
+              const marginOverLine = ss.l10_avg - line;
+              if (marginOverLine < 1.5) {
+                riskTags.push('ROLE_PLAYER_VOLATILE');
+                details.volatile_reason = `Low-floor prop (${line} ${propType}) with thin margin (avg ${ss.l10_avg}) — bench player variance risk`;
+                if (recommendation === 'KEEP') recommendation = 'CAUTION';
+              }
+            }
+          }
+        }
+
         // Blowout Check
         if (checks.includes('blowout') && team) {
           const spread = spreadMap.get(team);

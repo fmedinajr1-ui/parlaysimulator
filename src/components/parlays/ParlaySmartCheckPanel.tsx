@@ -291,6 +291,11 @@ export function ParlaySmartCheckPanel() {
                                 {leg.details.flip_reason}
                               </div>
                             )}
+                            {leg.details.volatile_reason && (
+                              <div className="text-xs text-orange-400">
+                                ⚠️ {leg.details.volatile_reason}
+                              </div>
+                            )}
 
                             {/* Action Checkboxes */}
                             <div className="flex items-center gap-3 pt-1">

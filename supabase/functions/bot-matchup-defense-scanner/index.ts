@@ -615,6 +615,15 @@ serve(async (req) => {
           // Build risk tags for this player target
           const { tags: riskTags, trend: l3Trend } = buildRiskTags(side, l3Avg, l10Avg, line, teamSpread);
 
+          // Role-player volatility: low-floor prop with high hit rate but thin margin
+          const volatileThreshold = LOW_FLOOR_THRESHOLDS[(ss.prop_type || '').toLowerCase()];
+          if (volatileThreshold != null && line <= volatileThreshold && side === 'over' && l10HitRate >= 0.70) {
+            const marginOverLine = l10Avg - line;
+            if (marginOverLine < 1.5) {
+              riskTags.push('ROLE_PLAYER_VOLATILE');
+            }
+          }
+
           // L3 contradiction filter: skip if L3 strongly contradicts recommended side
           if (side === 'over' && l3Avg !== null && l3Avg < line * 0.90) {
             continue;
