@@ -173,7 +173,7 @@ export function getHedgeActionLabel(params: {
       if (currentValue >= q1Line) return 'HOLD';
       if (gameProgress > 5 && currentValue < q1Line * 0.4) return 'MONITOR';
     } else {
-      if (currentValue >= q1Line) return 'HEDGE ALERT';
+      if (currentValue >= q1Line) return 'MONITOR';
       if (currentValue < q1Line * 0.5) return 'HOLD';
     }
   }
