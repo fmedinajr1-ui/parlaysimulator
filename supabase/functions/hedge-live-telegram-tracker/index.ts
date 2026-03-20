@@ -289,7 +289,7 @@ Deno.serve(async (req) => {
       const propLabel = PROP_LABELS[pick.prop_type?.toLowerCase()] || (pick.prop_type || '').toUpperCase();
       const side = (pick.recommended_side || 'over').toUpperCase();
       const sideChar = side.charAt(0);
-      const line = pick.recommended_line;
+      const originalLine = pick.recommended_line;
       const quarterAvgs = formatQuarterAvgs(playerBaselines, pick.prop_type);
 
       // Find live data for this player
@@ -347,6 +347,9 @@ Deno.serve(async (req) => {
         const bookKey = `${pick.player_name}::${statKey2}`;
         const actualBook = actualLineByKey[bookKey];
         const liveBookLine = actualBook?.line ?? pick.recommended_line ?? undefined;
+        // Use FanDuel line for hedge decisions (not just projection blending)
+        const hedgeLine = actualBook?.line ?? pick.actual_line ?? originalLine;
+        const lineSource = actualBook ? 'fanduel' : (pick.actual_line ? 'actual_line' : 'sweet_spot');
         const liveBookmaker = actualBook?.bookmaker;
         const liveOverPrice = actualBook?.overPrice;
         const liveUnderPrice = actualBook?.underPrice;
@@ -373,13 +376,22 @@ Deno.serve(async (req) => {
         liveComputedByKey[key] = { currentValue, projectedFinal, gameProgress, quarter: currentQuarter };
 
         // Calculate hedge status with tri-signal projection
-        const hedgeAction = calculateHedgeAction({
-          currentValue,
-          projectedFinal,
-          line,
-          side: pick.recommended_side || 'over',
-          gameProgress,
-        });
+        // Use real FanDuel line for hedge decision
+        const hedgeAction = (() => {
+          const isOver = (pick.recommended_side || 'over').toLowerCase() !== 'under';
+          const bufferPct = isOver
+            ? ((projectedFinal - hedgeLine) / hedgeLine) * 100
+            : ((hedgeLine - projectedFinal) / hedgeLine) * 100;
+          // Force escalation if buffer deeply negative
+          if (bufferPct < -15) return 'HEDGE NOW' as HedgeAction;
+          return calculateHedgeAction({
+            currentValue,
+            projectedFinal,
+            line: hedgeLine,
+            side: pick.recommended_side || 'over',
+            gameProgress,
+          });
+        })();
 
         // Determine if we should send an update
         const prevStatus = tracker?.last_status_sent;
@@ -394,7 +406,7 @@ Deno.serve(async (req) => {
               sweet_spot_id: pick.id,
               player_name: pick.player_name,
               prop_type: pick.prop_type,
-              line,
+              line: hedgeLine,
               side: (pick.recommended_side || 'over').toLowerCase(),
               quarter: currentQuarter,
               game_progress: gameProgress,
@@ -438,9 +450,17 @@ Deno.serve(async (req) => {
           const remaining = line - currentValue;
           const neededRate = remainingMinutes > 0 ? (remaining / remainingMinutes).toFixed(2) : '?';
 
-          let msg = `🎯 HEDGE UPDATE — ${pick.player_name} ${propLabel} ${sideChar}${line}\n\n`;
+          // Calculate buffer % for display
+          const isOverPick = (pick.recommended_side || 'over').toLowerCase() !== 'under';
+          const bufferPctDisplay = isOverPick
+            ? ((projectedFinal - hedgeLine) / hedgeLine) * 100
+            : ((hedgeLine - projectedFinal) / hedgeLine) * 100;
+          const fdTag = lineSource === 'fanduel' ? ' (FD)' : '';
+
+          let msg = `🎯 HEDGE UPDATE — ${pick.player_name} ${propLabel} ${sideChar}${hedgeLine}${fdTag}\n\n`;
           msg += `📊 Status: ${statusTransition}\n`;
           msg += `📈 Current: ${currentValue} ${propLabel.toLowerCase()} | Projected: ${projectedFinal.toFixed(1)}\n`;
+          msg += `📏 FD Line: ${hedgeLine} | Buffer: ${bufferPctDisplay >= 0 ? '+' : ''}${bufferPctDisplay.toFixed(1)}%\n`;
           msg += `⏱️ Q${currentQuarter} ${game.clock || ''} | Progress: ${Math.round(gameProgress)}%\n`;
           msg += `🏃 Rate: ${ratePerMin.toFixed(2)}/min (need ${neededRate})\n\n`;
           msg += `📋 StatMuse Q-Avg: ${quarterAvgs}\n`;
@@ -484,13 +504,15 @@ Deno.serve(async (req) => {
           trackerUpserts.push({
             player_name: pick.player_name,
             prop_type: pick.prop_type,
-            line,
+            line: hedgeLine,
             side: (pick.recommended_side || 'over').toLowerCase(),
             pick_id: pick.id,
             pregame_sent: tracker?.pregame_sent || true,
             last_status_sent: hedgeAction,
             last_quarter_sent: currentQuarter,
             analysis_date: today,
+            live_book_line: actualBook?.line ?? null,
+            line_source: lineSource,
           });
         } else {
           // Even if no Telegram message sent, update tracker quarter
@@ -498,13 +520,15 @@ Deno.serve(async (req) => {
           trackerUpserts.push({
             player_name: pick.player_name,
             prop_type: pick.prop_type,
-            line,
+            line: hedgeLine,
             side: (pick.recommended_side || 'over').toLowerCase(),
             pick_id: pick.id,
             pregame_sent: tracker?.pregame_sent || true,
             last_status_sent: tracker?.last_status_sent || null,
             last_quarter_sent: currentQuarter,
             analysis_date: today,
+            live_book_line: actualBook?.line ?? null,
+            line_source: lineSource,
           });
         }
       }

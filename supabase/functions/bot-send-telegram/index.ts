@@ -105,6 +105,7 @@ type NotificationType =
   | 'composite_conflict_report'
   | 'bench_picks_digest'
   | 'straight_bets'
+  | 'hedge_accuracy'
   | 'custom'
   | 'test';
 
@@ -192,6 +193,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return data.message || '🏀 Pre-game scout update';
     case 'hedge_live_update':
       return data.message || '🎯 Hedge status update';
+    case 'hedge_accuracy':
+      return data.message || '📊 Hedge accuracy report';
     case 'composite_conflict_report':
       return formatCompositeConflictReport(data, dateStr);
     case 'bench_picks_digest':
