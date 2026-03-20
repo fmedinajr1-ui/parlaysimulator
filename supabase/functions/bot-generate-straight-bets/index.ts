@@ -131,7 +131,7 @@ async function buildFanDuelLineMap(supabase: any, today: string): Promise<Map<st
     const key = `${name}|${prop}`;
     // Keep the most recent entry (data is ordered by created_at desc by default)
     if (!map.has(key)) {
-      map.set(key, { line: row.line, odds: row.over_price || -110 });
+      map.set(key, { line: row.current_line, odds: row.over_price || -110 });
     }
   }
 
