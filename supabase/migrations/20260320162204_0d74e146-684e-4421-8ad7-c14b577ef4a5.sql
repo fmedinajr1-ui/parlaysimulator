@@ -1,0 +1,1 @@
+ALTER TABLE bot_straight_bets ADD COLUMN IF NOT EXISTS line_source text DEFAULT 'recommended', ADD COLUMN IF NOT EXISTS buffer_pct numeric DEFAULT 0, ADD COLUMN IF NOT EXISTS l10_avg numeric DEFAULT 0;

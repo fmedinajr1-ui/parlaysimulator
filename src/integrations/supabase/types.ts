@@ -1717,11 +1717,14 @@ export type Database = {
         Row: {
           american_odds: number | null
           bet_date: string
+          buffer_pct: number | null
           composite_score: number | null
           created_at: string | null
           id: string
+          l10_avg: number | null
           l10_hit_rate: number | null
           line: number
+          line_source: string | null
           outcome: string | null
           player_name: string
           profit_loss: number | null
@@ -1735,11 +1738,14 @@ export type Database = {
         Insert: {
           american_odds?: number | null
           bet_date?: string
+          buffer_pct?: number | null
           composite_score?: number | null
           created_at?: string | null
           id?: string
+          l10_avg?: number | null
           l10_hit_rate?: number | null
           line: number
+          line_source?: string | null
           outcome?: string | null
           player_name: string
           profit_loss?: number | null
@@ -1753,11 +1759,14 @@ export type Database = {
         Update: {
           american_odds?: number | null
           bet_date?: string
+          buffer_pct?: number | null
           composite_score?: number | null
           created_at?: string | null
           id?: string
+          l10_avg?: number | null
           l10_hit_rate?: number | null
           line?: number
+          line_source?: string | null
           outcome?: string | null
           player_name?: string
           profit_loss?: number | null
