@@ -376,13 +376,22 @@ Deno.serve(async (req) => {
         liveComputedByKey[key] = { currentValue, projectedFinal, gameProgress, quarter: currentQuarter };
 
         // Calculate hedge status with tri-signal projection
-        const hedgeAction = calculateHedgeAction({
-          currentValue,
-          projectedFinal,
-          line,
-          side: pick.recommended_side || 'over',
-          gameProgress,
-        });
+        // Use real FanDuel line for hedge decision
+        const hedgeAction = (() => {
+          const isOver = (pick.recommended_side || 'over').toLowerCase() !== 'under';
+          const bufferPct = isOver
+            ? ((projectedFinal - hedgeLine) / hedgeLine) * 100
+            : ((hedgeLine - projectedFinal) / hedgeLine) * 100;
+          // Force escalation if buffer deeply negative
+          if (bufferPct < -15) return 'HEDGE NOW' as HedgeAction;
+          return calculateHedgeAction({
+            currentValue,
+            projectedFinal,
+            line: hedgeLine,
+            side: pick.recommended_side || 'over',
+            gameProgress,
+          });
+        })();
 
         // Determine if we should send an update
         const prevStatus = tracker?.last_status_sent;
