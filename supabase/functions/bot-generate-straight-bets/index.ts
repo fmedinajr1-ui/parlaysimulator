@@ -309,7 +309,7 @@ Deno.serve(async (req) => {
     }
 
     for (const pp of (poolPicks || [])) {
-      const side = pp.recommended_side || 'OVER';
+      const side = (pp.recommended_side || 'OVER').toUpperCase();
       const key = `${pp.player_name}|${pp.prop_type}|${side}`;
       if (seen.has(key)) continue;
       seen.add(key);
