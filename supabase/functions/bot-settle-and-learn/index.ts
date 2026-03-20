@@ -1938,6 +1938,101 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Hit rate refresh trigger failed:', hitRateRefreshErr);
     }
 
+    // ============ STRAIGHT BETS SETTLEMENT ============
+    let straightSettled = 0;
+    let straightWon = 0;
+    let straightLost = 0;
+    try {
+      const todayForStraight = getEasternDate();
+      console.log(`[Bot Settle] Settling straight bets before ${todayForStraight}...`);
+
+      const { data: pendingStraight, error: straightErr } = await supabase
+        .from('bot_straight_bets')
+        .select('*')
+        .eq('outcome', 'pending')
+        .lt('bet_date', todayForStraight)
+        .limit(200);
+
+      if (straightErr) {
+        console.error('[Bot Settle] Straight bets fetch error:', straightErr);
+      } else if (pendingStraight && pendingStraight.length > 0) {
+        console.log(`[Bot Settle] Found ${pendingStraight.length} pending straight bets to grade`);
+
+        // Get unique dates
+        const straightDates = [...new Set(pendingStraight.map(b => b.bet_date))];
+        const { data: sLogs } = await supabase
+          .from('nba_player_game_logs')
+          .select('player_name, game_date, points, rebounds, assists, three_pointers_made, steals, blocks, turnovers')
+          .in('game_date', straightDates);
+
+        const sLogMap = new Map<string, any>();
+        for (const log of (sLogs || [])) {
+          const key = `${(log.player_name || '').toLowerCase().trim()}_${log.game_date}`;
+          sLogMap.set(key, log);
+        }
+
+        for (const bet of pendingStraight) {
+          const playerKey = `${(bet.player_name || '').toLowerCase().trim()}_${bet.bet_date}`;
+          // Also check aliases
+          let log = sLogMap.get(playerKey);
+          if (!log) {
+            const aliases = NAME_ALIASES[(bet.player_name || '').toLowerCase().trim()] || [];
+            for (const alias of aliases) {
+              log = sLogMap.get(`${alias}_${bet.bet_date}`);
+              if (log) break;
+            }
+          }
+
+          if (!log) continue; // no game log found, skip
+
+          const propType = normalizePropType(bet.prop_type);
+          let actualValue: number | null = null;
+
+          if (propType === 'player_points') actualValue = log.points;
+          else if (propType === 'player_rebounds') actualValue = log.rebounds;
+          else if (propType === 'player_assists') actualValue = log.assists;
+          else if (propType === 'player_threes') actualValue = log.three_pointers_made;
+          else if (propType === 'player_steals') actualValue = log.steals;
+          else if (propType === 'player_blocks') actualValue = log.blocks;
+          else if (propType === 'player_turnovers') actualValue = log.turnovers;
+
+          if (actualValue === null || actualValue === undefined) continue;
+
+          const side = (bet.side || '').toUpperCase();
+          const line = bet.line || 0;
+          let hit = false;
+          if (side === 'OVER') hit = actualValue > line;
+          else if (side === 'UNDER') hit = actualValue < line;
+
+          if (actualValue === line) {
+            // Push
+            await supabase.from('bot_straight_bets').update({
+              outcome: 'push', profit_loss: 0, settled_at: new Date().toISOString()
+            }).eq('id', bet.id);
+            straightSettled++;
+            continue;
+          }
+
+          const stake = bet.simulated_stake || 50;
+          const pnl = hit ? Math.round(stake * 0.91 * 100) / 100 : -stake;
+
+          await supabase.from('bot_straight_bets').update({
+            outcome: hit ? 'won' : 'lost',
+            profit_loss: pnl,
+            settled_at: new Date().toISOString()
+          }).eq('id', bet.id);
+
+          straightSettled++;
+          if (hit) straightWon++;
+          else straightLost++;
+        }
+
+        console.log(`[Bot Settle] Straight bets settled: ${straightSettled} (${straightWon}W / ${straightLost}L)`);
+      }
+    } catch (straightError) {
+      console.error('[Bot Settle] Straight bet settlement error:', straightError);
+    }
+
     // ============ DD/TD Prediction Grading ============
     let ddTdGraded = 0;
     let ddTdHits = 0;

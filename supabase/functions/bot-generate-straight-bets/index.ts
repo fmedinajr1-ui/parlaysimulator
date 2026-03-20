@@ -29,10 +29,17 @@ const PROP_LABELS: Record<string, string> = {
   player_assists: 'AST', player_threes: '3PT',
 };
 
-function getStake(hitRate: number): number {
-  if (hitRate >= 90) return 100;
-  if (hitRate >= 80) return 75;
-  return 50;
+/**
+ * Kelly Criterion staking: stake = bankroll × (hit_rate × 1.91 - 1) / 0.91
+ * Capped at 5% of bankroll, floored at $25
+ */
+function getKellyStake(hitRate: number, bankroll: number): number {
+  const p = hitRate / 100;
+  const edge = (p * 1.91 - 1) / 0.91; // Kelly fraction at -110 odds
+  if (edge <= 0) return 25; // minimum bet even with thin edge
+  const raw = bankroll * edge * 0.5; // half-Kelly for safety
+  const capped = Math.min(raw, bankroll * 0.05); // max 5% of bankroll
+  return Math.max(25, Math.round(capped));
 }
 
 Deno.serve(async (req) => {
@@ -49,6 +56,9 @@ Deno.serve(async (req) => {
     const today = body.date || getEasternDate();
     const minHitRate = body.min_hit_rate ?? 70;
     const maxPicks = body.max_picks ?? 15;
+    const bankroll = body.bankroll ?? 5000; // default bankroll for Kelly sizing
+
+    console.log(`[StraightBets] Generating for ${today} | minHitRate=${minHitRate} | maxPicks=${maxPicks} | bankroll=${bankroll}`);
 
     console.log(`[StraightBets] Generating for ${today} | minHitRate=${minHitRate} | maxPicks=${maxPicks}`);
 
@@ -151,8 +161,8 @@ Deno.serve(async (req) => {
       side: s.side,
       l10_hit_rate: s.l10_hit_rate,
       composite_score: s.composite_score,
-      simulated_stake: getStake(s.l10_hit_rate),
-      simulated_payout: Math.round(getStake(s.l10_hit_rate) * 0.91 * 100) / 100, // -110 odds payout
+      simulated_stake: getKellyStake(s.l10_hit_rate, bankroll),
+      simulated_payout: Math.round(getKellyStake(s.l10_hit_rate, bankroll) * 0.91 * 100) / 100, // -110 odds payout
       american_odds: -110,
       source: s.source,
     }));
