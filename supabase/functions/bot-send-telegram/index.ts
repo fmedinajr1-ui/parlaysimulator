@@ -104,6 +104,7 @@ type NotificationType =
   | 'hedge_live_update'
   | 'composite_conflict_report'
   | 'bench_picks_digest'
+  | 'straight_bets'
   | 'custom'
   | 'test';
 
