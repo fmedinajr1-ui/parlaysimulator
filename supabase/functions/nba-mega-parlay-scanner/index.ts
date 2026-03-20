@@ -1128,10 +1128,10 @@ Deno.serve(async (req) => {
       if (fillerCount < 1 && legs.length < 4 && calcCombinedOdds(legs) < 500) {
         const filler = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
-          if (p.hitRate < 85) return false;
+          if (p.hitRate < 80) return false;
           if (p.l10Avg == null) return false;
           if (p.edgePct < 3) return false;
-          if (p.defenseRank !== null && p.defenseRank < 20) return false;
+          if (p.defenseRank !== null && p.defenseRank < 18) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
         });
