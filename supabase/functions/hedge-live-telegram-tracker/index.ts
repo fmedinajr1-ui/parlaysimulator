@@ -289,7 +289,7 @@ Deno.serve(async (req) => {
       const propLabel = PROP_LABELS[pick.prop_type?.toLowerCase()] || (pick.prop_type || '').toUpperCase();
       const side = (pick.recommended_side || 'over').toUpperCase();
       const sideChar = side.charAt(0);
-      const line = pick.recommended_line;
+      const originalLine = pick.recommended_line;
       const quarterAvgs = formatQuarterAvgs(playerBaselines, pick.prop_type);
 
       // Find live data for this player

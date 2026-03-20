@@ -4604,12 +4604,17 @@ export type Database = {
       }
       hedge_telegram_tracker: {
         Row: {
+          actual_value: number | null
           analysis_date: string
           created_at: string
+          hedge_was_correct: boolean | null
           id: string
           last_quarter_sent: number | null
           last_status_sent: string | null
           line: number
+          line_source: string | null
+          live_book_line: number | null
+          outcome: string | null
           pick_id: string | null
           player_name: string
           pregame_sent: boolean | null
@@ -4618,12 +4623,17 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          actual_value?: number | null
           analysis_date?: string
           created_at?: string
+          hedge_was_correct?: boolean | null
           id?: string
           last_quarter_sent?: number | null
           last_status_sent?: string | null
           line: number
+          line_source?: string | null
+          live_book_line?: number | null
+          outcome?: string | null
           pick_id?: string | null
           player_name: string
           pregame_sent?: boolean | null
@@ -4632,12 +4642,17 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          actual_value?: number | null
           analysis_date?: string
           created_at?: string
+          hedge_was_correct?: boolean | null
           id?: string
           last_quarter_sent?: number | null
           last_status_sent?: string | null
           line?: number
+          line_source?: string | null
+          live_book_line?: number | null
+          outcome?: string | null
           pick_id?: string | null
           player_name?: string
           pregame_sent?: boolean | null
