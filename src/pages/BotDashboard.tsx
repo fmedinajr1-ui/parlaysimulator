@@ -186,6 +186,7 @@ export default function BotDashboard() {
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-4">
           <SlateRefreshControls />
+          <StraightBetsPnLCard />
           <ResearchSummaryCard />
           <BotPnLCalendar />
           <BotPerformanceChart />

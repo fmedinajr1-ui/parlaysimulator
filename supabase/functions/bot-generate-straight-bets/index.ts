@@ -161,8 +161,8 @@ Deno.serve(async (req) => {
       side: s.side,
       l10_hit_rate: s.l10_hit_rate,
       composite_score: s.composite_score,
-      simulated_stake: getStake(s.l10_hit_rate),
-      simulated_payout: Math.round(getStake(s.l10_hit_rate) * 0.91 * 100) / 100, // -110 odds payout
+      simulated_stake: getKellyStake(s.l10_hit_rate, bankroll),
+      simulated_payout: Math.round(getKellyStake(s.l10_hit_rate, bankroll) * 0.91 * 100) / 100, // -110 odds payout
       american_odds: -110,
       source: s.source,
     }));
