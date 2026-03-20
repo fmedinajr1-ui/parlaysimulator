@@ -105,6 +105,7 @@ type NotificationType =
   | 'composite_conflict_report'
   | 'bench_picks_digest'
   | 'straight_bets'
+  | 'hedge_accuracy'
   | 'custom'
   | 'test';
 
