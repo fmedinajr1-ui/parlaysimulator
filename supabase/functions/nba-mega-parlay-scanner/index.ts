@@ -1096,7 +1096,7 @@ Deno.serve(async (req) => {
       // BALANCED leg
       const balCandidates = scoredProps.filter(p => {
         if (p.market_type !== 'player_prop') return false;
-        if (p.hitRate < 75) return false;
+        if (p.hitRate < 70) return false;
         if (p.edgePct < 5) return false;
         if (p.defenseRank !== null && p.defenseRank < 18) return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
