@@ -63,7 +63,8 @@ function getKellyStake(hitRate: number, bankroll: number): number {
  */
 function calcBuffer(l10Avg: number, line: number, side: string): number {
   if (line <= 0) return 0;
-  if (side === 'OVER') {
+  const s = side.toUpperCase();
+  if (s === 'OVER') {
     return ((l10Avg - line) / line) * 100;
   } else {
     return ((line - l10Avg) / line) * 100;
