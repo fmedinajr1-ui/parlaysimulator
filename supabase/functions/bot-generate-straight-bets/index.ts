@@ -1,8 +1,8 @@
 /**
  * bot-generate-straight-bets — Individual pick generator
  * 
- * Queries sweet spot / unified props pool and generates individual straight bets
- * for picks with high L10 hit rates. Sends Telegram broadcast.
+ * Queries sweet spot / unified props pool, applies historical prop win rate
+ * filtering, and generates individual straight bets. Sends Telegram broadcast.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -35,11 +35,44 @@ const PROP_LABELS: Record<string, string> = {
  */
 function getKellyStake(hitRate: number, bankroll: number): number {
   const p = hitRate / 100;
-  const edge = (p * 1.91 - 1) / 0.91; // Kelly fraction at -110 odds
-  if (edge <= 0) return 25; // minimum bet even with thin edge
-  const raw = bankroll * edge * 0.5; // half-Kelly for safety
-  const capped = Math.min(raw, bankroll * 0.05); // max 5% of bankroll
+  const edge = (p * 1.91 - 1) / 0.91;
+  if (edge <= 0) return 25;
+  const raw = bankroll * edge * 0.5;
+  const capped = Math.min(raw, bankroll * 0.05);
   return Math.max(25, Math.round(capped));
+}
+
+/**
+ * Query historical win rates by prop_type + side from settled sweet spots
+ */
+async function getHistoricalPropRates(supabase: any): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from('category_sweet_spots')
+    .select('prop_type, recommended_side, outcome')
+    .in('outcome', ['hit', 'miss', 'push']);
+
+  if (error || !data) {
+    console.log('[StraightBets] Could not fetch historical rates, using defaults');
+    return {};
+  }
+
+  const stats: Record<string, { hits: number; total: number }> = {};
+  for (const row of data) {
+    const key = `${row.prop_type}|${row.recommended_side || 'OVER'}`;
+    if (!stats[key]) stats[key] = { hits: 0, total: 0 };
+    stats[key].total++;
+    if (row.outcome === 'hit') stats[key].hits++;
+  }
+
+  const rates: Record<string, number> = {};
+  for (const [key, val] of Object.entries(stats)) {
+    if (val.total >= 5) { // need min sample
+      rates[key] = Math.round((val.hits / val.total) * 1000) / 10;
+    }
+  }
+
+  console.log('[StraightBets] Historical prop rates:', JSON.stringify(rates));
+  return rates;
 }
 
 Deno.serve(async (req) => {
@@ -55,8 +88,8 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const today = body.date || getEasternDate();
     const minHitRate = body.min_hit_rate ?? 70;
-    const maxPicks = body.max_picks ?? 15;
-    const bankroll = body.bankroll ?? 500; // default bankroll for Kelly sizing
+    const maxPicks = body.max_picks ?? 20;
+    const bankroll = body.bankroll ?? 500;
 
     console.log(`[StraightBets] Generating for ${today} | minHitRate=${minHitRate} | maxPicks=${maxPicks} | bankroll=${bankroll}`);
 
@@ -72,6 +105,9 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    // Get historical prop win rates
+    const historicalRates = await getHistoricalPropRates(supabase);
 
     // Query sweet spots with high hit rates
     const { data: sweetSpots, error: ssErr } = await supabase
@@ -105,42 +141,74 @@ Deno.serve(async (req) => {
       l10_hit_rate: number;
       composite_score: number;
       source: string;
+      historical_rate: number;
     }> = [];
 
     for (const ss of (sweetSpots || [])) {
-      const key = `${ss.player_name}|${ss.prop_type}|${ss.recommended_side}`;
+      const side = ss.recommended_side || 'OVER';
+      const key = `${ss.player_name}|${ss.prop_type}|${side}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const hr = (ss.l10_hit_rate || 0) <= 1 ? (ss.l10_hit_rate || 0) * 100 : (ss.l10_hit_rate || 0);
+      const histKey = `${ss.prop_type}|${side}`;
+      const histRate = historicalRates[histKey] ?? 60;
+
+      // SKIP entirely if historical rate < 55% (not profitable at -110)
+      if (histRate < 55) {
+        console.log(`[StraightBets] SKIP ${ss.player_name} ${ss.prop_type} ${side} — historical rate ${histRate}% < 55%`);
+        continue;
+      }
+
+      let score = ss.confidence_score || 0;
+      if (histRate >= 75) score += 15;
+      else if (histRate >= 70) score += 10;
+      else if (histRate < 60) score -= 20;
+
       candidates.push({
         player_name: ss.player_name,
         prop_type: ss.prop_type,
         line: ss.recommended_line,
-        side: ss.recommended_side || 'OVER',
+        side,
         l10_hit_rate: hr,
-        composite_score: ss.confidence_score || 0,
+        composite_score: score,
         source: 'sweet_spot',
+        historical_rate: histRate,
       });
     }
 
     for (const pp of (poolPicks || [])) {
-      const key = `${pp.player_name}|${pp.prop_type}|${pp.recommended_side}`;
+      const side = pp.recommended_side || 'OVER';
+      const key = `${pp.player_name}|${pp.prop_type}|${side}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const hr = (pp.l10_hit_rate || 0) <= 1 ? (pp.l10_hit_rate || 0) * 100 : (pp.l10_hit_rate || 0);
+      const histKey = `${pp.prop_type}|${side}`;
+      const histRate = historicalRates[histKey] ?? 60;
+
+      if (histRate < 55) {
+        console.log(`[StraightBets] SKIP ${pp.player_name} ${pp.prop_type} ${side} — historical rate ${histRate}% < 55%`);
+        continue;
+      }
+
+      let score = pp.composite_score || 0;
+      if (histRate >= 75) score += 15;
+      else if (histRate >= 70) score += 10;
+      else if (histRate < 60) score -= 20;
+
       candidates.push({
         player_name: pp.player_name,
         prop_type: pp.prop_type,
         line: pp.recommended_line || 0,
-        side: pp.recommended_side || 'OVER',
+        side,
         l10_hit_rate: hr,
-        composite_score: pp.composite_score || 0,
+        composite_score: score,
         source: 'pick_pool',
+        historical_rate: histRate,
       });
     }
 
-    // Sort by hit rate desc, take top N
-    candidates.sort((a, b) => b.l10_hit_rate - a.l10_hit_rate);
+    // Sort by boosted composite score desc, then hit rate desc
+    candidates.sort((a, b) => b.composite_score - a.composite_score || b.l10_hit_rate - a.l10_hit_rate);
     const selected = candidates.slice(0, maxPicks);
 
     if (selected.length === 0) {
@@ -160,7 +228,7 @@ Deno.serve(async (req) => {
       l10_hit_rate: s.l10_hit_rate,
       composite_score: s.composite_score,
       simulated_stake: getKellyStake(s.l10_hit_rate, bankroll),
-      simulated_payout: Math.round(getKellyStake(s.l10_hit_rate, bankroll) * 0.91 * 100) / 100, // -110 odds payout
+      simulated_payout: Math.round(getKellyStake(s.l10_hit_rate, bankroll) * 0.91 * 100) / 100,
       american_odds: -110,
       source: s.source,
     }));
@@ -181,11 +249,13 @@ Deno.serve(async (req) => {
     for (const b of betsToInsert) {
       const label = PROP_LABELS[b.prop_type] || b.prop_type;
       const arrow = b.side === 'OVER' ? '⬆️' : '⬇️';
+      const histKey = `${b.prop_type}|${b.side}`;
+      const hRate = historicalRates[histKey] ?? '?';
       msg += `${arrow} *${b.player_name}* ${b.side} ${b.line} ${label}\n`;
-      msg += `   L10: ${b.l10_hit_rate}% | Stake: $${b.simulated_stake}\n`;
+      msg += `   L10: ${b.l10_hit_rate}% | Hist: ${hRate}% | $${b.simulated_stake}\n`;
     }
 
-    msg += `\n_At 66%+ hit rate, EV = +$${Math.round(totalStake * 0.10)}/day_`;
+    msg += `\n_Hist-filtered: only 55%+ categories | Kelly-sized at $${bankroll} bankroll_`;
 
     // Send via bot-send-telegram
     await supabase.functions.invoke('bot-send-telegram', {
