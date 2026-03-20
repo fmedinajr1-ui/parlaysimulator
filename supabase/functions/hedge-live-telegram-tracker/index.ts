@@ -450,9 +450,17 @@ Deno.serve(async (req) => {
           const remaining = line - currentValue;
           const neededRate = remainingMinutes > 0 ? (remaining / remainingMinutes).toFixed(2) : '?';
 
-          let msg = `🎯 HEDGE UPDATE — ${pick.player_name} ${propLabel} ${sideChar}${line}\n\n`;
+          // Calculate buffer % for display
+          const isOverPick = (pick.recommended_side || 'over').toLowerCase() !== 'under';
+          const bufferPctDisplay = isOverPick
+            ? ((projectedFinal - hedgeLine) / hedgeLine) * 100
+            : ((hedgeLine - projectedFinal) / hedgeLine) * 100;
+          const fdTag = lineSource === 'fanduel' ? ' (FD)' : '';
+
+          let msg = `🎯 HEDGE UPDATE — ${pick.player_name} ${propLabel} ${sideChar}${hedgeLine}${fdTag}\n\n`;
           msg += `📊 Status: ${statusTransition}\n`;
           msg += `📈 Current: ${currentValue} ${propLabel.toLowerCase()} | Projected: ${projectedFinal.toFixed(1)}\n`;
+          msg += `📏 FD Line: ${hedgeLine} | Buffer: ${bufferPctDisplay >= 0 ? '+' : ''}${bufferPctDisplay.toFixed(1)}%\n`;
           msg += `⏱️ Q${currentQuarter} ${game.clock || ''} | Progress: ${Math.round(gameProgress)}%\n`;
           msg += `🏃 Rate: ${ratePerMin.toFixed(2)}/min (need ${neededRate})\n\n`;
           msg += `📋 StatMuse Q-Avg: ${quarterAvgs}\n`;
