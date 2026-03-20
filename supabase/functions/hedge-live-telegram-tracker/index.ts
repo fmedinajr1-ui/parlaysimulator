@@ -406,7 +406,7 @@ Deno.serve(async (req) => {
               sweet_spot_id: pick.id,
               player_name: pick.player_name,
               prop_type: pick.prop_type,
-              line,
+              line: hedgeLine,
               side: (pick.recommended_side || 'over').toLowerCase(),
               quarter: currentQuarter,
               game_progress: gameProgress,
