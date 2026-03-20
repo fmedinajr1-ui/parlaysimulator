@@ -1,0 +1,1 @@
+DELETE FROM bot_straight_bets WHERE bet_date = CURRENT_DATE;
