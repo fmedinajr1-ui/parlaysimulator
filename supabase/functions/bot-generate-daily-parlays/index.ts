@@ -8214,6 +8214,21 @@ async function generateTierParlays(
         }
       }
       
+      // === BUFFER GATE: Skip legs where L10 avg vs line buffer < 10% ===
+      if ('player_name' in pick) {
+        const pickL10Avg = (pick as any).l10_avg || (pick as any).projected_value || 0;
+        const pickLine = (pick as any).line || (pick as any).recommended_line || 0;
+        const pickSide = ((pick as any).recommended_side || (pick as any).side || 'OVER').toUpperCase();
+        if (pickL10Avg > 0 && pickLine > 0) {
+          const bufferPct = pickSide === 'OVER'
+            ? ((pickL10Avg - pickLine) / pickLine) * 100
+            : ((pickLine - pickL10Avg) / pickLine) * 100;
+          if (bufferPct < 10) {
+            continue; // Thin margin — skip
+          }
+        }
+      }
+      
       // For hybrid profiles, use a lower hit rate floor for team legs
       // EXEMPT: floor_lock and ceiling_shot already filtered by their own floor/ceiling gates
       const effectiveMinHitRate = (isHybridProfile && 'type' in pick && pick.type === 'team') 
