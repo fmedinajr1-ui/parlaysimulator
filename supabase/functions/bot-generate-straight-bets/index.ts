@@ -257,7 +257,7 @@ Deno.serve(async (req) => {
     let skippedHistorical = 0;
 
     for (const ss of (sweetSpots || [])) {
-      const side = ss.recommended_side || 'OVER';
+      const side = (ss.recommended_side || 'OVER').toUpperCase();
       const key = `${ss.player_name}|${ss.prop_type}|${side}`;
       if (seen.has(key)) continue;
       seen.add(key);
