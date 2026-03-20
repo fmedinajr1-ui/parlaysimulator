@@ -1,60 +1,65 @@
 
 
-# Fix Straight Bet Selection: Use Historical Prop Win Rates
+# Fix Straight Bets & Parlays: Use Real FanDuel Lines + Buffer Gate
 
 ## Problem
 
-Today's 15 straight bets are dominated by **points OVER** (53.4% historical hit rate) and **rebounds OVER** (61.6%). These are the two worst-performing categories. Meanwhile, the proven winners are being ignored:
+The straight bet generator (`bot-generate-straight-bets`) uses `recommended_line` from `category_sweet_spots` — a **calculated** line, not the actual FanDuel sportsbook line. This means:
 
-- Rebounds UNDER: **83.8%** hit rate
-- Threes OVER: **77.5%** hit rate  
-- Assists UNDER: **73.5%**
-- Points UNDER: **69.6%**
+1. Picks show lines that don't exist on FanDuel (can't actually bet them)
+2. No buffer check — if L10 avg is 5.1 and real line is 5.5, that's a terrible OVER pick even at 100% L10 hit rate on the old line
+3. The parlay generator already does FanDuel line lookup from `unified_props` but straight bets skip this entirely
 
-At -110 odds, you need 52.4% to break even. Points OVER at 53.4% has almost zero edge. The current system just sorts by L10 hit rate without checking if the prop type historically delivers.
+The `category_sweet_spots` table has an `actual_line` column (populated by the analyzer from real odds), but the straight bet generator ignores it.
 
-## Solution: 3 Changes
+## Solution
 
-### 1. Add Historical Prop Win Rate Multiplier to Straight Bet Generator
+### 1. Use real FanDuel lines for straight bets
 
-In `bot-generate-straight-bets/index.ts`, before ranking candidates, query `category_sweet_spots` for historical hit rates by `prop_type + recommended_side`. Apply a **composite boost/penalty**:
+In `bot-generate-straight-bets/index.ts`, after gathering candidates from sweet spots:
 
+- Cross-reference each candidate against `unified_props` (FanDuel bookmaker) to get the **real current sportsbook line**
+- If a FanDuel line exists, use it instead of `recommended_line`
+- If no FanDuel line exists, fall back to `actual_line` from sweet spots, then `recommended_line` as last resort
+- Tag each pick with `line_source: 'fanduel' | 'actual_line' | 'recommended'` for transparency
+
+### 2. Add buffer gate — skip picks with thin margins
+
+After resolving the real line, calculate the buffer:
 ```
-PROP_HISTORICAL_RATES = query from settled sweet spots grouped by prop_type + side
-
-For each candidate:
-  historical_rate = PROP_HISTORICAL_RATES[prop_type + side] or 60
-  if historical_rate >= 75: boost composite_score by +15
-  if historical_rate >= 70: boost by +10
-  if historical_rate < 60: penalty -20
-  if historical_rate < 55: SKIP entirely (not profitable at -110)
+buffer = (l10_avg - real_line) / real_line  // for OVER
+buffer = (real_line - l10_avg) / real_line  // for UNDER
 ```
 
-This would auto-filter out points OVER (53.4%) and prioritize threes OVER (77.5%) and rebounds UNDER (83.8%).
+- **Require buffer ≥ 15%** — if a player averages 5.1 and the line is 5.0, that's only 2% buffer = SKIP
+- This matches the March 12 winning pattern where all winners had 49%+ cushion above line
 
-### 2. Increase Max Picks to 20 (From Profitable Categories Only)
+### 3. Apply same fix to parlay generator's sweet spot line resolution
 
-With the filter removing low-edge prop types, raise `maxPicks` from 15 to 20. More volume from proven categories = more profit. If fewer than 15 qualify from good categories, that's fine — quality over quantity.
+The parlay generator (`bot-generate-daily-parlays`) already queries FanDuel props but some strategies still fall back to `recommended_line` when the odds map misses. Add the same buffer gate: any leg where L10 avg vs real line buffer < 10% gets skipped or deprioritized.
 
-### 3. Add `bot_straight_bet_tracking` View for Daily P&L
+### 4. Show real line + buffer in Telegram output
 
-Create a database function `get_straight_bet_performance` that returns:
-- Daily win/loss/P&L by prop type
-- Running total profit
-- Best/worst prop categories
-- Used by the settlement pipeline to log daily straight bet ROI
-
-This gives you a feedback loop: after tonight's games settle, you'll see exactly which prop types made money and which didn't.
-
-## Expected Impact
-
-- **Before**: 15 picks, ~53-62% avg historical hit rate across categories, thin edge
-- **After**: 15-20 picks from 70%+ historical categories only, ~70-78% avg historical hit rate
-- At 70% hit rate with 20 picks × $25: **+$168/day expected profit**
-- At 75% hit rate: **+$216/day**
+Update the Telegram message format to include the actual FanDuel line and buffer percentage:
+```
+⬆️ RJ Barrett OVER 14.5 PTS (FD line)
+   L10: 100% | Avg: 24.1 | Buffer: +66% | $25
+```
 
 ## Files Changed
 
-1. `supabase/functions/bot-generate-straight-bets/index.ts` — Add historical rate query, apply boost/penalty, skip sub-55% categories, raise max to 20
-2. DB migration — Create `get_straight_bet_performance()` function for tracking
+1. **`supabase/functions/bot-generate-straight-bets/index.ts`**
+   - Add FanDuel line lookup from `unified_props` for each candidate
+   - Add buffer calculation and 15% minimum gate
+   - Use real line in bet record and Telegram message
+   - Tag `line_source` on each pick
+
+2. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
+   - Add buffer check in leg assembly loop — skip legs where L10 avg vs real line < 10%
+
+## Expected Impact
+
+- Every straight bet will have a real, bettable FanDuel line
+- Thin-margin picks (the ones that usually lose) get automatically filtered
+- Telegram shows you exactly what to bet and the safety margin
 
