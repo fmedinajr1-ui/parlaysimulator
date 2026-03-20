@@ -104,6 +104,7 @@ type NotificationType =
   | 'hedge_live_update'
   | 'composite_conflict_report'
   | 'bench_picks_digest'
+  | 'straight_bets'
   | 'custom'
   | 'test';
 
@@ -195,6 +196,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatCompositeConflictReport(data, dateStr);
     case 'bench_picks_digest':
       return formatBenchPicksDigest(data, dateStr);
+    case 'straight_bets':
+      return data.message || '📊 Straight bets generated';
     case 'custom':
       // Extract clean message from adaptive intelligence and other custom senders
       return data.message || data.text || data.summary || '📌 Bot update received';

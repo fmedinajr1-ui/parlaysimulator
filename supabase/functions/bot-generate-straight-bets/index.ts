@@ -56,11 +56,9 @@ Deno.serve(async (req) => {
     const today = body.date || getEasternDate();
     const minHitRate = body.min_hit_rate ?? 70;
     const maxPicks = body.max_picks ?? 15;
-    const bankroll = body.bankroll ?? 5000; // default bankroll for Kelly sizing
+    const bankroll = body.bankroll ?? 500; // default bankroll for Kelly sizing
 
     console.log(`[StraightBets] Generating for ${today} | minHitRate=${minHitRate} | maxPicks=${maxPicks} | bankroll=${bankroll}`);
-
-    console.log(`[StraightBets] Generating for ${today} | minHitRate=${minHitRate} | maxPicks=${maxPicks}`);
 
     // Check for existing straight bets today
     const { count: existing } = await supabase
