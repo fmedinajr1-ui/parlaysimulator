@@ -1,19 +1,17 @@
 /**
- * bot-daily-diversity-rebalance v5.0 — Minimal Safety Net (Reverted)
+ * bot-daily-diversity-rebalance v6.0 — Loosened Caps + Hard Floor
  * 
- * REVERTED from v4.0 aggressive caps based on backtest showing
- * 82% void rate post-Mar12 (vs 42% pre-Mar12).
- * 
- * v5.0 changes:
- * - Raised player appearance cap from 5 → 10
- * - Raised strategy family cap from 40% → 60%
- * - Only voids extreme outliers, NOT moderate duplicates
- * - Volume-aware stake scaling unchanged
+ * v6.0 changes (from v5.0):
+ * - Raised player appearance cap from 10 → 15
+ * - Raised strategy family cap from 60% → 80%
+ * - Added hard floor: never void below 20 active parlays
+ * - Borderline cases tagged as warning instead of voided
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VERSION = 'diversity-rebalance-v5.0-minimal';
+const VERSION = 'diversity-rebalance-v6.0-loosened';
+const MIN_ACTIVE_FLOOR = 20;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,14 +49,11 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const today = body.date || getEasternDate();
-    // REVERTED: raised from 5 → 10
-    const maxPlayerAppearances = body.max_player_appearances ?? 10;
-    // REVERTED: raised from 40% → 60%
-    const maxStrategyPct = body.max_strategy_pct ?? 0.60;
+    const maxPlayerAppearances = body.max_player_appearances ?? 15;
+    const maxStrategyPct = body.max_strategy_pct ?? 0.80;
 
-    console.log(`[DiversityRebalance] ${VERSION} | date=${today} | playerCap=${maxPlayerAppearances} | stratPct=${maxStrategyPct}`);
+    console.log(`[DiversityRebalance] ${VERSION} | date=${today} | playerCap=${maxPlayerAppearances} | stratPct=${maxStrategyPct} | floor=${MIN_ACTIVE_FLOOR}`);
 
-    // Fetch pending parlays
     const { data: pending, error } = await supabase
       .from('bot_daily_parlays')
       .select('id, strategy_name, combined_probability, tier, legs')
@@ -78,10 +73,11 @@ Deno.serve(async (req) => {
     console.log(`[DiversityRebalance] ${totalCount} pending parlays to validate`);
 
     let totalVoided = 0;
+    let totalWarned = 0;
     const voidReasons: Record<string, number> = {};
 
     // ═══════════════════════════════════════════════════════════
-    // PASS 1: Global Player Appearance Cap (10)
+    // PASS 1: Global Player Appearance Cap (15)
     // ═══════════════════════════════════════════════════════════
     const playerUsage = new Map<string, string[]>();
 
@@ -100,10 +96,16 @@ Deno.serve(async (req) => {
     for (const [player, parlayIds] of playerUsage) {
       if (parlayIds.length <= maxPlayerAppearances) continue;
       const toVoid = parlayIds.slice(maxPlayerAppearances);
-      for (const id of toVoid) {
+      // Check floor: don't void if it would drop below MIN_ACTIVE_FLOOR
+      const currentActive = totalCount - playerVoidIds.size;
+      const canVoid = Math.max(0, currentActive - MIN_ACTIVE_FLOOR);
+      const actualVoid = toVoid.slice(0, canVoid);
+      for (const id of actualVoid) {
         playerVoidIds.add(id);
       }
-      console.log(`[DiversityRebalance] Player ${player}: ${parlayIds.length} appearances → voiding ${toVoid.length} (keeping ${maxPlayerAppearances})`);
+      if (actualVoid.length < toVoid.length) {
+        console.log(`[DiversityRebalance] Player ${player}: would void ${toVoid.length} but floor limits to ${actualVoid.length}`);
+      }
     }
 
     if (playerVoidIds.size > 0) {
@@ -112,7 +114,7 @@ Deno.serve(async (req) => {
         const chunk = ids.slice(i, i + 100);
         const { count } = await supabase
           .from('bot_daily_parlays')
-          .update({ outcome: 'void', lesson_learned: 'diversity_v5_player_cap' })
+          .update({ outcome: 'void', lesson_learned: 'diversity_v6_player_cap' })
           .in('id', chunk)
           .eq('outcome', 'pending')
           .select('*', { count: 'exact', head: true });
@@ -122,7 +124,7 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // PASS 2: Strategy Family Cap (60%)
+    // PASS 2: Strategy Family Cap (80%)
     // ═══════════════════════════════════════════════════════════
     const { data: remaining } = await supabase
       .from('bot_daily_parlays')
@@ -149,14 +151,40 @@ Deno.serve(async (req) => {
     let strategyVoided = 0;
     for (const [family, entry] of familyCounts) {
       if (entry.toVoid.length === 0) continue;
-      const { count } = await supabase
-        .from('bot_daily_parlays')
-        .update({ outcome: 'void', lesson_learned: `diversity_v5_strategy_cap_${maxPerFamily}` })
-        .in('id', entry.toVoid)
-        .eq('outcome', 'pending')
-        .select('*', { count: 'exact', head: true });
-      strategyVoided += (count || 0);
-      console.log(`[DiversityRebalance] ${family}: kept ${entry.kept}, voided ${count || 0}`);
+      // Check floor before voiding
+      const currentActive = remainingCount - strategyVoided;
+      const canVoid = Math.max(0, currentActive - MIN_ACTIVE_FLOOR);
+      if (canVoid === 0) {
+        // Tag as warning instead
+        await supabase
+          .from('bot_daily_parlays')
+          .update({ lesson_learned: 'diversity_v6_warning_strategy_cap' })
+          .in('id', entry.toVoid)
+          .eq('outcome', 'pending');
+        totalWarned += entry.toVoid.length;
+        console.log(`[DiversityRebalance] ${family}: ${entry.toVoid.length} warned (floor protection)`);
+        continue;
+      }
+      const voidSlice = entry.toVoid.slice(0, canVoid);
+      const warnSlice = entry.toVoid.slice(canVoid);
+      if (voidSlice.length > 0) {
+        const { count } = await supabase
+          .from('bot_daily_parlays')
+          .update({ outcome: 'void', lesson_learned: `diversity_v6_strategy_cap` })
+          .in('id', voidSlice)
+          .eq('outcome', 'pending')
+          .select('*', { count: 'exact', head: true });
+        strategyVoided += (count || 0);
+      }
+      if (warnSlice.length > 0) {
+        await supabase
+          .from('bot_daily_parlays')
+          .update({ lesson_learned: 'diversity_v6_warning_strategy_cap' })
+          .in('id', warnSlice)
+          .eq('outcome', 'pending');
+        totalWarned += warnSlice.length;
+      }
+      console.log(`[DiversityRebalance] ${family}: kept ${entry.kept}, voided ${voidSlice.length}, warned ${warnSlice.length}`);
     }
     totalVoided += strategyVoided;
     if (strategyVoided > 0) voidReasons['strategy_cap'] = strategyVoided;
@@ -201,16 +229,16 @@ Deno.serve(async (req) => {
       console.log(`[DiversityRebalance] Volume-scaled: ${totalAfter} parlays → ${volumeMultiplier}× (${stakesAdjusted} adjusted)`);
     }
 
-    // Activity log
     await supabase.from('bot_activity_log').insert({
       event_type: 'diversity_rebalance',
-      message: `Validation: ${totalCount} → ${totalAfter} parlays (voided ${totalVoided}, stake ${volumeMultiplier}×)`,
+      message: `Validation: ${totalCount} → ${totalAfter} parlays (voided ${totalVoided}, warned ${totalWarned}, stake ${volumeMultiplier}×)`,
       metadata: {
         version: VERSION,
         date: today,
         totalBefore: totalCount,
         totalAfter,
         totalVoided,
+        totalWarned,
         voidReasons,
         maxPlayerAppearances,
         maxPerFamily,
@@ -227,6 +255,7 @@ Deno.serve(async (req) => {
       totalBefore: totalCount,
       totalAfter,
       totalVoided,
+      totalWarned,
       voidReasons,
       volumeMultiplier,
       stakesAdjusted,

@@ -1096,7 +1096,7 @@ Deno.serve(async (req) => {
       // BALANCED leg
       const balCandidates = scoredProps.filter(p => {
         if (p.market_type !== 'player_prop') return false;
-        if (p.hitRate < 75) return false;
+        if (p.hitRate < 70) return false;
         if (p.edgePct < 5) return false;
         if (p.defenseRank !== null && p.defenseRank < 18) return false;
         if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
@@ -1128,10 +1128,10 @@ Deno.serve(async (req) => {
       if (fillerCount < 1 && legs.length < 4 && calcCombinedOdds(legs) < 500) {
         const filler = scoredProps.find(p => {
           if (p.market_type !== 'player_prop') return false;
-          if (p.hitRate < 85) return false;
+          if (p.hitRate < 80) return false;
           if (p.l10Avg == null) return false;
           if (p.edgePct < 3) return false;
-          if (p.defenseRank !== null && p.defenseRank < 20) return false;
+          if (p.defenseRank !== null && p.defenseRank < 18) return false;
           if (allUsedPlayers.has(normalizeName(p.player_name))) return false;
           return passesBasicChecks(p, legs, gc);
         });
@@ -1145,7 +1145,7 @@ Deno.serve(async (req) => {
       if (legs.length < 2) {
         for (const p of scoredProps) {
           if (legs.length >= 2) break;
-          if (p.hitRate < 80) continue;
+          if (p.hitRate < 75) continue;
           if (allUsedPlayers.has(normalizeName(p.player_name))) continue;
           if (!passesBasicChecks(p, legs, gc)) continue;
           addLeg(p, legs, gc, used, 'fallback', 'standard');

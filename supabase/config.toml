@@ -481,3 +481,12 @@ verify_jwt = false
 
 [functions.bot-parlay-auto-apply]
 verify_jwt = false
+
+[functions.bot-generate-straight-bets]
+verify_jwt = false
+
+[functions.bot-close-miss-analyzer]
+verify_jwt = false
+
+[functions.bot-slate-status-update]
+verify_jwt = false

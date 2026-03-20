@@ -1713,6 +1713,63 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_straight_bets: {
+        Row: {
+          american_odds: number | null
+          bet_date: string
+          composite_score: number | null
+          created_at: string | null
+          id: string
+          l10_hit_rate: number | null
+          line: number
+          outcome: string | null
+          player_name: string
+          profit_loss: number | null
+          prop_type: string
+          settled_at: string | null
+          side: string
+          simulated_payout: number | null
+          simulated_stake: number | null
+          source: string | null
+        }
+        Insert: {
+          american_odds?: number | null
+          bet_date?: string
+          composite_score?: number | null
+          created_at?: string | null
+          id?: string
+          l10_hit_rate?: number | null
+          line: number
+          outcome?: string | null
+          player_name: string
+          profit_loss?: number | null
+          prop_type: string
+          settled_at?: string | null
+          side: string
+          simulated_payout?: number | null
+          simulated_stake?: number | null
+          source?: string | null
+        }
+        Update: {
+          american_odds?: number | null
+          bet_date?: string
+          composite_score?: number | null
+          created_at?: string | null
+          id?: string
+          l10_hit_rate?: number | null
+          line?: number
+          outcome?: string | null
+          player_name?: string
+          profit_loss?: number | null
+          prop_type?: string
+          settled_at?: string | null
+          side?: string
+          simulated_payout?: number | null
+          simulated_stake?: number | null
+          source?: string | null
+        }
+        Relationships: []
+      }
       bot_strategies: {
         Row: {
           auto_generated: boolean | null
@@ -1767,6 +1824,39 @@ export type Database = {
           updated_at?: string | null
           version?: number | null
           win_rate?: number | null
+        }
+        Relationships: []
+      }
+      bot_weak_leg_tracker: {
+        Row: {
+          context: Json | null
+          created_at: string | null
+          id: string
+          last_miss_date: string | null
+          miss_count: number | null
+          player_name: string
+          prop_type: string
+          side: string
+        }
+        Insert: {
+          context?: Json | null
+          created_at?: string | null
+          id?: string
+          last_miss_date?: string | null
+          miss_count?: number | null
+          player_name: string
+          prop_type: string
+          side: string
+        }
+        Update: {
+          context?: Json | null
+          created_at?: string | null
+          id?: string
+          last_miss_date?: string | null
+          miss_count?: number | null
+          player_name?: string
+          prop_type?: string
+          side?: string
         }
         Relationships: []
       }
