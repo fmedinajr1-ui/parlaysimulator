@@ -347,6 +347,9 @@ Deno.serve(async (req) => {
         const bookKey = `${pick.player_name}::${statKey2}`;
         const actualBook = actualLineByKey[bookKey];
         const liveBookLine = actualBook?.line ?? pick.recommended_line ?? undefined;
+        // Use FanDuel line for hedge decisions (not just projection blending)
+        const hedgeLine = actualBook?.line ?? pick.actual_line ?? originalLine;
+        const lineSource = actualBook ? 'fanduel' : (pick.actual_line ? 'actual_line' : 'sweet_spot');
         const liveBookmaker = actualBook?.bookmaker;
         const liveOverPrice = actualBook?.overPrice;
         const liveUnderPrice = actualBook?.underPrice;
