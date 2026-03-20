@@ -13428,6 +13428,20 @@ export type Database = {
           win_rate: number
         }[]
       }
+      get_straight_bet_performance: {
+        Args: { days_back?: number }
+        Returns: {
+          losses: number
+          prop_type: string
+          roi_pct: number
+          side: string
+          total_bets: number
+          total_profit: number
+          total_staked: number
+          win_rate: number
+          wins: number
+        }[]
+      }
       get_strategy_performance_stats: {
         Args: { p_user_id?: string }
         Returns: {
