@@ -113,10 +113,10 @@ async function buildFanDuelLineMap(supabase: any, today: string): Promise<Map<st
 
   const { data, error } = await supabase
     .from('unified_props')
-    .select('player_name, prop_type, line, over_price, under_price, bookmaker')
+    .select('player_name, prop_type, current_line, over_price, under_price, bookmaker')
     .eq('bookmaker', 'fanduel')
     .gte('created_at', `${today}T00:00:00`)
-    .not('line', 'is', null);
+    .not('current_line', 'is', null);
 
   if (error || !data) {
     console.log('[StraightBets] Could not fetch FanDuel lines:', error?.message);
