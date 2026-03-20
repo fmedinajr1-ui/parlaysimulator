@@ -1,65 +1,69 @@
 
 
-# Fix Straight Bets & Parlays: Use Real FanDuel Lines + Buffer Gate
+# Plan: FanDuel Lines in Hedge Recommendations + Hedge Accuracy Tracking
 
-## Problem
+## Part 1: Use Real FanDuel Lines in Hedge Status Calculation
 
-The straight bet generator (`bot-generate-straight-bets`) uses `recommended_line` from `category_sweet_spots` — a **calculated** line, not the actual FanDuel sportsbook line. This means:
+### Problem
+Line 376-382: `calculateHedgeAction` uses `line` (from `category_sweet_spots.recommended_line`) instead of the FanDuel line already fetched at line 348 (`actualBook?.line`). The FanDuel line is only used for the tri-signal projection blend and the "Consider" note — not the actual hedge decision.
 
-1. Picks show lines that don't exist on FanDuel (can't actually bet them)
-2. No buffer check — if L10 avg is 5.1 and real line is 5.5, that's a terrible OVER pick even at 100% L10 hit rate on the old line
-3. The parlay generator already does FanDuel line lookup from `unified_props` but straight bets skip this entirely
+### Changes in `hedge-live-telegram-tracker/index.ts`
 
-The `category_sweet_spots` table has an `actual_line` column (populated by the analyzer from real odds), but the straight bet generator ignores it.
+1. **Line 292**: Store original line separately, use FanDuel line for hedge decisions:
+   ```typescript
+   const originalLine = pick.recommended_line;
+   const line = actualBook?.line ?? pick.actual_line ?? pick.recommended_line;
+   ```
+   Move this after `actualBook` is resolved (~line 348), or restructure so `line` gets reassigned.
 
-## Solution
+2. **Line 376-382**: `calculateHedgeAction` already receives `line` — just ensure `line` is the FanDuel-resolved value (from change above).
 
-### 1. Use real FanDuel lines for straight bets
+3. **Add buffer % to ALL Telegram messages** (not just HEDGE ALERT/NOW):
+   - After line 444, add: `📏 FD Line: ${line} | Buffer: ${bufferPct.toFixed(1)}%`
+   - Calculate: `bufferPct = isOver ? ((projectedFinal - line) / line) * 100 : ((line - projectedFinal) / line) * 100`
 
-In `bot-generate-straight-bets/index.ts`, after gathering candidates from sweet spots:
+4. **Tag line source in tracker upserts** (lines 484-494): add `line_source: actualBook ? 'fanduel' : 'sweet_spot'` and `live_book_line: actualBook?.line`
 
-- Cross-reference each candidate against `unified_props` (FanDuel bookmaker) to get the **real current sportsbook line**
-- If a FanDuel line exists, use it instead of `recommended_line`
-- If no FanDuel line exists, fall back to `actual_line` from sweet spots, then `recommended_line` as last resort
-- Tag each pick with `line_source: 'fanduel' | 'actual_line' | 'recommended'` for transparency
+5. **Add buffer-based escalation**: If buffer is deeply negative (< -15%), force escalate to HEDGE NOW regardless of thresholds.
 
-### 2. Add buffer gate — skip picks with thin margins
+---
 
-After resolving the real line, calculate the buffer:
+## Part 2: Hedge Accuracy Tracking & Settlement
+
+### DB Migration — Add columns to `hedge_telegram_tracker`
+```sql
+ALTER TABLE hedge_telegram_tracker 
+  ADD COLUMN IF NOT EXISTS actual_value numeric,
+  ADD COLUMN IF NOT EXISTS outcome text,
+  ADD COLUMN IF NOT EXISTS hedge_was_correct boolean,
+  ADD COLUMN IF NOT EXISTS live_book_line numeric,
+  ADD COLUMN IF NOT EXISTS line_source text DEFAULT 'sweet_spot';
 ```
-buffer = (l10_avg - real_line) / real_line  // for OVER
-buffer = (real_line - l10_avg) / real_line  // for UNDER
+
+### New Edge Function: `settle-hedge-tracker/index.ts`
+1. Query unsettled `hedge_telegram_tracker` rows (`outcome IS NULL`, `last_status_sent IS NOT NULL`)
+2. Join against `category_sweet_spots` for `actual_value` (same pattern as `settle-hedge-snapshots`)
+3. Determine hit/miss: OVER hit if actual > line, UNDER hit if actual < line
+4. Set `hedge_was_correct`:
+   - TRUE if LOCK/HOLD and pick hit
+   - TRUE if HEDGE NOW/HEDGE ALERT and pick missed (correctly warned)
+   - FALSE otherwise
+5. Send accuracy summary to admin Telegram
+
+### Telegram Accuracy Message Format
+```
+📊 HEDGE ACCURACY — March 19
+LOCK: 79 picks, 76 hit (96.2%) ✅
+HOLD: 45 picks, 38 hit (84.4%)
+HEDGE NOW: 21 picks, 19 correctly flagged (90.5%) ✅
+Overall accuracy: 94.1%
 ```
 
-- **Require buffer ≥ 15%** — if a player averages 5.1 and the line is 5.0, that's only 2% buffer = SKIP
-- This matches the March 12 winning pattern where all winners had 49%+ cushion above line
-
-### 3. Apply same fix to parlay generator's sweet spot line resolution
-
-The parlay generator (`bot-generate-daily-parlays`) already queries FanDuel props but some strategies still fall back to `recommended_line` when the odds map misses. Add the same buffer gate: any leg where L10 avg vs real line buffer < 10% gets skipped or deprioritized.
-
-### 4. Show real line + buffer in Telegram output
-
-Update the Telegram message format to include the actual FanDuel line and buffer percentage:
-```
-⬆️ RJ Barrett OVER 14.5 PTS (FD line)
-   L10: 100% | Avg: 24.1 | Buffer: +66% | $25
-```
+---
 
 ## Files Changed
 
-1. **`supabase/functions/bot-generate-straight-bets/index.ts`**
-   - Add FanDuel line lookup from `unified_props` for each candidate
-   - Add buffer calculation and 15% minimum gate
-   - Use real line in bet record and Telegram message
-   - Tag `line_source` on each pick
-
-2. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
-   - Add buffer check in leg assembly loop — skip legs where L10 avg vs real line < 10%
-
-## Expected Impact
-
-- Every straight bet will have a real, bettable FanDuel line
-- Thin-margin picks (the ones that usually lose) get automatically filtered
-- Telegram shows you exactly what to bet and the safety margin
+1. **`supabase/functions/hedge-live-telegram-tracker/index.ts`** — Use FanDuel line in hedge decision, add buffer to messages, tag line source
+2. **DB migration** — Add `actual_value`, `outcome`, `hedge_was_correct`, `live_book_line`, `line_source` to `hedge_telegram_tracker`
+3. **New: `supabase/functions/settle-hedge-tracker/index.ts`** — Settlement + accuracy Telegram broadcast
 
