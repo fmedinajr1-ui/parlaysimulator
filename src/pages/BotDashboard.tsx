@@ -18,6 +18,7 @@ import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
 import { TelegramCustomerManager } from '@/components/bot/TelegramCustomerManager';
 import { SlateRefreshControls } from '@/components/market/SlateRefreshControls';
 import { NHLPerformanceCard } from '@/components/bot/NHLPerformanceCard';
+import { StraightBetsPnLCard } from '@/components/bot/StraightBetsPnLCard';
 
 import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
