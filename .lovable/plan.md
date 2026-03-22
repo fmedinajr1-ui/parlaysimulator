@@ -1,69 +1,57 @@
 
 
-# Plan: FanDuel Lines in Hedge Recommendations + Hedge Accuracy Tracking
+# Settle Hedge Tracker + Wire Missing Matchup Intelligence
 
-## Part 1: Use Real FanDuel Lines in Hedge Status Calculation
+## Two Problems Found
 
-### Problem
-Line 376-382: `calculateHedgeAction` uses `line` (from `category_sweet_spots.recommended_line`) instead of the FanDuel line already fetched at line 348 (`actualBook?.line`). The FanDuel line is only used for the tri-signal projection blend and the "Consider" note — not the actual hedge decision.
+### 1. `settle-hedge-tracker` exists but is NOT wired into any pipeline
+The function was created but never added to:
+- `data-pipeline-orchestrator` (nightly settlement pipeline, Phase 4)
+- `sync-and-verify-all` (the cron-triggered settlement)
+- No cron job schedules it
 
-### Changes in `hedge-live-telegram-tracker/index.ts`
+Result: 426+ hedge tracker rows remain unsettled with no accuracy data.
 
-1. **Line 292**: Store original line separately, use FanDuel line for hedge decisions:
-   ```typescript
-   const originalLine = pick.recommended_line;
-   const line = actualBook?.line ?? pick.actual_line ?? pick.recommended_line;
-   ```
-   Move this after `actualBook` is resolved (~line 348), or restructure so `line` gets reassigned.
+### 2. `matchup-intelligence-analyzer` exists but is NOT called in the main pipeline
+The `matchup_intelligence` table is populated by `matchup-intelligence-analyzer` (action: `analyze_batch`), which is only referenced in `engine-cascade-runner` — but `engine-cascade-runner` is **not called** by `refresh-l10-and-rebuild` (the main 5:30 PM pipeline). The main pipeline calls `bot-matchup-defense-scanner` (which writes to `bot_research_findings`, not `matchup_intelligence`).
 
-2. **Line 376-382**: `calculateHedgeAction` already receives `line` — just ensure `line` is the FanDuel-resolved value (from change above).
-
-3. **Add buffer % to ALL Telegram messages** (not just HEDGE ALERT/NOW):
-   - After line 444, add: `📏 FD Line: ${line} | Buffer: ${bufferPct.toFixed(1)}%`
-   - Calculate: `bufferPct = isOver ? ((projectedFinal - line) / line) * 100 : ((line - projectedFinal) / line) * 100`
-
-4. **Tag line source in tracker upserts** (lines 484-494): add `line_source: actualBook ? 'fanduel' : 'sweet_spot'` and `live_book_line: actualBook?.line`
-
-5. **Add buffer-based escalation**: If buffer is deeply negative (< -15%), force escalate to HEDGE NOW regardless of thresholds.
+Result: `matchup_intelligence` table stays empty. `sharp-parlay-builder` and `heat-prop-engine` query it for blocked picks but get nothing — no matchup-based blocking happens.
 
 ---
 
-## Part 2: Hedge Accuracy Tracking & Settlement
+## Fix 1: Wire `settle-hedge-tracker` into nightly pipeline
 
-### DB Migration — Add columns to `hedge_telegram_tracker`
-```sql
-ALTER TABLE hedge_telegram_tracker 
-  ADD COLUMN IF NOT EXISTS actual_value numeric,
-  ADD COLUMN IF NOT EXISTS outcome text,
-  ADD COLUMN IF NOT EXISTS hedge_was_correct boolean,
-  ADD COLUMN IF NOT EXISTS live_book_line numeric,
-  ADD COLUMN IF NOT EXISTS line_source text DEFAULT 'sweet_spot';
+**File**: `supabase/functions/data-pipeline-orchestrator/index.ts`
+
+Add after line 278 (after `bot-settle-and-learn` and simulation settlement):
+```typescript
+await runFunction('settle-hedge-tracker', {});
 ```
 
-### New Edge Function: `settle-hedge-tracker/index.ts`
-1. Query unsettled `hedge_telegram_tracker` rows (`outcome IS NULL`, `last_status_sent IS NOT NULL`)
-2. Join against `category_sweet_spots` for `actual_value` (same pattern as `settle-hedge-snapshots`)
-3. Determine hit/miss: OVER hit if actual > line, UNDER hit if actual < line
-4. Set `hedge_was_correct`:
-   - TRUE if LOCK/HOLD and pick hit
-   - TRUE if HEDGE NOW/HEDGE ALERT and pick missed (correctly warned)
-   - FALSE otherwise
-5. Send accuracy summary to admin Telegram
+This ensures hedge accuracy gets settled every night alongside parlay settlement.
 
-### Telegram Accuracy Message Format
+## Fix 2: Wire `matchup-intelligence-analyzer` into pre-generation pipeline
+
+**File**: `supabase/functions/refresh-l10-and-rebuild/index.ts`
+
+Add a call to `matchup-intelligence-analyzer` in **phase3a** (pre-generation tasks), alongside the existing `bot-matchup-defense-scanner`:
+
+```typescript
+// In phase3a parallel array, add:
+["Matchup intelligence analysis", "matchup-intelligence-analyzer", { action: 'analyze_batch' }],
 ```
-📊 HEDGE ACCURACY — March 19
-LOCK: 79 picks, 76 hit (96.2%) ✅
-HOLD: 45 picks, 38 hit (84.4%)
-HEDGE NOW: 21 picks, 19 correctly flagged (90.5%) ✅
-Overall accuracy: 94.1%
-```
+
+This populates `matchup_intelligence` before `sharp-parlay-builder` and `heat-prop-engine` run in phase3d, so their blocked-pick queries actually work.
+
+## Fix 3: Run `settle-hedge-tracker` immediately
+
+Invoke `settle-hedge-tracker` now to grade all outstanding unsettled hedge recommendations and send the accuracy report to Telegram.
 
 ---
 
 ## Files Changed
 
-1. **`supabase/functions/hedge-live-telegram-tracker/index.ts`** — Use FanDuel line in hedge decision, add buffer to messages, tag line source
-2. **DB migration** — Add `actual_value`, `outcome`, `hedge_was_correct`, `live_book_line`, `line_source` to `hedge_telegram_tracker`
-3. **New: `supabase/functions/settle-hedge-tracker/index.ts`** — Settlement + accuracy Telegram broadcast
+1. **`supabase/functions/data-pipeline-orchestrator/index.ts`** — Add `settle-hedge-tracker` to Phase 4 settlement
+2. **`supabase/functions/refresh-l10-and-rebuild/index.ts`** — Add `matchup-intelligence-analyzer` to phase3a
+3. **Invoke `settle-hedge-tracker`** — Run immediately to settle backlog
 
