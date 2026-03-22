@@ -415,25 +415,97 @@ serve(async (req) => {
         
         if (riskError) {
           console.error('[Matchup] Error fetching risk picks:', riskError);
-          throw riskError;
         }
         
-        propsToAnalyze = (riskPicks || []).map((pick: any) => ({
-          playerName: pick.player_name,
-          playerTeam: pick.team_name || pick.team,
-          opponentTeam: pick.opponent,
-          propType: pick.prop_type,
-          side: pick.side,
-          line: pick.line,
-          median: pick.true_median,
-          l10HitRate: pick.l10_hit_rate,
-          archetype: pick.archetype || pick.player_role,
-          position: pick.position,
-          isStarter: pick.is_star || pick.is_ball_dominant,
-          isStar: pick.is_star,
-        }));
-        
-        console.log(`[Matchup] Fetched ${propsToAnalyze.length} approved picks from risk engine`);
+        if (riskPicks && riskPicks.length > 0) {
+          propsToAnalyze = riskPicks.map((pick: any) => ({
+            playerName: pick.player_name,
+            playerTeam: pick.team_name || pick.team,
+            opponentTeam: pick.opponent,
+            propType: pick.prop_type,
+            side: pick.side,
+            line: pick.line,
+            median: pick.true_median,
+            l10HitRate: pick.l10_hit_rate,
+            archetype: pick.archetype || pick.player_role,
+            position: pick.position,
+            isStarter: pick.is_star || pick.is_ball_dominant,
+            isStar: pick.is_star,
+          }));
+          console.log(`[Matchup] Fetched ${propsToAnalyze.length} approved picks from risk engine`);
+        } else {
+          // Fallback: use category_sweet_spots when risk engine picks are empty
+          console.log('[Matchup] No risk engine picks found, falling back to category_sweet_spots...');
+          const { data: sweetSpots, error: ssError } = await supabase
+            .from('category_sweet_spots')
+            .select('player_name, prop_type, recommended_side, recommended_line, l10_hit_rate, l10_avg, archetype, actual_line')
+            .eq('analysis_date', today)
+            .gte('l10_hit_rate', 0.6)
+            .not('recommended_side', 'is', null)
+            .limit(200);
+
+          if (ssError) {
+            console.error('[Matchup] Error fetching sweet spots fallback:', ssError);
+          }
+
+          if (sweetSpots && sweetSpots.length > 0) {
+            // Get player teams from bdl_player_cache
+            const playerNames = [...new Set(sweetSpots.map((s: any) => s.player_name))];
+            const { data: playerCache } = await supabase
+              .from('bdl_player_cache')
+              .select('player_name, team_name')
+              .in('player_name', playerNames.slice(0, 200))
+              .eq('is_active', true);
+
+            const playerTeamMap = new Map<string, string>();
+            (playerCache || []).forEach((p: any) => {
+              if (p.player_name && p.team_name) {
+                playerTeamMap.set(p.player_name.toLowerCase(), p.team_name);
+              }
+            });
+
+            // Get opponent from unified_props game_description
+            const { data: todayGames } = await supabase
+              .from('unified_props')
+              .select('player_name, game_description')
+              .in('player_name', playerNames.slice(0, 100))
+              .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+            const opponentMap = new Map<string, string>();
+            (todayGames || []).forEach((g: any) => {
+              if (!g.player_name || !g.game_description) return;
+              const playerTeam = playerTeamMap.get(g.player_name.toLowerCase());
+              if (!playerTeam) return;
+              // game_description format: "Team A @ Team B"
+              const parts = g.game_description.split(' @ ');
+              if (parts.length === 2) {
+                const awayTeam = parts[0].trim();
+                const homeTeam = parts[1].trim();
+                const opponent = playerTeam.toLowerCase().includes(homeTeam.toLowerCase().split(' ').pop() || '') 
+                  || homeTeam.toLowerCase().includes(playerTeam.toLowerCase().split(' ').pop() || '')
+                  ? awayTeam : homeTeam;
+                opponentMap.set(g.player_name.toLowerCase(), opponent);
+              }
+            });
+
+            propsToAnalyze = sweetSpots.map((ss: any) => {
+              const pTeam = playerTeamMap.get(ss.player_name?.toLowerCase()) || '';
+              const opponent = opponentMap.get(ss.player_name?.toLowerCase()) || '';
+              return {
+                playerName: ss.player_name,
+                playerTeam: pTeam,
+                opponentTeam: opponent,
+                propType: ss.prop_type,
+                side: ss.recommended_side,
+                line: ss.actual_line ?? ss.recommended_line,
+                l10HitRate: ss.l10_hit_rate,
+                archetype: ss.archetype,
+              };
+            }).filter((p: any) => p.opponentTeam);
+
+            console.log(`[Matchup] Fetched ${propsToAnalyze.length} props from sweet spots fallback (${sweetSpots.length} total, filtered to those with team data)`);
+          }
+        }
       }
       
       if (!propsToAnalyze || propsToAnalyze.length === 0) {
