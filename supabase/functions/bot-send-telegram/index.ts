@@ -106,6 +106,7 @@ type NotificationType =
   | 'bench_picks_digest'
   | 'straight_bets'
   | 'hedge_accuracy'
+  | 'pick_dna'
   | 'custom'
   | 'test';
 
