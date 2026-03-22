@@ -40,15 +40,15 @@ Deno.serve(async (req) => {
     console.log(`[settle-hedge-tracker] Found ${unsettled.length} unsettled rows`);
 
     const dates = [...new Set(unsettled.map(s => s.analysis_date))];
+    const today = new Date().toISOString().split('T')[0];
 
-    // SOURCE 1: Fetch actual values from category_sweet_spots
+    // SOURCE 1: category_sweet_spots
     const { data: outcomes } = await supabase
       .from('category_sweet_spots')
       .select('player_name, prop_type, actual_value, analysis_date')
       .in('analysis_date', dates)
       .not('actual_value', 'is', null);
 
-    // Build lookup from sweet spots
     const outcomeLookup = new Map<string, number>();
     if (outcomes) {
       for (const o of outcomes) {
@@ -56,9 +56,8 @@ Deno.serve(async (req) => {
         outcomeLookup.set(key, o.actual_value);
       }
     }
-    console.log(`[settle-hedge-tracker] Sweet spots lookup: ${outcomeLookup.size} entries`);
 
-    // SOURCE 2: Fallback — extract actual values from settled parlay legs
+    // SOURCE 2: settled parlay legs
     const { data: settledParlays } = await supabase
       .from('bot_daily_parlays')
       .select('legs, parlay_date')
@@ -78,9 +77,8 @@ Deno.serve(async (req) => {
         }
       }
     }
-    console.log(`[settle-hedge-tracker] Total lookup after parlay fallback: ${outcomeLookup.size} entries`);
 
-    // SOURCE 3: Fallback — extract from daily_elite_leg_outcomes
+    // SOURCE 3: daily_elite_leg_outcomes
     const { data: eliteLegs } = await supabase
       .from('daily_elite_leg_outcomes')
       .select('player_name, prop_type, actual_value, created_at')
@@ -100,25 +98,29 @@ Deno.serve(async (req) => {
         }
       }
     }
-    console.log(`[settle-hedge-tracker] Total lookup after elite legs fallback: ${outcomeLookup.size} entries`);
 
-    if (outcomeLookup.size === 0) {
-      return new Response(JSON.stringify({ settled: 0, message: 'No actual values found from any source' }), {
-        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    console.log(`[settle-hedge-tracker] Total lookup: ${outcomeLookup.size} entries`);
 
     let settledCount = 0;
     let unmatchedCount = 0;
-    const unmatchedPlayers: string[] = [];
+    let markedUngradeable = 0;
     const statusCounts: Record<string, { total: number; correct: number }> = {};
 
     for (const row of unsettled) {
       const key = `${row.player_name.toLowerCase().trim()}_${row.prop_type.toLowerCase().trim()}_${row.analysis_date}`;
       const actualValue = outcomeLookup.get(key);
+
       if (actualValue === undefined) {
-        unmatchedCount++;
-        if (unmatchedPlayers.length < 10) unmatchedPlayers.push(`${row.player_name} ${row.prop_type} ${row.analysis_date}`);
+        // If the game date is older than today, mark as ungradeable so it doesn't block future runs
+        if (row.analysis_date < today) {
+          const { error: ugErr } = await supabase
+            .from('hedge_telegram_tracker')
+            .update({ outcome: 'ungradeable' })
+            .eq('id', row.id);
+          if (!ugErr) markedUngradeable++;
+        } else {
+          unmatchedCount++;
+        }
         continue;
       }
 
@@ -133,7 +135,6 @@ Deno.serve(async (req) => {
         outcome = actualValue < row.line ? 'hit' : 'miss';
       }
 
-      // Determine if hedge recommendation was correct
       const status = row.last_status_sent;
       let hedgeWasCorrect: boolean;
 
@@ -147,11 +148,7 @@ Deno.serve(async (req) => {
 
       const { error: updateError } = await supabase
         .from('hedge_telegram_tracker')
-        .update({
-          actual_value: actualValue,
-          outcome,
-          hedge_was_correct: hedgeWasCorrect,
-        })
+        .update({ actual_value: actualValue, outcome, hedge_was_correct: hedgeWasCorrect })
         .eq('id', row.id);
 
       if (updateError) {
@@ -164,10 +161,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[settle-hedge-tracker] Settled ${settledCount}, unmatched ${unmatchedCount}`);
-    if (unmatchedPlayers.length > 0) {
-      console.log(`[settle-hedge-tracker] Unmatched samples: ${unmatchedPlayers.join(', ')}`);
-    }
+    console.log(`[settle-hedge-tracker] Settled ${settledCount}, ungradeable ${markedUngradeable}, unmatched ${unmatchedCount}`);
 
     // Build accuracy summary for Telegram
     if (settledCount > 0) {
@@ -190,8 +184,8 @@ Deno.serve(async (req) => {
 
       const overallPct = totalAll > 0 ? ((correctAll / totalAll) * 100).toFixed(1) : '0';
       summaryMsg += `\n📈 Overall accuracy: ${overallPct}% (${correctAll}/${totalAll})`;
-      if (unmatchedCount > 0) {
-        summaryMsg += `\n⚠️ ${unmatchedCount} picks could not be graded (no stat data)`;
+      if (markedUngradeable > 0) {
+        summaryMsg += `\n⚠️ ${markedUngradeable} picks marked ungradeable (no stat data)`;
       }
 
       try {
@@ -204,7 +198,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ settled: settledCount, unmatched: unmatchedCount, total: unsettled.length, statusCounts }), {
+    return new Response(JSON.stringify({ settled: settledCount, ungradeable: markedUngradeable, unmatched: unmatchedCount, total: unsettled.length, statusCounts }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
