@@ -276,6 +276,7 @@ serve(async (req) => {
       
       // Settle simulation shadow picks
       await runFunction('odds-simulation-engine', { mode: 'settle' });
+      await runFunction('settle-hedge-tracker', {});
     }
 
     // ============ PHASE 5: CALIBRATION & LEARNING ============

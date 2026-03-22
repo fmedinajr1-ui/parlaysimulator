@@ -151,6 +151,7 @@ Deno.serve(async (req) => {
           ["Cleaning stale props", "cleanup-stale-props", { immediate: true }],
           ["Scanning defensive matchups", "bot-matchup-defense-scanner", {}],
           ["Detecting mispriced lines", "detect-mispriced-lines", {}],
+          ["Matchup intelligence analysis", "matchup-intelligence-analyzer", { action: "analyze_batch" }],
         ]);
       },
     },
