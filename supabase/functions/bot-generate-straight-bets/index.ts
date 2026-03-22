@@ -375,6 +375,10 @@ Deno.serve(async (req) => {
       // Bonus for FanDuel-sourced lines (more reliable)
       if (resolved.source === 'fanduel') score += 5;
 
+      // Calculate pick DNA score if weights available
+      const candidateData = { l10_hit_rate: hr, l10_avg: l10Avg, buffer_pct: Math.round(buffer * 10) / 10, composite_score: score };
+      const pickScore = usePickDNA ? calculatePickScore(candidateData, ss, pickWeights) : 50;
+
       candidates.push({
         player_name: ss.player_name,
         prop_type: ss.prop_type,
@@ -382,6 +386,7 @@ Deno.serve(async (req) => {
         side,
         l10_hit_rate: hr,
         composite_score: score,
+        pick_score: pickScore,
         source: 'sweet_spot',
         historical_rate: histRate,
         line_source: resolved.source,
