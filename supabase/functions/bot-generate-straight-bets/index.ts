@@ -500,19 +500,24 @@ Deno.serve(async (req) => {
 
     let msg = `📊 *STRAIGHT BETS — ${today}*\n`;
     msg += `${betsToInsert.length} picks | $${totalStake} total risk\n`;
-    msg += `${fdCount}/${betsToInsert.length} FanDuel lines | Min buffer: ${minBuffer}%\n\n`;
+    msg += `${fdCount}/${betsToInsert.length} FanDuel lines | Min buffer: ${minBuffer}%\n`;
+    if (usePickDNA) msg += `🧬 Pick DNA scoring active\n`;
+    msg += `\n`;
 
-    for (const b of betsToInsert) {
+    for (let i = 0; i < selected.length; i++) {
+      const s = selected[i];
+      const b = betsToInsert[i];
       const label = PROP_LABELS[b.prop_type] || b.prop_type;
       const arrow = b.side === 'OVER' ? '⬆️' : '⬇️';
       const histKey = `${b.prop_type}|${b.side}`;
       const hRate = historicalRates[histKey] ?? '?';
       const srcTag = b.line_source === 'fanduel' ? '(FD)' : b.line_source === 'actual_line' ? '(AL)' : '(RC)';
+      const dnaTag = usePickDNA ? ` | DNA: ${s.pick_score}` : '';
       msg += `${arrow} *${b.player_name}* ${b.side} ${b.line} ${label} ${srcTag}\n`;
-      msg += `   L10: ${b.l10_hit_rate}% | Avg: ${b.l10_avg} | Buffer: +${b.buffer_pct}% | Hist: ${hRate}% | $${b.simulated_stake}\n`;
+      msg += `   L10: ${b.l10_hit_rate}% | Avg: ${b.l10_avg} | Buf: +${b.buffer_pct}%${dnaTag} | $${b.simulated_stake}\n`;
     }
 
-    msg += `\n_Buffer-gated ≥${minBuffer}% | Hist-filtered ≥55% | Kelly @ $${bankroll}_`;
+    msg += `\n_Buffer ≥${minBuffer}% | Hist ≥55%${usePickDNA ? ' | DNA scored' : ''} | Kelly @ $${bankroll}_`;
 
     // Send via bot-send-telegram
     await supabase.functions.invoke('bot-send-telegram', {
