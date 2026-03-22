@@ -449,27 +449,52 @@ serve(async (req) => {
           }
 
           if (sweetSpots && sweetSpots.length > 0) {
-            // Fetch player teams from unified_props
+            // Get player teams from bdl_player_cache
             const playerNames = [...new Set(sweetSpots.map((s: any) => s.player_name))];
-            const { data: propsData } = await supabase
-              .from('unified_props')
-              .select('player_name, team, opponent')
-              .in('player_name', playerNames.slice(0, 100))
-              .gte('scraped_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
+            const { data: playerCache } = await supabase
+              .from('bdl_player_cache')
+              .select('player_name, team_name')
+              .in('player_name', playerNames.slice(0, 200))
+              .eq('is_active', true);
 
-            const teamMap = new Map<string, { team: string; opponent: string }>();
-            (propsData || []).forEach((p: any) => {
-              if (p.player_name && p.team) {
-                teamMap.set(p.player_name.toLowerCase(), { team: p.team, opponent: p.opponent || '' });
+            const playerTeamMap = new Map<string, string>();
+            (playerCache || []).forEach((p: any) => {
+              if (p.player_name && p.team_name) {
+                playerTeamMap.set(p.player_name.toLowerCase(), p.team_name);
+              }
+            });
+
+            // Get opponent from unified_props game_description
+            const { data: todayGames } = await supabase
+              .from('unified_props')
+              .select('player_name, game_description')
+              .in('player_name', playerNames.slice(0, 100))
+              .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+            const opponentMap = new Map<string, string>();
+            (todayGames || []).forEach((g: any) => {
+              if (!g.player_name || !g.game_description) return;
+              const playerTeam = playerTeamMap.get(g.player_name.toLowerCase());
+              if (!playerTeam) return;
+              // game_description format: "Team A @ Team B"
+              const parts = g.game_description.split(' @ ');
+              if (parts.length === 2) {
+                const awayTeam = parts[0].trim();
+                const homeTeam = parts[1].trim();
+                const opponent = playerTeam.toLowerCase().includes(homeTeam.toLowerCase().split(' ').pop() || '') 
+                  || homeTeam.toLowerCase().includes(playerTeam.toLowerCase().split(' ').pop() || '')
+                  ? awayTeam : homeTeam;
+                opponentMap.set(g.player_name.toLowerCase(), opponent);
               }
             });
 
             propsToAnalyze = sweetSpots.map((ss: any) => {
-              const teamInfo = teamMap.get(ss.player_name?.toLowerCase()) || { team: '', opponent: '' };
+              const pTeam = playerTeamMap.get(ss.player_name?.toLowerCase()) || '';
+              const opponent = opponentMap.get(ss.player_name?.toLowerCase()) || '';
               return {
                 playerName: ss.player_name,
-                playerTeam: teamInfo.team,
-                opponentTeam: teamInfo.opponent,
+                playerTeam: pTeam,
+                opponentTeam: opponent,
                 propType: ss.prop_type,
                 side: ss.recommended_side,
                 line: ss.actual_line ?? ss.recommended_line,
