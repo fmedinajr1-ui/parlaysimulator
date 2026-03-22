@@ -327,6 +327,7 @@ Deno.serve(async (req) => {
       side: string;
       l10_hit_rate: number;
       composite_score: number;
+      pick_score: number;
       source: string;
       historical_rate: number;
       line_source: string;
