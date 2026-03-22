@@ -493,3 +493,6 @@ verify_jwt = false
 
 [functions.analyze-pick-dna]
 verify_jwt = false
+
+[functions.score-parlays-dna]
+verify_jwt = false

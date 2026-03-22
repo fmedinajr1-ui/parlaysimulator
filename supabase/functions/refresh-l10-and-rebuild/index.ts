@@ -173,8 +173,9 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase3d",
-      label: "Post-generation engines",
+      label: "Post-generation engines + DNA audit",
       run: async () => {
+        await invokeStep("DNA parlay audit", "score-parlays-dna", {});
         await invokeParallel([
           ["Building sharp parlays", "sharp-parlay-builder", { action: "build" }],
           ["Scanning heat tracker", "heat-prop-engine", { action: "scan" }],
