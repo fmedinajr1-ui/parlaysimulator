@@ -202,6 +202,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatBenchPicksDigest(data, dateStr);
     case 'straight_bets':
       return data.message || '📊 Straight bets generated';
+    case 'pick_dna':
+      return data.message || '🧬 Pick DNA report';
     case 'custom':
       // Extract clean message from adaptive intelligence and other custom senders
       return data.message || data.text || data.summary || '📌 Bot update received';
