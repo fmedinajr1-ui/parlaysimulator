@@ -105,6 +105,83 @@ async function getHistoricalPropRates(supabase: any): Promise<Record<string, num
 }
 
 /**
+ * Load learned pick score weights from pick_score_weights table
+ */
+async function loadPickScoreWeights(supabase: any): Promise<Record<string, { weight: number; avgHit: number; avgMiss: number }>> {
+  const { data, error } = await supabase
+    .from('pick_score_weights')
+    .select('signal_name, weight, avg_when_hit, avg_when_miss');
+
+  if (error || !data || data.length === 0) {
+    console.log('[StraightBets] No pick score weights found');
+    return {};
+  }
+
+  const weights: Record<string, { weight: number; avgHit: number; avgMiss: number }> = {};
+  for (const row of data) {
+    weights[row.signal_name] = {
+      weight: row.weight || 0,
+      avgHit: row.avg_when_hit || 0,
+      avgMiss: row.avg_when_miss || 0,
+    };
+  }
+  return weights;
+}
+
+/**
+ * Calculate pick_score using learned DNA weights (0-100 scale)
+ */
+function calculatePickScore(
+  candidate: { l10_hit_rate: number; l10_avg: number; buffer_pct: number; composite_score: number },
+  sweetSpot: any,
+  weights: Record<string, { weight: number; avgHit: number; avgMiss: number }>
+): number {
+  const signals: Record<string, number | null> = {
+    l10_hit_rate: candidate.l10_hit_rate / 100, // normalize to 0-1
+    l10_std_dev: sweetSpot?.l10_std_dev ?? null,
+    buffer_pct: candidate.buffer_pct,
+    confidence_score: sweetSpot?.confidence_score ?? null,
+    matchup_adjustment: sweetSpot?.matchup_adjustment ?? null,
+    pace_adjustment: sweetSpot?.pace_adjustment ?? null,
+    h2h_matchup_boost: sweetSpot?.h2h_matchup_boost ?? null,
+    bounce_back_score: sweetSpot?.bounce_back_score ?? null,
+    line_difference: sweetSpot?.line_difference ?? null,
+    season_avg: sweetSpot?.season_avg ?? null,
+  };
+
+  // Compute trend if we have l3 and l10
+  if (sweetSpot?.l3_avg && candidate.l10_avg && candidate.l10_avg > 0) {
+    signals.trend_l3_vs_l10 = ((sweetSpot.l3_avg - candidate.l10_avg) / candidate.l10_avg) * 100;
+  }
+
+  // Range ratio
+  if (sweetSpot?.l10_max && sweetSpot?.l10_min && sweetSpot?.l10_median && sweetSpot.l10_median > 0) {
+    signals.range_ratio = (sweetSpot.l10_max - sweetSpot.l10_min) / sweetSpot.l10_median;
+  }
+
+  let rawScore = 0;
+  let signalsUsed = 0;
+
+  for (const [name, value] of Object.entries(signals)) {
+    if (value == null || !weights[name]) continue;
+    const w = weights[name];
+    // Score contribution: how close is this value to the "hit" average vs "miss" average
+    // Normalized: if value is at avgHit, contribute +weight; at avgMiss, contribute -weight
+    const range = Math.abs(w.avgHit - w.avgMiss);
+    if (range === 0) continue;
+
+    const closenessToHit = 1 - Math.abs(value - w.avgHit) / (range * 2);
+    rawScore += closenessToHit * w.weight;
+    signalsUsed++;
+  }
+
+  if (signalsUsed === 0) return 50; // neutral
+
+  // Normalize to 0-100
+  const normalized = ((rawScore / signalsUsed) + 1) * 50;
+  return Math.max(0, Math.min(100, Math.round(normalized * 10) / 10));
+}
+/**
  * Build a FanDuel line lookup map from unified_props
  * Key: normalized "playerName|propType" → { line, bookmaker }
  */
@@ -209,16 +286,20 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch FanDuel lines, historical rates in parallel
-    const [fdMap, historicalRates] = await Promise.all([
+    // Fetch FanDuel lines, historical rates, and pick DNA weights in parallel
+    const [fdMap, historicalRates, pickWeights] = await Promise.all([
       buildFanDuelLineMap(supabase, today),
       getHistoricalPropRates(supabase),
+      loadPickScoreWeights(supabase),
     ]);
+
+    const usePickDNA = Object.keys(pickWeights).length >= 3;
+    console.log(`[StraightBets] Pick DNA: ${usePickDNA ? `${Object.keys(pickWeights).length} signals loaded` : 'not enough signals, using legacy scoring'}`);
 
     // Query sweet spots with high hit rates
     const { data: sweetSpots, error: ssErr } = await supabase
       .from('category_sweet_spots')
-      .select('player_name, prop_type, recommended_line, recommended_side, l10_hit_rate, confidence_score, l10_avg, category, actual_line')
+      .select('player_name, prop_type, recommended_line, recommended_side, l10_hit_rate, confidence_score, l10_avg, l3_avg, l5_avg, l10_std_dev, l10_median, l10_min, l10_max, season_avg, line_difference, matchup_adjustment, pace_adjustment, h2h_matchup_boost, bounce_back_score, category, actual_line')
       .eq('is_active', true)
       .eq('analysis_date', today)
       .gte('l10_hit_rate', minHitRate / 100)
@@ -246,6 +327,7 @@ Deno.serve(async (req) => {
       side: string;
       l10_hit_rate: number;
       composite_score: number;
+      pick_score: number;
       source: string;
       historical_rate: number;
       line_source: string;
@@ -293,6 +375,10 @@ Deno.serve(async (req) => {
       // Bonus for FanDuel-sourced lines (more reliable)
       if (resolved.source === 'fanduel') score += 5;
 
+      // Calculate pick DNA score if weights available
+      const candidateData = { l10_hit_rate: hr, l10_avg: l10Avg, buffer_pct: Math.round(buffer * 10) / 10, composite_score: score };
+      const pickScore = usePickDNA ? calculatePickScore(candidateData, ss, pickWeights) : 50;
+
       candidates.push({
         player_name: ss.player_name,
         prop_type: ss.prop_type,
@@ -300,6 +386,7 @@ Deno.serve(async (req) => {
         side,
         l10_hit_rate: hr,
         composite_score: score,
+        pick_score: pickScore,
         source: 'sweet_spot',
         historical_rate: histRate,
         line_source: resolved.source,
@@ -340,6 +427,9 @@ Deno.serve(async (req) => {
       else if (histRate < 60) score -= 20;
       if (resolved.source === 'fanduel') score += 5;
 
+      const candidateData2 = { l10_hit_rate: hr, l10_avg: l10Avg, buffer_pct: Math.round(buffer * 10) / 10, composite_score: score };
+      const pickScore = usePickDNA ? calculatePickScore(candidateData2, pp, pickWeights) : 50;
+
       candidates.push({
         player_name: pp.player_name,
         prop_type: pp.prop_type,
@@ -347,6 +437,7 @@ Deno.serve(async (req) => {
         side,
         l10_hit_rate: hr,
         composite_score: score,
+        pick_score: pickScore,
         source: 'pick_pool',
         historical_rate: histRate,
         line_source: resolved.source,
@@ -357,8 +448,17 @@ Deno.serve(async (req) => {
 
     console.log(`[StraightBets] ${candidates.length} candidates after filters (skipped: ${skippedBuffer} buffer, ${skippedHistorical} historical)`);
 
-    // Sort by boosted composite score desc, then hit rate desc
-    candidates.sort((a, b) => b.composite_score - a.composite_score || b.l10_hit_rate - a.l10_hit_rate);
+    // Sort by pick_score (DNA) if available, else composite score
+    if (usePickDNA) {
+      candidates.sort((a, b) => b.pick_score - a.pick_score || b.l10_hit_rate - a.l10_hit_rate);
+      // Skip picks with DNA score < 40
+      const dnaFiltered = candidates.filter(c => c.pick_score >= 40);
+      console.log(`[StraightBets] DNA filter: ${candidates.length} → ${dnaFiltered.length} (removed ${candidates.length - dnaFiltered.length} with score < 40)`);
+      candidates.length = 0;
+      candidates.push(...dnaFiltered);
+    } else {
+      candidates.sort((a, b) => b.composite_score - a.composite_score || b.l10_hit_rate - a.l10_hit_rate);
+    }
     const selected = candidates.slice(0, maxPicks);
 
     if (selected.length === 0) {
@@ -400,19 +500,24 @@ Deno.serve(async (req) => {
 
     let msg = `📊 *STRAIGHT BETS — ${today}*\n`;
     msg += `${betsToInsert.length} picks | $${totalStake} total risk\n`;
-    msg += `${fdCount}/${betsToInsert.length} FanDuel lines | Min buffer: ${minBuffer}%\n\n`;
+    msg += `${fdCount}/${betsToInsert.length} FanDuel lines | Min buffer: ${minBuffer}%\n`;
+    if (usePickDNA) msg += `🧬 Pick DNA scoring active\n`;
+    msg += `\n`;
 
-    for (const b of betsToInsert) {
+    for (let i = 0; i < selected.length; i++) {
+      const s = selected[i];
+      const b = betsToInsert[i];
       const label = PROP_LABELS[b.prop_type] || b.prop_type;
       const arrow = b.side === 'OVER' ? '⬆️' : '⬇️';
       const histKey = `${b.prop_type}|${b.side}`;
       const hRate = historicalRates[histKey] ?? '?';
       const srcTag = b.line_source === 'fanduel' ? '(FD)' : b.line_source === 'actual_line' ? '(AL)' : '(RC)';
+      const dnaTag = usePickDNA ? ` | DNA: ${s.pick_score}` : '';
       msg += `${arrow} *${b.player_name}* ${b.side} ${b.line} ${label} ${srcTag}\n`;
-      msg += `   L10: ${b.l10_hit_rate}% | Avg: ${b.l10_avg} | Buffer: +${b.buffer_pct}% | Hist: ${hRate}% | $${b.simulated_stake}\n`;
+      msg += `   L10: ${b.l10_hit_rate}% | Avg: ${b.l10_avg} | Buf: +${b.buffer_pct}%${dnaTag} | $${b.simulated_stake}\n`;
     }
 
-    msg += `\n_Buffer-gated ≥${minBuffer}% | Hist-filtered ≥55% | Kelly @ $${bankroll}_`;
+    msg += `\n_Buffer ≥${minBuffer}% | Hist ≥55%${usePickDNA ? ' | DNA scored' : ''} | Kelly @ $${bankroll}_`;
 
     // Send via bot-send-telegram
     await supabase.functions.invoke('bot-send-telegram', {

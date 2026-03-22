@@ -490,3 +490,6 @@ verify_jwt = false
 
 [functions.bot-slate-status-update]
 verify_jwt = false
+
+[functions.analyze-pick-dna]
+verify_jwt = false
