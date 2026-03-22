@@ -427,6 +427,9 @@ Deno.serve(async (req) => {
       else if (histRate < 60) score -= 20;
       if (resolved.source === 'fanduel') score += 5;
 
+      const candidateData2 = { l10_hit_rate: hr, l10_avg: l10Avg, buffer_pct: Math.round(buffer * 10) / 10, composite_score: score };
+      const pickScore = usePickDNA ? calculatePickScore(candidateData2, pp, pickWeights) : 50;
+
       candidates.push({
         player_name: pp.player_name,
         prop_type: pp.prop_type,
@@ -434,6 +437,7 @@ Deno.serve(async (req) => {
         side,
         l10_hit_rate: hr,
         composite_score: score,
+        pick_score: pickScore,
         source: 'pick_pool',
         historical_rate: histRate,
         line_source: resolved.source,
