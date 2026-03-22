@@ -8857,6 +8857,39 @@ export type Database = {
         }
         Relationships: []
       }
+      pick_score_weights: {
+        Row: {
+          avg_when_hit: number | null
+          avg_when_miss: number | null
+          calibrated_at: string | null
+          id: string
+          sample_size: number | null
+          separation: number | null
+          signal_name: string
+          weight: number
+        }
+        Insert: {
+          avg_when_hit?: number | null
+          avg_when_miss?: number | null
+          calibrated_at?: string | null
+          id?: string
+          sample_size?: number | null
+          separation?: number | null
+          signal_name: string
+          weight?: number
+        }
+        Update: {
+          avg_when_hit?: number | null
+          avg_when_miss?: number | null
+          calibrated_at?: string | null
+          id?: string
+          sample_size?: number | null
+          separation?: number | null
+          signal_name?: string
+          weight?: number
+        }
+        Relationships: []
+      }
       pilot_user_quotas: {
         Row: {
           created_at: string
