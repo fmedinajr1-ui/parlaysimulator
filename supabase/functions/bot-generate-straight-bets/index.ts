@@ -448,8 +448,17 @@ Deno.serve(async (req) => {
 
     console.log(`[StraightBets] ${candidates.length} candidates after filters (skipped: ${skippedBuffer} buffer, ${skippedHistorical} historical)`);
 
-    // Sort by boosted composite score desc, then hit rate desc
-    candidates.sort((a, b) => b.composite_score - a.composite_score || b.l10_hit_rate - a.l10_hit_rate);
+    // Sort by pick_score (DNA) if available, else composite score
+    if (usePickDNA) {
+      candidates.sort((a, b) => b.pick_score - a.pick_score || b.l10_hit_rate - a.l10_hit_rate);
+      // Skip picks with DNA score < 40
+      const dnaFiltered = candidates.filter(c => c.pick_score >= 40);
+      console.log(`[StraightBets] DNA filter: ${candidates.length} → ${dnaFiltered.length} (removed ${candidates.length - dnaFiltered.length} with score < 40)`);
+      candidates.length = 0;
+      candidates.push(...dnaFiltered);
+    } else {
+      candidates.sort((a, b) => b.composite_score - a.composite_score || b.l10_hit_rate - a.l10_hit_rate);
+    }
     const selected = candidates.slice(0, maxPicks);
 
     if (selected.length === 0) {
