@@ -299,7 +299,7 @@ Deno.serve(async (req) => {
     // Query sweet spots with high hit rates
     const { data: sweetSpots, error: ssErr } = await supabase
       .from('category_sweet_spots')
-      .select('player_name, prop_type, recommended_line, recommended_side, l10_hit_rate, confidence_score, l10_avg, category, actual_line')
+      .select('player_name, prop_type, recommended_line, recommended_side, l10_hit_rate, confidence_score, l10_avg, l3_avg, l5_avg, l10_std_dev, l10_median, l10_min, l10_max, season_avg, line_difference, matchup_adjustment, pace_adjustment, h2h_matchup_boost, bounce_back_score, category, actual_line')
       .eq('is_active', true)
       .eq('analysis_date', today)
       .gte('l10_hit_rate', minHitRate / 100)
