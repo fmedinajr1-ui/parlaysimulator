@@ -415,25 +415,72 @@ serve(async (req) => {
         
         if (riskError) {
           console.error('[Matchup] Error fetching risk picks:', riskError);
-          throw riskError;
         }
         
-        propsToAnalyze = (riskPicks || []).map((pick: any) => ({
-          playerName: pick.player_name,
-          playerTeam: pick.team_name || pick.team,
-          opponentTeam: pick.opponent,
-          propType: pick.prop_type,
-          side: pick.side,
-          line: pick.line,
-          median: pick.true_median,
-          l10HitRate: pick.l10_hit_rate,
-          archetype: pick.archetype || pick.player_role,
-          position: pick.position,
-          isStarter: pick.is_star || pick.is_ball_dominant,
-          isStar: pick.is_star,
-        }));
-        
-        console.log(`[Matchup] Fetched ${propsToAnalyze.length} approved picks from risk engine`);
+        if (riskPicks && riskPicks.length > 0) {
+          propsToAnalyze = riskPicks.map((pick: any) => ({
+            playerName: pick.player_name,
+            playerTeam: pick.team_name || pick.team,
+            opponentTeam: pick.opponent,
+            propType: pick.prop_type,
+            side: pick.side,
+            line: pick.line,
+            median: pick.true_median,
+            l10HitRate: pick.l10_hit_rate,
+            archetype: pick.archetype || pick.player_role,
+            position: pick.position,
+            isStarter: pick.is_star || pick.is_ball_dominant,
+            isStar: pick.is_star,
+          }));
+          console.log(`[Matchup] Fetched ${propsToAnalyze.length} approved picks from risk engine`);
+        } else {
+          // Fallback: use category_sweet_spots when risk engine picks are empty
+          console.log('[Matchup] No risk engine picks found, falling back to category_sweet_spots...');
+          const { data: sweetSpots, error: ssError } = await supabase
+            .from('category_sweet_spots')
+            .select('player_name, prop_type, recommended_side, recommended_line, l10_hit_rate, l10_avg, archetype, actual_line')
+            .eq('analysis_date', today)
+            .gte('l10_hit_rate', 0.6)
+            .not('recommended_side', 'is', null)
+            .limit(200);
+
+          if (ssError) {
+            console.error('[Matchup] Error fetching sweet spots fallback:', ssError);
+          }
+
+          if (sweetSpots && sweetSpots.length > 0) {
+            // Fetch player teams from unified_props
+            const playerNames = [...new Set(sweetSpots.map((s: any) => s.player_name))];
+            const { data: propsData } = await supabase
+              .from('unified_props')
+              .select('player_name, team, opponent')
+              .in('player_name', playerNames.slice(0, 100))
+              .gte('scraped_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
+
+            const teamMap = new Map<string, { team: string; opponent: string }>();
+            (propsData || []).forEach((p: any) => {
+              if (p.player_name && p.team) {
+                teamMap.set(p.player_name.toLowerCase(), { team: p.team, opponent: p.opponent || '' });
+              }
+            });
+
+            propsToAnalyze = sweetSpots.map((ss: any) => {
+              const teamInfo = teamMap.get(ss.player_name?.toLowerCase()) || { team: '', opponent: '' };
+              return {
+                playerName: ss.player_name,
+                playerTeam: teamInfo.team,
+                opponentTeam: teamInfo.opponent,
+                propType: ss.prop_type,
+                side: ss.recommended_side,
+                line: ss.actual_line ?? ss.recommended_line,
+                l10HitRate: ss.l10_hit_rate,
+                archetype: ss.archetype,
+              };
+            }).filter((p: any) => p.opponentTeam);
+
+            console.log(`[Matchup] Fetched ${propsToAnalyze.length} props from sweet spots fallback (${sweetSpots.length} total, filtered to those with team data)`);
+          }
+        }
       }
       
       if (!propsToAnalyze || propsToAnalyze.length === 0) {
