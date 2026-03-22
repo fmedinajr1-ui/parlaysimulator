@@ -209,11 +209,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch FanDuel lines, historical rates in parallel
-    const [fdMap, historicalRates] = await Promise.all([
+    // Fetch FanDuel lines, historical rates, and pick DNA weights in parallel
+    const [fdMap, historicalRates, pickWeights] = await Promise.all([
       buildFanDuelLineMap(supabase, today),
       getHistoricalPropRates(supabase),
+      loadPickScoreWeights(supabase),
     ]);
+
+    const usePickDNA = Object.keys(pickWeights).length >= 3;
+    console.log(`[StraightBets] Pick DNA: ${usePickDNA ? `${Object.keys(pickWeights).length} signals loaded` : 'not enough signals, using legacy scoring'}`);
 
     // Query sweet spots with high hit rates
     const { data: sweetSpots, error: ssErr } = await supabase
