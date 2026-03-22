@@ -105,6 +105,83 @@ async function getHistoricalPropRates(supabase: any): Promise<Record<string, num
 }
 
 /**
+ * Load learned pick score weights from pick_score_weights table
+ */
+async function loadPickScoreWeights(supabase: any): Promise<Record<string, { weight: number; avgHit: number; avgMiss: number }>> {
+  const { data, error } = await supabase
+    .from('pick_score_weights')
+    .select('signal_name, weight, avg_when_hit, avg_when_miss');
+
+  if (error || !data || data.length === 0) {
+    console.log('[StraightBets] No pick score weights found');
+    return {};
+  }
+
+  const weights: Record<string, { weight: number; avgHit: number; avgMiss: number }> = {};
+  for (const row of data) {
+    weights[row.signal_name] = {
+      weight: row.weight || 0,
+      avgHit: row.avg_when_hit || 0,
+      avgMiss: row.avg_when_miss || 0,
+    };
+  }
+  return weights;
+}
+
+/**
+ * Calculate pick_score using learned DNA weights (0-100 scale)
+ */
+function calculatePickScore(
+  candidate: { l10_hit_rate: number; l10_avg: number; buffer_pct: number; composite_score: number },
+  sweetSpot: any,
+  weights: Record<string, { weight: number; avgHit: number; avgMiss: number }>
+): number {
+  const signals: Record<string, number | null> = {
+    l10_hit_rate: candidate.l10_hit_rate / 100, // normalize to 0-1
+    l10_std_dev: sweetSpot?.l10_std_dev ?? null,
+    buffer_pct: candidate.buffer_pct,
+    confidence_score: sweetSpot?.confidence_score ?? null,
+    matchup_adjustment: sweetSpot?.matchup_adjustment ?? null,
+    pace_adjustment: sweetSpot?.pace_adjustment ?? null,
+    h2h_matchup_boost: sweetSpot?.h2h_matchup_boost ?? null,
+    bounce_back_score: sweetSpot?.bounce_back_score ?? null,
+    line_difference: sweetSpot?.line_difference ?? null,
+    season_avg: sweetSpot?.season_avg ?? null,
+  };
+
+  // Compute trend if we have l3 and l10
+  if (sweetSpot?.l3_avg && candidate.l10_avg && candidate.l10_avg > 0) {
+    signals.trend_l3_vs_l10 = ((sweetSpot.l3_avg - candidate.l10_avg) / candidate.l10_avg) * 100;
+  }
+
+  // Range ratio
+  if (sweetSpot?.l10_max && sweetSpot?.l10_min && sweetSpot?.l10_median && sweetSpot.l10_median > 0) {
+    signals.range_ratio = (sweetSpot.l10_max - sweetSpot.l10_min) / sweetSpot.l10_median;
+  }
+
+  let rawScore = 0;
+  let signalsUsed = 0;
+
+  for (const [name, value] of Object.entries(signals)) {
+    if (value == null || !weights[name]) continue;
+    const w = weights[name];
+    // Score contribution: how close is this value to the "hit" average vs "miss" average
+    // Normalized: if value is at avgHit, contribute +weight; at avgMiss, contribute -weight
+    const range = Math.abs(w.avgHit - w.avgMiss);
+    if (range === 0) continue;
+
+    const closenessToHit = 1 - Math.abs(value - w.avgHit) / (range * 2);
+    rawScore += closenessToHit * w.weight;
+    signalsUsed++;
+  }
+
+  if (signalsUsed === 0) return 50; // neutral
+
+  // Normalize to 0-100
+  const normalized = ((rawScore / signalsUsed) + 1) * 50;
+  return Math.max(0, Math.min(100, Math.round(normalized * 10) / 10));
+}
+/**
  * Build a FanDuel line lookup map from unified_props
  * Key: normalized "playerName|propType" → { line, bookmaker }
  */
