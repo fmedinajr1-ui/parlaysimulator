@@ -1,110 +1,54 @@
 
 
-# Build Custom Pick Scoring Model from Historical Hit/Miss Data
+# Score Today's Parlays Against Pick DNA + Fix Weak Legs
 
-## What You Want
+## What's Wrong With Today's 16 Parlays
 
-Yesterday: 25/49 picks hit (51%). Instead of using generic scoring (L10 hit rate + composite), build a **data-driven Pick Score** trained on what actually makes YOUR picks win — using every settled pick in `category_sweet_spots`.
+From the data:
 
-## The Insight
+- **Fake lines**: Many legs have `has_real_line: false`, `line_source: projected` — these are made-up lines, not bettable on FanDuel
+- **Negative buffers**: Jokic REB OVER 12.5 has buffer -0.5, Jalen Green REB OVER 4.5 has buffer -1 — these are picks where the player's L10 avg is BELOW the line
+- **No DNA scoring**: Zero parlays have been scored against the learned weights (buffer_pct = #1 predictor with 0.441 separation)
+- **Ghost legs**: Bench under parlays have no player name, no hit rate, no line source — just empty shells
 
-You have 20+ data columns per pick that are available at pick time. Some of these correlate strongly with hits, others don't. Right now the system scores picks using just L10 hit rate + a crude historical prop rate bonus. A proper model would weight ALL available signals based on which ones actually predicted wins.
+## Solution: New `score-parlays-dna` Edge Function
 
-## Signals Available for Scoring
+### What It Does
 
-From `category_sweet_spots`, each pick has these pre-game signals:
-- `l10_hit_rate` — last 10 game hit rate
-- `l10_avg`, `l5_avg`, `l3_avg` — recent averages (trend direction)
-- `l10_std_dev` — consistency (low = reliable)
-- `l10_median`, `l10_min`, `l10_max` — distribution shape
-- `confidence_score` — current composite confidence
-- `season_avg` — full season baseline
-- `line_difference` — gap between recommended and actual line
-- `matchup_adjustment` — opponent strength factor
-- `pace_adjustment` — game speed factor
-- `h2h_avg_vs_opponent`, `h2h_matchup_boost` — head-to-head history
-- `bounce_back_score` — post-bad-game rebound tendency
-- `buffer_pct` (calculated) — L10 avg vs line cushion
-- `prop_type + side` — category-level historical win rate
+1. Load today's 16 pending parlays from `bot_daily_parlays`
+2. Load DNA weights from `pick_score_weights`
+3. For each parlay, score every leg:
+   - Calculate buffer % (L10 avg vs line)
+   - Compute DNA pick_score using learned weights
+   - Flag legs with: no real FanDuel line, negative buffer, DNA score < 40
+4. Grade each parlay: A (all legs strong), B (1 weak leg), C (2+ weak), F (fake lines or negative buffers)
+5. **Auto-void** F-grade parlays (unbettable)
+6. **Drop weak legs** from B/C parlays if remaining legs ≥ 2, recalculate odds
+7. Send graded report to Telegram with per-leg DNA scores
 
-## Plan
-
-### 1. Create `analyze-pick-dna` Edge Function
-
-Queries ALL settled picks from `category_sweet_spots` (outcome = hit/miss), calculates correlation between each signal and outcome, then derives optimal weights:
-
+### Telegram Output
 ```
-For each signal (l10_hit_rate, l10_std_dev, buffer, etc.):
-  avg_when_hit = AVG(signal) WHERE outcome = 'hit'
-  avg_when_miss = AVG(signal) WHERE outcome = 'miss'
-  separation = (avg_when_hit - avg_when_miss) / stddev(signal)
-  weight = normalized separation score
-```
+🧬 DNA PARLAY AUDIT — March 22
+16 parlays scored | 4 voided | 3 fixed
 
-Stores the derived weights in a new `pick_score_weights` table.
+✅ A-GRADE (keep as-is):
+#1 KAT REB O7 (DNA:82) + OG 3PT O2.5 (DNA:76) + Brunson AST O7.5 (DNA:71)
 
-### 2. Create `pick_score_weights` Table
+⚠️ B-GRADE (1 weak leg dropped):
+#5 Was 3-leg → 2-leg after dropping Jalen Green REB O4.5 (DNA:28, buffer:-22%)
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| id | uuid | PK |
-| signal_name | text | e.g. "l10_hit_rate", "buffer_pct" |
-| weight | numeric | Learned importance (-1 to +1) |
-| avg_when_hit | numeric | Average value for winning picks |
-| avg_when_miss | numeric | Average value for losing picks |
-| separation | numeric | How well this signal separates wins/losses |
-| sample_size | integer | How many settled picks were analyzed |
-| calibrated_at | timestamp | When weights were last computed |
-
-### 3. Create `calculate-pick-score` Utility in Straight Bet Generator
-
-Replace the current crude scoring with:
-
-```
-pick_score = SUM(signal_value × learned_weight) for each signal
+❌ VOIDED (unbettable):
+#3 Dejounte Murray AST O3.5 — no FanDuel line
+#7 Bench Unders — no player data
 ```
 
-Normalized to 0-100 scale. Picks with `pick_score < 50` get skipped. Picks with `pick_score > 80` get priority.
+### Wire Into Pipeline
 
-### 4. Wire Into `bot-generate-straight-bets`
-
-- Before ranking candidates, load weights from `pick_score_weights`
-- For each candidate, compute `pick_score` using the learned weights
-- Replace `composite_score` sorting with `pick_score` sorting
-- Include `pick_score` in Telegram output
-
-### 5. Wire Into Nightly Pipeline
-
-Add `analyze-pick-dna` to Phase 4 (after settlement), so weights recalibrate daily as new outcomes arrive. This creates a self-improving feedback loop.
-
-### 6. Telegram Report: "Pick DNA Report"
-
-After recalibration, send a Telegram summary:
-```
-🧬 PICK DNA — March 22
-📊 2,847 settled picks analyzed
-
-Top Win Signals:
-1. Buffer % (0.83 separation) — Winners avg +42%, losers avg +18%
-2. L10 Std Dev (0.71) — Winners avg 1.8, losers avg 3.4
-3. L3/L10 Trend (0.65) — Winners trending UP
-4. Matchup Adj (0.52) — Winners had favorable matchups
-
-Weak Signals (don't matter):
-- Season Avg (0.08) — Nearly identical for wins/losses
-- Confidence Score (0.12) — Current formula is noisy
-```
-
-## Expected Impact
-
-- Current: picks scored by L10 hit rate + crude prop category bonus → 51% hit rate
-- After: picks scored by 10+ weighted signals trained on actual outcomes → target 65%+ hit rate
-- The model improves daily as more outcomes settle
+Add to `refresh-l10-and-rebuild` after parlay generation (phase3d) so every day's parlays get DNA-audited before broadcast.
 
 ## Files
 
-1. **DB migration** — Create `pick_score_weights` table
-2. **New: `supabase/functions/analyze-pick-dna/index.ts`** — Analyze settled picks, compute signal weights, store results, send Telegram report
-3. **Edit: `supabase/functions/bot-generate-straight-bets/index.ts`** — Load learned weights, compute `pick_score` per candidate, replace sorting
-4. **Edit: `supabase/functions/data-pipeline-orchestrator/index.ts`** — Add `analyze-pick-dna` to Phase 4
+1. **New: `supabase/functions/score-parlays-dna/index.ts`** — Score, grade, fix, void, Telegram report
+2. **Edit: `supabase/functions/refresh-l10-and-rebuild/index.ts`** — Add `score-parlays-dna` after parlay generation
+3. **Edit: `supabase/config.toml`** — Register new function
 
