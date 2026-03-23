@@ -452,6 +452,19 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // NEW: Check if the player's team actually played on this date
+        // If team didn't play, keep as pending — they'll be settled when their game happens
+        const teamPlayed = didTeamPlay(pick.player_name, sport);
+        if (!teamPlayed) {
+          results.pending++;
+          results.details.push({
+            player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
+            reason: 'Team did not play on this date — keeping pending for future settlement'
+          });
+          continue;
+        }
+
+        // Team played but player has no game log → DNP or name mismatch → no_data
         updates.push({
           id: pick.id, actual_value: null, outcome: 'no_data',
           settled_at: new Date().toISOString(), verified_source: sportLabel
@@ -459,7 +472,7 @@ Deno.serve(async (req) => {
         results.noData++;
         results.details.push({
           player: pick.player_name, propType: pick.prop_type, sport, status: 'no_data',
-          reason: 'No game log found — player likely did not play'
+          reason: 'No game log found — player likely did not play (DNP/injury)'
         });
         continue;
       }
