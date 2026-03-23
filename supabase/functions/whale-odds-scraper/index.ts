@@ -542,7 +542,8 @@ serve(async (req) => {
             }
           } catch (e) {
             console.error(`[Full] Error fetching batch for ${event.id}:`, e);
-          }
+        }
+        if (apiKeyInvalid) break; // stop processing batches for this event
         }
 
         // Phase 3: Fetch team props (spreads/totals/h2h) - single batched call
