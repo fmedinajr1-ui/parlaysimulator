@@ -342,6 +342,48 @@ Deno.serve(async (req) => {
 
     const hasSubstantialData = totalPlayersWithLogs >= 10;
 
+    // Build a set of teams whose players appear in game logs (i.e., teams that played)
+    // This lets us distinguish "player didn't play" from "team didn't play that day"
+    const buildTeamsPlayed = (logs: any[]): Set<string> => {
+      const teams = new Set<string>();
+      for (const log of logs) {
+        if (log.opponent) teams.add(log.opponent.toLowerCase());
+      }
+      return teams;
+    };
+    const nbaTeamsPlayed = buildTeamsPlayed([...nbaLogs, ...ncaabLogs]);
+    const mlbTeamsPlayed = buildTeamsPlayed(mlbLogs);
+    const nhlTeamsPlayed = buildTeamsPlayed([...nhlSkaterLogs, ...nhlGoalieLogs]);
+
+    // Build player → team lookup from bdl_player_cache
+    const playerTeamMap = new Map<string, string>();
+    if (playerTeams) {
+      for (const pt of playerTeams) {
+        playerTeamMap.set(normalizeName(pt.player_name), (pt.team_name || '').toLowerCase());
+      }
+    }
+
+    // Helper: did this player's team play on the target date?
+    const didTeamPlay = (playerName: string, sport: string): boolean => {
+      const teamsPlayed = sport === 'mlb' ? mlbTeamsPlayed : sport === 'nhl' ? nhlTeamsPlayed : nbaTeamsPlayed;
+      if (teamsPlayed.size === 0) return false; // no games at all for this sport
+      
+      const normalizedPlayer = normalizeName(playerName);
+      const teamName = playerTeamMap.get(normalizedPlayer);
+      if (!teamName) return true; // can't determine team → assume they played (safer to mark no_data)
+      
+      // Check if any of the teams that played match this player's team
+      for (const playedTeam of teamsPlayed) {
+        if (teamName.includes(playedTeam) || playedTeam.includes(teamName) ||
+            // Handle partial matches like "Celtics" in "Boston Celtics"
+            teamName.split(' ').some(w => w.length > 3 && playedTeam.includes(w)) ||
+            playedTeam.split(' ').some(w => w.length > 3 && teamName.includes(w))) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     // Step 3: Match and verify each pick
     const results = {
       total: pendingPicks.length,
