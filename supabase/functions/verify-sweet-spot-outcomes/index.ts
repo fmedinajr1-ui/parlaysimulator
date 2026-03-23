@@ -265,6 +265,12 @@ Deno.serve(async (req) => {
     const windowStart = targetDate;
     const windowEnd = addDays(targetDate, 2);
 
+    // Also fetch player-team mapping to check if team played
+    const { data: playerTeams } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, team_name')
+      .not('team_name', 'is', null);
+
     // Fetch all sport logs in parallel
     const [nbaResult, ncaabResult, mlbResult, nhlSkaterResult, nhlGoalieResult] = await Promise.all([
       supabase
