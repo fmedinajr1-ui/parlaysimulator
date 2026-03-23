@@ -1427,6 +1427,16 @@ interface SweetSpotPick {
   l10_max?: number;
   l10_avg?: number;
   l10_median?: number;
+  // DNA scoring fields
+  l3_avg?: number;
+  l5_avg?: number;
+  l10_std_dev?: number;
+  season_avg?: number;
+  matchup_adjustment?: number;
+  pace_adjustment?: number;
+  h2h_matchup_boost?: number;
+  bounce_back_score?: number;
+  line_difference?: number;
 }
 
 interface EnrichedPick extends SweetSpotPick {

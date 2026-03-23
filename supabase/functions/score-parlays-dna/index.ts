@@ -100,52 +100,59 @@ Deno.serve(async (req) => {
         const l10Avg = leg.l10_avg || leg.l10_average || 0;
         const hasRealLine = leg.has_real_line !== false && leg.line_source !== "projected";
 
-        // Calculate buffer %
-        const bufferPct = line > 0
-          ? side?.toLowerCase() === "over"
-            ? ((l10Avg - line) / line) * 100
-            : ((line - l10Avg) / line) * 100
-          : 0;
+        let bufferPct = 0;
+        let dnaScore = 50;
+        const flags: string[] = [];
 
-        // Calculate DNA score using learned weights
-        const signals: Record<string, number> = {
-          buffer_pct: bufferPct,
-          l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || 0,
-          l10_std_dev: leg.l10_std_dev || leg.std_dev || 0,
-          confidence_score: leg.confidence_score || leg.confidence || 0,
-          l10_avg: l10Avg,
-          l5_avg: leg.l5_avg || l10Avg,
-          l3_avg: leg.l3_avg || l10Avg,
-          matchup_adjustment: leg.matchup_adjustment || 0,
-          pace_adjustment: leg.pace_adjustment || 0,
-          h2h_matchup_boost: leg.h2h_matchup_boost || 0,
-          bounce_back_score: leg.bounce_back_score || 0,
-          season_avg: leg.season_avg || l10Avg,
-          line_difference: leg.line_difference || 0,
-        };
+        // If no L10 avg data, assign neutral score — don't penalize missing stats
+        if (l10Avg === 0 && line > 0) {
+          // No stats available, keep neutral defaults
+        } else {
+          // Calculate buffer %
+          bufferPct = line > 0
+            ? side?.toLowerCase() === "over"
+              ? ((l10Avg - line) / line) * 100
+              : ((line - l10Avg) / line) * 100
+            : 0;
 
-        let rawScore = 0;
-        let totalWeight = 0;
-        for (const [signalName, value] of Object.entries(signals)) {
-          const w = weightMap.get(signalName);
-          if (w && w.weight !== 0) {
-            // Normalize signal relative to hit/miss averages
-            const range = Math.abs(w.avg_when_hit - w.avg_when_miss) || 1;
-            const normalized = (value - w.avg_when_miss) / range;
-            rawScore += normalized * w.weight;
-            totalWeight += Math.abs(w.weight);
+          // Calculate DNA score using learned weights
+          const signals: Record<string, number> = {
+            buffer_pct: bufferPct,
+            l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || 0,
+            l10_std_dev: leg.l10_std_dev || leg.std_dev || 0,
+            confidence_score: leg.confidence_score || leg.confidence || 0,
+            l10_avg: l10Avg,
+            l5_avg: leg.l5_avg || l10Avg,
+            l3_avg: leg.l3_avg || l10Avg,
+            matchup_adjustment: leg.matchup_adjustment || 0,
+            pace_adjustment: leg.pace_adjustment || 0,
+            h2h_matchup_boost: leg.h2h_matchup_boost || 0,
+            bounce_back_score: leg.bounce_back_score || 0,
+            season_avg: leg.season_avg || l10Avg,
+            line_difference: leg.line_difference || 0,
+          };
+
+          let rawScore = 0;
+          let totalWeight = 0;
+          for (const [signalName, value] of Object.entries(signals)) {
+            const w = weightMap.get(signalName);
+            if (w && w.weight !== 0) {
+              const range = Math.abs(w.avg_when_hit - w.avg_when_miss) || 1;
+              const normalized = (value - w.avg_when_miss) / range;
+              rawScore += normalized * w.weight;
+              totalWeight += Math.abs(w.weight);
+            }
           }
+
+          dnaScore = totalWeight > 0
+            ? Math.max(0, Math.min(100, 50 + (rawScore / totalWeight) * 50))
+            : 50;
+
+          if (!hasRealLine) flags.push("NO_FD_LINE");
+          if (bufferPct < -5) flags.push("NEG_BUFFER");
+          if (dnaScore < 30) flags.push("LOW_DNA");
         }
 
-        // Normalize to 0-100
-        const dnaScore = totalWeight > 0
-          ? Math.max(0, Math.min(100, 50 + (rawScore / totalWeight) * 50))
-          : 50;
-
-        const flags: string[] = [];
-        if (!hasRealLine) flags.push("NO_FD_LINE");
-        if (bufferPct < -5) flags.push("NEG_BUFFER");
-        if (dnaScore < 30) flags.push("LOW_DNA");
         if (!playerName) flags.push("NO_PLAYER");
 
         legScores.push({
