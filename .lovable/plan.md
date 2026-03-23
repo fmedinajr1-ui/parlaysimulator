@@ -1,63 +1,70 @@
 
 
-# Fix DNA Audit: Missing Player Stats in Parlay Legs
+# Fix Whale Odds Scraper: API Key Returns 401
 
-## Root Cause
+## Root Cause Found
 
-The DNA audit is still voiding 100% of parlays — but NOT because of the FanDuel line fix (that's working: all legs now have `has_real_line: true`).
+The `whale-odds-scraper` has been **silently failing since March 16**. Every full run makes API calls but collects **0 props and 0 team bets**.
 
-The real problem: **`bot-generate-daily-parlays` doesn't embed player stats in the leg JSON**. Each leg has `line`, `player_name`, `side`, `american_odds` etc., but is missing critical fields the DNA scorer needs:
-
-- `l10_avg` → defaults to 0 → buffer becomes -100% for overs → `NEG_BUFFER` flag
-- `l3_avg`, `l5_avg`, `season_avg` → all 0 → garbage DNA signals
-- `l10_std_dev`, `confidence_score` → 0 → low DNA score → `LOW_DNA` flag
-
-With all signals at 0, EVERY leg gets flagged as weak. When all legs are weak and fewer than 2 remain after pruning, the parlay gets F-graded and voided.
-
-## Two-Pronged Fix
-
-### Fix 1: Enrich parlay legs with stats from `category_sweet_spots`
-
-In `bot-generate-daily-parlays/index.ts`, when building each leg object, carry forward the stats from the sweet spot pick that sourced it. The sweet spots already have `l10_avg`, `l3_avg`, `l5_avg`, `l10_std_dev`, `season_avg`, `confidence_score`, `matchup_adjustment`, `pace_adjustment`, `h2h_matchup_boost`, `bounce_back_score`.
-
-Add these fields to the leg JSON:
-```typescript
-{
-  ...existingLegFields,
-  l10_avg: pick.l10_avg,
-  l3_avg: pick.l3_avg,
-  l5_avg: pick.l5_avg,
-  l10_std_dev: pick.l10_std_dev,
-  season_avg: pick.season_avg,
-  confidence_score: pick.confidence_score,
-  matchup_adjustment: pick.matchup_adjustment || 0,
-  pace_adjustment: pick.pace_adjustment || 0,
-  h2h_matchup_boost: pick.h2h_matchup_boost || 0,
-  bounce_back_score: pick.bounce_back_score || 0,
-}
+**Logs show the problem:**
+```
+[Full] Props batch failed for ee838160...: 401
+[Full] Props batch failed for ee838160...: 401
+[Full] Props batch failed for b542245530...: 422
 ```
 
-### Fix 2: Make DNA scorer resilient to missing stats
+The Odds API is returning **401 Unauthorized** on all player prop and team market endpoints. The events endpoint (listing games) still works, so the scraper finds games but can't fetch any odds data.
 
-In `score-parlays-dna/index.ts`, if `l10Avg` is 0 or missing, skip buffer calculation and DNA scoring for that leg — don't flag it, just score it as neutral (50). This prevents future regressions if any leg source doesn't have stats.
+This is why:
+- `game_bets` has been empty since March 15 (last successful full run)
+- `unified_props` only has data because `pp-props-scraper` is a separate backup source
+- Every parlay run falls back to the `game_bets stale` path
 
-```typescript
-// If no L10 avg data, skip scoring — don't penalize
-if (l10Avg === 0 && line > 0) {
-  // No stats available, assign neutral score
-  dnaScore = 50;
-  bufferPct = 0;
-  // Don't add any flags
-}
-```
+## The Fix: Two Parts
+
+### Part 1: API Key — You Need to Check/Replace It
+
+The `THE_ODDS_API_KEY` secret is either:
+- **Expired** (monthly/annual subscription lapsed)
+- **Hit its quota** (The Odds API has monthly request limits; your plan may have renewed by now)
+- **Revoked** (unlikely but possible)
+
+**Action needed from you**: Go to [The Odds API dashboard](https://the-odds-api.com/) and check your API key status. If it's expired or over quota, get a new key and I'll update the secret.
+
+### Part 2: Code Fix — Better Error Handling
+
+The current code silently swallows 401 errors per-batch. If the API key is bad, it should:
+1. Detect the first 401 and **stop immediately** (don't waste remaining budget)
+2. Send a **Telegram alert**: "API key rejected — odds scraper disabled"
+3. Log the failure to `cron_job_history` as `failed` instead of `completed`
+
+Currently, a broken run logs as `status: completed` with `playerPropsCollected: 0`, which looks like "no data available" rather than "authentication failed."
+
+**File**: `supabase/functions/whale-odds-scraper/index.ts`
+
+Changes:
+- After the first 401 response on a prop/team fetch, set a flag `apiKeyInvalid = true`
+- Break out of the event loop immediately
+- Log to cron_job_history with `status: 'auth_failed'`
+- Send Telegram alert to admin
+- Return error response instead of success with 0 data
+
+### Part 3: Cron Job Fix
+
+The every-30-min cron (job 75) runs `mode: "scout"` which only counts events — it never fetches data. The `mode: "full"` cron (job 76) only runs 3x/day at 14:00, 17:00, 22:00 UTC.
+
+**Recommendation**: Change the scout cron to run every 2 hours instead of every 30 min (saves API calls), and add an additional full run at 18:00 UTC (2 PM ET, right before NBA games).
+
+## Summary
+
+| Issue | Status | Fix |
+|-------|--------|-----|
+| API key returning 401 | **User action needed** | Check/renew The Odds API key |
+| Silent failure (logs "completed" with 0 data) | Code fix | Add 401 detection, Telegram alert, proper error status |
+| Scout cron too frequent | Optional | Reduce from every 30min to every 2h |
 
 ## Files Changed
 
-1. **`supabase/functions/bot-generate-daily-parlays/index.ts`** — Add player stat fields to leg objects when building parlays
-2. **`supabase/functions/score-parlays-dna/index.ts`** — Handle missing stats gracefully (neutral score instead of flagging)
-
-## Expected Impact
-- Legs will carry real stats → DNA scoring actually works
-- Fallback: if stats missing, leg scores neutral (50) instead of being flagged
-- Void rate drops from 100% to only genuinely weak parlays
+1. **`supabase/functions/whale-odds-scraper/index.ts`** — Add 401 detection, early abort, Telegram alert, proper error logging
+2. **Secret check** — Verify `THE_ODDS_API_KEY` is valid (user action)
 
