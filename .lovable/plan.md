@@ -1,54 +1,42 @@
 
 
-# Score Today's Parlays Against Pick DNA + Fix Weak Legs
+# Fix Parlay Pipeline: Real FanDuel Lines
 
-## What's Wrong With Today's 16 Parlays
+## Root Cause (Two Bugs)
 
-From the data:
-
-- **Fake lines**: Many legs have `has_real_line: false`, `line_source: projected` — these are made-up lines, not bettable on FanDuel
-- **Negative buffers**: Jokic REB OVER 12.5 has buffer -0.5, Jalen Green REB OVER 4.5 has buffer -1 — these are picks where the player's L10 avg is BELOW the line
-- **No DNA scoring**: Zero parlays have been scored against the learned weights (buffer_pct = #1 predictor with 0.441 separation)
-- **Ghost legs**: Bench under parlays have no player name, no hit rate, no line source — just empty shells
-
-## Solution: New `score-parlays-dna` Edge Function
-
-### What It Does
-
-1. Load today's 16 pending parlays from `bot_daily_parlays`
-2. Load DNA weights from `pick_score_weights`
-3. For each parlay, score every leg:
-   - Calculate buffer % (L10 avg vs line)
-   - Compute DNA pick_score using learned weights
-   - Flag legs with: no real FanDuel line, negative buffer, DNA score < 40
-4. Grade each parlay: A (all legs strong), B (1 weak leg), C (2+ weak), F (fake lines or negative buffers)
-5. **Auto-void** F-grade parlays (unbettable)
-6. **Drop weak legs** from B/C parlays if remaining legs ≥ 2, recalculate odds
-7. Send graded report to Telegram with per-leg DNA scores
-
-### Telegram Output
+### Bug 1: Wrong column name in FanDuel query
+Line 4488 of `bot-generate-daily-parlays/index.ts`:
 ```
-🧬 DNA PARLAY AUDIT — March 22
-16 parlays scored | 4 voided | 3 fixed
+.eq('bookmaker_key', 'fanduel')
+```
+The column is actually `bookmaker`, not `bookmaker_key`. This query silently returns 0 results every time, always falling back to the "all books" query. FanDuel lines are never prioritized.
 
-✅ A-GRADE (keep as-is):
-#1 KAT REB O7 (DNA:82) + OG 3PT O2.5 (DNA:76) + Brunson AST O7.5 (DNA:71)
+**Fix**: Change to `.eq('bookmaker', 'fanduel')`
 
-⚠️ B-GRADE (1 weak leg dropped):
-#5 Was 3-leg → 2-leg after dropping Jalen Green REB O4.5 (DNA:28, buffer:-22%)
+### Bug 2: Prop type mismatch in oddsMap lookup
+When building the oddsMap from `unified_props`, the keys use raw prop types like `points`, `rebounds`. But when looking up sweet spot picks (line 4791), it uses `pick.prop_type` which is `player_points`, `player_rebounds`. The normalization map exists but is only applied on the oddsMap build side — never on the lookup side.
 
-❌ VOIDED (unbettable):
-#3 Dejounte Murray AST O3.5 — no FanDuel line
-#7 Bench Unders — no player data
+Example: Sweet spot has `prop_type: 'player_points'` → lookup key = `lebron james_player_points` → oddsMap only has `lebron james_points` → **miss** → `has_real_line: false` → `line_source: 'projected'` → DNA audit voids it.
+
+**Fix**: Normalize the sweet spot prop_type before looking up in oddsMap:
+```typescript
+const rawProp = (pick.prop_type || '').toLowerCase();
+const normProp = PROP_TYPE_NORMALIZE[rawProp] || rawProp;
+const rawOddsKey = `${pick.player_name}_${rawProp}`.toLowerCase();
+const normOddsKey = `${pick.player_name}_${normProp}`.toLowerCase();
+const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey) || oddsMap.get(stripTrailingPeriods(rawOddsKey)) || oddsMap.get(stripTrailingPeriods(normOddsKey));
 ```
 
-### Wire Into Pipeline
+## Impact
+These two bugs together mean **every parlay leg** gets `has_real_line: false` and `line_source: 'projected'`, causing the DNA audit to void 100% of parlays. Fixing them will:
+- Load actual FanDuel lines (500+ props)
+- Match 80%+ of sweet spot picks to real sportsbook lines
+- DNA audit will only void genuinely unbettable picks
 
-Add to `refresh-l10-and-rebuild` after parlay generation (phase3d) so every day's parlays get DNA-audited before broadcast.
+## Files Changed
 
-## Files
-
-1. **New: `supabase/functions/score-parlays-dna/index.ts`** — Score, grade, fix, void, Telegram report
-2. **Edit: `supabase/functions/refresh-l10-and-rebuild/index.ts`** — Add `score-parlays-dna` after parlay generation
-3. **Edit: `supabase/config.toml`** — Register new function
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
+   - Line 4488: `bookmaker_key` → `bookmaker`
+   - Lines 4791-4793: Add prop type normalization to oddsMap lookup
+   - Also fix the same pattern wherever legs are assembled (~6 locations) to ensure `line_source` propagates correctly
 
