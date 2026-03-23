@@ -240,7 +240,7 @@ Deno.serve(async (req) => {
     // Step 1: Fetch pending picks for the target date
     const { data: pendingPicks, error: fetchError } = await supabase
       .from('category_sweet_spots')
-      .select('id, player_name, prop_type, recommended_side, recommended_line, actual_line, category, l10_hit_rate, confidence_score')
+      .select('id, player_name, prop_type, recommended_side, recommended_line, actual_line, category, l10_hit_rate, confidence_score, outcome')
       .eq('analysis_date', targetDate)
       .in('outcome', ['pending', 'no_data'])
       .is('actual_value', null);
@@ -265,33 +265,44 @@ Deno.serve(async (req) => {
     const windowStart = targetDate;
     const windowEnd = addDays(targetDate, 2);
 
-    // Fetch all sport logs in parallel
+    // Also fetch player-team mapping to check if team played
+    const { data: playerTeams } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, team_name')
+      .not('team_name', 'is', null);
+
+    // Fetch all sport logs in parallel — use .limit(5000) to avoid the default 1000-row cap
     const [nbaResult, ncaabResult, mlbResult, nhlSkaterResult, nhlGoalieResult] = await Promise.all([
       supabase
         .from('nba_player_game_logs')
-        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .select('player_name, game_date, opponent, points, rebounds, assists, threes_made, steals, blocks, turnovers')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('ncaab_player_game_logs')
-        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .select('player_name, game_date, opponent, points, rebounds, assists, threes_made, steals, blocks, turnovers')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('mlb_player_game_logs')
-        .select('player_name, game_date, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, total_bases, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed, at_bats')
+        .select('player_name, game_date, opponent, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, total_bases, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed, at_bats')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('nhl_player_game_logs')
-        .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points')
+        .select('player_name, game_date, opponent, goals, assists, points, shots_on_goal, blocked_shots, power_play_points')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('nhl_goalie_game_logs')
-        .select('player_name, game_date, saves, shots_against, goals_against')
+        .select('player_name, game_date, opponent, saves, shots_against, goals_against')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
     ]);
 
     if (nbaResult.error) throw new Error(`Failed to fetch NBA game logs: ${nbaResult.error.message}`);
@@ -335,6 +346,48 @@ Deno.serve(async (req) => {
     console.log(`[verify] Unique players: NBA/NCAAB ${nbaMap.map.size}, MLB ${mlbMap.map.size}, NHL ${nhlMap.map.size}`);
 
     const hasSubstantialData = totalPlayersWithLogs >= 10;
+
+    // Build a set of teams whose players appear in game logs (i.e., teams that played)
+    // This lets us distinguish "player didn't play" from "team didn't play that day"
+    const buildTeamsPlayed = (logs: any[]): Set<string> => {
+      const teams = new Set<string>();
+      for (const log of logs) {
+        if (log.opponent) teams.add(log.opponent.toLowerCase());
+      }
+      return teams;
+    };
+    const nbaTeamsPlayed = buildTeamsPlayed([...nbaLogs, ...ncaabLogs]);
+    const mlbTeamsPlayed = buildTeamsPlayed(mlbLogs);
+    const nhlTeamsPlayed = buildTeamsPlayed([...nhlSkaterLogs, ...nhlGoalieLogs]);
+
+    // Build player → team lookup from bdl_player_cache
+    const playerTeamMap = new Map<string, string>();
+    if (playerTeams) {
+      for (const pt of playerTeams) {
+        playerTeamMap.set(normalizeName(pt.player_name), (pt.team_name || '').toLowerCase());
+      }
+    }
+
+    // Helper: did this player's team play on the target date?
+    const didTeamPlay = (playerName: string, sport: string): boolean => {
+      const teamsPlayed = sport === 'mlb' ? mlbTeamsPlayed : sport === 'nhl' ? nhlTeamsPlayed : nbaTeamsPlayed;
+      if (teamsPlayed.size === 0) return false; // no games at all for this sport
+      
+      const normalizedPlayer = normalizeName(playerName);
+      const teamName = playerTeamMap.get(normalizedPlayer);
+      if (!teamName) return true; // can't determine team → assume they played (safer to mark no_data)
+      
+      // Check if any of the teams that played match this player's team
+      for (const playedTeam of teamsPlayed) {
+        if (teamName.includes(playedTeam) || playedTeam.includes(teamName) ||
+            // Handle partial matches like "Celtics" in "Boston Celtics"
+            teamName.split(' ').some(w => w.length > 3 && playedTeam.includes(w)) ||
+            playedTeam.split(' ').some(w => w.length > 3 && teamName.includes(w))) {
+          return true;
+        }
+      }
+      return false;
+    };
 
     // Step 3: Match and verify each pick
     const results = {
@@ -385,6 +438,10 @@ Deno.serve(async (req) => {
 
       if (!gameLog) {
         if (!hasSubstantialData) {
+          // Revert no_data → pending if it was previously wrongly marked
+          if (pick.outcome === 'no_data') {
+            updates.push({ id: pick.id, actual_value: null, outcome: 'pending', settled_at: null as any, verified_source: '' });
+          }
           results.pending++;
           results.details.push({
             player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
@@ -396,6 +453,9 @@ Deno.serve(async (req) => {
         // Check if this sport specifically has data
         const sportHasData = sportMap.map.size >= 5;
         if (!sportHasData) {
+          if (pick.outcome === 'no_data') {
+            updates.push({ id: pick.id, actual_value: null, outcome: 'pending', settled_at: null as any, verified_source: '' });
+          }
           results.pending++;
           results.details.push({
             player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
@@ -404,6 +464,22 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // NEW: Check if the player's team actually played on this date
+        // If team didn't play, revert to pending — they'll be settled when their game happens
+        const teamPlayed = didTeamPlay(pick.player_name, sport);
+        if (!teamPlayed) {
+          if (pick.outcome === 'no_data') {
+            updates.push({ id: pick.id, actual_value: null, outcome: 'pending', settled_at: null as any, verified_source: '' });
+          }
+          results.pending++;
+          results.details.push({
+            player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
+            reason: 'Team did not play on this date — keeping pending for future settlement'
+          });
+          continue;
+        }
+
+        // Team played but player has no game log → DNP or name mismatch → no_data
         updates.push({
           id: pick.id, actual_value: null, outcome: 'no_data',
           settled_at: new Date().toISOString(), verified_source: sportLabel
@@ -411,7 +487,7 @@ Deno.serve(async (req) => {
         results.noData++;
         results.details.push({
           player: pick.player_name, propType: pick.prop_type, sport, status: 'no_data',
-          reason: 'No game log found — player likely did not play'
+          reason: 'No game log found — player likely did not play (DNP/injury)'
         });
         continue;
       }
