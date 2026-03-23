@@ -614,6 +614,44 @@ serve(async (req) => {
       if (apiKeyInvalid) break; // stop processing more sports
     }
 
+    // ========== API KEY FAILURE — ALERT & ABORT ==========
+    if (apiKeyInvalid) {
+      console.error(`[Full] API key invalid (HTTP ${authFailureStatus}) — collected ${allPlayerProps.length} props before abort`);
+
+      // Send Telegram alert
+      try {
+        const alertMsg = `🚨 *WHALE SCRAPER — API KEY REJECTED*\n\nThe Odds API returned HTTP ${authFailureStatus}\nAll prop/team fetches are failing.\n\n⚠️ Possible causes:\n• API key expired or quota exceeded\n• Subscription lapsed\n• Key revoked\n\n🔧 Action: Check your Odds API dashboard and renew/replace the key.\n\nCollected before abort: ${allPlayerProps.length} props, ${allTeamBets.length} team bets`;
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { message: alertMsg, parse_mode: 'Markdown', admin_only: true },
+        });
+      } catch (_) { /* ignore telegram errors */ }
+
+      await supabase.from('cron_job_history').insert({
+        job_name: 'whale-odds-scraper',
+        status: 'failed',
+        started_at: now.toISOString(),
+        completed_at: new Date().toISOString(),
+        duration_ms: Date.now() - now.getTime(),
+        error_message: `API key rejected (HTTP ${authFailureStatus}) — The Odds API returned unauthorized. Check/renew your API key.`,
+        result: {
+          mode: 'full',
+          error: 'auth_failed',
+          httpStatus: authFailureStatus,
+          playerPropsCollected: allPlayerProps.length,
+          teamBetsCollected: allTeamBets.length,
+          apiCalls: totalApiCalls,
+        },
+      });
+
+      return new Response(JSON.stringify({
+        success: false, mode: 'full',
+        error: `API key rejected (HTTP ${authFailureStatus})`,
+        playerPropsCollected: allPlayerProps.length,
+        teamBetsCollected: allTeamBets.length,
+        apiCalls: totalApiCalls,
+      }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     console.log(`[Full] Collected ${allPlayerProps.length} player props, ${allTeamBets.length} team bets from ${totalApiCalls} API calls`);
 
     // ========== UPSERT PLAYER PROPS ==========
@@ -695,11 +733,17 @@ serve(async (req) => {
       date: today, last_full_scrape: now.toISOString(),
     }, { onConflict: 'date' });
 
+    // Log success — but flag if 0 data collected (possible silent failure)
+    const finalStatus = (allPlayerProps.length === 0 && allTeamBets.length === 0) ? 'no_data' : 'completed';
+    const errorMsg = finalStatus === 'no_data' ? 'Full scrape completed but collected 0 props and 0 team bets — API may have issues' : null;
+
     await supabase.from('cron_job_history').insert({
       job_name: 'whale-odds-scraper',
-      status: 'completed',
+      status: finalStatus,
       started_at: now.toISOString(),
       completed_at: new Date().toISOString(),
+      duration_ms: Date.now() - now.getTime(),
+      error_message: errorMsg,
       result: {
         mode: 'full',
         playerPropsCollected: allPlayerProps.length,
