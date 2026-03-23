@@ -547,64 +547,71 @@ serve(async (req) => {
         }
 
         // Phase 3: Fetch team props (spreads/totals/h2h) - single batched call
-        try {
-          const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-          const teamResponse = await fetchWithTimeout(teamUrl);
-          await trackApiCall();
+        if (!apiKeyInvalid) {
+          try {
+            const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+            const teamResponse = await fetchWithTimeout(teamUrl);
+            await trackApiCall();
 
-          if (teamResponse.ok) {
-            const teamData = await teamResponse.json();
-            for (const bookmaker of (teamData.bookmakers || []) as Bookmaker[]) {
-              for (const market of bookmaker.markets) {
-                if (market.key === 'spreads') {
-                  const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
-                  const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
-                  if (homeOutcome || awayOutcome) {
-                    allTeamBets.push({
-                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'spread',
-                      home_team: event.home_team, away_team: event.away_team,
-                      line: homeOutcome?.point ?? null,
-                      home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
-                      over_odds: null, under_odds: null,
-                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
-                    });
-                  }
-                } else if (market.key === 'totals') {
-                  const overOutcome = market.outcomes.find(o => o.name === 'Over');
-                  const underOutcome = market.outcomes.find(o => o.name === 'Under');
-                  if (overOutcome || underOutcome) {
-                    allTeamBets.push({
-                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'total',
-                      home_team: event.home_team, away_team: event.away_team,
-                      line: overOutcome?.point ?? underOutcome?.point ?? null,
-                      home_odds: null, away_odds: null,
-                      over_odds: overOutcome?.price ?? null, under_odds: underOutcome?.price ?? null,
-                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
-                    });
-                  }
-                } else if (market.key === 'h2h') {
-                  const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
-                  const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
-                  if (homeOutcome || awayOutcome) {
-                    allTeamBets.push({
-                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
-                      home_team: event.home_team, away_team: event.away_team,
-                      line: null,
-                      home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
-                      over_odds: null, under_odds: null,
-                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
-                    });
+            if (teamResponse.status === 401 || teamResponse.status === 403) {
+              console.error(`[Full] API KEY REJECTED on team fetch (${teamResponse.status}) — aborting`);
+              apiKeyInvalid = true;
+              authFailureStatus = teamResponse.status;
+            } else if (teamResponse.ok) {
+              const teamData = await teamResponse.json();
+              for (const bookmaker of (teamData.bookmakers || []) as Bookmaker[]) {
+                for (const market of bookmaker.markets) {
+                  if (market.key === 'spreads') {
+                    const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
+                    const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
+                    if (homeOutcome || awayOutcome) {
+                      allTeamBets.push({
+                        game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'spread',
+                        home_team: event.home_team, away_team: event.away_team,
+                        line: homeOutcome?.point ?? null,
+                        home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
+                        over_odds: null, under_odds: null,
+                        bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
+                      });
+                    }
+                  } else if (market.key === 'totals') {
+                    const overOutcome = market.outcomes.find(o => o.name === 'Over');
+                    const underOutcome = market.outcomes.find(o => o.name === 'Under');
+                    if (overOutcome || underOutcome) {
+                      allTeamBets.push({
+                        game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'total',
+                        home_team: event.home_team, away_team: event.away_team,
+                        line: overOutcome?.point ?? underOutcome?.point ?? null,
+                        home_odds: null, away_odds: null,
+                        over_odds: overOutcome?.price ?? null, under_odds: underOutcome?.price ?? null,
+                        bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
+                      });
+                    }
+                  } else if (market.key === 'h2h') {
+                    const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
+                    const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
+                    if (homeOutcome || awayOutcome) {
+                      allTeamBets.push({
+                        game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
+                        home_team: event.home_team, away_team: event.away_team,
+                        line: null,
+                        home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
+                        over_odds: null, under_odds: null,
+                        bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
+                      });
+                    }
                   }
                 }
               }
             }
+          } catch (e) {
+            console.error(`[Full] Team props error for ${event.id}:`, e);
           }
-        } catch (e) {
-          console.error(`[Full] Team props error for ${event.id}:`, e);
         }
 
         await new Promise(r => setTimeout(r, 50));
       }
+      if (apiKeyInvalid) break; // stop processing more sports
     }
 
     console.log(`[Full] Collected ${allPlayerProps.length} player props, ${allTeamBets.length} team bets from ${totalApiCalls} API calls`);
