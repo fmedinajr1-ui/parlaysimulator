@@ -4485,7 +4485,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .from('unified_props')
     .select('*')
     .eq('is_active', true)
-    .eq('bookmaker_key', 'fanduel')
+    .eq('bookmaker', 'fanduel')
     .gte('commence_time', startUtc)
     .lt('commence_time', endUtc)
     .limit(500);
