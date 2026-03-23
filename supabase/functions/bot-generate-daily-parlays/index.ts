@@ -8445,6 +8445,17 @@ async function generateTierParlays(
           original_line_before_downgrade: originalLineBeforeAdjust,
           downgrade_reason: adjustReason || null,
           leg_role: (playerPick as any)._legRole || null,
+          // DNA scoring fields
+          l10_avg: playerPick.l10_avg || 0,
+          l3_avg: playerPick.l3_avg || 0,
+          l5_avg: playerPick.l5_avg || 0,
+          l10_std_dev: playerPick.l10_std_dev || 0,
+          season_avg: playerPick.season_avg || 0,
+          matchup_adjustment: playerPick.matchup_adjustment || 0,
+          pace_adjustment: playerPick.pace_adjustment || 0,
+          h2h_matchup_boost: playerPick.h2h_matchup_boost || 0,
+          bounce_back_score: playerPick.bounce_back_score || 0,
+          line_difference: playerPick.line_difference || 0,
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
