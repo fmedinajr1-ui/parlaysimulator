@@ -1,50 +1,63 @@
 
 
-# Tune DNA Audit Thresholds
+# Fix DNA Audit: Missing Player Stats in Parlay Legs
 
-## Problem
+## Root Cause
 
-The current audit has three overly aggressive rules that together void 91% of parlays:
+The DNA audit is still voiding 100% of parlays — but NOT because of the FanDuel line fix (that's working: all legs now have `has_real_line: true`).
 
-1. **`NO_FD_LINE` is fatal** (line 146, 166): Any leg without a real FanDuel line instantly makes the entire parlay F-grade. Even after the `bookmaker` fix, many props (steals, blocks, combos) simply aren't on FanDuel — they're still valid bets on other books.
+The real problem: **`bot-generate-daily-parlays` doesn't embed player stats in the leg JSON**. Each leg has `line`, `player_name`, `side`, `american_odds` etc., but is missing critical fields the DNA scorer needs:
 
-2. **`NEG_BUFFER` flags all negative buffers** (line 147): Even -0.1% buffer flags a leg as weak. A player averaging 12.4 on a 12.5 line is essentially a coin flip, not a fatal flaw.
+- `l10_avg` → defaults to 0 → buffer becomes -100% for overs → `NEG_BUFFER` flag
+- `l3_avg`, `l5_avg`, `season_avg` → all 0 → garbage DNA signals
+- `l10_std_dev`, `confidence_score` → 0 → low DNA score → `LOW_DNA` flag
 
-3. **`NO_FD_LINE` + `NO_PLAYER` are treated equally fatal** (line 165-167): Missing player name is truly fatal, but missing FanDuel line should be a warning, not a death sentence.
+With all signals at 0, EVERY leg gets flagged as weak. When all legs are weak and fewer than 2 remain after pruning, the parlay gets F-graded and voided.
 
-## Changes to `score-parlays-dna/index.ts`
+## Two-Pronged Fix
 
-### 1. Downgrade `NO_FD_LINE` from fatal to warning
-- Line 146: Keep the flag but **don't** include it in the fatal check
-- Line 165-167: Change `fatalLegs` to only check `NO_PLAYER` (not `NO_FD_LINE`)
-- Legs without FD lines still get flagged as weak (eligible for pruning) but don't auto-void the parlay
+### Fix 1: Enrich parlay legs with stats from `category_sweet_spots`
 
-### 2. Relax negative buffer threshold
-- Line 147: Change `bufferPct < 0` → `bufferPct < -5`
-- A small negative buffer (-1% to -5%) is marginal, not disqualifying. Only flag legs with deeply negative buffers.
+In `bot-generate-daily-parlays/index.ts`, when building each leg object, carry forward the stats from the sweet spot pick that sourced it. The sweet spots already have `l10_avg`, `l3_avg`, `l5_avg`, `l10_std_dev`, `season_avg`, `confidence_score`, `matchup_adjustment`, `pace_adjustment`, `h2h_matchup_boost`, `bounce_back_score`.
 
-### 3. Lower DNA score floor
-- Line 148: Change `dnaScore < 40` → `dnaScore < 30`
-- The current 40 threshold is too aggressive given the scoring normalizes around 50. A 35-score pick is mediocre but not terrible.
+Add these fields to the leg JSON:
+```typescript
+{
+  ...existingLegFields,
+  l10_avg: pick.l10_avg,
+  l3_avg: pick.l3_avg,
+  l5_avg: pick.l5_avg,
+  l10_std_dev: pick.l10_std_dev,
+  season_avg: pick.season_avg,
+  confidence_score: pick.confidence_score,
+  matchup_adjustment: pick.matchup_adjustment || 0,
+  pace_adjustment: pick.pace_adjustment || 0,
+  h2h_matchup_boost: pick.h2h_matchup_boost || 0,
+  bounce_back_score: pick.bounce_back_score || 0,
+}
+```
 
-### 4. Add severity tiers to flags
-- New concept: `FATAL` flags (NO_PLAYER, empty legs) vs `WEAK` flags (NEG_BUFFER, LOW_DNA, NO_FD_LINE)
-- Fatal flags → void the parlay
-- Weak flags → prune the leg if possible, keep parlay alive
+### Fix 2: Make DNA scorer resilient to missing stats
 
-### Summary of threshold changes
+In `score-parlays-dna/index.ts`, if `l10Avg` is 0 or missing, skip buffer calculation and DNA scoring for that leg — don't flag it, just score it as neutral (50). This prevents future regressions if any leg source doesn't have stats.
 
-| Rule | Before | After |
-|------|--------|-------|
-| No FanDuel line | Fatal (voids parlay) | Warning (prune leg) |
-| Negative buffer | Any < 0% | Only < -5% |
-| Low DNA score | < 40 | < 30 |
-| No player name | Fatal | Fatal (unchanged) |
-
-## Expected Impact
-- Before: 91% void rate (14/16 parlays voided)
-- After: ~20-30% void rate (only truly unbettable parlays voided), with weak legs pruned from the rest
+```typescript
+// If no L10 avg data, skip scoring — don't penalize
+if (l10Avg === 0 && line > 0) {
+  // No stats available, assign neutral score
+  dnaScore = 50;
+  bufferPct = 0;
+  // Don't add any flags
+}
+```
 
 ## Files Changed
-1. **`supabase/functions/score-parlays-dna/index.ts`** — Relax thresholds, separate fatal vs weak flags
+
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`** — Add player stat fields to leg objects when building parlays
+2. **`supabase/functions/score-parlays-dna/index.ts`** — Handle missing stats gracefully (neutral score instead of flagging)
+
+## Expected Impact
+- Legs will carry real stats → DNA scoring actually works
+- Fallback: if stats missing, leg scores neutral (50) instead of being flagged
+- Void rate drops from 100% to only genuinely weak parlays
 
