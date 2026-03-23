@@ -499,6 +499,12 @@ serve(async (req) => {
 
             if (!propsResponse.ok) {
               if (propsResponse.status === 404) continue;
+              if (propsResponse.status === 401 || propsResponse.status === 403) {
+                console.error(`[Full] API KEY REJECTED (${propsResponse.status}) — aborting all fetches`);
+                apiKeyInvalid = true;
+                authFailureStatus = propsResponse.status;
+                break;
+              }
               console.error(`[Full] Props batch failed for ${event.id}: ${propsResponse.status}`);
               continue;
             }
