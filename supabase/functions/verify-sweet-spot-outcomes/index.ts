@@ -438,6 +438,10 @@ Deno.serve(async (req) => {
 
       if (!gameLog) {
         if (!hasSubstantialData) {
+          // Revert no_data → pending if it was previously wrongly marked
+          if (pick.outcome === 'no_data') {
+            updates.push({ id: pick.id, actual_value: null, outcome: 'pending', settled_at: null as any, verified_source: '' });
+          }
           results.pending++;
           results.details.push({
             player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
@@ -449,6 +453,9 @@ Deno.serve(async (req) => {
         // Check if this sport specifically has data
         const sportHasData = sportMap.map.size >= 5;
         if (!sportHasData) {
+          if (pick.outcome === 'no_data') {
+            updates.push({ id: pick.id, actual_value: null, outcome: 'pending', settled_at: null as any, verified_source: '' });
+          }
           results.pending++;
           results.details.push({
             player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
@@ -458,9 +465,12 @@ Deno.serve(async (req) => {
         }
 
         // NEW: Check if the player's team actually played on this date
-        // If team didn't play, keep as pending — they'll be settled when their game happens
+        // If team didn't play, revert to pending — they'll be settled when their game happens
         const teamPlayed = didTeamPlay(pick.player_name, sport);
         if (!teamPlayed) {
+          if (pick.outcome === 'no_data') {
+            updates.push({ id: pick.id, actual_value: null, outcome: 'pending', settled_at: null as any, verified_source: '' });
+          }
           results.pending++;
           results.details.push({
             player: pick.player_name, propType: pick.prop_type, sport, status: 'pending',
