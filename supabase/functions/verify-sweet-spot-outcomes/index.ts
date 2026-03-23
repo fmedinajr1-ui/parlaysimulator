@@ -271,33 +271,38 @@ Deno.serve(async (req) => {
       .select('player_name, team_name')
       .not('team_name', 'is', null);
 
-    // Fetch all sport logs in parallel
+    // Fetch all sport logs in parallel — use .limit(5000) to avoid the default 1000-row cap
     const [nbaResult, ncaabResult, mlbResult, nhlSkaterResult, nhlGoalieResult] = await Promise.all([
       supabase
         .from('nba_player_game_logs')
-        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .select('player_name, game_date, opponent, points, rebounds, assists, threes_made, steals, blocks, turnovers')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('ncaab_player_game_logs')
-        .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+        .select('player_name, game_date, opponent, points, rebounds, assists, threes_made, steals, blocks, turnovers')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('mlb_player_game_logs')
-        .select('player_name, game_date, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, total_bases, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed, at_bats')
+        .select('player_name, game_date, opponent, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, total_bases, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed, at_bats')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('nhl_player_game_logs')
-        .select('player_name, game_date, goals, assists, points, shots_on_goal, blocked_shots, power_play_points')
+        .select('player_name, game_date, opponent, goals, assists, points, shots_on_goal, blocked_shots, power_play_points')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
       supabase
         .from('nhl_goalie_game_logs')
-        .select('player_name, game_date, saves, shots_against, goals_against')
+        .select('player_name, game_date, opponent, saves, shots_against, goals_against')
         .gte('game_date', windowStart)
-        .lte('game_date', windowEnd),
+        .lte('game_date', windowEnd)
+        .limit(5000),
     ]);
 
     if (nbaResult.error) throw new Error(`Failed to fetch NBA game logs: ${nbaResult.error.message}`);
