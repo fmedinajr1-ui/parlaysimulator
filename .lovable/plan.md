@@ -1,42 +1,50 @@
 
 
-# Fix Parlay Pipeline: Real FanDuel Lines
+# Tune DNA Audit Thresholds
 
-## Root Cause (Two Bugs)
+## Problem
 
-### Bug 1: Wrong column name in FanDuel query
-Line 4488 of `bot-generate-daily-parlays/index.ts`:
-```
-.eq('bookmaker_key', 'fanduel')
-```
-The column is actually `bookmaker`, not `bookmaker_key`. This query silently returns 0 results every time, always falling back to the "all books" query. FanDuel lines are never prioritized.
+The current audit has three overly aggressive rules that together void 91% of parlays:
 
-**Fix**: Change to `.eq('bookmaker', 'fanduel')`
+1. **`NO_FD_LINE` is fatal** (line 146, 166): Any leg without a real FanDuel line instantly makes the entire parlay F-grade. Even after the `bookmaker` fix, many props (steals, blocks, combos) simply aren't on FanDuel — they're still valid bets on other books.
 
-### Bug 2: Prop type mismatch in oddsMap lookup
-When building the oddsMap from `unified_props`, the keys use raw prop types like `points`, `rebounds`. But when looking up sweet spot picks (line 4791), it uses `pick.prop_type` which is `player_points`, `player_rebounds`. The normalization map exists but is only applied on the oddsMap build side — never on the lookup side.
+2. **`NEG_BUFFER` flags all negative buffers** (line 147): Even -0.1% buffer flags a leg as weak. A player averaging 12.4 on a 12.5 line is essentially a coin flip, not a fatal flaw.
 
-Example: Sweet spot has `prop_type: 'player_points'` → lookup key = `lebron james_player_points` → oddsMap only has `lebron james_points` → **miss** → `has_real_line: false` → `line_source: 'projected'` → DNA audit voids it.
+3. **`NO_FD_LINE` + `NO_PLAYER` are treated equally fatal** (line 165-167): Missing player name is truly fatal, but missing FanDuel line should be a warning, not a death sentence.
 
-**Fix**: Normalize the sweet spot prop_type before looking up in oddsMap:
-```typescript
-const rawProp = (pick.prop_type || '').toLowerCase();
-const normProp = PROP_TYPE_NORMALIZE[rawProp] || rawProp;
-const rawOddsKey = `${pick.player_name}_${rawProp}`.toLowerCase();
-const normOddsKey = `${pick.player_name}_${normProp}`.toLowerCase();
-const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey) || oddsMap.get(stripTrailingPeriods(rawOddsKey)) || oddsMap.get(stripTrailingPeriods(normOddsKey));
-```
+## Changes to `score-parlays-dna/index.ts`
 
-## Impact
-These two bugs together mean **every parlay leg** gets `has_real_line: false` and `line_source: 'projected'`, causing the DNA audit to void 100% of parlays. Fixing them will:
-- Load actual FanDuel lines (500+ props)
-- Match 80%+ of sweet spot picks to real sportsbook lines
-- DNA audit will only void genuinely unbettable picks
+### 1. Downgrade `NO_FD_LINE` from fatal to warning
+- Line 146: Keep the flag but **don't** include it in the fatal check
+- Line 165-167: Change `fatalLegs` to only check `NO_PLAYER` (not `NO_FD_LINE`)
+- Legs without FD lines still get flagged as weak (eligible for pruning) but don't auto-void the parlay
+
+### 2. Relax negative buffer threshold
+- Line 147: Change `bufferPct < 0` → `bufferPct < -5`
+- A small negative buffer (-1% to -5%) is marginal, not disqualifying. Only flag legs with deeply negative buffers.
+
+### 3. Lower DNA score floor
+- Line 148: Change `dnaScore < 40` → `dnaScore < 30`
+- The current 40 threshold is too aggressive given the scoring normalizes around 50. A 35-score pick is mediocre but not terrible.
+
+### 4. Add severity tiers to flags
+- New concept: `FATAL` flags (NO_PLAYER, empty legs) vs `WEAK` flags (NEG_BUFFER, LOW_DNA, NO_FD_LINE)
+- Fatal flags → void the parlay
+- Weak flags → prune the leg if possible, keep parlay alive
+
+### Summary of threshold changes
+
+| Rule | Before | After |
+|------|--------|-------|
+| No FanDuel line | Fatal (voids parlay) | Warning (prune leg) |
+| Negative buffer | Any < 0% | Only < -5% |
+| Low DNA score | < 40 | < 30 |
+| No player name | Fatal | Fatal (unchanged) |
+
+## Expected Impact
+- Before: 91% void rate (14/16 parlays voided)
+- After: ~20-30% void rate (only truly unbettable parlays voided), with weak legs pruned from the rest
 
 ## Files Changed
-
-1. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
-   - Line 4488: `bookmaker_key` → `bookmaker`
-   - Lines 4791-4793: Add prop type normalization to oddsMap lookup
-   - Also fix the same pattern wherever legs are assembled (~6 locations) to ensure `line_source` propagates correctly
+1. **`supabase/functions/score-parlays-dna/index.ts`** — Relax thresholds, separate fatal vs weak flags
 
