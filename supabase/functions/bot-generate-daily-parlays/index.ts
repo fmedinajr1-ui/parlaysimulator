@@ -1427,6 +1427,16 @@ interface SweetSpotPick {
   l10_max?: number;
   l10_avg?: number;
   l10_median?: number;
+  // DNA scoring fields
+  l3_avg?: number;
+  l5_avg?: number;
+  l10_std_dev?: number;
+  season_avg?: number;
+  matchup_adjustment?: number;
+  pace_adjustment?: number;
+  h2h_matchup_boost?: number;
+  bounce_back_score?: number;
+  line_difference?: number;
 }
 
 interface EnrichedPick extends SweetSpotPick {
@@ -6959,6 +6969,16 @@ async function generateTierParlays(
             sport: pick.sport || deriveSportFromCategory(pick.category),
             defense_rank: (pick as any).defenseMatchupRank ?? null,
             defense_adj: (pick as any).defenseMatchupAdj ?? 0,
+            l10_avg: pick.l10_avg || 0,
+            l3_avg: pick.l3_avg || 0,
+            l5_avg: pick.l5_avg || 0,
+            l10_std_dev: pick.l10_std_dev || 0,
+            season_avg: pick.season_avg || 0,
+            matchup_adjustment: pick.matchup_adjustment || 0,
+            pace_adjustment: pick.pace_adjustment || 0,
+            h2h_matchup_boost: pick.h2h_matchup_boost || 0,
+            bounce_back_score: pick.bounce_back_score || 0,
+            line_difference: pick.line_difference || 0,
           };
         });
         
@@ -8435,6 +8455,17 @@ async function generateTierParlays(
           original_line_before_downgrade: originalLineBeforeAdjust,
           downgrade_reason: adjustReason || null,
           leg_role: (playerPick as any)._legRole || null,
+          // DNA scoring fields
+          l10_avg: playerPick.l10_avg || 0,
+          l3_avg: playerPick.l3_avg || 0,
+          l5_avg: playerPick.l5_avg || 0,
+          l10_std_dev: playerPick.l10_std_dev || 0,
+          season_avg: playerPick.season_avg || 0,
+          matchup_adjustment: playerPick.matchup_adjustment || 0,
+          pace_adjustment: playerPick.pace_adjustment || 0,
+          h2h_matchup_boost: playerPick.h2h_matchup_boost || 0,
+          bounce_back_score: playerPick.bounce_back_score || 0,
+          line_difference: playerPick.line_difference || 0,
         };
 
         // MINIMUM PROJECTION BUFFER GATE (stat-aware + conviction-aware)
