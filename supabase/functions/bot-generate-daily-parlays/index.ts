@@ -4485,7 +4485,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .from('unified_props')
     .select('*')
     .eq('is_active', true)
-    .eq('bookmaker_key', 'fanduel')
+    .eq('bookmaker', 'fanduel')
     .gte('commence_time', startUtc)
     .lt('commence_time', endUtc)
     .limit(500);
@@ -4788,9 +4788,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     // Resolve oddsKey FIRST — used for both line override and odds lookup
-    const rawOddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-    const normOddsKey = stripTrailingPeriods(rawOddsKey);
-    const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey);
+    const rawProp = (pick.prop_type || '').toLowerCase();
+    const normProp = PROP_TYPE_NORMALIZE[rawProp] || rawProp;
+    const rawOddsKey = `${pick.player_name}_${rawProp}`.toLowerCase();
+    const normOddsKey = `${pick.player_name}_${normProp}`.toLowerCase();
+    const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey) || oddsMap.get(stripTrailingPeriods(rawOddsKey)) || oddsMap.get(stripTrailingPeriods(normOddsKey));
 
     // CRITICAL: Use the real sportsbook line from unified_props when available.
     // category_sweet_spots stores recommended_line=0.5 for THREE_POINT_SHOOTER (historical sweet spot)
@@ -5271,8 +5273,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const l10Max = (p as any).l10_max;
       if (l10Max == null || l10Max <= 0) return false;
       // Use sportsbook line from oddsMap if available, else fall back
-      const oddsKey = `${(p.player_name || '').toLowerCase()}_${(p.prop_type || '').toLowerCase()}`;
-      const oddsEntry = oddsMap.get(oddsKey);
+      const rawPropAlt = (p.prop_type || '').toLowerCase();
+      const normPropAlt = PROP_TYPE_NORMALIZE[rawPropAlt] || rawPropAlt;
+      const oddsKey = `${(p.player_name || '').toLowerCase()}_${rawPropAlt}`;
+      const normKey = `${(p.player_name || '').toLowerCase()}_${normPropAlt}`;
+      const oddsEntry = oddsMap.get(oddsKey) || oddsMap.get(normKey);
       const sportsbookLine = oddsEntry?.line && oddsEntry.line > 0 ? oddsEntry.line : null;
       const compareLine = p.line || sportsbookLine || (p as any).recommended_line;
       if (!compareLine || compareLine <= 0) return false;
