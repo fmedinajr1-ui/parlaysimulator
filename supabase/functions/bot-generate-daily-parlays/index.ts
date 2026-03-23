@@ -4788,9 +4788,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     // Resolve oddsKey FIRST — used for both line override and odds lookup
-    const rawOddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-    const normOddsKey = stripTrailingPeriods(rawOddsKey);
-    const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey);
+    const rawProp = (pick.prop_type || '').toLowerCase();
+    const normProp = PROP_TYPE_NORMALIZE[rawProp] || rawProp;
+    const rawOddsKey = `${pick.player_name}_${rawProp}`.toLowerCase();
+    const normOddsKey = `${pick.player_name}_${normProp}`.toLowerCase();
+    const oddsEntry = oddsMap.get(rawOddsKey) || oddsMap.get(normOddsKey) || oddsMap.get(stripTrailingPeriods(rawOddsKey)) || oddsMap.get(stripTrailingPeriods(normOddsKey));
 
     // CRITICAL: Use the real sportsbook line from unified_props when available.
     // category_sweet_spots stores recommended_line=0.5 for THREE_POINT_SHOOTER (historical sweet spot)
