@@ -172,6 +172,8 @@ serve(async (req) => {
     const today = getEasternDate();
     const now = new Date();
     let totalApiCalls = 0;
+    let apiKeyInvalid = false;
+    let authFailureStatus = 0;
 
     // ============ BUDGET CHECK ============
     const checkBudget = async (callsNeeded: number): Promise<boolean> => {
