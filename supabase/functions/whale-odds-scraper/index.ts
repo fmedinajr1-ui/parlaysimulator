@@ -172,6 +172,8 @@ serve(async (req) => {
     const today = getEasternDate();
     const now = new Date();
     let totalApiCalls = 0;
+    let apiKeyInvalid = false;
+    let authFailureStatus = 0;
 
     // ============ BUDGET CHECK ============
     const checkBudget = async (callsNeeded: number): Promise<boolean> => {
@@ -497,6 +499,12 @@ serve(async (req) => {
 
             if (!propsResponse.ok) {
               if (propsResponse.status === 404) continue;
+              if (propsResponse.status === 401 || propsResponse.status === 403) {
+                console.error(`[Full] API KEY REJECTED (${propsResponse.status}) — aborting all fetches`);
+                apiKeyInvalid = true;
+                authFailureStatus = propsResponse.status;
+                break;
+              }
               console.error(`[Full] Props batch failed for ${event.id}: ${propsResponse.status}`);
               continue;
             }
@@ -534,68 +542,114 @@ serve(async (req) => {
             }
           } catch (e) {
             console.error(`[Full] Error fetching batch for ${event.id}:`, e);
-          }
+        }
+        if (apiKeyInvalid) break; // stop processing batches for this event
         }
 
         // Phase 3: Fetch team props (spreads/totals/h2h) - single batched call
-        try {
-          const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-          const teamResponse = await fetchWithTimeout(teamUrl);
-          await trackApiCall();
+        if (!apiKeyInvalid) {
+          try {
+            const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+            const teamResponse = await fetchWithTimeout(teamUrl);
+            await trackApiCall();
 
-          if (teamResponse.ok) {
-            const teamData = await teamResponse.json();
-            for (const bookmaker of (teamData.bookmakers || []) as Bookmaker[]) {
-              for (const market of bookmaker.markets) {
-                if (market.key === 'spreads') {
-                  const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
-                  const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
-                  if (homeOutcome || awayOutcome) {
-                    allTeamBets.push({
-                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'spread',
-                      home_team: event.home_team, away_team: event.away_team,
-                      line: homeOutcome?.point ?? null,
-                      home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
-                      over_odds: null, under_odds: null,
-                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
-                    });
-                  }
-                } else if (market.key === 'totals') {
-                  const overOutcome = market.outcomes.find(o => o.name === 'Over');
-                  const underOutcome = market.outcomes.find(o => o.name === 'Under');
-                  if (overOutcome || underOutcome) {
-                    allTeamBets.push({
-                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'total',
-                      home_team: event.home_team, away_team: event.away_team,
-                      line: overOutcome?.point ?? underOutcome?.point ?? null,
-                      home_odds: null, away_odds: null,
-                      over_odds: overOutcome?.price ?? null, under_odds: underOutcome?.price ?? null,
-                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
-                    });
-                  }
-                } else if (market.key === 'h2h') {
-                  const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
-                  const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
-                  if (homeOutcome || awayOutcome) {
-                    allTeamBets.push({
-                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
-                      home_team: event.home_team, away_team: event.away_team,
-                      line: null,
-                      home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
-                      over_odds: null, under_odds: null,
-                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
-                    });
+            if (teamResponse.status === 401 || teamResponse.status === 403) {
+              console.error(`[Full] API KEY REJECTED on team fetch (${teamResponse.status}) — aborting`);
+              apiKeyInvalid = true;
+              authFailureStatus = teamResponse.status;
+            } else if (teamResponse.ok) {
+              const teamData = await teamResponse.json();
+              for (const bookmaker of (teamData.bookmakers || []) as Bookmaker[]) {
+                for (const market of bookmaker.markets) {
+                  if (market.key === 'spreads') {
+                    const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
+                    const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
+                    if (homeOutcome || awayOutcome) {
+                      allTeamBets.push({
+                        game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'spread',
+                        home_team: event.home_team, away_team: event.away_team,
+                        line: homeOutcome?.point ?? null,
+                        home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
+                        over_odds: null, under_odds: null,
+                        bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
+                      });
+                    }
+                  } else if (market.key === 'totals') {
+                    const overOutcome = market.outcomes.find(o => o.name === 'Over');
+                    const underOutcome = market.outcomes.find(o => o.name === 'Under');
+                    if (overOutcome || underOutcome) {
+                      allTeamBets.push({
+                        game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'total',
+                        home_team: event.home_team, away_team: event.away_team,
+                        line: overOutcome?.point ?? underOutcome?.point ?? null,
+                        home_odds: null, away_odds: null,
+                        over_odds: overOutcome?.price ?? null, under_odds: underOutcome?.price ?? null,
+                        bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
+                      });
+                    }
+                  } else if (market.key === 'h2h') {
+                    const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
+                    const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
+                    if (homeOutcome || awayOutcome) {
+                      allTeamBets.push({
+                        game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
+                        home_team: event.home_team, away_team: event.away_team,
+                        line: null,
+                        home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
+                        over_odds: null, under_odds: null,
+                        bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
+                      });
+                    }
                   }
                 }
               }
             }
+          } catch (e) {
+            console.error(`[Full] Team props error for ${event.id}:`, e);
           }
-        } catch (e) {
-          console.error(`[Full] Team props error for ${event.id}:`, e);
         }
 
         await new Promise(r => setTimeout(r, 50));
       }
+      if (apiKeyInvalid) break; // stop processing more sports
+    }
+
+    // ========== API KEY FAILURE — ALERT & ABORT ==========
+    if (apiKeyInvalid) {
+      console.error(`[Full] API key invalid (HTTP ${authFailureStatus}) — collected ${allPlayerProps.length} props before abort`);
+
+      // Send Telegram alert
+      try {
+        const alertMsg = `🚨 *WHALE SCRAPER — API KEY REJECTED*\n\nThe Odds API returned HTTP ${authFailureStatus}\nAll prop/team fetches are failing.\n\n⚠️ Possible causes:\n• API key expired or quota exceeded\n• Subscription lapsed\n• Key revoked\n\n🔧 Action: Check your Odds API dashboard and renew/replace the key.\n\nCollected before abort: ${allPlayerProps.length} props, ${allTeamBets.length} team bets`;
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { message: alertMsg, parse_mode: 'Markdown', admin_only: true },
+        });
+      } catch (_) { /* ignore telegram errors */ }
+
+      await supabase.from('cron_job_history').insert({
+        job_name: 'whale-odds-scraper',
+        status: 'failed',
+        started_at: now.toISOString(),
+        completed_at: new Date().toISOString(),
+        duration_ms: Date.now() - now.getTime(),
+        error_message: `API key rejected (HTTP ${authFailureStatus}) — The Odds API returned unauthorized. Check/renew your API key.`,
+        result: {
+          mode: 'full',
+          error: 'auth_failed',
+          httpStatus: authFailureStatus,
+          playerPropsCollected: allPlayerProps.length,
+          teamBetsCollected: allTeamBets.length,
+          apiCalls: totalApiCalls,
+        },
+      });
+
+      return new Response(JSON.stringify({
+        success: false, mode: 'full',
+        error: `API key rejected (HTTP ${authFailureStatus})`,
+        playerPropsCollected: allPlayerProps.length,
+        teamBetsCollected: allTeamBets.length,
+        apiCalls: totalApiCalls,
+      }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     console.log(`[Full] Collected ${allPlayerProps.length} player props, ${allTeamBets.length} team bets from ${totalApiCalls} API calls`);
@@ -679,11 +733,17 @@ serve(async (req) => {
       date: today, last_full_scrape: now.toISOString(),
     }, { onConflict: 'date' });
 
+    // Log success — but flag if 0 data collected (possible silent failure)
+    const finalStatus = (allPlayerProps.length === 0 && allTeamBets.length === 0) ? 'no_data' : 'completed';
+    const errorMsg = finalStatus === 'no_data' ? 'Full scrape completed but collected 0 props and 0 team bets — API may have issues' : null;
+
     await supabase.from('cron_job_history').insert({
       job_name: 'whale-odds-scraper',
-      status: 'completed',
+      status: finalStatus,
       started_at: now.toISOString(),
       completed_at: new Date().toISOString(),
+      duration_ms: Date.now() - now.getTime(),
+      error_message: errorMsg,
       result: {
         mode: 'full',
         playerPropsCollected: allPlayerProps.length,
