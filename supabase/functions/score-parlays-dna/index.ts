@@ -144,8 +144,8 @@ Deno.serve(async (req) => {
 
         const flags: string[] = [];
         if (!hasRealLine) flags.push("NO_FD_LINE");
-        if (bufferPct < 0) flags.push("NEG_BUFFER");
-        if (dnaScore < 40) flags.push("LOW_DNA");
+        if (bufferPct < -5) flags.push("NEG_BUFFER");
+        if (dnaScore < 30) flags.push("LOW_DNA");
         if (!playerName) flags.push("NO_PLAYER");
 
         legScores.push({
@@ -160,10 +160,10 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Grade the parlay
+      // Grade the parlay — only NO_PLAYER is fatal, everything else is weak/prunable
       const weakLegs = legScores.filter(l => l.flags.length > 0);
       const fatalLegs = legScores.filter(l =>
-        l.flags.includes("NO_FD_LINE") || l.flags.includes("NO_PLAYER")
+        l.flags.includes("NO_PLAYER")
       );
 
       let grade: "A" | "B" | "C" | "F";
