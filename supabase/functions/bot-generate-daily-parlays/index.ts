@@ -6969,6 +6969,16 @@ async function generateTierParlays(
             sport: pick.sport || deriveSportFromCategory(pick.category),
             defense_rank: (pick as any).defenseMatchupRank ?? null,
             defense_adj: (pick as any).defenseMatchupAdj ?? 0,
+            l10_avg: pick.l10_avg || 0,
+            l3_avg: pick.l3_avg || 0,
+            l5_avg: pick.l5_avg || 0,
+            l10_std_dev: pick.l10_std_dev || 0,
+            season_avg: pick.season_avg || 0,
+            matchup_adjustment: pick.matchup_adjustment || 0,
+            pace_adjustment: pick.pace_adjustment || 0,
+            h2h_matchup_boost: pick.h2h_matchup_boost || 0,
+            bounce_back_score: pick.bounce_back_score || 0,
+            line_difference: pick.line_difference || 0,
           };
         });
         
