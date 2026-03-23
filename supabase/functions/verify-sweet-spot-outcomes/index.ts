@@ -240,7 +240,7 @@ Deno.serve(async (req) => {
     // Step 1: Fetch pending picks for the target date
     const { data: pendingPicks, error: fetchError } = await supabase
       .from('category_sweet_spots')
-      .select('id, player_name, prop_type, recommended_side, recommended_line, actual_line, category, l10_hit_rate, confidence_score')
+      .select('id, player_name, prop_type, recommended_side, recommended_line, actual_line, category, l10_hit_rate, confidence_score, outcome')
       .eq('analysis_date', targetDate)
       .in('outcome', ['pending', 'no_data'])
       .is('actual_value', null);
