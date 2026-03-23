@@ -5273,8 +5273,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const l10Max = (p as any).l10_max;
       if (l10Max == null || l10Max <= 0) return false;
       // Use sportsbook line from oddsMap if available, else fall back
-      const oddsKey = `${(p.player_name || '').toLowerCase()}_${(p.prop_type || '').toLowerCase()}`;
-      const oddsEntry = oddsMap.get(oddsKey);
+      const rawPropAlt = (p.prop_type || '').toLowerCase();
+      const normPropAlt = PROP_TYPE_NORMALIZE[rawPropAlt] || rawPropAlt;
+      const oddsKey = `${(p.player_name || '').toLowerCase()}_${rawPropAlt}`;
+      const normKey = `${(p.player_name || '').toLowerCase()}_${normPropAlt}`;
+      const oddsEntry = oddsMap.get(oddsKey) || oddsMap.get(normKey);
       const sportsbookLine = oddsEntry?.line && oddsEntry.line > 0 ? oddsEntry.line : null;
       const compareLine = p.line || sportsbookLine || (p as any).recommended_line;
       if (!compareLine || compareLine <= 0) return false;
