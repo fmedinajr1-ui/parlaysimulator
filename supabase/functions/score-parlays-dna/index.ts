@@ -163,34 +163,35 @@ Deno.serve(async (req) => {
             projectedBuffer = sideUp ? ((projVal - line) / line) * 100 : ((line - projVal) / line) * 100;
           }
 
-          const signals: Record<string, number> = {
+          const signals: Record<string, number | null> = {
             buffer_pct: bufferPct,
-            l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || 0,
-            l10_std_dev: stdDev,
-            confidence_score: leg.confidence_score || leg.confidence || 0,
-            l10_avg: l10Avg,
-            l5_avg: l5Avg,
-            l3_avg: l3Avg,
-            matchup_adjustment: leg.matchup_adjustment || 0,
-            pace_adjustment: leg.pace_adjustment || 0,
-            h2h_matchup_boost: leg.h2h_matchup_boost || 0,
-            bounce_back_score: leg.bounce_back_score || 0,
-            season_avg: seasonAvg,
-            line_difference: leg.line_difference || 0,
-            // 8 new signals
-            floor_vs_line: floorVsLine,
-            median_buffer: medianBuffer,
-            trend_l5_vs_l10: trendL5,
-            consistency,
-            season_vs_line: seasonVsLine,
-            h2h_vs_line: h2hVsLine,
-            games_played: leg.games_played || 0,
-            projected_buffer: projectedBuffer,
+            l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || null,
+            l10_std_dev: stdDev || null,
+            confidence_score: leg.confidence_score || leg.confidence || null,
+            l10_avg: l10Avg || null,
+            l5_avg: l5Avg || null,
+            l3_avg: l3Avg || null,
+            matchup_adjustment: leg.matchup_adjustment || null,
+            pace_adjustment: leg.pace_adjustment || null,
+            h2h_matchup_boost: leg.h2h_matchup_boost || null,
+            bounce_back_score: leg.bounce_back_score || null,
+            season_avg: seasonAvg || null,
+            line_difference: leg.line_difference || null,
+            floor_vs_line: floorVsLine || null,
+            median_buffer: medianBuffer || null,
+            trend_l5_vs_l10: trendL5 || null,
+            consistency: consistency || null,
+            season_vs_line: seasonVsLine || null,
+            h2h_vs_line: h2hVsLine || null,
+            games_played: leg.games_played || null,
+            projected_buffer: projectedBuffer || null,
           };
 
+          // buffer_pct is always valid (even if 0), keep it; skip nulls for everything else
           let rawScore = 0;
           let totalWeight = 0;
           for (const [signalName, value] of Object.entries(signals)) {
+            if (value == null) continue; // skip missing data — don't penalize absent signals
             const w = weightMap.get(signalName);
             if (w && w.weight !== 0) {
               const range = Math.abs(w.avg_when_hit - w.avg_when_miss) || 1;
