@@ -29,7 +29,7 @@ const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
     ['player_points', 'player_rebounds', 'player_assists'],
     ['player_threes', 'player_blocks', 'player_steals'],
     ['player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists', 'player_rebounds_assists'],
-    ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1', 'player_threes_q1', 'player_steals_q1'],
+    ['player_points_q1', 'player_rebounds_q1', 'player_assists_q1'],
   ],
   'basketball_wnba': [
     ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
@@ -504,6 +504,59 @@ serve(async (req) => {
                 apiKeyInvalid = true;
                 authFailureStatus = propsResponse.status;
                 break;
+              }
+              if (propsResponse.status === 422) {
+                const errorBody = await propsResponse.text().catch(() => 'unable to read body');
+                console.error(`[Full] 422 on batch [${batch.join(',')}] for ${event.id}: ${errorBody}`);
+                // Fallback: retry each market individually
+                for (const singleMarket of batch) {
+                  try {
+                    const fallbackUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${singleMarket}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+                    const fallbackResp = await fetchWithTimeout(fallbackUrl);
+                    await trackApiCall();
+                    if (!fallbackResp.ok) {
+                      const fbBody = await fallbackResp.text().catch(() => '');
+                      console.warn(`[Full] Fallback ${singleMarket} failed (${fallbackResp.status}): ${fbBody}`);
+                      continue;
+                    }
+                    const fbData = await fallbackResp.json();
+                    for (const bookmaker of (fbData.bookmakers || []) as Bookmaker[]) {
+                      for (const propMarket of bookmaker.markets) {
+                        const playerMap = new Map<string, { over?: PropOutcome; under?: PropOutcome }>();
+                        for (const outcome of propMarket.outcomes) {
+                          const playerName = outcome.description || outcome.name;
+                          if (!playerName || playerName.length < 3) continue;
+                          if (!playerMap.has(playerName)) playerMap.set(playerName, {});
+                          const po = playerMap.get(playerName)!;
+                          if (outcome.name === 'Over') po.over = outcome;
+                          else if (outcome.name === 'Under') po.under = outcome;
+                        }
+                        for (const [playerName, outcomes] of playerMap) {
+                          const line = outcomes.over?.point ?? outcomes.under?.point;
+                          if (line === undefined || line === null) continue;
+                          allPlayerProps.push({
+                            player_name: playerName,
+                            prop_type: propMarket.key,
+                            current_line: line,
+                            sport: normalizeSportKey(sport),
+                            event_id: event.id,
+                            bookmaker: bookmaker.key,
+                            game_description: `${event.away_team} @ ${event.home_team}`,
+                            commence_time: event.commence_time,
+                            over_price: outcomes.over?.price ?? null,
+                            under_price: outcomes.under?.price ?? null,
+                            is_active: true,
+                          });
+                        }
+                      }
+                    }
+                    console.log(`[Full] Fallback OK: ${singleMarket} for ${event.id}`);
+                  } catch (fbErr) {
+                    console.warn(`[Full] Fallback ${singleMarket} exception:`, fbErr);
+                  }
+                  await new Promise(r => setTimeout(r, 50));
+                }
+                continue;
               }
               console.error(`[Full] Props batch failed for ${event.id}: ${propsResponse.status}`);
               continue;
