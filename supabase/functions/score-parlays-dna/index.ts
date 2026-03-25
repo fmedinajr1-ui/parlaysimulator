@@ -222,6 +222,9 @@ Deno.serve(async (req) => {
           has_real_line: hasRealLine,
           flags,
         });
+
+        // Verbose per-leg logging for diagnostics
+        log(`  Leg: ${playerName} ${propType} ${side} ${line} | DNA:${Math.round(dnaScore)} buf:${Math.round(bufferPct*10)/10}% flags:[${flags.join(',')}] real_line:${hasRealLine}`);
       }
 
       // Grade the parlay — split flags into hard (prunable) and soft (informational)
