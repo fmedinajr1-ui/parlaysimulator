@@ -89,6 +89,7 @@ Deno.serve(async (req) => {
     const updateParlays: { id: string; legs: any; leg_count: number; expected_odds: number }[] = [];
 
     for (const parlay of parlays) {
+      log(`--- Parlay ${parlay.id.slice(0,8)} (${parlay.strategy_name}) ---`);
       const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
       const legScores: LegScore[] = [];
 
