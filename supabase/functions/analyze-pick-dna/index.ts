@@ -215,7 +215,8 @@ Deno.serve(async (req) => {
         l10_median, l10_min, l10_max, confidence_score, season_avg,
         line_difference, matchup_adjustment, pace_adjustment,
         h2h_avg_vs_opponent, h2h_matchup_boost, bounce_back_score,
-        actual_line, recommended_line, recommended_side
+        actual_line, recommended_line, recommended_side,
+        games_played, projected_value
       `)
       .in('outcome', ['hit', 'miss']);
 
