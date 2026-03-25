@@ -915,6 +915,47 @@ Deno.serve(async (req) => {
       console.log(`[MegaParlay] 🔥 ${streakBoosted.length} props with hot streak bonus: ${streakBoosted.slice(0, 5).map(p => `${p.player_name} ${p.prop_type} ${p.side} (${p.streakLength}-game streak, +${p.streakBonus})`).join(', ')}`);
     }
 
+    // === CROSS-VERIFY LINES AGAINST unified_props (real FanDuel lines) ===
+    const { data: verifiedProps } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, current_line, bookmaker')
+      .eq('is_active', true)
+      .eq('sport', 'basketball_nba');
+
+    const verifiedLineMap = new Map<string, { line: number; bookmaker: string }>();
+    for (const vp of (verifiedProps || [])) {
+      const key = `${normalizeName(vp.player_name)}|${normalizePropType(vp.prop_type || '')}`;
+      verifiedLineMap.set(key, { line: vp.current_line || 0, bookmaker: vp.bookmaker || 'unknown' });
+    }
+    console.log(`[MegaParlay] Cross-verify: ${verifiedLineMap.size} verified lines from unified_props`);
+
+    // Mark props with verified lines and flag stale ones
+    for (const prop of scoredProps) {
+      if (prop.market_type !== 'player_prop') continue;
+      const vKey = `${normalizeName(prop.player_name)}|${normalizePropType(prop.prop_type)}`;
+      const verified = verifiedLineMap.get(vKey);
+      if (verified) {
+        const lineDiff = Math.abs(prop.line - verified.line);
+        if (lineDiff <= 1) {
+          prop.hasRealLine = true;
+          prop.lineSource = verified.bookmaker || 'fanduel';
+        } else {
+          // Line diverges from verified — flag as stale
+          prop.hasRealLine = false;
+          prop.lineSource = 'stale_diverged';
+          prop.compositeScore -= 10; // Penalize stale lines
+          console.log(`[MegaParlay] ⚠ STALE LINE: ${prop.player_name} ${prop.prop_type} line=${prop.line} vs verified=${verified.line} (diff=${lineDiff.toFixed(1)})`);
+        }
+      } else {
+        // No verified line found — mark unverified
+        prop.hasRealLine = false;
+        prop.lineSource = prop.bookmaker || 'unverified';
+      }
+    }
+
+    // Re-sort after cross-verification penalties
+    scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
+
     // === ALT LINE HUNTING (expanded to include under threes candidates) ===
     const underThreesCandidates = scoredProps.filter(p => 
       p.side === 'under' && 
@@ -977,6 +1018,8 @@ Deno.serve(async (req) => {
         prop.line = bestAlt.line;
         prop.odds = bestAlt.overOdds;
         prop.compositeScore += 5;
+        prop.hasRealLine = false; // Alt line may not be on FanDuel
+        prop.lineSource = 'alt_line';
       }
     }
 
@@ -997,21 +1040,15 @@ Deno.serve(async (req) => {
           prop.odds = bestAlt.underOdds;
           prop.compositeScore += 3;
           (prop as any).alt_swapped = true;
-          continue; // skip ghost line if real alt found
+          prop.hasRealLine = false; // Alt line may not be on FanDuel
+          prop.lineSource = 'alt_line';
+          continue;
         }
       }
 
-      // === GHOST LINE FALLBACK (threes unders only) ===
-      const normalizedProp = normalizePropType(prop.prop_type);
-      if (['threes', 'player_threes'].includes(normalizedProp) && prop.l10Median != null && prop.l10Median >= prop.line + 1) {
-        const ghostLine = prop.line + 1.0;
-        const oddsPenalty = -40;
-        console.log(`[MegaParlay] 👻 GHOST LINE: ${prop.player_name} ${prop.prop_type} U${prop.line} → U${ghostLine} (L10 median=${prop.l10Median}, odds penalty ${oddsPenalty})`);
-        prop.line = ghostLine;
-        prop.odds = (prop.odds || -110) + oddsPenalty; // make odds worse to reflect safer line
-        prop.compositeScore += 2;
-        (prop as any).ghost_alt = true;
-      }
+      // === GHOST LINE REMOVED — only real verified lines allowed ===
+      // Ghost lines fabricated fake lines that don't exist on any sportsbook.
+      // This caused DNA audit and integrity failures. Removed in v2.1.
     }
 
     scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
@@ -1163,24 +1200,26 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Relaxed fallback if < 2 legs
-      if (legs.length < 2) {
+      // Relaxed fallback if < 3 legs — ensure minimum 3-leg requirement
+      if (legs.length < 3) {
         for (const p of scoredProps) {
-          if (legs.length >= 2) break;
-          if (p.hitRate < 75) continue;
+          if (legs.length >= 3) break;
+          if (p.market_type !== 'player_prop') continue;
+          if (p.hitRate < 65) continue;
+          if (p.l10Avg == null) continue;
           if (allUsedPlayers.has(normalizeName(p.player_name))) continue;
           if (!passesBasicChecks(p, legs, gc)) continue;
           addLeg(p, legs, gc, used, 'fallback', 'standard');
         }
       }
 
-      if (legs.length >= 2) {
+      if (legs.length >= 3) {
         const odds = calcCombinedOdds(legs);
         allTickets.push({ tier: 'standard', legs, stake: stdAdj.stake, combinedOdds: odds });
         for (const n of used) allUsedPlayers.add(n);
         console.log(`[MegaParlay] STANDARD: ${legs.length} legs at +${odds}`);
       } else {
-        console.log(`[MegaParlay] STANDARD: Failed to build (only ${legs.length} legs)`);
+        console.log(`[MegaParlay] STANDARD: Failed to build (only ${legs.length} legs, need 3+)`);
       }
     }
 
@@ -1212,7 +1251,7 @@ Deno.serve(async (req) => {
           defense_bonus: leg.defenseBonus,
           volume_candidate: leg.volumeCandidate,
           alt_swapped: (leg as any).alt_swapped || false,
-          ghost_alt: (leg as any).ghost_alt || false,
+          ghost_alt: false, // Ghost lines removed in v2.1
           leg_role: leg.leg_role,
           ticket_tier: ticket.tier,
           market_type: leg.market_type,
