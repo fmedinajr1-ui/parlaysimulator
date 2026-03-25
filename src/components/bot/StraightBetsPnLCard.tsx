@@ -17,6 +17,11 @@ interface StraightBet {
   simulated_payout: number;
   outcome: string;
   profit_loss: number;
+  bet_type?: string;
+  ceiling_line?: number;
+  standard_line?: number;
+  h2h_boost?: number;
+  ceiling_reason?: string;
 }
 
 const PROP_LABELS: Record<string, string> = {
