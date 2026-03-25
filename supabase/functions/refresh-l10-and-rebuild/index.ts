@@ -312,6 +312,7 @@ Deno.serve(async (req) => {
         if ((lotteryCount || 0) === 0) {
           sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nLottery scanner completed but produced *0 lottery tickets* for ${todayL}.\n\nCheck: mega-parlay scanner, FanDuel lines, minimum leg requirements.`);
         }
+      },
     },
     {
       id: "phase3g",
