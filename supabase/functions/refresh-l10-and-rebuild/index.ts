@@ -31,6 +31,15 @@ Deno.serve(async (req) => {
   const results: Record<string, string> = {};
   const skipped: string[] = [];
 
+  // Fire-and-forget admin Telegram alert helper
+  const sendPipelineAlert = async (message: string) => {
+    try {
+      await supabase.functions.invoke("bot-send-telegram", {
+        body: { message, parse_mode: "Markdown", admin_only: true },
+      });
+    } catch (_) { /* never break pipeline */ }
+  };
+
   const elapsed = () => Date.now() - functionStartTime;
   const hasTime = () => elapsed() < TIMEOUT_MS;
 
@@ -45,8 +54,10 @@ Deno.serve(async (req) => {
     try {
       const { error } = await supabase.functions.invoke(fnName, { body });
       if (error) {
+        const errMsg = error.message || JSON.stringify(error);
         log(`⚠ ${name} error: ${JSON.stringify(error)}`);
-        results[fnName] = `error: ${error.message || JSON.stringify(error)}`;
+        results[fnName] = `error: ${errMsg}`;
+        sendPipelineAlert(`🚨 *Pipeline Step Error*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``);
       } else {
         log(`✅ ${name} done (${elapsed()}ms total)`);
         results[fnName] = "ok";
@@ -54,6 +65,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       log(`❌ ${name} exception: ${e.message}`);
       results[fnName] = `exception: ${e.message}`;
+      sendPipelineAlert(`🚨 *Pipeline Step Exception*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${e.message}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``);
     }
   };
 
@@ -240,6 +252,17 @@ Deno.serve(async (req) => {
         await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", { final_cap: 25 });
         await invokeStep("Running curated pipeline", "bot-curated-pipeline", {});
         await invokeStep("Force fresh mispriced parlays", "bot-force-fresh-parlays", {});
+
+        // Zero-output detection for parlays
+        const todayP = new Date().toISOString().split("T")[0];
+        const { count: parlayCount } = await supabase
+          .from("bot_daily_parlays")
+          .select("*", { count: "exact", head: true })
+          .eq("parlay_date", todayP)
+          .eq("outcome", "pending");
+        if ((parlayCount || 0) === 0) {
+          sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nParlay generation completed but produced *0 parlays* for ${todayP}.\n\nCheck: odds freshness, FanDuel line availability, injury gates.`);
+        }
       },
     },
     {
@@ -278,6 +301,17 @@ Deno.serve(async (req) => {
           return;
         }
         await invokeStep("Lottery mega-parlay scanner", "nba-mega-parlay-scanner", {});
+
+        // Zero-output detection for lottery
+        const todayL = new Date().toISOString().split("T")[0];
+        const { count: lotteryCount } = await supabase
+          .from("bot_daily_parlays")
+          .select("*", { count: "exact", head: true })
+          .eq("parlay_date", todayL)
+          .eq("tier", "lottery");
+        if ((lotteryCount || 0) === 0) {
+          sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nLottery scanner completed but produced *0 lottery tickets* for ${todayL}.\n\nCheck: mega-parlay scanner, FanDuel lines, minimum leg requirements.`);
+        }
       },
     },
     {
@@ -323,6 +357,16 @@ Deno.serve(async (req) => {
       label: "Generate straight bets + ceiling straights",
       run: async () => {
         await invokeStep("Generating straight bets", "bot-generate-straight-bets", {});
+
+        // Zero-output detection for straights
+        const todayS = new Date().toISOString().split("T")[0];
+        const { count: straightCount } = await supabase
+          .from("bot_straight_bets")
+          .select("*", { count: "exact", head: true })
+          .eq("bet_date", todayS);
+        if ((straightCount || 0) === 0) {
+          sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`);
+        }
       },
     },
     {
@@ -371,10 +415,19 @@ Deno.serve(async (req) => {
 
     log(`=== RUN COMPLETE (${elapsed()}ms) — ${skipped.length} phases skipped ===`);
 
+    // === END-OF-RUN FAILURE SUMMARY ===
+    const failedSteps = Object.entries(results).filter(([_, v]) => v.startsWith("error:") || v.startsWith("exception:"));
+    if (failedSteps.length > 0) {
+      const failList = failedSteps.map(([fn, status]) => `❌ \`${fn}\`: ${status}`).join("\n");
+      const okCount = Object.values(results).filter(v => v === "ok").length;
+      sendPipelineAlert(
+        `⚠️ *Pipeline Run Complete With Errors*\n\n*Run:* \`${currentRunId.slice(0,8)}\` | Attempt ${currentAttempt}/${MAX_ATTEMPTS}\n\n${failList}\n\n✅ ${okCount} steps OK | ⏭ ${skipped.length} skipped\n*Duration:* ${(elapsed()/1000).toFixed(1)}s`
+      );
+    }
+
     // === AUTO-RESUME: self-invoke if phases were skipped ===
     if (skipped.length > 0 && currentAttempt < MAX_ATTEMPTS && lastCompleted) {
       log(`🔄 Auto-continuing: attempt ${currentAttempt + 1}/${MAX_ATTEMPTS}, resuming after "${lastCompleted}"`);
-      // Fire-and-forget — don't await
       supabase.functions.invoke("refresh-l10-and-rebuild", {
         body: {
           resume_after: lastCompleted,
@@ -402,6 +455,7 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     log(`Fatal error (${elapsed()}ms): ${err.message}`);
+    await sendPipelineAlert(`🔴 *FATAL PIPELINE CRASH*\n\n*Error:* ${err.message}\n*Run:* \`${currentRunId.slice(0,8)}\` | Attempt ${currentAttempt}\n*Last completed:* ${lastCompleted || "none"}\n*Duration:* ${(elapsed()/1000).toFixed(1)}s`);
     return new Response(JSON.stringify({
       success: false,
       error: err.message,
