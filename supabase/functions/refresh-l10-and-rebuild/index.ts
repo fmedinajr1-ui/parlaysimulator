@@ -367,7 +367,7 @@ Deno.serve(async (req) => {
         if ((straightCount || 0) === 0) {
           sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`);
         }
-    },
+      },
     {
       id: "phase3h",
       label: "Slate status",
