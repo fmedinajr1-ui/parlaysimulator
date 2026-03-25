@@ -1,53 +1,61 @@
 
 
-# Fix Sweet Spot Void Rate — Stop Generating Unsettleable Picks
+# Ceiling Line Straights — L3 + H2H Matchup Scanner
 
-## Problem
-The `category-props-analyzer` generates picks for every player with game logs (~845/day), then checks `unified_props` for matching market lines. Players without matching props are marked `is_active = false` but still inserted into `category_sweet_spots` with `outcome = 'pending'`. This creates 75-90% unsettled noise that pollutes hit-rate stats, clogs the settlement pipeline, and makes tracking unreliable.
+## What This Does
+Scans today's sweet spots for players whose **L3 average** and **H2H matchup boost** both point OVER, then finds a **higher "ceiling" line** (based on L10 max / L3 trend) and generates a single straight bet at that elevated line. Tracks these separately as `ceiling_straight` bets for performance monitoring.
 
-## Root Cause (category-props-analyzer/index.ts, lines 1758-1767)
-When no matching prop exists in `unified_props`, the spot is marked inactive but still pushed into `validatedSpots` and upserted to the DB. The settlement function (`verify-sweet-spot-outcomes`) then loops over these forever, never finding game data to resolve them.
+Example: Bam Adebayo has a FanDuel line of 8.5 REB. His L3 avg is 11.3 and H2H vs opponent shows +15% boost. System identifies a ceiling line of 10.5 and creates a straight bet on OVER 10.5 REB — higher risk, higher reward.
+
+---
 
 ## Plan
 
-### Step 1: Skip inserting picks with no market line
-**File:** `supabase/functions/category-props-analyzer/index.ts`
-
-In the validation loop (line 1758), when `actualData` is null (no matching prop in `unified_props`), **do not push** the spot into `validatedSpots`. Simply increment `noGameCount` and `continue`. This prevents ~700+ phantom picks per day from ever entering the database.
-
-Add a summary log: `"Dropped X picks with no market line (not inserted)"`.
-
-### Step 2: Auto-void stale unsettled picks in the settlement function
-**File:** `supabase/functions/verify-sweet-spot-outcomes/index.ts`
-
-Add a cleanup step at the start: any pick older than 2 days with `outcome = 'pending'` and `actual_line IS NULL` should be batch-updated to `outcome = 'void'` with a reason like `'no_market_line'`. This cleans the existing backlog and prevents future accumulation.
-
-### Step 3: Add market-line gate to the parlay generator pickup query
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-When querying `category_sweet_spots` for parlay legs, add `.not('actual_line', 'is', null)` to the query filter. This ensures only picks with real book lines can enter parlays — a safety net even if Step 1 misses something.
-
-### Step 4: Clean existing backlog
-Create a one-time migration to mark all historical `category_sweet_spots` rows where `actual_line IS NULL` and `outcome IN ('pending', 'no_data')` as `outcome = 'void'`. This immediately clears the noise from past runs.
+### Step 1: Add `bet_type` column to `bot_straight_bets`
+Add a column to distinguish standard straights from ceiling straights so they can be tracked and filtered independently.
 
 ```sql
-UPDATE category_sweet_spots
-SET outcome = 'void', settled_at = now()
-WHERE actual_line IS NULL
-  AND outcome IN ('pending', 'no_data')
-  AND analysis_date < CURRENT_DATE;
+ALTER TABLE bot_straight_bets 
+  ADD COLUMN IF NOT EXISTS bet_type text DEFAULT 'standard',
+  ADD COLUMN IF NOT EXISTS ceiling_line numeric,
+  ADD COLUMN IF NOT EXISTS standard_line numeric,
+  ADD COLUMN IF NOT EXISTS l3_avg numeric,
+  ADD COLUMN IF NOT EXISTS h2h_boost numeric,
+  ADD COLUMN IF NOT EXISTS ceiling_reason text;
 ```
 
-## Expected Impact
-- Daily pick count drops from ~845 to ~45-100 (only market-backed picks)
-- Void rate drops from 75-90% to near 0%
-- Settlement pipeline runs faster with no phantom picks to skip
-- Hit-rate tracking becomes accurate (based only on real book lines)
-- Parlay legs guaranteed to have verifiable lines
+### Step 2: Add ceiling logic to `bot-generate-straight-bets/index.ts`
+After the existing straight bet generation, add a **Ceiling Scanner** phase:
+
+1. **Query** today's sweet spots with `l3_avg`, `l10_max`, `h2h_matchup_boost`, and `actual_line` (verified FanDuel line)
+2. **Filter** for ceiling candidates where:
+   - `l3_avg > actual_line` (recent trend clears the book line)
+   - `h2h_matchup_boost > 0` (matchup is favorable, not negative)
+   - `l10_max >= actual_line * 1.25` (player has shown ceiling 25%+ above line)
+3. **Calculate ceiling line**: `ceil_line = round_to_half(min(l3_avg * 0.95, l10_max * 0.8))` — picks a line between the L3 trend and L10 ceiling, ensuring it's above the standard line but below the true max
+4. **Validate**: ceiling line must be > standard FanDuel line (otherwise it's just a normal pick)
+5. **Insert** into `bot_straight_bets` with `bet_type = 'ceiling_straight'`, recording both `standard_line` and `ceiling_line`, plus `l3_avg` and `h2h_boost` for audit
+6. **Telegram broadcast**: separate section showing ceiling picks with L3/H2H/ceiling rationale
+
+### Step 3: Settlement support
+The existing `bot-settle-and-learn` function already settles `bot_straight_bets` by comparing `line` to actual stats. Since we insert the ceiling line as `line`, settlement works automatically — no changes needed.
+
+---
+
+## Ceiling Line Calculation Example
+
+```
+Player: Bam Adebayo | Prop: Rebounds
+FanDuel Line: 8.5
+L3 Avg: 11.3 | L10 Max: 14 | H2H Boost: +12%
+
+Ceiling Line = min(11.3 * 0.95, 14 * 0.8) = min(10.7, 11.2) = 10.7 → rounded to 10.5
+
+Result: OVER 10.5 REB (ceiling straight)
+Standard was 8.5, ceiling is 10.5 — tracks separately
+```
 
 ## Files Changed
-1. `supabase/functions/category-props-analyzer/index.ts` — Drop no-line picks before insert
-2. `supabase/functions/verify-sweet-spot-outcomes/index.ts` — Auto-void stale pending picks
-3. `supabase/functions/bot-generate-daily-parlays/index.ts` — Add actual_line filter to pickup query
-4. One database migration to clean backlog
+1. **Migration** — Add `bet_type`, `ceiling_line`, `standard_line`, `l3_avg`, `h2h_boost`, `ceiling_reason` columns
+2. **`supabase/functions/bot-generate-straight-bets/index.ts`** — Add ceiling scanner phase after standard generation
 
