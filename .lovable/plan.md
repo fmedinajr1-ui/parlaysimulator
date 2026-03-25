@@ -1,70 +1,50 @@
 
 
-# Fix Whale Odds Scraper: API Key Returns 401
+# Add More DNA Signals from Existing Data
 
-## Root Cause Found
+## Current State
 
-The `whale-odds-scraper` has been **silently failing since March 16**. Every full run makes API calls but collects **0 props and 0 team bets**.
+DNA has only 7 signals with enough data to produce weights. The `extractSignals` function returns 12, but 5 get filtered out due to low sample sizes or zero separation. Meanwhile, `category_sweet_spots` has **15+ unused columns** that can be turned into predictive features with zero pipeline risk.
 
-**Logs show the problem:**
-```
-[Full] Props batch failed for ee838160...: 401
-[Full] Props batch failed for ee838160...: 401
-[Full] Props batch failed for b542245530...: 422
-```
+## New Signals to Add (All Derived from Existing Columns)
 
-The Odds API is returning **401 Unauthorized** on all player prop and team market endpoints. The events endpoint (listing games) still works, so the scraper finds games but can't fetch any odds data.
+These only change `analyze-pick-dna` (learning) and `score-parlays-dna` (scoring). No parlay generation changes needed.
 
-This is why:
-- `game_bets` has been empty since March 15 (last successful full run)
-- `unified_props` only has data because `pp-props-scraper` is a separate backup source
-- Every parlay run falls back to the `game_bets stale` path
+| # | Signal | Formula | Why It Helps |
+|---|--------|---------|-------------|
+| 1 | `floor_vs_line` | `(l10_min - line) / line × 100` (OVER) | Does player's worst game still hit? Strong safety signal |
+| 2 | `median_buffer` | `(l10_median - line) / line × 100` | Median resists outliers better than mean |
+| 3 | `trend_l5_vs_l10` | `(l5_avg - l10_avg) / l10_avg × 100` | Medium-term momentum (complements L3 vs L10) |
+| 4 | `consistency` | `l10_std_dev / l10_avg` | Coefficient of variation — lower = more reliable |
+| 5 | `season_vs_line` | `(season_avg - line) / line × 100` | Long-term baseline buffer |
+| 6 | `h2h_vs_line` | `(h2h_avg_vs_opponent - line) / line × 100` | Does player beat line against THIS opponent? |
+| 7 | `games_played` | Raw `games_played` value | More data = more trustworthy pick |
+| 8 | `projected_buffer` | `(projected_value - line) / line × 100` | Do projections agree with the pick? |
 
-## The Fix: Two Parts
+## What Changes
 
-### Part 1: API Key — You Need to Check/Replace It
+### 1. `analyze-pick-dna/index.ts`
+- Add new columns to the `SettledPick` interface and SELECT query: `l5_avg`, `games_played`, `projected_value`
+- Add 8 new derived signals to `extractSignals()`
+- Everything else (stats computation, weight storage, Telegram report) works unchanged
 
-The `THE_ODDS_API_KEY` secret is either:
-- **Expired** (monthly/annual subscription lapsed)
-- **Hit its quota** (The Odds API has monthly request limits; your plan may have renewed by now)
-- **Revoked** (unlikely but possible)
+### 2. `score-parlays-dna/index.ts`
+- Add the same 8 computed signals to the per-leg scoring loop
+- The existing `weightMap.get(signalName)` lookup auto-discovers new weights — no structural changes
 
-**Action needed from you**: Go to [The Odds API dashboard](https://the-odds-api.com/) and check your API key status. If it's expired or over quota, get a new key and I'll update the secret.
+### 3. `bot-generate-daily-parlays/index.ts`
+- Add `games_played`, `projected_value`, `l10_min`, `l10_median`, `h2h_avg_vs_opponent` to leg JSON (same pattern as the existing stat enrichment fix)
 
-### Part 2: Code Fix — Better Error Handling
+## Why This Is Safe
 
-The current code silently swallows 401 errors per-batch. If the API key is bad, it should:
-1. Detect the first 401 and **stop immediately** (don't waste remaining budget)
-2. Send a **Telegram alert**: "API key rejected — odds scraper disabled"
-3. Log the failure to `cron_job_history` as `failed` instead of `completed`
-
-Currently, a broken run logs as `status: completed` with `playerPropsCollected: 0`, which looks like "no data available" rather than "authentication failed."
-
-**File**: `supabase/functions/whale-odds-scraper/index.ts`
-
-Changes:
-- After the first 401 response on a prop/team fetch, set a flag `apiKeyInvalid = true`
-- Break out of the event loop immediately
-- Log to cron_job_history with `status: 'auth_failed'`
-- Send Telegram alert to admin
-- Return error response instead of success with 0 data
-
-### Part 3: Cron Job Fix
-
-The every-30-min cron (job 75) runs `mode: "scout"` which only counts events — it never fetches data. The `mode: "full"` cron (job 76) only runs 3x/day at 14:00, 17:00, 22:00 UTC.
-
-**Recommendation**: Change the scout cron to run every 2 hours instead of every 30 min (saves API calls), and add an additional full run at 18:00 UTC (2 PM ET, right before NBA games).
-
-## Summary
-
-| Issue | Status | Fix |
-|-------|--------|-----|
-| API key returning 401 | **User action needed** | Check/renew The Odds API key |
-| Silent failure (logs "completed" with 0 data) | Code fix | Add 401 detection, Telegram alert, proper error status |
-| Scout cron too frequent | Optional | Reduce from every 30min to every 2h |
+- **No new tables** — uses existing columns already populated daily
+- **No pipeline changes** — only touches the DNA learning/scoring layer
+- **No voiding risk** — signals with insufficient data automatically get filtered by the existing `hitVals.length < 10` check
+- **Self-calibrating** — if a new signal doesn't predict wins, it gets near-zero weight and is ignored
 
 ## Files Changed
 
-1. **`supabase/functions/whale-odds-scraper/index.ts`** — Add 401 detection, early abort, Telegram alert, proper error logging
-2. **Secret check** — Verify `THE_ODDS_API_KEY` is valid (user action)
+1. `supabase/functions/analyze-pick-dna/index.ts` — Add 8 new derived signals
+2. `supabase/functions/score-parlays-dna/index.ts` — Add same signals to scoring
+3. `supabase/functions/bot-generate-daily-parlays/index.ts` — Enrich legs with missing stat fields
 
