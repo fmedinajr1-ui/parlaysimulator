@@ -915,6 +915,47 @@ Deno.serve(async (req) => {
       console.log(`[MegaParlay] 🔥 ${streakBoosted.length} props with hot streak bonus: ${streakBoosted.slice(0, 5).map(p => `${p.player_name} ${p.prop_type} ${p.side} (${p.streakLength}-game streak, +${p.streakBonus})`).join(', ')}`);
     }
 
+    // === CROSS-VERIFY LINES AGAINST unified_props (real FanDuel lines) ===
+    const { data: verifiedProps } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, current_line, bookmaker')
+      .eq('is_active', true)
+      .eq('sport', 'basketball_nba');
+
+    const verifiedLineMap = new Map<string, { line: number; bookmaker: string }>();
+    for (const vp of (verifiedProps || [])) {
+      const key = `${normalizeName(vp.player_name)}|${normalizePropType(vp.prop_type || '')}`;
+      verifiedLineMap.set(key, { line: vp.current_line || 0, bookmaker: vp.bookmaker || 'unknown' });
+    }
+    console.log(`[MegaParlay] Cross-verify: ${verifiedLineMap.size} verified lines from unified_props`);
+
+    // Mark props with verified lines and flag stale ones
+    for (const prop of scoredProps) {
+      if (prop.market_type !== 'player_prop') continue;
+      const vKey = `${normalizeName(prop.player_name)}|${normalizePropType(prop.prop_type)}`;
+      const verified = verifiedLineMap.get(vKey);
+      if (verified) {
+        const lineDiff = Math.abs(prop.line - verified.line);
+        if (lineDiff <= 1) {
+          prop.hasRealLine = true;
+          prop.lineSource = verified.bookmaker || 'fanduel';
+        } else {
+          // Line diverges from verified — flag as stale
+          prop.hasRealLine = false;
+          prop.lineSource = 'stale_diverged';
+          prop.compositeScore -= 10; // Penalize stale lines
+          console.log(`[MegaParlay] ⚠ STALE LINE: ${prop.player_name} ${prop.prop_type} line=${prop.line} vs verified=${verified.line} (diff=${lineDiff.toFixed(1)})`);
+        }
+      } else {
+        // No verified line found — mark unverified
+        prop.hasRealLine = false;
+        prop.lineSource = prop.bookmaker || 'unverified';
+      }
+    }
+
+    // Re-sort after cross-verification penalties
+    scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
+
     // === ALT LINE HUNTING (expanded to include under threes candidates) ===
     const underThreesCandidates = scoredProps.filter(p => 
       p.side === 'under' && 
