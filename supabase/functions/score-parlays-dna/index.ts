@@ -89,6 +89,7 @@ Deno.serve(async (req) => {
     const updateParlays: { id: string; legs: any; leg_count: number; expected_odds: number }[] = [];
 
     for (const parlay of parlays) {
+      log(`--- Parlay ${parlay.id.slice(0,8)} (${parlay.strategy_name}) ---`);
       const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
       const legScores: LegScore[] = [];
 
@@ -163,40 +164,44 @@ Deno.serve(async (req) => {
             projectedBuffer = sideUp ? ((projVal - line) / line) * 100 : ((line - projVal) / line) * 100;
           }
 
-          const signals: Record<string, number> = {
+          // Only use NORMALIZED/DERIVED signals — raw stat values (l10_avg, l3_avg, etc.)
+          // vary wildly across players/props and blow up the DNA formula
+          const rawHitRate = leg.l10_hit_rate ?? leg.hit_rate ?? null;
+          // Normalize hit_rate: legs store as 0-100 (%), DNA weights expect 0-1 fraction
+          const hitRateNorm = rawHitRate != null && rawHitRate > 1 ? rawHitRate / 100 : rawHitRate;
+          const signals: Record<string, number | null> = {
             buffer_pct: bufferPct,
-            l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || 0,
-            l10_std_dev: stdDev,
-            confidence_score: leg.confidence_score || leg.confidence || 0,
-            l10_avg: l10Avg,
-            l5_avg: l5Avg,
-            l3_avg: l3Avg,
-            matchup_adjustment: leg.matchup_adjustment || 0,
-            pace_adjustment: leg.pace_adjustment || 0,
-            h2h_matchup_boost: leg.h2h_matchup_boost || 0,
-            bounce_back_score: leg.bounce_back_score || 0,
-            season_avg: seasonAvg,
-            line_difference: leg.line_difference || 0,
-            // 8 new signals
-            floor_vs_line: floorVsLine,
-            median_buffer: medianBuffer,
-            trend_l5_vs_l10: trendL5,
-            consistency,
-            season_vs_line: seasonVsLine,
-            h2h_vs_line: h2hVsLine,
-            games_played: leg.games_played || 0,
-            projected_buffer: projectedBuffer,
+            l10_hit_rate: hitRateNorm,
+            confidence_score: leg.confidence_score || leg.confidence || null,
+            matchup_adjustment: leg.matchup_adjustment || null,
+            pace_adjustment: leg.pace_adjustment || null,
+            h2h_matchup_boost: leg.h2h_matchup_boost || null,
+            bounce_back_score: leg.bounce_back_score || null,
+            line_difference: leg.line_difference || null,
+            floor_vs_line: floorVsLine || null,
+            median_buffer: medianBuffer || null,
+            trend_l5_vs_l10: trendL5 || null,
+            consistency: consistency || null,
+            season_vs_line: seasonVsLine || null,
+            h2h_vs_line: h2hVsLine || null,
+            projected_buffer: projectedBuffer || null,
+            // Excluded: l10_avg, l3_avg, l5_avg, season_avg, l10_std_dev, games_played
+            // (raw stat values that aren't comparable across players/prop types)
           };
 
+          // buffer_pct is always valid (even if 0), keep it; skip nulls for everything else
           let rawScore = 0;
           let totalWeight = 0;
+          let signalsUsed = 0;
           for (const [signalName, value] of Object.entries(signals)) {
+            if (value == null) continue; // skip missing data — don't penalize absent signals
             const w = weightMap.get(signalName);
             if (w && w.weight !== 0) {
               const range = Math.abs(w.avg_when_hit - w.avg_when_miss) || 1;
               const normalized = (value - w.avg_when_miss) / range;
               rawScore += normalized * w.weight;
               totalWeight += Math.abs(w.weight);
+              signalsUsed++;
             }
           }
 
@@ -204,9 +209,12 @@ Deno.serve(async (req) => {
             ? Math.max(0, Math.min(100, 50 + (rawScore / totalWeight) * 50))
             : 50;
 
+          log(`    DNA calc: signals_used=${signalsUsed} rawScore=${rawScore.toFixed(3)} totalWeight=${totalWeight.toFixed(3)} dnaScore=${Math.round(dnaScore)} buf=${bufferPct.toFixed(1)}%`);
+
           if (!hasRealLine) flags.push("NO_FD_LINE"); // soft flag — informational only
           if (bufferPct < -10) flags.push("NEG_BUFFER"); // hard flag — widened from -5% to -10%
-          if (dnaScore < 30) flags.push("LOW_DNA"); // hard flag
+          // Only flag LOW_DNA when we have enough signals for a meaningful score
+          if (dnaScore < 30 && signalsUsed >= 3) flags.push("LOW_DNA");
         }
 
         if (!playerName) flags.push("NO_PLAYER");
@@ -221,6 +229,9 @@ Deno.serve(async (req) => {
           has_real_line: hasRealLine,
           flags,
         });
+
+        // Verbose per-leg logging for diagnostics
+        log(`  Leg: ${playerName} ${propType} ${side} ${line} | DNA:${Math.round(dnaScore)} buf:${Math.round(bufferPct*10)/10}% flags:[${flags.join(',')}] real_line:${hasRealLine}`);
       }
 
       // Grade the parlay — split flags into hard (prunable) and soft (informational)
