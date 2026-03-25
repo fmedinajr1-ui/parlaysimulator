@@ -24,6 +24,8 @@ Deno.serve(async (req) => {
   const resumeAfter: string | null = body.resume_after || null;
   const currentRunId: string = body.run_id || crypto.randomUUID();
   const currentAttempt: number = body.attempt || 1;
+  const regenAttempt: number = body.regen_attempt || 0;
+  const MAX_REGEN = 2;
 
   const log = (msg: string) => console.log(`[refresh-l10-and-rebuild][run:${currentRunId.slice(0,8)}][attempt:${currentAttempt}] ${msg}`);
   const results: Record<string, string> = {};
