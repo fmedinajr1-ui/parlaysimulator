@@ -51,6 +51,8 @@ export function StraightBetsPnLCard() {
   }
 
   const totalBets = bets.length;
+  const standardBets = bets.filter(b => b.bet_type !== 'ceiling_straight');
+  const ceilingBets = bets.filter(b => b.bet_type === 'ceiling_straight');
   const settled = bets.filter(b => b.outcome !== 'pending');
   const won = settled.filter(b => b.outcome === 'won').length;
   const lost = settled.filter(b => b.outcome === 'lost').length;
@@ -63,6 +65,8 @@ export function StraightBetsPnLCard() {
   // Today's bets
   const today = new Date().toISOString().split('T')[0];
   const todayBets = bets.filter(b => b.bet_date === today);
+  const todayStandard = todayBets.filter(b => b.bet_type !== 'ceiling_straight');
+  const todayCeiling = todayBets.filter(b => b.bet_type === 'ceiling_straight');
   const todayPending = todayBets.filter(b => b.outcome === 'pending').length;
   const todayWon = todayBets.filter(b => b.outcome === 'won').length;
   const todayLost = todayBets.filter(b => b.outcome === 'lost').length;
