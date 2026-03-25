@@ -3207,14 +3207,22 @@ function buildOptimalComboParlays(
   
   function generateCombinations(start: number, current: EnrichedPick[]) {
     if (current.length === legCount) {
-      // Check for correlations: no same player, no same game_id
-      const players = new Set<string>();
+      // Check for correlations: no same player+prop combo, allow same player with different props
+      const playerProps = new Set<string>();
       const gameIds = new Set<string>();
       let valid = true;
       for (const p of current) {
         const pName = (p.player_name || '').toLowerCase();
-        if (players.has(pName)) { valid = false; break; }
-        players.add(pName);
+        const pProp = normalizePropTypeForCorrelation(p.prop_type || '');
+        const ppKey = `${pName}|${pProp}`;
+        if (playerProps.has(ppKey)) { valid = false; break; }
+        playerProps.add(ppKey);
+        // Also check combo/base overlap for same player
+        const existingSoFar = current.slice(0, current.indexOf(p));
+        const playerExistingLegs = existingSoFar
+          .filter(e => (e.player_name || '').toLowerCase() === pName)
+          .map(e => ({ player_name: e.player_name, prop_type: e.prop_type || '' }));
+        if (playerExistingLegs.length > 0 && hasCorrelatedProp(playerExistingLegs, p.player_name, p.prop_type || '')) { valid = false; break; }
         const gId = (p as any).game_id || (p as any).event_id || '';
         if (gId && gameIds.has(gId)) {
           // Allow same game but different players (that's fine for props)
@@ -3408,7 +3416,11 @@ function hasCorrelatedProp(
     }
   }
 
-  return true; // Same player = always block (one player per parlay)
+  // Same player with different, non-correlated prop is ALLOWED
+  // Check for exact same prop type (block duplicate prop on same player)
+  if (playerLegs.includes(prop)) return true;
+  
+  return false; // Different prop type, no combo overlap = OK
 }
 
 // Normalize prop type to a canonical category for concentration tracking
@@ -3508,14 +3520,16 @@ function canUsePickInParlay(
   const categoryCount = parlayCategoryCount.get(category) || 0;
   if (categoryCount >= tierConfig.maxCategoryUsage) return false;
   
-  // === PROP TYPE CONCENTRATION CAP (40% max per parlay, 60% in volume/thin pool mode) ===
-  if (parlayPropTypeCount && totalLegs) {
+  // === PROP TYPE CONCENTRATION CAP ===
+  // For 3-leg parlays: no cap (pool is small enough)
+  // For 4+ legs: max 60% same prop type (or 67% in volume mode)
+  if (parlayPropTypeCount && totalLegs && totalLegs > 3) {
     const propType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) : 
                      'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
     const currentCount = parlayPropTypeCount.get(propType) || 0;
     const maxPropTypeLegs = volumeMode 
-      ? Math.max(2, Math.floor(totalLegs * 0.67))  // Volume mode: allow 2 of same type in 3-leg
-      : Math.max(1, Math.floor(totalLegs * 0.6));   // Relaxed from 0.4 to 0.6: allow 2 of same type in 3-leg parlays
+      ? Math.max(2, Math.floor(totalLegs * 0.67))
+      : Math.max(2, Math.floor(totalLegs * 0.6));
     if (currentCount >= maxPropTypeLegs) {
       console.log(`[PropTypeCap] Blocked ${('player_name' in pick ? pick.player_name : pick.home_team)} - ${propType} already at ${currentCount}/${maxPropTypeLegs} max for ${totalLegs}-leg parlay`);
       return false;
@@ -10463,7 +10477,13 @@ Deno.serve(async (req) => {
           for (const pick of sorted) {
             if (legs.length >= 3) break;
             const pName = (pick.player_name || '').toLowerCase();
-            if (usedPlayers.has(pName)) continue;
+            const ppKey = `${pName}|${normalizePropTypeForCorrelation(pick.prop_type || '')}`;
+            if (usedPlayers.has(ppKey)) continue;
+            // Check combo/base overlap with existing legs
+            if (legs.length > 0) {
+              const existingForCorr = legs.map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || '' }));
+              if (hasCorrelatedProp(existingForCorr, pick.player_name, pick.prop_type || '')) continue;
+            }
             
             // === 70% L10 HIT RATE GATE for cluster builder ===
             const clusterL10Hr = (pick as any).l10_hit_rate || 0;
@@ -10494,7 +10514,7 @@ Deno.serve(async (req) => {
               type: 'player',
               _gameContext: (pick as any)._gameContext,
             });
-            usedPlayers.add(pName);
+            usedPlayers.add(ppKey);
           }
 
           if (legs.length < 3) break;
@@ -10633,7 +10653,13 @@ Deno.serve(async (req) => {
           for (const pick of rolePool) {
             if (added >= target) break;
             const pName = (pick.player_name || '').toLowerCase();
-            if (usedPlayers.has(pName)) continue;
+            const ppKey = `${pName}|${normalizePropTypeForCorrelation(pick.prop_type || '')}`;
+            if (usedPlayers.has(ppKey)) continue;
+            // Check combo/base overlap with existing legs
+            if (selectedLegs.length > 0) {
+              const existingForCorr = selectedLegs.map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || '' }));
+              if (hasCorrelatedProp(existingForCorr, pick.player_name, pick.prop_type || '')) continue;
+            }
             
             // Check global fingerprint
             const fp = `${pName}_${pick.prop_type}_${pick.recommended_side}`;
@@ -10657,7 +10683,7 @@ Deno.serve(async (req) => {
               sport: pick.sport,
               type: 'player',
             });
-            usedPlayers.add(pName);
+            usedPlayers.add(ppKey);
             added++;
           }
         }
@@ -10667,7 +10693,12 @@ Deno.serve(async (req) => {
           for (const pick of multiLegCandidates) {
             if (selectedLegs.length >= legCount) break;
             const pName = (pick.player_name || '').toLowerCase();
-            if (usedPlayers.has(pName)) continue;
+            const ppKey = `${pName}|${normalizePropTypeForCorrelation(pick.prop_type || '')}`;
+            if (usedPlayers.has(ppKey)) continue;
+            if (selectedLegs.length > 0) {
+              const existingForCorr = selectedLegs.map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || '' }));
+              if (hasCorrelatedProp(existingForCorr, pick.player_name, pick.prop_type || '')) continue;
+            }
             const antiCorr = hasAntiCorrelation(pick, selectedLegs);
             if (antiCorr.blocked) continue;
             selectedLegs.push({
@@ -10686,7 +10717,7 @@ Deno.serve(async (req) => {
               sport: pick.sport,
               type: 'player',
             });
-            usedPlayers.add(pName);
+            usedPlayers.add(ppKey);
           }
         }
 
@@ -11078,7 +11109,7 @@ Deno.serve(async (req) => {
           const leg1 = unusedMispriced[start];
           const leg1Name = (leg1.player_name || '').toLowerCase().trim();
           const sweepLegs = [leg1];
-          const sweepPlayers = new Set([leg1Name]);
+          const sweepPlayerProps = new Set([`${leg1Name}|${normalizePropTypeForCorrelation(leg1.prop_type || '')}`]);
           const sweepIndices = [start];
           let overCount = (leg1.signal || '').toUpperCase() === 'OVER' ? 1 : 0;
           let underCount = (leg1.signal || '').toUpperCase() === 'UNDER' ? 1 : 0;
@@ -11088,9 +11119,13 @@ Deno.serve(async (req) => {
             if (usedInSweep.has(j)) continue;
             const candidate = unusedMispriced[j];
             const candName = (candidate.player_name || '').toLowerCase().trim();
+            const candPpKey = `${candName}|${normalizePropTypeForCorrelation(candidate.prop_type || '')}`;
 
-            // No same player
-            if (sweepPlayers.has(candName)) continue;
+            // No same player+prop combo
+            if (sweepPlayerProps.has(candPpKey)) continue;
+            // Check combo/base overlap for same player
+            const sweepExisting = sweepLegs.map((l: any) => ({ player_name: l.player_name || '', prop_type: l.prop_type || '' }));
+            if (hasCorrelatedProp(sweepExisting, candidate.player_name || '', candidate.prop_type || '')) continue;
 
             // Prefer mixing OVER/UNDER for hedge protection
             const candSide = (candidate.signal || '').toUpperCase();
@@ -11104,7 +11139,7 @@ Deno.serve(async (req) => {
             }
 
             sweepLegs.push(candidate);
-            sweepPlayers.add(candName);
+            sweepPlayerProps.add(candPpKey);
             sweepIndices.push(j);
             if (candSide === 'OVER') overCount++;
             else underCount++;
