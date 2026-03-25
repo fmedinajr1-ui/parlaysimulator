@@ -243,10 +243,10 @@ Deno.serve(async (req) => {
       } else if (weakLegs.length === 1) {
         grade = "B";
         // Drop weak leg if remaining >= 2
-        const keptLegs = legScores.filter(l => l.flags.length === 0);
+        const keptLegs = legScores.filter(l => !l.flags.some(f => !SOFT_FLAGS.has(f)));
         if (keptLegs.length >= 2) {
           action = `drop_${weakLegs.length}_leg`;
-          const keptLegData = legs.filter((_: any, i: number) => legScores[i].flags.length === 0);
+          const keptLegData = legs.filter((_: any, i: number) => !legScores[i].flags.some((f: string) => !SOFT_FLAGS.has(f)));
           const newOdds = keptLegData.reduce((acc: number, l: any) => {
             const legOdds = l.american_odds || l.odds || -110;
             const decimal = legOdds > 0 ? (legOdds / 100) + 1 : (100 / Math.abs(legOdds)) + 1;
@@ -265,10 +265,10 @@ Deno.serve(async (req) => {
         }
       } else {
         grade = "C";
-        const keptLegs = legScores.filter(l => l.flags.length === 0);
+        const keptLegs = legScores.filter(l => !l.flags.some(f => !SOFT_FLAGS.has(f)));
         if (keptLegs.length >= 2) {
           action = `drop_${weakLegs.length}_legs`;
-          const keptLegData = legs.filter((_: any, i: number) => legScores[i].flags.length === 0);
+          const keptLegData = legs.filter((_: any, i: number) => !legScores[i].flags.some((f: string) => !SOFT_FLAGS.has(f)));
           const newOdds = keptLegData.reduce((acc: number, l: any) => {
             const legOdds = l.american_odds || l.odds || -110;
             const decimal = legOdds > 0 ? (legOdds / 100) + 1 : (100 / Math.abs(legOdds)) + 1;
@@ -292,7 +292,7 @@ Deno.serve(async (req) => {
         strategy: parlay.strategy_name,
         grade,
         original_legs: legs.length,
-        kept_legs: action === "void" ? 0 : legScores.filter(l => l.flags.length === 0).length,
+        kept_legs: action === "void" ? 0 : legScores.filter(l => !l.flags.some(f => !SOFT_FLAGS.has(f))).length,
         voided: action === "void",
         leg_scores: legScores,
         action,
