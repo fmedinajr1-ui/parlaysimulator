@@ -10512,7 +10512,7 @@ Deno.serve(async (req) => {
               type: 'player',
               _gameContext: (pick as any)._gameContext,
             });
-            usedPlayers.add(pName);
+            usedPlayers.add(ppKey);
           }
 
           if (legs.length < 3) break;
@@ -10651,7 +10651,13 @@ Deno.serve(async (req) => {
           for (const pick of rolePool) {
             if (added >= target) break;
             const pName = (pick.player_name || '').toLowerCase();
-            if (usedPlayers.has(pName)) continue;
+            const ppKey = `${pName}|${normalizePropTypeForCorrelation(pick.prop_type || '')}`;
+            if (usedPlayers.has(ppKey)) continue;
+            // Check combo/base overlap with existing legs
+            if (selectedLegs.length > 0) {
+              const existingForCorr = selectedLegs.map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || '' }));
+              if (hasCorrelatedProp(existingForCorr, pick.player_name, pick.prop_type || '')) continue;
+            }
             
             // Check global fingerprint
             const fp = `${pName}_${pick.prop_type}_${pick.recommended_side}`;
@@ -10675,7 +10681,7 @@ Deno.serve(async (req) => {
               sport: pick.sport,
               type: 'player',
             });
-            usedPlayers.add(pName);
+            usedPlayers.add(ppKey);
             added++;
           }
         }
@@ -10685,7 +10691,12 @@ Deno.serve(async (req) => {
           for (const pick of multiLegCandidates) {
             if (selectedLegs.length >= legCount) break;
             const pName = (pick.player_name || '').toLowerCase();
-            if (usedPlayers.has(pName)) continue;
+            const ppKey = `${pName}|${normalizePropTypeForCorrelation(pick.prop_type || '')}`;
+            if (usedPlayers.has(ppKey)) continue;
+            if (selectedLegs.length > 0) {
+              const existingForCorr = selectedLegs.map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || '' }));
+              if (hasCorrelatedProp(existingForCorr, pick.player_name, pick.prop_type || '')) continue;
+            }
             const antiCorr = hasAntiCorrelation(pick, selectedLegs);
             if (antiCorr.blocked) continue;
             selectedLegs.push({
@@ -10704,7 +10715,7 @@ Deno.serve(async (req) => {
               sport: pick.sport,
               type: 'player',
             });
-            usedPlayers.add(pName);
+            usedPlayers.add(ppKey);
           }
         }
 
@@ -11096,7 +11107,7 @@ Deno.serve(async (req) => {
           const leg1 = unusedMispriced[start];
           const leg1Name = (leg1.player_name || '').toLowerCase().trim();
           const sweepLegs = [leg1];
-          const sweepPlayers = new Set([leg1Name]);
+          const sweepPlayerProps = new Set([`${leg1Name}|${normalizePropTypeForCorrelation(leg1.prop_type || '')}`]);
           const sweepIndices = [start];
           let overCount = (leg1.signal || '').toUpperCase() === 'OVER' ? 1 : 0;
           let underCount = (leg1.signal || '').toUpperCase() === 'UNDER' ? 1 : 0;
@@ -11106,9 +11117,13 @@ Deno.serve(async (req) => {
             if (usedInSweep.has(j)) continue;
             const candidate = unusedMispriced[j];
             const candName = (candidate.player_name || '').toLowerCase().trim();
+            const candPpKey = `${candName}|${normalizePropTypeForCorrelation(candidate.prop_type || '')}`;
 
-            // No same player
-            if (sweepPlayers.has(candName)) continue;
+            // No same player+prop combo
+            if (sweepPlayerProps.has(candPpKey)) continue;
+            // Check combo/base overlap for same player
+            const sweepExisting = sweepLegs.map((l: any) => ({ player_name: l.player_name || '', prop_type: l.prop_type || '' }));
+            if (hasCorrelatedProp(sweepExisting, candidate.player_name || '', candidate.prop_type || '')) continue;
 
             // Prefer mixing OVER/UNDER for hedge protection
             const candSide = (candidate.signal || '').toUpperCase();
