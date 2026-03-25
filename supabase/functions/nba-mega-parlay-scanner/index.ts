@@ -1200,11 +1200,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Relaxed fallback if < 2 legs
-      if (legs.length < 2) {
+      // Relaxed fallback if < 3 legs — ensure minimum 3-leg requirement
+      if (legs.length < 3) {
         for (const p of scoredProps) {
-          if (legs.length >= 2) break;
-          if (p.hitRate < 75) continue;
+          if (legs.length >= 3) break;
+          if (p.market_type !== 'player_prop') continue;
+          if (p.hitRate < 65) continue;
+          if (p.l10Avg == null) continue;
           if (allUsedPlayers.has(normalizeName(p.player_name))) continue;
           if (!passesBasicChecks(p, legs, gc)) continue;
           addLeg(p, legs, gc, used, 'fallback', 'standard');
