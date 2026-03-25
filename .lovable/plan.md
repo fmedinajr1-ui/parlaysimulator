@@ -1,61 +1,53 @@
 
 
-# Ceiling Line Straights — L3 + H2H Matchup Scanner
+# Fix Lottery Scanner — Real Lines + DNA Audit
 
-## What This Does
-Scans today's sweet spots for players whose **L3 average** and **H2H matchup boost** both point OVER, then finds a **higher "ceiling" line** (based on L10 max / L3 trend) and generates a single straight bet at that elevated line. Tracks these separately as `ceiling_straight` bets for performance monitoring.
-
-Example: Bam Adebayo has a FanDuel line of 8.5 REB. His L3 avg is 11.3 and H2H vs opponent shows +15% boost. System identifies a ceiling line of 10.5 and creates a straight bet on OVER 10.5 REB — higher risk, higher reward.
-
----
+## Problems
+1. Lottery scanner legs don't include `has_real_line`, `line_source`, or `line_verified_at` — DNA audit can't distinguish verified vs projected lines
+2. Legs lack proper enrichment fields (`l10_std_dev`, `l10_min`, `l10_max`, `l3_avg`, `l5_avg`, `season_avg`, `h2h_avg_vs_opponent`, `projected_value`) that the DNA scorer needs to compute meaningful scores
+3. The orchestrator doesn't run DNA audit on lottery parlays after they're generated
 
 ## Plan
 
-### Step 1: Add `bet_type` column to `bot_straight_bets`
-Add a column to distinguish standard straights from ceiling straights so they can be tracked and filtered independently.
+### Step 1: Enrich lottery legs with real line verification + DNA-compatible fields
+**File: `supabase/functions/nba-mega-parlay-scanner/index.ts`**
 
-```sql
-ALTER TABLE bot_straight_bets 
-  ADD COLUMN IF NOT EXISTS bet_type text DEFAULT 'standard',
-  ADD COLUMN IF NOT EXISTS ceiling_line numeric,
-  ADD COLUMN IF NOT EXISTS standard_line numeric,
-  ADD COLUMN IF NOT EXISTS l3_avg numeric,
-  ADD COLUMN IF NOT EXISTS h2h_boost numeric,
-  ADD COLUMN IF NOT EXISTS ceiling_reason text;
+In the leg serialization block (~line 1176), add the fields DNA expects:
+- `has_real_line: true` (these come direct from FanDuel/HardRock API)
+- `line_source: 'fanduel'` or the bookmaker name
+- `l10_std_dev`, `l10_min`, `l10_max` — pull from `category_sweet_spots` query (already fetching `l10_avg`, need to add these columns)
+- `l3_avg`, `l5_avg`, `season_avg` — pull from sweet spots or game logs
+- `h2h_avg_vs_opponent`, `projected_value` — from mispriced lines data
+
+Update the `category_sweet_spots` select query (~line 506) to also fetch: `l10_std_dev`, `l10_min`, `l10_max`, `l3_avg`, `l5_avg`, `season_avg`, `h2h_avg_vs_opponent`
+
+Update `ScoredProp` interface to carry these new fields through scoring.
+
+Update the `parlayLegsJson` mapping (~line 1176) to include all DNA-required fields:
+```typescript
+has_real_line: true,
+line_source: leg.bookmaker || 'fanduel',
+l10_std_dev: leg.l10StdDev || 0,
+l10_min: leg.l10Min || 0,
+l10_max: leg.l10Max || 0,
+l3_avg: leg.l3Avg || leg.l10Avg,
+l5_avg: leg.l5Avg || leg.l10Avg,
+season_avg: leg.seasonAvg || leg.l10Avg,
+h2h_avg_vs_opponent: leg.h2hAvg || 0,
+projected_value: leg.l10Avg || 0,
 ```
 
-### Step 2: Add ceiling logic to `bot-generate-straight-bets/index.ts`
-After the existing straight bet generation, add a **Ceiling Scanner** phase:
+### Step 2: Run DNA audit on lottery parlays
+**File: `supabase/functions/refresh-l10-and-rebuild/index.ts`**
 
-1. **Query** today's sweet spots with `l3_avg`, `l10_max`, `h2h_matchup_boost`, and `actual_line` (verified FanDuel line)
-2. **Filter** for ceiling candidates where:
-   - `l3_avg > actual_line` (recent trend clears the book line)
-   - `h2h_matchup_boost > 0` (matchup is favorable, not negative)
-   - `l10_max >= actual_line * 1.25` (player has shown ceiling 25%+ above line)
-3. **Calculate ceiling line**: `ceil_line = round_to_half(min(l3_avg * 0.95, l10_max * 0.8))` — picks a line between the L3 trend and L10 ceiling, ensuring it's above the standard line but below the true max
-4. **Validate**: ceiling line must be > standard FanDuel line (otherwise it's just a normal pick)
-5. **Insert** into `bot_straight_bets` with `bet_type = 'ceiling_straight'`, recording both `standard_line` and `ceiling_line`, plus `l3_avg` and `h2h_boost` for audit
-6. **Telegram broadcast**: separate section showing ceiling picks with L3/H2H/ceiling rationale
+The DNA audit (Phase 3g) already runs on ALL pending parlays including lottery ones. However, the lottery scanner runs in the orchestrator *before* the DNA audit — need to verify ordering. If lottery runs after DNA audit, move it before or add a second DNA pass after lottery generation.
 
-### Step 3: Settlement support
-The existing `bot-settle-and-learn` function already settles `bot_straight_bets` by comparing `line` to actual stats. Since we insert the ceiling line as `line`, settlement works automatically — no changes needed.
+### Step 3: Cross-verify lines against `unified_props`
+**File: `supabase/functions/nba-mega-parlay-scanner/index.ts`**
 
----
-
-## Ceiling Line Calculation Example
-
-```
-Player: Bam Adebayo | Prop: Rebounds
-FanDuel Line: 8.5
-L3 Avg: 11.3 | L10 Max: 14 | H2H Boost: +12%
-
-Ceiling Line = min(11.3 * 0.95, 14 * 0.8) = min(10.7, 11.2) = 10.7 → rounded to 10.5
-
-Result: OVER 10.5 REB (ceiling straight)
-Standard was 8.5, ceiling is 10.5 — tracks separately
-```
+After scoring props, cross-reference each selected leg against `unified_props` to confirm the line matches a verified FanDuel line. If the Odds API line differs from unified_props by more than 1 point, flag it as stale.
 
 ## Files Changed
-1. **Migration** — Add `bet_type`, `ceiling_line`, `standard_line`, `l3_avg`, `h2h_boost`, `ceiling_reason` columns
-2. **`supabase/functions/bot-generate-straight-bets/index.ts`** — Add ceiling scanner phase after standard generation
+1. `supabase/functions/nba-mega-parlay-scanner/index.ts` — Add real line flags, enrich legs with DNA fields, cross-verify against unified_props
+2. `supabase/functions/refresh-l10-and-rebuild/index.ts` — Ensure DNA audit runs after lottery generation (verify ordering)
 
