@@ -2138,7 +2138,7 @@ serve(async (req) => {
       validatedSpots.push(spot);
     }
 
-    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no game today, ${bounceBackCount} bounce-back, ${lineEligibleCount} line-eligible`);
+    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no market line (skipped), ${bounceBackCount} bounce-back, ${lineEligibleCount} line-eligible`);
 
     // Sort by confidence score (active first, then by score)
     validatedSpots.sort((a, b) => {
