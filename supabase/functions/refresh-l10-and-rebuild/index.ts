@@ -54,8 +54,10 @@ Deno.serve(async (req) => {
     try {
       const { error } = await supabase.functions.invoke(fnName, { body });
       if (error) {
+        const errMsg = error.message || JSON.stringify(error);
         log(`⚠ ${name} error: ${JSON.stringify(error)}`);
-        results[fnName] = `error: ${error.message || JSON.stringify(error)}`;
+        results[fnName] = `error: ${errMsg}`;
+        sendPipelineAlert(`🚨 *Pipeline Step Error*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``);
       } else {
         log(`✅ ${name} done (${elapsed()}ms total)`);
         results[fnName] = "ok";
@@ -63,6 +65,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       log(`❌ ${name} exception: ${e.message}`);
       results[fnName] = `exception: ${e.message}`;
+      sendPipelineAlert(`🚨 *Pipeline Step Exception*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${e.message}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``);
     }
   };
 
