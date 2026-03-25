@@ -308,6 +308,13 @@ Deno.serve(async (req) => {
       },
     },
     {
+      id: "phase3i",
+      label: "Generate straight bets + ceiling straights",
+      run: async () => {
+        await invokeStep("Generating straight bets", "bot-generate-straight-bets", {});
+      },
+    },
+    {
       id: "phase3h",
       label: "Slate status",
       run: async () => {
