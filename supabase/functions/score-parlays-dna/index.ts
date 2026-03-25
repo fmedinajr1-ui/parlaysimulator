@@ -191,6 +191,7 @@ Deno.serve(async (req) => {
           // buffer_pct is always valid (even if 0), keep it; skip nulls for everything else
           let rawScore = 0;
           let totalWeight = 0;
+          let signalsUsed = 0;
           for (const [signalName, value] of Object.entries(signals)) {
             if (value == null) continue; // skip missing data — don't penalize absent signals
             const w = weightMap.get(signalName);
@@ -199,6 +200,7 @@ Deno.serve(async (req) => {
               const normalized = (value - w.avg_when_miss) / range;
               rawScore += normalized * w.weight;
               totalWeight += Math.abs(w.weight);
+              signalsUsed++;
             }
           }
 
@@ -206,9 +208,12 @@ Deno.serve(async (req) => {
             ? Math.max(0, Math.min(100, 50 + (rawScore / totalWeight) * 50))
             : 50;
 
+          log(`    DNA calc: signals_used=${signalsUsed} rawScore=${rawScore.toFixed(3)} totalWeight=${totalWeight.toFixed(3)} dnaScore=${Math.round(dnaScore)} buf=${bufferPct.toFixed(1)}%`);
+
           if (!hasRealLine) flags.push("NO_FD_LINE"); // soft flag — informational only
           if (bufferPct < -10) flags.push("NEG_BUFFER"); // hard flag — widened from -5% to -10%
-          if (dnaScore < 30) flags.push("LOW_DNA"); // hard flag
+          // Only flag LOW_DNA when we have enough signals for a meaningful score
+          if (dnaScore < 30 && signalsUsed >= 3) flags.push("LOW_DNA");
         }
 
         if (!playerName) flags.push("NO_PLAYER");
