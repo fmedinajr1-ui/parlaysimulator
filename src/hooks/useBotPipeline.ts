@@ -46,6 +46,7 @@ export interface PipelineParlay {
   outcome: string | null;
   selection_rationale: string | null;
   created_at: string;
+  dna_grade: string | null;
 }
 
 export interface UniquePick extends PipelineLeg {

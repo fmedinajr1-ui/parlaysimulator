@@ -303,7 +303,7 @@ Deno.serve(async (req) => {
     if (voidIds.length > 0) {
       const { error: voidErr } = await supabase
         .from("bot_daily_parlays")
-        .update({ outcome: "void", lesson_learned: "DNA audit: unbettable (fake line / no player / insufficient legs)" })
+        .update({ outcome: "void", lesson_learned: "DNA audit: unbettable (fake line / no player / insufficient legs)", dna_grade: "F" })
         .in("id", voidIds);
       if (voidErr) log(`Void error: ${voidErr.message}`);
       else log(`Voided ${voidIds.length} F-grade parlays`);
@@ -311,6 +311,7 @@ Deno.serve(async (req) => {
 
     // Update pruned parlays
     for (const up of updateParlays) {
+      const gradeEntry = grades.find(g => g.parlay_id === up.id);
       const { error: upErr } = await supabase
         .from("bot_daily_parlays")
         .update({
@@ -318,9 +319,23 @@ Deno.serve(async (req) => {
           leg_count: up.leg_count,
           expected_odds: up.expected_odds,
           lesson_learned: "DNA audit: weak legs pruned",
+          dna_grade: gradeEntry?.grade || "C",
         })
         .eq("id", up.id);
       if (upErr) log(`Update error for ${up.id}: ${upErr.message}`);
+    }
+
+    // Persist dna_grade on all non-voided, non-pruned parlays (A-grades)
+    const aGradeIds = grades
+      .filter(g => g.grade === "A" && !voidIds.includes(g.parlay_id) && !updateParlays.some(u => u.id === g.parlay_id))
+      .map(g => g.parlay_id);
+    if (aGradeIds.length > 0) {
+      const { error: aErr } = await supabase
+        .from("bot_daily_parlays")
+        .update({ dna_grade: "A" })
+        .in("id", aGradeIds);
+      if (aErr) log(`A-grade update error: ${aErr.message}`);
+      else log(`Marked ${aGradeIds.length} parlays as A-grade`);
     }
 
     log(`Grades: A=${grades.filter(g => g.grade === "A").length}, B=${grades.filter(g => g.grade === "B").length}, C=${grades.filter(g => g.grade === "C").length}, F=${grades.filter(g => g.grade === "F").length}`);
