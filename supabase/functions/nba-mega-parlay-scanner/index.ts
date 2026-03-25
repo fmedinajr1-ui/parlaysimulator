@@ -1249,7 +1249,7 @@ Deno.serve(async (req) => {
           defense_bonus: leg.defenseBonus,
           volume_candidate: leg.volumeCandidate,
           alt_swapped: (leg as any).alt_swapped || false,
-          ghost_alt: (leg as any).ghost_alt || false,
+          ghost_alt: false, // Ghost lines removed in v2.1
           leg_role: leg.leg_role,
           ticket_tier: ticket.tier,
           market_type: leg.market_type,
