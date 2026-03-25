@@ -977,6 +977,8 @@ Deno.serve(async (req) => {
         prop.line = bestAlt.line;
         prop.odds = bestAlt.overOdds;
         prop.compositeScore += 5;
+        prop.hasRealLine = false; // Alt line may not be on FanDuel
+        prop.lineSource = 'alt_line';
       }
     }
 
@@ -997,21 +999,15 @@ Deno.serve(async (req) => {
           prop.odds = bestAlt.underOdds;
           prop.compositeScore += 3;
           (prop as any).alt_swapped = true;
-          continue; // skip ghost line if real alt found
+          prop.hasRealLine = false; // Alt line may not be on FanDuel
+          prop.lineSource = 'alt_line';
+          continue;
         }
       }
 
-      // === GHOST LINE FALLBACK (threes unders only) ===
-      const normalizedProp = normalizePropType(prop.prop_type);
-      if (['threes', 'player_threes'].includes(normalizedProp) && prop.l10Median != null && prop.l10Median >= prop.line + 1) {
-        const ghostLine = prop.line + 1.0;
-        const oddsPenalty = -40;
-        console.log(`[MegaParlay] 👻 GHOST LINE: ${prop.player_name} ${prop.prop_type} U${prop.line} → U${ghostLine} (L10 median=${prop.l10Median}, odds penalty ${oddsPenalty})`);
-        prop.line = ghostLine;
-        prop.odds = (prop.odds || -110) + oddsPenalty; // make odds worse to reflect safer line
-        prop.compositeScore += 2;
-        (prop as any).ghost_alt = true;
-      }
+      // === GHOST LINE REMOVED — only real verified lines allowed ===
+      // Ghost lines fabricated fake lines that don't exist on any sportsbook.
+      // This caused DNA audit and integrity failures. Removed in v2.1.
     }
 
     scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
@@ -1174,13 +1170,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      if (legs.length >= 2) {
+      if (legs.length >= 3) {
         const odds = calcCombinedOdds(legs);
         allTickets.push({ tier: 'standard', legs, stake: stdAdj.stake, combinedOdds: odds });
         for (const n of used) allUsedPlayers.add(n);
         console.log(`[MegaParlay] STANDARD: ${legs.length} legs at +${odds}`);
       } else {
-        console.log(`[MegaParlay] STANDARD: Failed to build (only ${legs.length} legs)`);
+        console.log(`[MegaParlay] STANDARD: Failed to build (only ${legs.length} legs, need 3+)`);
       }
     }
 
