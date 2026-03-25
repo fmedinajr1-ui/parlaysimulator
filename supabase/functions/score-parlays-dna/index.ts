@@ -166,9 +166,12 @@ Deno.serve(async (req) => {
 
           // Only use NORMALIZED/DERIVED signals — raw stat values (l10_avg, l3_avg, etc.)
           // vary wildly across players/props and blow up the DNA formula
+          const rawHitRate = leg.l10_hit_rate ?? leg.hit_rate ?? null;
+          // Normalize hit_rate: legs store as 0-100 (%), DNA weights expect 0-1 fraction
+          const hitRateNorm = rawHitRate != null && rawHitRate > 1 ? rawHitRate / 100 : rawHitRate;
           const signals: Record<string, number | null> = {
             buffer_pct: bufferPct,
-            l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || null,
+            l10_hit_rate: hitRateNorm,
             confidence_score: leg.confidence_score || leg.confidence || null,
             matchup_adjustment: leg.matchup_adjustment || null,
             pace_adjustment: leg.pace_adjustment || null,
