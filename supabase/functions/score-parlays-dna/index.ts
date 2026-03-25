@@ -235,7 +235,7 @@ Deno.serve(async (req) => {
       }
 
       // Grade the parlay — split flags into hard (prunable) and soft (informational)
-      const SOFT_FLAGS = new Set(["NO_FD_LINE"]);
+      const SOFT_FLAGS = new Set<string>(); // NO_FD_LINE is now a HARD flag — no picks without real FanDuel lines
       const weakLegs = legScores.filter(l => l.flags.some(f => !SOFT_FLAGS.has(f)));
       const fatalLegs = legScores.filter(l =>
         l.flags.includes("NO_PLAYER")
