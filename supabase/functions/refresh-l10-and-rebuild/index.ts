@@ -165,9 +165,79 @@ Deno.serve(async (req) => {
       },
     },
     {
+      id: "phase3_odds_gate",
+      label: "FanDuel odds freshness gate",
+      run: async () => {
+        log("=== PRE-GENERATION GATE: Checking FanDuel odds freshness ===");
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const { count: freshFdProps, error: gateErr } = await supabase
+          .from("unified_props")
+          .select("*", { count: "exact", head: true })
+          .eq("bookmaker", "fanduel")
+          .gte("scraped_at", twoHoursAgo);
+
+        const freshCount = freshFdProps || 0;
+
+        if (gateErr) {
+          log(`⚠ Odds gate query error: ${gateErr.message} — proceeding anyway`);
+          results["odds_gate"] = `query_error: ${gateErr.message}`;
+          return;
+        }
+
+        if (freshCount < 50) {
+          log(`⚠ Only ${freshCount} fresh FanDuel props (need 50+) — attempting odds refresh`);
+          await invokeStep("Emergency odds scrape", "whale-odds-scraper", { mode: "full" });
+
+          // Re-check after scrape
+          const { count: retryCount } = await supabase
+            .from("unified_props")
+            .select("*", { count: "exact", head: true })
+            .eq("bookmaker", "fanduel")
+            .gte("scraped_at", new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+
+          const afterScrape = retryCount || 0;
+          if (afterScrape < 50) {
+            log(`❌ GATE BLOCKED: Still only ${afterScrape} FanDuel props after emergency scrape — skipping generation`);
+            results["odds_gate"] = `blocked:${afterScrape}_props`;
+
+            // Send admin alert
+            try {
+              await supabase.functions.invoke("bot-send-telegram", {
+                body: {
+                  message: `🚫 *Odds Gate Blocked*\n\nOnly ${afterScrape} fresh FanDuel props found after emergency scrape.\n\nParlay generation skipped to prevent stale-data parlays.\n\n⚠️ Check whale-odds-scraper and The Odds API status.`,
+                  parse_mode: "Markdown",
+                  admin_only: true,
+                },
+              });
+            } catch (_) { /* ignore */ }
+
+            // Skip all generation phases by marking them done
+            const genPhaseIds = ["phase3c", "phase3d", "phase3e", "phase3f"];
+            for (const pid of genPhaseIds) {
+              results[pid] = "skipped:odds_gate_blocked";
+              skipped.push(pid);
+            }
+            // Jump past generation — set a flag the loop reads
+            (globalThis as any).__oddsGateBlocked = true;
+            return;
+          }
+
+          log(`✅ Emergency scrape recovered: ${afterScrape} fresh FanDuel props — proceeding`);
+          results["odds_gate"] = `recovered:${afterScrape}_props`;
+        } else {
+          log(`✅ Odds gate passed: ${freshCount} fresh FanDuel props`);
+          results["odds_gate"] = `passed:${freshCount}_props`;
+        }
+      },
+    },
+    {
       id: "phase3c",
       label: "Wide generate + rank + curated + force fresh",
       run: async () => {
+        if ((globalThis as any).__oddsGateBlocked) {
+          log("⏭ Skipping generation — odds gate blocked");
+          return;
+        }
         await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", { final_cap: 25 });
         await invokeStep("Running curated pipeline", "bot-curated-pipeline", {});
         await invokeStep("Force fresh mispriced parlays", "bot-force-fresh-parlays", {});
