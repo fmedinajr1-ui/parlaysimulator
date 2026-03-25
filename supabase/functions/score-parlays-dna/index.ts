@@ -116,20 +116,76 @@ Deno.serve(async (req) => {
             : 0;
 
           // Calculate DNA score using learned weights
+          // Compute derived signals for DNA scoring
+          const l3Avg = leg.l3_avg || l10Avg;
+          const l5Avg = leg.l5_avg || l10Avg;
+          const seasonAvg = leg.season_avg || l10Avg;
+          const l10Min = leg.l10_min || 0;
+          const l10Median = leg.l10_median || l10Avg;
+          const h2hAvg = leg.h2h_avg_vs_opponent || 0;
+          const projVal = leg.projected_value || 0;
+          const sideUp = side?.toLowerCase() === "over";
+
+          // floor_vs_line
+          let floorVsLine = 0;
+          if (l10Min > 0 && line > 0) {
+            floorVsLine = sideUp ? ((l10Min - line) / line) * 100 : ((line - l10Min) / line) * 100;
+          }
+          // median_buffer
+          let medianBuffer = 0;
+          if (l10Median > 0 && line > 0) {
+            medianBuffer = sideUp ? ((l10Median - line) / line) * 100 : ((line - l10Median) / line) * 100;
+          }
+          // trend_l5_vs_l10
+          let trendL5 = 0;
+          if (l5Avg > 0 && l10Avg > 0) {
+            trendL5 = ((l5Avg - l10Avg) / l10Avg) * 100;
+          }
+          // consistency (CoV)
+          const stdDev = leg.l10_std_dev || leg.std_dev || 0;
+          let consistency = 0;
+          if (stdDev > 0 && l10Avg > 0) {
+            consistency = stdDev / l10Avg;
+          }
+          // season_vs_line
+          let seasonVsLine = 0;
+          if (seasonAvg > 0 && line > 0) {
+            seasonVsLine = sideUp ? ((seasonAvg - line) / line) * 100 : ((line - seasonAvg) / line) * 100;
+          }
+          // h2h_vs_line
+          let h2hVsLine = 0;
+          if (h2hAvg > 0 && line > 0) {
+            h2hVsLine = sideUp ? ((h2hAvg - line) / line) * 100 : ((line - h2hAvg) / line) * 100;
+          }
+          // projected_buffer
+          let projectedBuffer = 0;
+          if (projVal > 0 && line > 0) {
+            projectedBuffer = sideUp ? ((projVal - line) / line) * 100 : ((line - projVal) / line) * 100;
+          }
+
           const signals: Record<string, number> = {
             buffer_pct: bufferPct,
             l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || 0,
-            l10_std_dev: leg.l10_std_dev || leg.std_dev || 0,
+            l10_std_dev: stdDev,
             confidence_score: leg.confidence_score || leg.confidence || 0,
             l10_avg: l10Avg,
-            l5_avg: leg.l5_avg || l10Avg,
-            l3_avg: leg.l3_avg || l10Avg,
+            l5_avg: l5Avg,
+            l3_avg: l3Avg,
             matchup_adjustment: leg.matchup_adjustment || 0,
             pace_adjustment: leg.pace_adjustment || 0,
             h2h_matchup_boost: leg.h2h_matchup_boost || 0,
             bounce_back_score: leg.bounce_back_score || 0,
-            season_avg: leg.season_avg || l10Avg,
+            season_avg: seasonAvg,
             line_difference: leg.line_difference || 0,
+            // 8 new signals
+            floor_vs_line: floorVsLine,
+            median_buffer: medianBuffer,
+            trend_l5_vs_l10: trendL5,
+            consistency,
+            season_vs_line: seasonVsLine,
+            h2h_vs_line: h2hVsLine,
+            games_played: leg.games_played || 0,
+            projected_buffer: projectedBuffer,
           };
 
           let rawScore = 0;

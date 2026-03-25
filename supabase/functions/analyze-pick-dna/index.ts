@@ -35,6 +35,8 @@ interface SettledPick {
   actual_line: number | null;
   recommended_line: number | null;
   recommended_side: string | null;
+  games_played: number | null;
+  projected_value: number | null;
 }
 
 interface SignalStats {
@@ -83,6 +85,63 @@ function extractSignals(pick: SettledPick): Record<string, number | null> {
     rangeRatio = (max - min) / median;
   }
 
+  // NEW: floor_vs_line — does worst game still clear the line?
+  let floorVsLine: number | null = null;
+  if (min != null && line != null && line > 0) {
+    floorVsLine = side === 'OVER'
+      ? ((min - line) / line) * 100
+      : ((line - min) / line) * 100; // for UNDER, higher line-min = better
+  }
+
+  // NEW: median_buffer — median resists outliers
+  let medianBuffer: number | null = null;
+  if (median != null && line != null && line > 0) {
+    medianBuffer = side === 'OVER'
+      ? ((median - line) / line) * 100
+      : ((line - median) / line) * 100;
+  }
+
+  // NEW: trend_l5_vs_l10 — medium-term momentum
+  const l5 = safeNum(pick.l5_avg);
+  let trendL5: number | null = null;
+  if (l5 != null && l10 != null && l10 > 0) {
+    trendL5 = ((l5 - l10) / l10) * 100;
+  }
+
+  // NEW: consistency — coefficient of variation (lower = more reliable)
+  const stddev_val = safeNum(pick.l10_std_dev);
+  let consistency: number | null = null;
+  if (stddev_val != null && l10Avg != null && l10Avg > 0) {
+    consistency = stddev_val / l10Avg;
+  }
+
+  // NEW: season_vs_line
+  const seasonAvg = safeNum(pick.season_avg);
+  let seasonVsLine: number | null = null;
+  if (seasonAvg != null && line != null && line > 0) {
+    seasonVsLine = side === 'OVER'
+      ? ((seasonAvg - line) / line) * 100
+      : ((line - seasonAvg) / line) * 100;
+  }
+
+  // NEW: h2h_vs_line
+  const h2hAvg = safeNum(pick.h2h_avg_vs_opponent);
+  let h2hVsLine: number | null = null;
+  if (h2hAvg != null && line != null && line > 0) {
+    h2hVsLine = side === 'OVER'
+      ? ((h2hAvg - line) / line) * 100
+      : ((line - h2hAvg) / line) * 100;
+  }
+
+  // NEW: projected_buffer
+  const projVal = safeNum(pick.projected_value);
+  let projectedBuffer: number | null = null;
+  if (projVal != null && line != null && line > 0) {
+    projectedBuffer = side === 'OVER'
+      ? ((projVal - line) / line) * 100
+      : ((line - projVal) / line) * 100;
+  }
+
   return {
     l10_hit_rate: safeNum(pick.l10_hit_rate),
     l10_std_dev: safeNum(pick.l10_std_dev),
@@ -96,6 +155,15 @@ function extractSignals(pick: SettledPick): Record<string, number | null> {
     line_difference: safeNum(pick.line_difference),
     range_ratio: rangeRatio,
     season_avg: safeNum(pick.season_avg),
+    // 8 new signals
+    floor_vs_line: floorVsLine,
+    median_buffer: medianBuffer,
+    trend_l5_vs_l10: trendL5,
+    consistency,
+    season_vs_line: seasonVsLine,
+    h2h_vs_line: h2hVsLine,
+    games_played: safeNum(pick.games_played),
+    projected_buffer: projectedBuffer,
   };
 }
 
@@ -147,7 +215,8 @@ Deno.serve(async (req) => {
         l10_median, l10_min, l10_max, confidence_score, season_avg,
         line_difference, matchup_adjustment, pace_adjustment,
         h2h_avg_vs_opponent, h2h_matchup_boost, bounce_back_score,
-        actual_line, recommended_line, recommended_side
+        actual_line, recommended_line, recommended_side,
+        games_played, projected_value
       `)
       .in('outcome', ['hit', 'miss']);
 
