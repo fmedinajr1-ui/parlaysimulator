@@ -225,7 +225,7 @@ function resolveLine(
   recommendedLine: number,
   actualLine: number | null,
   fdMap: Map<string, { line: number; odds: number }>
-): { line: number; source: string; odds: number } {
+): { line: number; source: string; odds: number } | null {
   const name = playerName.toLowerCase().trim();
 
   // Try all prop type aliases against FanDuel map
@@ -351,8 +351,12 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Resolve real FanDuel line
+      // Resolve real FanDuel line — SKIP if no verified line exists
       const resolved = resolveLine(ss.player_name, ss.prop_type, ss.recommended_line, ss.actual_line, fdMap);
+      if (!resolved) {
+        console.log(`[StraightBets] SKIP ${ss.player_name} ${ss.prop_type} ${side} — no FanDuel line`);
+        continue;
+      }
 
       // Buffer gate
       const buffer = calcBuffer(l10Avg, resolved.line, side);
@@ -406,8 +410,12 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Resolve real FanDuel line (pool picks don't have actual_line)
+      // Resolve real FanDuel line — SKIP if no verified line exists
       const resolved = resolveLine(pp.player_name, pp.prop_type, pp.recommended_line || 0, null, fdMap);
+      if (!resolved) {
+        console.log(`[StraightBets] SKIP ${pp.player_name} ${pp.prop_type} ${side} — no FanDuel line`);
+        continue;
+      }
 
       const buffer = calcBuffer(l10Avg, resolved.line, side);
       if (buffer < minBuffer) {
