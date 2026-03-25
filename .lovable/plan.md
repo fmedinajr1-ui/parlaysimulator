@@ -1,39 +1,53 @@
 
 
-# Fix MLB Parlay Generation — Unblock + Data Coverage
+# Fix Sweet Spot Void Rate — Stop Generating Unsettleable Picks
 
-## Problem Summary
-MLB has good analytical data (604 mispriced lines today, 49K game logs) but three hard blocks in the generator prevent any MLB pick from entering parlays, and FanDuel batting prop coverage is nearly zero (only 24 pitcher K props).
+## Problem
+The `category-props-analyzer` generates picks for every player with game logs (~845/day), then checks `unified_props` for matching market lines. Players without matching props are marked `is_active = false` but still inserted into `category_sweet_spots` with `outcome = 'pending'`. This creates 75-90% unsettled noise that pollutes hit-rate stats, clogs the settlement pipeline, and makes tracking unreliable.
+
+## Root Cause (category-props-analyzer/index.ts, lines 1758-1767)
+When no matching prop exists in `unified_props`, the spot is marked inactive but still pushed into `validatedSpots` and upserted to the DB. The settlement function (`verify-sweet-spot-outcomes`) then loops over these forever, never finding game data to resolve them.
 
 ## Plan
 
-### Step 1: Remove MLB from BLOCKED_SPORTS and BLOCKED_CATEGORIES
+### Step 1: Skip inserting picks with no market line
+**File:** `supabase/functions/category-props-analyzer/index.ts`
+
+In the validation loop (line 1758), when `actualData` is null (no matching prop in `unified_props`), **do not push** the spot into `validatedSpots`. Simply increment `noGameCount` and `continue`. This prevents ~700+ phantom picks per day from ever entering the database.
+
+Add a summary log: `"Dropped X picks with no market line (not inserted)"`.
+
+### Step 2: Auto-void stale unsettled picks in the settlement function
+**File:** `supabase/functions/verify-sweet-spot-outcomes/index.ts`
+
+Add a cleanup step at the start: any pick older than 2 days with `outcome = 'pending'` and `actual_line IS NULL` should be batch-updated to `outcome = 'void'` with a reason like `'no_market_line'`. This cleans the existing backlog and prevents future accumulation.
+
+### Step 3: Add market-line gate to the parlay generator pickup query
 **File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-- Remove `'baseball_mlb'` from the `BLOCKED_SPORTS` array (line 1114)
-- Remove all 14 MLB categories from `BLOCKED_CATEGORIES` (lines 1124-1128): `MLB_PITCHER_K_OVER`, `MLB_HITS_OVER`, `MLB_TOTAL_BASES_OVER`, etc.
+When querying `category_sweet_spots` for parlay legs, add `.not('actual_line', 'is', null)` to the query filter. This ensures only picks with real book lines can enter parlays — a safety net even if Step 1 misses something.
 
-### Step 2: Uncomment MLB parlay recipes
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
+### Step 4: Clean existing backlog
+Create a one-time migration to mark all historical `category_sweet_spots` rows where `actual_line IS NULL` and `outcome IN ('pending', 'no_data')` as `outcome = 'void'`. This immediately clears the noise from past runs.
 
-Activate the paused MLB recipes:
-- Line 725: `mispriced_edge` for `baseball_mlb` (composite sort)
-- Line 797-798: Two MLB `mispriced_edge` recipes
-- Line 802: `double_confirmed_conviction` cross-sport NBA+MLB recipe
+```sql
+UPDATE category_sweet_spots
+SET outcome = 'void', settled_at = now()
+WHERE actual_line IS NULL
+  AND outcome IN ('pending', 'no_data')
+  AND analysis_date < CURRENT_DATE;
+```
 
-### Step 3: Fix FanDuel MLB prop coverage in the scraper
-**File:** `supabase/functions/whale-odds-scraper/index.ts`
-
-The Odds API uses different market key formats for MLB batting props on FanDuel vs BetMGM. Investigate and fix the MLB market batches — currently `batter_hits`, `batter_rbis`, `batter_runs_scored`, `batter_total_bases`, `batter_home_runs`, `batter_stolen_bases`, `pitcher_strikeouts`, `pitcher_outs` are used. Some of these may not be valid FanDuel market keys. Add per-market fallback (already exists for NBA) to MLB batches so invalid keys don't kill the whole batch.
-
-### Step 4: Re-run MLB cross-reference engine
-Trigger `mlb-prop-cross-reference` and `mlb-batter-analyzer` to populate today's `mlb_engine_picks` and refresh `mispriced_lines` with current data.
-
-### Step 5: Run full pipeline and verify MLB legs appear in output
-Execute `refresh-l10-and-rebuild` and confirm MLB props appear in generated parlays and Telegram broadcasts.
+## Expected Impact
+- Daily pick count drops from ~845 to ~45-100 (only market-backed picks)
+- Void rate drops from 75-90% to near 0%
+- Settlement pipeline runs faster with no phantom picks to skip
+- Hit-rate tracking becomes accurate (based only on real book lines)
+- Parlay legs guaranteed to have verifiable lines
 
 ## Files Changed
-1. `supabase/functions/bot-generate-daily-parlays/index.ts` — Remove blocks, uncomment recipes
-2. `supabase/functions/whale-odds-scraper/index.ts` — Verify/fix MLB FanDuel market keys
-3. No new files needed
+1. `supabase/functions/category-props-analyzer/index.ts` — Drop no-line picks before insert
+2. `supabase/functions/verify-sweet-spot-outcomes/index.ts` — Auto-void stale pending picks
+3. `supabase/functions/bot-generate-daily-parlays/index.ts` — Add actual_line filter to pickup query
+4. One database migration to clean backlog
 
