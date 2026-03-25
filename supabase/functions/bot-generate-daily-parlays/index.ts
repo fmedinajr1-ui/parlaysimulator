@@ -4875,10 +4875,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     // ALL picks in this array are sweet spots (from category_sweet_spots) — engine already vetted them
     // Only block if hit-rate blocked category
     if (blockedByHitRate.has(p.category)) return false;
-    // REQUIRE real sportsbook line — no fake -110 defaults
-    // EXCEPTION: Allow picks with L10 floor/ceiling data through for floor_lock/ceiling_shot strategies
-    const hasL10Data = (p as any).l10_min != null || (p as any).l10_max != null;
-    if (!p.has_real_line && !hasL10Data) return false;
+    // REQUIRE real FanDuel sportsbook line — NO exceptions
+    if (!p.has_real_line) return false;
     return true;
   });
 

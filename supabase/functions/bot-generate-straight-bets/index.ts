@@ -245,13 +245,8 @@ function resolveLine(
     return { line: directFd.line, source: 'fanduel', odds: directFd.odds };
   }
 
-  // Fallback to actual_line from sweet spots
-  if (actualLine != null && actualLine > 0) {
-    return { line: actualLine, source: 'actual_line', odds: -110 };
-  }
-
-  // Last resort: recommended_line
-  return { line: recommendedLine, source: 'recommended', odds: -110 };
+  // No FanDuel line found — return null to signal skip
+  return null;
 }
 
 Deno.serve(async (req) => {
