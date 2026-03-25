@@ -6979,6 +6979,11 @@ async function generateTierParlays(
             h2h_matchup_boost: pick.h2h_matchup_boost || 0,
             bounce_back_score: pick.bounce_back_score || 0,
             line_difference: pick.line_difference || 0,
+            l10_min: pick.l10_min || 0,
+            l10_median: pick.l10_median || 0,
+            h2h_avg_vs_opponent: (pick as any).h2h_avg_vs_opponent || 0,
+            games_played: (pick as any).games_played || 0,
+            projected_value: (pick as any).projected_value || 0,
           };
         });
         
