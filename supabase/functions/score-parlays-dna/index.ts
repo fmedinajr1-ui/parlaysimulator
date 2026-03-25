@@ -204,9 +204,9 @@ Deno.serve(async (req) => {
             ? Math.max(0, Math.min(100, 50 + (rawScore / totalWeight) * 50))
             : 50;
 
-          if (!hasRealLine) flags.push("NO_FD_LINE");
-          if (bufferPct < -5) flags.push("NEG_BUFFER");
-          if (dnaScore < 30) flags.push("LOW_DNA");
+          if (!hasRealLine) flags.push("NO_FD_LINE"); // soft flag — informational only
+          if (bufferPct < -10) flags.push("NEG_BUFFER"); // hard flag — widened from -5% to -10%
+          if (dnaScore < 30) flags.push("LOW_DNA"); // hard flag
         }
 
         if (!playerName) flags.push("NO_PLAYER");
@@ -223,8 +223,9 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Grade the parlay — only NO_PLAYER is fatal, everything else is weak/prunable
-      const weakLegs = legScores.filter(l => l.flags.length > 0);
+      // Grade the parlay — split flags into hard (prunable) and soft (informational)
+      const SOFT_FLAGS = new Set(["NO_FD_LINE"]);
+      const weakLegs = legScores.filter(l => l.flags.some(f => !SOFT_FLAGS.has(f)));
       const fatalLegs = legScores.filter(l =>
         l.flags.includes("NO_PLAYER")
       );
