@@ -1,50 +1,42 @@
 
 
-# Add More DNA Signals from Existing Data
+# Wire DNA Scorer as Mandatory Post-Generation Step
 
 ## Current State
 
-DNA has only 7 signals with enough data to produce weights. The `extractSignals` function returns 12, but 5 get filtered out due to low sample sizes or zero separation. Meanwhile, `category_sweet_spots` has **15+ unused columns** that can be turned into predictive features with zero pipeline risk.
+- `score-parlays-dna` already runs in Phase 3d of the orchestrator and voids/prunes parlays
+- But it does **not persist the grade** — no `dna_grade` column exists on `bot_daily_parlays`
+- The frontend and other pipeline steps have no visibility into which grade a parlay received
+- Sharp/heat parlays generated *after* the DNA audit (Phase 3d/3e) never get scored
 
-## New Signals to Add (All Derived from Existing Columns)
+## Changes
 
-These only change `analyze-pick-dna` (learning) and `score-parlays-dna` (scoring). No parlay generation changes needed.
+### 1. Add `dna_grade` column to `bot_daily_parlays`
+- Migration: `ALTER TABLE bot_daily_parlays ADD COLUMN dna_grade text;`
+- Nullable — older parlays stay null, new ones get A/B/C/F
 
-| # | Signal | Formula | Why It Helps |
-|---|--------|---------|-------------|
-| 1 | `floor_vs_line` | `(l10_min - line) / line × 100` (OVER) | Does player's worst game still hit? Strong safety signal |
-| 2 | `median_buffer` | `(l10_median - line) / line × 100` | Median resists outliers better than mean |
-| 3 | `trend_l5_vs_l10` | `(l5_avg - l10_avg) / l10_avg × 100` | Medium-term momentum (complements L3 vs L10) |
-| 4 | `consistency` | `l10_std_dev / l10_avg` | Coefficient of variation — lower = more reliable |
-| 5 | `season_vs_line` | `(season_avg - line) / line × 100` | Long-term baseline buffer |
-| 6 | `h2h_vs_line` | `(h2h_avg_vs_opponent - line) / line × 100` | Does player beat line against THIS opponent? |
-| 7 | `games_played` | Raw `games_played` value | More data = more trustworthy pick |
-| 8 | `projected_buffer` | `(projected_value - line) / line × 100` | Do projections agree with the pick? |
+### 2. Update `score-parlays-dna/index.ts`
+- After grading each parlay, persist the grade: update `dna_grade` on every scored parlay (not just voided/pruned ones)
+- Batch update all A/B/C grades alongside existing void/prune logic
 
-## What Changes
+### 3. Move DNA audit after ALL generators in orchestrator
+- Currently Phase 3d runs DNA audit **before** sharp-parlay-builder and heat-prop-engine generate new parlays
+- Restructure so DNA audit runs **after** all generators (sharp, heat, ladder, diversity) as a final gate
+- New phase ordering in `refresh-l10-and-rebuild/index.ts`:
+  - Phase 3c: Wide generate + curated + force fresh (unchanged)
+  - Phase 3d: Sharp + heat scan (parallel) — move existing generators here
+  - Phase 3e: Heat build (unchanged)
+  - Phase 3f: Ladder + diversity (unchanged)
+  - **Phase 3g (new): DNA audit** — scores ALL pending parlays including sharp/heat/ladder
+  - Phase 3h: Slate status (was 3g)
 
-### 1. `analyze-pick-dna/index.ts`
-- Add new columns to the `SettledPick` interface and SELECT query: `l5_avg`, `games_played`, `projected_value`
-- Add 8 new derived signals to `extractSignals()`
-- Everything else (stats computation, weight storage, Telegram report) works unchanged
-
-### 2. `score-parlays-dna/index.ts`
-- Add the same 8 computed signals to the per-leg scoring loop
-- The existing `weightMap.get(signalName)` lookup auto-discovers new weights — no structural changes
-
-### 3. `bot-generate-daily-parlays/index.ts`
-- Add `games_played`, `projected_value`, `l10_min`, `l10_median`, `h2h_avg_vs_opponent` to leg JSON (same pattern as the existing stat enrichment fix)
-
-## Why This Is Safe
-
-- **No new tables** — uses existing columns already populated daily
-- **No pipeline changes** — only touches the DNA learning/scoring layer
-- **No voiding risk** — signals with insufficient data automatically get filtered by the existing `hitVals.length < 10` check
-- **Self-calibrating** — if a new signal doesn't predict wins, it gets near-zero weight and is ignored
+### 4. Update frontend hook `useBotPipeline.ts`
+- Add `dna_grade` to `PipelineParlay` interface so the UI can display grades
 
 ## Files Changed
 
-1. `supabase/functions/analyze-pick-dna/index.ts` — Add 8 new derived signals
-2. `supabase/functions/score-parlays-dna/index.ts` — Add same signals to scoring
-3. `supabase/functions/bot-generate-daily-parlays/index.ts` — Enrich legs with missing stat fields
+1. **Migration** — Add `dna_grade text` column to `bot_daily_parlays`
+2. **`supabase/functions/score-parlays-dna/index.ts`** — Persist grade to `dna_grade` column on every parlay
+3. **`supabase/functions/refresh-l10-and-rebuild/index.ts`** — Move DNA audit to final post-generation phase
+4. **`src/hooks/useBotPipeline.ts`** — Add `dna_grade` to interface
 
