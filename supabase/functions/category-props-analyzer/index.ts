@@ -1756,13 +1756,7 @@ serve(async (req) => {
       const actualData = actualLineMap.get(key);
       
       if (!actualData) {
-        // No upcoming game found - mark as inactive
-        spot.is_active = false;
-        spot.actual_line = null;
-        spot.actual_hit_rate = null;
-        spot.line_difference = null;
-        spot.bookmaker = null;
-        validatedSpots.push(spot);
+        // No matching market line — skip entirely (do not insert phantom picks)
         noGameCount++;
         continue;
       }
