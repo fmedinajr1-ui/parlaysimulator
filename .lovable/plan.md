@@ -1,44 +1,41 @@
 
 
-# Tune DNA Audit + Auto-Retry Until Graded Parlays Exist
+# Fix Whale Odds Scraper — 422 Errors on Player Props
 
-## Problem
+## What's Happening
 
-The DNA scorer voids 100% of parlays because `NO_FD_LINE` is treated as a **prunable weakness** (same as `NEG_BUFFER` and `LOW_DNA`). Since most legs have `line_source: "unified_props"` (which sets `has_real_line: true`), the actual failure is likely that `has_real_line` defaults to `false` when not explicitly set in the leg JSON. Any leg with a flag gets pruned, and once too many legs are pruned, the parlay drops below 2 legs → auto-voided as F.
+Your API key is working again (no more 401). However, **every player props request now returns HTTP 422** (Unprocessable Entity). The scraper currently discards the error body, so we can't see the exact reason. There are two likely causes:
 
-## Changes
+1. **Your new subscription tier may not include player props** — props require a paid plan on The Odds API
+2. **Invalid market keys in batches** — the scraper includes `player_threes_q1` and `player_steals_q1` which are NOT valid API markets; if any market in a batch is invalid, the entire batch fails
 
-### 1. Reclassify `NO_FD_LINE` as informational, not prunable (`score-parlays-dna/index.ts`)
+## Plan
 
-- Split flags into **hard flags** (prune-worthy) and **soft flags** (informational)
-- **Hard flags** (trigger pruning): `NO_PLAYER`, `NEG_BUFFER` (buffer < -5%), `LOW_DNA` (score < 30)
-- **Soft flags** (informational only): `NO_FD_LINE` — logged but does NOT count toward weak leg classification
-- Change `weakLegs` filter to only check for hard flags
-- A leg with only `NO_FD_LINE` is no longer pruned — it stays in the parlay and can contribute to an A or B grade
+### Step 1: Log the 422 response body for diagnosis
 
-### 2. Soften `NEG_BUFFER` threshold
+Update the error handler in the scraper to read and log the response body on 422 errors. This will tell us exactly whether it's "INVALID_MARKET" or "subscription tier required."
 
-- Change from `-5%` to `-10%` — a small negative buffer is normal variance, not a disqualifier
-- Only prune legs that are significantly misaligned with the player's recent performance
+### Step 2: Fix invalid market keys
 
-### 3. Add auto-retry loop to orchestrator (`refresh-l10-and-rebuild/index.ts`)
+Remove `player_threes_q1` and `player_steals_q1` from batch 4 — these do not exist in the API. The valid Q1 markets for NBA are only: `player_points_q1`, `player_rebounds_q1`, `player_assists_q1`.
 
-After Phase 3g (DNA audit), add a check:
-- Query `bot_daily_parlays` for today's pending parlays with a non-null `dna_grade`
-- If **zero graded pending parlays** remain:
-  - Log a warning and re-invoke the generation phases (3c through 3g) as a retry
-  - Track retry count via a new `regen_attempt` parameter (max 2 retries)
-  - On retry, skip phases 0–3b (data already fresh) and jump straight to generation
-- If graded parlays exist, proceed to Phase 3h (slate status) as normal
+Updated NBA batches:
+```text
+Batch 1: player_points, player_rebounds, player_assists
+Batch 2: player_threes, player_blocks, player_steals
+Batch 3: player_points_rebounds_assists, player_points_rebounds, player_points_assists, player_rebounds_assists
+Batch 4: player_points_q1, player_rebounds_q1, player_assists_q1  (removed 2 invalid keys)
+```
 
-### 4. Add `regen_attempt` tracking to orchestrator
+### Step 3: Add per-market fallback on 422
 
-- Accept `regen_attempt` in the request body (default 0)
-- On empty-slate detection after DNA audit, self-invoke with `resume_after: "phase3b"` and `regen_attempt: current + 1`
-- Max 2 regen attempts to avoid infinite loops
+If a batched request returns 422, retry each market in the batch individually. This way one bad market doesn't kill the entire batch. This also handles cases where the subscription doesn't support certain markets.
+
+### Step 4: Re-deploy and test
+
+Deploy the fixed scraper, run it in full mode, and check logs for success.
 
 ## Files Changed
 
-1. **`supabase/functions/score-parlays-dna/index.ts`** — Reclassify NO_FD_LINE as soft flag, widen NEG_BUFFER to -10%
-2. **`supabase/functions/refresh-l10-and-rebuild/index.ts`** — Add post-DNA empty-slate check with auto-retry of generation phases
+1. **`supabase/functions/whale-odds-scraper/index.ts`** — Log 422 body, fix invalid Q1 market keys, add per-market fallback on 422 errors
 
