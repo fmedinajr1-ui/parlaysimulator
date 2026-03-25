@@ -35,6 +35,8 @@ interface SettledPick {
   actual_line: number | null;
   recommended_line: number | null;
   recommended_side: string | null;
+  games_played: number | null;
+  projected_value: number | null;
 }
 
 interface SignalStats {
