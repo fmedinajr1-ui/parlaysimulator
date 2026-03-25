@@ -89,14 +89,13 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase1",
-      label: "Sync NBA game logs",
+      label: "Sync NBA + MLB game logs",
       run: async () => {
-        log("=== PHASE 1: Syncing fresh NBA game logs ===");
-        await invokeStep(
-          "Syncing game logs (ESPN)",
-          "nba-stats-fetcher",
-          { mode: "sync", daysBack: 5, useESPN: true, includeParlayPlayers: true }
-        );
+        log("=== PHASE 1: Syncing fresh NBA + MLB game logs ===");
+        await invokeParallel([
+          ["Syncing NBA game logs (ESPN)", "nba-stats-fetcher", { mode: "sync", daysBack: 5, useESPN: true, includeParlayPlayers: true }],
+          ["Syncing MLB game logs (ESPN)", "mlb-data-ingestion", { days_back: 3, fetch_all: true }],
+        ]);
       },
     },
     {

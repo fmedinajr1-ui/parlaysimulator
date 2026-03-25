@@ -49,8 +49,8 @@ Deno.serve(async (req) => {
     // 2. NHL
     await invokeStep("NHL game logs", "nhl-stats-fetcher", {});
 
-    // 3. MLB
-    await invokeStep("MLB data ingestion", "mlb-data-ingestion", {});
+    // 3. MLB (current season game logs)
+    await invokeStep("MLB game logs (ESPN)", "mlb-data-ingestion", { days_back: 3, fetch_all: true });
 
     const totalDuration = Date.now() - startTime;
     const allOk = Object.values(results).every((r) => r.status === "ok");
