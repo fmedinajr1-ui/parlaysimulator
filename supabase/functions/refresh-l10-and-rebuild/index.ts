@@ -31,6 +31,15 @@ Deno.serve(async (req) => {
   const results: Record<string, string> = {};
   const skipped: string[] = [];
 
+  // Fire-and-forget admin Telegram alert helper
+  const sendPipelineAlert = async (message: string) => {
+    try {
+      await supabase.functions.invoke("bot-send-telegram", {
+        body: { message, parse_mode: "Markdown", admin_only: true },
+      });
+    } catch (_) { /* never break pipeline */ }
+  };
+
   const elapsed = () => Date.now() - functionStartTime;
   const hasTime = () => elapsed() < TIMEOUT_MS;
 
