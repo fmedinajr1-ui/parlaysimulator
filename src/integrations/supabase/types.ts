@@ -1164,6 +1164,7 @@ export type Database = {
           category_weights_snapshot: Json | null
           combined_probability: number
           created_at: string
+          dna_grade: string | null
           expected_odds: number
           id: string
           is_simulated: boolean | null
@@ -1193,6 +1194,7 @@ export type Database = {
           category_weights_snapshot?: Json | null
           combined_probability?: number
           created_at?: string
+          dna_grade?: string | null
           expected_odds?: number
           id?: string
           is_simulated?: boolean | null
@@ -1222,6 +1224,7 @@ export type Database = {
           category_weights_snapshot?: Json | null
           combined_probability?: number
           created_at?: string
+          dna_grade?: string | null
           expected_odds?: number
           id?: string
           is_simulated?: boolean | null

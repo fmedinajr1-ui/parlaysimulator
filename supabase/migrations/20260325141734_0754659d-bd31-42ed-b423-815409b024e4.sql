@@ -1,0 +1,1 @@
+ALTER TABLE public.bot_daily_parlays ADD COLUMN dna_grade text;
