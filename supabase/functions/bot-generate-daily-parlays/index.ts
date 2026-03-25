@@ -6373,7 +6373,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   }
 
   console.log(`[Bot] Cross-engine conviction: ${riskEngineMap.size} risk, ${propV2Result.data?.length || 0} propV2, ${sharpResult.data?.length || 0} sharp, ${heatResult.data?.length || 0} heat | multiEngineMap: ${multiEngineMap.size} unique picks`);
-  // MLB engine cross-reference PAUSED — MLB blocked from generation until more data collected
+  // MLB engine cross-reference ENABLED
 
   // === STEP 2: ENRICH MISPRICED LINES + CROSS-REFERENCE WITH SWEET SPOTS ===
   let doubleConfirmedCount = 0;
@@ -6390,8 +6390,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const riskConfirmed = riskMatch && riskMatch.side.toLowerCase() === side;
     const convictionBoost = riskConfirmed ? 12 : (riskMatch ? 3 : 0);
 
-    // MLB engine cross-reference boost — PAUSED (MLB blocked from generation)
-    const mlbBoost = 0;
+    // MLB engine cross-reference boost — ENABLED
+    const mlbMultiKey = `${(ml.player_name || '').toLowerCase().trim()}|${normProp}`;
+    const mlbMultiMatch = multiEngineMap.get(mlbMultiKey);
+    const mlbBoost = (mlbMultiMatch && mlbMultiMatch.engines.size >= 2) ? 8 : 0;
     
     // === DOUBLE-CONFIRMED CROSS-REFERENCE ===
     // Normalize mispriced prop_type to sweet spot prop_type format
