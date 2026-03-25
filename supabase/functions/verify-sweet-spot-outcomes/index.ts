@@ -237,6 +237,25 @@ Deno.serve(async (req) => {
 
     console.log(`[verify-sweet-spot-outcomes] Starting verification for date: ${targetDate}`);
 
+    // Step 0: Auto-void stale picks older than 2 days with no market line
+    const twoDaysAgo = addDays(getEasternDate(0), -2);
+    const { data: voidedRows, error: voidError } = await supabase
+      .from('category_sweet_spots')
+      .update({ outcome: 'void', settled_at: new Date().toISOString() })
+      .is('actual_line', null)
+      .in('outcome', ['pending', 'no_data'])
+      .lt('analysis_date', twoDaysAgo)
+      .select('id');
+
+    if (voidError) {
+      console.error(`[verify-sweet-spot-outcomes] Void cleanup error: ${voidError.message}`);
+    } else {
+      const voidCount = voidedRows?.length || 0;
+      if (voidCount > 0) {
+        console.log(`[verify-sweet-spot-outcomes] Auto-voided ${voidCount} stale picks with no market line`);
+      }
+    }
+
     // Step 1: Fetch pending picks for the target date
     const { data: pendingPicks, error: fetchError } = await supabase
       .from('category_sweet_spots')

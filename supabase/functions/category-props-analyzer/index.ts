@@ -1756,13 +1756,7 @@ serve(async (req) => {
       const actualData = actualLineMap.get(key);
       
       if (!actualData) {
-        // No upcoming game found - mark as inactive
-        spot.is_active = false;
-        spot.actual_line = null;
-        spot.actual_hit_rate = null;
-        spot.line_difference = null;
-        spot.bookmaker = null;
-        validatedSpots.push(spot);
+        // No matching market line — skip entirely (do not insert phantom picks)
         noGameCount++;
         continue;
       }
@@ -2144,7 +2138,7 @@ serve(async (req) => {
       validatedSpots.push(spot);
     }
 
-    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no game today, ${bounceBackCount} bounce-back, ${lineEligibleCount} line-eligible`);
+    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no market line (skipped), ${bounceBackCount} bounce-back, ${lineEligibleCount} line-eligible`);
 
     // Sort by confidence score (active first, then by score)
     validatedSpots.sort((a, b) => {

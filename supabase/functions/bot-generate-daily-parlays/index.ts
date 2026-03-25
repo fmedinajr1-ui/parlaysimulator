@@ -4438,11 +4438,12 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }
   }
 
-  // 1. Sweet spot picks (analyzed player props) - no is_active filter, analysis_date is sufficient
+  // 1. Sweet spot picks (analyzed player props) - only picks with real market lines
   const { data: sweetSpots } = await supabase
     .from('category_sweet_spots')
     .select('*, actual_line, recommended_line, bookmaker')
     .eq('analysis_date', targetDate)
+    .not('actual_line', 'is', null)
     .gte('confidence_score', 0.45)
     .order('confidence_score', { ascending: false })
     .limit(500);
