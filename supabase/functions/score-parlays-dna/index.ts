@@ -164,19 +164,16 @@ Deno.serve(async (req) => {
             projectedBuffer = sideUp ? ((projVal - line) / line) * 100 : ((line - projVal) / line) * 100;
           }
 
+          // Only use NORMALIZED/DERIVED signals — raw stat values (l10_avg, l3_avg, etc.)
+          // vary wildly across players/props and blow up the DNA formula
           const signals: Record<string, number | null> = {
             buffer_pct: bufferPct,
             l10_hit_rate: leg.l10_hit_rate || leg.hit_rate || null,
-            l10_std_dev: stdDev || null,
             confidence_score: leg.confidence_score || leg.confidence || null,
-            l10_avg: l10Avg || null,
-            l5_avg: l5Avg || null,
-            l3_avg: l3Avg || null,
             matchup_adjustment: leg.matchup_adjustment || null,
             pace_adjustment: leg.pace_adjustment || null,
             h2h_matchup_boost: leg.h2h_matchup_boost || null,
             bounce_back_score: leg.bounce_back_score || null,
-            season_avg: seasonAvg || null,
             line_difference: leg.line_difference || null,
             floor_vs_line: floorVsLine || null,
             median_buffer: medianBuffer || null,
@@ -184,8 +181,9 @@ Deno.serve(async (req) => {
             consistency: consistency || null,
             season_vs_line: seasonVsLine || null,
             h2h_vs_line: h2hVsLine || null,
-            games_played: leg.games_played || null,
             projected_buffer: projectedBuffer || null,
+            // Excluded: l10_avg, l3_avg, l5_avg, season_avg, l10_std_dev, games_played
+            // (raw stat values that aren't comparable across players/prop types)
           };
 
           // buffer_pct is always valid (even if 0), keep it; skip nulls for everything else
