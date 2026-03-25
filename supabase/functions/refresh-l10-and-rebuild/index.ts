@@ -270,6 +270,17 @@ Deno.serve(async (req) => {
       },
     },
     {
+      id: "phase3_lottery",
+      label: "Lottery scanner (mega parlay)",
+      run: async () => {
+        if ((globalThis as any).__oddsGateBlocked) {
+          log("⏭ Skipping lottery — odds gate blocked");
+          return;
+        }
+        await invokeStep("Lottery mega-parlay scanner", "nba-mega-parlay-scanner", {});
+      },
+    },
+    {
       id: "phase3g",
       label: "DNA audit (mandatory post-generation)",
       run: async () => {

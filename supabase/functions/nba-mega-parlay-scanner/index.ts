@@ -503,7 +503,7 @@ Deno.serve(async (req) => {
     const [sweetSpotsRes, mispricedRes, gameLogsRes, defenseRes, archetypesRes, teamDefenseRes, l20Res, streakRes, tierPerfRes] = await Promise.all([
       supabase
         .from('category_sweet_spots')
-        .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l10_median, actual_line, category, confidence_score')
+        .select('player_name, prop_type, recommended_side, l10_hit_rate, l10_avg, l10_median, actual_line, category, confidence_score, l10_std_dev, l10_min, l10_max, l3_avg, l5_avg, season_avg, h2h_avg_vs_opponent, projected_value, line_verified_at')
         .eq('analysis_date', today),
       supabase
         .from('mispriced_lines')
@@ -665,6 +665,17 @@ Deno.serve(async (req) => {
       volumeCandidate: boolean;
       streakLength: number;
       streakBonus: number;
+      // DNA-compatible fields
+      l10StdDev: number | null;
+      l10Min: number | null;
+      l10Max: number | null;
+      l3Avg: number | null;
+      l5Avg: number | null;
+      seasonAvg: number | null;
+      h2hAvg: number | null;
+      projectedValue: number | null;
+      hasRealLine: boolean;
+      lineSource: string | null;
     }
 
     const scoredProps: ScoredProp[] = [];
@@ -883,6 +894,17 @@ Deno.serve(async (req) => {
         volumeCandidate,
         streakLength,
         streakBonus,
+        // DNA-compatible fields from sweet spots
+        l10StdDev: ss?.l10_std_dev ?? null,
+        l10Min: ss?.l10_min ?? null,
+        l10Max: ss?.l10_max ?? null,
+        l3Avg: ss?.l3_avg ?? null,
+        l5Avg: ss?.l5_avg ?? null,
+        seasonAvg: ss?.season_avg ?? null,
+        h2hAvg: ss?.h2h_avg_vs_opponent ?? null,
+        projectedValue: ss?.projected_value ?? l10Avg,
+        hasRealLine: !!(ss?.actual_line && ss?.line_verified_at),
+        lineSource: ss?.actual_line ? 'fanduel' : (prop.bookmaker || null),
       });
     }
 
@@ -1188,12 +1210,23 @@ Deno.serve(async (req) => {
           l10_median: leg.l10Median,
           defense_rank: leg.defenseRank,
           defense_bonus: leg.defenseBonus,
-           volume_candidate: leg.volumeCandidate,
+          volume_candidate: leg.volumeCandidate,
           alt_swapped: (leg as any).alt_swapped || false,
           ghost_alt: (leg as any).ghost_alt || false,
           leg_role: leg.leg_role,
           ticket_tier: ticket.tier,
           market_type: leg.market_type,
+          // DNA-compatible fields
+          has_real_line: leg.hasRealLine || false,
+          line_source: leg.lineSource || leg.bookmaker || 'odds_api',
+          l10_std_dev: leg.l10StdDev || 0,
+          l10_min: leg.l10Min || 0,
+          l10_max: leg.l10Max || 0,
+          l3_avg: leg.l3Avg || leg.l10Avg,
+          l5_avg: leg.l5Avg || leg.l10Avg,
+          season_avg: leg.seasonAvg || leg.l10Avg,
+          h2h_avg_vs_opponent: leg.h2hAvg || 0,
+          projected_value: leg.projectedValue || leg.l10Avg || 0,
         }));
 
         const combinedProb = ticket.legs.reduce((acc, leg) => acc * americanToImpliedProb(leg.odds), 1);
