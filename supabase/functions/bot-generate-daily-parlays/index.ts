@@ -10475,7 +10475,13 @@ Deno.serve(async (req) => {
           for (const pick of sorted) {
             if (legs.length >= 3) break;
             const pName = (pick.player_name || '').toLowerCase();
-            if (usedPlayers.has(pName)) continue;
+            const ppKey = `${pName}|${normalizePropTypeForCorrelation(pick.prop_type || '')}`;
+            if (usedPlayers.has(ppKey)) continue;
+            // Check combo/base overlap with existing legs
+            if (legs.length > 0) {
+              const existingForCorr = legs.map((l: any) => ({ player_name: l.player_name, prop_type: l.prop_type || '' }));
+              if (hasCorrelatedProp(existingForCorr, pick.player_name, pick.prop_type || '')) continue;
+            }
             
             // === 70% L10 HIT RATE GATE for cluster builder ===
             const clusterL10Hr = (pick as any).l10_hit_rate || 0;
