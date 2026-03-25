@@ -3207,14 +3207,22 @@ function buildOptimalComboParlays(
   
   function generateCombinations(start: number, current: EnrichedPick[]) {
     if (current.length === legCount) {
-      // Check for correlations: no same player, no same game_id
-      const players = new Set<string>();
+      // Check for correlations: no same player+prop combo, allow same player with different props
+      const playerProps = new Set<string>();
       const gameIds = new Set<string>();
       let valid = true;
       for (const p of current) {
         const pName = (p.player_name || '').toLowerCase();
-        if (players.has(pName)) { valid = false; break; }
-        players.add(pName);
+        const pProp = normalizePropTypeForCorrelation(p.prop_type || '');
+        const ppKey = `${pName}|${pProp}`;
+        if (playerProps.has(ppKey)) { valid = false; break; }
+        playerProps.add(ppKey);
+        // Also check combo/base overlap for same player
+        const existingSoFar = current.slice(0, current.indexOf(p));
+        const playerExistingLegs = existingSoFar
+          .filter(e => (e.player_name || '').toLowerCase() === pName)
+          .map(e => ({ player_name: e.player_name, prop_type: e.prop_type || '' }));
+        if (playerExistingLegs.length > 0 && hasCorrelatedProp(playerExistingLegs, p.player_name, p.prop_type || '')) { valid = false; break; }
         const gId = (p as any).game_id || (p as any).event_id || '';
         if (gId && gameIds.has(gId)) {
           // Allow same game but different players (that's fine for props)
@@ -3408,7 +3416,11 @@ function hasCorrelatedProp(
     }
   }
 
-  return true; // Same player = always block (one player per parlay)
+  // Same player with different, non-correlated prop is ALLOWED
+  // Check for exact same prop type (block duplicate prop on same player)
+  if (playerLegs.includes(prop)) return true;
+  
+  return false; // Different prop type, no combo overlap = OK
 }
 
 // Normalize prop type to a canonical category for concentration tracking
