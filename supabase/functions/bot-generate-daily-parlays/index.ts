@@ -11137,7 +11137,7 @@ Deno.serve(async (req) => {
             }
 
             sweepLegs.push(candidate);
-            sweepPlayers.add(candName);
+            sweepPlayerProps.add(candPpKey);
             sweepIndices.push(j);
             if (candSide === 'OVER') overCount++;
             else underCount++;
