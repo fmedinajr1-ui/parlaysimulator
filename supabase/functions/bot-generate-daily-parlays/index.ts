@@ -722,7 +722,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // VERIFIED-SOURCE EXPLORATION: mispriced_edge REDUCED (0.5% ROI) + double_confirmed_conviction
       // PAUSED: mispriced_edge NBA composite — { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'composite' },
       // PAUSED: mispriced_edge NBA hit_rate — { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 55, sortBy: 'composite' },
       // PAUSED: mispriced_edge NHL — { legs: 3, strategy: 'mispriced_edge', sports: ['icehockey_nhl'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       // REDIRECTED: 3 mispriced_edge slots → cross_sport_4 + double_confirmed_conviction
@@ -794,12 +794,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'mispriced_edge', sports: ['all'], minHitRate: 55, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_ncaab'], minHitRate: 52, sortBy: 'composite' },
       { legs: 3, strategy: 'mispriced_edge', sports: ['basketball_nba'] },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'] },
+      { legs: 3, strategy: 'mispriced_edge', sports: ['baseball_mlb'], minHitRate: 52, sortBy: 'hit_rate' },
       // Double-confirmed: sweet spot hit rate 70%+ AND mispriced edge 15%+
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['all'] },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'] },
-      // PAUSED: MLB needs more data — { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
+      { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba', 'baseball_mlb'], minHitRate: 55 },
       // WINNING ARCHETYPE: 3PT — REDUCED from 3 to 1 (3PM overs underperforming)
       { legs: 3, strategy: 'winning_archetype_3pt_scorer', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate', preferCategories: ['THREE_POINT_SHOOTER'] },
       // WINNING ARCHETYPE: REBOUNDER + ASSISTS combo
@@ -1111,7 +1111,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 };
 
 // ============= BLOCKED SPORTS (paused until more data collected) =============
-const BLOCKED_SPORTS = ['baseball_ncaa', 'baseball_mlb', 'golf_pga'];
+const BLOCKED_SPORTS = ['baseball_ncaa', 'golf_pga'];
 
 // ============= BLOCKED CATEGORIES (catastrophic hit rates + non-NBA sports mislabeled) =============
 const BLOCKED_CATEGORIES = new Set([
@@ -1121,11 +1121,7 @@ const BLOCKED_CATEGORIES = new Set([
   'BIG_ASSIST_OVER', // 10.3% hit rate
   'VOLUME_SCORER',   // 0% hit rate across ALL strategies
   'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
-  // MLB categories (mislabeled as basketball_nba sport)
-  'MLB_PITCHER_K_OVER', 'MLB_PITCHER_K_UNDER', 'MLB_HITS_OVER', 'MLB_HITS_UNDER',
-  'MLB_TOTAL_BASES_OVER', 'MLB_TOTAL_BASES_UNDER', 'MLB_RBIS_OVER', 'MLB_RBIS_UNDER',
-  'MLB_RUNS_OVER', 'MLB_RUNS_UNDER', 'MLB_STOLEN_BASES_OVER', 'MLB_STOLEN_BASES_UNDER',
-  'MLB_WALKS_OVER', 'MLB_WALKS_UNDER',
+  // MLB categories — UNBLOCKED (data pipeline now active)
 ]);
 
 // ============= CASH LOCK FLIP MAP (force historically-losing categories to winning side) =============
