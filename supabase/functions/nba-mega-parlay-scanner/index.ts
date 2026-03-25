@@ -953,6 +953,11 @@ Deno.serve(async (req) => {
       }
     }
 
+    // HARD GATE: Remove any props without verified FanDuel lines
+    const beforeFilter = scoredProps.length;
+    scoredProps = scoredProps.filter(p => p.hasRealLine);
+    console.log(`[MegaParlay] Real-line gate: ${beforeFilter} → ${scoredProps.length} props (removed ${beforeFilter - scoredProps.length} without FanDuel lines)`);
+
     // Re-sort after cross-verification penalties
     scoredProps.sort((a, b) => b.compositeScore - a.compositeScore);
 
