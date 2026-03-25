@@ -24,6 +24,8 @@ Deno.serve(async (req) => {
   const resumeAfter: string | null = body.resume_after || null;
   const currentRunId: string = body.run_id || crypto.randomUUID();
   const currentAttempt: number = body.attempt || 1;
+  const regenAttempt: number = body.regen_attempt || 0;
+  const MAX_REGEN = 2;
 
   const log = (msg: string) => console.log(`[refresh-l10-and-rebuild][run:${currentRunId.slice(0,8)}][attempt:${currentAttempt}] ${msg}`);
   const results: Record<string, string> = {};
@@ -203,6 +205,37 @@ Deno.serve(async (req) => {
       label: "DNA audit (mandatory post-generation)",
       run: async () => {
         await invokeStep("DNA parlay audit", "score-parlays-dna", {});
+
+        // Post-DNA empty-slate check: if no graded pending parlays, auto-retry generation
+        const todayStr = new Date().toISOString().split("T")[0];
+        const { data: gradedParlays } = await supabase
+          .from("bot_daily_parlays")
+          .select("id")
+          .eq("parlay_date", todayStr)
+          .eq("outcome", "pending")
+          .not("dna_grade", "is", null)
+          .limit(1);
+
+        const hasGraded = (gradedParlays || []).length > 0;
+
+        if (!hasGraded && regenAttempt < MAX_REGEN) {
+          log(`⚠ ZERO graded pending parlays after DNA audit — triggering regen attempt ${regenAttempt + 1}/${MAX_REGEN}`);
+          // Re-invoke from phase3c (generation) through phase3g again
+          supabase.functions.invoke("refresh-l10-and-rebuild", {
+            body: {
+              resume_after: "phase3b",
+              run_id: currentRunId,
+              attempt: currentAttempt,
+              regen_attempt: regenAttempt + 1,
+            },
+          }).catch(e => log(`⚠ Regen invoke failed: ${e.message}`));
+          results["regen_triggered"] = `attempt_${regenAttempt + 1}`;
+        } else if (!hasGraded) {
+          log(`⚠ ZERO graded pending parlays after ${MAX_REGEN} regen attempts — giving up`);
+          results["regen_exhausted"] = `${MAX_REGEN}_attempts_no_graded_parlays`;
+        } else {
+          log(`✅ ${(gradedParlays || []).length}+ graded pending parlays survive DNA audit`);
+        }
       },
     },
     {

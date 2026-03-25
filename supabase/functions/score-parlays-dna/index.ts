@@ -204,9 +204,9 @@ Deno.serve(async (req) => {
             ? Math.max(0, Math.min(100, 50 + (rawScore / totalWeight) * 50))
             : 50;
 
-          if (!hasRealLine) flags.push("NO_FD_LINE");
-          if (bufferPct < -5) flags.push("NEG_BUFFER");
-          if (dnaScore < 30) flags.push("LOW_DNA");
+          if (!hasRealLine) flags.push("NO_FD_LINE"); // soft flag — informational only
+          if (bufferPct < -10) flags.push("NEG_BUFFER"); // hard flag — widened from -5% to -10%
+          if (dnaScore < 30) flags.push("LOW_DNA"); // hard flag
         }
 
         if (!playerName) flags.push("NO_PLAYER");
@@ -223,8 +223,9 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Grade the parlay — only NO_PLAYER is fatal, everything else is weak/prunable
-      const weakLegs = legScores.filter(l => l.flags.length > 0);
+      // Grade the parlay — split flags into hard (prunable) and soft (informational)
+      const SOFT_FLAGS = new Set(["NO_FD_LINE"]);
+      const weakLegs = legScores.filter(l => l.flags.some(f => !SOFT_FLAGS.has(f)));
       const fatalLegs = legScores.filter(l =>
         l.flags.includes("NO_PLAYER")
       );
@@ -242,10 +243,10 @@ Deno.serve(async (req) => {
       } else if (weakLegs.length === 1) {
         grade = "B";
         // Drop weak leg if remaining >= 2
-        const keptLegs = legScores.filter(l => l.flags.length === 0);
+        const keptLegs = legScores.filter(l => !l.flags.some(f => !SOFT_FLAGS.has(f)));
         if (keptLegs.length >= 2) {
           action = `drop_${weakLegs.length}_leg`;
-          const keptLegData = legs.filter((_: any, i: number) => legScores[i].flags.length === 0);
+          const keptLegData = legs.filter((_: any, i: number) => !legScores[i].flags.some((f: string) => !SOFT_FLAGS.has(f)));
           const newOdds = keptLegData.reduce((acc: number, l: any) => {
             const legOdds = l.american_odds || l.odds || -110;
             const decimal = legOdds > 0 ? (legOdds / 100) + 1 : (100 / Math.abs(legOdds)) + 1;
@@ -264,10 +265,10 @@ Deno.serve(async (req) => {
         }
       } else {
         grade = "C";
-        const keptLegs = legScores.filter(l => l.flags.length === 0);
+        const keptLegs = legScores.filter(l => !l.flags.some(f => !SOFT_FLAGS.has(f)));
         if (keptLegs.length >= 2) {
           action = `drop_${weakLegs.length}_legs`;
-          const keptLegData = legs.filter((_: any, i: number) => legScores[i].flags.length === 0);
+          const keptLegData = legs.filter((_: any, i: number) => !legScores[i].flags.some((f: string) => !SOFT_FLAGS.has(f)));
           const newOdds = keptLegData.reduce((acc: number, l: any) => {
             const legOdds = l.american_odds || l.odds || -110;
             const decimal = legOdds > 0 ? (legOdds / 100) + 1 : (100 / Math.abs(legOdds)) + 1;
@@ -291,7 +292,7 @@ Deno.serve(async (req) => {
         strategy: parlay.strategy_name,
         grade,
         original_legs: legs.length,
-        kept_legs: action === "void" ? 0 : legScores.filter(l => l.flags.length === 0).length,
+        kept_legs: action === "void" ? 0 : legScores.filter(l => !l.flags.some(f => !SOFT_FLAGS.has(f))).length,
         voided: action === "void",
         leg_scores: legScores,
         action,
