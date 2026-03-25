@@ -1720,9 +1720,13 @@ export type Database = {
         Row: {
           american_odds: number | null
           bet_date: string
+          bet_type: string | null
           buffer_pct: number | null
+          ceiling_line: number | null
+          ceiling_reason: string | null
           composite_score: number | null
           created_at: string | null
+          h2h_boost: number | null
           id: string
           l10_avg: number | null
           l10_hit_rate: number | null
@@ -1737,13 +1741,18 @@ export type Database = {
           simulated_payout: number | null
           simulated_stake: number | null
           source: string | null
+          standard_line: number | null
         }
         Insert: {
           american_odds?: number | null
           bet_date?: string
+          bet_type?: string | null
           buffer_pct?: number | null
+          ceiling_line?: number | null
+          ceiling_reason?: string | null
           composite_score?: number | null
           created_at?: string | null
+          h2h_boost?: number | null
           id?: string
           l10_avg?: number | null
           l10_hit_rate?: number | null
@@ -1758,13 +1767,18 @@ export type Database = {
           simulated_payout?: number | null
           simulated_stake?: number | null
           source?: string | null
+          standard_line?: number | null
         }
         Update: {
           american_odds?: number | null
           bet_date?: string
+          bet_type?: string | null
           buffer_pct?: number | null
+          ceiling_line?: number | null
+          ceiling_reason?: string | null
           composite_score?: number | null
           created_at?: string | null
+          h2h_boost?: number | null
           id?: string
           l10_avg?: number | null
           l10_hit_rate?: number | null
@@ -1779,6 +1793,7 @@ export type Database = {
           simulated_payout?: number | null
           simulated_stake?: number | null
           source?: string | null
+          standard_line?: number | null
         }
         Relationships: []
       }

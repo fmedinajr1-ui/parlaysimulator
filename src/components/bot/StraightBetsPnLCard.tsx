@@ -17,6 +17,11 @@ interface StraightBet {
   simulated_payout: number;
   outcome: string;
   profit_loss: number;
+  bet_type?: string;
+  ceiling_line?: number;
+  standard_line?: number;
+  h2h_boost?: number;
+  ceiling_reason?: string;
 }
 
 const PROP_LABELS: Record<string, string> = {
@@ -46,6 +51,8 @@ export function StraightBetsPnLCard() {
   }
 
   const totalBets = bets.length;
+  const standardBets = bets.filter(b => b.bet_type !== 'ceiling_straight');
+  const ceilingBets = bets.filter(b => b.bet_type === 'ceiling_straight');
   const settled = bets.filter(b => b.outcome !== 'pending');
   const won = settled.filter(b => b.outcome === 'won').length;
   const lost = settled.filter(b => b.outcome === 'lost').length;
@@ -58,6 +65,8 @@ export function StraightBetsPnLCard() {
   // Today's bets
   const today = new Date().toISOString().split('T')[0];
   const todayBets = bets.filter(b => b.bet_date === today);
+  const todayStandard = todayBets.filter(b => b.bet_type !== 'ceiling_straight');
+  const todayCeiling = todayBets.filter(b => b.bet_type === 'ceiling_straight');
   const todayPending = todayBets.filter(b => b.outcome === 'pending').length;
   const todayWon = todayBets.filter(b => b.outcome === 'won').length;
   const todayLost = todayBets.filter(b => b.outcome === 'lost').length;
@@ -105,7 +114,7 @@ export function StraightBetsPnLCard() {
               Today — ${todayRisk} risk · {todayPending} pending
             </p>
             <div className="space-y-1.5 max-h-64 overflow-y-auto">
-              {todayBets.map(bet => {
+              {todayStandard.map(bet => {
                 const label = PROP_LABELS[bet.prop_type] || bet.prop_type;
                 return (
                   <div key={bet.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded-lg bg-muted/20">
@@ -130,6 +139,43 @@ export function StraightBetsPnLCard() {
                   </div>
                 );
               })}
+              {todayCeiling.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-orange-400 mt-2 mb-1 flex items-center gap-1">
+                    🚀 Ceiling Straights ({todayCeiling.length})
+                  </p>
+                  {todayCeiling.map(bet => {
+                    const label = PROP_LABELS[bet.prop_type] || bet.prop_type;
+                    return (
+                      <div key={bet.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {bet.outcome === 'won' && <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />}
+                          {bet.outcome === 'lost' && <TrendingDown className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                          {bet.outcome === 'pending' && <DollarSign className="w-3.5 h-3.5 text-orange-400 shrink-0" />}
+                          <span className="truncate font-medium">{bet.player_name}</span>
+                          <span className="text-muted-foreground text-xs shrink-0">
+                            OVER {bet.ceiling_line || bet.line} {label}
+                          </span>
+                          {bet.standard_line && (
+                            <span className="text-xs text-muted-foreground/60 shrink-0">
+                              (book: {bet.standard_line})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {bet.h2h_boost && <span className="text-xs text-orange-400">+{bet.h2h_boost}H2H</span>}
+                          <span className="text-xs font-medium">${bet.simulated_stake}</span>
+                          {bet.outcome !== 'pending' && (
+                            <span className={cn("text-xs font-bold", (bet.profit_loss || 0) >= 0 ? "text-green-500" : "text-red-500")}>
+                              {(bet.profit_loss || 0) >= 0 ? '+' : ''}${(bet.profit_loss || 0).toFixed(0)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
             {todayBets.some(b => b.outcome !== 'pending') && (
               <div className="mt-2 pt-2 border-t border-border/50 flex justify-between text-sm">

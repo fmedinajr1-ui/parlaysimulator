@@ -468,7 +468,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Insert straight bets
+    // Insert standard straight bets
     const betsToInsert = selected.map(s => ({
       bet_date: today,
       player_name: s.player_name,
@@ -484,6 +484,7 @@ Deno.serve(async (req) => {
       line_source: s.line_source,
       buffer_pct: s.buffer_pct,
       l10_avg: s.l10_avg,
+      bet_type: 'standard',
     }));
 
     const { error: insertErr } = await supabase
@@ -492,7 +493,104 @@ Deno.serve(async (req) => {
 
     if (insertErr) throw insertErr;
 
-    console.log(`[StraightBets] Inserted ${betsToInsert.length} straight bets`);
+    console.log(`[StraightBets] Inserted ${betsToInsert.length} standard straight bets`);
+
+    // ═══════════════════════════════════════════════════════════
+    // CEILING LINE SCANNER — L3 + H2H Matchup elevated lines
+    // ═══════════════════════════════════════════════════════════
+    console.log(`[CeilingScanner] Starting ceiling line scan...`);
+
+    const { data: ceilingCandidates, error: ceilErr } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, prop_type, actual_line, l3_avg, l10_avg, l10_max, h2h_matchup_boost, l10_hit_rate, confidence_score, recommended_side')
+      .eq('is_active', true)
+      .eq('analysis_date', today)
+      .not('actual_line', 'is', null)
+      .not('l3_avg', 'is', null)
+      .not('l10_max', 'is', null)
+      .gt('h2h_matchup_boost', 0);
+
+    const ceilingBets: any[] = [];
+
+    if (!ceilErr && ceilingCandidates) {
+      for (const c of ceilingCandidates) {
+        const stdLine = c.actual_line;
+        const l3 = c.l3_avg;
+        const l10Max = c.l10_max;
+        const h2hBoost = c.h2h_matchup_boost || 0;
+
+        // Gate: L3 must clear the book line
+        if (l3 <= stdLine) continue;
+        // Gate: L10 max must show 25%+ ceiling above line
+        if (l10Max < stdLine * 1.25) continue;
+
+        // Calculate ceiling line
+        const rawCeil = Math.min(l3 * 0.95, l10Max * 0.8);
+        // Round to nearest 0.5
+        const ceilLine = Math.round(rawCeil * 2) / 2;
+
+        // Ceiling must be above the standard line
+        if (ceilLine <= stdLine) continue;
+
+        // Don't duplicate a standard bet we already placed at this line
+        const alreadyPlaced = betsToInsert.some(
+          b => b.player_name === c.player_name && b.prop_type === c.prop_type
+        );
+        if (alreadyPlaced) {
+          // Still create ceiling if it's a meaningfully higher line (≥1.5 above standard)
+          const existingBet = betsToInsert.find(b => b.player_name === c.player_name && b.prop_type === c.prop_type);
+          if (existingBet && ceilLine < existingBet.line + 1.5) continue;
+        }
+
+        const hr = (c.l10_hit_rate || 0) <= 1 ? (c.l10_hit_rate || 0) * 100 : (c.l10_hit_rate || 0);
+        const reason = `L3 avg ${l3} clears line ${stdLine} | L10 max ${l10Max} (${((l10Max/stdLine - 1)*100).toFixed(0)}% above) | H2H boost +${h2hBoost}`;
+
+        ceilingBets.push({
+          bet_date: today,
+          player_name: c.player_name,
+          prop_type: c.prop_type,
+          line: ceilLine,
+          side: 'OVER',
+          l10_hit_rate: hr,
+          composite_score: c.confidence_score || 0,
+          simulated_stake: Math.max(25, Math.round(getKellyStake(hr, bankroll) * 0.6)), // smaller stake for higher risk
+          simulated_payout: 0, // will be calculated below
+          american_odds: -110,
+          source: 'ceiling_scanner',
+          line_source: 'ceiling',
+          buffer_pct: Math.round(((l3 - ceilLine) / ceilLine) * 100 * 10) / 10,
+          l10_avg: c.l10_avg || 0,
+          bet_type: 'ceiling_straight',
+          ceiling_line: ceilLine,
+          standard_line: stdLine,
+          h2h_boost: h2hBoost,
+          ceiling_reason: reason,
+        });
+      }
+
+      // Calculate payouts
+      for (const cb of ceilingBets) {
+        cb.simulated_payout = Math.round(cb.simulated_stake * 0.91 * 100) / 100;
+      }
+
+      // Limit to top 5 ceiling picks by buffer
+      ceilingBets.sort((a: any, b: any) => b.buffer_pct - a.buffer_pct);
+      const topCeilings = ceilingBets.slice(0, 5);
+
+      if (topCeilings.length > 0) {
+        const { error: cInsertErr } = await supabase
+          .from('bot_straight_bets')
+          .insert(topCeilings);
+
+        if (cInsertErr) {
+          console.error(`[CeilingScanner] Insert error:`, cInsertErr.message);
+        } else {
+          console.log(`[CeilingScanner] Inserted ${topCeilings.length} ceiling straight bets`);
+        }
+      }
+    }
+
+    console.log(`[CeilingScanner] Found ${ceilingBets.length} candidates, inserted ${Math.min(ceilingBets.length, 5)}`);
 
     // Build Telegram message
     const totalStake = betsToInsert.reduce((sum, b) => sum + b.simulated_stake, 0);
@@ -517,6 +615,18 @@ Deno.serve(async (req) => {
       msg += `   L10: ${b.l10_hit_rate}% | Avg: ${b.l10_avg} | Buf: +${b.buffer_pct}%${dnaTag} | $${b.simulated_stake}\n`;
     }
 
+    // Append ceiling picks to Telegram
+    const insertedCeilings = ceilingBets.slice(0, 5);
+    if (insertedCeilings.length > 0) {
+      const ceilStake = insertedCeilings.reduce((s: number, c: any) => s + c.simulated_stake, 0);
+      msg += `\n🚀 *CEILING STRAIGHTS* (${insertedCeilings.length} picks | $${ceilStake} risk)\n`;
+      for (const c of insertedCeilings) {
+        const label = PROP_LABELS[c.prop_type] || c.prop_type;
+        msg += `⬆️ *${c.player_name}* OVER ${c.ceiling_line} ${label}\n`;
+        msg += `   Book: ${c.standard_line} → Ceil: ${c.ceiling_line} | L3: ${c.l10_avg} | H2H: +${c.h2h_boost} | $${c.simulated_stake}\n`;
+      }
+    }
+
     msg += `\n_Buffer ≥${minBuffer}% | Hist ≥55%${usePickDNA ? ' | DNA scored' : ''} | Kelly @ $${bankroll}_`;
 
     // Send via bot-send-telegram
@@ -525,28 +635,31 @@ Deno.serve(async (req) => {
         type: 'straight_bets',
         data: {
           message: msg,
-          picks: betsToInsert,
-          totalStake,
+          picks: [...betsToInsert, ...insertedCeilings],
+          totalStake: totalStake + insertedCeilings.reduce((s: number, c: any) => s + c.simulated_stake, 0),
         },
       },
     });
 
     // Log activity
+    const totalCeilings = Math.min(ceilingBets.length, 5);
     await supabase.from('bot_activity_log').insert({
       event_type: 'straight_bets_generated',
-      message: `Generated ${betsToInsert.length} straight bets, $${totalStake} total risk, ${fdCount} FD lines`,
-      metadata: { date: today, count: betsToInsert.length, totalStake, fdCount, skippedBuffer, skippedHistorical },
+      message: `Generated ${betsToInsert.length} standard + ${totalCeilings} ceiling straight bets, $${totalStake} risk, ${fdCount} FD lines`,
+      metadata: { date: today, count: betsToInsert.length, ceilingCount: totalCeilings, totalStake, fdCount, skippedBuffer, skippedHistorical },
       severity: 'info',
     });
 
     return new Response(JSON.stringify({
       success: true,
       count: betsToInsert.length,
+      ceilingCount: totalCeilings,
       totalStake,
       fdLines: fdCount,
       skippedBuffer,
       skippedHistorical,
-      picks: betsToInsert.map(b => `${b.player_name} ${b.side} ${b.line} ${b.prop_type} [${b.line_source}] +${b.buffer_pct}%`),
+      standardPicks: betsToInsert.map(b => `${b.player_name} ${b.side} ${b.line} ${b.prop_type} [${b.line_source}] +${b.buffer_pct}%`),
+      ceilingPicks: insertedCeilings.map((c: any) => `${c.player_name} OVER ${c.ceiling_line} ${c.prop_type} (book: ${c.standard_line}, h2h: +${c.h2h_boost})`),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
