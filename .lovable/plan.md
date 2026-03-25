@@ -1,41 +1,45 @@
 
 
-# Fix Whale Odds Scraper — 422 Errors on Player Props
+# Enable MLB Parlay Generation
 
-## What's Happening
-
-Your API key is working again (no more 401). However, **every player props request now returns HTTP 422** (Unprocessable Entity). The scraper currently discards the error body, so we can't see the exact reason. There are two likely causes:
-
-1. **Your new subscription tier may not include player props** — props require a paid plan on The Odds API
-2. **Invalid market keys in batches** — the scraper includes `player_threes_q1` and `player_steals_q1` which are NOT valid API markets; if any market in a batch is invalid, the entire batch fails
+## Current State
+- Historical game logs exist but stop at Feb 20 — no current season data
+- FanDuel only has 24 MLB props (pitcher K's); BetMGM has 1,267
+- MLB is explicitly blocked in `bot-generate-daily-parlays` and filtered out in `broadcast-new-strategies`
+- The MLB game log ingestion function exists but needs to run for current dates
 
 ## Plan
 
-### Step 1: Log the 422 response body for diagnosis
+### Step 1: Fix MLB game log ingestion for current season
+Update the MLB data ingestion to fetch recent game logs (last 14 days) and backfill the gap from Feb 20 to today. Ensure the `mlb_player_game_logs` table has current L10 data for active players.
 
-Update the error handler in the scraper to read and log the response body on 422 errors. This will tell us exactly whether it's "INVALID_MARKET" or "subscription tier required."
+**File:** `supabase/functions/mlb-props-sync/index.ts` or create a dedicated `mlb-data-ingestion` function modeled after `ncaa-baseball-data-ingestion` but targeting ESPN's MLB endpoints.
 
-### Step 2: Fix invalid market keys
+### Step 2: Fix whale-odds-scraper MLB FanDuel coverage
+The scraper collects MLB props but FanDuel only returns 24. Investigate whether MLB prop market keys need adjustment (similar to the NBA Q1 fix). Ensure batting props (hits, total_bases, rbis, runs, home_runs, stolen_bases) are included in MLB batches, not just pitcher_strikeouts.
 
-Remove `player_threes_q1` and `player_steals_q1` from batch 4 — these do not exist in the API. The valid Q1 markets for NBA are only: `player_points_q1`, `player_rebounds_q1`, `player_assists_q1`.
+**File:** `supabase/functions/whale-odds-scraper/index.ts` — review/add MLB-specific market batches
 
-Updated NBA batches:
-```text
-Batch 1: player_points, player_rebounds, player_assists
-Batch 2: player_threes, player_blocks, player_steals
-Batch 3: player_points_rebounds_assists, player_points_rebounds, player_points_assists, player_rebounds_assists
-Batch 4: player_points_q1, player_rebounds_q1, player_assists_q1  (removed 2 invalid keys)
-```
+### Step 3: Unblock MLB in parlay generator
+Remove the "MLB blocked" guard in `bot-generate-daily-parlays`:
+- Re-enable MLB engine cross-reference boost (currently hardcoded to 0)
+- Allow `baseball_mlb` sport through the generation filter
 
-### Step 3: Add per-market fallback on 422
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts` — lines ~6376 and ~6393
 
-If a batched request returns 422, retry each market in the batch individually. This way one bad market doesn't kill the entire batch. This also handles cases where the subscription doesn't support certain markets.
+### Step 4: Unblock MLB in broadcast
+Remove the `filterBaseball()` calls in `broadcast-new-strategies` that strip MLB parlays before sending to Telegram.
 
-### Step 4: Re-deploy and test
+**File:** `supabase/functions/broadcast-new-strategies/index.ts`
 
-Deploy the fixed scraper, run it in full mode, and check logs for success.
+### Step 5: Add MLB to scheduled pipeline
+Add MLB game log refresh to the morning-data-refresh cron (8 AM ET) so L10 stats stay current daily.
 
-## Files Changed
+**File:** `supabase/functions/refresh-l10-and-rebuild/index.ts` or the morning pipeline orchestrator
 
-1. **`supabase/functions/whale-odds-scraper/index.ts`** — Log 422 body, fix invalid Q1 market keys, add per-market fallback on 422 errors
+## Execution Order
+1. Steps 1–2 first (data foundation)
+2. Steps 3–4 (unblock generation)
+3. Step 5 (automate daily refresh)
+4. Test end-to-end with a manual pipeline run
 
