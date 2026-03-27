@@ -1,83 +1,50 @@
 
 
-# Fix Pipeline Quality Issues — 4 Items
+# Send Daily Sweet Spot Picks via Telegram
 
-## 1. Fix Ghost Legs (no player_name)
+## Problem
+The pipeline analyzes and stores individual sweet spot picks in `category_sweet_spots`, but never sends them to you via Telegram. Only parlays get broadcast — the best individual picks are invisible unless you check the dashboard.
 
-**Root cause**: The main leg assembly (line ~8439) copies `playerPick.player_name` into `legData`, but some picks from mispriced/team sources may have null player names and still pass through. The cluster builder (line ~10498) and other builders also lack validation.
+## Solution
+Add a new phase to the orchestrator that queries today's top sweet spot picks and sends them as a formatted Telegram message to admin.
 
-**Fix**: Add a hard gate in `bot-generate-daily-parlays/index.ts` immediately before `legs.push(legData)` at every push site:
-- If `!legData.player_name` (for player-type legs), skip with a log: `[GhostBlock] Skipped leg with no player_name`
-- Apply the same check in the cluster builder (~10498), sweep builder (~11139), and all other `legs.push` / `selectedLegs.push` sites
-- Also add a final sanitization pass before inserting parlays: filter out any leg where `type !== 'team' && !player_name`
+## Changes
 
-**Files**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+### 1. New Edge Function: `broadcast-sweet-spots`
+- Queries `category_sweet_spots` for today's date, `is_active = true`, confidence ≥ 70, ordered by confidence descending
+- Groups picks by category (e.g., Points, Rebounds, Assists)
+- Formats a clean Telegram message showing: player, prop, side, line, confidence, hit rate
+- Sends via `bot-send-telegram` with `admin_only: true`
+- Caps at top ~20 picks to keep the message readable
 
-## 2. Cap Rebounds — Max 1 Per Parlay
+### 2. Add Formatter to `bot-send-telegram/index.ts`
+- Add a `sweet_spots_broadcast` message type
+- Format: grouped by category, each pick showing player name, prop type, recommended side/line, confidence score, L10 hit rate
 
-**Fix**: At each `legs.push` site, check the prop type count tracker (`parlayPropTypeCount`) for `player_rebounds`. If it's already at 1, skip the leg.
+### 3. Wire Into Orchestrator: `refresh-l10-and-rebuild/index.ts`
+- Add a new phase after `phase3h` (slate status) that invokes `broadcast-sweet-spots`
+- Runs at the very end so all analysis is complete before broadcasting
 
-Specifically, right before `legs.push(legData)` (~line 8543), add:
-```
-const normProp = normalizePropType(legData.prop_type || '');
-if (normProp === 'player_rebounds' && (parlayPropTypeCount.get('rebounds') || 0) >= 1) {
-  console.log(`[ReboundCap] Blocked ${legData.player_name} — max 1 rebound leg per parlay`);
-  continue;
-}
-```
+## Message Format Example
+```text
+🎯 *Today's Sweet Spot Picks*
+━━━━━━━━━━━━━━━━━━━━━
 
-Apply the same cap in cluster builder, sweep builder, and all sub-builders (sharp, heat, lottery scanner).
+📊 *Points*
+• LeBron James — O25.5 Pts (87% conf, 80% L10)
+• Jayson Tatum — O27.5 Pts (82% conf, 70% L10)
 
-**Files**: `bot-generate-daily-parlays/index.ts`, `nba-mega-parlay-scanner/index.ts`, `sharp-parlay-builder/index.ts` (if applicable), `bot-force-fresh-parlays/index.ts`
+📊 *Rebounds*
+• Nikola Jokic — O11.5 Reb (85% conf, 90% L10)
 
-## 3. Block Steals & Blocks From Parlays
+📊 *Assists*
+• Tyrese Haliburton — O9.5 Ast (79% conf, 75% L10)
 
-**Fix**: Add a `BLOCKED_PARLAY_PROPS` set at the top of the generator:
-```
-const BLOCKED_PARLAY_PROPS = new Set(['player_steals', 'player_blocks']);
-```
-
-Before each `legs.push`, check:
-```
-if (BLOCKED_PARLAY_PROPS.has(normalizePropType(legData.prop_type || ''))) {
-  console.log(`[VolatileBlock] Blocked ${legData.player_name} ${legData.prop_type} — steals/blocks banned from parlays`);
-  continue;
-}
+Total: 15 picks | Avg confidence: 81%
 ```
 
-Apply in all parlay builders. Straight bets can still use them (no change to `bot-generate-straight-bets`).
-
-**Files**: `bot-generate-daily-parlays/index.ts`, `nba-mega-parlay-scanner/index.ts`, `bot-force-fresh-parlays/index.ts`
-
-## 4. DNA Audit Must Run Every Day — Never Skip
-
-**Problem**: The DNA audit (phase3g) gets skipped when the orchestrator times out before reaching it, and there's no recovery mechanism specifically for the audit.
-
-**Fix** in `refresh-l10-and-rebuild/index.ts`:
-- After the main phase loop ends, check if `results["score-parlays-dna"]` exists and equals `"ok"`. If not (skipped or failed), force-invoke it one more time as a standalone call outside the loop, with its own try/catch
-- Send an admin alert if the DNA audit was skipped and the recovery also fails
-- This ensures the audit runs even if earlier phases consumed the timeout budget
-
-```
-// After main loop, before auto-resume logic (~line 418)
-if (results["score-parlays-dna"] !== "ok") {
-  log("⚠ DNA audit did not complete — forcing standalone run");
-  try {
-    const dnaResp = await supabase.functions.invoke("score-parlays-dna", { body: {} });
-    results["score-parlays-dna"] = "ok:forced";
-    log("✅ Forced DNA audit completed");
-  } catch (e) {
-    results["score-parlays-dna"] = `forced_error:${e.message}`;
-    sendPipelineAlert(`🚨 *DNA Audit Failed*\n\nForced DNA audit after timeout also failed.\n*Error:* ${e.message}`);
-  }
-}
-```
-
-**Files**: `supabase/functions/refresh-l10-and-rebuild/index.ts`
-
-## Summary of Files Changed
-1. `supabase/functions/bot-generate-daily-parlays/index.ts` — Ghost leg gate, rebound cap, steals/blocks block
-2. `supabase/functions/nba-mega-parlay-scanner/index.ts` — Rebound cap, steals/blocks block
-3. `supabase/functions/bot-force-fresh-parlays/index.ts` — Rebound cap, steals/blocks block
-4. `supabase/functions/refresh-l10-and-rebuild/index.ts` — Forced DNA audit fallback
+## Files Changed
+1. **New**: `supabase/functions/broadcast-sweet-spots/index.ts`
+2. **Edit**: `supabase/functions/bot-send-telegram/index.ts` — add `sweet_spots_broadcast` type + formatter
+3. **Edit**: `supabase/functions/refresh-l10-and-rebuild/index.ts` — add phase after slate status
 
