@@ -709,8 +709,12 @@ async function handleParlays(chatId: string, page = 1) {
      .eq("outcome", "lost");
 
   if (!allParlays || allParlays.length === 0) {
-    const voidedNote = voidedCount ? `\n\n🗑 ${voidedCount} parlay(s) voided by DNA audit.` : '';
-    return `📭 No active parlays today.${voidedNote}\n\nUse /generate to create new parlays!`;
+    const notes = [
+      voidedCount ? `🗑 ${voidedCount} voided by DNA audit` : '',
+      lostCount ? `❌ ${lostCount} lost` : '',
+    ].filter(Boolean).join(' · ');
+    const contextNote = notes ? `\n\n${notes}` : '';
+    return `📭 No pending parlays today.${contextNote}\n\nUse /generate to create new parlays!`;
   }
 
   // Group by tier using shared classifier
@@ -746,7 +750,11 @@ async function handleParlays(chatId: string, page = 1) {
     .map(([t, g]) => `${tierLabels[t]}: ${g.length}`)
     .join(' | ');
 
-  const voidedNote = voidedCount ? `\n🗑 ${voidedCount} voided by DNA audit` : '';
+  const filterNotes = [
+    voidedCount ? `🗑 ${voidedCount} voided` : '',
+    lostCount ? `❌ ${lostCount} lost` : '',
+  ].filter(Boolean).join(' · ');
+  const voidedNote = filterNotes ? `\n${filterNotes}` : '';
 
   let message = `🎯🔥 *TODAY'S PARLAYS* 🔥🎯\n`;
   message += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
