@@ -688,20 +688,25 @@ async function handleParlays(chatId: string, page = 1) {
   const today = getEasternDate();
   const PARLAYS_PER_PAGE = 5;
   
-  // Fetch today's parlays excluding voided ones
-  const { data: allParlays } = await supabase
-    .from("bot_daily_parlays")
-    .select("*")
-    .eq("parlay_date", today)
-    .neq("outcome", "voided")
-    .order("created_at", { ascending: false });
+  // Fetch today's pending parlays only (exclude voided + lost)
+   const { data: allParlays } = await supabase
+     .from("bot_daily_parlays")
+     .select("*")
+     .eq("parlay_date", today)
+     .eq("outcome", "pending")
+     .order("created_at", { ascending: false });
 
-  // Also count voided for context
-  const { count: voidedCount } = await supabase
-    .from("bot_daily_parlays")
-    .select("*", { count: "exact", head: true })
-    .eq("parlay_date", today)
-    .eq("outcome", "voided");
+   // Count voided + lost for context
+   const { count: voidedCount } = await supabase
+     .from("bot_daily_parlays")
+     .select("*", { count: "exact", head: true })
+     .eq("parlay_date", today)
+     .eq("outcome", "voided");
+   const { count: lostCount } = await supabase
+     .from("bot_daily_parlays")
+     .select("*", { count: "exact", head: true })
+     .eq("parlay_date", today)
+     .eq("outcome", "lost");
 
   if (!allParlays || allParlays.length === 0) {
     const voidedNote = voidedCount ? `\n\n🗑 ${voidedCount} parlay(s) voided by DNA audit.` : '';
