@@ -415,6 +415,20 @@ Deno.serve(async (req) => {
 
     log(`=== RUN COMPLETE (${elapsed()}ms) — ${skipped.length} phases skipped ===`);
 
+    // === FORCED DNA AUDIT: ensure it runs every day, even if skipped by timeout ===
+    if (results["score-parlays-dna"] !== "ok") {
+      log("⚠ DNA audit did not complete — forcing standalone run");
+      try {
+        await supabase.functions.invoke("score-parlays-dna", { body: {} });
+        results["score-parlays-dna"] = "ok:forced";
+        log("✅ Forced DNA audit completed");
+      } catch (dnaErr) {
+        results["score-parlays-dna"] = `forced_error:${dnaErr.message}`;
+        log(`❌ Forced DNA audit also failed: ${dnaErr.message}`);
+        sendPipelineAlert(`🚨 *DNA Audit Failed*\n\nDNA audit was skipped and forced retry also failed.\n*Error:* ${dnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``);
+      }
+    }
+
     // === END-OF-RUN FAILURE SUMMARY ===
     const failedSteps = Object.entries(results).filter(([_, v]) => v.startsWith("error:") || v.startsWith("exception:"));
     if (failedSteps.length > 0) {

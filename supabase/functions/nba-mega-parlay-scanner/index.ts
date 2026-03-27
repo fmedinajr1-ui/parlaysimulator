@@ -28,6 +28,10 @@ function normalizePropType(raw: string): string {
   return s;
 }
 
+// Props banned from parlays — too binary/volatile
+const BLOCKED_PARLAY_PROPS = new Set(['player_steals', 'player_blocks', 'steals', 'blocks']);
+const MAX_REBOUND_LEGS_PER_PARLAY = 1;
+
 // === POISON FLIP MAP: block historically-losing sides ===
 const POISON_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'rebounds': 'under',
@@ -1109,10 +1113,20 @@ Deno.serve(async (req) => {
       usedPlayers: Set<string>,
       role: string,
       tier: string
-    ) {
+    ): boolean {
+      // Ghost leg gate
+      if (!prop.player_name) { console.log(`[GhostBlock] MegaScanner: skipped leg with no player_name`); return false; }
+      // Volatile prop block
+      const normProp = normalizePropType(prop.prop_type || '');
+      if (BLOCKED_PARLAY_PROPS.has(normProp)) { console.log(`[VolatileBlock] MegaScanner: blocked ${prop.player_name} ${prop.prop_type}`); return false; }
+      // Rebound cap
+      const rebCount = legs.filter(l => normalizePropType(l.prop_type || '') === 'rebounds' || normalizePropType(l.prop_type || '') === 'player_rebounds').length;
+      if ((normProp === 'rebounds' || normProp === 'player_rebounds') && rebCount >= MAX_REBOUND_LEGS_PER_PARLAY) { console.log(`[ReboundCap] MegaScanner: blocked ${prop.player_name}`); return false; }
+
       legs.push({ ...prop, leg_role: role, ticket_tier: tier });
       gameCount.set(prop.game, (gameCount.get(prop.game) || 0) + 1);
       usedPlayers.add(normalizeName(prop.player_name));
+      return true;
     }
 
     function calcCombinedOdds(legs: ScoredProp[]): number {
