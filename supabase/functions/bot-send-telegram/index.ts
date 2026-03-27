@@ -219,6 +219,69 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
   }
 }
 
+function formatSweetSpotsBroadcast(data: Record<string, any>, dateStr: string): string {
+  const picks = data.picks || [];
+  if (picks.length === 0) return `🎯 *Sweet Spot Picks — ${dateStr}*\n\nNo qualifying picks today.`;
+
+  const CATEGORY_EMOJI: Record<string, string> = {
+    points: '📊', rebounds: '📊', assists: '📊', threes: '📊',
+    steals: '📊', blocks: '📊', pra: '📊', pts_rebs: '📊',
+    pts_asts: '📊', rebs_asts: '📊', turnovers: '📊',
+  };
+
+  // Group by category
+  const groups: Record<string, typeof picks> = {};
+  for (const p of picks) {
+    const cat = (p.category || p.prop_type || 'other').toLowerCase().replace('player_', '');
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(p);
+  }
+
+  let msg = `🎯 *Today's Sweet Spot Picks* — ${dateStr}\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  const catLabel = (cat: string) => {
+    const labels: Record<string, string> = {
+      points: 'Points', rebounds: 'Rebounds', assists: 'Assists',
+      threes: '3-Pointers', pra: 'PRA', pts_rebs: 'Pts+Rebs',
+      pts_asts: 'Pts+Asts', rebs_asts: 'Rebs+Asts', steals: 'Steals',
+      blocks: 'Blocks', turnovers: 'Turnovers',
+    };
+    return labels[cat] || cat.charAt(0).toUpperCase() + cat.slice(1);
+  };
+
+  const propShort = (cat: string) => {
+    const shorts: Record<string, string> = {
+      points: 'Pts', rebounds: 'Reb', assists: 'Ast', threes: '3PT',
+      pra: 'PRA', pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
+      steals: 'Stl', blocks: 'Blk', turnovers: 'TO',
+    };
+    return shorts[cat] || cat.toUpperCase();
+  };
+
+  let totalConf = 0;
+  let count = 0;
+
+  for (const [cat, catPicks] of Object.entries(groups)) {
+    const emoji = CATEGORY_EMOJI[cat] || '📊';
+    msg += `${emoji} *${catLabel(cat)}*\n`;
+    for (const p of catPicks) {
+      const side = (p.recommended_side || 'over').charAt(0).toUpperCase();
+      const line = p.recommended_line ?? '?';
+      const conf = Math.round(p.confidence_score || 0);
+      const l10 = p.l10_hit_rate != null ? `${Math.round(p.l10_hit_rate * 100)}%` : '—';
+      msg += `• ${p.player_name} — ${side}${line} ${propShort(cat)} (${conf}% conf, ${l10} L10)\n`;
+      totalConf += conf;
+      count++;
+    }
+    msg += '\n';
+  }
+
+  const avgConf = count > 0 ? Math.round(totalConf / count) : 0;
+  msg += `📈 *Total:* ${count} picks | *Avg confidence:* ${avgConf}%`;
+
+  return msg;
+}
+
 function formatCompositeConflictReport(data: Record<string, any>, dateStr: string): string {
   const conflicts = data.conflicts || [];
   if (conflicts.length === 0) return '';
