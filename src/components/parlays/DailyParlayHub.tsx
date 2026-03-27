@@ -101,6 +101,11 @@ export function DailyParlayHub() {
         </CardHeader>
       
         <CardContent className="p-3">
+          {/* Day Type Classifier */}
+          <div className="mb-3">
+            <DayTypeClassifierCard />
+          </div>
+
           {/* Smart Check Panel */}
           <div className="mb-3">
             <ParlaySmartCheckPanel />
