@@ -376,6 +376,13 @@ Deno.serve(async (req) => {
         await invokeStep("Sending slate status", "bot-slate-status-update", {});
       },
     },
+    {
+      id: "phase3j",
+      label: "Broadcast sweet spot picks",
+      run: async () => {
+        await invokeStep("Broadcasting sweet spot picks", "broadcast-sweet-spots", {});
+      },
+    },
   ];
 
   // Determine start index based on resume_after
