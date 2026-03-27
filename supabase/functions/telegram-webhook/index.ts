@@ -688,15 +688,24 @@ async function handleParlays(chatId: string, page = 1) {
   const today = getEasternDate();
   const PARLAYS_PER_PAGE = 5;
   
-  // Fetch ALL of today's parlays (no batch filter)
+  // Fetch today's parlays excluding voided ones
   const { data: allParlays } = await supabase
     .from("bot_daily_parlays")
     .select("*")
     .eq("parlay_date", today)
+    .neq("outcome", "voided")
     .order("created_at", { ascending: false });
 
+  // Also count voided for context
+  const { count: voidedCount } = await supabase
+    .from("bot_daily_parlays")
+    .select("*", { count: "exact", head: true })
+    .eq("parlay_date", today)
+    .eq("outcome", "voided");
+
   if (!allParlays || allParlays.length === 0) {
-    return "📭 No parlays generated today yet.\n\nUse /generate to create new parlays!";
+    const voidedNote = voidedCount ? `\n\n🗑 ${voidedCount} parlay(s) voided by DNA audit.` : '';
+    return `📭 No active parlays today.${voidedNote}\n\nUse /generate to create new parlays!`;
   }
 
   // Group by tier using shared classifier
@@ -732,9 +741,11 @@ async function handleParlays(chatId: string, page = 1) {
     .map(([t, g]) => `${tierLabels[t]}: ${g.length}`)
     .join(' | ');
 
+  const voidedNote = voidedCount ? `\n🗑 ${voidedCount} voided by DNA audit` : '';
+
   let message = `🎯🔥 *TODAY'S PARLAYS* 🔥🎯\n`;
   message += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `Showing ${startIdx + 1}-${endIdx} of ${totalParlays} parlays\n`;
+  message += `Showing ${startIdx + 1}-${endIdx} of ${totalParlays} active parlays${voidedNote}\n`;
   message += `${tierCounts}\n\n`;
 
   // Track which tier label we last printed
