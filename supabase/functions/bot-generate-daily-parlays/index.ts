@@ -695,7 +695,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minEdge: 0.003,
     minSharpe: 0.01,
     stake: 100,
-    minConfidence: 0.45,
+    minConfidence: 0.60, // RAISED from 0.45 → 0.60 (legs with 0.55-0.65 confidence hit at 47% — coin flip)
     profiles: [
       // ============= OPTIMAL COMBO EXPLORATION (CAPPED: max 5/day, thresholds raised) =============
       { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
