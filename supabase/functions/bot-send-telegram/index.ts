@@ -107,6 +107,7 @@ type NotificationType =
   | 'straight_bets'
   | 'hedge_accuracy'
   | 'pick_dna'
+  | 'sweet_spots_broadcast'
   | 'custom'
   | 'test';
 
