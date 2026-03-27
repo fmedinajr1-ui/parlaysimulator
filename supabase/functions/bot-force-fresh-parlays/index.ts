@@ -32,6 +32,10 @@ const COMBO_BASES: Record<string, string[]> = {
   ra: ['rebounds', 'assists'],
 };
 
+// Props banned from parlays — too binary/volatile
+const BLOCKED_PARLAY_PROPS = new Set(['player_steals', 'player_blocks', 'steals', 'blocks']);
+const MAX_REBOUND_LEGS_PER_PARLAY = 1;
+
 // === FLIP MAP: force poison prop types to their winning side ===
 const MISPRICED_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'rebounds': 'under',
@@ -434,6 +438,14 @@ serve(async (req) => {
         // Limit player+prop reuse across parlays (max 2 per parlay index)
         const usageCount = [...usedInParlay].filter(k => k.startsWith(globalKey)).length;
         if (usageCount >= 2) continue;
+
+        // Ghost leg gate
+        if (!pick.player_name) { console.log(`[GhostBlock] ForceFresh: skipped leg with no player_name`); continue; }
+        // Volatile prop block
+        if (BLOCKED_PARLAY_PROPS.has(propKey)) { console.log(`[VolatileBlock] ForceFresh: blocked ${pick.player_name} ${pick.prop_type}`); continue; }
+        // Rebound cap
+        const ffRebCount = parlay.filter(p => normalizePropType(p.prop_type) === 'rebounds' || normalizePropType(p.prop_type) === 'player_rebounds').length;
+        if ((propKey === 'rebounds' || propKey === 'player_rebounds') && ffRebCount >= MAX_REBOUND_LEGS_PER_PARLAY) { console.log(`[ReboundCap] ForceFresh: blocked ${pick.player_name}`); continue; }
 
         parlay.push(pick);
         usedPlayers.add(playerKey);

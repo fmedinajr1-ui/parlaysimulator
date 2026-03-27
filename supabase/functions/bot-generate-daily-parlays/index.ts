@@ -17,6 +17,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Props banned from parlays — too binary/volatile
+const BLOCKED_PARLAY_PROPS = new Set(['player_steals', 'player_blocks']);
+const MAX_REBOUND_LEGS_PER_PARLAY = 1;
+
 // Normalize prop type variants to canonical form to prevent split tracking
 function normalizePropType(raw: string): string {
   const lower = (raw || '').toLowerCase().trim();
@@ -8540,6 +8544,23 @@ async function generateTierParlays(
         }
       }
 
+      // === GHOST LEG GATE: skip legs with no player_name ===
+      if (legData.type !== 'team' && !legData.player_name) {
+        console.log(`[GhostBlock] Skipped leg with no player_name (prop: ${legData.prop_type})`);
+        continue;
+      }
+      // === VOLATILE PROP BLOCK: steals/blocks banned from parlays ===
+      const normPropCheck = normalizePropType(legData.prop_type || '');
+      if (BLOCKED_PARLAY_PROPS.has(normPropCheck)) {
+        console.log(`[VolatileBlock] Blocked ${legData.player_name} ${legData.prop_type} — steals/blocks banned from parlays`);
+        continue;
+      }
+      // === REBOUND CAP: max 1 rebound leg per parlay ===
+      if (normPropCheck === 'player_rebounds' && (parlayPropTypeCount.get('rebounds') || 0) >= MAX_REBOUND_LEGS_PER_PARLAY) {
+        console.log(`[ReboundCap] Blocked ${legData.player_name} — max ${MAX_REBOUND_LEGS_PER_PARLAY} rebound leg per parlay`);
+        continue;
+      }
+
       legs.push(legData);
       parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
       // Track prop type count for concentration cap
@@ -9767,6 +9788,15 @@ async function generateMasterParlay(
     // Enforce team diversity (max 1 player per team)
     if (teamKey && usedTeams.has(teamKey)) continue;
 
+    // Ghost leg gate
+    if (!candidate.player_name) { console.log(`[GhostBlock] Master parlay: skipped leg with no player_name`); continue; }
+    // Volatile prop block
+    const masterNormProp = normalizePropType(candidate.prop_type || '');
+    if (BLOCKED_PARLAY_PROPS.has(masterNormProp)) { console.log(`[VolatileBlock] Master: blocked ${candidate.player_name} ${candidate.prop_type}`); continue; }
+    // Rebound cap
+    const masterRebCount = selectedLegs.filter(l => normalizePropType(l.prop_type || '') === 'player_rebounds').length;
+    if (masterNormProp === 'player_rebounds' && masterRebCount >= MAX_REBOUND_LEGS_PER_PARLAY) { console.log(`[ReboundCap] Master: blocked ${candidate.player_name}`); continue; }
+
     selectedLegs.push(candidate);
     usedArchetypes.add(archetype);
     if (teamKey) usedTeams.add(teamKey);
@@ -10495,6 +10525,15 @@ Deno.serve(async (req) => {
             const antiCorr = hasAntiCorrelation(pick, legs);
             if (antiCorr.blocked) continue;
 
+            // Ghost leg gate
+            if (!pick.player_name) { console.log(`[GhostBlock] Cluster: skipped leg with no player_name`); continue; }
+            // Volatile prop block
+            const clusterNormProp = normalizePropType(pick.prop_type || '');
+            if (BLOCKED_PARLAY_PROPS.has(clusterNormProp)) { console.log(`[VolatileBlock] Cluster: blocked ${pick.player_name} ${pick.prop_type}`); continue; }
+            // Rebound cap
+            const clusterRebCount = legs.filter((l: any) => normalizePropType(l.prop_type || '') === 'player_rebounds').length;
+            if (clusterNormProp === 'player_rebounds' && clusterRebCount >= MAX_REBOUND_LEGS_PER_PARLAY) { console.log(`[ReboundCap] Cluster: blocked ${pick.player_name}`); continue; }
+
             legs.push({
               player_name: pick.player_name,
               team_name: pick.team_name,
@@ -10665,6 +10704,13 @@ Deno.serve(async (req) => {
             const antiCorr = hasAntiCorrelation(pick, selectedLegs);
             if (antiCorr.blocked) continue;
 
+            // Ghost leg, volatile, rebound gates
+            if (!pick.player_name) { console.log(`[GhostBlock] MultiLeg: skipped leg with no player_name`); continue; }
+            const mlNormProp = normalizePropType(pick.prop_type || '');
+            if (BLOCKED_PARLAY_PROPS.has(mlNormProp)) { console.log(`[VolatileBlock] MultiLeg: blocked ${pick.player_name} ${pick.prop_type}`); continue; }
+            const mlRebCount = selectedLegs.filter((l: any) => normalizePropType(l.prop_type || '') === 'player_rebounds').length;
+            if (mlNormProp === 'player_rebounds' && mlRebCount >= MAX_REBOUND_LEGS_PER_PARLAY) { console.log(`[ReboundCap] MultiLeg: blocked ${pick.player_name}`); continue; }
+
             selectedLegs.push({
               player_name: pick.player_name,
               team_name: pick.team_name,
@@ -10699,6 +10745,13 @@ Deno.serve(async (req) => {
             }
             const antiCorr = hasAntiCorrelation(pick, selectedLegs);
             if (antiCorr.blocked) continue;
+            // Ghost leg, volatile, rebound gates for FILLER
+            if (!pick.player_name) { console.log(`[GhostBlock] Filler: skipped leg with no player_name`); continue; }
+            const fillNormProp = normalizePropType(pick.prop_type || '');
+            if (BLOCKED_PARLAY_PROPS.has(fillNormProp)) { console.log(`[VolatileBlock] Filler: blocked ${pick.player_name} ${pick.prop_type}`); continue; }
+            const fillRebCount = selectedLegs.filter((l: any) => normalizePropType(l.prop_type || '') === 'player_rebounds').length;
+            if (fillNormProp === 'player_rebounds' && fillRebCount >= MAX_REBOUND_LEGS_PER_PARLAY) { console.log(`[ReboundCap] Filler: blocked ${pick.player_name}`); continue; }
+
             selectedLegs.push({
               player_name: pick.player_name,
               team_name: pick.team_name,
