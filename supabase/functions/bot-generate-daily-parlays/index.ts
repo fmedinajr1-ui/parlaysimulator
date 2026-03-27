@@ -697,10 +697,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 100,
     minConfidence: 0.45,
     profiles: [
-      // ============= OPTIMAL COMBO EXPLORATION (PRIORITY — combinatorial optimizer) =============
-      { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= OPTIMAL COMBO EXPLORATION (CAPPED: max 5/day, thresholds raised) =============
+      { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      // KILLED: 4-leg optimal_combo exploration (7% win rate Mar 15-27)
+      // { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' },
       // ============= FLOOR LOCK EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
@@ -1122,9 +1123,12 @@ const BLOCKED_CATEGORIES = new Set([
   'OVER_TOTAL',      // 10.2% hit rate
   'UNDER_TOTAL',     // 18.2% hit rate
   'ML_FAVORITE',     // 20% hit rate
-  'BIG_ASSIST_OVER', // 10.3% hit rate
+  'BIG_ASSIST_OVER', // 10.3% hit rate → 0% Mar 15-27
   'VOLUME_SCORER',   // 0% hit rate across ALL strategies
   'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
+  'REBOUNDS',        // 13% hit rate Mar 15-27 — toxic category
+  'HIGH_REB_UNDER',  // 29% hit rate Mar 15-27 — below threshold
+  'uncategorized',   // No signal — unclassified legs drag down win rate
   // MLB categories — UNBLOCKED (data pipeline now active)
 ]);
 
@@ -6875,8 +6879,18 @@ async function generateTierParlays(
     if (parlaysToCreate.length >= config.count) break;
 
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
+    // NOTE: optimal_combo REMOVED from priority list — now subject to hard cap of 5/day (was 72% of losing volume)
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'floor_lock', 'ceiling_shot']);
     
+    // HARD CAP: optimal_combo limited to 5 parlays per tier (was unlimited, caused 72% volume imbalance)
+    if (profile.strategy === 'optimal_combo') {
+      const optimalComboCount = strategyCountMap.get('optimal_combo') || 0;
+      if (optimalComboCount >= 5) {
+        console.log(`[Bot] ⏭️ optimal_combo HARD CAP reached (${optimalComboCount}/5), skipping`);
+        continue;
+      }
+    }
+
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
       const currentStrategyCount = strategyCountMap.get(profile.strategy) || 0;
