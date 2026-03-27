@@ -695,28 +695,28 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minEdge: 0.003,
     minSharpe: 0.01,
     stake: 100,
-    minConfidence: 0.45,
+    minConfidence: 0.60, // RAISED from 0.45 → 0.60 (legs with 0.55-0.65 confidence hit at 47% — coin flip)
     profiles: [
-      // ============= OPTIMAL COMBO EXPLORATION (PRIORITY — combinatorial optimizer) =============
-      { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
+      // ============= OPTIMAL COMBO EXPLORATION (CAPPED: max 5/day, thresholds raised) =============
+      { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      // KILLED: 4-leg optimal_combo exploration (7% win rate Mar 15-27)
+      // { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate' },
       // ============= FLOOR LOCK EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite' },
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle' },
       { legs: 3, strategy: 'floor_lock', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate' },
-      // ============= SWEET SPOT L3: 5-leg parlays scored by L3 recency (moved from execution) =============
-      // ============= SWEET SPOT L3: capped at 4 legs (5+ leg parlays have 0% win rate) =============
-      { legs: 4, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
-      { legs: 4, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
-      { legs: 4, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
-      // ============= L3 + MATCHUP COMBO: capped at 4 legs =============
-      { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
-      { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
-      // ============= L3 SWEET + MISPRICED HYBRID: capped at 4 legs =============
-      { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined' },
-      { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined' },
+      // ============= SWEET SPOT L3: KILLED 4-leg exploration (7% win rate on 4-leggers Mar 15-27) =============
+      // { legs: 4, strategy: 'sweet_spot_l3', sports: ['all'], minHitRate: 50, sortBy: 'l3_score' },
+      // { legs: 4, strategy: 'sweet_spot_l3', sports: ['icehockey_nhl'], minHitRate: 50, sortBy: 'l3_score' },
+      // { legs: 4, strategy: 'sweet_spot_l3', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'l3_score' },
+      // ============= L3 + MATCHUP COMBO: KILLED 4-leg exploration =============
+      // { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined_l3_matchup' },
+      // { legs: 4, strategy: 'l3_matchup_combo', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined_l3_matchup' },
+      // ============= L3 SWEET + MISPRICED HYBRID: KILLED 4-leg exploration =============
+      // { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 50, sortBy: 'combined' },
+      // { legs: 4, strategy: 'l3_sweet_mispriced_hybrid', sports: ['basketball_nba'], minHitRate: 55, sortBy: 'combined' },
       // ============= CEILING SHOT EXPLORATION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'composite', useAltLines: true, preferPlusMoney: true },
       { legs: 3, strategy: 'ceiling_shot', sports: ['basketball_nba'], minHitRate: 45, sortBy: 'shuffle', useAltLines: true, preferPlusMoney: true },
@@ -1122,9 +1122,12 @@ const BLOCKED_CATEGORIES = new Set([
   'OVER_TOTAL',      // 10.2% hit rate
   'UNDER_TOTAL',     // 18.2% hit rate
   'ML_FAVORITE',     // 20% hit rate
-  'BIG_ASSIST_OVER', // 10.3% hit rate
+  'BIG_ASSIST_OVER', // 10.3% hit rate → 0% Mar 15-27
   'VOLUME_SCORER',   // 0% hit rate across ALL strategies
   'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
+  'REBOUNDS',        // 13% hit rate Mar 15-27 — toxic category
+  'HIGH_REB_UNDER',  // 29% hit rate Mar 15-27 — below threshold
+  'uncategorized',   // No signal — unclassified legs drag down win rate
   // MLB categories — UNBLOCKED (data pipeline now active)
 ]);
 
@@ -6874,9 +6877,24 @@ async function generateTierParlays(
     }
     if (parlaysToCreate.length >= config.count) break;
 
+    // KILL 4-LEG EXPLORATION: 7% win rate on 4-leggers Mar 15-27 — only keep execution 4-leggers
+    if (tier === 'exploration' && profile.legs >= 4) {
+      continue;
+    }
+
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
-    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'optimal_combo', 'floor_lock', 'ceiling_shot']);
+    // NOTE: optimal_combo REMOVED from priority list — now subject to hard cap of 5/day (was 72% of losing volume)
+    const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'floor_lock', 'ceiling_shot']);
     
+    // HARD CAP: optimal_combo limited to 5 parlays per tier (was unlimited, caused 72% volume imbalance)
+    if (profile.strategy === 'optimal_combo') {
+      const optimalComboCount = strategyCountMap.get('optimal_combo') || 0;
+      if (optimalComboCount >= 5) {
+        console.log(`[Bot] ⏭️ optimal_combo HARD CAP reached (${optimalComboCount}/5), skipping`);
+        continue;
+      }
+    }
+
     // Enforce strategy diversity cap + L10 volume throttling (skip for priority strategies)
     if (!PRIORITY_STRATEGIES.has(profile.strategy)) {
       const currentStrategyCount = strategyCountMap.get(profile.strategy) || 0;
