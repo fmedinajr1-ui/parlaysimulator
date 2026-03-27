@@ -6877,6 +6877,11 @@ async function generateTierParlays(
     }
     if (parlaysToCreate.length >= config.count) break;
 
+    // KILL 4-LEG EXPLORATION: 7% win rate on 4-leggers Mar 15-27 — only keep execution 4-leggers
+    if (tier === 'exploration' && profile.legs >= 4) {
+      continue;
+    }
+
     // Priority strategies bypass the diversity cap — these are cross-referenced highest-conviction picks
     // NOTE: optimal_combo REMOVED from priority list — now subject to hard cap of 5/day (was 72% of losing volume)
     const PRIORITY_STRATEGIES = new Set(['sweet_spot_core', 'sweet_spot_plus', 'sweet_spot_l3', 'l3_matchup_combo', 'l3_sweet_mispriced_hybrid', 'double_confirmed_conviction', 'triple_confirmed_conviction', 'mixed_conviction_stack', 'floor_lock', 'ceiling_shot']);
