@@ -1,0 +1,1 @@
+DELETE FROM bot_daily_parlays WHERE parlay_date = CURRENT_DATE AND outcome = 'pending';
