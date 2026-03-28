@@ -5171,7 +5171,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         return { ...gameCtx, envCluster: cluster, envClusterStrength: strength };
       })(),
     };
-  }).filter((p: EnrichedPick) => {
+  }).filter(Boolean).filter((p: EnrichedPick) => {
     // ALL picks in this array are sweet spots (from category_sweet_spots) — engine already vetted them
     // Only block if hit-rate blocked category
     if (blockedByHitRate.has(p.category)) return false;
