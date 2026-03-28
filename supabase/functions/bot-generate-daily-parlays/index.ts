@@ -5140,6 +5140,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const resolvedTeamName = (pick as any).team_name || 
       playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
 
+    // Apply per-player matchup grade + game context boost/penalty
+    compositeScore += getMatchupContextBoost(pick.player_name, resolvedTeamName, pick.prop_type);
+
+    // Hard gate: skip blowout-risk legs with low composite
+    if (isBlowoutRiskGame(resolvedTeamName) && compositeScore < 55) {
+      return null; // filtered out below
+    }
+
     // Attach game context for stacking intelligence
     const teamAbbrev = nameToAbbrev.get(resolvedTeamName) || nameToAbbrev.get(resolvedTeamName.toLowerCase()) || '';
     const gameCtx = teamAbbrev ? teamGameContextMap.get(teamAbbrev) : undefined;
@@ -5688,6 +5696,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
       let compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent, prop.side || 'over');
       compositeScore += getDayTypeBoost(prop.prop_type, currentDayTypeSignal);
+      compositeScore += getMatchupContextBoost(prop.player_name, prop.team_name || '', prop.prop_type);
       
       return {
         id: prop.id,
@@ -9801,6 +9810,7 @@ function generateSyntheticPool(): PropPool {
     const category = mapPropTypeToCategory(p.propType);
     let compositeScore = calculateCompositeScore(p.hitRate * 100, edge, oddsValueScore, 1.0, p.hitRate * 100, side);
     compositeScore += getDayTypeBoost(p.propType, currentDayTypeSignal);
+    compositeScore += getMatchupContextBoost(p.name, p.team, p.propType);
 
     return {
       id: `syn_pick_${i}`,
@@ -10242,6 +10252,8 @@ Deno.serve(async (req) => {
       loadPlayerPerformance(supabase),
       fetchStrategyHitRates(supabase),
       getDayTypeSignal(supabase, targetDate).then(signal => { currentDayTypeSignal = signal; }),
+      fetchGameContextFlags(supabase, targetDate),
+      fetchPlayerMatchupGrades(supabase, targetDate),
     ]);
 
     // ============= DAY TYPE PROFILE ADJUSTMENT =============
