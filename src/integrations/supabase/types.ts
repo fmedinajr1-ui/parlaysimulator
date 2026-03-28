@@ -3274,6 +3274,57 @@ export type Database = {
         }
         Relationships: []
       }
+      fanduel_behavior_patterns: {
+        Row: {
+          avg_move_size: number | null
+          avg_reaction_time_minutes: number | null
+          cascade_sequence: Json | null
+          confidence: number | null
+          created_at: string
+          id: string
+          last_updated: string
+          pattern_type: string
+          prop_type: string
+          sample_size: number | null
+          snapback_pct: number | null
+          sport: string
+          timing_window: string | null
+          velocity_threshold: number | null
+        }
+        Insert: {
+          avg_move_size?: number | null
+          avg_reaction_time_minutes?: number | null
+          cascade_sequence?: Json | null
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          last_updated?: string
+          pattern_type: string
+          prop_type: string
+          sample_size?: number | null
+          snapback_pct?: number | null
+          sport: string
+          timing_window?: string | null
+          velocity_threshold?: number | null
+        }
+        Update: {
+          avg_move_size?: number | null
+          avg_reaction_time_minutes?: number | null
+          cascade_sequence?: Json | null
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          last_updated?: string
+          pattern_type?: string
+          prop_type?: string
+          sample_size?: number | null
+          snapback_pct?: number | null
+          sport?: string
+          timing_window?: string | null
+          velocity_threshold?: number | null
+        }
+        Relationships: []
+      }
       fanduel_daily_parlay: {
         Row: {
           confidence_score: number | null
@@ -3325,6 +3376,141 @@ export type Database = {
           total_odds?: number
           trap_patterns_found?: number | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fanduel_line_timeline: {
+        Row: {
+          commence_time: string | null
+          created_at: string
+          drift_velocity: number | null
+          event_description: string | null
+          event_id: string
+          hours_to_tip: number | null
+          id: string
+          line: number
+          line_change_from_open: number | null
+          opening_line: number | null
+          opening_over_price: number | null
+          opening_under_price: number | null
+          over_price: number | null
+          player_name: string
+          price_change_from_open: number | null
+          prop_type: string
+          snapshot_phase: string
+          snapshot_time: string
+          sport: string
+          under_price: number | null
+        }
+        Insert: {
+          commence_time?: string | null
+          created_at?: string
+          drift_velocity?: number | null
+          event_description?: string | null
+          event_id: string
+          hours_to_tip?: number | null
+          id?: string
+          line: number
+          line_change_from_open?: number | null
+          opening_line?: number | null
+          opening_over_price?: number | null
+          opening_under_price?: number | null
+          over_price?: number | null
+          player_name: string
+          price_change_from_open?: number | null
+          prop_type: string
+          snapshot_phase?: string
+          snapshot_time?: string
+          sport: string
+          under_price?: number | null
+        }
+        Update: {
+          commence_time?: string | null
+          created_at?: string
+          drift_velocity?: number | null
+          event_description?: string | null
+          event_id?: string
+          hours_to_tip?: number | null
+          id?: string
+          line?: number
+          line_change_from_open?: number | null
+          opening_line?: number | null
+          opening_over_price?: number | null
+          opening_under_price?: number | null
+          over_price?: number | null
+          player_name?: string
+          price_change_from_open?: number | null
+          prop_type?: string
+          snapshot_phase?: string
+          snapshot_time?: string
+          sport?: string
+          under_price?: number | null
+        }
+        Relationships: []
+      }
+      fanduel_prediction_accuracy: {
+        Row: {
+          actual_outcome: string | null
+          actual_value: number | null
+          confidence_at_signal: number | null
+          created_at: string
+          edge_at_signal: number | null
+          event_id: string | null
+          id: string
+          player_name: string | null
+          predicted_direction: string | null
+          predicted_magnitude: number | null
+          prediction: string
+          prop_type: string
+          signal_factors: Json | null
+          signal_type: string
+          sport: string
+          time_to_tip_hours: number | null
+          velocity_at_signal: number | null
+          verified_at: string | null
+          was_correct: boolean | null
+        }
+        Insert: {
+          actual_outcome?: string | null
+          actual_value?: number | null
+          confidence_at_signal?: number | null
+          created_at?: string
+          edge_at_signal?: number | null
+          event_id?: string | null
+          id?: string
+          player_name?: string | null
+          predicted_direction?: string | null
+          predicted_magnitude?: number | null
+          prediction: string
+          prop_type: string
+          signal_factors?: Json | null
+          signal_type: string
+          sport: string
+          time_to_tip_hours?: number | null
+          velocity_at_signal?: number | null
+          verified_at?: string | null
+          was_correct?: boolean | null
+        }
+        Update: {
+          actual_outcome?: string | null
+          actual_value?: number | null
+          confidence_at_signal?: number | null
+          created_at?: string
+          edge_at_signal?: number | null
+          event_id?: string | null
+          id?: string
+          player_name?: string | null
+          predicted_direction?: string | null
+          predicted_magnitude?: number | null
+          prediction?: string
+          prop_type?: string
+          signal_factors?: Json | null
+          signal_type?: string
+          sport?: string
+          time_to_tip_hours?: number | null
+          velocity_at_signal?: number | null
+          verified_at?: string | null
+          was_correct?: boolean | null
         }
         Relationships: []
       }
