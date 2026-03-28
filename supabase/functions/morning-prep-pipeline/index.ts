@@ -58,6 +58,9 @@ Deno.serve(async (req) => {
       invokeStep('Game context analyzer', 'bot-game-context-analyzer', {}),
     ]);
 
+    // Step 3: Sync all engine outputs to the unified tracker
+    await invokeStep('Engine tracker sync', 'engine-tracker-sync', {});
+
     const totalDuration = Date.now() - startTime;
     const allOk = Object.values(results).every((r) => r.status === 'ok');
     const failedSteps = Object.entries(results).filter(([, r]) => r.status !== 'ok');
