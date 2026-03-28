@@ -229,32 +229,46 @@ async function fetchPlayerMatchupGrades(supabase: any, gameDate: string): Promis
       return;
     }
 
-    const insights = data[0].key_insights as any[];
-    for (const insight of insights) {
-      let parsed: any = null;
-      if (typeof insight === 'string') {
-        try { parsed = JSON.parse(insight); } catch { continue; }
-      } else {
-        parsed = insight;
-      }
-      // Look for player-level grade objects
-      if (parsed?.playerName && parsed?.overallGrade) {
-        playerMatchupMap.set(parsed.playerName.toLowerCase().trim(), {
-          overallGrade: parsed.overallGrade,
-          overallScore: parsed.overallScore || 0,
-          propEdgeType: parsed.propEdgeType || 'none',
-          recommendedSide: parsed.recommendedSide || 'pass',
-        });
-      }
-      // Also handle arrays of players
-      if (Array.isArray(parsed?.players)) {
-        for (const p of parsed.players) {
-          if (p.playerName && p.overallGrade) {
-            playerMatchupMap.set(p.playerName.toLowerCase().trim(), {
-              overallGrade: p.overallGrade,
-              overallScore: p.overallScore || 0,
-              propEdgeType: p.propEdgeType || 'none',
-              recommendedSide: p.recommendedSide || 'pass',
+    const ki = data[0].key_insights as any;
+    // Structure: { matchups: [{ recommended_props: [{ player_targets: [...], prop_type, matchup_label, matchup_score }] }] }
+    const matchups = ki?.matchups || (Array.isArray(ki) ? ki : []);
+    
+    for (const game of matchups) {
+      const recProps = game?.recommended_props || [];
+      for (const rec of recProps) {
+        const matchupLabel = (rec.matchup_label || '').toLowerCase();
+        const matchupScore = rec.matchup_score || 0;
+        const propType = rec.prop_type || 'none';
+        
+        // Map matchup_label to grade letter
+        let grade = 'B';
+        if (matchupLabel === 'elite' && matchupScore >= 22) grade = 'A+';
+        else if (matchupLabel === 'elite') grade = 'A';
+        else if (matchupLabel === 'strong' || matchupLabel === 'favorable') grade = 'B+';
+        else if (matchupLabel === 'bench_under') grade = 'B';
+        else if (matchupLabel === 'neutral') grade = 'C';
+        else if (matchupLabel === 'avoid' || matchupLabel === 'tough') grade = 'D';
+        
+        const playerTargets = rec.player_targets || [];
+        for (const pt of playerTargets) {
+          const playerName = (pt.player_name || '').toLowerCase().trim();
+          if (!playerName) continue;
+          
+          // Determine prop edge type from the recommendation
+          let propEdgeType = 'none';
+          if (propType === 'points') propEdgeType = 'points';
+          else if (propType === 'threes') propEdgeType = 'threes';
+          else if (propType === 'rebounds' || propType === 'assists') propEdgeType = 'none';
+          
+          const existing = playerMatchupMap.get(playerName);
+          // Keep the best grade for each player (they may appear in multiple matchup props)
+          const gradeRank: Record<string, number> = { 'A+': 6, 'A': 5, 'B+': 4, 'B': 3, 'C': 2, 'D': 1 };
+          if (!existing || (gradeRank[grade] || 0) > (gradeRank[existing.overallGrade] || 0)) {
+            playerMatchupMap.set(playerName, {
+              overallGrade: grade,
+              overallScore: matchupScore,
+              propEdgeType,
+              recommendedSide: rec.side || 'over',
             });
           }
         }
