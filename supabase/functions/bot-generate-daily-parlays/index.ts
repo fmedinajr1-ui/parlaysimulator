@@ -322,6 +322,7 @@ function autoPromoteToExecution(winningPatterns: { sports: string[]; legCount: n
 // L10 strategy hit rate data (loaded at runtime)
 let strategyHitRates = new Map<string, { winRate: number; total: number }>();
 let strategyWeightMultipliers = new Map<string, number>();
+let currentDayTypeSignal: DayTypeSignal | null = null;
 
 async function fetchStrategyHitRates(supabase: any): Promise<void> {
   try {
@@ -4962,7 +4963,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
     const catHitRate = calibratedHitRateMap.get(pick.category);
     const playerBonus = getPlayerBonus(pick.player_name, pick.prop_type);
-    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side, undefined, playerBonus);
+    let compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side, undefined, playerBonus);
+    // Apply day-type matchup boost/penalty
+    const dayBoost = getDayTypeBoost(pick.prop_type, currentDayTypeSignal);
+    compositeScore += dayBoost;
     
     // Resolve team_name: category_sweet_spots has no team_name column, so we pull from playerTeamMap
     const resolvedTeamName = (pick as any).team_name || 
