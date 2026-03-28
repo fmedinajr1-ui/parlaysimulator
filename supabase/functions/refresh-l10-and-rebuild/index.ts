@@ -383,6 +383,13 @@ Deno.serve(async (req) => {
         await invokeStep("Broadcasting sweet spot picks", "broadcast-sweet-spots", {});
       },
     },
+    {
+      id: "phase3k",
+      label: "Sync all engines to tracker",
+      run: async () => {
+        await invokeStep("Engine tracker sync", "engine-tracker-sync", {});
+      },
+    },
   ];
 
   // Determine start index based on resume_after
