@@ -290,6 +290,7 @@ Deno.serve(async (req) => {
       const side = (pick.recommended_side || 'over').toUpperCase();
       const sideChar = side.charAt(0);
       const originalLine = pick.recommended_line;
+      const line = originalLine;
       const quarterAvgs = formatQuarterAvgs(playerBaselines, pick.prop_type);
 
       // Find live data for this player
