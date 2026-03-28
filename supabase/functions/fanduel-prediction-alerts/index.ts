@@ -124,10 +124,11 @@ Deno.serve(async (req) => {
           const elapsed = Math.round(timeDiffMin);
           const remaining = Math.max(0, avgReaction - elapsed);
 
+          const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
           telegramAlerts.push(
             [
-              `🔮 *LINE ABOUT TO MOVE* — ${first.sport}`,
-              `${first.player_name} ${first.prop_type.replace("player_", "").toUpperCase()}`,
+              `🔮 *LINE ABOUT TO MOVE* — ${esc(first.sport)}`,
+              `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
               `Line ${direction}: ${first.line} → ${last.line}`,
               `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
               `FanDuel avg reaction: ~${remaining}min remaining`,
@@ -170,13 +171,14 @@ Deno.serve(async (req) => {
         const confidence = Math.min(85, 30 + driftPct * 3);
 
         if (confidence >= snapbackThreshold) {
+          const esc2 = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
           telegramAlerts.push(
             [
-              `💰 *TAKE IT NOW* — ${last.sport}`,
-              `${last.player_name} ${last.prop_type.replace("player_", "").toUpperCase()}`,
+              `💰 *TAKE IT NOW* — ${esc2(last.sport)}`,
+              `${esc2(last.player_name)} ${esc2(last.prop_type).replace("player ", "").toUpperCase()}`,
               `Open: ${last.opening_line} → Now: ${last.line}`,
               `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
-              `Action: *${snapDirection} ${last.line}*`,
+              `Action: ${snapDirection} ${last.line}`,
               `Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
               `Confidence: ${Math.round(confidence)}%`,
             ].join("\n")
@@ -218,10 +220,11 @@ Deno.serve(async (req) => {
         Math.abs(secondHalfDir) >= 0.5 &&
         Math.sign(firstHalfDir) !== Math.sign(secondHalfDir)
       ) {
+        const esc3 = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
         telegramAlerts.push(
           [
-            `⚠️ *TRAP WARNING* — ${first.sport}`,
-            `${first.player_name} ${first.prop_type.replace("player_", "").toUpperCase()}`,
+            `⚠️ *TRAP WARNING* — ${esc3(first.sport)}`,
+            `${esc3(first.player_name)} ${esc3(first.prop_type).replace("player ", "").toUpperCase()}`,
             `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
             `Sharp reversal pattern — DO NOT TOUCH`,
           ].join("\n")
