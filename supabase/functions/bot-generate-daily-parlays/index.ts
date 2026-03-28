@@ -149,6 +149,190 @@ function normalizePropType(raw: string): string {
   return map[lower] || lower;
 }
 
+// ============= GAME CONTEXT + PLAYER MATCHUP SIGNALS =============
+interface GameContextFlag {
+  type: string; // 'revenge_game' | 'b2b_fatigue' | 'blowout_risk' | 'thin_slate'
+  team?: string;
+  home_team?: string;
+  away_team?: string;
+  boost?: number;
+  penalty?: number;
+}
+interface PlayerMatchupGrade {
+  overallGrade: string;
+  overallScore: number;
+  propEdgeType: string;
+  recommendedSide: string;
+}
+
+let gameContextFlags: Map<string, GameContextFlag[]> = new Map();
+let playerMatchupMap: Map<string, PlayerMatchupGrade> = new Map();
+
+async function fetchGameContextFlags(supabase: any, gameDate: string): Promise<void> {
+  gameContextFlags = new Map();
+  try {
+    const { data, error } = await supabase
+      .from('bot_research_findings')
+      .select('key_insights')
+      .eq('research_date', gameDate)
+      .eq('category', 'game_context')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (error || !data?.[0]?.key_insights) {
+      console.log(`[Bot v2] 🎯 Game Context: No context flags for ${gameDate}`);
+      return;
+    }
+
+    const insights = data[0].key_insights as any[];
+    // Last entry is the JSON blob with all flags
+    for (const insight of insights) {
+      let parsed: any = null;
+      if (typeof insight === 'string') {
+        try { parsed = JSON.parse(insight); } catch { continue; }
+      } else {
+        parsed = insight;
+      }
+      if (parsed?.context_flags && Array.isArray(parsed.context_flags)) {
+        for (const flag of parsed.context_flags) {
+          const teams = [flag.team, flag.home_team, flag.away_team].filter(Boolean).map((t: string) => t.toLowerCase());
+          for (const t of teams) {
+            if (!gameContextFlags.has(t)) gameContextFlags.set(t, []);
+            gameContextFlags.get(t)!.push(flag);
+          }
+        }
+      }
+    }
+
+    const revenge = [...gameContextFlags.values()].flat().filter(f => f.type === 'revenge_game').length;
+    const b2b = [...gameContextFlags.values()].flat().filter(f => f.type === 'b2b_fatigue').length;
+    const blowout = [...gameContextFlags.values()].flat().filter(f => f.type === 'blowout_risk').length;
+    console.log(`[Bot v2] 🎯 Game Context: ${revenge} revenge games, ${b2b} B2B fatigue, ${blowout} blowout risk`);
+  } catch (err) {
+    console.warn(`[Bot v2] Game context fetch failed: ${err}`);
+  }
+}
+
+async function fetchPlayerMatchupGrades(supabase: any, gameDate: string): Promise<void> {
+  playerMatchupMap = new Map();
+  try {
+    const { data, error } = await supabase
+      .from('bot_research_findings')
+      .select('key_insights')
+      .eq('research_date', gameDate)
+      .eq('category', 'matchup_defense_scan')
+      .order('relevance_score', { ascending: false })
+      .limit(1);
+
+    if (error || !data?.[0]?.key_insights) {
+      console.log(`[Bot v2] 🎯 Matchup Grades: No scan data for ${gameDate}`);
+      return;
+    }
+
+    const ki = data[0].key_insights as any;
+    // Structure: { matchups: [{ recommended_props: [{ player_targets: [...], prop_type, matchup_label, matchup_score }] }] }
+    const matchups = ki?.matchups || (Array.isArray(ki) ? ki : []);
+    
+    for (const game of matchups) {
+      const recProps = game?.recommended_props || [];
+      for (const rec of recProps) {
+        const matchupLabel = (rec.matchup_label || '').toLowerCase();
+        const matchupScore = rec.matchup_score || 0;
+        const propType = rec.prop_type || 'none';
+        
+        // Map matchup_label to grade letter
+        let grade = 'B';
+        if (matchupLabel === 'elite' && matchupScore >= 22) grade = 'A+';
+        else if (matchupLabel === 'elite') grade = 'A';
+        else if (matchupLabel === 'strong' || matchupLabel === 'favorable') grade = 'B+';
+        else if (matchupLabel === 'bench_under') grade = 'B';
+        else if (matchupLabel === 'neutral') grade = 'C';
+        else if (matchupLabel === 'avoid' || matchupLabel === 'tough') grade = 'D';
+        
+        const playerTargets = rec.player_targets || [];
+        for (const pt of playerTargets) {
+          const playerName = (pt.player_name || '').toLowerCase().trim();
+          if (!playerName) continue;
+          
+          // Determine prop edge type from the recommendation
+          let propEdgeType = 'none';
+          if (propType === 'points') propEdgeType = 'points';
+          else if (propType === 'threes') propEdgeType = 'threes';
+          else if (propType === 'rebounds' || propType === 'assists') propEdgeType = 'none';
+          
+          const existing = playerMatchupMap.get(playerName);
+          // Keep the best grade for each player (they may appear in multiple matchup props)
+          const gradeRank: Record<string, number> = { 'A+': 6, 'A': 5, 'B+': 4, 'B': 3, 'C': 2, 'D': 1 };
+          if (!existing || (gradeRank[grade] || 0) > (gradeRank[existing.overallGrade] || 0)) {
+            playerMatchupMap.set(playerName, {
+              overallGrade: grade,
+              overallScore: matchupScore,
+              propEdgeType,
+              recommendedSide: rec.side || 'over',
+            });
+          }
+        }
+      }
+    }
+
+    const grades = [...playerMatchupMap.values()];
+    const aPlus = grades.filter(g => g.overallGrade === 'A+' || g.overallGrade === 'A').length;
+    const bPlus = grades.filter(g => g.overallGrade === 'B+' || g.overallGrade === 'B').length;
+    const cOrD = grades.filter(g => g.overallGrade === 'C' || g.overallGrade === 'D').length;
+    console.log(`[Bot v2] 🎯 Matchup Grades loaded: ${grades.length} players (${aPlus} A+/A, ${bPlus} B+/B, ${cOrD} C/D)`);
+  } catch (err) {
+    console.warn(`[Bot v2] Matchup grades fetch failed: ${err}`);
+  }
+}
+
+function getMatchupContextBoost(playerName: string, teamName: string, propType: string): number {
+  let boost = 0;
+  const normalizedPlayer = (playerName || '').toLowerCase().trim();
+  const normalizedTeam = (teamName || '').toLowerCase().trim();
+  const normalizedProp = normalizePropType(propType);
+
+  // Player matchup grade boost
+  const grade = playerMatchupMap.get(normalizedPlayer);
+  if (grade) {
+    const gradeBoosts: Record<string, number> = {
+      'A+': 10, 'A': 6, 'B+': 3, 'B': 0, 'C': -4, 'D': -4,
+    };
+    boost += gradeBoosts[grade.overallGrade] ?? 0;
+
+    // Prop edge type alignment
+    const edgeProps: Record<string, string[]> = {
+      'points': ['player_points'],
+      'threes': ['player_threes'],
+      'both': ['player_points', 'player_threes'],
+    };
+    const alignedProps = edgeProps[grade.propEdgeType] || [];
+    if (alignedProps.length > 0) {
+      if (alignedProps.includes(normalizedProp)) {
+        boost += 5; // Prop matches player's edge type
+      } else {
+        boost += -3; // Prop contradicts player's edge type
+      }
+    }
+  }
+
+  // Game context flags for this team
+  const teamFlags = gameContextFlags.get(normalizedTeam) || [];
+  for (const flag of teamFlags) {
+    switch (flag.type) {
+      case 'revenge_game': boost += 5; break;
+      case 'b2b_fatigue': boost += -6; break;
+      case 'blowout_risk': boost += -8; break;
+    }
+  }
+
+  return boost;
+}
+
+function isBlowoutRiskGame(teamName: string): boolean {
+  const flags = gameContextFlags.get((teamName || '').toLowerCase().trim()) || [];
+  return flags.some(f => f.type === 'blowout_risk');
+}
+
 // ============= DYNAMIC WINNING ARCHETYPE DETECTION =============
 const FALLBACK_ARCHETYPE_CATEGORIES = ['THREE_POINT_SHOOTER', 'BIG_REBOUNDER', 'HIGH_ASSIST'];
 
@@ -4972,6 +5156,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const resolvedTeamName = (pick as any).team_name || 
       playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
 
+    // Apply per-player matchup grade + game context boost/penalty
+    compositeScore += getMatchupContextBoost(pick.player_name, resolvedTeamName, pick.prop_type);
+
+    // Hard gate: skip blowout-risk legs with low composite
+    if (isBlowoutRiskGame(resolvedTeamName) && compositeScore < 55) {
+      return null; // filtered out below
+    }
+
     // Attach game context for stacking intelligence
     const teamAbbrev = nameToAbbrev.get(resolvedTeamName) || nameToAbbrev.get(resolvedTeamName.toLowerCase()) || '';
     const gameCtx = teamAbbrev ? teamGameContextMap.get(teamAbbrev) : undefined;
@@ -4995,7 +5187,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         return { ...gameCtx, envCluster: cluster, envClusterStrength: strength };
       })(),
     };
-  }).filter((p: EnrichedPick) => {
+  }).filter(Boolean).filter((p: EnrichedPick) => {
     // ALL picks in this array are sweet spots (from category_sweet_spots) — engine already vetted them
     // Only block if hit-rate blocked category
     if (blockedByHitRate.has(p.category)) return false;
@@ -5520,6 +5712,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
       let compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent, prop.side || 'over');
       compositeScore += getDayTypeBoost(prop.prop_type, currentDayTypeSignal);
+      compositeScore += getMatchupContextBoost(prop.player_name, prop.team_name || '', prop.prop_type);
       
       return {
         id: prop.id,
@@ -9633,6 +9826,7 @@ function generateSyntheticPool(): PropPool {
     const category = mapPropTypeToCategory(p.propType);
     let compositeScore = calculateCompositeScore(p.hitRate * 100, edge, oddsValueScore, 1.0, p.hitRate * 100, side);
     compositeScore += getDayTypeBoost(p.propType, currentDayTypeSignal);
+    compositeScore += getMatchupContextBoost(p.name, p.team, p.propType);
 
     return {
       id: `syn_pick_${i}`,
@@ -10074,6 +10268,8 @@ Deno.serve(async (req) => {
       loadPlayerPerformance(supabase),
       fetchStrategyHitRates(supabase),
       getDayTypeSignal(supabase, targetDate).then(signal => { currentDayTypeSignal = signal; }),
+      fetchGameContextFlags(supabase, targetDate),
+      fetchPlayerMatchupGrades(supabase, targetDate),
     ]);
 
     // ============= DAY TYPE PROFILE ADJUSTMENT =============
