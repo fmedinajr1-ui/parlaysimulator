@@ -214,6 +214,7 @@ async function fetchGameContextFlags(supabase: any, gameDate: string): Promise<v
 }
 
 async function fetchPlayerMatchupGrades(supabase: any, gameDate: string): Promise<void> {
+  playerMatchupMap = new Map();
   try {
     const { data, error } = await supabase
       .from('bot_research_findings')
