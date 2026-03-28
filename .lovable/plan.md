@@ -1,68 +1,147 @@
 
 
-## Wire Game Context + Per-Player Matchup Signals Into Parlay Generator
+## FanDuel Line Behavior Prediction Engine
 
-### The Gap
+### The Core Idea
 
-The generator currently has the **Day Type Classifier** (aggregate signal: "today is a Threes day") but is completely blind to **per-game and per-player matchup conditions**. Two critical data sources are generated daily but never consumed:
+You're right — if we're trying to **beat** FanDuel's line adjustments, 30 minutes is way too slow. FanDuel typically adjusts lines in **3-7 minute windows** after sharp money hits. To predict where a line is going before FanDuel moves it, we need to:
 
-1. **Game Context Analyzer** (`bot-game-context-analyzer`) — writes revenge games, B2B fatigue, blowout risk, and thin slate flags to `bot_research_findings` under category `game_context`. The generator never reads this.
+1. Track lines at **5-minute intervals** (not 30 min or 3x/day)
+2. Store a persistent timeline so we can learn FanDuel's **behavioral patterns** (how fast they react, which markets move first, cascade patterns)
+3. Build a **prediction layer** that recognizes the early signals of an incoming move and alerts you BEFORE FanDuel finishes adjusting
 
-2. **Bidirectional Matchup Scanner** — writes per-player matchup grades (A+/A/B/C/D), exploitable zones, and prop edge types to `bot_research_findings` under category `matchup_defense_scan`. The Day Type Classifier only reads the aggregate summary text, not the per-player grades.
+### What's Broken Right Now
 
-This means a player with an A+ matchup grade gets no scoring advantage over a player with a D grade. A player on a B2B fatigue team gets no penalty. A game flagged as blowout risk has no impact on leg selection.
+| Component | Current Speed | Problem |
+|---|---|---|
+| `track-odds-movement` | 3x per day | Misses 95% of intra-day moves |
+| `whale-odds-scraper` | Every 30 min | Too slow to catch sharp windows |
+| Prop markets tracked | Only PTS + AST | Missing REB, 3s, blocks, steals |
+| Games tracked for props | Max 2 | Ignores most of the slate |
+| Snapshot retention | Deleted after 24h | Can't learn patterns |
+| Sports | NBA only for props | No MLB/NHL prop tracking |
 
-### Changes to `bot-generate-daily-parlays/index.ts`
+### Telegram Digest — Current State
 
-#### 1. Fetch game context flags at pipeline start (~30 lines)
-Add `fetchGameContextFlags()` that queries `bot_research_findings` where `category = 'game_context'` for today. Parse the `key_insights` JSON to extract an array of context flags (revenge, B2B fatigue, blowout risk). Store in a module-level `gameContextFlags` map keyed by team name.
+Telegram alerts fire from multiple functions but they're all **reactive** (reporting what already happened):
+- `pregame-scanlines-alert` — 15 min cron, alerts 30 min before tip
+- `hedge-live-telegram-tracker` — 15 min cron, in-game status updates
+- `bot-send-telegram` — used by diagnostics, integrity, broadcasts
+- Various outcome verifiers send results
 
-#### 2. Fetch per-player matchup grades (~40 lines)
-Add `fetchPlayerMatchupGrades()` that queries `bot_research_findings` where `category = 'matchup_defense_scan'` for today. Parse per-player entries to extract: `overallGrade`, `overallScore`, `propEdgeType`, `recommendedSide`. Store in a module-level `playerMatchupMap` keyed by player name.
+None of these predict where lines are **going**. They report where lines **went**.
 
-#### 3. Add `getMatchupContextBoost()` function (~35 lines)
-Given a player name, team, and prop type, returns a combined boost/penalty:
+### The Build — 3 Layers
 
-| Signal | Boost |
-|--------|-------|
-| Player matchup grade A+ | +10 |
-| Player matchup grade A | +6 |
-| Player matchup grade B+ | +3 |
-| Player matchup grade C/D | -4 |
-| Prop type matches player's `propEdgeType` | +5 |
-| Prop contradicts player's `propEdgeType` | -3 |
-| Team on B2B fatigue | -6 |
-| Revenge game for team | +5 |
-| Game flagged blowout risk | -8 |
+#### Layer 1: High-Frequency FanDuel Scanner (every 5 min)
 
-These stack with existing Day Type boost and category tier signals.
+**New function: `fanduel-line-scanner`**
 
-#### 4. Wire into all three `calculateCompositeScore` call sites
-At lines ~4966, ~5522, and ~9635, add `getMatchupContextBoost()` alongside the existing `getDayTypeBoost()` call:
+Replaces the broken 3x/day `track-odds-movement` prop tracking with a dedicated FanDuel-only scanner:
+- Runs every **5 minutes** from 10AM to 1AM ET
+- Covers NBA, MLB, NHL — all prop markets available on FanDuel
+- Stores every snapshot in `fanduel_line_timeline` (retained 30 days, not 24h)
+- Tags each snapshot with phase: `morning_open`, `midday`, `pre_tip`, `live`, `closing`
+- Filters `bookmakers=fanduel` in API calls to save budget (one book = ~75% fewer API calls)
+- Tracks: line value, over/under prices, hours-to-tip, drift from opening
+
+**New table: `fanduel_line_timeline`**
+- `sport`, `event_id`, `player_name`, `prop_type`, `line`, `over_price`, `under_price`
+- `snapshot_phase`, `snapshot_time`, `hours_to_tip`
+- `line_change_from_open`, `price_change_from_open`
+- `drift_velocity` (computed: points moved per hour)
+- 30-day retention via nightly cleanup
+
+#### Layer 2: FanDuel Behavior Pattern Detector
+
+**New function: `fanduel-behavior-analyzer`** (runs every 15 min)
+
+This is the prediction engine. It reads the timeline and identifies FanDuel's behavioral patterns:
+
+1. **Cascade Detection**: When FanDuel moves one prop market for a player, they often adjust related markets within 5-15 minutes. If Points line drops, Rebounds/Assists lines follow. Detect cascade start and alert before wave completes.
+
+2. **Velocity Alerts**: Track how fast a line is moving (drift_velocity). A line that moved 0.5 points in 10 minutes is about to move again. Alert when velocity exceeds historical norms.
+
+3. **Opening Line Anchor Divergence**: FanDuel tends to snap lines back toward opening if they drift too far without sharp confirmation. Detect overextended lines ripe for snapback.
+
+4. **Cross-Sport Pattern Learning**: Store FanDuel's reaction speed by sport and market type. MLB pitcher Ks move slower than NBA points. Learn the cadence per market.
+
+5. **Sharp Timing Windows**: FanDuel adjusts fastest between 2-4 PM ET (early sharp money) and 30-60 min pre-tip. Lines are stickiest in morning. Learn and exploit the slow windows.
+
+**New table: `fanduel_behavior_patterns`**
+- `sport`, `prop_type`, `pattern_type` (cascade, velocity_spike, snapback, etc.)
+- `avg_reaction_time_minutes`, `avg_move_size`, `confidence`
+- `sample_size`, `last_updated`
+
+#### Layer 3: Predictive Alert Engine + Telegram
+
+**New function: `fanduel-prediction-alerts`** (runs every 5 min during game windows)
+
+Fires Telegram alerts for three signal types:
+
+1. **"LINE ABOUT TO MOVE"** — Cascade detected, velocity spike, or sharp money pattern recognized. Alert includes predicted direction and magnitude.
+
+2. **"TAKE IT NOW"** — Line is at a soft number that historically snaps back. Window to grab value before FanDuel corrects. Includes the over/under recommendation and confidence.
+
+3. **"TRAP WARNING"** — Line moved in a pattern historically associated with traps (sharp reversal, both-sides movement). Don't touch this one.
+
+Telegram format:
+```text
+PREDICTION ALERT — NBA
+Wembanyama PTS OVER 24.5
+Line dropped 1.5 pts in 20 min (velocity: 4.5/hr)
+FanDuel avg reaction: 12 min remaining
+Cascade: AST line not yet adjusted
+Action: TAKE OVER NOW
+Confidence: 78%
 ```
-compositeScore += getDayTypeBoost(prop_type, currentDayTypeSignal);
-compositeScore += getMatchupContextBoost(playerName, teamName, prop_type);
-```
 
-#### 5. Add hard gate for blowout risk games
-After composite scoring, skip any leg where the game is flagged as blowout risk AND the composite score is below 55. This prevents low-confidence picks in games likely to see bench players in Q4.
+#### Self-Correction: Accuracy Feedback Loop
 
-#### 6. Log context signals at pipeline start
-```
-[Bot v2] 🎯 Game Context: 2 revenge games, 1 B2B fatigue, 1 blowout risk
-[Bot v2] 🎯 Matchup Grades loaded: 47 players (12 A+/A, 20 B+/B, 15 C/D)
-```
+**New function: `fanduel-accuracy-feedback`** (nightly 2AM ET)
 
-### Scope
-- **Modified:** `supabase/functions/bot-generate-daily-parlays/index.ts` (~120 lines added)
-- No new files, no database changes
-- Redeploy edge function after changes
+- Compares every prediction alert against actual outcomes
+- Buckets accuracy by: sport, prop type, signal type, time-to-tip, velocity range
+- Auto-adjusts velocity thresholds and cascade timing based on what's actually winning
+- Updates `fanduel_behavior_patterns` with fresh reaction times
+- Target: start at baseline, improve weekly as data accumulates
 
-### Testing Plan
-After implementation, run 5 verification tests:
-1. Confirm `fetchGameContextFlags()` returns parsed flags from today's `bot_research_findings`
-2. Confirm `fetchPlayerMatchupGrades()` returns player-level grades
-3. Simulate a player with A+ grade + revenge game — verify composite boost stacks correctly
-4. Simulate a player on B2B fatigue team in blowout game — verify penalty + hard gate
-5. Full pipeline invocation to confirm no runtime errors
+**New table: `fanduel_prediction_accuracy`**
+- `signal_type`, `sport`, `prop_type`, `prediction`, `actual_outcome`
+- `was_correct`, `edge_at_signal`, `time_to_tip_hours`
+- Feeds back into behavior analyzer weights
+
+### Updated Cron Schedule
+
+| Function | Frequency | Why |
+|---|---|---|
+| `fanduel-line-scanner` | Every 5 min | Catch FanDuel moves in real-time |
+| `fanduel-behavior-analyzer` | Every 15 min | Pattern detection needs 3+ data points |
+| `fanduel-prediction-alerts` | Every 5 min (game hours) | Predictions must be faster than FanDuel |
+| `fanduel-accuracy-feedback` | Daily 2AM ET | Nightly self-correction |
+
+### API Budget Impact
+
+Current whale scraper uses ~1,072/2,500 calls per day across multiple books.
+FanDuel-only scanning with `&bookmakers=fanduel` reduces per-call cost significantly.
+At 5-min intervals for ~12 hours = ~144 calls/day for game lines + ~144 for props = ~288 total new calls.
+Well within budget, especially since we're filtering to one book.
+
+### Implementation Order
+
+1. Create 3 new database tables (`fanduel_line_timeline`, `fanduel_behavior_patterns`, `fanduel_prediction_accuracy`)
+2. Build `fanduel-line-scanner` — start collecting 5-min data immediately
+3. Upgrade `track-odds-movement` — expand from 2 markets to all, remove 2-game cap, increase cron to every 5 min
+4. Build `fanduel-behavior-analyzer` — pattern detection layer
+5. Build `fanduel-prediction-alerts` — Telegram prediction alerts
+6. Build `fanduel-accuracy-feedback` — close the self-correction loop
+7. Set up all 4 new cron jobs
+
+### Technical Details
+
+- All functions are edge functions in `supabase/functions/`
+- FanDuel-only API calls use `&bookmakers=fanduel` parameter on The Odds API
+- Timeline data retained 30 days via nightly `DELETE WHERE snapshot_time < now() - interval '30 days'`
+- Behavior patterns table has no TTL — patterns accumulate permanently
+- Telegram alerts use existing `bot-send-telegram` infrastructure
 
