@@ -124,10 +124,11 @@ Deno.serve(async (req) => {
           const elapsed = Math.round(timeDiffMin);
           const remaining = Math.max(0, avgReaction - elapsed);
 
+          const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
           telegramAlerts.push(
             [
-              `🔮 *LINE ABOUT TO MOVE* — ${first.sport}`,
-              `${first.player_name} ${first.prop_type.replace("player_", "").toUpperCase()}`,
+              `🔮 *LINE ABOUT TO MOVE* — ${esc(first.sport)}`,
+              `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
               `Line ${direction}: ${first.line} → ${last.line}`,
               `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
               `FanDuel avg reaction: ~${remaining}min remaining`,

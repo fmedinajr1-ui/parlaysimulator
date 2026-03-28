@@ -248,15 +248,16 @@ Deno.serve(async (req) => {
     // ====== SEND TELEGRAM FOR HIGH-CONFIDENCE ALERTS ======
     const highConfAlerts = alerts.filter((a) => a.confidence >= 70);
     if (highConfAlerts.length > 0) {
+      const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
       const alertLines = highConfAlerts.slice(0, 5).map((a) => {
         if (a.type === "velocity_spike") {
-          return `⚡ *VELOCITY* — ${a.sport}\n${a.player_name} ${a.prop_type}\nLine ${a.direction}: ${a.line_from} → ${a.line_to}\nSpeed: ${a.velocity}/hr over ${a.time_span_min}min\nConf: ${Math.round(a.confidence)}%`;
+          return `⚡ *VELOCITY* — ${esc(a.sport)}\n${esc(a.player_name)} ${esc(a.prop_type)}\nLine ${a.direction}: ${a.line_from} → ${a.line_to}\nSpeed: ${a.velocity}/hr over ${a.time_span_min}min\nConf: ${Math.round(a.confidence)}%`;
         }
         if (a.type === "cascade") {
-          return `🌊 *CASCADE* — ${a.sport}\n${a.player_name}\nMoved: ${a.moved_props.join(", ")}\nPending: ${a.pending_props.join(", ")}\nConf: ${Math.round(a.confidence)}%`;
+          return `🌊 *CASCADE* — ${esc(a.sport)}\n${esc(a.player_name)}\nMoved: ${(a.moved_props || []).map(esc).join(", ")}\nPending: ${(a.pending_props || []).map(esc).join(", ")}\nConf: ${Math.round(a.confidence)}%`;
         }
         if (a.type === "snapback") {
-          return `🔄 *SNAPBACK* — ${a.sport}\n${a.player_name} ${a.prop_type}\nOpen: ${a.opening_line} → Now: ${a.current_line}\nDrift: ${a.drift_pct}%\nConf: ${Math.round(a.confidence)}%`;
+          return `🔄 *SNAPBACK* — ${esc(a.sport)}\n${esc(a.player_name)} ${esc(a.prop_type)}\nOpen: ${a.opening_line} → Now: ${a.current_line}\nDrift: ${a.drift_pct}%\nConf: ${Math.round(a.confidence)}%`;
         }
         return "";
       });
