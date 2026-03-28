@@ -1,9 +1,7 @@
 /**
  * test-matchup-context
- * Verifies that game context flags and player matchup grades are correctly fetched
- * and that getMatchupContextBoost() returns expected values.
+ * Verifies game context flags and player matchup grades parsing.
  */
-
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
@@ -13,174 +11,75 @@ const corsHeaders = {
 
 function getEasternDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const supabase = createClient(supabaseUrl, supabaseKey);
-
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const today = getEasternDate();
   const results: any = { date: today, tests: [] };
 
-  // === TEST 1: Fetch game context flags ===
+  // T1: Game context flags
   try {
-    const { data, error } = await supabase
-      .from('bot_research_findings')
-      .select('key_insights, summary')
-      .eq('research_date', today)
-      .eq('category', 'game_context')
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    const contextFlags: any[] = [];
+    const { data } = await supabase.from('bot_research_findings').select('key_insights, summary')
+      .eq('research_date', today).eq('category', 'game_context').order('created_at', { ascending: false }).limit(1);
+    const flags: any[] = [];
     if (data?.[0]?.key_insights) {
-      const insights = data[0].key_insights as any[];
+      const insights = Array.isArray(data[0].key_insights) ? data[0].key_insights : [data[0].key_insights];
       for (const insight of insights) {
-        let parsed: any = null;
-        if (typeof insight === 'string') {
-          try { parsed = JSON.parse(insight); } catch { continue; }
-        } else {
-          parsed = insight;
-        }
-        if (parsed?.context_flags) {
-          contextFlags.push(...parsed.context_flags);
-        }
+        let p = typeof insight === 'string' ? (() => { try { return JSON.parse(insight); } catch { return null; } })() : insight;
+        if (p?.context_flags) flags.push(...p.context_flags);
       }
     }
+    results.tests.push({ name: 'T1: fetchGameContextFlags', status: flags.length > 0 ? 'PASS' : 'WARN_NO_DATA', flagCount: flags.length,
+      revenge: flags.filter(f => f.type === 'revenge_game').length, b2b: flags.filter(f => f.type === 'b2b_fatigue').length, blowout: flags.filter(f => f.type === 'blowout_risk').length });
+  } catch (e) { results.tests.push({ name: 'T1', status: 'FAIL', error: e.message }); }
 
-    const revenge = contextFlags.filter(f => f.type === 'revenge_game').length;
-    const b2b = contextFlags.filter(f => f.type === 'b2b_fatigue').length;
-    const blowout = contextFlags.filter(f => f.type === 'blowout_risk').length;
-
-    results.tests.push({
-      name: 'T1: fetchGameContextFlags',
-      status: contextFlags.length > 0 ? 'PASS' : 'WARN_NO_DATA',
-      flagCount: contextFlags.length,
-      revenge, b2b, blowout,
-      rawSummary: data?.[0]?.summary?.substring(0, 200),
-    });
-  } catch (e) {
-    results.tests.push({ name: 'T1: fetchGameContextFlags', status: 'FAIL', error: e.message });
-  }
-
-  // === TEST 2: Fetch player matchup grades ===
+  // T2: Player matchup grades (actual structure: key_insights.matchups[].recommended_props[].player_targets[])
   try {
-    const { data, error } = await supabase
-      .from('bot_research_findings')
-      .select('key_insights')
-      .eq('research_date', today)
-      .eq('category', 'matchup_defense_scan')
-      .order('relevance_score', { ascending: false })
-      .limit(1);
-
+    const { data } = await supabase.from('bot_research_findings').select('key_insights')
+      .eq('research_date', today).eq('category', 'matchup_defense_scan').order('relevance_score', { ascending: false }).limit(1);
     const players: any[] = [];
     if (data?.[0]?.key_insights) {
-      const insights = data[0].key_insights as any[];
-      for (const insight of insights) {
-        let parsed: any = null;
-        if (typeof insight === 'string') {
-          try { parsed = JSON.parse(insight); } catch { continue; }
-        } else {
-          parsed = insight;
-        }
-        if (parsed?.playerName && parsed?.overallGrade) {
-          players.push({ name: parsed.playerName, grade: parsed.overallGrade, score: parsed.overallScore, edge: parsed.propEdgeType });
-        }
-        if (Array.isArray(parsed?.players)) {
-          for (const p of parsed.players) {
-            if (p.playerName && p.overallGrade) {
-              players.push({ name: p.playerName, grade: p.overallGrade, score: p.overallScore, edge: p.propEdgeType });
-            }
+      const ki = data[0].key_insights as any;
+      const matchups = ki?.matchups || [];
+      for (const game of matchups) {
+        for (const rec of (game?.recommended_props || [])) {
+          const label = (rec.matchup_label || '').toLowerCase();
+          let grade = 'B';
+          if (label === 'elite' && (rec.matchup_score || 0) >= 22) grade = 'A+';
+          else if (label === 'elite') grade = 'A';
+          else if (label === 'strong' || label === 'favorable') grade = 'B+';
+          else if (label === 'bench_under') grade = 'B';
+          else if (label === 'neutral') grade = 'C';
+          else if (label === 'avoid' || label === 'tough') grade = 'D';
+          for (const pt of (rec.player_targets || [])) {
+            players.push({ name: pt.player_name, grade, score: rec.matchup_score, prop: rec.prop_type, side: rec.side });
           }
         }
       }
     }
+    const unique = new Map<string, any>();
+    for (const p of players) { if (!unique.has(p.name)) unique.set(p.name, p); }
+    const u = [...unique.values()];
+    results.tests.push({ name: 'T2: fetchPlayerMatchupGrades', status: u.length > 0 ? 'PASS' : 'WARN_NO_DATA',
+      playerCount: u.length, aPlus: u.filter(p => p.grade === 'A+' || p.grade === 'A').length,
+      bPlus: u.filter(p => p.grade === 'B+' || p.grade === 'B').length,
+      cOrD: u.filter(p => p.grade === 'C' || p.grade === 'D').length,
+      samplePlayers: u.slice(0, 5) });
+  } catch (e) { results.tests.push({ name: 'T2', status: 'FAIL', error: e.message }); }
 
-    const aPlus = players.filter(p => p.grade === 'A+' || p.grade === 'A').length;
-    const bPlus = players.filter(p => p.grade === 'B+' || p.grade === 'B').length;
-    const cOrD = players.filter(p => p.grade === 'C' || p.grade === 'D').length;
+  // T3: A+ + revenge boost
+  results.tests.push({ name: 'T3: A+ + revenge boost', status: (10+5+5) === 20 ? 'PASS' : 'FAIL', boost: 20 });
+  // T4: B2B + blowout penalty
+  results.tests.push({ name: 'T4: B2B + blowout penalty', status: (-4-6-8-3) === -21 ? 'PASS' : 'FAIL', boost: -21 });
+  // T5: Blowout hard gate
+  results.tests.push({ name: 'T5: Blowout gate (50<55)', status: (50 < 55) ? 'PASS' : 'FAIL' });
+  results.tests.push({ name: 'T5b: Blowout gate (60>=55)', status: !(60 < 55) ? 'PASS' : 'FAIL' });
 
-    results.tests.push({
-      name: 'T2: fetchPlayerMatchupGrades',
-      status: players.length > 0 ? 'PASS' : 'WARN_NO_DATA',
-      playerCount: players.length,
-      aPlus, bPlus, cOrD,
-      samplePlayers: players.slice(0, 5),
-    });
-  } catch (e) {
-    results.tests.push({ name: 'T2: fetchPlayerMatchupGrades', status: 'FAIL', error: e.message });
-  }
-
-  // === TEST 3: Simulate A+ grade + revenge game boost ===
-  {
-    // Simulate: player with A+ grade = +10, revenge game = +5, prop matches edge = +5 → total +20
-    const boost = 10 + 5 + 5; // A+ + revenge + prop match
-    const expected = 20;
-    results.tests.push({
-      name: 'T3: A+ grade + revenge game boost',
-      status: boost === expected ? 'PASS' : 'FAIL',
-      expectedBoost: expected,
-      actualBoost: boost,
-      breakdown: 'A+(+10) + revenge(+5) + propMatch(+5) = +20',
-    });
-  }
-
-  // === TEST 4: B2B fatigue + blowout penalty ===
-  {
-    // Simulate: player with C grade = -4, B2B = -6, blowout = -8, prop contradicts = -3 → total -21
-    const boost = -4 + -6 + -8 + -3;
-    const expected = -21;
-    results.tests.push({
-      name: 'T4: B2B fatigue + blowout penalty',
-      status: boost === expected ? 'PASS' : 'FAIL',
-      expectedBoost: expected,
-      actualBoost: boost,
-      breakdown: 'C(-4) + B2B(-6) + blowout(-8) + propContradict(-3) = -21',
-    });
-  }
-
-  // === TEST 5: Blowout hard gate check ===
-  {
-    // A composite score of 50 in a blowout game should be gated (< 55)
-    const compositeScore = 50;
-    const isBlowout = true;
-    const blocked = isBlowout && compositeScore < 55;
-    results.tests.push({
-      name: 'T5: Blowout hard gate (composite 50 in blowout)',
-      status: blocked ? 'PASS' : 'FAIL',
-      compositeScore,
-      isBlowout,
-      blocked,
-      explanation: 'Score 50 < 55 threshold in blowout game → should be blocked',
-    });
-
-    // A composite score of 60 in blowout should NOT be gated
-    const compositeScore2 = 60;
-    const blocked2 = isBlowout && compositeScore2 < 55;
-    results.tests.push({
-      name: 'T5b: Blowout hard gate (composite 60 in blowout)',
-      status: !blocked2 ? 'PASS' : 'FAIL',
-      compositeScore: compositeScore2,
-      isBlowout,
-      blocked: blocked2,
-      explanation: 'Score 60 >= 55 threshold in blowout game → should NOT be blocked',
-    });
-  }
-
-  const allPassed = results.tests.every((t: any) => t.status === 'PASS' || t.status === 'WARN_NO_DATA');
-  results.overall = allPassed ? 'ALL_TESTS_PASSED' : 'SOME_TESTS_FAILED';
-
-  return new Response(JSON.stringify(results, null, 2), {
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
+  results.overall = results.tests.every((t: any) => t.status === 'PASS' || t.status === 'WARN_NO_DATA') ? 'ALL_TESTS_PASSED' : 'SOME_TESTS_FAILED';
+  return new Response(JSON.stringify(results, null, 2), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
