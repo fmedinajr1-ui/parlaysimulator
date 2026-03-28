@@ -5518,7 +5518,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       
       const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
       const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
-      const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent, prop.side || 'over');
+      let compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent, prop.side || 'over');
+      compositeScore += getDayTypeBoost(prop.prop_type, currentDayTypeSignal);
       
       return {
         id: prop.id,
@@ -9630,7 +9631,8 @@ function generateSyntheticPool(): PropPool {
     const americanOdds = -110;
     const oddsValueScore = calculateOddsValueScore(americanOdds, p.hitRate);
     const category = mapPropTypeToCategory(p.propType);
-    const compositeScore = calculateCompositeScore(p.hitRate * 100, edge, oddsValueScore, 1.0, p.hitRate * 100, side);
+    let compositeScore = calculateCompositeScore(p.hitRate * 100, edge, oddsValueScore, 1.0, p.hitRate * 100, side);
+    compositeScore += getDayTypeBoost(p.propType, currentDayTypeSignal);
 
     return {
       id: `syn_pick_${i}`,
