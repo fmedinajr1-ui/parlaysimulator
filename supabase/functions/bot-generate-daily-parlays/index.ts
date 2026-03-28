@@ -169,6 +169,7 @@ let gameContextFlags: Map<string, GameContextFlag[]> = new Map();
 let playerMatchupMap: Map<string, PlayerMatchupGrade> = new Map();
 
 async function fetchGameContextFlags(supabase: any, gameDate: string): Promise<void> {
+  gameContextFlags = new Map();
   try {
     const { data, error } = await supabase
       .from('bot_research_findings')
