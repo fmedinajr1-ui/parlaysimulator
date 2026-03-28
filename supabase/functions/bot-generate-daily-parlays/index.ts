@@ -21,6 +21,119 @@ const corsHeaders = {
 const BLOCKED_PARLAY_PROPS = new Set(['player_steals', 'player_blocks']);
 const MAX_REBOUND_LEGS_PER_PARLAY = 1;
 
+// ============= DAY TYPE CLASSIFIER (matchup-driven prop type signal) =============
+type DayType = 'POINTS' | 'THREES' | 'REBOUNDS' | 'ASSISTS' | 'BALANCED';
+interface DayTypeSignal {
+  primary: DayType;
+  secondary: DayType | null;
+  confidence: number;
+  propScores: Record<string, { avgScore: number; vectors: number; games: number }>;
+}
+
+const PROP_TO_DAY_TYPE: Record<string, DayType> = {
+  points: 'POINTS', threes: 'THREES', rebounds: 'REBOUNDS', assists: 'ASSISTS',
+};
+const DAY_TYPE_TO_PROP_TYPES: Record<DayType, string[]> = {
+  POINTS: ['player_points'],
+  THREES: ['player_threes'],
+  REBOUNDS: ['player_rebounds'],
+  ASSISTS: ['player_assists'],
+  BALANCED: [],
+};
+
+async function getDayTypeSignal(supabase: any, gameDate: string): Promise<DayTypeSignal | null> {
+  try {
+    const { data, error } = await supabase
+      .from('bot_research_findings')
+      .select('summary')
+      .eq('research_date', gameDate)
+      .eq('category', 'matchup_defense_scan')
+      .order('relevance_score', { ascending: false })
+      .limit(1);
+
+    if (error || !data?.[0]?.summary) {
+      console.log(`[Bot v2] 📊 Day Type: No matchup scan found for ${gameDate}`);
+      return null;
+    }
+
+    const summary = data[0].summary as string;
+    const propScores: Record<string, { scores: number[]; vectors: number; games: Set<string> }> = {
+      points: { scores: [], vectors: 0, games: new Set() },
+      threes: { scores: [], vectors: 0, games: new Set() },
+      rebounds: { scores: [], vectors: 0, games: new Set() },
+      assists: { scores: [], vectors: 0, games: new Set() },
+    };
+
+    const gameBlocks = summary.split(' | ');
+    for (const block of gameBlocks) {
+      const gameKeyMatch = block.match(/^([A-Z]+@[A-Z]+)/);
+      const gameKey = gameKeyMatch?.[1] || 'UNK';
+      const propPattern = /(points|threes|rebounds|assists)\(OFF\d+vDEF\d+=([0-9.]+)\)/g;
+      let match;
+      while ((match = propPattern.exec(block)) !== null) {
+        const propType = match[1];
+        const score = parseFloat(match[2]);
+        if (propScores[propType]) {
+          propScores[propType].scores.push(score);
+          propScores[propType].vectors++;
+          propScores[propType].games.add(gameKey);
+        }
+      }
+    }
+
+    const ranked = Object.entries(propScores)
+      .map(([key, data]) => ({
+        key,
+        avgScore: data.scores.length > 0 ? data.scores.reduce((a, b) => a + b, 0) / data.scores.length : 0,
+        vectors: data.vectors,
+        games: data.games.size,
+      }))
+      .sort((a, b) => b.avgScore - a.avgScore);
+
+    const top = ranked[0];
+    const second = ranked[1];
+
+    const isBalanced = top && second &&
+      Math.abs(top.avgScore - second.avgScore) < 2 &&
+      top.vectors === second.vectors;
+
+    const primary: DayType = isBalanced ? 'BALANCED' : (PROP_TO_DAY_TYPE[top.key] || 'BALANCED');
+    let secondary: DayType | null = null;
+    if (!isBalanced && second && second.avgScore >= 15 && second.vectors >= 3) {
+      secondary = PROP_TO_DAY_TYPE[second.key] || null;
+    }
+
+    const gap = top && second ? top.avgScore - second.avgScore : top?.avgScore || 0;
+    const confidence = Math.min(95, Math.round(50 + gap * 2 + (top?.vectors || 0) * 2));
+
+    const result: DayTypeSignal = {
+      primary,
+      secondary,
+      confidence,
+      propScores: Object.fromEntries(ranked.map(r => [r.key, { avgScore: Math.round(r.avgScore * 10) / 10, vectors: r.vectors, games: r.games }])),
+    };
+
+    console.log(`[Bot v2] 📊 Day Type: ${primary}${secondary ? ` + ${secondary}` : ''} (confidence ${confidence}%) — ${JSON.stringify(result.propScores)}`);
+    return result;
+  } catch (err) {
+    console.warn(`[Bot v2] Day Type signal failed: ${err}`);
+    return null;
+  }
+}
+
+// Returns a composite score boost/penalty based on whether a pick's prop type aligns with today's matchup signal
+function getDayTypeBoost(propType: string, daySignal: DayTypeSignal | null): number {
+  if (!daySignal || daySignal.primary === 'BALANCED') return 0;
+  const normalized = normalizePropType(propType);
+  const primaryProps = DAY_TYPE_TO_PROP_TYPES[daySignal.primary] || [];
+  const secondaryProps = daySignal.secondary ? (DAY_TYPE_TO_PROP_TYPES[daySignal.secondary] || []) : [];
+
+  if (primaryProps.includes(normalized)) return 8;   // Matches dominant day type
+  if (secondaryProps.includes(normalized)) return 4;  // Matches secondary day type
+  // Penalize props that contradict the day type (but don't hard-block)
+  return -5;
+}
+
 // Normalize prop type variants to canonical form to prevent split tracking
 function normalizePropType(raw: string): string {
   const lower = (raw || '').toLowerCase().trim();
