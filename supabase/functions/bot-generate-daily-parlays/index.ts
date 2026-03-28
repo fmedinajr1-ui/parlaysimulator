@@ -10066,12 +10066,53 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] No stake config found, using hardcoded TIER_CONFIG defaults`);
     }
 
-    // ============= LOAD PLAYER, PROP TYPE, & STRATEGY PERFORMANCE =============
+    // ============= LOAD PLAYER, PROP TYPE, STRATEGY PERFORMANCE & DAY TYPE SIGNAL =============
     await Promise.all([
       loadPropTypePerformance(supabase),
       loadPlayerPerformance(supabase),
       fetchStrategyHitRates(supabase),
+      getDayTypeSignal(supabase, targetDate).then(signal => { currentDayTypeSignal = signal; }),
     ]);
+
+    // ============= DAY TYPE PROFILE ADJUSTMENT =============
+    // Dynamically adjust archetype profiles based on today's matchup signal
+    if (currentDayTypeSignal && currentDayTypeSignal.primary !== 'BALANCED' && currentDayTypeSignal.confidence >= 60) {
+      const dayType = currentDayTypeSignal.primary;
+      for (const tierName of ['exploration', 'validation', 'execution'] as const) {
+        const tier = TIER_CONFIG[tierName];
+        let profiles = [...tier.profiles];
+        
+        if (dayType === 'THREES' || dayType === 'POINTS') {
+          // Skip 2 of 3 rebound archetype profiles (keep 1 for diversity)
+          let rebSkipped = 0;
+          profiles = profiles.filter(p => {
+            if (p.strategy === 'winning_archetype_reb_ast' && rebSkipped < 2) {
+              rebSkipped++;
+              return false;
+            }
+            return true;
+          });
+          // Duplicate 3PT profiles on Threes days
+          if (dayType === 'THREES') {
+            const threesProfiles = profiles.filter(p => p.strategy === 'winning_archetype_3pt_scorer');
+            profiles.push(...threesProfiles);
+          }
+        } else if (dayType === 'REBOUNDS') {
+          // Skip 3PT archetype profiles on Rebounds days
+          let threeSkipped = 0;
+          profiles = profiles.filter(p => {
+            if (p.strategy === 'winning_archetype_3pt_scorer' && threeSkipped < 1) {
+              threeSkipped++;
+              return false;
+            }
+            return true;
+          });
+        }
+        
+        tier.profiles = profiles;
+      }
+      console.log(`[Bot v2] 📊 Day Type profile adjustment applied: ${dayType} — rebalanced archetype profiles`);
+    }
 
     // ============= STALE HIT RATE DETECTION + AUTO-REFRESH =============
     // If bot_strategies haven't been updated in 24 hours, trigger immediate refresh
