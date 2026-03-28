@@ -11,7 +11,7 @@ import { LineupCheckSheet } from "@/components/lineup/LineupCheckSheet";
 import { LineupRiskSummary } from "@/components/lineup/LineupStatusBadge";
 import { EliteThreesParlayCard } from "@/components/market/EliteThreesParlayCard";
 import { ParlaySmartCheckPanel } from "./ParlaySmartCheckPanel";
-import { DayTypeClassifierCard } from "./DayTypeClassifierCard";
+
 
 export function DailyParlayHub() {
   const { parlays, isLoading, parlayCount, today } = useDailyParlays();
@@ -101,10 +101,6 @@ export function DailyParlayHub() {
         </CardHeader>
       
         <CardContent className="p-3">
-          {/* Day Type Classifier */}
-          <div className="mb-3">
-            <DayTypeClassifierCard />
-          </div>
 
           {/* Smart Check Panel */}
           <div className="mb-3">
