@@ -245,31 +245,110 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // ====== SEND TELEGRAM FOR HIGH-CONFIDENCE ALERTS ======
+    // ====== SEND TELEGRAM FOR ALL ALERTS WITH RECOMMENDATIONS ======
     const highConfAlerts = alerts.filter((a) => a.confidence >= 70);
     if (highConfAlerts.length > 0) {
       const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
-      const alertLines = highConfAlerts.slice(0, 5).map((a) => {
+
+      const formatAlert = (a: any): string => {
         if (a.type === "velocity_spike") {
-          return `⚡ *VELOCITY* — ${esc(a.sport)}\n${esc(a.player_name)} ${esc(a.prop_type)}\nLine ${a.direction}: ${a.line_from} → ${a.line_to}\nSpeed: ${a.velocity}/hr over ${a.time_span_min}min\nConf: ${Math.round(a.confidence)}%`;
+          const action = a.direction === "dropping" ? "OVER" : "UNDER";
+          const reason = a.direction === "dropping"
+            ? "Line dropping = book expects fewer, value is OVER"
+            : "Line rising = book expects more, value is UNDER";
+          return [
+            `⚡ *VELOCITY* — ${esc(a.sport)}`,
+            `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
+            `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
+            `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action} ${a.line_to}*`,
+            `💡 ${reason}`,
+          ].join("\n");
         }
         if (a.type === "cascade") {
-          return `🌊 *CASCADE* — ${esc(a.sport)}\n${esc(a.player_name)}\nMoved: ${(a.moved_props || []).map(esc).join(", ")}\nPending: ${(a.pending_props || []).map(esc).join(", ")}\nConf: ${Math.round(a.confidence)}%`;
+          return [
+            `🌊 *CASCADE ALERT* — ${esc(a.sport)}`,
+            `${esc(a.player_name)}`,
+            `Moved: ${(a.moved_props || []).map(esc).join(", ")}`,
+            `⏳ Pending: ${(a.pending_props || []).map(esc).join(", ")}`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: Grab pending props NOW before they adjust*`,
+            `💡 When one prop moves, related props follow within 5-15 min`,
+          ].join("\n");
         }
         if (a.type === "snapback") {
-          return `🔄 *SNAPBACK* — ${esc(a.sport)}\n${esc(a.player_name)} ${esc(a.prop_type)}\nOpen: ${a.opening_line} → Now: ${a.current_line}\nDrift: ${a.drift_pct}%\nConf: ${Math.round(a.confidence)}%`;
+          const action = a.current_line > a.opening_line ? "UNDER" : "OVER";
+          const reason = a.current_line > a.opening_line
+            ? "Line inflated above open — historically snaps back down"
+            : "Line deflated below open — historically snaps back up";
+          return [
+            `🔄 *SNAPBACK* — ${esc(a.sport)}`,
+            `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
+            `Open: ${a.opening_line} → Now: ${a.current_line}`,
+            `Drift: ${a.drift_pct}%`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action} ${a.current_line}*`,
+            `💡 ${reason}`,
+          ].join("\n");
         }
         return "";
-      });
+      };
 
-      const msg = [`🧠 *FanDuel Behavior Alerts*`, `${highConfAlerts.length} pattern(s) detected`, "", ...alertLines].join("\n");
+      // Group by type for organized display
+      const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
+      const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
+      const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
 
-      try {
-        await supabase.functions.invoke("bot-send-telegram", {
-          body: { message: msg, parse_mode: "Markdown", admin_only: true },
-        });
-      } catch (tgErr: any) {
-        log(`Telegram error: ${tgErr.message}`);
+      // Build paginated messages (max ~8 alerts per message to avoid Telegram limits)
+      const allFormatted: string[] = [];
+      if (velocityAlerts.length > 0) {
+        allFormatted.push(`\n— *VELOCITY SPIKES (${velocityAlerts.length})* —`);
+        allFormatted.push(...velocityAlerts.map(formatAlert));
+      }
+      if (cascadeAlerts.length > 0) {
+        allFormatted.push(`\n— *CASCADE OPPORTUNITIES (${cascadeAlerts.length})* —`);
+        allFormatted.push(...cascadeAlerts.map(formatAlert));
+      }
+      if (snapbackAlerts.length > 0) {
+        allFormatted.push(`\n— *SNAPBACK CANDIDATES (${snapbackAlerts.length})* —`);
+        allFormatted.push(...snapbackAlerts.map(formatAlert));
+      }
+
+      // Paginate: split into chunks of 8 alerts per message
+      const ALERTS_PER_MSG = 8;
+      const pages: string[][] = [];
+      let currentPage: string[] = [];
+      let alertCount = 0;
+
+      for (const line of allFormatted) {
+        currentPage.push(line);
+        // Count actual alerts (not section headers)
+        if (!line.startsWith("\n—")) alertCount++;
+        if (alertCount >= ALERTS_PER_MSG) {
+          pages.push(currentPage);
+          currentPage = [];
+          alertCount = 0;
+        }
+      }
+      if (currentPage.length > 0) pages.push(currentPage);
+
+      // Send each page
+      for (let i = 0; i < pages.length; i++) {
+        const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
+        const header = i === 0
+          ? [`🧠 *FanDuel Behavior Alerts*${pageLabel}`, `${highConfAlerts.length} pattern(s) — ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
+          : [`🧠 *Behavior Alerts${pageLabel}*`, ""];
+
+        const msg = [...header, ...pages[i]].join("\n");
+
+        try {
+          await supabase.functions.invoke("bot-send-telegram", {
+            body: { message: msg, parse_mode: "Markdown", admin_only: true },
+          });
+        } catch (tgErr: any) {
+          log(`Telegram error page ${i + 1}: ${tgErr.message}`);
+        }
       }
     }
 

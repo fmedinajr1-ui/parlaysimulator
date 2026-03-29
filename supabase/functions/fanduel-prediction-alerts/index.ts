@@ -252,22 +252,27 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // Send Telegram alerts (max 3 per cycle to avoid spam)
+    // Send Telegram alerts — paginated, all signals shown
     if (telegramAlerts.length > 0) {
-      const msg = [
-        `🎯 *FanDuel Prediction Engine*`,
-        `${telegramAlerts.length} signal(s) detected`,
-        "",
-        ...telegramAlerts.slice(0, 3),
-        telegramAlerts.length > 3 ? `\n...+${telegramAlerts.length - 3} more` : "",
-      ].join("\n");
+      const ALERTS_PER_MSG = 6;
+      const totalPages = Math.ceil(telegramAlerts.length / ALERTS_PER_MSG);
 
-      try {
-        await supabase.functions.invoke("bot-send-telegram", {
-          body: { message: msg, parse_mode: "Markdown", admin_only: true },
-        });
-      } catch (tgErr: any) {
-        log(`Telegram error: ${tgErr.message}`);
+      for (let i = 0; i < totalPages; i++) {
+        const pageAlerts = telegramAlerts.slice(i * ALERTS_PER_MSG, (i + 1) * ALERTS_PER_MSG);
+        const pageLabel = totalPages > 1 ? ` (${i + 1}/${totalPages})` : "";
+        const header = i === 0
+          ? [`🎯 *FanDuel Prediction Engine*${pageLabel}`, `${telegramAlerts.length} signal(s) detected`, ""]
+          : [`🎯 *Predictions${pageLabel}*`, ""];
+
+        const msg = [...header, ...pageAlerts].join("\n\n");
+
+        try {
+          await supabase.functions.invoke("bot-send-telegram", {
+            body: { message: msg, parse_mode: "Markdown", admin_only: true },
+          });
+        } catch (tgErr: any) {
+          log(`Telegram error page ${i + 1}: ${tgErr.message}`);
+        }
       }
     }
 
