@@ -263,18 +263,20 @@ Deno.serve(async (req) => {
           let action: string;
           let reason: string;
           if (isTeamMarket && (a.prop_type === "h2h" || a.prop_type === "moneyline")) {
-            // Moneyline: dropping odds = team becoming more favored = BACK them
-            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}` : `FADE ${esc(a.player_name)}`;
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}${gameName}` : `FADE ${esc(a.player_name)}${gameName}`;
             reason = a.direction === "dropping"
               ? "Odds shortening = sharp money on this team"
               : "Odds drifting = money moving away from this team";
           } else if (isTeamMarket && a.prop_type === "spreads") {
-            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD` : `FADE ${esc(a.player_name)} SPREAD`;
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD${gameName}` : `FADE ${esc(a.player_name)} SPREAD${gameName}`;
             reason = a.direction === "dropping"
               ? "Spread tightening = sharps backing this side"
               : "Spread widening = sharps fading this side";
           } else if (isTeamMarket && a.prop_type === "totals") {
-            action = a.direction === "dropping" ? "UNDER" : "OVER";
+            const gameName = a.event_description ? esc(a.event_description) : esc(a.player_name);
+            action = a.direction === "dropping" ? `UNDER ${gameName}` : `OVER ${gameName}`;
             reason = a.direction === "dropping"
               ? "Total dropping = sharps expecting low-scoring game"
               : "Total rising = sharps expecting high-scoring game";
@@ -285,9 +287,12 @@ Deno.serve(async (req) => {
               : "Line rising = book expects more, value is UNDER";
           }
           const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
+          const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
+            ? esc(a.event_description)
+            : esc(a.player_name);
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
-            `${esc(a.player_name)} ${propLabel}`,
+            `${displayName} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
