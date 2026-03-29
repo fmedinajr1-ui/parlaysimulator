@@ -154,16 +154,23 @@ Deno.serve(async (req) => {
             : "Line rising = book expects more, value is UNDER";
           const liveTag = live ? " [🔴 LIVE]" : "";
 
+          const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
+          const matchupLine = isTeamMarket ? eventMatchup.get(first.event_id) : null;
+          const marketLabel = isTeamMarket
+            ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
+            : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
+
           const alertText = [
             `🔮 *${live ? "LINE MOVING NOW" : "LINE ABOUT TO MOVE"}*${liveTag} — ${esc(first.sport)}`,
-            `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
+            matchupLine ? `🏟 ${esc(matchupLine)}` : null,
+            marketLabel,
             `Line ${direction}: ${first.line} → ${last.line}`,
             `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
             live ? `⏱ In-game shift detected` : `⏱ FanDuel avg reaction: ~${remaining}min remaining`,
             `📊 Confidence: ${Math.round(confidence)}%`,
             `✅ *Action: ${side} ${last.line}*`,
             `💡 ${reason}`,
-          ].join("\n");
+          ].filter(Boolean).join("\n");
 
           const record = {
             signal_type: live ? "live_line_moving" : "line_about_to_move",
