@@ -68,18 +68,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Split into 3 tiers
-    const pregameData = recentData.filter((r: any) =>
-      typeof r.hours_to_tip === "number" && r.hours_to_tip > 0 && r.snapshot_phase !== "live"
+    // Exclude finished games — only pregame + live get alerts
+    const activeData = recentData.filter((r: any) =>
+      typeof r.hours_to_tip !== "number" || r.hours_to_tip > -3
     );
-    const liveData = recentData.filter((r: any) =>
-      r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0 && r.hours_to_tip > -3)
-    );
-    const finishedData = recentData.filter((r: any) =>
-      typeof r.hours_to_tip === "number" && r.hours_to_tip <= -3
-    );
-
-    log(`Tier split: ${pregameData.length} pregame, ${liveData.length} live, ${finishedData.length} finished`);
+    const excluded = recentData.length - activeData.length;
+    log(`Filtered to ${activeData.length} active records (excluded ${excluded} finished games)`);
 
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
 
