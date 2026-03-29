@@ -458,6 +458,44 @@ Deno.serve(async (req) => {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
 
+        // ====== TAKE IT NOW — OPTIMAL ENTRY POINT ======
+        if (a.type === "take_it_now") {
+          const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
+          let action: string;
+          let reason: string;
+          if (isTeamMarket && (a.prop_type === "h2h" || a.prop_type === "moneyline")) {
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}${gameName}` : `FADE ${esc(a.player_name)}${gameName}`;
+            reason = `Line at ${a.drift_pct_of_range}% of typical range — ~${a.remaining_move} more movement expected`;
+          } else if (isTeamMarket && a.prop_type === "spreads") {
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD${gameName}` : `FADE ${esc(a.player_name)} SPREAD${gameName}`;
+            reason = `Spread at ${a.drift_pct_of_range}% of range — expect ~${a.remaining_move} more`;
+          } else if (isTeamMarket && a.prop_type === "totals") {
+            const gameName = a.event_description ? esc(a.event_description) : esc(a.player_name);
+            action = a.direction === "dropping" ? `UNDER ${gameName}` : `OVER ${gameName}`;
+            reason = `Total at ${a.drift_pct_of_range}% of range — ~${a.remaining_move} more expected`;
+          } else {
+            action = a.direction === "dropping" ? `OVER ${a.current_line}` : `UNDER ${a.current_line}`;
+            reason = a.direction === "dropping"
+              ? `Dropped ${a.drift_amount} pts (${a.drift_pct_of_range}% of typical ${a.expected_drift} drift) — grab OVER before it drops more`
+              : `Rose ${a.drift_amount} pts (${a.drift_pct_of_range}% of typical ${a.expected_drift} drift) — grab UNDER before it rises more`;
+          }
+          const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
+          const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
+            ? esc(a.event_description)
+            : esc(a.player_name);
+          return [
+            `🔥 *TAKE IT NOW*${liveTag} — ${esc(a.sport)}`,
+            `${displayName} ${propLabel}`,
+            `Open: ${a.opening_line} → Now: ${a.current_line} (moved ${a.drift_amount})`,
+            `📏 ${a.drift_pct_of_range}% of typical range (avg drift: ${a.expected_drift})`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action}*`,
+            `💡 ${reason}`,
+          ].join("\n");
+        }
+
         // ====== LINE ABOUT TO MOVE (primary signal) ======
         if (a.type === "line_about_to_move") {
           const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
