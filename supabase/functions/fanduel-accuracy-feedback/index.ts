@@ -17,144 +17,144 @@ Deno.serve(async (req) => {
 
   const log = (msg: string) => console.log(`[Accuracy Feedback] ${msg}`);
   const now = new Date();
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
   try {
     log("=== Starting accuracy feedback loop ===");
 
-    // 1. Get unverified predictions (up to 7 days old for backfill)
+    // Get unverified predictions older than 2 hours (game should be done)
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: unverified, error: fetchErr } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("*")
       .is("was_correct", null)
       .gte("created_at", sevenDaysAgo)
-      .limit(500);
+      .lte("created_at", twoHoursAgo.toISOString())
+      .limit(200);
 
     if (fetchErr) throw new Error(`Fetch unverified: ${fetchErr.message}`);
-    log(`Found ${unverified?.length || 0} unverified predictions`);
+    log(`Found ${unverified?.length || 0} unverified predictions (2h+ old)`);
+
+    // Mark trap warnings immediately
+    const traps = (unverified || []).filter(p => p.signal_type === "trap_warning");
+    const actionable = (unverified || []).filter(p => p.signal_type !== "trap_warning");
+
+    for (const trap of traps) {
+      await supabase
+        .from("fanduel_prediction_accuracy")
+        .update({ actual_outcome: "informational", verified_at: now.toISOString() })
+        .eq("id", trap.id);
+    }
+
+    // Group actionable predictions by event_id for efficient timeline lookups
+    const byEvent = new Map<string, typeof actionable>();
+    for (const pred of actionable) {
+      const key = pred.event_id;
+      if (!byEvent.has(key)) byEvent.set(key, []);
+      byEvent.get(key)!.push(pred);
+    }
 
     let verified = 0;
     let correct = 0;
     let incorrect = 0;
 
-    for (const pred of unverified || []) {
-      // Skip trap warnings — informational only
-      if (pred.signal_type === "trap_warning") {
-        await supabase
-          .from("fanduel_prediction_accuracy")
-          .update({ was_correct: null, actual_outcome: "informational", verified_at: now.toISOString() })
-          .eq("id", pred.id);
-        continue;
-      }
-
-      // Only verify predictions for games that have ended (hours_to_tip should be very negative by now)
-      const predAge = (now.getTime() - new Date(pred.created_at).getTime()) / (1000 * 60 * 60);
-      if (predAge < 2) continue; // Wait at least 2 hours for closing data to settle
-
-      // Get closing line: the LAST snapshot for this player+event+prop
-      const { data: closingSnaps } = await supabase
+    for (const [eventId, preds] of byEvent) {
+      // Get ALL timeline data for this event in one query
+      const { data: timeline } = await supabase
         .from("fanduel_line_timeline")
-        .select("line, over_price, under_price, snapshot_phase, opening_line, snapshot_time, hours_to_tip")
-        .eq("event_id", pred.event_id)
-        .eq("player_name", pred.player_name)
-        .eq("prop_type", pred.prop_type)
+        .select("player_name, prop_type, line, snapshot_time")
+        .eq("event_id", eventId)
         .order("snapshot_time", { ascending: false })
-        .limit(1);
+        .limit(500);
 
-      if (!closingSnaps || closingSnaps.length === 0) continue;
-      const closing = closingSnaps[0];
+      if (!timeline || timeline.length === 0) continue;
 
-      // Get the opening/earliest snapshot for this prop
-      const { data: openingSnaps } = await supabase
-        .from("fanduel_line_timeline")
-        .select("line, over_price, under_price, snapshot_time")
-        .eq("event_id", pred.event_id)
-        .eq("player_name", pred.player_name)
-        .eq("prop_type", pred.prop_type)
-        .order("snapshot_time", { ascending: true })
-        .limit(1);
+      for (const pred of preds) {
+        // Find closing line (latest snapshot for this player+prop)
+        const closing = timeline.find(
+          t => t.player_name === pred.player_name && t.prop_type === pred.prop_type
+        );
+        if (!closing) continue;
 
-      const opening = openingSnaps?.[0];
+        // Find opening line (earliest snapshot)
+        const opening = [...timeline]
+          .filter(t => t.player_name === pred.player_name && t.prop_type === pred.prop_type)
+          .pop(); // last item since sorted desc = earliest
 
-      // Extract signal details
-      const signalFactors = pred.signal_factors || {};
-      const lineAtSignal = signalFactors.line_to || signalFactors.currentLine;
-      const lineAtOpen = signalFactors.line_from || opening?.line;
-      const closingLine = closing.line;
-      const predictedDir = pred.predicted_direction;
+        const signalFactors = pred.signal_factors || {};
+        const lineAtSignal = signalFactors.line_to || signalFactors.currentLine;
+        const lineAtOpen = signalFactors.line_from || opening?.line;
+        const closingLine = closing.line;
+        const predictedDir = pred.predicted_direction;
 
-      let wasCorrect: boolean | null = null;
-      let actualOutcome = "unverifiable";
-      let actualValue: number | null = closingLine;
+        let wasCorrect: boolean | null = null;
+        let actualOutcome = "unverifiable";
 
-      // --- VELOCITY SPIKE / LINE_ABOUT_TO_MOVE ---
-      // Verify: did the line continue moving in the predicted direction?
-      if (pred.signal_type === "velocity_spike" || pred.signal_type === "line_about_to_move") {
-        if (lineAtSignal != null && closingLine != null) {
-          if (predictedDir === "dropping") {
-            wasCorrect = closingLine < lineAtSignal;
-            actualOutcome = closingLine < lineAtSignal ? "CONTINUED_DROP" : "REVERSED_UP";
-          } else if (predictedDir === "rising") {
-            wasCorrect = closingLine > lineAtSignal;
-            actualOutcome = closingLine > lineAtSignal ? "CONTINUED_RISE" : "REVERSED_DOWN";
+        // VELOCITY SPIKE / LINE_ABOUT_TO_MOVE: did line continue moving?
+        if (pred.signal_type === "velocity_spike" || pred.signal_type === "line_about_to_move") {
+          if (lineAtSignal != null && closingLine != null) {
+            if (predictedDir === "dropping") {
+              wasCorrect = closingLine < lineAtSignal;
+              actualOutcome = wasCorrect ? "CONTINUED_DROP" : "REVERSED_UP";
+            } else if (predictedDir === "rising") {
+              wasCorrect = closingLine > lineAtSignal;
+              actualOutcome = wasCorrect ? "CONTINUED_RISE" : "REVERSED_DOWN";
+            }
           }
         }
-      }
 
-      // --- CASCADE ---
-      // Verify: did the cascade prediction hold? (multiple props moved = real sharp action)
-      if (pred.signal_type === "cascade") {
-        if (lineAtSignal != null && closingLine != null && lineAtOpen != null) {
-          // A cascade is "correct" if the closing line drifted further from opening than at signal time
-          const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
-          const driftAtClose = Math.abs(closingLine - lineAtOpen);
-          wasCorrect = driftAtClose >= driftAtSignal;
-          actualOutcome = wasCorrect ? "CASCADE_CONFIRMED" : "CASCADE_REVERSED";
-        }
-      }
-
-      // --- LIVE LINE MOVING ---
-      // Verify: did the live movement continue?
-      if (pred.signal_type === "live_line_moving") {
-        if (lineAtSignal != null && closingLine != null) {
-          if (predictedDir === "dropping") {
-            wasCorrect = closingLine <= lineAtSignal;
-            actualOutcome = closingLine <= lineAtSignal ? "LIVE_DROP_CONFIRMED" : "LIVE_REVERSED";
-          } else if (predictedDir === "rising") {
-            wasCorrect = closingLine >= lineAtSignal;
-            actualOutcome = closingLine >= lineAtSignal ? "LIVE_RISE_CONFIRMED" : "LIVE_REVERSED";
+        // CASCADE: did drift continue from opening?
+        if (pred.signal_type === "cascade") {
+          if (lineAtSignal != null && closingLine != null && lineAtOpen != null) {
+            const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
+            const driftAtClose = Math.abs(closingLine - lineAtOpen);
+            wasCorrect = driftAtClose >= driftAtSignal;
+            actualOutcome = wasCorrect ? "CASCADE_CONFIRMED" : "CASCADE_REVERSED";
           }
         }
-      }
 
-      // --- TAKE IT NOW (snapback) ---
-      if (pred.signal_type === "take_it_now") {
-        if (lineAtOpen != null && lineAtSignal != null && closingLine != null) {
-          const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
-          const driftAtClose = Math.abs(closingLine - lineAtOpen);
-          wasCorrect = driftAtClose < driftAtSignal;
-          actualOutcome = wasCorrect ? "SNAPPED_BACK" : "CONTINUED_DRIFT";
+        // LIVE LINE MOVING: did live movement continue?
+        if (pred.signal_type === "live_line_moving") {
+          if (lineAtSignal != null && closingLine != null) {
+            if (predictedDir === "dropping") {
+              wasCorrect = closingLine <= lineAtSignal;
+              actualOutcome = wasCorrect ? "LIVE_DROP_CONFIRMED" : "LIVE_REVERSED";
+            } else if (predictedDir === "rising") {
+              wasCorrect = closingLine >= lineAtSignal;
+              actualOutcome = wasCorrect ? "LIVE_RISE_CONFIRMED" : "LIVE_REVERSED";
+            }
+          }
         }
-      }
 
-      if (wasCorrect !== null) {
-        await supabase
-          .from("fanduel_prediction_accuracy")
-          .update({
-            was_correct: wasCorrect,
-            actual_outcome: actualOutcome,
-            actual_value: actualValue,
-            verified_at: now.toISOString(),
-          })
-          .eq("id", pred.id);
+        // TAKE IT NOW (snapback)
+        if (pred.signal_type === "take_it_now") {
+          if (lineAtOpen != null && lineAtSignal != null && closingLine != null) {
+            const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
+            const driftAtClose = Math.abs(closingLine - lineAtOpen);
+            wasCorrect = driftAtClose < driftAtSignal;
+            actualOutcome = wasCorrect ? "SNAPPED_BACK" : "CONTINUED_DRIFT";
+          }
+        }
 
-        verified++;
-        if (wasCorrect) correct++;
-        else incorrect++;
+        if (wasCorrect !== null) {
+          await supabase
+            .from("fanduel_prediction_accuracy")
+            .update({
+              was_correct: wasCorrect,
+              actual_outcome: actualOutcome,
+              actual_value: closingLine,
+              verified_at: now.toISOString(),
+            })
+            .eq("id", pred.id);
+
+          verified++;
+          if (wasCorrect) correct++;
+          else incorrect++;
+        }
       }
     }
 
-    // 2. Compute accuracy by signal type and update behavior patterns
+    // Compute accuracy by signal type
     const { data: allVerified } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, sport, prop_type, was_correct, velocity_at_signal")
@@ -171,54 +171,47 @@ Deno.serve(async (req) => {
       if (row.velocity_at_signal) b.velocities.push(row.velocity_at_signal);
     }
 
-    // Update behavior patterns with accuracy-adjusted confidence
     let patternsUpdated = 0;
     for (const [key, stats] of buckets) {
       const [signalType, sport, propType] = key.split("|");
       const accuracy = stats.total > 0 ? stats.correct / stats.total : 0;
-      const newConfidence = Math.round(accuracy * 100);
       const avgVelocity = stats.velocities.length > 0
         ? stats.velocities.reduce((a, b) => a + b, 0) / stats.velocities.length
         : null;
 
       const { error } = await supabase
         .from("fanduel_behavior_patterns")
-        .upsert(
-          {
-            sport,
-            prop_type: propType,
-            pattern_type: signalType,
-            confidence: newConfidence,
-            sample_size: stats.total,
-            velocity_threshold: avgVelocity,
-            last_updated: now.toISOString(),
-          },
-          { onConflict: "sport,prop_type,pattern_type" }
-        );
+        .upsert({
+          sport, prop_type: propType, pattern_type: signalType,
+          confidence: Math.round(accuracy * 100),
+          sample_size: stats.total,
+          velocity_threshold: avgVelocity,
+          last_updated: now.toISOString(),
+        }, { onConflict: "sport,prop_type,pattern_type" });
       if (!error) patternsUpdated++;
     }
 
-    // 3. Send Telegram summary
+    // Telegram summary
     const overallAccuracy = verified > 0 ? Math.round((correct / verified) * 100) : 0;
-    const msg = [
-      `📊 *FanDuel Accuracy Report*`,
-      ``,
-      `Verified: ${verified} predictions`,
-      `✅ Correct: ${correct} (${overallAccuracy}%)`,
-      `❌ Incorrect: ${incorrect}`,
-      `📈 Patterns updated: ${patternsUpdated}`,
-      ``,
-      ...Array.from(buckets.entries())
-        .filter(([, s]) => s.total >= 3)
-        .slice(0, 8)
-        .map(([k, s]) => {
-          const [sig, sport, prop] = k.split("|");
-          const acc = Math.round((s.correct / s.total) * 100);
-          return `${acc >= 55 ? "✅" : acc < 45 ? "❌" : "⚠️"} ${sig} ${prop} (${sport}): ${acc}% (n=${s.total})`;
-        }),
-    ].join("\n");
-
     if (verified > 0) {
+      const msg = [
+        `📊 *FanDuel Accuracy Report*`,
+        ``,
+        `Verified: ${verified} predictions`,
+        `✅ Correct: ${correct} (${overallAccuracy}%)`,
+        `❌ Incorrect: ${incorrect}`,
+        `📈 Patterns updated: ${patternsUpdated}`,
+        ``,
+        ...Array.from(buckets.entries())
+          .filter(([, s]) => s.total >= 3)
+          .slice(0, 8)
+          .map(([k, s]) => {
+            const [sig, sport, prop] = k.split("|");
+            const acc = Math.round((s.correct / s.total) * 100);
+            return `${acc >= 55 ? "✅" : acc < 45 ? "❌" : "⚠️"} ${sig} ${prop} (${sport}): ${acc}% (n=${s.total})`;
+          }),
+      ].join("\n");
+
       try {
         await supabase.functions.invoke("bot-send-telegram", {
           body: { message: msg, parse_mode: "Markdown", admin_only: true },
@@ -230,7 +223,7 @@ Deno.serve(async (req) => {
 
     log(`=== COMPLETE: ${verified} verified, ${correct} correct, ${patternsUpdated} patterns ===`);
 
-    // 4. Cleanup old timeline data (30 day retention)
+    // Cleanup old timeline (30 day retention)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
     await supabase.from("fanduel_line_timeline").delete().lt("created_at", thirtyDaysAgo);
 
