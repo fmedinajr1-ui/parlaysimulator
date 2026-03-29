@@ -315,21 +315,21 @@ Deno.serve(async (req) => {
         allFormatted.push(...snapbackAlerts.map(formatAlert));
       }
 
-      // Paginate: split into chunks of 8 alerts per message
-      const ALERTS_PER_MSG = 8;
+      // Paginate by character count to respect Telegram's 4096 char limit
+      const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
-      let alertCount = 0;
+      let currentLen = 0;
 
       for (const line of allFormatted) {
-        currentPage.push(line);
-        // Count actual alerts (not section headers)
-        if (!line.startsWith("\n—")) alertCount++;
-        if (alertCount >= ALERTS_PER_MSG) {
+        const lineLen = line.length + 1; // +1 for \n separator
+        if (currentPage.length > 0 && !line.startsWith("\n—") && currentLen + lineLen > MAX_CHARS) {
           pages.push(currentPage);
           currentPage = [];
-          alertCount = 0;
+          currentLen = 0;
         }
+        currentPage.push(line);
+        currentLen += lineLen;
       }
       if (currentPage.length > 0) pages.push(currentPage);
 

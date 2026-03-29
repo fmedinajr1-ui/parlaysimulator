@@ -262,19 +262,32 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // Send Telegram alerts — paginated, all signals shown
+    // Send Telegram alerts — paginated, respecting 4096 char limit
     if (telegramAlerts.length > 0) {
-      const ALERTS_PER_MSG = 6;
-      const totalPages = Math.ceil(telegramAlerts.length / ALERTS_PER_MSG);
+      const MAX_CHARS = 3800; // leave buffer under Telegram's 4096 limit
+      const pages: string[][] = [];
+      let currentPage: string[] = [];
+      let currentLen = 0;
 
-      for (let i = 0; i < totalPages; i++) {
-        const pageAlerts = telegramAlerts.slice(i * ALERTS_PER_MSG, (i + 1) * ALERTS_PER_MSG);
-        const pageLabel = totalPages > 1 ? ` (${i + 1}/${totalPages})` : "";
+      for (const alert of telegramAlerts) {
+        const alertLen = alert.length + 2; // +2 for \n\n separator
+        if (currentPage.length > 0 && currentLen + alertLen > MAX_CHARS) {
+          pages.push(currentPage);
+          currentPage = [];
+          currentLen = 0;
+        }
+        currentPage.push(alert);
+        currentLen += alertLen;
+      }
+      if (currentPage.length > 0) pages.push(currentPage);
+
+      for (let i = 0; i < pages.length; i++) {
+        const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
           ? [`🎯 *FanDuel Prediction Engine*${pageLabel}`, `${telegramAlerts.length} signal(s) detected`, ""]
           : [`🎯 *Predictions${pageLabel}*`, ""];
 
-        const msg = [...header, ...pageAlerts].join("\n\n");
+        const msg = [...header, ...pages[i]].join("\n\n");
 
         try {
           await supabase.functions.invoke("bot-send-telegram", {
