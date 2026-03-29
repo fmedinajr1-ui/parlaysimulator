@@ -68,14 +68,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // FILTER OUT FINISHED GAMES (hours_to_tip <= -3 means game is over)
-    const activeData = recentData.filter(
-      (r: any) => r.hours_to_tip === null || r.hours_to_tip > -3
+    // STRICT PREGAME FILTER — no live/finished games in predictions
+    const activeData = recentData.filter((r: any) =>
+      typeof r.hours_to_tip === "number" && r.hours_to_tip > 0 && r.snapshot_phase !== "live"
     );
-    log(`Filtered to ${activeData.length} active records (excluded ${recentData.length - activeData.length} finished)`);
+    log(`Filtered to ${activeData.length} pregame records (excluded ${recentData.length - activeData.length} live/finished)`);
 
     if (activeData.length === 0) {
-      log("No active game data for alerts");
+      log("No pregame data for alerts");
       return new Response(JSON.stringify({ success: true, alerts: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -231,8 +231,8 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
 
-      // Skip finished games
-      if (last.hours_to_tip !== null && last.hours_to_tip <= -3) continue;
+      // Skip non-pregame rows defensively
+      if (typeof last.hours_to_tip !== "number" || last.hours_to_tip <= 0 || last.snapshot_phase === "live") continue;
 
       const firstHalfDir = mid.line - first.line;
       const secondHalfDir = last.line - mid.line;
