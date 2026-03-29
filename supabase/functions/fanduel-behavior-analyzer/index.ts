@@ -44,151 +44,161 @@ Deno.serve(async (req) => {
     const excluded = recentTimeline.length - activeTimeline.length;
     log(`Analyzing ${activeTimeline.length} active records (excluded ${excluded} finished games)`);
 
-    const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
+    if (activeTimeline.length === 0) {
+      log("No active data to analyze");
+      return new Response(JSON.stringify({ success: true, patterns: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // ====== ANALYZE A TIER ======
-    const analyzeTier = (data: any[], tierLabel: string) => {
-      const groups = new Map<string, any[]>();
-      for (const row of data) {
-        const key = `${row.event_id}|${row.player_name}|${row.prop_type}`;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key)!.push(row);
+    // Group by event+player+prop for sequential analysis
+    const groups = new Map<string, any[]>();
+    for (const row of activeTimeline) {
+      const key = `${row.event_id}|${row.player_name}|${row.prop_type}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(row);
+    }
+
+    // Also group by event+player (all props) for cascade detection
+    const playerGroups = new Map<string, any[]>();
+    for (const row of activeTimeline) {
+      const key = `${row.event_id}|${row.player_name}`;
+      if (!playerGroups.has(key)) playerGroups.set(key, []);
+      playerGroups.get(key)!.push(row);
+    }
+
+    const patterns: any[] = [];
+    // Track best alert per player (dedup)
+    const bestAlertPerPlayer = new Map<string, { confidence: number; alert: any }>();
+    const addAlert = (playerKey: string, confidence: number, alert: any) => {
+      const existing = bestAlertPerPlayer.get(playerKey);
+      if (!existing || confidence > existing.confidence) {
+        bestAlertPerPlayer.set(playerKey, { confidence, alert });
       }
-
-      const playerGroups = new Map<string, any[]>();
-      for (const row of data) {
-        const key = `${row.event_id}|${row.player_name}`;
-        if (!playerGroups.has(key)) playerGroups.set(key, []);
-        playerGroups.get(key)!.push(row);
-      }
-
-      const patterns: any[] = [];
-      const bestAlertPerPlayer = new Map<string, { confidence: number; alert: any }>();
-      const addAlert = (playerKey: string, confidence: number, alert: any) => {
-        const existing = bestAlertPerPlayer.get(playerKey);
-        if (!existing || confidence > existing.confidence) {
-          bestAlertPerPlayer.set(playerKey, { confidence, alert });
-        }
-      };
-
-      // VELOCITY SPIKES
-      for (const [key, snapshots] of groups) {
-        if (snapshots.length < 2) continue;
-        const first = snapshots[0];
-        const last = snapshots[snapshots.length - 1];
-        const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-        if (timeDiffMin < 5) continue;
-        const lineDiff = Math.abs(last.line - first.line);
-        const velocityPerHour = (lineDiff / timeDiffMin) * 60;
-
-        if (velocityPerHour >= 1.0) {
-          const direction = last.line < first.line ? "dropping" : "rising";
-          const conf = Math.min(95, 50 + velocityPerHour * 15);
-          patterns.push({
-            sport: first.sport, prop_type: first.prop_type, pattern_type: "velocity_spike",
-            avg_reaction_time_minutes: timeDiffMin, avg_move_size: lineDiff,
-            confidence: conf, sample_size: snapshots.length,
-            cascade_sequence: null, velocity_threshold: velocityPerHour,
-            snapback_pct: null, timing_window: `${Math.round(timeDiffMin)}min`,
-          });
-
-          const playerKey = `${first.event_id}|${first.player_name}`;
-          addAlert(playerKey, conf, {
-            type: "velocity_spike", tier: tierLabel, sport: first.sport,
-            player_name: first.player_name, prop_type: first.prop_type,
-            event_description: first.event_description, event_id: first.event_id,
-            direction, velocity: Math.round(velocityPerHour * 100) / 100,
-            line_from: first.line, line_to: last.line,
-            time_span_min: Math.round(timeDiffMin), confidence: conf,
-            hours_to_tip: last.hours_to_tip,
-          });
-        }
-      }
-
-      // CASCADE DETECTION
-      for (const [playerKey, allProps] of playerGroups) {
-        const propMap = new Map<string, any[]>();
-        for (const row of allProps) {
-          if (!propMap.has(row.prop_type)) propMap.set(row.prop_type, []);
-          propMap.get(row.prop_type)!.push(row);
-        }
-        if (propMap.size < 2) continue;
-        const movedProps: string[] = [];
-        const staleProps: string[] = [];
-        for (const [propType, snapshots] of propMap) {
-          if (snapshots.length < 2) { staleProps.push(propType); continue; }
-          const f = snapshots[0]; const l = snapshots[snapshots.length - 1];
-          Math.abs(l.line - f.line) >= 0.5 ? movedProps.push(propType) : staleProps.push(propType);
-        }
-        if (movedProps.length > 0 && staleProps.length > 0) {
-          const sampleRow = allProps[0];
-          const conf = Math.min(85, 40 + movedProps.length * 15);
-          patterns.push({
-            sport: sampleRow.sport, prop_type: movedProps[0], pattern_type: "cascade",
-            avg_reaction_time_minutes: 0, avg_move_size: 0, confidence: conf,
-            sample_size: allProps.length, cascade_sequence: { moved: movedProps, pending: staleProps },
-            velocity_threshold: null, snapback_pct: null, timing_window: null,
-          });
-          const dedupKey = `${sampleRow.event_id}|${sampleRow.player_name}`;
-          addAlert(dedupKey, conf, {
-            type: "cascade", tier: tierLabel, sport: sampleRow.sport,
-            player_name: sampleRow.player_name, event_description: sampleRow.event_description,
-            event_id: sampleRow.event_id, moved_props: movedProps, pending_props: staleProps,
-            confidence: conf, hours_to_tip: sampleRow.hours_to_tip,
-          });
-        }
-      }
-
-      // SNAPBACK DETECTION
-      for (const [key, snapshots] of groups) {
-        if (snapshots.length < 3) continue;
-        const last = snapshots[snapshots.length - 1];
-        const openingLine = last.opening_line;
-        if (!openingLine) continue;
-        const drift = Math.abs(last.line - openingLine);
-        const driftPct = (drift / openingLine) * 100;
-        if (driftPct >= 8) {
-          const conf = Math.min(80, 35 + driftPct * 2);
-          patterns.push({
-            sport: last.sport, prop_type: last.prop_type, pattern_type: "snapback_candidate",
-            avg_reaction_time_minutes: 0, avg_move_size: drift, confidence: conf,
-            sample_size: snapshots.length, cascade_sequence: null,
-            velocity_threshold: null, snapback_pct: driftPct, timing_window: null,
-          });
-          const playerKey = `${last.event_id}|${last.player_name}`;
-          addAlert(playerKey, conf, {
-            type: "snapback", tier: tierLabel, sport: last.sport,
-            player_name: last.player_name, prop_type: last.prop_type,
-            event_description: last.event_description, event_id: last.event_id,
-            opening_line: openingLine, current_line: last.line,
-            drift_pct: Math.round(driftPct * 10) / 10, confidence: conf,
-            hours_to_tip: last.hours_to_tip,
-          });
-        }
-      }
-
-      return { patterns, alerts: Array.from(bestAlertPerPlayer.values()).map((v) => v.alert) };
     };
 
-    // Run analysis on each tier
-    const pregameResult = analyzeTier(pregameData, "PREGAME");
-    const liveResult = analyzeTier(liveData, "LIVE");
-    const finishedResult = analyzeTier(finishedData, "POSTGAME");
+    const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
 
-    const allPatterns = [...pregameResult.patterns, ...liveResult.patterns, ...finishedResult.patterns];
+    // Helper: is this row from a live game?
+    const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
-    // Upsert patterns
+    // ====== PATTERN 1: VELOCITY SPIKES ======
+    for (const [key, snapshots] of groups) {
+      if (snapshots.length < 2) continue;
+      const first = snapshots[0];
+      const last = snapshots[snapshots.length - 1];
+      const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
+      if (timeDiffMin < 5) continue;
+
+      const lineDiff = Math.abs(last.line - first.line);
+      const velocityPerHour = (lineDiff / timeDiffMin) * 60;
+
+      if (velocityPerHour >= 1.0) {
+        const direction = last.line < first.line ? "dropping" : "rising";
+        const live = isLive(last);
+        patterns.push({
+          sport: first.sport, prop_type: first.prop_type, pattern_type: "velocity_spike",
+          avg_reaction_time_minutes: timeDiffMin, avg_move_size: lineDiff,
+          confidence: Math.min(95, 50 + velocityPerHour * 15), sample_size: snapshots.length,
+          cascade_sequence: null, velocity_threshold: velocityPerHour,
+          snapback_pct: null, timing_window: `${Math.round(timeDiffMin)}min`,
+        });
+
+        const conf = Math.min(95, 50 + velocityPerHour * 15);
+        const playerKey = `${first.event_id}|${first.player_name}`;
+        addAlert(playerKey, conf, {
+          type: "velocity_spike", live, sport: first.sport,
+          player_name: first.player_name, prop_type: first.prop_type,
+          event_description: first.event_description, event_id: first.event_id,
+          direction, velocity: Math.round(velocityPerHour * 100) / 100,
+          line_from: first.line, line_to: last.line,
+          time_span_min: Math.round(timeDiffMin), confidence: conf,
+          hours_to_tip: last.hours_to_tip,
+        });
+      }
+    }
+
+    // ====== PATTERN 2: CASCADE DETECTION ======
+    for (const [playerKey, allProps] of playerGroups) {
+      const propMap = new Map<string, any[]>();
+      for (const row of allProps) {
+        if (!propMap.has(row.prop_type)) propMap.set(row.prop_type, []);
+        propMap.get(row.prop_type)!.push(row);
+      }
+      if (propMap.size < 2) continue;
+
+      const movedProps: string[] = [];
+      const staleProps: string[] = [];
+      for (const [propType, snapshots] of propMap) {
+        if (snapshots.length < 2) { staleProps.push(propType); continue; }
+        const f = snapshots[0]; const l = snapshots[snapshots.length - 1];
+        Math.abs(l.line - f.line) >= 0.5 ? movedProps.push(propType) : staleProps.push(propType);
+      }
+
+      if (movedProps.length > 0 && staleProps.length > 0) {
+        const sampleRow = allProps[0];
+        const live = isLive(sampleRow);
+        const conf = Math.min(85, 40 + movedProps.length * 15);
+        patterns.push({
+          sport: sampleRow.sport, prop_type: movedProps[0], pattern_type: "cascade",
+          avg_reaction_time_minutes: 0, avg_move_size: 0, confidence: conf,
+          sample_size: allProps.length, cascade_sequence: { moved: movedProps, pending: staleProps },
+          velocity_threshold: null, snapback_pct: null, timing_window: null,
+        });
+        const dedupKey = `${sampleRow.event_id}|${sampleRow.player_name}`;
+        addAlert(dedupKey, conf, {
+          type: "cascade", live, sport: sampleRow.sport,
+          player_name: sampleRow.player_name, event_description: sampleRow.event_description,
+          event_id: sampleRow.event_id, moved_props: movedProps, pending_props: staleProps,
+          confidence: conf, hours_to_tip: sampleRow.hours_to_tip,
+        });
+      }
+    }
+
+    // ====== PATTERN 3: SNAPBACK DETECTION ======
+    for (const [key, snapshots] of groups) {
+      if (snapshots.length < 3) continue;
+      const last = snapshots[snapshots.length - 1];
+      const openingLine = last.opening_line;
+      if (!openingLine) continue;
+      const drift = Math.abs(last.line - openingLine);
+      const driftPct = (drift / openingLine) * 100;
+
+      if (driftPct >= 8) {
+        const live = isLive(last);
+        const conf = Math.min(80, 35 + driftPct * 2);
+        patterns.push({
+          sport: last.sport, prop_type: last.prop_type, pattern_type: "snapback_candidate",
+          avg_reaction_time_minutes: 0, avg_move_size: drift, confidence: conf,
+          sample_size: snapshots.length, cascade_sequence: null,
+          velocity_threshold: null, snapback_pct: driftPct, timing_window: null,
+        });
+        const playerKey = `${last.event_id}|${last.player_name}`;
+        addAlert(playerKey, conf, {
+          type: "snapback", live, sport: last.sport,
+          player_name: last.player_name, prop_type: last.prop_type,
+          event_description: last.event_description, event_id: last.event_id,
+          opening_line: openingLine, current_line: last.line,
+          drift_pct: Math.round(driftPct * 10) / 10, confidence: conf,
+          hours_to_tip: last.hours_to_tip,
+        });
+      }
+    }
+
+    // ====== UPSERT PATTERNS ======
     let patternsUpserted = 0;
-    for (const p of allPatterns) {
+    for (const p of patterns) {
       const { error } = await supabase
         .from("fanduel_behavior_patterns")
         .upsert(p, { onConflict: "sport,prop_type,pattern_type" });
       if (!error) patternsUpserted++;
     }
 
-    // Store prediction accuracy records for pregame + live (not postgame)
-    const allActionableAlerts = [...pregameResult.alerts, ...liveResult.alerts];
-    const predRows = allActionableAlerts.map((a) => ({
+    // Collect deduped alerts (one per player)
+    const alerts = Array.from(bestAlertPerPlayer.values()).map((v) => v.alert);
+
+    // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
+    const predRows = alerts.map((a) => ({
       signal_type: a.type,
       sport: a.sport,
       prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
@@ -212,61 +222,81 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // ====== FORMAT ALERTS PER TIER ======
-    const formatAlert = (a: any): string => {
-      const tierTag = a.tier === "LIVE" ? "🔴 LIVE" : a.tier === "POSTGAME" ? "📋 RECAP" : "📡 PRE";
-      if (a.type === "velocity_spike") {
-        const action = a.direction === "dropping" ? "OVER" : "UNDER";
-        const reason = a.direction === "dropping"
-          ? "Line dropping = book expects fewer, value is OVER"
-          : "Line rising = book expects more, value is UNDER";
-        return [
-          `⚡ *VELOCITY* [${tierTag}] — ${esc(a.sport)}`,
-          `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
-          `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
-          `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
-          `📊 Conf: ${Math.round(a.confidence)}%`,
-          a.tier !== "POSTGAME" ? `✅ *Action: ${action} ${a.line_to}*` : `📝 *Movement recorded for learning*`,
-          a.tier !== "POSTGAME" ? `💡 ${reason}` : "",
-        ].filter(Boolean).join("\n");
-      }
-      if (a.type === "cascade") {
-        return [
-          `🌊 *CASCADE* [${tierTag}] — ${esc(a.sport)}`,
-          `${esc(a.player_name)}`,
-          `Moved: ${(a.moved_props || []).map(esc).join(", ")}`,
-          `⏳ Pending: ${(a.pending_props || []).map(esc).join(", ")}`,
-          `📊 Conf: ${Math.round(a.confidence)}%`,
-          a.tier !== "POSTGAME" ? `✅ *Action: Grab pending props NOW*` : `📝 *Cascade recorded*`,
-        ].join("\n");
-      }
-      if (a.type === "snapback") {
-        const action = a.current_line > a.opening_line ? "UNDER" : "OVER";
-        return [
-          `🔄 *SNAPBACK* [${tierTag}] — ${esc(a.sport)}`,
-          `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
-          `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
-          `📊 Conf: ${Math.round(a.confidence)}%`,
-          a.tier !== "POSTGAME" ? `✅ *Action: ${action} ${a.current_line}*` : `📝 *Drift recorded*`,
-        ].join("\n");
-      }
-      return "";
-    };
+    // ====== SEND TELEGRAM — DEDUPED, GROUPED, PAGINATED ======
+    const highConfAlerts = alerts.filter((a) => a.confidence >= 70);
+    if (highConfAlerts.length > 0) {
+      const formatAlert = (a: any): string => {
+        const liveTag = a.live ? " [🔴 LIVE]" : "";
+        if (a.type === "velocity_spike") {
+          const action = a.direction === "dropping" ? "OVER" : "UNDER";
+          const reason = a.direction === "dropping"
+            ? "Line dropping = book expects fewer, value is OVER"
+            : "Line rising = book expects more, value is UNDER";
+          return [
+            `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
+            `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
+            `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
+            `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action} ${a.line_to}*`,
+            `💡 ${reason}`,
+          ].join("\n");
+        }
+        if (a.type === "cascade") {
+          return [
+            `🌊 *CASCADE*${liveTag} — ${esc(a.sport)}`,
+            `${esc(a.player_name)}`,
+            `Moved: ${(a.moved_props || []).map(esc).join(", ")}`,
+            `⏳ Pending: ${(a.pending_props || []).map(esc).join(", ")}`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: Grab pending props NOW*`,
+            `💡 Related props follow within 5-15 min`,
+          ].join("\n");
+        }
+        if (a.type === "snapback") {
+          const action = a.current_line > a.opening_line ? "UNDER" : "OVER";
+          const reason = a.current_line > a.opening_line
+            ? "Inflated above open — snaps back down"
+            : "Deflated below open — snaps back up";
+          return [
+            `🔄 *SNAPBACK*${liveTag} — ${esc(a.sport)}`,
+            `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
+            `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action} ${a.current_line}*`,
+            `💡 ${reason}`,
+          ].join("\n");
+        }
+        return "";
+      };
 
-    // Send Telegram — separated by tier
-    const sendTierAlerts = async (alerts: any[], tierName: string, emoji: string, minConf: number) => {
-      const highConf = alerts.filter((a) => a.confidence >= minConf);
-      if (highConf.length === 0) return;
+      const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
+      const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
+      const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
 
-      const formatted = highConf.map(formatAlert).filter(Boolean);
+      const allFormatted: string[] = [];
+      if (velocityAlerts.length > 0) {
+        allFormatted.push(`\n— *VELOCITY SPIKES (${velocityAlerts.length})* —`);
+        allFormatted.push(...velocityAlerts.map(formatAlert));
+      }
+      if (cascadeAlerts.length > 0) {
+        allFormatted.push(`\n— *CASCADE OPPORTUNITIES (${cascadeAlerts.length})* —`);
+        allFormatted.push(...cascadeAlerts.map(formatAlert));
+      }
+      if (snapbackAlerts.length > 0) {
+        allFormatted.push(`\n— *SNAPBACK CANDIDATES (${snapbackAlerts.length})* —`);
+        allFormatted.push(...snapbackAlerts.map(formatAlert));
+      }
+
+      // Paginate by character count
       const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
       let currentLen = 0;
 
-      for (const line of formatted) {
-        const lineLen = line.length + 2;
-        if (currentPage.length > 0 && currentLen + lineLen > MAX_CHARS) {
+      for (const line of allFormatted) {
+        const lineLen = line.length + 1;
+        if (currentPage.length > 0 && !line.startsWith("\n—") && currentLen + lineLen > MAX_CHARS) {
           pages.push(currentPage);
           currentPage = [];
           currentLen = 0;
@@ -279,29 +309,22 @@ Deno.serve(async (req) => {
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`${emoji} *FanDuel ${tierName}*${pageLabel}`, `${highConf.length} signals`, ""]
-          : [`${emoji} *${tierName}${pageLabel}*`, ""];
+          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} unique players — ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
+          : [`🧠 *Behavior${pageLabel}*`, ""];
 
-        const msg = [...header, ...pages[i]].join("\n\n");
+        const msg = [...header, ...pages[i]].join("\n");
+
         try {
           await supabase.functions.invoke("bot-send-telegram", {
             body: { message: msg, parse_mode: "Markdown", admin_only: true },
           });
         } catch (tgErr: any) {
-          log(`Telegram error ${tierName} page ${i + 1}: ${tgErr.message}`);
+          log(`Telegram error page ${i + 1}: ${tgErr.message}`);
         }
       }
-    };
+    }
 
-    // Pregame: high-conf only (70+)
-    await sendTierAlerts(pregameResult.alerts, "Pregame Behavior", "📡", 70);
-    // Live: slightly lower threshold (60+) — time-sensitive
-    await sendTierAlerts(liveResult.alerts, "🔴 Live Line Movement", "🔴", 60);
-    // Postgame: summary of biggest movers only (80+)
-    await sendTierAlerts(finishedResult.alerts, "Post-Game Recap", "📋", 80);
-
-    const totalAlerts = pregameResult.alerts.length + liveResult.alerts.length + finishedResult.alerts.length;
-    log(`=== ANALYSIS COMPLETE: ${allPatterns.length} patterns, ${totalAlerts} alerts (pre:${pregameResult.alerts.length} live:${liveResult.alerts.length} post:${finishedResult.alerts.length}) ===`);
+    log(`=== ANALYSIS COMPLETE: ${patterns.length} patterns, ${alerts.length} alerts (deduped), ${highConfAlerts.length} high-conf ===`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "fanduel-behavior-analyzer",
@@ -309,16 +332,11 @@ Deno.serve(async (req) => {
       started_at: now.toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: Date.now() - now.getTime(),
-      result: {
-        patterns: allPatterns.length, totalAlerts,
-        pregame: pregameResult.alerts.length,
-        live: liveResult.alerts.length,
-        postgame: finishedResult.alerts.length,
-      },
+      result: { patterns: patterns.length, alerts: alerts.length, highConf: highConfAlerts.length },
     });
 
     return new Response(
-      JSON.stringify({ success: true, patterns: allPatterns.length, alerts: totalAlerts }),
+      JSON.stringify({ success: true, patterns: patterns.length, alerts: alerts.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err: any) {
