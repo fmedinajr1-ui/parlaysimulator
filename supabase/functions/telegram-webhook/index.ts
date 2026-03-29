@@ -1613,6 +1613,16 @@ async function handleResume(chatId: string) {
   return "▶️ *Bot Resumed*\n\nDaily generation is back online.\n\nUse /generate to create parlays now.";
 }
 
+async function handlePauseHedge(chatId: string) {
+  await logActivity("hedge_paused", "Hedge tracking paused via Telegram", { chatId });
+  return "⏸ *Hedge Tracking Paused*\n\nLive hedge alerts and recommendations are now paused.\n\nSnapshots will still be recorded, but no Telegram alerts will be sent.\n\nUse /resumehedge to re-enable.";
+}
+
+async function handleResumeHedge(chatId: string) {
+  await logActivity("hedge_resumed", "Hedge tracking resumed via Telegram", { chatId });
+  return "▶️ *Hedge Tracking Resumed*\n\nLive hedge alerts are back online.\n\nYou'll receive status updates and recommendations during games.";
+}
+
 async function handleBankroll(chatId: string, amountStr: string) {
   await logActivity("telegram_bankroll", "User updating bankroll", { chatId, amount: amountStr });
 
