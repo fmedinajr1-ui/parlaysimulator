@@ -633,13 +633,18 @@ Deno.serve(async (req) => {
         return "";
       };
 
+      const takeItNowAlerts = highConfAlerts.filter((a) => a.type === "take_it_now");
       const lineAboutToMoveAlerts = highConfAlerts.filter((a) => a.type === "line_about_to_move");
       const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
       const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
       const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
 
       const allFormatted: string[] = [];
-      // Primary signal first
+      // Highest priority first
+      if (takeItNowAlerts.length > 0) {
+        allFormatted.push(`\n— *🔥 TAKE IT NOW (${takeItNowAlerts.length})* —`);
+        allFormatted.push(...takeItNowAlerts.map(formatAlert));
+      }
       if (lineAboutToMoveAlerts.length > 0) {
         allFormatted.push(`\n— *🎯 LINE ABOUT TO MOVE (${lineAboutToMoveAlerts.length})* —`);
         allFormatted.push(...lineAboutToMoveAlerts.map(formatAlert));
