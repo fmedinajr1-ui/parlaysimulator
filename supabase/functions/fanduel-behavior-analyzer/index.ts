@@ -37,14 +37,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // FILTER OUT FINISHED GAMES — only analyze active/upcoming
-    const activeTimeline = recentTimeline.filter(
-      (r: any) => r.hours_to_tip === null || r.hours_to_tip > -3
+    // STRICT PREGAME FILTER — no live/finished games in behavior alerts
+    const activeTimeline = recentTimeline.filter((r: any) =>
+      typeof r.hours_to_tip === "number" && r.hours_to_tip > 0 && r.snapshot_phase !== "live"
     );
-    log(`Analyzing ${activeTimeline.length} active records (excluded ${recentTimeline.length - activeTimeline.length} finished)`);
+    log(`Analyzing ${activeTimeline.length} pregame records (excluded ${recentTimeline.length - activeTimeline.length} live/finished)`);
 
     if (activeTimeline.length === 0) {
-      log("No active game data to analyze");
+      log("No pregame data to analyze");
       return new Response(JSON.stringify({ success: true, patterns: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
