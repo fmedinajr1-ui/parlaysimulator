@@ -143,15 +143,109 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 3. Fetch prop markets from FanDuel
-      const batches = PROP_MARKETS[sportKey] || [];
+      // 3. Fetch TEAM markets (moneyline, totals, spreads) per event
       const rows: TimelineRow[] = [];
+      const TEAM_MARKETS = ["h2h", "totals", "spreads"];
+
+      for (const eventId of eventIds) {
+        const teamUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(",")}&bookmakers=fanduel&oddsFormat=american`;
+        try {
+          const resp = await fetch(teamUrl);
+          totalApiCalls++;
+          if (!resp.ok) { await resp.text(); }
+          else {
+            const data = await resp.json();
+            const eventInfo = eventMap.get(eventId);
+            const commenceTime = eventInfo?.commence_time;
+            const description = eventInfo ? `${eventInfo.away_team} @ ${eventInfo.home_team}` : eventId;
+            const tipTime = commenceTime ? new Date(commenceTime) : null;
+            const hoursToTip = tipTime ? (tipTime.getTime() - now.getTime()) / (1000 * 60 * 60) : null;
+            const phase = getPhase(hoursToTip);
+
+            const fanduel = data.bookmakers?.find((b: any) => b.key === "fanduel");
+            if (fanduel) {
+              for (const market of fanduel.markets || []) {
+                if (market.key === "h2h") {
+                  // Moneyline: each outcome is a team
+                  for (const outcome of market.outcomes || []) {
+                    const teamName = outcome.name;
+                    const price = outcome.price;
+                    const key = `${eventId}|${teamName}|moneyline`;
+                    const opening = openingMap.get(key);
+                    rows.push({
+                      sport: sportLabel, event_id: eventId,
+                      player_name: teamName, prop_type: "moneyline",
+                      line: price, over_price: price, under_price: null,
+                      snapshot_phase: phase, snapshot_time: nowISO,
+                      hours_to_tip: hoursToTip ? Math.round(hoursToTip * 100) / 100 : null,
+                      line_change_from_open: opening ? price - opening.line : 0,
+                      price_change_from_open: 0, drift_velocity: 0,
+                      opening_line: opening?.line ?? (phase === "morning_open" ? price : null),
+                      opening_over_price: opening?.over ?? (phase === "morning_open" ? price : null),
+                      opening_under_price: null,
+                      event_description: description, commence_time: commenceTime || null,
+                    });
+                  }
+                } else if (market.key === "totals") {
+                  // Over/Under on game total
+                  const overOut = market.outcomes?.find((o: any) => o.name === "Over");
+                  const underOut = market.outcomes?.find((o: any) => o.name === "Under");
+                  const totalLine = overOut?.point ?? underOut?.point;
+                  if (totalLine != null) {
+                    const key = `${eventId}|Game Total|totals`;
+                    const opening = openingMap.get(key);
+                    rows.push({
+                      sport: sportLabel, event_id: eventId,
+                      player_name: "Game Total", prop_type: "totals",
+                      line: totalLine, over_price: overOut?.price ?? null, under_price: underOut?.price ?? null,
+                      snapshot_phase: phase, snapshot_time: nowISO,
+                      hours_to_tip: hoursToTip ? Math.round(hoursToTip * 100) / 100 : null,
+                      line_change_from_open: opening ? totalLine - opening.line : 0,
+                      price_change_from_open: opening && overOut?.price && opening.over ? overOut.price - opening.over : 0,
+                      drift_velocity: 0,
+                      opening_line: opening?.line ?? (phase === "morning_open" ? totalLine : null),
+                      opening_over_price: opening?.over ?? (phase === "morning_open" ? overOut?.price ?? null : null),
+                      opening_under_price: opening?.under ?? (phase === "morning_open" ? underOut?.price ?? null : null),
+                      event_description: description, commence_time: commenceTime || null,
+                    });
+                  }
+                } else if (market.key === "spreads") {
+                  for (const outcome of market.outcomes || []) {
+                    const teamName = outcome.name;
+                    const spread = outcome.point;
+                    if (spread == null) continue;
+                    const key = `${eventId}|${teamName}|spreads`;
+                    const opening = openingMap.get(key);
+                    rows.push({
+                      sport: sportLabel, event_id: eventId,
+                      player_name: teamName, prop_type: "spreads",
+                      line: spread, over_price: outcome.price, under_price: null,
+                      snapshot_phase: phase, snapshot_time: nowISO,
+                      hours_to_tip: hoursToTip ? Math.round(hoursToTip * 100) / 100 : null,
+                      line_change_from_open: opening ? spread - opening.line : 0,
+                      price_change_from_open: 0, drift_velocity: 0,
+                      opening_line: opening?.line ?? (phase === "morning_open" ? spread : null),
+                      opening_over_price: opening?.over ?? (phase === "morning_open" ? outcome.price : null),
+                      opening_under_price: null,
+                      event_description: description, commence_time: commenceTime || null,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e: any) {
+          log(`⚠ ${sportLabel} team market ${eventId}: ${e.message}`);
+        }
+      }
+      await new Promise((r) => setTimeout(r, 200));
+
+      // 4. Fetch PLAYER PROP markets from FanDuel
+      const batches = PROP_MARKETS[sportKey] || [];
 
       for (const batch of batches) {
         const marketsParam = batch.join(",");
-        const propsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventIds[0]}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=fanduel&oddsFormat=american`;
 
-        // For efficiency, use the odds endpoint per-event for first few events, batch for rest
         for (const eventId of eventIds) {
           const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=fanduel&oddsFormat=american`;
 
@@ -161,7 +255,6 @@ Deno.serve(async (req) => {
 
             if (!resp.ok) {
               if (resp.status === 422) {
-                // Market not available for this event
                 await resp.text();
                 continue;
               }
@@ -178,12 +271,10 @@ Deno.serve(async (req) => {
             const hoursToTip = tipTime ? (tipTime.getTime() - now.getTime()) / (1000 * 60 * 60) : null;
             const phase = getPhase(hoursToTip);
 
-            // Parse FanDuel bookmaker data
             const fanduel = data.bookmakers?.find((b: any) => b.key === "fanduel");
             if (!fanduel) continue;
 
             for (const market of fanduel.markets || []) {
-              // Group outcomes by player (description field)
               const playerOutcomes = new Map<string, { over: any; under: any }>();
 
               for (const outcome of market.outcomes || []) {
@@ -209,34 +300,24 @@ Deno.serve(async (req) => {
                 const priceChange = opening && overPrice && opening.over
                   ? overPrice - opening.over : 0;
 
-                // Compute drift velocity (points per hour since opening)
-                // For first snapshot, velocity is 0
                 let driftVelocity = 0;
                 if (opening && lineChange !== 0) {
-                  // Rough estimate: hours since market open (assume 10 AM ET)
                   const hoursSinceOpen = Math.max(1, etHour - 10);
                   driftVelocity = Math.round((lineChange / hoursSinceOpen) * 100) / 100;
                 }
 
                 rows.push({
-                  sport: sportLabel,
-                  event_id: eventId,
-                  player_name: playerName,
-                  prop_type: market.key,
-                  line,
-                  over_price: overPrice,
-                  under_price: underPrice,
-                  snapshot_phase: phase,
-                  snapshot_time: nowISO,
+                  sport: sportLabel, event_id: eventId,
+                  player_name: playerName, prop_type: market.key,
+                  line, over_price: overPrice, under_price: underPrice,
+                  snapshot_phase: phase, snapshot_time: nowISO,
                   hours_to_tip: hoursToTip ? Math.round(hoursToTip * 100) / 100 : null,
-                  line_change_from_open: lineChange,
-                  price_change_from_open: priceChange,
+                  line_change_from_open: lineChange, price_change_from_open: priceChange,
                   drift_velocity: driftVelocity,
                   opening_line: opening?.line ?? (phase === "morning_open" ? line : null),
                   opening_over_price: opening?.over ?? (phase === "morning_open" ? overPrice : null),
                   opening_under_price: opening?.under ?? (phase === "morning_open" ? underPrice : null),
-                  event_description: description,
-                  commence_time: commenceTime || null,
+                  event_description: description, commence_time: commenceTime || null,
                 });
               }
             }
@@ -245,7 +326,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Small delay between batches to avoid rate limiting
         await new Promise((r) => setTimeout(r, 200));
       }
 
