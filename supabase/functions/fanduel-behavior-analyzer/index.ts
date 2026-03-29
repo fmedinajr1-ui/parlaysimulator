@@ -144,32 +144,47 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ====== PATTERN 1: VELOCITY SPIKES (deprioritized — 27.6% win rate) ======
-    // Only alert on very strong spikes now (velocity >= 2.0 instead of 1.0)
+    // ====== PATTERN 1: VELOCITY SPIKES (strict — learned data shows need >= 4.0/hr) ======
+    // Learned avg velocity for correct predictions: ~8.6/hr. Require >= 4.0 minimum,
+    // plus directional consistency and minimum line move to filter noise.
     for (const [key, snapshots] of groups) {
-      if (snapshots.length < 2) continue;
+      if (snapshots.length < 3) continue; // Need 3+ snapshots (was 2)
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      if (timeDiffMin < 5) continue;
+      if (timeDiffMin < 10) continue; // Need 10+ min of data (was 5)
 
       const lineDiff = Math.abs(last.line - first.line);
       const velocityPerHour = (lineDiff / timeDiffMin) * 60;
 
-      // Raised threshold from 1.0 to 2.0 and require higher confidence
-      if (velocityPerHour >= 2.0) {
+      // Must have meaningful line move (not just rounding noise)
+      const edgeMin = EDGE_MINIMUMS[first.prop_type] || 0.5;
+      if (lineDiff < edgeMin) continue;
+
+      // Check directional consistency — at least 50% of moves same direction
+      let consistentMoves = 0;
+      const signedDiff = last.line - first.line;
+      for (let i = 1; i < snapshots.length; i++) {
+        const move = snapshots[i].line - snapshots[i - 1].line;
+        if ((signedDiff > 0 && move > 0) || (signedDiff < 0 && move < 0)) consistentMoves++;
+      }
+      const dirConsistency = consistentMoves / (snapshots.length - 1);
+      if (dirConsistency < 0.5) continue; // Skip choppy lines
+
+      // Use learned velocity threshold from behavior_patterns if available
+      // Fallback: require >= 4.0/hr (doubled from 2.0)
+      if (velocityPerHour >= 4.0) {
         const direction = last.line < first.line ? "dropping" : "rising";
         const live = isLive(last);
+        const conf = Math.min(95, 50 + velocityPerHour * 8 + dirConsistency * 10);
         patterns.push({
           sport: first.sport, prop_type: first.prop_type, pattern_type: "velocity_spike",
           avg_reaction_time_minutes: timeDiffMin, avg_move_size: lineDiff,
-          confidence: Math.min(95, 50 + velocityPerHour * 15), sample_size: snapshots.length,
+          confidence: conf, sample_size: snapshots.length,
           cascade_sequence: null, velocity_threshold: velocityPerHour,
           snapback_pct: null, timing_window: `${Math.round(timeDiffMin)}min`,
         });
 
-        const conf = Math.min(95, 50 + velocityPerHour * 15);
-        // Only send to Telegram if conf >= 80 (raised from implicit 70)
         const playerKey = `${first.event_id}|${first.player_name}`;
         addAlert(playerKey, conf, {
           type: "velocity_spike", live, sport: first.sport,
@@ -177,6 +192,7 @@ Deno.serve(async (req) => {
           event_description: first.event_description, event_id: first.event_id,
           direction, velocity: Math.round(velocityPerHour * 100) / 100,
           line_from: first.line, line_to: last.line,
+          dir_consistency: Math.round(dirConsistency * 100),
           time_span_min: Math.round(timeDiffMin), confidence: conf,
           hours_to_tip: last.hours_to_tip,
         });

@@ -159,12 +159,21 @@ Deno.serve(async (req) => {
 
         // ── TAKE_IT_NOW: did line continue moving in predicted direction? ──
         if (pred.signal_type === "take_it_now") {
-          const sigCurrentLine = sf.current_line ?? sf.line_to;
+          // Handle both key formats: current_line (new) and currentLine (old)
+          const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to;
+          const sigOpeningLine = sf.opening_line ?? sf.openingLine;
           if (sigCurrentLine != null && closingLine != null) {
-            if (pred.predicted_direction === "dropping") {
+            // Infer direction from data if predicted_direction is missing or "snapback" (old bug)
+            let dir = pred.predicted_direction;
+            if (!dir || dir === "snapback" || dir === "revert") {
+              if (sigOpeningLine != null) {
+                dir = sigCurrentLine < sigOpeningLine ? "dropping" : "rising";
+              }
+            }
+            if (dir === "dropping") {
               wasCorrect = closingLine <= sigCurrentLine;
               actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_DROP" : "ENTRY_REVERSED";
-            } else if (pred.predicted_direction === "rising") {
+            } else if (dir === "rising") {
               wasCorrect = closingLine >= sigCurrentLine;
               actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_RISE" : "ENTRY_REVERSED";
             }
