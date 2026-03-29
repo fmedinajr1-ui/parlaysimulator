@@ -274,7 +274,8 @@ Deno.serve(async (req) => {
               ? "Spread tightening = sharps backing this side"
               : "Spread widening = sharps fading this side";
           } else if (isTeamMarket && a.prop_type === "totals") {
-            action = a.direction === "dropping" ? "UNDER" : "OVER";
+            const gameName = a.event_description ? esc(a.event_description) : esc(a.player_name);
+            action = a.direction === "dropping" ? `UNDER ${gameName}` : `OVER ${gameName}`;
             reason = a.direction === "dropping"
               ? "Total dropping = sharps expecting low-scoring game"
               : "Total rising = sharps expecting high-scoring game";
