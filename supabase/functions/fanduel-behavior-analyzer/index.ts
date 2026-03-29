@@ -251,7 +251,121 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ====== UPSERT PATTERNS ======
+    // ====== PATTERN 4: TAKE IT NOW — OPTIMAL ENTRY POINT ======
+    // Uses historical drift ranges to detect when a line has moved far enough
+    // that it's at the "sweet spot" — grab it before it moves more or snaps back.
+    // Based on data: Points drift ~4.35, Rebounds ~2.21, Assists ~1.82, etc.
+    const TYPICAL_DRIFT: Record<string, number> = {
+      player_points: 4.35,
+      player_rebounds: 2.21,
+      player_assists: 1.82,
+      player_threes: 1.30,
+      player_points_rebounds_assists: 1.13,
+      player_points_rebounds: 1.04,
+      player_points_assists: 1.03,
+      player_rebounds_assists: 1.00,
+      player_shots_on_goal: 1.00,
+      player_steals: 0.75,
+      player_blocks: 0.75,
+      player_turnovers: 0.75,
+      spreads: 2.53,
+      totals: 2.31,
+      moneyline: 50, // moneyline uses American odds scale
+      h2h: 50,
+    };
+    // Optimal entry: line has moved 50-85% of its typical drift range
+    const ENTRY_MIN_PCT = 0.50;
+    const ENTRY_MAX_PCT = 0.85;
+
+    // Query recent historical drift for this session to refine defaults
+    const { data: recentDrifts } = await supabase
+      .from("fanduel_line_timeline")
+      .select("prop_type, event_id, player_name, line")
+      .gte("created_at", new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString())
+      .limit(1000);
+
+    // Build learned drift map from recent data
+    const learnedDrift = new Map<string, number[]>();
+    if (recentDrifts && recentDrifts.length > 0) {
+      const driftGroups = new Map<string, { min: number; max: number }>();
+      for (const r of recentDrifts) {
+        const k = `${r.event_id}|${r.player_name}|${r.prop_type}`;
+        const existing = driftGroups.get(k);
+        if (!existing) {
+          driftGroups.set(k, { min: r.line, max: r.line });
+        } else {
+          existing.min = Math.min(existing.min, r.line);
+          existing.max = Math.max(existing.max, r.line);
+        }
+      }
+      for (const [k, v] of driftGroups) {
+        const drift = v.max - v.min;
+        if (drift > 0) {
+          const propType = k.split("|")[2];
+          if (!learnedDrift.has(propType)) learnedDrift.set(propType, []);
+          learnedDrift.get(propType)!.push(drift);
+        }
+      }
+    }
+
+    // Compute learned averages
+    const learnedAvgDrift = new Map<string, number>();
+    for (const [propType, drifts] of learnedDrift) {
+      const avg = drifts.reduce((a, b) => a + b, 0) / drifts.length;
+      learnedAvgDrift.set(propType, avg);
+    }
+
+    for (const [key, snapshots] of groups) {
+      if (snapshots.length < 3) continue;
+      const first = snapshots[0];
+      const last = snapshots[snapshots.length - 1];
+      const openingLine = last.opening_line || first.line;
+      const currentDrift = Math.abs(last.line - openingLine);
+      if (currentDrift < 0.5) continue; // no meaningful movement
+
+      // Use learned drift if available, fall back to static defaults
+      const expectedDrift = learnedAvgDrift.get(first.prop_type) || TYPICAL_DRIFT[first.prop_type] || 1.5;
+      const driftRatio = currentDrift / expectedDrift;
+
+      // Sweet spot: moved 50-85% of typical range
+      if (driftRatio >= ENTRY_MIN_PCT && driftRatio <= ENTRY_MAX_PCT) {
+        const live = isLive(last);
+        const direction = last.line < openingLine ? "dropping" : "rising";
+
+        // Confidence scales with how close to the sweet spot center (67%)
+        const sweetSpotCenter = 0.67;
+        const distFromCenter = Math.abs(driftRatio - sweetSpotCenter);
+        const conf = Math.min(90, 70 + (1 - distFromCenter * 5) * 15);
+
+        // Don't duplicate if we already have a stronger "line_about_to_move" for this player
+        const playerKey = `${first.event_id}|${first.player_name}`;
+        const existing = bestAlertPerPlayer.get(playerKey);
+        if (existing && existing.confidence > conf + 5) continue;
+
+        patterns.push({
+          sport: first.sport, prop_type: first.prop_type, pattern_type: "take_it_now",
+          avg_reaction_time_minutes: 0, avg_move_size: currentDrift,
+          confidence: conf, sample_size: snapshots.length,
+          cascade_sequence: null, velocity_threshold: null,
+          snapback_pct: null, timing_window: `${Math.round(driftRatio * 100)}% of range`,
+        });
+
+        addAlert(playerKey, conf + 15, { // High priority — actionable NOW
+          type: "take_it_now", live, sport: first.sport,
+          player_name: first.player_name, prop_type: first.prop_type,
+          event_description: first.event_description, event_id: first.event_id,
+          direction,
+          opening_line: openingLine, current_line: last.line,
+          drift_amount: Math.round(currentDrift * 100) / 100,
+          drift_pct_of_range: Math.round(driftRatio * 100),
+          expected_drift: Math.round(expectedDrift * 100) / 100,
+          remaining_move: Math.round((expectedDrift - currentDrift) * 100) / 100,
+          confidence: conf,
+          hours_to_tip: last.hours_to_tip,
+        });
+      }
+    }
+
     let patternsUpserted = 0;
     for (const p of patterns) {
       const { error } = await supabase
