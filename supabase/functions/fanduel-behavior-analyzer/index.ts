@@ -22,27 +22,32 @@ Deno.serve(async (req) => {
     log("=== Starting FanDuel behavior analysis ===");
 
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
-    const { data: recentTimeline, error: tlError } = await supabase
-      .from("fanduel_line_timeline")
-      .select("*")
-      .gte("snapshot_time", twoHoursAgo)
-      .order("snapshot_time", { ascending: true })
-      .limit(5000);
 
-    if (tlError) throw new Error(`Timeline fetch: ${tlError.message}`);
-    if (!recentTimeline || recentTimeline.length === 0) {
-      log("No recent timeline data to analyze");
-      return new Response(JSON.stringify({ success: true, patterns: 0 }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Query per-sport to avoid 1000-row default limit drowning out smaller sports
+    const SPORTS = ["NBA", "NCAAB", "NHL", "MLB"];
+    let activeTimeline: any[] = [];
+
+    for (const sport of SPORTS) {
+      const { data, error } = await supabase
+        .from("fanduel_line_timeline")
+        .select("*")
+        .eq("sport", sport)
+        .gte("snapshot_time", twoHoursAgo)
+        .gt("hours_to_tip", -3) // Exclude finished games at DB level
+        .order("snapshot_time", { ascending: true })
+        .limit(1000);
+
+      if (error) {
+        log(`⚠ ${sport} fetch error: ${error.message}`);
+        continue;
+      }
+      if (data && data.length > 0) {
+        activeTimeline = activeTimeline.concat(data);
+        log(`${sport}: ${data.length} active records`);
+      }
     }
 
-    // Exclude finished games — only pregame + live
-    const activeTimeline = recentTimeline.filter((r: any) =>
-      typeof r.hours_to_tip !== "number" || r.hours_to_tip > -3
-    );
-    const excluded = recentTimeline.length - activeTimeline.length;
-    log(`Analyzing ${activeTimeline.length} active records (excluded ${excluded} finished games)`);
+    log(`Total active records: ${activeTimeline.length}`);
 
     if (activeTimeline.length === 0) {
       log("No active data to analyze");
