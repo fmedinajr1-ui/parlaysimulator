@@ -267,14 +267,21 @@ Deno.serve(async (req) => {
         Math.abs(secondHalfDir) >= 0.5 &&
         Math.sign(firstHalfDir) !== Math.sign(secondHalfDir)
       ) {
+        const isTeamMarket3 = TEAM_MARKET_TYPES.has(first.prop_type);
+        const matchupLine3 = isTeamMarket3 ? eventMatchup.get(first.event_id) : null;
+        const marketLabel3 = isTeamMarket3
+          ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
+          : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
+
         const alertText = [
           `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
-          `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
+          matchupLine3 ? `🏟 ${esc(matchupLine3)}` : null,
+          marketLabel3,
           `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
           `🚫 Sharp reversal pattern — DO NOT TOUCH`,
           `✅ *Action: STAY AWAY — both sides are dangerous*`,
           `💡 Book is manipulating this line to trap bettors`,
-        ].join("\n");
+        ].filter(Boolean).join("\n");
 
         const record = {
           signal_type: "trap_warning",
