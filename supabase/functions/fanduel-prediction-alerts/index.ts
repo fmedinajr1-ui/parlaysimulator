@@ -141,7 +141,11 @@ Deno.serve(async (req) => {
 
       if (velocityPerHour >= 1.5 && isAboveNorm) {
         const direction = lineDiff < 0 ? "DROPPING" : "RISING";
-        const side = lineDiff < 0 ? "OVER" : "UNDER";
+        // Contrarian flip: Points & 3s historically move opposite to prediction (~38% raw accuracy)
+        const CONTRARIAN_PROPS = new Set(["player_points", "player_threes"]);
+        const isContrarian = CONTRARIAN_PROPS.has(first.prop_type);
+        const rawSide = lineDiff < 0 ? "OVER" : "UNDER";
+        const side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
         const confidence = Math.min(92, 50 + velocityPerHour * 12);
         const live = isLive(last);
 
@@ -149,9 +153,13 @@ Deno.serve(async (req) => {
           const avgReaction = learnedPattern?.avg_reaction_time_minutes || 12;
           const elapsed = Math.round(timeDiffMin);
           const remaining = Math.max(0, avgReaction - elapsed);
-          const reason = direction === "DROPPING"
-            ? "Line dropping = book expects fewer, value is OVER"
-            : "Line rising = book expects more, value is UNDER";
+          const reason = isContrarian
+            ? (side === "UNDER"
+              ? "🔄 Contrarian: Points/3s lines dropping historically favor UNDER"
+              : "🔄 Contrarian: Points/3s lines rising historically favor OVER")
+            : (direction === "DROPPING"
+              ? "Line dropping = book expects fewer, value is OVER"
+              : "Line rising = book expects more, value is UNDER");
           const liveTag = live ? " [🔴 LIVE]" : "";
 
           const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
