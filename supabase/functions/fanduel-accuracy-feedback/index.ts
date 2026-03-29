@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
 
       // Only verify predictions for games that have ended (hours_to_tip should be very negative by now)
       const predAge = (now.getTime() - new Date(pred.created_at).getTime()) / (1000 * 60 * 60);
-      if (predAge < 4) continue; // Wait at least 4 hours for game to finish and closing data to settle
+      if (predAge < 2) continue; // Wait at least 2 hours for closing data to settle
 
       // Get closing line: the LAST snapshot for this player+event+prop
       const { data: closingSnaps } = await supabase
