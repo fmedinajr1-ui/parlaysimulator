@@ -13,6 +13,11 @@ const PROP_MARKETS: Record<string, string[][]> = {
     ["player_turnovers", "player_blocks_steals", "player_double_double"],
     ["player_points_rebounds_assists", "player_points_rebounds", "player_points_assists", "player_rebounds_assists"],
   ],
+  basketball_ncaab: [
+    ["player_points", "player_rebounds", "player_assists"],
+    ["player_threes", "player_blocks", "player_steals"],
+    ["player_points_rebounds_assists", "player_points_rebounds", "player_points_assists", "player_rebounds_assists"],
+  ],
   icehockey_nhl: [
     ["player_points", "player_assists", "player_goals"],
     ["player_shots_on_goal", "player_total_saves"],
@@ -28,7 +33,7 @@ const PROP_MARKETS: Record<string, string[][]> = {
   ],
 };
 
-const SPORT_KEYS = ["basketball_nba", "icehockey_nhl", "baseball_mlb"];
+const SPORT_KEYS = ["basketball_nba", "basketball_ncaab", "icehockey_nhl", "baseball_mlb"];
 
 interface TimelineRow {
   sport: string;
