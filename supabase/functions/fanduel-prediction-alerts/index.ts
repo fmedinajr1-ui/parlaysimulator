@@ -125,15 +125,19 @@ Deno.serve(async (req) => {
           const remaining = Math.max(0, avgReaction - elapsed);
 
           const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
+          const reason = direction === "DROPPING"
+            ? "Line dropping = book expects fewer, value is OVER"
+            : "Line rising = book expects more, value is UNDER";
           telegramAlerts.push(
             [
               `🔮 *LINE ABOUT TO MOVE* — ${esc(first.sport)}`,
               `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
               `Line ${direction}: ${first.line} → ${last.line}`,
               `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
-              `FanDuel avg reaction: ~${remaining}min remaining`,
-              `Action: Consider ${side} ${last.line}`,
-              `Confidence: ${Math.round(confidence)}%`,
+              `⏱ FanDuel avg reaction: ~${remaining}min remaining`,
+              `📊 Confidence: ${Math.round(confidence)}%`,
+              `✅ *Action: ${side} ${last.line}*`,
+              `💡 ${reason}`,
             ].join("\n")
           );
 
@@ -172,15 +176,19 @@ Deno.serve(async (req) => {
 
         if (confidence >= snapbackThreshold) {
           const esc2 = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
+          const reason = snapDirection === "UNDER"
+            ? "Line inflated above open — expect snapback down"
+            : "Line deflated below open — expect snapback up";
           telegramAlerts.push(
             [
               `💰 *TAKE IT NOW* — ${esc2(last.sport)}`,
               `${esc2(last.player_name)} ${esc2(last.prop_type).replace("player ", "").toUpperCase()}`,
               `Open: ${last.opening_line} → Now: ${last.line}`,
               `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
-              `Action: ${snapDirection} ${last.line}`,
-              `Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
-              `Confidence: ${Math.round(confidence)}%`,
+              `⏱ Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
+              `📊 Confidence: ${Math.round(confidence)}%`,
+              `✅ *Action: ${snapDirection} ${last.line}*`,
+              `💡 ${reason}`,
             ].join("\n")
           );
 
@@ -226,7 +234,9 @@ Deno.serve(async (req) => {
             `⚠️ *TRAP WARNING* — ${esc3(first.sport)}`,
             `${esc3(first.player_name)} ${esc3(first.prop_type).replace("player ", "").toUpperCase()}`,
             `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
-            `Sharp reversal pattern — DO NOT TOUCH`,
+            `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+            `✅ *Action: STAY AWAY — both sides are dangerous*`,
+            `💡 Book is manipulating this line to trap bettors`,
           ].join("\n")
         );
 
@@ -252,22 +262,27 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // Send Telegram alerts (max 3 per cycle to avoid spam)
+    // Send Telegram alerts — paginated, all signals shown
     if (telegramAlerts.length > 0) {
-      const msg = [
-        `🎯 *FanDuel Prediction Engine*`,
-        `${telegramAlerts.length} signal(s) detected`,
-        "",
-        ...telegramAlerts.slice(0, 3),
-        telegramAlerts.length > 3 ? `\n...+${telegramAlerts.length - 3} more` : "",
-      ].join("\n");
+      const ALERTS_PER_MSG = 6;
+      const totalPages = Math.ceil(telegramAlerts.length / ALERTS_PER_MSG);
 
-      try {
-        await supabase.functions.invoke("bot-send-telegram", {
-          body: { message: msg, parse_mode: "Markdown", admin_only: true },
-        });
-      } catch (tgErr: any) {
-        log(`Telegram error: ${tgErr.message}`);
+      for (let i = 0; i < totalPages; i++) {
+        const pageAlerts = telegramAlerts.slice(i * ALERTS_PER_MSG, (i + 1) * ALERTS_PER_MSG);
+        const pageLabel = totalPages > 1 ? ` (${i + 1}/${totalPages})` : "";
+        const header = i === 0
+          ? [`🎯 *FanDuel Prediction Engine*${pageLabel}`, `${telegramAlerts.length} signal(s) detected`, ""]
+          : [`🎯 *Predictions${pageLabel}*`, ""];
+
+        const msg = [...header, ...pageAlerts].join("\n\n");
+
+        try {
+          await supabase.functions.invoke("bot-send-telegram", {
+            body: { message: msg, parse_mode: "Markdown", admin_only: true },
+          });
+        } catch (tgErr: any) {
+          log(`Telegram error page ${i + 1}: ${tgErr.message}`);
+        }
       }
     }
 
