@@ -553,29 +553,34 @@ Deno.serve(async (req) => {
       if (upsertErr) console.error('[HedgeTracker] Tracker upsert error:', upsertErr);
     }
 
-    // 7. Send Telegram messages
+    // 7. Send Telegram messages (skip if hedge is paused)
     let messagesSent = 0;
 
-    // Pre-game scout (batch all into one message)
-    if (pregameMessages.length > 0) {
-      const fullMessage = `🏀 PRE-GAME SCOUT — ${dateStr}\n━━━━━━━━━━━━━━━━━━━━━\n\n${pregameMessages.join('\n\n')}`;
+    if (isHedgePaused) {
+      console.log(`[HedgeTracker] ⏸ Hedge paused — skipping ${pregameMessages.length} pregame + ${liveUpdateMessages.length} live Telegram alerts (snapshots still recorded)`);
+    } else {
+      // Pre-game scout (batch all into one message)
+      if (pregameMessages.length > 0) {
+        const fullMessage = `🏀 PRE-GAME SCOUT — ${dateStr}\n━━━━━━━━━━━━━━━━━━━━━\n\n${pregameMessages.join('\n\n')}`;
 
-      await supabase.functions.invoke('bot-send-telegram', {
-        body: { type: 'hedge_pregame_scout', data: { message: fullMessage } },
-      });
-      messagesSent++;
-      console.log(`[HedgeTracker] Sent pregame scout with ${pregameMessages.length} picks`);
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { type: 'hedge_pregame_scout', data: { message: fullMessage } },
+        });
+        messagesSent++;
+        console.log(`[HedgeTracker] Sent pregame scout with ${pregameMessages.length} picks`);
+      }
+
+      // Live updates (send each status change individually for urgency)
+      for (const msg of liveUpdateMessages) {
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { type: 'hedge_live_update', data: { message: msg } },
+        });
+        messagesSent++;
+      }
     }
 
-    // Live updates (send each status change individually for urgency)
+    // Collect hedge alerts for customer push notifications — use actual computed values
     const hedgePushAlerts: any[] = [];
-
-    for (const msg of liveUpdateMessages) {
-      await supabase.functions.invoke('bot-send-telegram', {
-        body: { type: 'hedge_live_update', data: { message: msg } },
-      });
-      messagesSent++;
-    }
 
     // Collect hedge alerts for customer push notifications — use actual computed values
     for (const upsert of trackerUpserts) {
