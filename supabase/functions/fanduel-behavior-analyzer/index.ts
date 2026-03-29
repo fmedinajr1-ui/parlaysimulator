@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
 
     // ====== CONFLICT FILTER: Same event + same prop_type = opposing sides ======
     // For team markets (h2h, spreads, totals), two teams in same game can't both be picks
-    const TEAM_PROP_TYPES = ["h2h", "spreads", "totals"];
+    const TEAM_PROP_TYPES = ["h2h", "spreads", "totals", "moneyline"];
     const eventPropGroups = new Map<string, typeof alerts>();
     for (const a of alerts) {
       if (TEAM_PROP_TYPES.includes(a.prop_type)) {
