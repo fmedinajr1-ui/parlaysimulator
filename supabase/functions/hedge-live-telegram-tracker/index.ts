@@ -130,6 +130,16 @@ Deno.serve(async (req) => {
     const etHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
     const isGameHours = etHour >= 17 || etHour < 2;
 
+    // Check if hedge tracking is paused via admin command
+    const { data: pauseEvent } = await supabase
+      .from('bot_activity_log')
+      .select('event_type')
+      .in('event_type', ['hedge_paused', 'hedge_resumed'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const isHedgePaused = pauseEvent?.event_type === 'hedge_paused';
+
     // 1. Fetch today's unsettled sweet spot picks
     const { data: picks, error: picksErr } = await supabase
       .from('category_sweet_spots')
