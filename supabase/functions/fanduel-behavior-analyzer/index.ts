@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
 
     // ====== CONFLICT FILTER: Same event + same prop_type = opposing sides ======
     // For team markets (h2h, spreads, totals), two teams in same game can't both be picks
-    const TEAM_PROP_TYPES = ["h2h", "spreads", "totals"];
+    const TEAM_PROP_TYPES = ["h2h", "spreads", "totals", "moneyline"];
     const eventPropGroups = new Map<string, typeof alerts>();
     for (const a of alerts) {
       if (TEAM_PROP_TYPES.includes(a.prop_type)) {
@@ -259,17 +259,39 @@ Deno.serve(async (req) => {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
         if (a.type === "velocity_spike") {
-          const action = a.direction === "dropping" ? "OVER" : "UNDER";
-          const reason = a.direction === "dropping"
-            ? "Line dropping = book expects fewer, value is OVER"
-            : "Line rising = book expects more, value is UNDER";
+          const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
+          let action: string;
+          let reason: string;
+          if (isTeamMarket && (a.prop_type === "h2h" || a.prop_type === "moneyline")) {
+            // Moneyline: dropping odds = team becoming more favored = BACK them
+            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}` : `FADE ${esc(a.player_name)}`;
+            reason = a.direction === "dropping"
+              ? "Odds shortening = sharp money on this team"
+              : "Odds drifting = money moving away from this team";
+          } else if (isTeamMarket && a.prop_type === "spreads") {
+            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD` : `FADE ${esc(a.player_name)} SPREAD`;
+            reason = a.direction === "dropping"
+              ? "Spread tightening = sharps backing this side"
+              : "Spread widening = sharps fading this side";
+          } else if (isTeamMarket && a.prop_type === "totals") {
+            action = a.direction === "dropping" ? "UNDER" : "OVER";
+            reason = a.direction === "dropping"
+              ? "Total dropping = sharps expecting low-scoring game"
+              : "Total rising = sharps expecting high-scoring game";
+          } else {
+            action = a.direction === "dropping" ? "OVER" : "UNDER";
+            reason = a.direction === "dropping"
+              ? "Line dropping = book expects fewer, value is OVER"
+              : "Line rising = book expects more, value is UNDER";
+          }
+          const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
-            `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
+            `${esc(a.player_name)} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            `✅ *Action: ${action} ${a.line_to}*`,
+            `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
             `💡 ${reason}`,
           ].join("\n");
         }
