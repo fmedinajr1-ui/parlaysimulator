@@ -428,13 +428,17 @@ Deno.serve(async (req) => {
       prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
       player_name: a.player_name,
       event_id: a.event_id,
-      prediction: a.type === "line_about_to_move"
+      prediction: a.type === "take_it_now"
+        ? `TAKE IT NOW: ${a.current_line} (${a.drift_pct_of_range}% of range, ~${a.remaining_move} more expected)`
+        : a.type === "line_about_to_move"
         ? `Line ${a.direction} steadily at ${a.velocity}/hr (${a.consistencyRate}% consistent)`
         : a.type === "cascade"
         ? `Cascade: ${a.pending_props?.join(",")} will follow ${a.moved_props?.join(",")}`
         : a.type === "velocity_spike"
         ? `Line ${a.direction} at ${a.velocity}/hr`
-        : `Snapback from ${a.current_line} toward ${a.opening_line}`,
+        : a.type === "snapback"
+        ? `Snapback from ${a.current_line} toward ${a.opening_line}`
+        : `Unknown signal`,
       predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
       predicted_magnitude: a.velocity || a.drift_pct || null,
       confidence_at_signal: a.confidence,
