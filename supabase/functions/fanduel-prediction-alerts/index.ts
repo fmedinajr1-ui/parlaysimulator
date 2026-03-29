@@ -265,10 +265,45 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Collect deduplicated results
+    // Hard conflict guard: for team markets, keep only the strongest side per event+market
+    // so we never send both teams from the same game.
+    const TEAM_PROP_TYPES = new Set(["h2h", "moneyline", "spreads", "totals"]);
+    const chosenTeamMarketSignals = new Map<string, { confidence: number; alert: string; record: any }>();
+    const nonTeamSignals: Array<{ confidence: number; alert: string; record: any }> = [];
+
+    for (const entry of bestSignalPerPlayer.values()) {
+      const propType = entry.record?.prop_type;
+      const eventId = entry.record?.event_id;
+
+      if (!eventId || !TEAM_PROP_TYPES.has(propType)) {
+        nonTeamSignals.push(entry);
+        continue;
+      }
+
+      const conflictKey = `${eventId}|${propType}`;
+      const strength = Number(entry.record?.confidence_at_signal ?? entry.confidence ?? 0)
+        + Number(entry.record?.velocity_at_signal ?? 0) * 0.1;
+
+      const existing = chosenTeamMarketSignals.get(conflictKey);
+      if (!existing || strength > existing.confidence) {
+        if (existing) {
+          log(`⚠ Replaced conflicting team-market signal in ${conflictKey}; kept stronger side`);
+        }
+        chosenTeamMarketSignals.set(conflictKey, { ...entry, confidence: strength });
+      } else {
+        log(`⚠ Dropped conflicting team-market signal in ${conflictKey}: ${entry.record?.player_name}`);
+      }
+    }
+
+    const selectedSignals = [
+      ...nonTeamSignals,
+      ...Array.from(chosenTeamMarketSignals.values()),
+    ];
+
+    // Collect deduplicated + conflict-filtered results
     const telegramAlerts: string[] = [];
     const predictionRecords: any[] = [];
-    for (const { alert, record } of bestSignalPerPlayer.values()) {
+    for (const { alert, record } of selectedSignals) {
       telegramAlerts.push(alert);
       predictionRecords.push(record);
     }
