@@ -146,7 +146,11 @@ Deno.serve(async (req) => {
         const isContrarian = CONTRARIAN_PROPS.has(first.prop_type);
         const rawSide = lineDiff < 0 ? "OVER" : "UNDER";
         const side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
-        const confidence = Math.min(92, 50 + velocityPerHour * 12);
+        // Combo props (PRA, Reb+Ast, Pts+Ast, etc.) have 85-92% accuracy — boost confidence
+        const COMBO_PROPS = new Set(["player_points_rebounds_assists", "player_rebounds_assists", "player_points_assists", "player_points_rebounds"]);
+        const isCombo = COMBO_PROPS.has(first.prop_type);
+        const comboBoost = isCombo ? 15 : 0;
+        const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
         const live = isLive(last);
 
         if (confidence >= velocityThreshold) {
