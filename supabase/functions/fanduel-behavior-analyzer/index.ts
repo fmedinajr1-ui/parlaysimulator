@@ -312,16 +312,43 @@ Deno.serve(async (req) => {
           ].join("\n");
         }
         if (a.type === "snapback") {
-          const action = a.current_line > a.opening_line ? "UNDER" : "OVER";
-          const reason = a.current_line > a.opening_line
-            ? "Inflated above open — snaps back down"
-            : "Deflated below open — snaps back up";
+          const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
+          let action: string;
+          let reason: string;
+          if (isTeamMarket && (a.prop_type === "h2h" || a.prop_type === "moneyline")) {
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.current_line > a.opening_line ? `FADE ${esc(a.player_name)}${gameName}` : `BACK ${esc(a.player_name)}${gameName}`;
+            reason = a.current_line > a.opening_line
+              ? "Odds drifted too far — expect correction back"
+              : "Odds dropped too far — expect reversion";
+          } else if (isTeamMarket && a.prop_type === "spreads") {
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.current_line > a.opening_line ? `FADE ${esc(a.player_name)} SPREAD${gameName}` : `TAKE ${esc(a.player_name)} SPREAD${gameName}`;
+            reason = a.current_line > a.opening_line
+              ? "Spread inflated past open — expect snapback"
+              : "Spread compressed past open — expect reversion";
+          } else if (isTeamMarket && a.prop_type === "totals") {
+            const gameName = a.event_description ? esc(a.event_description) : esc(a.player_name);
+            action = a.current_line > a.opening_line ? `UNDER ${gameName}` : `OVER ${gameName}`;
+            reason = a.current_line > a.opening_line
+              ? "Total inflated above open — snaps back down"
+              : "Total deflated below open — snaps back up";
+          } else {
+            action = a.current_line > a.opening_line ? "UNDER" : "OVER";
+            reason = a.current_line > a.opening_line
+              ? "Inflated above open — snaps back down"
+              : "Deflated below open — snaps back up";
+          }
+          const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
+          const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
+            ? esc(a.event_description)
+            : esc(a.player_name);
           return [
             `🔄 *SNAPBACK*${liveTag} — ${esc(a.sport)}`,
-            `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
+            `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            `✅ *Action: ${action} ${a.current_line}*`,
+            `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.current_line}`}*`,
             `💡 ${reason}`,
           ].join("\n");
         }
