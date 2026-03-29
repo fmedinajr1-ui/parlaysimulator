@@ -287,9 +287,12 @@ Deno.serve(async (req) => {
               : "Line rising = book expects more, value is UNDER";
           }
           const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
+          const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
+            ? esc(a.event_description)
+            : esc(a.player_name);
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
-            `${esc(a.player_name)} ${propLabel}`,
+            `${displayName} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
