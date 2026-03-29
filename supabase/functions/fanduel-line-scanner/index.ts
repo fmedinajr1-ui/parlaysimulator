@@ -10,15 +10,21 @@ const PROP_MARKETS: Record<string, string[][]> = {
   basketball_nba: [
     ["player_points", "player_rebounds", "player_assists"],
     ["player_threes", "player_blocks", "player_steals"],
+    ["player_turnovers", "player_blocks_steals", "player_double_double"],
     ["player_points_rebounds_assists", "player_points_rebounds", "player_points_assists", "player_rebounds_assists"],
   ],
   icehockey_nhl: [
     ["player_points", "player_assists", "player_goals"],
-    ["player_shots_on_goal", "player_saves"],
+    ["player_shots_on_goal", "player_total_saves"],
+    ["player_power_play_points", "player_blocked_shots"],
   ],
   baseball_mlb: [
-    ["batter_hits", "batter_rbis", "batter_runs_scored", "batter_total_bases"],
-    ["batter_home_runs", "batter_stolen_bases", "pitcher_strikeouts", "pitcher_outs"],
+    ["batter_hits", "batter_total_bases"],
+    ["batter_rbis", "batter_runs_scored"],
+    ["batter_home_runs", "batter_stolen_bases"],
+    ["batter_strikeouts", "batter_walks"],
+    ["pitcher_strikeouts", "pitcher_outs"],
+    ["pitcher_hits_allowed", "pitcher_earned_runs"],
   ],
 };
 
