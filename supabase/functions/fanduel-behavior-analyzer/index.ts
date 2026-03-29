@@ -200,7 +200,33 @@ Deno.serve(async (req) => {
     }
 
     // Collect deduped alerts (one per player)
-    const alerts = Array.from(bestAlertPerPlayer.values()).map((v) => v.alert);
+    let alerts = Array.from(bestAlertPerPlayer.values()).map((v) => v.alert);
+
+    // ====== CONFLICT FILTER: Same event + same prop_type = opposing sides ======
+    // For team markets (h2h, spreads, totals), two teams in same game can't both be picks
+    const TEAM_PROP_TYPES = ["h2h", "spreads", "totals"];
+    const eventPropGroups = new Map<string, typeof alerts>();
+    for (const a of alerts) {
+      if (TEAM_PROP_TYPES.includes(a.prop_type)) {
+        const conflictKey = `${a.event_id}|${a.prop_type}`;
+        if (!eventPropGroups.has(conflictKey)) eventPropGroups.set(conflictKey, []);
+        eventPropGroups.get(conflictKey)!.push(a);
+      }
+    }
+    // For each conflict group, keep only the strongest signal
+    const droppedPlayers = new Set<string>();
+    for (const [, group] of eventPropGroups) {
+      if (group.length <= 1) continue;
+      // Sort by velocity (or confidence), keep the best one
+      group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
+      for (let i = 1; i < group.length; i++) {
+        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
+        log(`⚠ Dropped conflicting signal: ${group[i].player_name} ${group[i].prop_type} (kept ${group[0].player_name})`);
+      }
+    }
+    if (droppedPlayers.size > 0) {
+      alerts = alerts.filter(a => !droppedPlayers.has(`${a.event_id}|${a.player_name}`));
+    }
 
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
     const predRows = alerts.map((a) => ({
