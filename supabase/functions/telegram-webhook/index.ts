@@ -4768,6 +4768,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /backtest — Run backtest
 /watch — Watch picks
 /pause / /resume — Pause/resume bot
+/pausehedge / /resumehedge — Pause/resume hedge alerts
 /bankroll — Set bankroll
 /force-settle — Force settle
 /subscribe / /unsubscribe — Alerts
@@ -4817,6 +4818,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/watch") return await handleWatch(chatId, args);
     if (cmd === "/pause") return await handlePause(chatId);
     if (cmd === "/resume") return await handleResume(chatId);
+    if (cmd === "/pausehedge") return await handlePauseHedge(chatId);
+    if (cmd === "/resumehedge") return await handleResumeHedge(chatId);
     if (cmd === "/bankroll") return await handleBankroll(chatId, args);
     if (cmd === "/force-settle") return await handleForceSettle(chatId, args);
     if (cmd === "/subscribe") return await handleSubscribe(chatId);
