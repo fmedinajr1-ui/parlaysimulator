@@ -176,15 +176,19 @@ Deno.serve(async (req) => {
 
         if (confidence >= snapbackThreshold) {
           const esc2 = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
+          const reason = snapDirection === "UNDER"
+            ? "Line inflated above open — expect snapback down"
+            : "Line deflated below open — expect snapback up";
           telegramAlerts.push(
             [
               `💰 *TAKE IT NOW* — ${esc2(last.sport)}`,
               `${esc2(last.player_name)} ${esc2(last.prop_type).replace("player ", "").toUpperCase()}`,
               `Open: ${last.opening_line} → Now: ${last.line}`,
               `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
-              `Action: ${snapDirection} ${last.line}`,
-              `Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
-              `Confidence: ${Math.round(confidence)}%`,
+              `⏱ Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
+              `📊 Confidence: ${Math.round(confidence)}%`,
+              `✅ *Action: ${snapDirection} ${last.line}*`,
+              `💡 ${reason}`,
             ].join("\n")
           );
 
@@ -230,7 +234,9 @@ Deno.serve(async (req) => {
             `⚠️ *TRAP WARNING* — ${esc3(first.sport)}`,
             `${esc3(first.player_name)} ${esc3(first.prop_type).replace("player ", "").toUpperCase()}`,
             `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
-            `Sharp reversal pattern — DO NOT TOUCH`,
+            `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+            `✅ *Action: STAY AWAY — both sides are dangerous*`,
+            `💡 Book is manipulating this line to trap bettors`,
           ].join("\n")
         );
 
