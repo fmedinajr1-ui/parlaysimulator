@@ -157,8 +157,22 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── SNAPBACK / TAKE_IT_NOW: did line revert toward opening? ──
-        if (pred.signal_type === "snapback" || pred.signal_type === "take_it_now") {
+        // ── TAKE_IT_NOW: did line continue moving in predicted direction? ──
+        if (pred.signal_type === "take_it_now") {
+          const sigCurrentLine = sf.current_line ?? sf.line_to;
+          if (sigCurrentLine != null && closingLine != null) {
+            if (pred.predicted_direction === "dropping") {
+              wasCorrect = closingLine <= sigCurrentLine;
+              actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_DROP" : "ENTRY_REVERSED";
+            } else if (pred.predicted_direction === "rising") {
+              wasCorrect = closingLine >= sigCurrentLine;
+              actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_RISE" : "ENTRY_REVERSED";
+            }
+          }
+        }
+
+        // ── SNAPBACK: did line revert toward opening? ──
+        if (pred.signal_type === "snapback") {
           const sigOpeningLine = sf.opening_line ?? openingLine;
           const sigCurrentLine = sf.current_line ?? sf.line_to;
           if (sigOpeningLine != null && sigCurrentLine != null && closingLine != null) {
