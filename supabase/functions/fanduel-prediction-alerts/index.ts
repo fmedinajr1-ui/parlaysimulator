@@ -21,7 +21,6 @@ Deno.serve(async (req) => {
   try {
     log("=== Generating FanDuel prediction alerts ===");
 
-    // Get recent timeline snapshots (last 30 min for velocity)
     const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
     const { data: recentData, error: fetchErr } = await supabase
       .from("fanduel_line_timeline")
@@ -32,13 +31,11 @@ Deno.serve(async (req) => {
 
     if (fetchErr) throw new Error(`Timeline fetch: ${fetchErr.message}`);
 
-    // Get learned behavior patterns
     const { data: patterns } = await supabase
       .from("fanduel_behavior_patterns")
       .select("*")
       .gte("sample_size", 3);
 
-    // Get prediction accuracy to adjust thresholds
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: accuracyData } = await supabase
       .from("fanduel_prediction_accuracy")
@@ -46,7 +43,6 @@ Deno.serve(async (req) => {
       .gte("created_at", sevenDaysAgo)
       .not("was_correct", "is", null);
 
-    // Compute accuracy by signal type for threshold adjustment
     const accuracyMap = new Map<string, { correct: number; total: number }>();
     for (const row of accuracyData || []) {
       const key = row.signal_type;
@@ -56,13 +52,12 @@ Deno.serve(async (req) => {
       if (row.was_correct) entry.correct++;
     }
 
-    // Dynamic confidence threshold: lower for accurate signals, higher for inaccurate ones
     const getThreshold = (signalType: string): number => {
       const acc = accuracyMap.get(signalType);
-      if (!acc || acc.total < 10) return 65; // Default
+      if (!acc || acc.total < 10) return 65;
       const rate = acc.correct / acc.total;
-      if (rate > 0.6) return 55; // Lower threshold for proven signals
-      if (rate < 0.4) return 80; // Raise threshold for poor signals
+      if (rate > 0.6) return 55;
+      if (rate < 0.4) return 80;
       return 65;
     };
 
@@ -73,24 +68,43 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Group by event+player+prop
+    // FILTER OUT FINISHED GAMES (hours_to_tip <= -3 means game is over)
+    const activeData = recentData.filter(
+      (r: any) => r.hours_to_tip === null || r.hours_to_tip > -3
+    );
+    log(`Filtered to ${activeData.length} active records (excluded ${recentData.length - activeData.length} finished)`);
+
+    if (activeData.length === 0) {
+      log("No active game data for alerts");
+      return new Response(JSON.stringify({ success: true, alerts: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const groups = new Map<string, any[]>();
-    for (const row of recentData) {
+    for (const row of activeData) {
       const key = `${row.event_id}|${row.player_name}|${row.prop_type}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(row);
     }
 
-    // Also group by event+player for cross-prop
     const playerGroups = new Map<string, any[]>();
-    for (const row of recentData) {
+    for (const row of activeData) {
       const key = `${row.event_id}|${row.player_name}`;
       if (!playerGroups.has(key)) playerGroups.set(key, []);
       playerGroups.get(key)!.push(row);
     }
 
-    const telegramAlerts: string[] = [];
-    const predictionRecords: any[] = [];
+    // Track best signal per player to avoid duplicates
+    const bestSignalPerPlayer = new Map<string, { confidence: number; alert: string; record: any }>();
+    const addSignal = (playerKey: string, confidence: number, alert: string, record: any) => {
+      const existing = bestSignalPerPlayer.get(playerKey);
+      if (!existing || confidence > existing.confidence) {
+        bestSignalPerPlayer.set(playerKey, { confidence, alert, record });
+      }
+    };
+
+    const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
 
     // ====== SIGNAL 1: LINE ABOUT TO MOVE ======
     const velocityThreshold = getThreshold("velocity_spike");
@@ -106,7 +120,6 @@ Deno.serve(async (req) => {
       const absLineDiff = Math.abs(lineDiff);
       const velocityPerHour = (absLineDiff / timeDiffMin) * 60;
 
-      // Check against learned patterns for this sport+prop
       const learnedPattern = (patterns || []).find(
         (p: any) => p.sport === first.sport && p.prop_type === first.prop_type && p.pattern_type === "velocity_spike"
       );
@@ -119,29 +132,25 @@ Deno.serve(async (req) => {
         const confidence = Math.min(92, 50 + velocityPerHour * 12);
 
         if (confidence >= velocityThreshold) {
-          // Estimate remaining reaction time from learned data
           const avgReaction = learnedPattern?.avg_reaction_time_minutes || 12;
           const elapsed = Math.round(timeDiffMin);
           const remaining = Math.max(0, avgReaction - elapsed);
-
-          const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
           const reason = direction === "DROPPING"
             ? "Line dropping = book expects fewer, value is OVER"
             : "Line rising = book expects more, value is UNDER";
-          telegramAlerts.push(
-            [
-              `🔮 *LINE ABOUT TO MOVE* — ${esc(first.sport)}`,
-              `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
-              `Line ${direction}: ${first.line} → ${last.line}`,
-              `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
-              `⏱ FanDuel avg reaction: ~${remaining}min remaining`,
-              `📊 Confidence: ${Math.round(confidence)}%`,
-              `✅ *Action: ${side} ${last.line}*`,
-              `💡 ${reason}`,
-            ].join("\n")
-          );
 
-          predictionRecords.push({
+          const alertText = [
+            `🔮 *LINE ABOUT TO MOVE* — ${esc(first.sport)}`,
+            `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
+            `Line ${direction}: ${first.line} → ${last.line}`,
+            `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
+            `⏱ FanDuel avg reaction: ~${remaining}min remaining`,
+            `📊 Confidence: ${Math.round(confidence)}%`,
+            `✅ *Action: ${side} ${last.line}*`,
+            `💡 ${reason}`,
+          ].join("\n");
+
+          const record = {
             signal_type: "line_about_to_move",
             sport: first.sport,
             prop_type: first.prop_type,
@@ -155,7 +164,10 @@ Deno.serve(async (req) => {
             time_to_tip_hours: last.hours_to_tip,
             edge_at_signal: absLineDiff,
             signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity },
-          });
+          };
+
+          const playerKey = `${first.event_id}|${first.player_name}`;
+          addSignal(playerKey, confidence, alertText, record);
         }
       }
     }
@@ -175,24 +187,22 @@ Deno.serve(async (req) => {
         const confidence = Math.min(85, 30 + driftPct * 3);
 
         if (confidence >= snapbackThreshold) {
-          const esc2 = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
           const reason = snapDirection === "UNDER"
             ? "Line inflated above open — expect snapback down"
             : "Line deflated below open — expect snapback up";
-          telegramAlerts.push(
-            [
-              `💰 *TAKE IT NOW* — ${esc2(last.sport)}`,
-              `${esc2(last.player_name)} ${esc2(last.prop_type).replace("player ", "").toUpperCase()}`,
-              `Open: ${last.opening_line} → Now: ${last.line}`,
-              `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
-              `⏱ Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
-              `📊 Confidence: ${Math.round(confidence)}%`,
-              `✅ *Action: ${snapDirection} ${last.line}*`,
-              `💡 ${reason}`,
-            ].join("\n")
-          );
 
-          predictionRecords.push({
+          const alertText = [
+            `💰 *TAKE IT NOW* — ${esc(last.sport)}`,
+            `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`,
+            `Open: ${last.opening_line} → Now: ${last.line}`,
+            `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
+            `⏱ Window: ~${Math.round((last.hours_to_tip || 1) * 60)}min to tip`,
+            `📊 Confidence: ${Math.round(confidence)}%`,
+            `✅ *Action: ${snapDirection} ${last.line}*`,
+            `💡 ${reason}`,
+          ].join("\n");
+
+          const record = {
             signal_type: "take_it_now",
             sport: last.sport,
             prop_type: last.prop_type,
@@ -205,7 +215,10 @@ Deno.serve(async (req) => {
             time_to_tip_hours: last.hours_to_tip,
             edge_at_signal: driftPct,
             signal_factors: { openingLine: last.opening_line, currentLine: last.line, driftPct },
-          });
+          };
+
+          const playerKey = `${last.event_id}|${last.player_name}`;
+          addSignal(playerKey, confidence, alertText, record);
         }
       }
     }
@@ -214,33 +227,31 @@ Deno.serve(async (req) => {
     for (const [key, snapshots] of groups) {
       if (snapshots.length < 3) continue;
 
-      // Detect reversal: line moved one way then reversed
       const mid = snapshots[Math.floor(snapshots.length / 2)];
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
 
+      // Skip finished games
+      if (last.hours_to_tip !== null && last.hours_to_tip <= -3) continue;
+
       const firstHalfDir = mid.line - first.line;
       const secondHalfDir = last.line - mid.line;
 
-      // Reversal: significant move in opposite directions
       if (
         Math.abs(firstHalfDir) >= 0.5 &&
         Math.abs(secondHalfDir) >= 0.5 &&
         Math.sign(firstHalfDir) !== Math.sign(secondHalfDir)
       ) {
-        const esc3 = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
-        telegramAlerts.push(
-          [
-            `⚠️ *TRAP WARNING* — ${esc3(first.sport)}`,
-            `${esc3(first.player_name)} ${esc3(first.prop_type).replace("player ", "").toUpperCase()}`,
-            `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
-            `🚫 Sharp reversal pattern — DO NOT TOUCH`,
-            `✅ *Action: STAY AWAY — both sides are dangerous*`,
-            `💡 Book is manipulating this line to trap bettors`,
-          ].join("\n")
-        );
+        const alertText = [
+          `⚠️ *TRAP WARNING* — ${esc(first.sport)}`,
+          `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
+          `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
+          `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+          `✅ *Action: STAY AWAY — both sides are dangerous*`,
+          `💡 Book is manipulating this line to trap bettors`,
+        ].join("\n");
 
-        predictionRecords.push({
+        const record = {
           signal_type: "trap_warning",
           sport: first.sport,
           prop_type: first.prop_type,
@@ -252,8 +263,20 @@ Deno.serve(async (req) => {
           confidence_at_signal: 75,
           time_to_tip_hours: last.hours_to_tip,
           signal_factors: { firstLine: first.line, midLine: mid.line, lastLine: last.line },
-        });
+        };
+
+        // Trap warnings always override — player should NOT bet
+        const playerKey = `${first.event_id}|${first.player_name}`;
+        bestSignalPerPlayer.set(playerKey, { confidence: 99, alert: alertText, record });
       }
+    }
+
+    // Collect deduplicated results
+    const telegramAlerts: string[] = [];
+    const predictionRecords: any[] = [];
+    for (const { alert, record } of bestSignalPerPlayer.values()) {
+      telegramAlerts.push(alert);
+      predictionRecords.push(record);
     }
 
     // Store prediction records
@@ -262,15 +285,15 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // Send Telegram alerts — paginated, respecting 4096 char limit
+    // Send Telegram alerts — paginated
     if (telegramAlerts.length > 0) {
-      const MAX_CHARS = 3800; // leave buffer under Telegram's 4096 limit
+      const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
       let currentLen = 0;
 
       for (const alert of telegramAlerts) {
-        const alertLen = alert.length + 2; // +2 for \n\n separator
+        const alertLen = alert.length + 2;
         if (currentPage.length > 0 && currentLen + alertLen > MAX_CHARS) {
           pages.push(currentPage);
           currentPage = [];
@@ -284,7 +307,7 @@ Deno.serve(async (req) => {
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`🎯 *FanDuel Prediction Engine*${pageLabel}`, `${telegramAlerts.length} signal(s) detected`, ""]
+          ? [`🎯 *FanDuel Predictions*${pageLabel}`, `${telegramAlerts.length} unique player signal(s)`, ""]
           : [`🎯 *Predictions${pageLabel}*`, ""];
 
         const msg = [...header, ...pages[i]].join("\n\n");
@@ -299,7 +322,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    log(`=== ALERTS COMPLETE: ${telegramAlerts.length} alerts, ${predictionRecords.length} predictions ===`);
+    log(`=== ALERTS COMPLETE: ${telegramAlerts.length} alerts (deduped), ${predictionRecords.length} predictions ===`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "fanduel-prediction-alerts",
