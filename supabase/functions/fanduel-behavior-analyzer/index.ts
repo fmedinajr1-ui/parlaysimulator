@@ -263,13 +263,14 @@ Deno.serve(async (req) => {
           let action: string;
           let reason: string;
           if (isTeamMarket && (a.prop_type === "h2h" || a.prop_type === "moneyline")) {
-            // Moneyline: dropping odds = team becoming more favored = BACK them
-            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}` : `FADE ${esc(a.player_name)}`;
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}${gameName}` : `FADE ${esc(a.player_name)}${gameName}`;
             reason = a.direction === "dropping"
               ? "Odds shortening = sharp money on this team"
               : "Odds drifting = money moving away from this team";
           } else if (isTeamMarket && a.prop_type === "spreads") {
-            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD` : `FADE ${esc(a.player_name)} SPREAD`;
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD${gameName}` : `FADE ${esc(a.player_name)} SPREAD${gameName}`;
             reason = a.direction === "dropping"
               ? "Spread tightening = sharps backing this side"
               : "Spread widening = sharps fading this side";
