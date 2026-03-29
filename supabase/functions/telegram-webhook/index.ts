@@ -1613,6 +1613,16 @@ async function handleResume(chatId: string) {
   return "▶️ *Bot Resumed*\n\nDaily generation is back online.\n\nUse /generate to create parlays now.";
 }
 
+async function handlePauseHedge(chatId: string) {
+  await logActivity("hedge_paused", "Hedge tracking paused via Telegram", { chatId });
+  return "⏸ *Hedge Tracking Paused*\n\nLive hedge alerts and recommendations are now paused.\n\nSnapshots will still be recorded, but no Telegram alerts will be sent.\n\nUse /resumehedge to re-enable.";
+}
+
+async function handleResumeHedge(chatId: string) {
+  await logActivity("hedge_resumed", "Hedge tracking resumed via Telegram", { chatId });
+  return "▶️ *Hedge Tracking Resumed*\n\nLive hedge alerts are back online.\n\nYou'll receive status updates and recommendations during games.";
+}
+
 async function handleBankroll(chatId: string, amountStr: string) {
   await logActivity("telegram_bankroll", "User updating bankroll", { chatId, amount: amountStr });
 
@@ -4768,6 +4778,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /backtest — Run backtest
 /watch — Watch picks
 /pause / /resume — Pause/resume bot
+/pausehedge / /resumehedge — Pause/resume hedge alerts
 /bankroll — Set bankroll
 /force-settle — Force settle
 /subscribe / /unsubscribe — Alerts
@@ -4817,6 +4828,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/watch") return await handleWatch(chatId, args);
     if (cmd === "/pause") return await handlePause(chatId);
     if (cmd === "/resume") return await handleResume(chatId);
+    if (cmd === "/pausehedge") return await handlePauseHedge(chatId);
+    if (cmd === "/resumehedge") return await handleResumeHedge(chatId);
     if (cmd === "/bankroll") return await handleBankroll(chatId, args);
     if (cmd === "/force-settle") return await handleForceSettle(chatId, args);
     if (cmd === "/subscribe") return await handleSubscribe(chatId);
