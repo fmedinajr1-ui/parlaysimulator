@@ -19,28 +19,26 @@ Deno.serve(async (req) => {
   const now = new Date();
 
   try {
-    log("=== Starting nightly accuracy feedback loop ===");
+    log("=== Starting accuracy feedback loop ===");
 
-    // 1. Get unverified predictions from the last 48 hours
-    const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+    // 1. Get unverified predictions (up to 7 days old for backfill)
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: unverified, error: fetchErr } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("*")
       .is("was_correct", null)
-      .gte("created_at", twoDaysAgo)
+      .gte("created_at", sevenDaysAgo)
       .limit(500);
 
     if (fetchErr) throw new Error(`Fetch unverified: ${fetchErr.message}`);
-
     log(`Found ${unverified?.length || 0} unverified predictions`);
 
-    // 2. For each prediction, try to verify against settled data
     let verified = 0;
     let correct = 0;
     let incorrect = 0;
 
     for (const pred of unverified || []) {
-      // Skip trap warnings — they're informational, not directional predictions
+      // Skip trap warnings — informational only
       if (pred.signal_type === "trap_warning") {
         await supabase
           .from("fanduel_prediction_accuracy")
@@ -49,10 +47,14 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Look up the closing line from timeline (latest snapshot for this event+player+prop)
+      // Only verify predictions for games that have ended (hours_to_tip should be very negative by now)
+      const predAge = (now.getTime() - new Date(pred.created_at).getTime()) / (1000 * 60 * 60);
+      if (predAge < 4) continue; // Wait at least 4 hours for game to finish and closing data to settle
+
+      // Get closing line: the LAST snapshot for this player+event+prop
       const { data: closingSnaps } = await supabase
         .from("fanduel_line_timeline")
-        .select("line, over_price, under_price, snapshot_phase, opening_line")
+        .select("line, over_price, under_price, snapshot_phase, opening_line, snapshot_time, hours_to_tip")
         .eq("event_id", pred.event_id)
         .eq("player_name", pred.player_name)
         .eq("prop_type", pred.prop_type)
@@ -60,83 +62,78 @@ Deno.serve(async (req) => {
         .limit(1);
 
       if (!closingSnaps || closingSnaps.length === 0) continue;
-
       const closing = closingSnaps[0];
 
-      // Also check actual game results from player_game_logs if available
-      const { data: gameLog } = await supabase
-        .from("player_game_logs")
-        .select("pts, reb, ast, fg3m, blk, stl")
-        .ilike("player_name", `%${pred.player_name}%`)
-        .gte("game_date", twoDaysAgo)
+      // Get the opening/earliest snapshot for this prop
+      const { data: openingSnaps } = await supabase
+        .from("fanduel_line_timeline")
+        .select("line, over_price, under_price, snapshot_time")
+        .eq("event_id", pred.event_id)
+        .eq("player_name", pred.player_name)
+        .eq("prop_type", pred.prop_type)
+        .order("snapshot_time", { ascending: true })
         .limit(1);
 
-      // Map prop_type to stat column
-      const statMap: Record<string, string> = {
-        player_points: "pts",
-        player_rebounds: "reb",
-        player_assists: "ast",
-        player_threes: "fg3m",
-        player_blocks: "blk",
-        player_steals: "stl",
-      };
+      const opening = openingSnaps?.[0];
+
+      // Extract signal details
+      const signalFactors = pred.signal_factors || {};
+      const lineAtSignal = signalFactors.line_to || signalFactors.currentLine;
+      const lineAtOpen = signalFactors.line_from || opening?.line;
+      const closingLine = closing.line;
+      const predictedDir = pred.predicted_direction;
 
       let wasCorrect: boolean | null = null;
-      let actualValue: number | null = null;
       let actualOutcome = "unverifiable";
+      let actualValue: number | null = closingLine;
 
-      if (gameLog && gameLog.length > 0) {
-        const statCol = statMap[pred.prop_type];
-        if (statCol && gameLog[0][statCol] !== undefined && gameLog[0][statCol] !== null) {
-          actualValue = Number(gameLog[0][statCol]);
-
-          // Parse the prediction to determine if it was OVER or UNDER
-          const predText = (pred.prediction || "").toUpperCase();
-          const signalFactors = pred.signal_factors || {};
-          const lineAtSignal = signalFactors.currentLine || signalFactors.line_to || closing.line;
-
-          if (predText.includes("OVER")) {
-            wasCorrect = actualValue > lineAtSignal;
-            actualOutcome = actualValue > lineAtSignal ? "OVER_HIT" : "OVER_MISS";
-          } else if (predText.includes("UNDER")) {
-            wasCorrect = actualValue < lineAtSignal;
-            actualOutcome = actualValue < lineAtSignal ? "UNDER_HIT" : "UNDER_MISS";
-          }
-        }
-      }
-
-      // For velocity/cascade predictions, verify if the line continued moving in predicted direction
-      if (wasCorrect === null && pred.signal_type === "line_about_to_move") {
-        const signalFactors = pred.signal_factors || {};
-        const predictedDir = pred.predicted_direction;
-        const lineAtSignal = signalFactors.line_to || signalFactors.currentLine;
-        const closingLine = closing.line;
-
-        if (lineAtSignal && closingLine) {
+      // --- VELOCITY SPIKE / LINE_ABOUT_TO_MOVE ---
+      // Verify: did the line continue moving in the predicted direction?
+      if (pred.signal_type === "velocity_spike" || pred.signal_type === "line_about_to_move") {
+        if (lineAtSignal != null && closingLine != null) {
           if (predictedDir === "dropping") {
             wasCorrect = closingLine < lineAtSignal;
-            actualOutcome = closingLine < lineAtSignal ? "CONTINUED_DROP" : "REVERSED";
+            actualOutcome = closingLine < lineAtSignal ? "CONTINUED_DROP" : "REVERSED_UP";
           } else if (predictedDir === "rising") {
             wasCorrect = closingLine > lineAtSignal;
-            actualOutcome = closingLine > lineAtSignal ? "CONTINUED_RISE" : "REVERSED";
+            actualOutcome = closingLine > lineAtSignal ? "CONTINUED_RISE" : "REVERSED_DOWN";
           }
-          actualValue = closingLine;
         }
       }
 
-      // For snapback predictions, verify if line moved back toward opening
-      if (wasCorrect === null && pred.signal_type === "take_it_now") {
-        const signalFactors = pred.signal_factors || {};
-        const openLine = signalFactors.openingLine;
-        const signalLine = signalFactors.currentLine;
-        const closingLine = closing.line;
+      // --- CASCADE ---
+      // Verify: did the cascade prediction hold? (multiple props moved = real sharp action)
+      if (pred.signal_type === "cascade") {
+        if (lineAtSignal != null && closingLine != null && lineAtOpen != null) {
+          // A cascade is "correct" if the closing line drifted further from opening than at signal time
+          const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
+          const driftAtClose = Math.abs(closingLine - lineAtOpen);
+          wasCorrect = driftAtClose >= driftAtSignal;
+          actualOutcome = wasCorrect ? "CASCADE_CONFIRMED" : "CASCADE_REVERSED";
+        }
+      }
 
-        if (openLine && signalLine && closingLine) {
-          const driftAtSignal = Math.abs(signalLine - openLine);
-          const driftAtClose = Math.abs(closingLine - openLine);
-          wasCorrect = driftAtClose < driftAtSignal; // Line moved back toward opening
+      // --- LIVE LINE MOVING ---
+      // Verify: did the live movement continue?
+      if (pred.signal_type === "live_line_moving") {
+        if (lineAtSignal != null && closingLine != null) {
+          if (predictedDir === "dropping") {
+            wasCorrect = closingLine <= lineAtSignal;
+            actualOutcome = closingLine <= lineAtSignal ? "LIVE_DROP_CONFIRMED" : "LIVE_REVERSED";
+          } else if (predictedDir === "rising") {
+            wasCorrect = closingLine >= lineAtSignal;
+            actualOutcome = closingLine >= lineAtSignal ? "LIVE_RISE_CONFIRMED" : "LIVE_REVERSED";
+          }
+        }
+      }
+
+      // --- TAKE IT NOW (snapback) ---
+      if (pred.signal_type === "take_it_now") {
+        if (lineAtOpen != null && lineAtSignal != null && closingLine != null) {
+          const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
+          const driftAtClose = Math.abs(closingLine - lineAtOpen);
+          wasCorrect = driftAtClose < driftAtSignal;
           actualOutcome = wasCorrect ? "SNAPPED_BACK" : "CONTINUED_DRIFT";
-          actualValue = closingLine;
         }
       }
 
@@ -157,7 +154,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3. Compute accuracy by signal type and update behavior patterns
+    // 2. Compute accuracy by signal type and update behavior patterns
     const { data: allVerified } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, sport, prop_type, was_correct, velocity_at_signal")
@@ -179,8 +176,6 @@ Deno.serve(async (req) => {
     for (const [key, stats] of buckets) {
       const [signalType, sport, propType] = key.split("|");
       const accuracy = stats.total > 0 ? stats.correct / stats.total : 0;
-
-      // Adjust confidence in behavior patterns based on real accuracy
       const newConfidence = Math.round(accuracy * 100);
       const avgVelocity = stats.velocities.length > 0
         ? stats.velocities.reduce((a, b) => a + b, 0) / stats.velocities.length
@@ -200,43 +195,13 @@ Deno.serve(async (req) => {
           },
           { onConflict: "sport,prop_type,pattern_type" }
         );
-
       if (!error) patternsUpdated++;
     }
 
-    // 4. Update sharp_signal_calibration weights based on accuracy
-    for (const [key, stats] of buckets) {
-      if (stats.total < 5) continue; // Need minimum sample
-      const accuracy = stats.correct / stats.total;
-      const [signalType, sport] = key.split("|");
-
-      // If signal accuracy < 45%, reduce its weight in the calibration
-      // If > 55%, boost it
-      const weightAdj = accuracy < 0.45 ? -0.1 : accuracy > 0.55 ? 0.1 : 0;
-
-      if (weightAdj !== 0) {
-        const { data: existing } = await supabase
-          .from("sharp_signal_calibration")
-          .select("weight")
-          .eq("signal_type", signalType)
-          .eq("sport", sport)
-          .limit(1);
-
-        if (existing && existing.length > 0) {
-          const newWeight = Math.max(0.1, Math.min(2.0, (existing[0].weight || 1.0) + weightAdj));
-          await supabase
-            .from("sharp_signal_calibration")
-            .update({ weight: newWeight })
-            .eq("signal_type", signalType)
-            .eq("sport", sport);
-        }
-      }
-    }
-
-    // 5. Send Telegram summary
+    // 3. Send Telegram summary
     const overallAccuracy = verified > 0 ? Math.round((correct / verified) * 100) : 0;
     const msg = [
-      `📊 *FanDuel Accuracy Feedback*`,
+      `📊 *FanDuel Accuracy Report*`,
       ``,
       `Verified: ${verified} predictions`,
       `✅ Correct: ${correct} (${overallAccuracy}%)`,
@@ -245,25 +210,27 @@ Deno.serve(async (req) => {
       ``,
       ...Array.from(buckets.entries())
         .filter(([, s]) => s.total >= 3)
-        .slice(0, 5)
+        .slice(0, 8)
         .map(([k, s]) => {
-          const [sig, sport] = k.split("|");
+          const [sig, sport, prop] = k.split("|");
           const acc = Math.round((s.correct / s.total) * 100);
-          return `${acc >= 55 ? "✅" : acc < 45 ? "❌" : "⚠️"} ${sig} (${sport}): ${acc}% (n=${s.total})`;
+          return `${acc >= 55 ? "✅" : acc < 45 ? "❌" : "⚠️"} ${sig} ${prop} (${sport}): ${acc}% (n=${s.total})`;
         }),
     ].join("\n");
 
-    try {
-      await supabase.functions.invoke("bot-send-telegram", {
-        body: { message: msg, parse_mode: "Markdown", admin_only: true },
-      });
-    } catch (tgErr: any) {
-      log(`Telegram error: ${tgErr.message}`);
+    if (verified > 0) {
+      try {
+        await supabase.functions.invoke("bot-send-telegram", {
+          body: { message: msg, parse_mode: "Markdown", admin_only: true },
+        });
+      } catch (tgErr: any) {
+        log(`Telegram error: ${tgErr.message}`);
+      }
     }
 
-    log(`=== FEEDBACK COMPLETE: ${verified} verified, ${correct} correct, ${patternsUpdated} patterns updated ===`);
+    log(`=== COMPLETE: ${verified} verified, ${correct} correct, ${patternsUpdated} patterns ===`);
 
-    // 6. Cleanup old timeline data (30 day retention)
+    // 4. Cleanup old timeline data (30 day retention)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
     await supabase.from("fanduel_line_timeline").delete().lt("created_at", thirtyDaysAgo);
 
