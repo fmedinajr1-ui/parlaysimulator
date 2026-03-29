@@ -252,9 +252,9 @@ Deno.serve(async (req) => {
     }
 
     // ====== PATTERN 4: TAKE IT NOW — OPTIMAL ENTRY POINT ======
-    // Uses historical drift ranges to detect when a line has moved far enough
-    // that it's at the "sweet spot" — grab it before it moves more or snaps back.
-    // Based on data: Points drift ~4.35, Rebounds ~2.21, Assists ~1.82, etc.
+    // Uses historical drift ranges + Sweet Spot edge thresholds to detect
+    // when a line has moved far enough to be actionable NOW.
+    // Sweet Spot edge minimums: Points 5.5, Rebounds 3.0, Assists 2.5, Threes 1.2
     const TYPICAL_DRIFT: Record<string, number> = {
       player_points: 4.35,
       player_rebounds: 2.21,
@@ -270,12 +270,34 @@ Deno.serve(async (req) => {
       player_turnovers: 0.75,
       spreads: 2.53,
       totals: 2.31,
-      moneyline: 50, // moneyline uses American odds scale
+      moneyline: 50,
       h2h: 50,
     };
-    // Optimal entry: line has moved 50-85% of its typical drift range
-    const ENTRY_MIN_PCT = 0.50;
-    const ENTRY_MAX_PCT = 0.85;
+
+    // Sweet Spot edge minimums — drift must exceed these to be actionable
+    const EDGE_MINIMUMS: Record<string, number> = {
+      player_points: 1.5,
+      player_rebounds: 1.0,
+      player_assists: 1.0,
+      player_threes: 0.5,
+      player_points_rebounds_assists: 1.0,
+      player_points_rebounds: 1.0,
+      player_points_assists: 1.0,
+      player_rebounds_assists: 0.5,
+      player_shots_on_goal: 0.5,
+      player_steals: 0.5,
+      player_blocks: 0.5,
+      player_turnovers: 0.5,
+      spreads: 1.0,
+      totals: 1.0,
+      moneyline: 15,
+      h2h: 15,
+    };
+
+    // Tightened entry: 55-80% of typical drift range
+    const ENTRY_MIN_PCT = 0.55;
+    const ENTRY_MAX_PCT = 0.80;
+    const MIN_SNAPSHOTS = 5; // Need 5+ timeline entries to confirm drift is real
 
     // Query recent historical drift for this session to refine defaults
     const { data: recentDrifts } = await supabase
@@ -316,28 +338,41 @@ Deno.serve(async (req) => {
     }
 
     for (const [key, snapshots] of groups) {
-      if (snapshots.length < 3) continue;
+      if (snapshots.length < MIN_SNAPSHOTS) continue; // Need 5+ data points
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const openingLine = last.opening_line || first.line;
       const currentDrift = Math.abs(last.line - openingLine);
-      if (currentDrift < 0.5) continue; // no meaningful movement
+
+      // Must exceed edge minimum for this prop type
+      const edgeMin = EDGE_MINIMUMS[first.prop_type] || 0.5;
+      if (currentDrift < edgeMin) continue;
 
       // Use learned drift if available, fall back to static defaults
       const expectedDrift = learnedAvgDrift.get(first.prop_type) || TYPICAL_DRIFT[first.prop_type] || 1.5;
       const driftRatio = currentDrift / expectedDrift;
 
-      // Sweet spot: moved 50-85% of typical range
+      // Sweet spot: moved 55-80% of typical range (tightened)
       if (driftRatio >= ENTRY_MIN_PCT && driftRatio <= ENTRY_MAX_PCT) {
         const live = isLive(last);
         const direction = last.line < openingLine ? "dropping" : "rising";
 
-        // Confidence scales with how close to the sweet spot center (67%)
+        // Check directional consistency (at least 50% of moves in same direction)
+        let consistentMoves = 0;
+        const lineDiff = last.line - openingLine;
+        for (let i = 1; i < snapshots.length; i++) {
+          const move = snapshots[i].line - snapshots[i - 1].line;
+          if ((lineDiff > 0 && move > 0) || (lineDiff < 0 && move < 0)) consistentMoves++;
+        }
+        const dirConsistency = consistentMoves / (snapshots.length - 1);
+        if (dirConsistency < 0.4) continue; // Skip noisy/choppy lines
+
+        // Confidence: scales with drift ratio position + consistency + snapshot count
         const sweetSpotCenter = 0.67;
         const distFromCenter = Math.abs(driftRatio - sweetSpotCenter);
-        const conf = Math.min(90, 70 + (1 - distFromCenter * 5) * 15);
+        const conf = Math.min(92, 68 + (1 - distFromCenter * 5) * 12 + Math.min(dirConsistency * 10, 5));
 
-        // Don't duplicate if we already have a stronger "line_about_to_move" for this player
+        // Don't duplicate if we already have a stronger signal for this player
         const playerKey = `${first.event_id}|${first.player_name}`;
         const existing = bestAlertPerPlayer.get(playerKey);
         if (existing && existing.confidence > conf + 5) continue;
@@ -360,6 +395,8 @@ Deno.serve(async (req) => {
           drift_pct_of_range: Math.round(driftRatio * 100),
           expected_drift: Math.round(expectedDrift * 100) / 100,
           remaining_move: Math.round((expectedDrift - currentDrift) * 100) / 100,
+          edge_minimum: edgeMin,
+          dir_consistency: Math.round(dirConsistency * 100),
           confidence: conf,
           hours_to_tip: last.hours_to_tip,
         });
