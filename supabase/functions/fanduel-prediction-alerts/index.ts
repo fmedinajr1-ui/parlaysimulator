@@ -125,15 +125,19 @@ Deno.serve(async (req) => {
           const remaining = Math.max(0, avgReaction - elapsed);
 
           const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
+          const reason = direction === "DROPPING"
+            ? "Line dropping = book expects fewer, value is OVER"
+            : "Line rising = book expects more, value is UNDER";
           telegramAlerts.push(
             [
               `🔮 *LINE ABOUT TO MOVE* — ${esc(first.sport)}`,
               `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
               `Line ${direction}: ${first.line} → ${last.line}`,
               `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
-              `FanDuel avg reaction: ~${remaining}min remaining`,
-              `Action: Consider ${side} ${last.line}`,
-              `Confidence: ${Math.round(confidence)}%`,
+              `⏱ FanDuel avg reaction: ~${remaining}min remaining`,
+              `📊 Confidence: ${Math.round(confidence)}%`,
+              `✅ *Action: ${side} ${last.line}*`,
+              `💡 ${reason}`,
             ].join("\n")
           );
 
