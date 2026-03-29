@@ -182,6 +182,7 @@ Deno.serve(async (req) => {
             `📊 Confidence: ${Math.round(confidence)}%`,
             `✅ *Action: ${side} ${last.line}*`,
             `💡 ${reason}`,
+            isCombo ? `🔥 *COMBO PROP* — 85-92% historical accuracy` : null,
           ].filter(Boolean).join("\n");
 
           const record = {
