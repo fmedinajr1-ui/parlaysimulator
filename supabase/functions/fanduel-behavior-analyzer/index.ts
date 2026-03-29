@@ -421,31 +421,53 @@ Deno.serve(async (req) => {
       alerts = alerts.filter(a => !droppedPlayers.has(`${a.event_id}|${a.player_name}`));
     }
 
+    // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
+    const { data: recentPreds } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("player_name, prop_type, signal_type, event_id")
+      .gte("created_at", twoHoursAgo)
+      .limit(1000);
+
+    const recentPredKeys = new Set(
+      (recentPreds || []).map(r => `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`)
+    );
+
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
-    const predRows = alerts.map((a) => ({
-      signal_type: a.type,
-      sport: a.sport,
-      prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
-      player_name: a.player_name,
-      event_id: a.event_id,
-      prediction: a.type === "take_it_now"
-        ? `TAKE IT NOW: ${a.current_line} (${a.drift_pct_of_range}% of range, ~${a.remaining_move} more expected)`
-        : a.type === "line_about_to_move"
-        ? `Line ${a.direction} steadily at ${a.velocity}/hr (${a.consistencyRate}% consistent)`
-        : a.type === "cascade"
-        ? `Cascade: ${a.pending_props?.join(",")} will follow ${a.moved_props?.join(",")}`
-        : a.type === "velocity_spike"
-        ? `Line ${a.direction} at ${a.velocity}/hr`
-        : a.type === "snapback"
-        ? `Snapback from ${a.current_line} toward ${a.opening_line}`
-        : `Unknown signal`,
-      predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
-      predicted_magnitude: a.velocity || a.drift_pct || null,
-      confidence_at_signal: a.confidence,
-      velocity_at_signal: a.velocity || null,
-      time_to_tip_hours: a.hours_to_tip,
-      signal_factors: a,
-    }));
+    const predRows = alerts
+      .filter(a => {
+        const dedupKey = `${a.event_id}|${a.player_name}|${a.prop_type}|${a.type}`;
+        if (recentPredKeys.has(dedupKey)) {
+          log(`⏭ Skipping duplicate: ${a.player_name} ${a.prop_type} ${a.type}`);
+          return false;
+        }
+        return true;
+      })
+      .map((a) => ({
+        signal_type: a.type,
+        sport: a.sport,
+        prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
+        player_name: a.player_name,
+        event_id: a.event_id,
+        prediction: a.type === "take_it_now"
+          ? `TAKE IT NOW: ${a.current_line} (${a.drift_pct_of_range}% of range, ~${a.remaining_move} more expected)`
+          : a.type === "line_about_to_move"
+          ? `Line ${a.direction} steadily at ${a.velocity}/hr (${a.consistencyRate}% consistent)`
+          : a.type === "cascade"
+          ? `Cascade: ${a.pending_props?.join(",")} will follow ${a.moved_props?.join(",")}`
+          : a.type === "velocity_spike"
+          ? `Line ${a.direction} at ${a.velocity}/hr`
+          : a.type === "snapback"
+          ? `Snapback from ${a.current_line} toward ${a.opening_line}`
+          : `Unknown signal`,
+        predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
+        predicted_magnitude: a.velocity || a.drift_pct || a.drift_amount || null,
+        confidence_at_signal: a.confidence,
+        velocity_at_signal: a.velocity || null,
+        time_to_tip_hours: a.hours_to_tip,
+        signal_factors: a,
+      }));
+
+    log(`Inserting ${predRows.length} new predictions (${alerts.length - predRows.length} duplicates skipped)`);
 
     if (predRows.length > 0) {
       const { error } = await supabase.from("fanduel_prediction_accuracy").insert(predRows);
