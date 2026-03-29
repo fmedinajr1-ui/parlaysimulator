@@ -475,11 +475,17 @@ Deno.serve(async (req) => {
         return "";
       };
 
+      const lineAboutToMoveAlerts = highConfAlerts.filter((a) => a.type === "line_about_to_move");
       const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
       const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
       const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
 
       const allFormatted: string[] = [];
+      // Primary signal first
+      if (lineAboutToMoveAlerts.length > 0) {
+        allFormatted.push(`\n— *🎯 LINE ABOUT TO MOVE (${lineAboutToMoveAlerts.length})* —`);
+        allFormatted.push(...lineAboutToMoveAlerts.map(formatAlert));
+      }
       if (velocityAlerts.length > 0) {
         allFormatted.push(`\n— *VELOCITY SPIKES (${velocityAlerts.length})* —`);
         allFormatted.push(...velocityAlerts.map(formatAlert));
@@ -514,7 +520,7 @@ Deno.serve(async (req) => {
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} unique players — ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
+          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} signals — 🎯${lineAboutToMoveAlerts.length} ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
           : [`🧠 *Behavior${pageLabel}*`, ""];
 
         const msg = [...header, ...pages[i]].join("\n");
