@@ -21,7 +21,6 @@ Deno.serve(async (req) => {
   try {
     log("=== Starting FanDuel behavior analysis ===");
 
-    // Fetch last 2 hours of timeline data for pattern detection
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
     const { data: recentTimeline, error: tlError } = await supabase
       .from("fanduel_line_timeline")
@@ -38,11 +37,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    log(`Analyzing ${recentTimeline.length} timeline records`);
+    // FILTER OUT FINISHED GAMES — only analyze active/upcoming
+    const activeTimeline = recentTimeline.filter(
+      (r: any) => r.hours_to_tip === null || r.hours_to_tip > -3
+    );
+    log(`Analyzing ${activeTimeline.length} active records (excluded ${recentTimeline.length - activeTimeline.length} finished)`);
+
+    if (activeTimeline.length === 0) {
+      log("No active game data to analyze");
+      return new Response(JSON.stringify({ success: true, patterns: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Group by event+player+prop for sequential analysis
     const groups = new Map<string, any[]>();
-    for (const row of recentTimeline) {
+    for (const row of activeTimeline) {
       const key = `${row.event_id}|${row.player_name}|${row.prop_type}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(row);
@@ -50,14 +60,21 @@ Deno.serve(async (req) => {
 
     // Also group by event+player (all props) for cascade detection
     const playerGroups = new Map<string, any[]>();
-    for (const row of recentTimeline) {
+    for (const row of activeTimeline) {
       const key = `${row.event_id}|${row.player_name}`;
       if (!playerGroups.has(key)) playerGroups.set(key, []);
       playerGroups.get(key)!.push(row);
     }
 
     const patterns: any[] = [];
-    const alerts: any[] = [];
+    // Track best alert per player (dedup)
+    const bestAlertPerPlayer = new Map<string, { confidence: number; alert: any }>();
+    const addAlert = (playerKey: string, confidence: number, alert: any) => {
+      const existing = bestAlertPerPlayer.get(playerKey);
+      if (!existing || confidence > existing.confidence) {
+        bestAlertPerPlayer.set(playerKey, { confidence, alert });
+      }
+    };
 
     // ====== PATTERN 1: VELOCITY SPIKES ======
     for (const [key, snapshots] of groups) {
@@ -72,7 +89,6 @@ Deno.serve(async (req) => {
       const velocityPerHour = (lineDiff / timeDiffMin) * 60;
 
       if (velocityPerHour >= 1.0) {
-        // Significant velocity — this line is moving fast
         const direction = last.line < first.line ? "dropping" : "rising";
         patterns.push({
           sport: first.sport,
@@ -88,7 +104,9 @@ Deno.serve(async (req) => {
           timing_window: `${Math.round(timeDiffMin)}min`,
         });
 
-        alerts.push({
+        const conf = Math.min(95, 50 + velocityPerHour * 15);
+        const playerKey = `${first.event_id}|${first.player_name}`;
+        addAlert(playerKey, conf, {
           type: "velocity_spike",
           sport: first.sport,
           player_name: first.player_name,
@@ -100,16 +118,14 @@ Deno.serve(async (req) => {
           line_from: first.line,
           line_to: last.line,
           time_span_min: Math.round(timeDiffMin),
-          confidence: Math.min(95, 50 + velocityPerHour * 15),
+          confidence: conf,
           hours_to_tip: last.hours_to_tip,
         });
       }
     }
 
     // ====== PATTERN 2: CASCADE DETECTION ======
-    // When one prop moves for a player, check if related props haven't moved yet
     for (const [playerKey, allProps] of playerGroups) {
-      // Group by prop_type
       const propMap = new Map<string, any[]>();
       for (const row of allProps) {
         if (!propMap.has(row.prop_type)) propMap.set(row.prop_type, []);
@@ -118,7 +134,6 @@ Deno.serve(async (req) => {
 
       if (propMap.size < 2) continue;
 
-      // Check each prop for movement
       const movedProps: string[] = [];
       const staleProps: string[] = [];
 
@@ -137,7 +152,6 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Cascade: one prop moved, others haven't yet
       if (movedProps.length > 0 && staleProps.length > 0) {
         const sampleRow = allProps[0];
         patterns.push({
@@ -154,7 +168,9 @@ Deno.serve(async (req) => {
           timing_window: null,
         });
 
-        alerts.push({
+        const conf = Math.min(85, 40 + movedProps.length * 15);
+        const dedupKey = `${sampleRow.event_id}|${sampleRow.player_name}`;
+        addAlert(dedupKey, conf, {
           type: "cascade",
           sport: sampleRow.sport,
           player_name: sampleRow.player_name,
@@ -162,14 +178,13 @@ Deno.serve(async (req) => {
           event_id: sampleRow.event_id,
           moved_props: movedProps,
           pending_props: staleProps,
-          confidence: Math.min(85, 40 + movedProps.length * 15),
+          confidence: conf,
           hours_to_tip: sampleRow.hours_to_tip,
         });
       }
     }
 
     // ====== PATTERN 3: SNAPBACK DETECTION ======
-    // Line moved far from opening, likely to revert
     for (const [key, snapshots] of groups) {
       if (snapshots.length < 3) continue;
       const last = snapshots[snapshots.length - 1];
@@ -179,7 +194,6 @@ Deno.serve(async (req) => {
       const drift = Math.abs(last.line - openingLine);
       const driftPct = (drift / openingLine) * 100;
 
-      // If line drifted >8% from opening without sharp confirmation
       if (driftPct >= 8) {
         patterns.push({
           sport: last.sport,
@@ -195,7 +209,9 @@ Deno.serve(async (req) => {
           timing_window: null,
         });
 
-        alerts.push({
+        const conf = Math.min(80, 35 + driftPct * 2);
+        const playerKey = `${last.event_id}|${last.player_name}`;
+        addAlert(playerKey, conf, {
           type: "snapback",
           sport: last.sport,
           player_name: last.player_name,
@@ -205,7 +221,7 @@ Deno.serve(async (req) => {
           opening_line: openingLine,
           current_line: last.line,
           drift_pct: Math.round(driftPct * 10) / 10,
-          confidence: Math.min(80, 35 + driftPct * 2),
+          confidence: conf,
           hours_to_tip: last.hours_to_tip,
         });
       }
@@ -219,6 +235,9 @@ Deno.serve(async (req) => {
         .upsert(p, { onConflict: "sport,prop_type,pattern_type" });
       if (!error) patternsUpserted++;
     }
+
+    // Collect deduped alerts (one per player)
+    const alerts = Array.from(bestAlertPerPlayer.values()).map((v) => v.alert);
 
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
     const predRows = alerts.map((a) => ({
@@ -245,7 +264,7 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
-    // ====== SEND TELEGRAM FOR ALL ALERTS WITH RECOMMENDATIONS ======
+    // ====== SEND TELEGRAM — DEDUPED, GROUPED, PAGINATED ======
     const highConfAlerts = alerts.filter((a) => a.confidence >= 70);
     if (highConfAlerts.length > 0) {
       const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
@@ -268,25 +287,24 @@ Deno.serve(async (req) => {
         }
         if (a.type === "cascade") {
           return [
-            `🌊 *CASCADE ALERT* — ${esc(a.sport)}`,
+            `🌊 *CASCADE* — ${esc(a.sport)}`,
             `${esc(a.player_name)}`,
             `Moved: ${(a.moved_props || []).map(esc).join(", ")}`,
             `⏳ Pending: ${(a.pending_props || []).map(esc).join(", ")}`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            `✅ *Action: Grab pending props NOW before they adjust*`,
-            `💡 When one prop moves, related props follow within 5-15 min`,
+            `✅ *Action: Grab pending props NOW*`,
+            `💡 Related props follow within 5-15 min`,
           ].join("\n");
         }
         if (a.type === "snapback") {
           const action = a.current_line > a.opening_line ? "UNDER" : "OVER";
           const reason = a.current_line > a.opening_line
-            ? "Line inflated above open — historically snaps back down"
-            : "Line deflated below open — historically snaps back up";
+            ? "Inflated above open — snaps back down"
+            : "Deflated below open — snaps back up";
           return [
             `🔄 *SNAPBACK* — ${esc(a.sport)}`,
             `${esc(a.player_name)} ${esc(a.prop_type).replace("player ", "").toUpperCase()}`,
-            `Open: ${a.opening_line} → Now: ${a.current_line}`,
-            `Drift: ${a.drift_pct}%`,
+            `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action} ${a.current_line}*`,
             `💡 ${reason}`,
@@ -295,12 +313,10 @@ Deno.serve(async (req) => {
         return "";
       };
 
-      // Group by type for organized display
       const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
       const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
       const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
 
-      // Build paginated messages (max ~8 alerts per message to avoid Telegram limits)
       const allFormatted: string[] = [];
       if (velocityAlerts.length > 0) {
         allFormatted.push(`\n— *VELOCITY SPIKES (${velocityAlerts.length})* —`);
@@ -315,14 +331,14 @@ Deno.serve(async (req) => {
         allFormatted.push(...snapbackAlerts.map(formatAlert));
       }
 
-      // Paginate by character count to respect Telegram's 4096 char limit
+      // Paginate by character count
       const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
       let currentLen = 0;
 
       for (const line of allFormatted) {
-        const lineLen = line.length + 1; // +1 for \n separator
+        const lineLen = line.length + 1;
         if (currentPage.length > 0 && !line.startsWith("\n—") && currentLen + lineLen > MAX_CHARS) {
           pages.push(currentPage);
           currentPage = [];
@@ -333,12 +349,11 @@ Deno.serve(async (req) => {
       }
       if (currentPage.length > 0) pages.push(currentPage);
 
-      // Send each page
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`🧠 *FanDuel Behavior Alerts*${pageLabel}`, `${highConfAlerts.length} pattern(s) — ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
-          : [`🧠 *Behavior Alerts${pageLabel}*`, ""];
+          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} unique players — ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
+          : [`🧠 *Behavior${pageLabel}*`, ""];
 
         const msg = [...header, ...pages[i]].join("\n");
 
@@ -352,7 +367,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    log(`=== ANALYSIS COMPLETE: ${patterns.length} patterns, ${alerts.length} alerts (${highConfAlerts.length} high-conf) ===`);
+    log(`=== ANALYSIS COMPLETE: ${patterns.length} patterns, ${alerts.length} alerts (deduped), ${highConfAlerts.length} high-conf ===`);
 
     await supabase.from("cron_job_history").insert({
       job_name: "fanduel-behavior-analyzer",
