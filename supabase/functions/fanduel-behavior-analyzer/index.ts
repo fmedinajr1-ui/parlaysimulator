@@ -217,13 +217,31 @@ Deno.serve(async (req) => {
     const droppedPlayers = new Set<string>();
     for (const [, group] of eventPropGroups) {
       if (group.length <= 1) continue;
-      // Sort by velocity (or confidence), keep the best one
       group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
       for (let i = 1; i < group.length; i++) {
         droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
         log(`⚠ Dropped conflicting signal: ${group[i].player_name} ${group[i].prop_type} (kept ${group[0].player_name})`);
       }
     }
+
+    // Also check for same-player contradictions across different pattern types
+    // e.g. velocity says TAKE spread but snapback says FADE spread for same team
+    const playerPropGroups = new Map<string, typeof alerts>();
+    for (const a of alerts) {
+      const ppKey = `${a.event_id}|${a.player_name}|${a.prop_type}`;
+      if (!playerPropGroups.has(ppKey)) playerPropGroups.set(ppKey, []);
+      playerPropGroups.get(ppKey)!.push(a);
+    }
+    for (const [, group] of playerPropGroups) {
+      if (group.length <= 1) continue;
+      // Multiple alerts for same player + same prop = keep strongest only
+      group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
+      for (let i = 1; i < group.length; i++) {
+        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
+        log(`⚠ Dropped same-player conflicting ${group[i].type}: ${group[i].player_name} ${group[i].prop_type}`);
+      }
+    }
+
     if (droppedPlayers.size > 0) {
       alerts = alerts.filter(a => !droppedPlayers.has(`${a.event_id}|${a.player_name}`));
     }
