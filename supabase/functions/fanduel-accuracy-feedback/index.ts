@@ -22,7 +22,6 @@ Deno.serve(async (req) => {
   try {
     log("=== Starting accuracy feedback loop ===");
 
-    // Get unverified predictions older than 2 hours (game should be done)
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: unverified, error: fetchErr } = await supabase
       .from("fanduel_prediction_accuracy")
@@ -46,7 +45,7 @@ Deno.serve(async (req) => {
         .eq("id", trap.id);
     }
 
-    // Group actionable predictions by event_id for efficient timeline lookups
+    // Group actionable predictions by event_id
     const byEvent = new Map<string, typeof actionable>();
     for (const pred of actionable) {
       const key = pred.event_id;
@@ -59,7 +58,6 @@ Deno.serve(async (req) => {
     let incorrect = 0;
 
     for (const [eventId, preds] of byEvent) {
-      // Get ALL timeline data for this event in one query
       const { data: timeline } = await supabase
         .from("fanduel_line_timeline")
         .select("player_name, prop_type, line, snapshot_time")
@@ -70,67 +68,102 @@ Deno.serve(async (req) => {
       if (!timeline || timeline.length === 0) continue;
 
       for (const pred of preds) {
-        // Find closing line (latest snapshot for this player+prop)
-        const closing = timeline.find(
+        const playerTimeline = timeline.filter(
           t => t.player_name === pred.player_name && t.prop_type === pred.prop_type
         );
-        if (!closing) continue;
+        if (playerTimeline.length === 0) continue;
 
-        // Find opening line (earliest snapshot)
-        const opening = [...timeline]
-          .filter(t => t.player_name === pred.player_name && t.prop_type === pred.prop_type)
-          .pop(); // last item since sorted desc = earliest
+        const closingLine = playerTimeline[0].line; // latest (sorted desc)
+        const openingLine = playerTimeline[playerTimeline.length - 1].line; // earliest
 
-        const signalFactors = pred.signal_factors || {};
-        const lineAtSignal = signalFactors.line_to || signalFactors.currentLine;
-        const lineAtOpen = signalFactors.line_from || opening?.line;
-        const closingLine = closing.line;
-        const predictedDir = pred.predicted_direction;
-
+        const sf = pred.signal_factors || {};
         let wasCorrect: boolean | null = null;
         let actualOutcome = "unverifiable";
 
-        // VELOCITY SPIKE / LINE_ABOUT_TO_MOVE: did line continue moving?
-        if (pred.signal_type === "velocity_spike" || pred.signal_type === "line_about_to_move") {
+        // ── VELOCITY SPIKE: did line continue moving in predicted direction? ──
+        if (pred.signal_type === "velocity_spike") {
+          const lineAtSignal = sf.line_to ?? sf.currentLine;
           if (lineAtSignal != null && closingLine != null) {
-            if (predictedDir === "dropping") {
+            if (pred.predicted_direction === "dropping") {
               wasCorrect = closingLine < lineAtSignal;
               actualOutcome = wasCorrect ? "CONTINUED_DROP" : "REVERSED_UP";
-            } else if (predictedDir === "rising") {
+            } else if (pred.predicted_direction === "rising") {
               wasCorrect = closingLine > lineAtSignal;
               actualOutcome = wasCorrect ? "CONTINUED_RISE" : "REVERSED_DOWN";
             }
           }
         }
 
-        // CASCADE: did drift continue from opening?
-        if (pred.signal_type === "cascade") {
-          if (lineAtSignal != null && closingLine != null && lineAtOpen != null) {
-            const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
-            const driftAtClose = Math.abs(closingLine - lineAtOpen);
-            wasCorrect = driftAtClose >= driftAtSignal;
-            actualOutcome = wasCorrect ? "CASCADE_CONFIRMED" : "CASCADE_REVERSED";
+        // ── LINE ABOUT TO MOVE: did line continue in predicted direction? ──
+        if (pred.signal_type === "line_about_to_move") {
+          // signal_factors has: lineDiff, velocityPerHour, learnedAvgVelocity
+          // predicted_direction is "dropping" or "rising"
+          // Check if from signal time to close, line moved further in that direction
+          const lineAtSignal = sf.line_to ?? sf.currentLine;
+          if (lineAtSignal != null && closingLine != null) {
+            if (pred.predicted_direction === "dropping") {
+              wasCorrect = closingLine < lineAtSignal;
+              actualOutcome = wasCorrect ? "CONTINUED_DROP" : "REVERSED_UP";
+            } else if (pred.predicted_direction === "rising") {
+              wasCorrect = closingLine > lineAtSignal;
+              actualOutcome = wasCorrect ? "CONTINUED_RISE" : "REVERSED_DOWN";
+            }
+          }
+          // Fallback: use lineDiff direction from signal_factors
+          if (wasCorrect === null && sf.lineDiff != null && closingLine != null && openingLine != null) {
+            const signalDirection = sf.lineDiff < 0 ? "dropping" : "rising";
+            const closeDirection = closingLine < openingLine ? "dropping" : "rising";
+            wasCorrect = signalDirection === closeDirection;
+            actualOutcome = wasCorrect ? "MOVE_CONFIRMED" : "MOVE_REVERSED";
           }
         }
 
-        // LIVE LINE MOVING: did live movement continue?
+        // ── CASCADE: did the pending props also move? ──
+        if (pred.signal_type === "cascade") {
+          const pendingProps: string[] = sf.pending_props || [];
+          const movedProps: string[] = sf.moved_props || [];
+          if (pendingProps.length > 0) {
+            // Check each pending prop — did it eventually move (any line change)?
+            let pendingThatMoved = 0;
+            for (const pp of pendingProps) {
+              const ppTimeline = timeline.filter(
+                t => t.player_name === pred.player_name && t.prop_type === pp
+              );
+              if (ppTimeline.length >= 2) {
+                const ppClose = ppTimeline[0].line;
+                const ppOpen = ppTimeline[ppTimeline.length - 1].line;
+                if (Math.abs(ppClose - ppOpen) >= 0.5) pendingThatMoved++;
+              }
+            }
+            const moveRate = pendingThatMoved / pendingProps.length;
+            wasCorrect = moveRate >= 0.5; // at least half the pending props moved
+            actualOutcome = wasCorrect
+              ? `CASCADE_CONFIRMED (${pendingThatMoved}/${pendingProps.length} moved)`
+              : `CASCADE_MISSED (${pendingThatMoved}/${pendingProps.length} moved)`;
+          }
+        }
+
+        // ── LIVE LINE MOVING: did live movement continue? ──
         if (pred.signal_type === "live_line_moving") {
+          const lineAtSignal = sf.line_to ?? sf.currentLine;
           if (lineAtSignal != null && closingLine != null) {
-            if (predictedDir === "dropping") {
+            if (pred.predicted_direction === "dropping") {
               wasCorrect = closingLine <= lineAtSignal;
               actualOutcome = wasCorrect ? "LIVE_DROP_CONFIRMED" : "LIVE_REVERSED";
-            } else if (predictedDir === "rising") {
+            } else if (pred.predicted_direction === "rising") {
               wasCorrect = closingLine >= lineAtSignal;
               actualOutcome = wasCorrect ? "LIVE_RISE_CONFIRMED" : "LIVE_REVERSED";
             }
           }
         }
 
-        // TAKE IT NOW (snapback)
-        if (pred.signal_type === "take_it_now") {
-          if (lineAtOpen != null && lineAtSignal != null && closingLine != null) {
-            const driftAtSignal = Math.abs(lineAtSignal - lineAtOpen);
-            const driftAtClose = Math.abs(closingLine - lineAtOpen);
+        // ── SNAPBACK / TAKE_IT_NOW: did line revert toward opening? ──
+        if (pred.signal_type === "snapback" || pred.signal_type === "take_it_now") {
+          const sigOpeningLine = sf.opening_line ?? openingLine;
+          const sigCurrentLine = sf.current_line ?? sf.line_to;
+          if (sigOpeningLine != null && sigCurrentLine != null && closingLine != null) {
+            const driftAtSignal = Math.abs(sigCurrentLine - sigOpeningLine);
+            const driftAtClose = Math.abs(closingLine - sigOpeningLine);
             wasCorrect = driftAtClose < driftAtSignal;
             actualOutcome = wasCorrect ? "SNAPPED_BACK" : "CONTINUED_DRIFT";
           }
@@ -154,7 +187,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Compute accuracy by signal type
+    // ── Compute accuracy by signal type and update behavior patterns ──
     const { data: allVerified } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, sport, prop_type, was_correct, velocity_at_signal")
@@ -191,7 +224,7 @@ Deno.serve(async (req) => {
       if (!error) patternsUpdated++;
     }
 
-    // Telegram summary
+    // ── Telegram summary ──
     const overallAccuracy = verified > 0 ? Math.round((correct / verified) * 100) : 0;
     if (verified > 0) {
       const msg = [
