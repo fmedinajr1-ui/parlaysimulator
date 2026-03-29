@@ -200,7 +200,8 @@ Deno.serve(async (req) => {
         Math.abs(l.line - f.line) >= 0.5 ? movedProps.push(propType) : staleProps.push(propType);
       }
 
-      if (movedProps.length > 0 && staleProps.length > 0) {
+      // Cascade deprioritized (19% win rate) — require 2+ moved props now
+      if (movedProps.length >= 2 && staleProps.length > 0) {
         const sampleRow = allProps[0];
         const live = isLive(sampleRow);
         const conf = Math.min(85, 40 + movedProps.length * 15);
@@ -336,6 +337,47 @@ Deno.serve(async (req) => {
     if (highConfAlerts.length > 0) {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
+
+        // ====== LINE ABOUT TO MOVE (primary signal) ======
+        if (a.type === "line_about_to_move") {
+          const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
+          let action: string;
+          let reason: string;
+          if (isTeamMarket && (a.prop_type === "h2h" || a.prop_type === "moneyline")) {
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `BACK ${esc(a.player_name)}${gameName}` : `FADE ${esc(a.player_name)}${gameName}`;
+            reason = "Steady drift = smart money building position";
+          } else if (isTeamMarket && a.prop_type === "spreads") {
+            const gameName = a.event_description ? ` (${esc(a.event_description)})` : "";
+            action = a.direction === "dropping" ? `TAKE ${esc(a.player_name)} SPREAD${gameName}` : `FADE ${esc(a.player_name)} SPREAD${gameName}`;
+            reason = "Spread steadily shifting = sharps accumulating";
+          } else if (isTeamMarket && a.prop_type === "totals") {
+            const gameName = a.event_description ? esc(a.event_description) : esc(a.player_name);
+            action = a.direction === "dropping" ? `UNDER ${gameName}` : `OVER ${gameName}`;
+            reason = a.direction === "dropping"
+              ? "Total steadily dropping = money on under"
+              : "Total steadily rising = money on over";
+          } else {
+            action = a.direction === "dropping" ? "OVER" : "UNDER";
+            reason = a.direction === "dropping"
+              ? "Line consistently dropping = get OVER before it moves more"
+              : "Line consistently rising = get UNDER before it moves more";
+          }
+          const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
+          const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
+            ? esc(a.event_description)
+            : esc(a.player_name);
+          return [
+            `🎯 *LINE ABOUT TO MOVE*${liveTag} — ${esc(a.sport)}`,
+            `${displayName} ${propLabel}`,
+            `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
+            `Consistency: ${a.consistencyRate}% | Speed: ${a.velocity}/hr`,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
+            `💡 ${reason}`,
+          ].join("\n");
+        }
+
         if (a.type === "velocity_spike") {
           const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
           let action: string;
