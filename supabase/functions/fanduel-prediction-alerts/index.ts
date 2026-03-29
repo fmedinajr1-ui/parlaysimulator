@@ -90,6 +90,21 @@ Deno.serve(async (req) => {
       groups.get(key)!.push(row);
     }
 
+    // Build matchup lookup: event_id → "Team A vs Team B"
+    const TEAM_MARKET_TYPES = new Set(["h2h", "moneyline", "spreads", "totals"]);
+    const eventTeams = new Map<string, Set<string>>();
+    for (const row of activeData) {
+      if (TEAM_MARKET_TYPES.has(row.prop_type) && row.player_name !== "Game Total") {
+        if (!eventTeams.has(row.event_id)) eventTeams.set(row.event_id, new Set());
+        eventTeams.get(row.event_id)!.add(row.player_name);
+      }
+    }
+    const eventMatchup = new Map<string, string>();
+    for (const [eid, teams] of eventTeams) {
+      const arr = Array.from(teams);
+      eventMatchup.set(eid, arr.length >= 2 ? `${arr[0]} vs ${arr[1]}` : arr[0] || "Unknown");
+    }
+
     // Track best signal per player to avoid duplicates
     const bestSignalPerPlayer = new Map<string, { confidence: number; alert: string; record: any }>();
     const addSignal = (playerKey: string, confidence: number, alert: string, record: any) => {
