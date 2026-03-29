@@ -90,6 +90,21 @@ Deno.serve(async (req) => {
       groups.get(key)!.push(row);
     }
 
+    // Build matchup lookup: event_id → "Team A vs Team B"
+    const TEAM_MARKET_TYPES = new Set(["h2h", "moneyline", "spreads", "totals"]);
+    const eventTeams = new Map<string, Set<string>>();
+    for (const row of activeData) {
+      if (TEAM_MARKET_TYPES.has(row.prop_type) && row.player_name !== "Game Total") {
+        if (!eventTeams.has(row.event_id)) eventTeams.set(row.event_id, new Set());
+        eventTeams.get(row.event_id)!.add(row.player_name);
+      }
+    }
+    const eventMatchup = new Map<string, string>();
+    for (const [eid, teams] of eventTeams) {
+      const arr = Array.from(teams);
+      eventMatchup.set(eid, arr.length >= 2 ? `${arr[0]} vs ${arr[1]}` : arr[0] || "Unknown");
+    }
+
     // Track best signal per player to avoid duplicates
     const bestSignalPerPlayer = new Map<string, { confidence: number; alert: string; record: any }>();
     const addSignal = (playerKey: string, confidence: number, alert: string, record: any) => {
@@ -139,16 +154,23 @@ Deno.serve(async (req) => {
             : "Line rising = book expects more, value is UNDER";
           const liveTag = live ? " [🔴 LIVE]" : "";
 
+          const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
+          const matchupLine = isTeamMarket ? eventMatchup.get(first.event_id) : null;
+          const marketLabel = isTeamMarket
+            ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
+            : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
+
           const alertText = [
             `🔮 *${live ? "LINE MOVING NOW" : "LINE ABOUT TO MOVE"}*${liveTag} — ${esc(first.sport)}`,
-            `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
+            matchupLine ? `🏟 ${esc(matchupLine)}` : null,
+            marketLabel,
             `Line ${direction}: ${first.line} → ${last.line}`,
             `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
             live ? `⏱ In-game shift detected` : `⏱ FanDuel avg reaction: ~${remaining}min remaining`,
             `📊 Confidence: ${Math.round(confidence)}%`,
             `✅ *Action: ${side} ${last.line}*`,
             `💡 ${reason}`,
-          ].join("\n");
+          ].filter(Boolean).join("\n");
 
           const record = {
             signal_type: live ? "live_line_moving" : "line_about_to_move",
@@ -191,15 +213,22 @@ Deno.serve(async (req) => {
             : "Line deflated below open — expect snapback up";
           const liveTag = live ? " [🔴 LIVE]" : "";
 
+          const isTeamMarket2 = TEAM_MARKET_TYPES.has(last.prop_type);
+          const matchupLine2 = isTeamMarket2 ? eventMatchup.get(last.event_id) : null;
+          const marketLabel2 = isTeamMarket2
+            ? `${esc(last.player_name)} ${esc(last.prop_type).toUpperCase()}`
+            : `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`;
+
           const alertText = [
             `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
-            `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`,
+            matchupLine2 ? `🏟 ${esc(matchupLine2)}` : null,
+            marketLabel2,
             `Open: ${last.opening_line} → Now: ${last.line}`,
             `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
             `📊 Confidence: ${Math.round(confidence)}%`,
             `✅ *Action: ${snapDirection} ${last.line}*`,
             `💡 ${reason}`,
-          ].join("\n");
+          ].filter(Boolean).join("\n");
 
           const record = {
             signal_type: live ? "live_drift" : "take_it_now",
@@ -238,14 +267,21 @@ Deno.serve(async (req) => {
         Math.abs(secondHalfDir) >= 0.5 &&
         Math.sign(firstHalfDir) !== Math.sign(secondHalfDir)
       ) {
+        const isTeamMarket3 = TEAM_MARKET_TYPES.has(first.prop_type);
+        const matchupLine3 = isTeamMarket3 ? eventMatchup.get(first.event_id) : null;
+        const marketLabel3 = isTeamMarket3
+          ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
+          : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
+
         const alertText = [
           `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
-          `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
+          matchupLine3 ? `🏟 ${esc(matchupLine3)}` : null,
+          marketLabel3,
           `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
           `🚫 Sharp reversal pattern — DO NOT TOUCH`,
           `✅ *Action: STAY AWAY — both sides are dangerous*`,
           `💡 Book is manipulating this line to trap bettors`,
-        ].join("\n");
+        ].filter(Boolean).join("\n");
 
         const record = {
           signal_type: "trap_warning",
