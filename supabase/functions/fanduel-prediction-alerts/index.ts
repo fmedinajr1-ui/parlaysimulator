@@ -213,15 +213,22 @@ Deno.serve(async (req) => {
             : "Line deflated below open — expect snapback up";
           const liveTag = live ? " [🔴 LIVE]" : "";
 
+          const isTeamMarket2 = TEAM_MARKET_TYPES.has(last.prop_type);
+          const matchupLine2 = isTeamMarket2 ? eventMatchup.get(last.event_id) : null;
+          const marketLabel2 = isTeamMarket2
+            ? `${esc(last.player_name)} ${esc(last.prop_type).toUpperCase()}`
+            : `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`;
+
           const alertText = [
             `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
-            `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`,
+            matchupLine2 ? `🏟 ${esc(matchupLine2)}` : null,
+            marketLabel2,
             `Open: ${last.opening_line} → Now: ${last.line}`,
             `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
             `📊 Confidence: ${Math.round(confidence)}%`,
             `✅ *Action: ${snapDirection} ${last.line}*`,
             `💡 ${reason}`,
-          ].join("\n");
+          ].filter(Boolean).join("\n");
 
           const record = {
             signal_type: live ? "live_drift" : "take_it_now",
