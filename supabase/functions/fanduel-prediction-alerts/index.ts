@@ -302,11 +302,12 @@ Deno.serve(async (req) => {
         `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
         marketLabel,
+        fdLineBadge(last.line, last.over_price, last.under_price, snapDirection),
         `Open: ${last.opening_line} → Now: ${last.line}`,
         `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
-        `✅ *Action: ${snapDirection} ${last.line}*`,
+        `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
 
