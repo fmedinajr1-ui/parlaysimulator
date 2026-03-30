@@ -162,7 +162,19 @@ Deno.serve(async (req) => {
       console.log(`[Verdicts] Upserted ${inserted} verdicts (${steamCount} STEAM, ${trapCount} TRAP)`);
     }
 
-    // Send Telegram alert for STEAM/TRAP verdicts
+    // ── Cross-reference against unified_props for real FanDuel lines ──
+    const { data: liveProps } = await supabase
+      .from("unified_props")
+      .select("player_name, prop_type, current_line, over_price, under_price")
+      .eq("bookmaker", "fanduel");
+
+    const liveLineMap = new Map<string, { line: number; over: number | null; under: number | null }>();
+    for (const p of liveProps || []) {
+      const key = `${p.player_name}|${p.prop_type}`;
+      liveLineMap.set(key, { line: p.current_line, over: p.over_price, under: p.under_price });
+    }
+
+    // Send Telegram alert for STEAM/TRAP verdicts — only verified lines
     const actionable = verdicts.filter(v => v.verdict !== "HOLD");
     if (actionable.length > 0) {
       try {
@@ -172,20 +184,37 @@ Deno.serve(async (req) => {
           timeZone: "America/New_York",
         }).format(now);
 
+        // Filter SHARP verdicts to only those with verified FanDuel lines
+        const steamVerdicts = actionable
+          .filter(v => v.verdict === "SHARP_CONFIRMED")
+          .filter(v => {
+            const key = `${v.player_name}|${v.prop_type}`;
+            const live = liveLineMap.get(key);
+            if (!live) {
+              console.log(`[Verdicts] 🚫 Skipping ${v.player_name} ${v.prop_type} — no FanDuel line found`);
+              return false;
+            }
+            return true;
+          });
+        const trapVerdicts = actionable.filter(v => v.verdict === "TRAP");
+
+        const verifiedSteamCount = steamVerdicts.length;
+
         let msg = `🐋 *WHALE VERDICTS — ${dateLabel}*\n`;
         msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        msg += `${steamCount} 🟢 SHARP | ${trapCount} 🔴 TRAP\n\n`;
-
-        const steamVerdicts = actionable.filter(v => v.verdict === "SHARP_CONFIRMED");
-        const trapVerdicts = actionable.filter(v => v.verdict === "TRAP");
+        msg += `${verifiedSteamCount} 🟢 SHARP | ${trapCount} 🔴 TRAP\n\n`;
 
         if (steamVerdicts.length > 0) {
           msg += `*🟢 SHARP CONFIRMED*\n`;
           for (const v of steamVerdicts.slice(0, 8)) {
-            const propLabel = v.prop_type.replace(/^player_/, "").replace(/_/g, " ").toUpperCase();
+            const propLabel = v.prop_type.replace(/^player_/, "").replace(/^batter_/, "").replace(/^pitcher_/, "").replace(/_/g, " ").toUpperCase();
+            const key = `${v.player_name}|${v.prop_type}`;
+            const live = liveLineMap.get(key)!;
             const side = v.price_movement > 0 ? "O" : "U";
-            msg += `• *${v.player_name}* ${propLabel} ${side} ${v.final_scan_line}\n`;
-            msg += `  ${v.first_scan_line}→${v.final_scan_line} | ${v.verdict_reason}\n`;
+            const odds = side === "O" ? live.over : live.under;
+            const oddsStr = odds ? (odds > 0 ? ` (+${odds})` : ` (${odds})`) : "";
+            msg += `• *${v.player_name}* ${propLabel} ${side} ${live.line}${oddsStr}\n`;
+            msg += `  📗 FanDuel: ${live.line} | ${v.first_scan_line}→${v.final_scan_line} | ${v.verdict_reason}\n`;
           }
           msg += "\n";
         }
@@ -193,7 +222,7 @@ Deno.serve(async (req) => {
         if (trapVerdicts.length > 0) {
           msg += `*🔴 TRAP — MARKET FADED*\n`;
           for (const v of trapVerdicts.slice(0, 5)) {
-            const propLabel = v.prop_type.replace(/^player_/, "").replace(/_/g, " ").toUpperCase();
+            const propLabel = v.prop_type.replace(/^player_/, "").replace(/^batter_/, "").replace(/^pitcher_/, "").replace(/_/g, " ").toUpperCase();
             msg += `• *${v.player_name}* ${propLabel} — ${v.verdict_reason}\n`;
           }
         }
