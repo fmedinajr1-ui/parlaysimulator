@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useUnifiedAccuracy } from "@/hooks/useUnifiedAccuracy";
 import { CompositeGradeCard } from "./CompositeGradeCard";
+import { PropTypeAccuracyCard } from "./PropTypeAccuracyCard";
 import { SystemAccuracyCard } from "./SystemAccuracyCard";
 import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
 import { SettledPicksTable } from "./SettledPicksTable";
@@ -126,6 +127,9 @@ export function UnifiedAccuracyView() {
         hitRate={compositeHitRate}
         totalVerified={totalVerified}
       />
+
+      {/* Prop Type Accuracy — Bettor Decision Guide */}
+      <PropTypeAccuracyCard />
 
       {/* System Cards Grid */}
       <div className="grid grid-cols-2 gap-3">
