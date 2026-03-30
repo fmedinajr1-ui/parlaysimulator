@@ -546,17 +546,8 @@ Deno.serve(async (req) => {
       const avgReaction = learnedPattern?.avg_reaction_time_minutes || 12;
       const remaining = Math.max(0, avgReaction - elapsed);
 
-      // Accuracy badge based on historical data
-      let accuracyBadge = "";
-      if (first.prop_type === "player_rebounds" && first.signal_type !== "take_it_now") {
-        accuracyBadge = "📈 Historical: 50-52%";
-      } else if (first.prop_type === "player_points" && direction === "RISING") {
-        accuracyBadge = "📈 Historical: 75% (contrarian rising)";
-      } else if (first.prop_type === "player_points" && direction === "DROPPING") {
-        accuracyBadge = "📈 Historical: 45% (contrarian dropping)";
-      } else if (isCombo) {
-        accuracyBadge = "🔥 Historical: 85-100% (combo prop)";
-      }
+      // Dynamic accuracy badge from real verified data
+      const accuracyBadge = dynamicAccBadge("line_about_to_move", first.prop_type);
 
       const reason = isContrarian
         ? (side === "UNDER"
