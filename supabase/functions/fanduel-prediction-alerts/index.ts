@@ -406,6 +406,7 @@ Deno.serve(async (req) => {
         live ? `⏱ In-game shift detected` : `⏱ ~${remaining}min window remaining`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accuracyBadge || null,
+        crossRefBadge || null,
         `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
