@@ -205,14 +205,21 @@ Deno.serve(async (req) => {
       const e1 = SPORT_EMOJI[leg1.sport] || "🎯";
       const e2 = SPORT_EMOJI[leg2.sport] || "🎯";
 
+      const formatPropLabel = (leg: EnrichedPick) => {
+        const pt = leg.prop_type
+          ? leg.prop_type.replace(/_/g, " ").replace(/player /i, "").replace(/\b\w/g, c => c.toUpperCase())
+          : "";
+        return pt ? ` ${pt}` : "";
+      };
+
       lines.push(`━━━ *Pair ${i + 1}* — ${p.strategy} ━━━`);
       lines.push(
         `${e1} *${leg1.player_name}* (${leg1.sport})`,
-        `   ${leg1.prediction}`,
+        `   ${leg1.prediction}${formatPropLabel(leg1)}`,
         `   Signal: ${leg1.signal_type} · ${(leg1.signal_accuracy * 100).toFixed(0)}% acc · Edge: ${leg1.edge > 0 ? "+" : ""}${leg1.edge.toFixed(1)}`,
         "",
         `${e2} *${leg2.player_name}* (${leg2.sport})`,
-        `   ${leg2.prediction}`,
+        `   ${leg2.prediction}${formatPropLabel(leg2)}`,
         `   Signal: ${leg2.signal_type} · ${(leg2.signal_accuracy * 100).toFixed(0)}% acc · Edge: ${leg2.edge > 0 ? "+" : ""}${leg2.edge.toFixed(1)}`,
         "",
         `Combined Accuracy: *${(p.combined_accuracy * 100).toFixed(0)}%*`,
