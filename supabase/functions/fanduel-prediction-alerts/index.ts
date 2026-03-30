@@ -40,23 +40,36 @@ function getSignalPriority(record: any): number {
   return 6;
 }
 
-// Minimum velocity gates by prop (tuned to reduce noise)
+// Minimum velocity gates by prop — lowered for faster detection
 const PROP_MIN_VELOCITY: Record<string, number> = {
-  player_points: 1.5,
-  player_rebounds: 1.2,
-  player_threes: 1.0,
-  player_points_rebounds_assists: 1.0,
-  player_rebounds_assists: 1.0,
-  player_points_assists: 1.0,
-  player_points_rebounds: 1.0,
+  player_points: 1.0,
+  player_rebounds: 0.8,
+  player_threes: 0.8,
+  player_points_rebounds_assists: 0.8,
+  player_rebounds_assists: 0.8,
+  player_points_assists: 0.8,
+  player_points_rebounds: 0.8,
 };
 
-// Minimum drift gates for take_it_now
+// Minimum drift gates for take_it_now — lowered for earlier alerts
 const PROP_MIN_DRIFT_PCT: Record<string, number> = {
-  player_rebounds: 5,  // lower gate for our best signal
-  player_points: 6,
-  player_threes: 8,
+  player_rebounds: 4,
+  player_points: 4,
+  player_threes: 5,
 };
+
+// Format American odds for display
+function fmtOdds(price: number | null | undefined): string {
+  if (!price) return "";
+  return price > 0 ? `+${price}` : `${price}`;
+}
+
+// Build the FanDuel line badge with odds
+function fdLineBadge(line: number, overPrice: number | null, underPrice: number | null, side: string): string {
+  const actionOdds = side === "OVER" ? overPrice : underPrice;
+  const oddsStr = actionOdds ? ` (${fmtOdds(actionOdds)})` : "";
+  return `📗 *FanDuel Line: ${line}${oddsStr}*`;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
