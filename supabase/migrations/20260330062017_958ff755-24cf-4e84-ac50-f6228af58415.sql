@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS line_projection_results (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at timestamptz DEFAULT now(),
+  player_name text NOT NULL,
+  prop_type text NOT NULL,
+  sport text DEFAULT 'NBA',
+  projected_value numeric NOT NULL,
+  projection_confidence numeric DEFAULT 0,
+  projection_method text,
+  fanduel_line numeric,
+  edge_pct numeric,
+  recommended_side text,
+  edge_grade text,
+  predicted_line_direction text,
+  predicted_settle_line numeric,
+  optimal_entry_line numeric,
+  is_snapback boolean DEFAULT false,
+  snapback_reason text,
+  regression_target numeric,
+  l3_avg numeric,
+  l5_avg numeric,
+  l10_avg numeric,
+  l20_avg numeric,
+  matchup_avg numeric,
+  matchup_games integer,
+  actual_value numeric,
+  projection_accurate boolean,
+  settled_at timestamptz,
+  game_date date DEFAULT CURRENT_DATE,
+  event_id text,
+  UNIQUE(player_name, prop_type, game_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projection_results_date ON line_projection_results(game_date DESC);
+CREATE INDEX IF NOT EXISTS idx_projection_results_accuracy ON line_projection_results(projection_accurate) WHERE projection_accurate IS NOT NULL;
