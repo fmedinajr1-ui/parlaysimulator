@@ -657,16 +657,8 @@ Deno.serve(async (req) => {
         : "Line deflated below open — expect snapback up";
       const liveTag = live ? " [🔴 LIVE]" : "";
 
-      // Accuracy badge
-      const accBadge = last.prop_type === "player_rebounds"
-        ? "🔥 Historical: 95.0% (37/39 verified)"
-        : last.prop_type === "spreads"
-        ? "🔥 Historical: 94.9% (37/39 verified)"
-        : last.prop_type === "moneyline"
-        ? "📈 Historical: 63.2% (12/19 verified)"
-        : isCombo
-        ? "🔥 Historical: 85-100% (combo prop snapback)"
-        : "";
+      // Dynamic accuracy badge from real verified data
+      const accBadge = dynamicAccBadge(live ? "live_drift" : "take_it_now", last.prop_type);
 
       const isTeamMarket = TEAM_MARKET_TYPES.has(last.prop_type);
       const matchupLine = isTeamMarket ? eventMatchup.get(last.event_id) : null;
