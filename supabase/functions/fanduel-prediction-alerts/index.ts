@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
   try {
     log("=== Generating FanDuel prediction alerts (accuracy-gated v2) ===");
 
-    const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+    const thirtyMinAgo = new Date(now.getTime() - 20 * 60 * 1000).toISOString(); // 20min window for faster detection
     const { data: recentData, error: fetchErr } = await supabase
       .from("fanduel_line_timeline")
       .select("*")
