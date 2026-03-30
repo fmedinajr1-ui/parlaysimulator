@@ -2044,36 +2044,40 @@ serve(async (req) => {
         ];
 
         if (OPTIMAL_WINNER_CATEGORIES.includes(spot.category)) {
-          // Use the L10 hit rate calculated during initial analysis (not recalculated against actual line)
+          // v13.0: ALWAYS use the REAL FanDuel line as recommended_line
           const config = CATEGORIES[spot.category];
           const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
           
+          // CRITICAL FIX: Set recommended_line to the REAL FanDuel line, not the hardcoded category floor
+          spot.recommended_line = actualData.line;
           spot.actual_line = actualData.line;
           spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
-          spot.line_difference = spot.recommended_line ? Math.round((actualData.line - spot.recommended_line) * 10) / 10 : null;
+          spot.l10_hit_rate = Math.round(actualHitRate * 100) / 100; // Recalculate against REAL line
+          spot.line_difference = 0; // Same line now
           spot.bookmaker = actualData.bookmaker;
           
-          // Activate based on ORIGINAL L10 hit rate (stored during analysis)
-          spot.is_active = (spot.l10_hit_rate || 0) >= (config?.minHitRate || 0.55);
+          // v13.0: Activate based on hit rate AGAINST REAL FANDUEL LINE (not fake floor)
+          const minRequired = config?.minHitRate || 0.55;
+          spot.is_active = actualHitRate >= minRequired;
           
           // Add risk level based on actual line hit rate
           if (actualHitRate >= 0.60) {
             spot.risk_level = 'LOW';
-            spot.recommendation = `Strong play - ${(actualHitRate * 100).toFixed(0)}% vs actual line`;
+            spot.recommendation = `Strong play - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
           } else if (actualHitRate >= 0.45) {
             spot.risk_level = 'MEDIUM';
-            spot.recommendation = `Moderate risk - ${(actualHitRate * 100).toFixed(0)}% vs actual, ${((spot.l10_hit_rate || 0) * 100).toFixed(0)}% L10`;
+            spot.recommendation = `Moderate risk - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
           } else {
             spot.risk_level = 'HIGH';
-            spot.recommendation = `Higher risk - L10 favorable but actual line tighter`;
+            spot.recommendation = `Higher risk - only ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
           }
           
           if (spot.is_active) {
             validatedCount++;
-            console.log(`[Category Analyzer] ✓ OPTIMAL ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (L10: ${((spot.l10_hit_rate || 0) * 100).toFixed(0)}%, Actual: ${(actualHitRate * 100).toFixed(0)}%)`);
+            console.log(`[Category Analyzer] ✓ OPTIMAL ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% hit rate vs REAL line)`);
           } else {
             droppedCount++;
-            console.log(`[Category Analyzer] ✗ OPTIMAL ${spot.player_name}: L10 hit rate ${((spot.l10_hit_rate || 0) * 100).toFixed(0)}% below threshold`);
+            console.log(`[Category Analyzer] ✗ OPTIMAL ${spot.player_name}: ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line} < ${(minRequired * 100).toFixed(0)}% required`);
           }
           
           validatedSpots.push(spot);
