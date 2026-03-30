@@ -412,6 +412,7 @@ Deno.serve(async (req) => {
 
           bestSignalPerPlayer.set(playerKey, { confidence: 99, alert: alertText, record });
         }
+      }
     }
 
     // Team market conflict guard
