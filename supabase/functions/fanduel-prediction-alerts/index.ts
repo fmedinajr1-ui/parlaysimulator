@@ -779,9 +779,35 @@ Deno.serve(async (req) => {
       predictionRecords.push(record);
     }
 
-    // Store prediction records
+    // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
+    let dedupedRecords = predictionRecords;
     if (predictionRecords.length > 0) {
-      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(predictionRecords);
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const { data: recentPreds } = await supabase
+        .from("fanduel_prediction_accuracy")
+        .select("player_name, prop_type, signal_type, event_id")
+        .gte("created_at", twoHoursAgo)
+        .limit(1000);
+
+      const recentKeys = new Set(
+        (recentPreds || []).map((r: any) => `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`)
+      );
+
+      dedupedRecords = predictionRecords.filter(r => {
+        const key = `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`;
+        if (recentKeys.has(key)) {
+          log(`⏭ Dedup: skipping ${r.player_name} ${r.prop_type} ${r.signal_type}`);
+          return false;
+        }
+        return true;
+      });
+
+      log(`Dedup: ${predictionRecords.length} → ${dedupedRecords.length} records (${predictionRecords.length - dedupedRecords.length} skipped)`);
+    }
+
+    // Store prediction records (deduped)
+    if (dedupedRecords.length > 0) {
+      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(dedupedRecords);
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
