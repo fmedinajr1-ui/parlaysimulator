@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useUnifiedAccuracy } from "@/hooks/useUnifiedAccuracy";
 import { CompositeGradeCard } from "./CompositeGradeCard";
+import { PropTypeAccuracyCard } from "./PropTypeAccuracyCard";
 import { SystemAccuracyCard } from "./SystemAccuracyCard";
 import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
 import { SettledPicksTable } from "./SettledPicksTable";
