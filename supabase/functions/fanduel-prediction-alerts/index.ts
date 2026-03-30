@@ -150,6 +150,147 @@ Deno.serve(async (req) => {
       groups.get(key)!.push(row);
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // MATCHUP CROSS-REFERENCE GATE — validate lines before alerting
+    // ══════════════════════════════════════════════════════════════
+    const STAT_FIELD_MAP: Record<string, string> = {
+      player_points: "points",
+      player_rebounds: "rebounds",
+      player_assists: "assists",
+      player_threes: "threes_made",
+    };
+    // For combo props, sum these fields
+    const COMBO_STAT_FIELDS: Record<string, string[]> = {
+      player_points_rebounds_assists: ["points", "rebounds", "assists"],
+      player_points_rebounds: ["points", "rebounds"],
+      player_points_assists: ["points", "assists"],
+      player_rebounds_assists: ["rebounds", "assists"],
+    };
+
+    const allPlayerNames = [...new Set(
+      activeData
+        .filter((r: any) => !TEAM_MARKET_TYPES.has(r.prop_type))
+        .map((r: any) => r.player_name)
+        .filter(Boolean)
+    )];
+
+    // Fetch L10 game logs + matchup history for all players in parallel
+    const [l10LogsRes, matchupHistRes] = await Promise.all([
+      allPlayerNames.length > 0
+        ? supabase
+            .from("nba_player_game_logs")
+            .select("player_name, opponent, game_date, points, rebounds, assists, threes_made")
+            .in("player_name", allPlayerNames)
+            .order("game_date", { ascending: false })
+            .limit(5000)
+        : Promise.resolve({ data: [] }),
+      allPlayerNames.length > 0
+        ? supabase
+            .from("matchup_history")
+            .select("player_name, opponent, prop_type, avg_stat, hit_rate_over, hit_rate_under, games_played, min_stat, max_stat")
+            .in("player_name", allPlayerNames)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    // Build L10 lookup: player → last 10 game stats
+    const playerL10 = new Map<string, any[]>();
+    for (const gl of (l10LogsRes.data || [])) {
+      const key = gl.player_name?.toLowerCase();
+      if (!key) continue;
+      if (!playerL10.has(key)) playerL10.set(key, []);
+      const arr = playerL10.get(key)!;
+      if (arr.length < 10) arr.push(gl);
+    }
+
+    // Build matchup lookup: player|opponent|prop_type → matchup data
+    const matchupLookup = new Map<string, any>();
+    for (const m of (matchupHistRes.data || [])) {
+      matchupLookup.set(
+        `${m.player_name.toLowerCase()}|${m.opponent?.toLowerCase()}|${m.prop_type}`,
+        m
+      );
+    }
+
+    /**
+     * Cross-reference gate: checks if the player's L10 avg supports the recommended side/line.
+     * Returns { pass, l10Avg, hitRate, matchupAvg, reason } 
+     */
+    function crossReferenceGate(playerName: string, propType: string, line: number, side: string, eventDesc: string): {
+      pass: boolean; l10Avg: number | null; l10HitRate: number | null; matchupAvg: number | null; reason: string; badge: string;
+    } {
+      const pLower = playerName.toLowerCase();
+      const logs = playerL10.get(pLower) || [];
+      const noData = { pass: true, l10Avg: null, l10HitRate: null, matchupAvg: null, reason: "no_data", badge: "" };
+
+      if (logs.length < 3) return noData; // Not enough data — let signal through with no badge
+
+      // Calculate L10 average for this prop type
+      const statFields = COMBO_STAT_FIELDS[propType] || (STAT_FIELD_MAP[propType] ? [STAT_FIELD_MAP[propType]] : null);
+      if (!statFields) return noData; // Unknown prop — let through
+
+      const l10Values = logs.slice(0, 10).map((gl: any) =>
+        statFields.reduce((sum: number, f: string) => sum + (Number(gl[f]) || 0), 0)
+      );
+      const l10Avg = l10Values.reduce((a: number, b: number) => a + b, 0) / l10Values.length;
+
+      // L10 hit rate vs this line
+      const l10Hits = l10Values.filter((v: number) =>
+        side === "OVER" ? v > line : v < line
+      ).length;
+      const l10HitRate = l10Hits / l10Values.length;
+
+      // Check matchup history if opponent can be extracted from event description
+      let matchupAvg: number | null = null;
+      let matchupHitRate: number | null = null;
+      const edLower = (eventDesc || "").toLowerCase();
+      for (const [mKey, m] of matchupLookup) {
+        if (!mKey.startsWith(`${pLower}|`)) continue;
+        if (!mKey.endsWith(`|${propType}`)) continue;
+        // Check if opponent name appears in event description
+        const oppName = mKey.split("|")[1];
+        const oppWords = oppName.split(/\s+/);
+        if (oppWords.some((w: string) => w.length > 3 && edLower.includes(w))) {
+          matchupAvg = Number(m.avg_stat);
+          matchupHitRate = side === "OVER" ? Number(m.hit_rate_over || 0) : Number(m.hit_rate_under || 0);
+          break;
+        }
+      }
+
+      // GATE LOGIC: block if L10 avg clearly doesn't support the side
+      const isOver = side === "OVER";
+      const avgVsLine = isOver ? l10Avg - line : line - l10Avg;
+      const pctEdge = (avgVsLine / line) * 100;
+
+      // Hard block: L10 avg goes AGAINST the recommended side by >10%
+      if (pctEdge < -10 && l10HitRate < 0.30) {
+        return {
+          pass: false, l10Avg, l10HitRate, matchupAvg,
+          reason: `L10 avg ${l10Avg.toFixed(1)} ${isOver ? "below" : "above"} line ${line} — ${(l10HitRate * 100).toFixed(0)}% hit rate`,
+          badge: "",
+        };
+      }
+
+      // Soft block: L10 avg slightly against AND matchup history also against
+      if (pctEdge < -5 && l10HitRate < 0.40 && matchupHitRate !== null && matchupHitRate < 0.40) {
+        return {
+          pass: false, l10Avg, l10HitRate, matchupAvg,
+          reason: `L10 avg ${l10Avg.toFixed(1)} + matchup ${matchupAvg?.toFixed(1)} both fail vs line ${line}`,
+          badge: "",
+        };
+      }
+
+      // Build validation badge for alerts that pass
+      let badge = `📊 L10 Avg: ${l10Avg.toFixed(1)} | L10 Hit: ${(l10HitRate * 100).toFixed(0)}%`;
+      if (matchupAvg !== null) {
+        badge += ` | vs Opp: ${matchupAvg.toFixed(1)} avg`;
+      }
+      if (l10HitRate >= 0.70) badge += " ✅";
+      else if (l10HitRate >= 0.50) badge += " ⚠️";
+      else badge += " 🔻";
+
+      return { pass: true, l10Avg, l10HitRate, matchupAvg, reason: "validated", badge };
+    }
+
     // Build matchup lookup
     const eventTeams = new Map<string, Set<string>>();
     for (const row of activeData) {
@@ -209,6 +350,18 @@ Deno.serve(async (req) => {
       const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
       const live = isLive(last);
 
+      // ── MATCHUP CROSS-REFERENCE GATE (player props only) ──
+      const isPlayerProp = !TEAM_MARKET_TYPES.has(first.prop_type);
+      let crossRefBadge = "";
+      if (isPlayerProp) {
+        const gate = crossReferenceGate(first.player_name, first.prop_type, last.line, side, last.event_description || "");
+        if (!gate.pass) {
+          log(`🚫 BLOCKED ${first.player_name} ${first.prop_type} ${side} ${last.line}: ${gate.reason}`);
+          continue;
+        }
+        crossRefBadge = gate.badge;
+      }
+
       // Minimum confidence gate
       if (confidence < 60) continue;
 
@@ -253,6 +406,7 @@ Deno.serve(async (req) => {
         live ? `⏱ In-game shift detected` : `⏱ ~${remaining}min window remaining`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accuracyBadge || null,
+        crossRefBadge || null,
         `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
@@ -300,6 +454,18 @@ Deno.serve(async (req) => {
       const confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
       const live = isLive(last);
 
+      // ── MATCHUP CROSS-REFERENCE GATE (player props only) ──
+      const isPlayerPropTIN = !TEAM_MARKET_TYPES.has(last.prop_type);
+      let crossRefBadgeTIN = "";
+      if (isPlayerPropTIN) {
+        const gate = crossReferenceGate(last.player_name, last.prop_type, last.line, snapDirection, last.event_description || "");
+        if (!gate.pass) {
+          log(`🚫 BLOCKED (TIN) ${last.player_name} ${last.prop_type} ${snapDirection} ${last.line}: ${gate.reason}`);
+          continue;
+        }
+        crossRefBadgeTIN = gate.badge;
+      }
+
       if (confidence < 55) continue;
 
       const reason = snapDirection === "UNDER"
@@ -333,6 +499,7 @@ Deno.serve(async (req) => {
         `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
+        crossRefBadgeTIN || null,
         `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
