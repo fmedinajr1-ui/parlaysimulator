@@ -108,6 +108,11 @@ export function DailyParlayHub() {
             <ParlaySmartCheckPanel />
           </div>
 
+          {/* Prediction 2-Leg Parlays */}
+          <div className="mb-4">
+            <PredictionParlaysSection />
+          </div>
+
           {/* Elite 3PT Parlay Card - Featured */}
           <div className="mb-4">
             <EliteThreesParlayCard />
