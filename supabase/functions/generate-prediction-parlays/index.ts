@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
       signal_sample: number;
     }
 
-    const picks: EnrichedPick[] = todayPredictions.map(p => {
+    const picks: EnrichedPick[] = verifiedPredictions.map(p => {
       const stats = signalStats[p.signal_type] || { accuracy: 0, total: 0 };
       return {
         id: p.id,
