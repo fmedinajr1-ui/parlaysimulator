@@ -2002,6 +2002,42 @@ serve(async (req) => {
           // v1.5: For BIG categories, ALWAYS recommend OVER with risk indicator
           const overHitRate = calculateHitRate(statValues, actualData.line, 'over');
           
+          // v14.0: L3 GATE — block if L3 avg doesn't clear the actual FanDuel line with buffer
+          const lineEligL3 = spot.l3_avg;
+          if (lineEligL3 != null && actualData.line > 0) {
+            const l3Buffer = ((lineEligL3 - actualData.line) / actualData.line) * 100;
+            if (lineEligL3 < actualData.line) {
+              console.log(`[L3 Gate] ✗ LINE-ELIGIBLE ${spot.player_name} ${spot.prop_type}: L3 avg ${lineEligL3.toFixed(1)} BELOW line ${actualData.line} — blocked`);
+              spot.is_active = false;
+              spot.risk_level = 'BLOCKED';
+              spot.recommendation = `L3 avg ${lineEligL3.toFixed(1)} below FanDuel line ${actualData.line}`;
+              spot.actual_line = actualData.line;
+              spot.bookmaker = actualData.bookmaker;
+              validatedSpots.push(spot);
+              droppedCount++;
+              continue;
+            }
+            if (l3Buffer < 5) {
+              console.log(`[L3 Gate] ⚠ LINE-ELIGIBLE ${spot.player_name} ${spot.prop_type}: L3 buffer only ${l3Buffer.toFixed(1)}% — thin edge, blocking`);
+              spot.is_active = false;
+              spot.risk_level = 'BLOCKED';
+              spot.recommendation = `L3 buffer ${l3Buffer.toFixed(1)}% < 5% minimum`;
+              spot.actual_line = actualData.line;
+              spot.bookmaker = actualData.bookmaker;
+              validatedSpots.push(spot);
+              droppedCount++;
+              continue;
+            }
+          } else if (lineEligL3 == null) {
+            console.log(`[L3 Gate] ✗ LINE-ELIGIBLE ${spot.player_name} ${spot.prop_type}: No L3 data — blocked`);
+            spot.is_active = false;
+            spot.actual_line = actualData.line;
+            spot.bookmaker = actualData.bookmaker;
+            validatedSpots.push(spot);
+            droppedCount++;
+            continue;
+          }
+          
           spot.recommended_side = 'over';
           spot.recommended_line = actualData.line;
           spot.actual_line = actualData.line;
@@ -2017,12 +2053,13 @@ serve(async (req) => {
           } else if (overHitRate >= 0.50) {
             spot.risk_level = 'MEDIUM';
             spot.recommendation = 'Decent value - watch for variance';
-          } else if (overHitRate >= 0.30) {
-            spot.risk_level = 'HIGH';
-            spot.recommendation = 'High variance - potential regression play';
           } else {
-            spot.risk_level = 'EXTREME';
-            spot.recommendation = 'Extreme variance - use caution';
+            spot.is_active = false;
+            spot.risk_level = 'HIGH';
+            spot.recommendation = `Only ${(overHitRate * 100).toFixed(0)}% hit rate — blocked`;
+            validatedSpots.push(spot);
+            droppedCount++;
+            continue;
           }
           
           // Confidence adjusted by hit rate (scaled 0.4-0.9)
@@ -2031,7 +2068,7 @@ serve(async (req) => {
           
           lineEligibleCount++;
           validatedCount++;
-          console.log(`[Category Analyzer] ✓ LINE-ELIGIBLE-OVER ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} (${(overHitRate * 100).toFixed(0)}% L10, ${spot.risk_level} risk)`);
+          console.log(`[Category Analyzer] ✓ LINE-ELIGIBLE-OVER ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} (${(overHitRate * 100).toFixed(0)}% L10, L3=${lineEligL3?.toFixed(1)}, ${spot.risk_level} risk)`);
           validatedSpots.push(spot);
           continue;
         }
