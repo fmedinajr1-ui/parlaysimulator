@@ -499,6 +499,7 @@ Deno.serve(async (req) => {
         `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
+        crossRefBadgeTIN || null,
         `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
