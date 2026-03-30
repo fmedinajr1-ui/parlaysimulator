@@ -305,7 +305,11 @@ Deno.serve(async (req) => {
 
       // Accuracy badge
       const accBadge = last.prop_type === "player_rebounds"
-        ? "🔥 Historical: 95.0% (76/80 correct)"
+        ? "🔥 Historical: 95.0% (37/39 verified)"
+        : last.prop_type === "spreads"
+        ? "🔥 Historical: 94.9% (37/39 verified)"
+        : last.prop_type === "moneyline"
+        ? "📈 Historical: 63.2% (12/19 verified)"
         : isCombo
         ? "🔥 Historical: 85-100% (combo prop snapback)"
         : "";
