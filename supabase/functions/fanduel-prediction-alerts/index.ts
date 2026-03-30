@@ -825,6 +825,14 @@ Deno.serve(async (req) => {
 
     log(`=== ALERTS COMPLETE: ${telegramAlerts.length} alerts, ${predictionRecords.length} predictions ===`);
 
+    // Trigger 2-leg prediction parlays digest after predictions are stored
+    try {
+      await supabase.functions.invoke("generate-prediction-parlays");
+      log("2-leg prediction parlays digest triggered ✅");
+    } catch (parlayErr: any) {
+      log(`⚠ Prediction parlays trigger error: ${parlayErr.message}`);
+    }
+
     await supabase.from("cron_job_history").insert({
       job_name: "fanduel-prediction-alerts",
       status: "completed",
