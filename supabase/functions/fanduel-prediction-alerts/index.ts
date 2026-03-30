@@ -291,6 +291,141 @@ Deno.serve(async (req) => {
       return { pass: true, l10Avg, l10HitRate, matchupAvg, reason: "validated", badge };
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // TEAM MARKET CROSS-REFERENCE GATE — validate team signals
+    // ══════════════════════════════════════════════════════════════
+    const [standingsRes, aliasesRes, nhlTeamsRes] = await Promise.all([
+      supabase.from("team_season_standings").select("team_name, sport, wins, losses, win_pct, points_for, points_against"),
+      supabase.from("team_aliases").select("team_name, aliases, team_abbreviation"),
+      supabase.from("nhl_team_pace_stats").select("team_name, goals_for_per_game, goals_against_per_game, wins, losses, ot_losses"),
+    ]);
+
+    const teamStatsMap = new Map<string, any>();
+    for (const s of (standingsRes.data || [])) {
+      teamStatsMap.set(s.team_name.toLowerCase(), {
+        team_name: s.team_name, sport: s.sport,
+        wins: s.wins, losses: s.losses,
+        win_pct: Number(s.win_pct || 0),
+        ppg: s.points_for ? Number(s.points_for) : null,
+        oppg: s.points_against ? Number(s.points_against) : null,
+      });
+    }
+    for (const t of (nhlTeamsRes.data || [])) {
+      const total = (t.wins || 0) + (t.losses || 0) + (t.ot_losses || 0);
+      teamStatsMap.set(t.team_name.toLowerCase(), {
+        team_name: t.team_name, sport: "NHL",
+        wins: t.wins, losses: t.losses,
+        win_pct: total > 0 ? t.wins / total : 0,
+        ppg: Number(t.goals_for_per_game || 0),
+        oppg: Number(t.goals_against_per_game || 0),
+      });
+    }
+
+    // Alias resolver
+    const aliasToTeamName = new Map<string, string>();
+    for (const a of (aliasesRes.data || [])) {
+      aliasToTeamName.set(a.team_name.toLowerCase(), a.team_name);
+      if (a.team_abbreviation) aliasToTeamName.set(a.team_abbreviation.toLowerCase(), a.team_name);
+      if (a.aliases) {
+        try {
+          const list = typeof a.aliases === "string" ? JSON.parse(a.aliases) : a.aliases;
+          for (const al of list) {
+            if (typeof al === "string") aliasToTeamName.set(al.toLowerCase(), a.team_name);
+          }
+        } catch {}
+      }
+    }
+
+    function resolveTeamName(name: string): string | null {
+      const lower = name.toLowerCase();
+      if (aliasToTeamName.has(lower)) return aliasToTeamName.get(lower)!;
+      for (const [alias, canonical] of aliasToTeamName) {
+        if (lower.includes(alias) || alias.includes(lower)) return canonical;
+      }
+      return null;
+    }
+
+    function teamCrossReferenceGate(teamName: string, propType: string, line: number, side: string, eventDesc: string): {
+      pass: boolean; reason: string; badge: string;
+    } {
+      const resolved = resolveTeamName(teamName);
+      if (!resolved) return { pass: true, reason: "no_team_data", badge: "" };
+
+      const stats = teamStatsMap.get(resolved.toLowerCase());
+      if (!stats) return { pass: true, reason: "no_stats", badge: "" };
+
+      // Find opponent from event description
+      const parts = (eventDesc || "").split(/\s+vs?\s+/i);
+      let oppStats: any = null;
+      if (parts.length === 2) {
+        const opp0 = resolveTeamName(parts[0].trim());
+        const opp1 = resolveTeamName(parts[1].trim());
+        const oppName = opp0?.toLowerCase() === resolved.toLowerCase() ? opp1 : opp0;
+        if (oppName) oppStats = teamStatsMap.get(oppName.toLowerCase());
+      }
+
+      if (propType === "moneyline" || propType === "h2h") {
+        // Check if win% supports the recommended side
+        const winPct = stats.win_pct;
+        const oppWinPct = oppStats?.win_pct || 0.5;
+
+        // BACK = betting team wins. Check if team is actually good enough
+        if (side === "OVER" || side === "BACK") {
+          // Blocking: recommending BACK on a team with <40% win rate vs opponent with >55%
+          if (winPct < 0.40 && oppWinPct > 0.55) {
+            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% win rate vs ${(oppWinPct*100).toFixed(0)}% opp — bad ML value`, badge: "" };
+          }
+        }
+        if (side === "UNDER" || side === "FADE") {
+          // Blocking: recommending FADE on a team with >60% win rate
+          if (winPct > 0.60) {
+            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% win rate — fading a strong team`, badge: "" };
+          }
+        }
+
+        const badge = `📊 ${resolved}: ${(winPct*100).toFixed(0)}% W${oppStats ? ` | Opp: ${(oppWinPct*100).toFixed(0)}% W` : ""}`;
+        return { pass: true, reason: "validated", badge };
+
+      } else if (propType === "totals") {
+        if (!stats.ppg || !oppStats?.ppg) return { pass: true, reason: "missing_ppg", badge: "" };
+
+        const projectedTotal = stats.ppg + oppStats.ppg;
+        const isOver = side === "OVER";
+        const edge = isOver ? projectedTotal - line : line - projectedTotal;
+        const pctEdge = (edge / line) * 100;
+
+        // Block if projected total strongly contradicts the side (>8% against)
+        if (pctEdge < -8) {
+          return { pass: false, reason: `Projected ${projectedTotal.toFixed(1)} ${isOver ? "below" : "above"} line ${line} by ${Math.abs(pctEdge).toFixed(1)}%`, badge: "" };
+        }
+
+        const badge = `📊 Projected: ${projectedTotal.toFixed(1)} (${stats.ppg.toFixed(1)} + ${oppStats.ppg.toFixed(1)})${pctEdge > 0 ? " ✅" : " ⚠️"}`;
+        return { pass: true, reason: "validated", badge };
+
+      } else if (propType === "spreads") {
+        if (!stats.ppg || !stats.oppg) return { pass: true, reason: "missing_diff", badge: "" };
+
+        const ptDiff = stats.ppg - stats.oppg;
+        const oppPtDiff = oppStats ? (oppStats.ppg || 0) - (oppStats.oppg || 0) : 0;
+        const projMargin = (ptDiff - oppPtDiff) / 2;
+        const spreadLine = line;
+        const edge = projMargin - (-spreadLine);
+
+        // Block if projected margin strongly contradicts the recommended side (>5pt against)
+        if (side === "COVER" && edge < -5) {
+          return { pass: false, reason: `Projected margin ${projMargin.toFixed(1)} doesn't cover ${spreadLine}`, badge: "" };
+        }
+        if (side === "FADE" && edge > 5) {
+          return { pass: false, reason: `Projected margin ${projMargin.toFixed(1)} suggests cover, not fade`, badge: "" };
+        }
+
+        const badge = `📊 Margin: ${projMargin > 0 ? "+" : ""}${projMargin.toFixed(1)} | Spread: ${spreadLine}${Math.abs(edge) > 2 ? " ✅" : " ⚠️"}`;
+        return { pass: true, reason: "validated", badge };
+      }
+
+      return { pass: true, reason: "unknown_market", badge: "" };
+    }
+
     // Build matchup lookup
     const eventTeams = new Map<string, Set<string>>();
     for (const row of activeData) {
