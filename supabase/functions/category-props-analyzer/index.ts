@@ -2085,6 +2085,36 @@ serve(async (req) => {
           const config = CATEGORIES[spot.category];
           const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
           
+          // v14.0: L3 GATE for OPTIMAL categories — must clear line with buffer
+          const optL3 = spot.l3_avg;
+          const optSide = (spot.recommended_side || 'over').toLowerCase();
+          if (optL3 != null && actualData.line > 0) {
+            const l3Vs = optSide === 'over' 
+              ? ((optL3 - actualData.line) / actualData.line) * 100
+              : ((actualData.line - optL3) / actualData.line) * 100;
+            if (l3Vs < 5) {
+              console.log(`[L3 Gate] ✗ OPTIMAL ${spot.player_name} ${spot.prop_type}: L3=${optL3.toFixed(1)} vs line ${actualData.line}, buffer ${l3Vs.toFixed(1)}% < 5% — blocked`);
+              spot.is_active = false;
+              spot.risk_level = 'BLOCKED';
+              spot.recommended_line = actualData.line;
+              spot.actual_line = actualData.line;
+              spot.bookmaker = actualData.bookmaker;
+              spot.recommendation = `L3 buffer ${l3Vs.toFixed(1)}% < 5% minimum vs FanDuel line ${actualData.line}`;
+              validatedSpots.push(spot);
+              droppedCount++;
+              continue;
+            }
+          } else if (optL3 == null) {
+            console.log(`[L3 Gate] ✗ OPTIMAL ${spot.player_name} ${spot.prop_type}: No L3 data — blocked`);
+            spot.is_active = false;
+            spot.recommended_line = actualData.line;
+            spot.actual_line = actualData.line;
+            spot.bookmaker = actualData.bookmaker;
+            validatedSpots.push(spot);
+            droppedCount++;
+            continue;
+          }
+          
           // CRITICAL FIX: Set recommended_line to the REAL FanDuel line, not the hardcoded category floor
           spot.recommended_line = actualData.line;
           spot.actual_line = actualData.line;
@@ -2100,7 +2130,7 @@ serve(async (req) => {
           // Add risk level based on actual line hit rate
           if (actualHitRate >= 0.60) {
             spot.risk_level = 'LOW';
-            spot.recommendation = `Strong play - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
+            spot.recommendation = `Strong play - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}, L3=${optL3?.toFixed(1)}`;
           } else if (actualHitRate >= 0.45) {
             spot.risk_level = 'MEDIUM';
             spot.recommendation = `Moderate risk - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
@@ -2111,7 +2141,7 @@ serve(async (req) => {
           
           if (spot.is_active) {
             validatedCount++;
-            console.log(`[Category Analyzer] ✓ OPTIMAL ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% hit rate vs REAL line)`);
+            console.log(`[Category Analyzer] ✓ OPTIMAL ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% hit rate, L3=${optL3?.toFixed(1)})`);
           } else {
             droppedCount++;
             console.log(`[Category Analyzer] ✗ OPTIMAL ${spot.player_name}: ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line} < ${(minRequired * 100).toFixed(0)}% required`);
