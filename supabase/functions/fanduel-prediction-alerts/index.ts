@@ -5,17 +5,34 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── ACCURACY-DRIVEN SIGNAL GATES ──
-// Based on verified historical data as of 2026-03-30:
-//   take_it_now (rebounds): 95.0%  → PRIORITY 1
-//   line_about_to_move (points rising): 75.0% → PRIORITY 2
-//   combo props (PRA etc): 100% (n=14) → PRIORITY 3
-//   line_about_to_move (rebounds): 50-52% → PRIORITY 4
-//   velocity_spike: 15-36% → KILLED
-//   cascade: 11-24% → KILLED
-//   snapback (points): 0% → KILLED
+// ── ACCURACY-DRIVEN SIGNAL GATES (updated 2026-03-30) ──
+// VERIFIED WINNERS:
+//   take_it_now (rebounds): 95.0%        → P1
+//   take_it_now (spreads): 94.9%         → P1 (same tier!)
+//   combo props (PRA etc): 85-100%       → P2
+//   line_about_to_move (points rising): 75% → P3
+//   take_it_now (moneyline): 63.2%       → P4
+//   velocity_spike (ML dropping): 57.9%  → P5
+// KILLED:
+//   velocity_spike (totals): 0-8%        → KILLED
+//   velocity_spike (spreads): 0%         → KILLED
+//   cascade: 0-24%                       → KILLED
+//   snapback (points/3s): 0%             → KILLED
 
-const KILLED_SIGNALS = new Set(["velocity_spike", "cascade"]);
+const KILLED_SIGNALS = new Set(["cascade"]);
+// velocity_spike is now conditionally killed (see below)
+const KILLED_VELOCITY_MARKETS = new Set(["totals", "spreads", "player_points", "player_threes", "player_rebounds"]);
+// velocity_spike ONLY survives for moneyline dropping (57.9%)
+function isKilledSignal(signalType: string, propType: string, direction?: string): boolean {
+  if (KILLED_SIGNALS.has(signalType)) return true;
+  if (signalType === "velocity_spike") {
+    // Only moneyline dropping survives
+    if (propType === "moneyline" && direction === "dropping") return false;
+    return true;
+  }
+  return false;
+}
+
 const COMBO_PROPS = new Set([
   "player_points_rebounds_assists", "player_rebounds_assists",
   "player_points_assists", "player_points_rebounds",
@@ -26,20 +43,21 @@ const TEAM_MARKET_TYPES = new Set(["h2h", "moneyline", "spreads", "totals"]);
 // Priority tiers for alert ordering (lower = sent first)
 function getSignalPriority(record: any): number {
   const { signal_type, prop_type, predicted_direction } = record;
-  // P1: take_it_now rebounds (95%)
-  if (signal_type === "take_it_now" && prop_type === "player_rebounds") return 1;
+  // P1: take_it_now rebounds (95%) + spreads (94.9%)
+  if (signal_type === "take_it_now" && (prop_type === "player_rebounds" || prop_type === "spreads")) return 1;
   // P2: combo props (85-100%)
   if (COMBO_PROPS.has(prop_type)) return 2;
   // P3: line_about_to_move points rising (75% w/ contrarian flip)
   if (signal_type === "line_about_to_move" && prop_type === "player_points") return 3;
-  // P4: take_it_now other props (still strong snapback)
-  if (signal_type === "take_it_now") return 4;
-  // P5: line_about_to_move rebounds (50-52%)
-  if (signal_type === "line_about_to_move" && prop_type === "player_rebounds") return 5;
-  // P6: everything else
-  return 6;
+  // P4: take_it_now moneyline (63.2%)
+  if (signal_type === "take_it_now" && prop_type === "moneyline") return 4;
+  // P5: velocity_spike moneyline dropping (57.9%)
+  if (signal_type === "velocity_spike" && prop_type === "moneyline" && predicted_direction === "dropping") return 5;
+  // P6: take_it_now other props
+  if (signal_type === "take_it_now") return 6;
+  // P7: everything else
+  return 7;
 }
-
 // Minimum velocity gates by prop — lowered for faster detection
 const PROP_MIN_VELOCITY: Record<string, number> = {
   player_points: 1.0,
@@ -287,7 +305,11 @@ Deno.serve(async (req) => {
 
       // Accuracy badge
       const accBadge = last.prop_type === "player_rebounds"
-        ? "🔥 Historical: 95.0% (76/80 correct)"
+        ? "🔥 Historical: 95.0% (37/39 verified)"
+        : last.prop_type === "spreads"
+        ? "🔥 Historical: 94.9% (37/39 verified)"
+        : last.prop_type === "moneyline"
+        ? "📈 Historical: 63.2% (12/19 verified)"
         : isCombo
         ? "🔥 Historical: 85-100% (combo prop snapback)"
         : "";
