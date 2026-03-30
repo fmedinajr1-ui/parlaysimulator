@@ -259,7 +259,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    lines.push(`_Generated from ${todayPredictions.length} active predictions_`);
+    lines.push(`_Generated from ${verifiedPredictions.length} verified FanDuel predictions (${todayPredictions.length} total)_`);
 
     const message = lines.join("\n");
 
