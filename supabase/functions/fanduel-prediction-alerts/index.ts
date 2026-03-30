@@ -485,7 +485,7 @@ Deno.serve(async (req) => {
       const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
       const live = isLive(last);
 
-      // ── MATCHUP CROSS-REFERENCE GATE (player props only) ──
+      // ── CROSS-REFERENCE GATE (player props + team markets) ──
       const isPlayerProp = !TEAM_MARKET_TYPES.has(first.prop_type);
       let crossRefBadge = "";
       if (isPlayerProp) {
@@ -495,6 +495,14 @@ Deno.serve(async (req) => {
           continue;
         }
         crossRefBadge = gate.badge;
+      } else {
+        // Team market cross-reference
+        const teamGate = teamCrossReferenceGate(first.player_name, first.prop_type, last.line, side, last.event_description || "");
+        if (!teamGate.pass) {
+          log(`🚫 BLOCKED TEAM ${first.player_name} ${first.prop_type} ${side} ${last.line}: ${teamGate.reason}`);
+          continue;
+        }
+        crossRefBadge = teamGate.badge;
       }
 
       // Minimum confidence gate
