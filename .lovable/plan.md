@@ -1,147 +1,84 @@
 
 
-## FanDuel Line Behavior Prediction Engine
+## Perfect Line Catcher — Matchup-Aware Line Value Engine
 
-### The Core Idea
+### The Concept
 
-You're right — if we're trying to **beat** FanDuel's line adjustments, 30 minutes is way too slow. FanDuel typically adjusts lines in **3-7 minute windows** after sharp money hits. To predict where a line is going before FanDuel moves it, we need to:
+Right now your system detects *line movement* but doesn't cross-reference it with *historical player performance vs that specific opponent*. The idea: when FanDuel posts a line for "Jayson Tatum O 27.5 pts", the system should instantly check his historical stats vs that opponent (e.g., he averages 31.2 pts vs CHA with a 4/5 over rate) and flag it as a **Perfect Line** — a mispriced entry where history says the book is wrong.
 
-1. Track lines at **5-minute intervals** (not 30 min or 3x/day)
-2. Store a persistent timeline so we can learn FanDuel's **behavioral patterns** (how fast they react, which markets move first, cascade patterns)
-3. Build a **prediction layer** that recognizes the early signals of an incoming move and alerts you BEFORE FanDuel finishes adjusting
+### What We Have Already
 
-### What's Broken Right Now
+- **`matchup_history`** table: `player_name`, `opponent`, `prop_type`, `avg_stat`, `min_stat`, `max_stat`, `games_played`, `hit_rate_over`, `hit_rate_under`
+- **`fanduel_line_timeline`** table: real-time FanDuel lines with `player_name`, `prop_type`, `line`, `over_price`, `under_price`
+- **`nba_player_game_logs`**: granular game-by-game data with points, rebounds, threes, assists vs each opponent
 
-| Component | Current Speed | Problem |
-|---|---|---|
-| `track-odds-movement` | 3x per day | Misses 95% of intra-day moves |
-| `whale-odds-scraper` | Every 30 min | Too slow to catch sharp windows |
-| Prop markets tracked | Only PTS + AST | Missing REB, 3s, blocks, steals |
-| Games tracked for props | Max 2 | Ignores most of the slate |
-| Snapshot retention | Deleted after 24h | Can't learn patterns |
-| Sports | NBA only for props | No MLB/NHL prop tracking |
+### Plan
 
-### Telegram Digest — Current State
+#### 1. New Edge Function: `perfect-line-scanner`
 
-Telegram alerts fire from multiple functions but they're all **reactive** (reporting what already happened):
-- `pregame-scanlines-alert` — 15 min cron, alerts 30 min before tip
-- `hedge-live-telegram-tracker` — 15 min cron, in-game status updates
-- `bot-send-telegram` — used by diagnostics, integrity, broadcasts
-- Various outcome verifiers send results
+Cross-references today's FanDuel lines against matchup history to find mispriced lines.
 
-None of these predict where lines are **going**. They report where lines **went**.
+**Logic:**
+- Fetch all current FanDuel lines (latest snapshot per player/prop)
+- For each line, look up `matchup_history` for that player vs today's opponent
+- Calculate **Line Gap** = `avg_stat - line` (positive = book is too low)
+- Calculate **Floor Safety** = `min_stat - line` (positive = player ALWAYS clears)
+- Calculate **Hit Rate** from `hit_rate_over` / `hit_rate_under`
+- Score each line into tiers:
+  - **PERFECT LINE** (🟢): avg > line by 15%+ AND min >= line AND games >= 3 AND hit rate >= 80%
+  - **STRONG EDGE** (🔵): avg > line by 10%+ AND hit rate >= 65%
+  - **LEAN** (🟡): avg > line by 5%+ AND hit rate >= 55%
+- Works for points, threes, AND rebounds
+- Returns sorted list with best opportunities first
 
-### The Build — 3 Layers
+#### 2. Integrate Into `fanduel-prediction-alerts`
 
-#### Layer 1: High-Frequency FanDuel Scanner (every 5 min)
+Add a new signal type `perfect_line` that fires as a **P0 (highest priority)** alert — these go out FIRST, before any movement-based signals.
 
-**New function: `fanduel-line-scanner`**
+- When the scanner finds a Perfect Line or Strong Edge, format a Telegram alert:
+  ```
+  🎯 PERFECT LINE DETECTED
+  Jayson Tatum OVER 27.5 Points (-110)
+  📊 vs CHA: 31.2 avg | 4/5 over | Floor: 28
+  🔥 Historical: 80% hit rate (4/5 games)
+  ✅ Gap: +3.7 pts above line
+  ```
+- Fire these as soon as lines appear (no need to wait for movement)
 
-Replaces the broken 3x/day `track-odds-movement` prop tracking with a dedicated FanDuel-only scanner:
-- Runs every **5 minutes** from 10AM to 1AM ET
-- Covers NBA, MLB, NHL — all prop markets available on FanDuel
-- Stores every snapshot in `fanduel_line_timeline` (retained 30 days, not 24h)
-- Tags each snapshot with phase: `morning_open`, `midday`, `pre_tip`, `live`, `closing`
-- Filters `bookmakers=fanduel` in API calls to save budget (one book = ~75% fewer API calls)
-- Tracks: line value, over/under prices, hours-to-tip, drift from opening
+#### 3. Enhanced Game Log Cross-Reference
 
-**New table: `fanduel_line_timeline`**
-- `sport`, `event_id`, `player_name`, `prop_type`, `line`, `over_price`, `under_price`
-- `snapshot_phase`, `snapshot_time`, `hours_to_tip`
-- `line_change_from_open`, `price_change_from_open`
-- `drift_velocity` (computed: points moved per hour)
-- 30-day retention via nightly cleanup
+For deeper accuracy, also query `nba_player_game_logs` directly to get:
+- Last 3 games vs this specific opponent (recency matters)
+- Home/away split vs opponent
+- Whether the player was a starter in those games
 
-#### Layer 2: FanDuel Behavior Pattern Detector
+This adds a **recency weight** — if a player scored 35, 32, 29 in their last 3 vs CHA, that's stronger than a 5-game average of 28.
 
-**New function: `fanduel-behavior-analyzer`** (runs every 15 min)
+#### 4. Cron Schedule
 
-This is the prediction engine. It reads the timeline and identifies FanDuel's behavioral patterns:
+Run `perfect-line-scanner` every 30 minutes during scan hours (10 AM–7 PM ET) so it catches lines as soon as FanDuel posts them — before movement happens.
 
-1. **Cascade Detection**: When FanDuel moves one prop market for a player, they often adjust related markets within 5-15 minutes. If Points line drops, Rebounds/Assists lines follow. Detect cascade start and alert before wave completes.
+### Files to Create/Edit
 
-2. **Velocity Alerts**: Track how fast a line is moving (drift_velocity). A line that moved 0.5 points in 10 minutes is about to move again. Alert when velocity exceeds historical norms.
+| File | Action |
+|------|--------|
+| `supabase/functions/perfect-line-scanner/index.ts` | **Create** — core matchup vs line cross-reference engine |
+| `supabase/functions/fanduel-prediction-alerts/index.ts` | **Edit** — add P0 perfect_line signal type, fire before movement signals |
+| DB migration | **Create** — add `pg_cron` job for 30-min scans |
 
-3. **Opening Line Anchor Divergence**: FanDuel tends to snap lines back toward opening if they drift too far without sharp confirmation. Detect overextended lines ripe for snapback.
+### Key Technical Detail
 
-4. **Cross-Sport Pattern Learning**: Store FanDuel's reaction speed by sport and market type. MLB pitcher Ks move slower than NBA points. Learn the cadence per market.
+The scoring formula per prop:
 
-5. **Sharp Timing Windows**: FanDuel adjusts fastest between 2-4 PM ET (early sharp money) and 30-60 min pre-tip. Lines are stickiest in morning. Learn and exploit the slow windows.
-
-**New table: `fanduel_behavior_patterns`**
-- `sport`, `prop_type`, `pattern_type` (cascade, velocity_spike, snapback, etc.)
-- `avg_reaction_time_minutes`, `avg_move_size`, `confidence`
-- `sample_size`, `last_updated`
-
-#### Layer 3: Predictive Alert Engine + Telegram
-
-**New function: `fanduel-prediction-alerts`** (runs every 5 min during game windows)
-
-Fires Telegram alerts for three signal types:
-
-1. **"LINE ABOUT TO MOVE"** — Cascade detected, velocity spike, or sharp money pattern recognized. Alert includes predicted direction and magnitude.
-
-2. **"TAKE IT NOW"** — Line is at a soft number that historically snaps back. Window to grab value before FanDuel corrects. Includes the over/under recommendation and confidence.
-
-3. **"TRAP WARNING"** — Line moved in a pattern historically associated with traps (sharp reversal, both-sides movement). Don't touch this one.
-
-Telegram format:
 ```text
-PREDICTION ALERT — NBA
-Wembanyama PTS OVER 24.5
-Line dropped 1.5 pts in 20 min (velocity: 4.5/hr)
-FanDuel avg reaction: 12 min remaining
-Cascade: AST line not yet adjusted
-Action: TAKE OVER NOW
-Confidence: 78%
+edge_score = (avg_stat - line) / line × 100    # % above line
+floor_gap  = min_stat - line                    # safety margin
+hit_rate   = hit_rate_over (or under)           # from matchup_history
+
+tier = PERFECT  if edge_score >= 15 AND floor_gap >= 0 AND hit_rate >= 0.80
+     = STRONG   if edge_score >= 10 AND hit_rate >= 0.65
+     = LEAN     if edge_score >= 5  AND hit_rate >= 0.55
 ```
 
-#### Self-Correction: Accuracy Feedback Loop
-
-**New function: `fanduel-accuracy-feedback`** (nightly 2AM ET)
-
-- Compares every prediction alert against actual outcomes
-- Buckets accuracy by: sport, prop type, signal type, time-to-tip, velocity range
-- Auto-adjusts velocity thresholds and cascade timing based on what's actually winning
-- Updates `fanduel_behavior_patterns` with fresh reaction times
-- Target: start at baseline, improve weekly as data accumulates
-
-**New table: `fanduel_prediction_accuracy`**
-- `signal_type`, `sport`, `prop_type`, `prediction`, `actual_outcome`
-- `was_correct`, `edge_at_signal`, `time_to_tip_hours`
-- Feeds back into behavior analyzer weights
-
-### Updated Cron Schedule
-
-| Function | Frequency | Why |
-|---|---|---|
-| `fanduel-line-scanner` | Every 5 min | Catch FanDuel moves in real-time |
-| `fanduel-behavior-analyzer` | Every 15 min | Pattern detection needs 3+ data points |
-| `fanduel-prediction-alerts` | Every 5 min (game hours) | Predictions must be faster than FanDuel |
-| `fanduel-accuracy-feedback` | Daily 2AM ET | Nightly self-correction |
-
-### API Budget Impact
-
-Current whale scraper uses ~1,072/2,500 calls per day across multiple books.
-FanDuel-only scanning with `&bookmakers=fanduel` reduces per-call cost significantly.
-At 5-min intervals for ~12 hours = ~144 calls/day for game lines + ~144 for props = ~288 total new calls.
-Well within budget, especially since we're filtering to one book.
-
-### Implementation Order
-
-1. Create 3 new database tables (`fanduel_line_timeline`, `fanduel_behavior_patterns`, `fanduel_prediction_accuracy`)
-2. Build `fanduel-line-scanner` — start collecting 5-min data immediately
-3. Upgrade `track-odds-movement` — expand from 2 markets to all, remove 2-game cap, increase cron to every 5 min
-4. Build `fanduel-behavior-analyzer` — pattern detection layer
-5. Build `fanduel-prediction-alerts` — Telegram prediction alerts
-6. Build `fanduel-accuracy-feedback` — close the self-correction loop
-7. Set up all 4 new cron jobs
-
-### Technical Details
-
-- All functions are edge functions in `supabase/functions/`
-- FanDuel-only API calls use `&bookmakers=fanduel` parameter on The Odds API
-- Timeline data retained 30 days via nightly `DELETE WHERE snapshot_time < now() - interval '30 days'`
-- Behavior patterns table has no TTL — patterns accumulate permanently
-- Telegram alerts use existing `bot-send-telegram` infrastructure
+This ensures we only alert on lines where the book is genuinely mispriced against historical matchup data — no traps, no guessing.
 
