@@ -40,23 +40,36 @@ function getSignalPriority(record: any): number {
   return 6;
 }
 
-// Minimum velocity gates by prop (tuned to reduce noise)
+// Minimum velocity gates by prop — lowered for faster detection
 const PROP_MIN_VELOCITY: Record<string, number> = {
-  player_points: 1.5,
-  player_rebounds: 1.2,
-  player_threes: 1.0,
-  player_points_rebounds_assists: 1.0,
-  player_rebounds_assists: 1.0,
-  player_points_assists: 1.0,
-  player_points_rebounds: 1.0,
+  player_points: 1.0,
+  player_rebounds: 0.8,
+  player_threes: 0.8,
+  player_points_rebounds_assists: 0.8,
+  player_rebounds_assists: 0.8,
+  player_points_assists: 0.8,
+  player_points_rebounds: 0.8,
 };
 
-// Minimum drift gates for take_it_now
+// Minimum drift gates for take_it_now — lowered for earlier alerts
 const PROP_MIN_DRIFT_PCT: Record<string, number> = {
-  player_rebounds: 5,  // lower gate for our best signal
-  player_points: 6,
-  player_threes: 8,
+  player_rebounds: 4,
+  player_points: 4,
+  player_threes: 5,
 };
+
+// Format American odds for display
+function fmtOdds(price: number | null | undefined): string {
+  if (!price) return "";
+  return price > 0 ? `+${price}` : `${price}`;
+}
+
+// Build the FanDuel line badge with odds
+function fdLineBadge(line: number, overPrice: number | null, underPrice: number | null, side: string): string {
+  const actionOdds = side === "OVER" ? overPrice : underPrice;
+  const oddsStr = actionOdds ? ` (${fmtOdds(actionOdds)})` : "";
+  return `📗 *FanDuel Line: ${line}${oddsStr}*`;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -74,7 +87,7 @@ Deno.serve(async (req) => {
   try {
     log("=== Generating FanDuel prediction alerts (accuracy-gated v2) ===");
 
-    const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+    const thirtyMinAgo = new Date(now.getTime() - 20 * 60 * 1000).toISOString(); // 20min window for faster detection
     const { data: recentData, error: fetchErr } = await supabase
       .from("fanduel_line_timeline")
       .select("*")
@@ -150,7 +163,7 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      if (timeDiffMin < 5) continue;
+      if (timeDiffMin < 3) continue; // reduced from 5 for faster detection
 
       const lineDiff = last.line - first.line;
       const absLineDiff = Math.abs(lineDiff);
@@ -212,12 +225,13 @@ Deno.serve(async (req) => {
         `🔮 *${live ? "LINE MOVING NOW" : "LINE ABOUT TO MOVE"}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
         marketLabel,
+        fdLineBadge(last.line, last.over_price, last.under_price, side),
         `Line ${direction}: ${first.line} → ${last.line}`,
         `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
         live ? `⏱ In-game shift detected` : `⏱ ~${remaining}min window remaining`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accuracyBadge || null,
-        `✅ *Action: ${side} ${last.line}*`,
+        `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
       ].filter(Boolean).join("\n");
@@ -288,11 +302,12 @@ Deno.serve(async (req) => {
         `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
         marketLabel,
+        fdLineBadge(last.line, last.over_price, last.under_price, snapDirection),
         `Open: ${last.opening_line} → Now: ${last.line}`,
         `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
-        `✅ *Action: ${snapDirection} ${last.line}*`,
+        `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
 
