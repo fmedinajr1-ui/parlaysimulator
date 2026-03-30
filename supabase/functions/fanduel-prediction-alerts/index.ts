@@ -454,6 +454,18 @@ Deno.serve(async (req) => {
       const confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
       const live = isLive(last);
 
+      // ── MATCHUP CROSS-REFERENCE GATE (player props only) ──
+      const isPlayerPropTIN = !TEAM_MARKET_TYPES.has(last.prop_type);
+      let crossRefBadgeTIN = "";
+      if (isPlayerPropTIN) {
+        const gate = crossReferenceGate(last.player_name, last.prop_type, last.line, snapDirection, last.event_description || "");
+        if (!gate.pass) {
+          log(`🚫 BLOCKED (TIN) ${last.player_name} ${last.prop_type} ${snapDirection} ${last.line}: ${gate.reason}`);
+          continue;
+        }
+        crossRefBadgeTIN = gate.badge;
+      }
+
       if (confidence < 55) continue;
 
       const reason = snapDirection === "UNDER"
