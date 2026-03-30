@@ -87,6 +87,38 @@ Deno.serve(async (req) => {
 
     log(`Found ${todayPredictions.length} today's predictions from qualified signals`);
 
+    // 2b. Cross-reference against unified_props for REAL verified FanDuel lines
+    const { data: verifiedProps } = await supabase
+      .from("unified_props")
+      .select("player_name, prop_type, line, has_real_line")
+      .eq("has_real_line", true);
+
+    const verifiedLineKeys = new Set<string>();
+    if (verifiedProps) {
+      for (const vp of verifiedProps) {
+        const key = `${(vp.player_name || "").toLowerCase().trim()}|${(vp.prop_type || "").toLowerCase().trim()}`;
+        verifiedLineKeys.add(key);
+      }
+    }
+    log(`Verified FanDuel lines in unified_props: ${verifiedLineKeys.size}`);
+
+    // Filter predictions to only those with verified real FanDuel lines
+    const verifiedPredictions = todayPredictions.filter(p => {
+      const playerName = (p.player_name || "").toLowerCase().trim();
+      const propType = (p.prop_type || "").toLowerCase().trim();
+      const key = `${playerName}|${propType}`;
+      return verifiedLineKeys.has(key);
+    });
+
+    log(`After FanDuel line verification: ${verifiedPredictions.length}/${todayPredictions.length} predictions have real lines`);
+
+    if (verifiedPredictions.length < 2) {
+      log(`Only ${verifiedPredictions.length} verified predictions — need ≥2`);
+      return new Response(JSON.stringify({ success: true, parlays: 0, reason: "Not enough verified FanDuel lines" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Enrich picks
     interface EnrichedPick {
       id: string;
@@ -102,7 +134,7 @@ Deno.serve(async (req) => {
       signal_sample: number;
     }
 
-    const picks: EnrichedPick[] = todayPredictions.map(p => {
+    const picks: EnrichedPick[] = verifiedPredictions.map(p => {
       const stats = signalStats[p.signal_type] || { accuracy: 0, total: 0 };
       return {
         id: p.id,
@@ -227,7 +259,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    lines.push(`_Generated from ${todayPredictions.length} active predictions_`);
+    lines.push(`_Generated from ${verifiedPredictions.length} verified FanDuel predictions (${todayPredictions.length} total)_`);
 
     const message = lines.join("\n");
 
