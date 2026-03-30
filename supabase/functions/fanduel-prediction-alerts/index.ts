@@ -124,6 +124,32 @@ Deno.serve(async (req) => {
       .select("*")
       .gte("sample_size", 3);
 
+    // ── Dynamic accuracy lookup from verified predictions ──
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: accuracyRows } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("signal_type, prop_type, was_correct")
+      .not("was_correct", "is", null)
+      .gte("created_at", thirtyDaysAgo);
+
+    const accuracyMap = new Map<string, { correct: number; total: number }>();
+    for (const row of accuracyRows || []) {
+      const key = `${row.signal_type}|${row.prop_type}`;
+      if (!accuracyMap.has(key)) accuracyMap.set(key, { correct: 0, total: 0 });
+      const b = accuracyMap.get(key)!;
+      b.total++;
+      if (row.was_correct) b.correct++;
+    }
+
+    function dynamicAccBadge(signalType: string, propType: string): string {
+      const key = `${signalType}|${propType}`;
+      const stats = accuracyMap.get(key);
+      if (!stats || stats.total < 5) return "";
+      const pct = ((stats.correct / stats.total) * 100).toFixed(1);
+      const emoji = stats.correct / stats.total >= 0.6 ? "🔥" : stats.correct / stats.total >= 0.5 ? "📈" : "⚠️";
+      return `${emoji} Historical: ${pct}% (${stats.correct}/${stats.total} verified)`;
+    }
+
     if (!recentData || recentData.length === 0) {
       log("No recent data for alerts");
       return new Response(JSON.stringify({ success: true, alerts: 0 }), {
