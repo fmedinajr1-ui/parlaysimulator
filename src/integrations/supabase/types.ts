@@ -10529,6 +10529,78 @@ export type Database = {
         }
         Relationships: []
       }
+      scale_in_tracker: {
+        Row: {
+          avg_entry_line: number | null
+          best_line: number | null
+          created_at: string
+          current_line: number
+          entries: Json
+          event_description: string | null
+          event_id: string
+          hit_rate: number | null
+          id: string
+          initial_line: number
+          is_active: boolean
+          matchup_edge_pct: number | null
+          opponent: string | null
+          outcome: string | null
+          phase: number
+          player_name: string
+          prop_type: string
+          side: string
+          sport: string | null
+          total_units_deployed: number
+          updated_at: string
+        }
+        Insert: {
+          avg_entry_line?: number | null
+          best_line?: number | null
+          created_at?: string
+          current_line: number
+          entries?: Json
+          event_description?: string | null
+          event_id: string
+          hit_rate?: number | null
+          id?: string
+          initial_line: number
+          is_active?: boolean
+          matchup_edge_pct?: number | null
+          opponent?: string | null
+          outcome?: string | null
+          phase?: number
+          player_name: string
+          prop_type: string
+          side: string
+          sport?: string | null
+          total_units_deployed?: number
+          updated_at?: string
+        }
+        Update: {
+          avg_entry_line?: number | null
+          best_line?: number | null
+          created_at?: string
+          current_line?: number
+          entries?: Json
+          event_description?: string | null
+          event_id?: string
+          hit_rate?: number | null
+          id?: string
+          initial_line?: number
+          is_active?: boolean
+          matchup_edge_pct?: number | null
+          opponent?: string | null
+          outcome?: string | null
+          phase?: number
+          player_name?: string
+          prop_type?: string
+          side?: string
+          sport?: string | null
+          total_units_deployed?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       scan_usage: {
         Row: {
           created_at: string | null
