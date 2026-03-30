@@ -157,25 +157,44 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TAKE_IT_NOW: did line continue moving in predicted direction? ──
+        // ── TAKE_IT_NOW: CLV check — did closing line move favorably for the recommended side? ──
         if (pred.signal_type === "take_it_now") {
-          // Handle both key formats: current_line (new) and currentLine (old)
           const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to;
           const sigOpeningLine = sf.opening_line ?? sf.openingLine;
           if (sigCurrentLine != null && closingLine != null) {
-            // Infer direction from data if predicted_direction is missing or "snapback" (old bug)
-            let dir = pred.predicted_direction;
-            if (!dir || dir === "snapback" || dir === "revert") {
-              if (sigOpeningLine != null) {
-                dir = sigCurrentLine < sigOpeningLine ? "dropping" : "rising";
+            // Extract recommended side from prediction text (e.g., "OVER 7.5" or "UNDER 4.5")
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER");
+            const isUnder = predText.includes("UNDER");
+            const isTake = predText.includes("TAKE") && !predText.includes("TAKE IT NOW");
+            const isFade = predText.includes("FADE") || predText.includes("BACK");
+
+            if (isOver || isUnder || isTake || isFade) {
+              // CLV: closing line moved in a direction that makes our entry better
+              // OVER 7.5 is confirmed if closing >= signal line (line rose = we got value)
+              // UNDER 4.5 is confirmed if closing <= signal line (line dropped = we got value)
+              if (isOver || isTake) {
+                wasCorrect = closingLine >= sigCurrentLine;
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
+              } else {
+                wasCorrect = closingLine <= sigCurrentLine;
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
               }
-            }
-            if (dir === "dropping") {
-              wasCorrect = closingLine <= sigCurrentLine;
-              actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_DROP" : "ENTRY_REVERSED";
-            } else if (dir === "rising") {
-              wasCorrect = closingLine >= sigCurrentLine;
-              actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_RISE" : "ENTRY_REVERSED";
+            } else {
+              // Fallback: infer direction from opening→current drift
+              let dir = pred.predicted_direction;
+              if (!dir || dir === "snapback" || dir === "revert") {
+                if (sigOpeningLine != null) {
+                  dir = sigCurrentLine < sigOpeningLine ? "dropping" : "rising";
+                }
+              }
+              if (dir === "dropping") {
+                wasCorrect = closingLine <= sigCurrentLine;
+                actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_DROP" : "ENTRY_REVERSED";
+              } else if (dir === "rising") {
+                wasCorrect = closingLine >= sigCurrentLine;
+                actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_RISE" : "ENTRY_REVERSED";
+              }
             }
           }
         }
