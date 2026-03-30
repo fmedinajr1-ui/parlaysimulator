@@ -349,50 +349,70 @@ Deno.serve(async (req) => {
       addSignal(`${last.event_id}|${last.player_name}`, confidence, alertText, record);
     }
 
-    // ====== SIGNAL: TRAP WARNING (kept — informational) ======
-    for (const [key, snapshots] of groups) {
-      if (snapshots.length < 3) continue;
+    // ====== SIGNAL: TRAP WARNING — fires faster, skips already-recommended lines ======
+    // Collect player keys we already recommended a side on
+    const alreadyRecommended = new Set<string>();
+    for (const [pKey, entry] of bestSignalPerPlayer) {
+      if (entry.record?.signal_type !== "trap_warning") {
+        alreadyRecommended.add(pKey);
+      }
+    }
 
-      const mid = snapshots[Math.floor(snapshots.length / 2)];
+    for (const [key, snapshots] of groups) {
+      if (snapshots.length < 2) continue; // reduced from 3 for faster detection
+
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+      const playerKey = `${first.event_id}|${first.player_name}`;
+
+      // Skip trap warning if we already sent a pick/take-it-now for this player+event
+      if (alreadyRecommended.has(playerKey)) continue;
+
       const live = isLive(last);
       const liveTag = live ? " [🔴 LIVE]" : "";
 
-      const firstHalfDir = mid.line - first.line;
-      const secondHalfDir = last.line - mid.line;
+      // Detect reversal with lower threshold (0.3 instead of 0.5)
+      if (snapshots.length >= 3) {
+        const mid = snapshots[Math.floor(snapshots.length / 2)];
+        const firstHalfDir = mid.line - first.line;
+        const secondHalfDir = last.line - mid.line;
 
-      if (
-        Math.abs(firstHalfDir) >= 0.5 &&
-        Math.abs(secondHalfDir) >= 0.5 &&
-        Math.sign(firstHalfDir) !== Math.sign(secondHalfDir)
-      ) {
-        const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
-        const matchupLine = isTeamMarket ? eventMatchup.get(first.event_id) : null;
-        const marketLabel = isTeamMarket
-          ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
-          : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
+        if (
+          Math.abs(firstHalfDir) >= 0.3 &&
+          Math.abs(secondHalfDir) >= 0.3 &&
+          Math.sign(firstHalfDir) !== Math.sign(secondHalfDir)
+        ) {
+          const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
+          const matchupLine = isTeamMarket ? eventMatchup.get(first.event_id) : null;
+          const marketLabel = isTeamMarket
+            ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
+            : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
 
-        const alertText = [
-          `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
-          matchupLine ? `🏟 ${esc(matchupLine)}` : null,
-          marketLabel,
-          `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
-          `🚫 Sharp reversal pattern — DO NOT TOUCH`,
-          `✅ *Action: STAY AWAY — both sides are dangerous*`,
-          `💡 Book is manipulating this line to trap bettors`,
-        ].filter(Boolean).join("\n");
+          const alertText = [
+            `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
+            matchupLine ? `🏟 ${esc(matchupLine)}` : null,
+            marketLabel,
+            `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
+            `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+            `✅ *Action: STAY AWAY — both sides are dangerous*`,
+            `💡 Book is manipulating this line to trap bettors`,
+          ].filter(Boolean).join("\n");
 
-        const record = {
-          signal_type: "trap_warning",
-          sport: first.sport, prop_type: first.prop_type,
-          player_name: first.player_name, event_id: first.event_id,
-          prediction: "TRAP — avoid",
-          predicted_direction: "reversal",
-          predicted_magnitude: Math.abs(firstHalfDir) + Math.abs(secondHalfDir),
-          confidence_at_signal: 75,
-          time_to_tip_hours: last.hours_to_tip,
-          signal_factors: { firstLine: first.line, midLine: mid.line, lastLine: last.line },
+          const record = {
+            signal_type: "trap_warning",
+            sport: first.sport, prop_type: first.prop_type,
+            player_name: first.player_name, event_id: first.event_id,
+            prediction: "TRAP — avoid",
+            predicted_direction: "reversal",
+            predicted_magnitude: Math.abs(firstHalfDir) + Math.abs(secondHalfDir),
+            confidence_at_signal: 75,
+            time_to_tip_hours: last.hours_to_tip,
+            signal_factors: { firstLine: first.line, midLine: mid.line, lastLine: last.line },
+          };
+
+          bestSignalPerPlayer.set(playerKey, { confidence: 99, alert: alertText, record });
+        }
+      }
         };
 
         bestSignalPerPlayer.set(`${first.event_id}|${first.player_name}`, { confidence: 99, alert: alertText, record });
