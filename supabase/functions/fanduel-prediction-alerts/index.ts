@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      if (timeDiffMin < 5) continue;
+      if (timeDiffMin < 3) continue; // reduced from 5 for faster detection
 
       const lineDiff = last.line - first.line;
       const absLineDiff = Math.abs(lineDiff);
