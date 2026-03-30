@@ -365,25 +365,33 @@ Deno.serve(async (req) => {
       }
 
       if (propType === "moneyline" || propType === "h2h") {
-        // Check if win% supports the recommended side
         const winPct = stats.win_pct;
         const oppWinPct = oppStats?.win_pct || 0.5;
+        const winPctDiff = winPct - oppWinPct; // positive = our team is better
 
-        // BACK = betting team wins. Check if team is actually good enough
         if (side === "OVER" || side === "BACK") {
-          // Blocking: recommending BACK on a team with <40% win rate vs opponent with >55%
-          if (winPct < 0.40 && oppWinPct > 0.55) {
-            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% win rate vs ${(oppWinPct*100).toFixed(0)}% opp — bad ML value`, badge: "" };
+          // Block backing a sub-.500 team against a better opponent
+          if (winPct < 0.50 && oppWinPct >= 0.50) {
+            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% W vs ${(oppWinPct*100).toFixed(0)}% opp — sub-.500 underdog ML is a trap`, badge: "" };
+          }
+          // Block backing any team that's significantly worse than opponent (>10% gap)
+          if (winPctDiff < -0.10) {
+            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% W vs ${(oppWinPct*100).toFixed(0)}% opp — ${Math.abs(winPctDiff*100).toFixed(0)}% gap too wide`, badge: "" };
           }
         }
         if (side === "UNDER" || side === "FADE") {
-          // Blocking: recommending FADE on a team with >60% win rate
-          if (winPct > 0.60) {
-            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% win rate — fading a strong team`, badge: "" };
+          // Block fading a team with >55% win rate (was 60%, tightened)
+          if (winPct > 0.55) {
+            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% win rate — fading a winning team`, badge: "" };
+          }
+          // Block fading if opponent is actually worse
+          if (oppWinPct < winPct && winPct >= 0.50) {
+            return { pass: false, reason: `${resolved} ${(winPct*100).toFixed(0)}% W vs weaker ${(oppWinPct*100).toFixed(0)}% opp — don't fade the better team`, badge: "" };
           }
         }
 
-        const badge = `📊 ${resolved}: ${(winPct*100).toFixed(0)}% W${oppStats ? ` | Opp: ${(oppWinPct*100).toFixed(0)}% W` : ""}`;
+        const verdict = winPctDiff > 0.05 ? " ✅" : winPctDiff < -0.05 ? " ⚠️" : "";
+        const badge = `📊 ${resolved}: ${(winPct*100).toFixed(0)}% W${oppStats ? ` | Opp: ${(oppWinPct*100).toFixed(0)}% W` : ""}${verdict}`;
         return { pass: true, reason: "validated", badge };
 
       } else if (propType === "totals") {
