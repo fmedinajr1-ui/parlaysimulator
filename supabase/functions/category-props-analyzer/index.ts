@@ -2087,9 +2087,12 @@ serve(async (req) => {
         // Standard validation for AVG_RANGE qualified spots (legacy categories)
         const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
         
+        // v13.0: ALWAYS use real FanDuel line as recommended_line
+        spot.recommended_line = actualData.line;
         spot.actual_line = actualData.line;
         spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
-        spot.line_difference = spot.recommended_line ? Math.round((actualData.line - spot.recommended_line) * 10) / 10 : null;
+        spot.l10_hit_rate = Math.round(actualHitRate * 100) / 100; // Recalculate against REAL line
+        spot.line_difference = 0;
         spot.bookmaker = actualData.bookmaker;
         
         // v1.2: TIERED HIT RATE REQUIREMENTS for BIG_REBOUNDER
