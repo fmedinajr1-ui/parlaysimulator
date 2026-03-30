@@ -5567,6 +5567,102 @@ export type Database = {
         }
         Relationships: []
       }
+      line_projection_results: {
+        Row: {
+          actual_value: number | null
+          created_at: string | null
+          edge_grade: string | null
+          edge_pct: number | null
+          event_id: string | null
+          fanduel_line: number | null
+          game_date: string | null
+          id: string
+          is_snapback: boolean | null
+          l10_avg: number | null
+          l20_avg: number | null
+          l3_avg: number | null
+          l5_avg: number | null
+          matchup_avg: number | null
+          matchup_games: number | null
+          optimal_entry_line: number | null
+          player_name: string
+          predicted_line_direction: string | null
+          predicted_settle_line: number | null
+          projected_value: number
+          projection_accurate: boolean | null
+          projection_confidence: number | null
+          projection_method: string | null
+          prop_type: string
+          recommended_side: string | null
+          regression_target: number | null
+          settled_at: string | null
+          snapback_reason: string | null
+          sport: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          created_at?: string | null
+          edge_grade?: string | null
+          edge_pct?: number | null
+          event_id?: string | null
+          fanduel_line?: number | null
+          game_date?: string | null
+          id?: string
+          is_snapback?: boolean | null
+          l10_avg?: number | null
+          l20_avg?: number | null
+          l3_avg?: number | null
+          l5_avg?: number | null
+          matchup_avg?: number | null
+          matchup_games?: number | null
+          optimal_entry_line?: number | null
+          player_name: string
+          predicted_line_direction?: string | null
+          predicted_settle_line?: number | null
+          projected_value: number
+          projection_accurate?: boolean | null
+          projection_confidence?: number | null
+          projection_method?: string | null
+          prop_type: string
+          recommended_side?: string | null
+          regression_target?: number | null
+          settled_at?: string | null
+          snapback_reason?: string | null
+          sport?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          created_at?: string | null
+          edge_grade?: string | null
+          edge_pct?: number | null
+          event_id?: string | null
+          fanduel_line?: number | null
+          game_date?: string | null
+          id?: string
+          is_snapback?: boolean | null
+          l10_avg?: number | null
+          l20_avg?: number | null
+          l3_avg?: number | null
+          l5_avg?: number | null
+          matchup_avg?: number | null
+          matchup_games?: number | null
+          optimal_entry_line?: number | null
+          player_name?: string
+          predicted_line_direction?: string | null
+          predicted_settle_line?: number | null
+          projected_value?: number
+          projection_accurate?: boolean | null
+          projection_confidence?: number | null
+          projection_method?: string | null
+          prop_type?: string
+          recommended_side?: string | null
+          regression_target?: number | null
+          settled_at?: string | null
+          snapback_reason?: string | null
+          sport?: string | null
+        }
+        Relationships: []
+      }
       lineup_alerts: {
         Row: {
           alert_type: string
