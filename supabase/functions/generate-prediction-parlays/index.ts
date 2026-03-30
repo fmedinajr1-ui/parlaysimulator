@@ -5,31 +5,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-interface PredictionPick {
-  id: string;
-  player_name: string;
-  prop_type: string;
-  sport: string;
-  prediction: string;
-  signal_type: string;
-  confidence_at_signal: number;
-  edge_at_signal: number;
-  event_id: string;
-  created_at: string;
-  signal_accuracy: number;
-  signal_sample_size: number;
-}
-
-interface TwoLegParlay {
-  id: string;
-  leg1: PredictionPick;
-  leg2: PredictionPick;
-  combined_accuracy: number;
-  combined_confidence: number;
-  sports: string[];
-  strategy: string;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -43,20 +18,21 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[prediction-parlays] ${msg}`);
 
   try {
-    log("=== Generating 2-Leg Prediction Parlays ===");
+    log("=== Generating 2-Leg Prediction Parlays (Telegram Digest) ===");
 
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
 
-    // 1. Get accuracy stats per signal_type (only those with enough sample size)
+    // 1. Get accuracy stats per signal_type (≥10 samples)
     const { data: allVerified } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, sport, prop_type, was_correct")
       .not("was_correct", "is", null);
 
     if (!allVerified || allVerified.length === 0) {
-      return new Response(JSON.stringify({ success: true, parlays: [], reason: "No verified predictions yet" }), {
+      log("No verified predictions yet — skipping");
+      return new Response(JSON.stringify({ success: true, parlays: 0, reason: "No verified data" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -75,154 +51,198 @@ Deno.serve(async (req) => {
         : 0;
     }
 
-    log(`Signal accuracy stats: ${JSON.stringify(signalStats)}`);
-
-    // Only consider signal types with >= 10 samples and >= 55% accuracy
+    // Only signal types with ≥10 samples and ≥55% accuracy
     const qualifiedSignals = Object.entries(signalStats)
       .filter(([_, s]) => s.total >= 10 && s.accuracy >= 0.55)
       .map(([type, s]) => ({ type, ...s }))
       .sort((a, b) => b.accuracy - a.accuracy);
 
-    log(`Qualified signals (≥55% acc, ≥10 sample): ${qualifiedSignals.map(s => `${s.type}=${(s.accuracy*100).toFixed(1)}%`).join(', ')}`);
+    log(`Qualified signals: ${qualifiedSignals.map(s => `${s.type}=${(s.accuracy * 100).toFixed(1)}%`).join(', ')}`);
 
     if (qualifiedSignals.length === 0) {
-      return new Response(JSON.stringify({ success: true, parlays: [], reason: "No signal types meet accuracy threshold" }), {
+      log("No signal types meet accuracy threshold");
+      return new Response(JSON.stringify({ success: true, parlays: 0, reason: "No qualified signals" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const qualifiedSignalTypes = qualifiedSignals.map(s => s.type);
 
-    // 2. Get today's predictions from qualified signal types
+    // 2. Get today's unsettled predictions from qualified signal types
     const { data: todayPredictions } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("*")
       .gte("created_at", todayStart.toISOString())
-      .is("was_correct", null) // Not yet settled
+      .is("was_correct", null)
       .in("signal_type", qualifiedSignalTypes)
       .not("player_name", "is", null)
       .order("confidence_at_signal", { ascending: false });
 
     if (!todayPredictions || todayPredictions.length < 2) {
-      return new Response(JSON.stringify({ success: true, parlays: [], reason: "Not enough qualifying predictions today" }), {
+      log(`Only ${todayPredictions?.length || 0} predictions today — need ≥2`);
+      return new Response(JSON.stringify({ success: true, parlays: 0, reason: "Not enough predictions" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     log(`Found ${todayPredictions.length} today's predictions from qualified signals`);
 
-    // Enrich with signal accuracy
-    const enrichedPicks: PredictionPick[] = todayPredictions.map(p => {
+    // Enrich picks
+    interface EnrichedPick {
+      id: string;
+      player_name: string;
+      prop_type: string;
+      sport: string;
+      prediction: string;
+      signal_type: string;
+      confidence: number;
+      edge: number;
+      event_id: string;
+      signal_accuracy: number;
+      signal_sample: number;
+    }
+
+    const picks: EnrichedPick[] = todayPredictions.map(p => {
       const stats = signalStats[p.signal_type] || { accuracy: 0, total: 0 };
       return {
         id: p.id,
-        player_name: p.player_name || 'Unknown',
+        player_name: p.player_name || "Unknown",
         prop_type: p.prop_type,
         sport: p.sport,
         prediction: p.prediction,
         signal_type: p.signal_type,
-        confidence_at_signal: p.confidence_at_signal || 50,
-        edge_at_signal: p.edge_at_signal || 0,
-        event_id: p.event_id || '',
-        created_at: p.created_at,
+        confidence: p.confidence_at_signal || 50,
+        edge: p.edge_at_signal || 0,
+        event_id: p.event_id || "",
         signal_accuracy: stats.accuracy,
-        signal_sample_size: stats.total,
+        signal_sample: stats.total,
       };
     });
 
-    // Sort by (signal_accuracy * confidence) descending
-    enrichedPicks.sort((a, b) => 
-      (b.signal_accuracy * b.confidence_at_signal) - (a.signal_accuracy * a.confidence_at_signal)
+    // Sort by composite score (accuracy × confidence)
+    picks.sort((a, b) =>
+      (b.signal_accuracy * b.confidence) - (a.signal_accuracy * a.confidence)
     );
 
-    // 3. Build 2-leg parlays: pair picks from DIFFERENT events for diversification
+    // 3. Build 2-leg parlays: different events, different players
+    interface TwoLegParlay {
+      leg1: EnrichedPick;
+      leg2: EnrichedPick;
+      combined_accuracy: number;
+      strategy: string;
+    }
+
     const parlays: TwoLegParlay[] = [];
-    const usedPickIds = new Set<string>();
+    const usedIds = new Set<string>();
 
-    // Strategy 1: Cross-sport pairs (highest priority)
-    for (let i = 0; i < enrichedPicks.length && parlays.length < 3; i++) {
-      if (usedPickIds.has(enrichedPicks[i].id)) continue;
-      for (let j = i + 1; j < enrichedPicks.length && parlays.length < 3; j++) {
-        if (usedPickIds.has(enrichedPicks[j].id)) continue;
-        const a = enrichedPicks[i];
-        const b = enrichedPicks[j];
+    const tryPair = (strategy: string, crossSportOnly: boolean, maxParlays: number) => {
+      for (let i = 0; i < picks.length && parlays.length < maxParlays; i++) {
+        if (usedIds.has(picks[i].id)) continue;
+        for (let j = i + 1; j < picks.length && parlays.length < maxParlays; j++) {
+          if (usedIds.has(picks[j].id)) continue;
+          const a = picks[i], b = picks[j];
 
-        // Must be different events
-        if (a.event_id && b.event_id && a.event_id === b.event_id) continue;
-        // Must be different players
-        if (a.player_name === b.player_name) continue;
+          // Different events
+          if (a.event_id && b.event_id && a.event_id === b.event_id) continue;
+          // Different players
+          if (a.player_name === b.player_name) continue;
+          // Cross-sport filter
+          if (crossSportOnly && a.sport === b.sport) continue;
 
-        // Cross-sport bonus
-        const isCrossSport = a.sport !== b.sport;
-        if (!isCrossSport) continue;
-
-        const combinedAccuracy = (a.signal_accuracy + b.signal_accuracy) / 2;
-        const combinedConfidence = (a.confidence_at_signal + b.confidence_at_signal) / 2;
-
-        parlays.push({
-          id: `pred-cross-${a.id.slice(0, 8)}-${b.id.slice(0, 8)}`,
-          leg1: a,
-          leg2: b,
-          combined_accuracy: combinedAccuracy,
-          combined_confidence: combinedConfidence,
-          sports: [...new Set([a.sport, b.sport])],
-          strategy: "cross-sport",
-        });
-
-        usedPickIds.add(a.id);
-        usedPickIds.add(b.id);
-        break;
+          parlays.push({
+            leg1: a,
+            leg2: b,
+            combined_accuracy: (a.signal_accuracy + b.signal_accuracy) / 2,
+            strategy,
+          });
+          usedIds.add(a.id);
+          usedIds.add(b.id);
+          break;
+        }
       }
-    }
+    };
 
-    // Strategy 2: Same-sport but different games (fill remaining slots)
-    for (let i = 0; i < enrichedPicks.length && parlays.length < 5; i++) {
-      if (usedPickIds.has(enrichedPicks[i].id)) continue;
-      for (let j = i + 1; j < enrichedPicks.length && parlays.length < 5; j++) {
-        if (usedPickIds.has(enrichedPicks[j].id)) continue;
-        const a = enrichedPicks[i];
-        const b = enrichedPicks[j];
+    // Priority: cross-sport pairs first, then same-sport
+    tryPair("Cross-Sport", true, 3);
+    tryPair("Same-Sport", false, 5);
 
-        if (a.event_id && b.event_id && a.event_id === b.event_id) continue;
-        if (a.player_name === b.player_name) continue;
-
-        const combinedAccuracy = (a.signal_accuracy + b.signal_accuracy) / 2;
-        const combinedConfidence = (a.confidence_at_signal + b.confidence_at_signal) / 2;
-
-        parlays.push({
-          id: `pred-same-${a.id.slice(0, 8)}-${b.id.slice(0, 8)}`,
-          leg1: a,
-          leg2: b,
-          combined_accuracy: combinedAccuracy,
-          combined_confidence: combinedConfidence,
-          sports: [...new Set([a.sport, b.sport])],
-          strategy: a.sport === b.sport ? "same-sport" : "cross-sport",
-        });
-
-        usedPickIds.add(a.id);
-        usedPickIds.add(b.id);
-        break;
-      }
-    }
-
-    // Sort parlays by combined accuracy
     parlays.sort((a, b) => b.combined_accuracy - a.combined_accuracy);
 
-    log(`Generated ${parlays.length} 2-leg prediction parlays`);
+    log(`Built ${parlays.length} 2-leg prediction parlays`);
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      parlays,
-      signal_stats: qualifiedSignals.map(s => ({
-        signal_type: s.type,
-        accuracy: Math.round(s.accuracy * 100),
-        sample_size: s.total,
-      })),
-      total_predictions_today: todayPredictions.length,
+    if (parlays.length === 0) {
+      return new Response(JSON.stringify({ success: true, parlays: 0, reason: "No valid pairs" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 4. Build Telegram digest
+    const SPORT_EMOJI: Record<string, string> = {
+      NBA: "🏀", MLB: "⚾", NHL: "🏒", NCAAB: "🏀", NFL: "🏈",
+    };
+
+    const formatProp = (pt: string) =>
+      pt.replace(/_/g, " ").replace(/player /i, "").replace(/\b\w/g, c => c.toUpperCase());
+
+    const lines: string[] = [
+      `🎯 *2-Leg Prediction Parlays*`,
+      `${parlays.length} pair(s) from top-accuracy FanDuel signals`,
+      "",
+    ];
+
+    // Signal accuracy overview
+    const statsLine = qualifiedSignals
+      .slice(0, 5)
+      .map(s => `${s.type}: ${(s.accuracy * 100).toFixed(0)}% (n=${s.total})`)
+      .join(" · ");
+    lines.push(`📊 _${statsLine}_`);
+    lines.push("");
+
+    for (let i = 0; i < parlays.length; i++) {
+      const p = parlays[i];
+      const { leg1, leg2 } = p;
+
+      const e1 = SPORT_EMOJI[leg1.sport] || "🎯";
+      const e2 = SPORT_EMOJI[leg2.sport] || "🎯";
+
+      lines.push(`━━━ *Pair ${i + 1}* — ${p.strategy} ━━━`);
+      lines.push(
+        `${e1} *${leg1.player_name}* (${leg1.sport})`,
+        `   ${leg1.prediction}`,
+        `   Signal: ${leg1.signal_type} · ${(leg1.signal_accuracy * 100).toFixed(0)}% acc · Edge: ${leg1.edge > 0 ? "+" : ""}${leg1.edge.toFixed(1)}`,
+        "",
+        `${e2} *${leg2.player_name}* (${leg2.sport})`,
+        `   ${leg2.prediction}`,
+        `   Signal: ${leg2.signal_type} · ${(leg2.signal_accuracy * 100).toFixed(0)}% acc · Edge: ${leg2.edge > 0 ? "+" : ""}${leg2.edge.toFixed(1)}`,
+        "",
+        `Combined Accuracy: *${(p.combined_accuracy * 100).toFixed(0)}%*`,
+        ""
+      );
+    }
+
+    lines.push(`_Generated from ${todayPredictions.length} active predictions_`);
+
+    const message = lines.join("\n");
+
+    // 5. Send via Telegram
+    try {
+      await supabase.functions.invoke("bot-send-telegram", {
+        body: { message, parse_mode: "Markdown", admin_only: true },
+      });
+      log("Telegram digest sent ✅");
+    } catch (tgErr: any) {
+      log(`Telegram send error: ${tgErr.message}`);
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      parlays: parlays.length,
+      predictions_used: todayPredictions.length,
+      qualified_signals: qualifiedSignals.length,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (error) {
+  } catch (error: any) {
     log(`Error: ${error.message}`);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
