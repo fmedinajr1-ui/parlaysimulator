@@ -5,20 +5,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── ACCURACY-DRIVEN SIGNAL GATES (updated 2026-03-30) ──
-// VERIFIED WINNERS:
-//   perfect_line (matchup-based): NEW    → P0 (highest priority!)
-//   take_it_now (rebounds): 95.0%        → P1
-//   take_it_now (spreads): 94.9%         → P1 (same tier!)
-//   combo props (PRA etc): 85-100%       → P2
-//   line_about_to_move (points rising): 75% → P3
-//   take_it_now (moneyline): 63.2%       → P4
-//   velocity_spike (ML dropping): 57.9%  → P5
-// KILLED:
-//   velocity_spike (totals): 0-8%        → KILLED
-//   velocity_spike (spreads): 0%         → KILLED
-//   cascade: 0-24%                       → KILLED
-//   snapback (points/3s): 0%             → KILLED
+// ── ACCURACY-DRIVEN SIGNAL GATES ──
+// Historical accuracy badges are now DYNAMIC — queried from fanduel_prediction_accuracy
+// Priority tiers remain: P0 (perfect_line/scale_in) → P5 (velocity_spike ML)
+// KILLED: cascade, velocity_spike (totals/spreads/points/threes/rebounds), snapback (points/3s)
 
 const KILLED_SIGNALS = new Set(["cascade"]);
 // velocity_spike is now conditionally killed (see below)
@@ -123,6 +113,32 @@ Deno.serve(async (req) => {
       .from("fanduel_behavior_patterns")
       .select("*")
       .gte("sample_size", 3);
+
+    // ── Dynamic accuracy lookup from verified predictions ──
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: accuracyRows } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("signal_type, prop_type, was_correct")
+      .not("was_correct", "is", null)
+      .gte("created_at", thirtyDaysAgo);
+
+    const accuracyMap = new Map<string, { correct: number; total: number }>();
+    for (const row of accuracyRows || []) {
+      const key = `${row.signal_type}|${row.prop_type}`;
+      if (!accuracyMap.has(key)) accuracyMap.set(key, { correct: 0, total: 0 });
+      const b = accuracyMap.get(key)!;
+      b.total++;
+      if (row.was_correct) b.correct++;
+    }
+
+    function dynamicAccBadge(signalType: string, propType: string): string {
+      const key = `${signalType}|${propType}`;
+      const stats = accuracyMap.get(key);
+      if (!stats || stats.total < 5) return "";
+      const pct = ((stats.correct / stats.total) * 100).toFixed(1);
+      const emoji = stats.correct / stats.total >= 0.6 ? "🔥" : stats.correct / stats.total >= 0.5 ? "📈" : "⚠️";
+      return `${emoji} Historical: ${pct}% (${stats.correct}/${stats.total} verified)`;
+    }
 
     if (!recentData || recentData.length === 0) {
       log("No recent data for alerts");
@@ -520,17 +536,8 @@ Deno.serve(async (req) => {
       const avgReaction = learnedPattern?.avg_reaction_time_minutes || 12;
       const remaining = Math.max(0, avgReaction - elapsed);
 
-      // Accuracy badge based on historical data
-      let accuracyBadge = "";
-      if (first.prop_type === "player_rebounds" && first.signal_type !== "take_it_now") {
-        accuracyBadge = "📈 Historical: 50-52%";
-      } else if (first.prop_type === "player_points" && direction === "RISING") {
-        accuracyBadge = "📈 Historical: 75% (contrarian rising)";
-      } else if (first.prop_type === "player_points" && direction === "DROPPING") {
-        accuracyBadge = "📈 Historical: 45% (contrarian dropping)";
-      } else if (isCombo) {
-        accuracyBadge = "🔥 Historical: 85-100% (combo prop)";
-      }
+      // Dynamic accuracy badge from real verified data
+      const accuracyBadge = dynamicAccBadge("line_about_to_move", first.prop_type);
 
       const reason = isContrarian
         ? (side === "UNDER"
@@ -631,16 +638,8 @@ Deno.serve(async (req) => {
         : "Line deflated below open — expect snapback up";
       const liveTag = live ? " [🔴 LIVE]" : "";
 
-      // Accuracy badge
-      const accBadge = last.prop_type === "player_rebounds"
-        ? "🔥 Historical: 95.0% (37/39 verified)"
-        : last.prop_type === "spreads"
-        ? "🔥 Historical: 94.9% (37/39 verified)"
-        : last.prop_type === "moneyline"
-        ? "📈 Historical: 63.2% (12/19 verified)"
-        : isCombo
-        ? "🔥 Historical: 85-100% (combo prop snapback)"
-        : "";
+      // Dynamic accuracy badge from real verified data
+      const accBadge = dynamicAccBadge(live ? "live_drift" : "take_it_now", last.prop_type);
 
       const isTeamMarket = TEAM_MARKET_TYPES.has(last.prop_type);
       const matchupLine = isTeamMarket ? eventMatchup.get(last.event_id) : null;
