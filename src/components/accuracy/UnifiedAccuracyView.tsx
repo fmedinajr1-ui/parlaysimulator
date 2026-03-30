@@ -128,6 +128,9 @@ export function UnifiedAccuracyView() {
         totalVerified={totalVerified}
       />
 
+      {/* Prop Type Accuracy — Bettor Decision Guide */}
+      <PropTypeAccuracyCard />
+
       {/* System Cards Grid */}
       <div className="grid grid-cols-2 gap-3">
         {isLoading ? (
