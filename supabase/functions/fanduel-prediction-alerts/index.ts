@@ -5,20 +5,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── ACCURACY-DRIVEN SIGNAL GATES (updated 2026-03-30) ──
-// VERIFIED WINNERS:
-//   perfect_line (matchup-based): NEW    → P0 (highest priority!)
-//   take_it_now (rebounds): 95.0%        → P1
-//   take_it_now (spreads): 94.9%         → P1 (same tier!)
-//   combo props (PRA etc): 85-100%       → P2
-//   line_about_to_move (points rising): 75% → P3
-//   take_it_now (moneyline): 63.2%       → P4
-//   velocity_spike (ML dropping): 57.9%  → P5
-// KILLED:
-//   velocity_spike (totals): 0-8%        → KILLED
-//   velocity_spike (spreads): 0%         → KILLED
-//   cascade: 0-24%                       → KILLED
-//   snapback (points/3s): 0%             → KILLED
+// ── ACCURACY-DRIVEN SIGNAL GATES ──
+// Historical accuracy badges are now DYNAMIC — queried from fanduel_prediction_accuracy
+// Priority tiers remain: P0 (perfect_line/scale_in) → P5 (velocity_spike ML)
+// KILLED: cascade, velocity_spike (totals/spreads/points/threes/rebounds), snapback (points/3s)
 
 const KILLED_SIGNALS = new Set(["cascade"]);
 // velocity_spike is now conditionally killed (see below)
