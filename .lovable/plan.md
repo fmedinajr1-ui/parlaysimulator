@@ -1,84 +1,72 @@
 
 
-## Perfect Line Catcher — Matchup-Aware Line Value Engine
+## Line Adjustment Recovery System — "Scale-In Staking"
 
-### The Concept
+### Problem
+You bet SGA PRA at 38.5 and lost. FanDuel often adjusts lines after the initial posting — the line might move to 37.5 or 36.5 later. The system currently doesn't track whether you already bet a market, so it can't tell you to wait, scale in, or recover.
 
-Right now your system detects *line movement* but doesn't cross-reference it with *historical player performance vs that specific opponent*. The idea: when FanDuel posts a line for "Jayson Tatum O 27.5 pts", the system should instantly check his historical stats vs that opponent (e.g., he averages 31.2 pts vs CHA with a 4/5 over rate) and flag it as a **Perfect Line** — a mispriced entry where history says the book is wrong.
+### Solution: Two-Phase "Scale-In" Alert System
 
-### What We Have Already
+**Phase 1 — Initial Alert = Small Stake Warning**
+When a Perfect Line or Strong Edge fires for a combo prop (PRA, PR, PA, etc.), the alert tells you to bet only **25% of your normal unit** because the line may adjust. The message says:
 
-- **`matchup_history`** table: `player_name`, `opponent`, `prop_type`, `avg_stat`, `min_stat`, `max_stat`, `games_played`, `hit_rate_over`, `hit_rate_under`
-- **`fanduel_line_timeline`** table: real-time FanDuel lines with `player_name`, `prop_type`, `line`, `over_price`, `under_price`
-- **`nba_player_game_logs`**: granular game-by-game data with points, rebounds, threes, assists vs each opponent
+```
+🎯 PERFECT LINE: Shai Gilgeous-Alexander OVER 38.5 PRA (-115)
+📊 vs OPP: 42.1 avg | 4/5 over | Floor: 39
+⚠️ SCALE-IN: Bet 25% unit ($5). Line may adjust — hold reserves.
+```
 
-### Plan
+**Phase 2 — Line Adjustment = Double Down Alert**
+The system watches `fanduel_line_timeline` for the same player+prop. If the line drops (e.g., 38.5 → 37.5), it fires a **recovery alert** with a larger stake:
 
-#### 1. New Edge Function: `perfect-line-scanner`
+```
+🔄 LINE ADJUSTED: SGA PRA dropped 38.5 → 37.5 (-110)
+📊 Edge improved: 42.1 avg vs 37.5 line (+12.3% edge)
+💰 SCALE UP: Bet 50% unit ($10). Better entry point.
+🛡️ If it drops again → full unit.
+```
 
-Cross-references today's FanDuel lines against matchup history to find mispriced lines.
+If it drops a second time (37.5 → 36.5), full unit fires:
+```
+🔥 PERFECT ENTRY: SGA PRA now 36.5 — max value reached
+💰 FULL UNIT: Bet remaining 25% ($5). Total invested: $20 across 3 entries.
+📊 Avg entry: 37.5 | Current edge: +15.3%
+```
 
-**Logic:**
-- Fetch all current FanDuel lines (latest snapshot per player/prop)
-- For each line, look up `matchup_history` for that player vs today's opponent
-- Calculate **Line Gap** = `avg_stat - line` (positive = book is too low)
-- Calculate **Floor Safety** = `min_stat - line` (positive = player ALWAYS clears)
-- Calculate **Hit Rate** from `hit_rate_over` / `hit_rate_under`
-- Score each line into tiers:
-  - **PERFECT LINE** (🟢): avg > line by 15%+ AND min >= line AND games >= 3 AND hit rate >= 80%
-  - **STRONG EDGE** (🔵): avg > line by 10%+ AND hit rate >= 65%
-  - **LEAN** (🟡): avg > line by 5%+ AND hit rate >= 55%
-- Works for points, threes, AND rebounds
-- Returns sorted list with best opportunities first
+### How It Works Technically
 
-#### 2. Integrate Into `fanduel-prediction-alerts`
+**1. New table: `scale_in_tracker`**
+Tracks active scale-in positions per user/day:
+- `player_name`, `prop_type`, `event_id`, `initial_line`, `current_line`, `entries` (JSON array of lines bet), `phase` (1/2/3), `created_at`
 
-Add a new signal type `perfect_line` that fires as a **P0 (highest priority)** alert — these go out FIRST, before any movement-based signals.
+**2. Update `perfect-line-scanner`**
+- On first detection of a combo prop signal → insert into `scale_in_tracker` with phase=1, mark alert as "scale-in"
+- On subsequent runs, check if any tracked lines have moved → if line dropped, fire phase 2/3 alerts
+- Cross-reference: before outputting ANY combo prop alert, check if a previous entry exists — if so, output a recovery/scale-up alert instead of a duplicate recommendation
 
-- When the scanner finds a Perfect Line or Strong Edge, format a Telegram alert:
-  ```
-  🎯 PERFECT LINE DETECTED
-  Jayson Tatum OVER 27.5 Points (-110)
-  📊 vs CHA: 31.2 avg | 4/5 over | Floor: 28
-  🔥 Historical: 80% hit rate (4/5 games)
-  ✅ Gap: +3.7 pts above line
-  ```
-- Fire these as soon as lines appear (no need to wait for movement)
+**3. Update `fanduel-prediction-alerts`**
+- New signal types: `scale_in_initial`, `scale_in_adjust`, `scale_in_max`
+- Format with staking guidance (25% → 50% → 25% remaining)
+- Include average entry price across all phases
 
-#### 3. Enhanced Game Log Cross-Reference
+**4. Staking tiers based on line movement:**
 
-For deeper accuracy, also query `nba_player_game_logs` directly to get:
-- Last 3 games vs this specific opponent (recency matters)
-- Home/away split vs opponent
-- Whether the player was a starter in those games
+| Phase | Trigger | Stake | Cumulative |
+|-------|---------|-------|------------|
+| 1 | Initial detection | 25% unit | 25% |
+| 2 | Line drops ≥ 0.5 | 50% unit | 75% |
+| 3 | Line drops ≥ 1.0 total | 25% unit | 100% |
 
-This adds a **recency weight** — if a player scored 35, 32, 29 in their last 3 vs CHA, that's stronger than a 5-game average of 28.
-
-#### 4. Cron Schedule
-
-Run `perfect-line-scanner` every 30 minutes during scan hours (10 AM–7 PM ET) so it catches lines as soon as FanDuel posts them — before movement happens.
+If the line moves AGAINST you (goes up), the system sends a "hold — no additional entry" message.
 
 ### Files to Create/Edit
 
 | File | Action |
 |------|--------|
-| `supabase/functions/perfect-line-scanner/index.ts` | **Create** — core matchup vs line cross-reference engine |
-| `supabase/functions/fanduel-prediction-alerts/index.ts` | **Edit** — add P0 perfect_line signal type, fire before movement signals |
-| DB migration | **Create** — add `pg_cron` job for 30-min scans |
+| DB migration | Create `scale_in_tracker` table |
+| `supabase/functions/perfect-line-scanner/index.ts` | Add scale-in detection logic for combo props, check for line adjustments on tracked positions |
+| `supabase/functions/fanduel-prediction-alerts/index.ts` | Add `scale_in_*` signal formatting with staking guidance |
 
-### Key Technical Detail
-
-The scoring formula per prop:
-
-```text
-edge_score = (avg_stat - line) / line × 100    # % above line
-floor_gap  = min_stat - line                    # safety margin
-hit_rate   = hit_rate_over (or under)           # from matchup_history
-
-tier = PERFECT  if edge_score >= 15 AND floor_gap >= 0 AND hit_rate >= 0.80
-     = STRONG   if edge_score >= 10 AND hit_rate >= 0.65
-     = LEAN     if edge_score >= 5  AND hit_rate >= 0.55
-```
-
-This ensures we only alert on lines where the book is genuinely mispriced against historical matchup data — no traps, no guessing.
+### Key Benefit
+Instead of going all-in on the first line and losing, you deploy capital progressively as the line adjusts in your favor — dollar-cost averaging into the best entry point. If the initial line hits, you still profit (just smaller). If it adjusts, you get a better average entry and recover the initial loss.
 
