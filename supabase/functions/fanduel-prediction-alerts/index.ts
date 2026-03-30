@@ -7,6 +7,7 @@ const corsHeaders = {
 
 // ── ACCURACY-DRIVEN SIGNAL GATES (updated 2026-03-30) ──
 // VERIFIED WINNERS:
+//   perfect_line (matchup-based): NEW    → P0 (highest priority!)
 //   take_it_now (rebounds): 95.0%        → P1
 //   take_it_now (spreads): 94.9%         → P1 (same tier!)
 //   combo props (PRA etc): 85-100%       → P2
@@ -43,6 +44,8 @@ const TEAM_MARKET_TYPES = new Set(["h2h", "moneyline", "spreads", "totals"]);
 // Priority tiers for alert ordering (lower = sent first)
 function getSignalPriority(record: any): number {
   const { signal_type, prop_type, predicted_direction } = record;
+  // P0: perfect_line — matchup-based mispricing (highest priority)
+  if (signal_type?.startsWith("perfect_line")) return 0;
   // P1: take_it_now rebounds (95%) + spreads (94.9%)
   if (signal_type === "take_it_now" && (prop_type === "player_rebounds" || prop_type === "spreads")) return 1;
   // P2: combo props (85-100%)
