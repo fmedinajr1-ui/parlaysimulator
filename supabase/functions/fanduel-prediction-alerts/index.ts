@@ -7,21 +7,12 @@ const corsHeaders = {
 
 // ── ACCURACY-DRIVEN SIGNAL GATES ──
 // Historical accuracy badges are now DYNAMIC — queried from fanduel_prediction_accuracy
-// Priority tiers remain: P0 (perfect_line/scale_in) → P5 (velocity_spike ML)
-// KILLED: cascade, velocity_spike (totals/spreads/points/threes/rebounds), snapback (points/3s)
+// Priority tiers: P0 (perfect_line/scale_in) → P5 (velocity_spike) → P6 (cascade)
+// All signal types are now ACTIVE — velocity_spike and cascade fully restored
 
-const KILLED_SIGNALS = new Set(["cascade"]);
-// velocity_spike is now conditionally killed (see below)
-const KILLED_VELOCITY_MARKETS = new Set(["totals", "spreads", "player_points", "player_threes", "player_rebounds"]);
-// velocity_spike ONLY survives for moneyline dropping (57.9%)
-function isKilledSignal(signalType: string, propType: string, direction?: string): boolean {
-  if (KILLED_SIGNALS.has(signalType)) return true;
-  if (signalType === "velocity_spike") {
-    // Only moneyline dropping survives
-    if (propType === "moneyline" && direction === "dropping") return false;
-    return true;
-  }
-  return false;
+const KILLED_SIGNALS = new Set<string>(); // No killed signals
+function isKilledSignal(signalType: string, _propType: string, _direction?: string): boolean {
+  return KILLED_SIGNALS.has(signalType);
 }
 
 const COMBO_PROPS = new Set([
@@ -45,12 +36,14 @@ function getSignalPriority(record: any): number {
   if (signal_type === "line_about_to_move" && prop_type === "player_points") return 3;
   // P4: take_it_now moneyline (63.2%)
   if (signal_type === "take_it_now" && prop_type === "moneyline") return 4;
-  // P5: velocity_spike moneyline dropping (57.9%)
-  if (signal_type === "velocity_spike" && prop_type === "moneyline" && predicted_direction === "dropping") return 5;
+  // P5: velocity_spike (all markets)
+  if (signal_type === "velocity_spike") return 5;
   // P6: take_it_now other props
   if (signal_type === "take_it_now") return 6;
-  // P7: everything else
-  return 7;
+  // P7: cascade
+  if (signal_type === "cascade") return 7;
+  // P8: everything else
+  return 8;
 }
 // Minimum velocity gates by prop — lowered for faster detection
 const PROP_MIN_VELOCITY: Record<string, number> = {
@@ -476,9 +469,8 @@ Deno.serve(async (req) => {
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
-    // ====== SIGNAL: LINE ABOUT TO MOVE (accuracy-gated) ======
-    // KILLED: velocity_spike and cascade — 15-36% and 11-24% accuracy
-    // Only line_about_to_move survives for directional signals
+    // ====== SIGNAL: LINE ABOUT TO MOVE / VELOCITY SPIKE / CASCADE ======
+    // All signal types restored — velocity_spike and cascade fully active
     for (const [key, snapshots] of groups) {
       if (snapshots.length < 2) continue;
 
