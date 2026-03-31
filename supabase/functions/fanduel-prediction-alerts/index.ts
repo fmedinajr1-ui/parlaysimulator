@@ -469,9 +469,8 @@ Deno.serve(async (req) => {
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
-    // ====== SIGNAL: LINE ABOUT TO MOVE (accuracy-gated) ======
-    // KILLED: velocity_spike and cascade — 15-36% and 11-24% accuracy
-    // Only line_about_to_move survives for directional signals
+    // ====== SIGNAL: LINE ABOUT TO MOVE / VELOCITY SPIKE / CASCADE ======
+    // All signal types restored — velocity_spike and cascade fully active
     for (const [key, snapshots] of groups) {
       if (snapshots.length < 2) continue;
 
