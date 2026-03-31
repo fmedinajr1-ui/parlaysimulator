@@ -36,12 +36,14 @@ function getSignalPriority(record: any): number {
   if (signal_type === "line_about_to_move" && prop_type === "player_points") return 3;
   // P4: take_it_now moneyline (63.2%)
   if (signal_type === "take_it_now" && prop_type === "moneyline") return 4;
-  // P5: velocity_spike moneyline dropping (57.9%)
-  if (signal_type === "velocity_spike" && prop_type === "moneyline" && predicted_direction === "dropping") return 5;
+  // P5: velocity_spike (all markets)
+  if (signal_type === "velocity_spike") return 5;
   // P6: take_it_now other props
   if (signal_type === "take_it_now") return 6;
-  // P7: everything else
-  return 7;
+  // P7: cascade
+  if (signal_type === "cascade") return 7;
+  // P8: everything else
+  return 8;
 }
 // Minimum velocity gates by prop — lowered for faster detection
 const PROP_MIN_VELOCITY: Record<string, number> = {
