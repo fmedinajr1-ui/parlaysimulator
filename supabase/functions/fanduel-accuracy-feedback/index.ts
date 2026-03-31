@@ -200,6 +200,34 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── PERFECT LINE (perfect_line_perfect, perfect_line_strong, perfect_line_lean): CLV check ──
+        if (pred.signal_type?.startsWith("perfect_line")) {
+          const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to ?? sf.fanduel_line ?? sf.line;
+          if (sigCurrentLine != null && closingLine != null) {
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER") || predText.includes("TAKE");
+            const isUnder = predText.includes("UNDER") || predText.includes("FADE");
+
+            if (isOver) {
+              wasCorrect = closingLine >= sigCurrentLine;
+              actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
+            } else if (isUnder) {
+              wasCorrect = closingLine <= sigCurrentLine;
+              actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
+            } else {
+              // Fallback: infer from predicted_direction
+              const dir = pred.predicted_direction;
+              if (dir === "dropping") {
+                wasCorrect = closingLine <= sigCurrentLine;
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_DROP" : "CLV_NEGATIVE_DROP";
+              } else if (dir === "rising") {
+                wasCorrect = closingLine >= sigCurrentLine;
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_RISE" : "CLV_NEGATIVE_RISE";
+              }
+            }
+          }
+        }
+
         // ── SNAPBACK: did line revert toward opening? ──
         if (pred.signal_type === "snapback") {
           const sigOpeningLine = sf.opening_line ?? openingLine;
