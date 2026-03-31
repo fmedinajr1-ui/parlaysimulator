@@ -518,6 +518,12 @@ Deno.serve(async (req) => {
         velocity_at_signal: a.velocity || null,
         time_to_tip_hours: a.hours_to_tip,
         signal_factors: a,
+        // Trap detection fields — captured at alert time
+        line_at_alert: a.current_line ?? null,
+        hours_before_tip: a.hours_to_tip ?? null,
+        alert_sent_at: new Date().toISOString(),
+        snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
+        drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
       }));
 
     log(`Inserting ${predRows.length} new predictions (${alerts.length - predRows.length} duplicates skipped)`);
