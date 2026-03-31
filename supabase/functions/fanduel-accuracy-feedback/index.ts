@@ -29,7 +29,8 @@ Deno.serve(async (req) => {
       .is("was_correct", null)
       .gte("created_at", sevenDaysAgo)
       .lte("created_at", twoHoursAgo.toISOString())
-      .limit(200);
+      .order("created_at", { ascending: false })
+      .limit(300);
 
     if (fetchErr) throw new Error(`Fetch unverified: ${fetchErr.message}`);
     log(`Found ${unverified?.length || 0} unverified predictions (2h+ old)`);
@@ -194,6 +195,39 @@ Deno.serve(async (req) => {
               } else if (dir === "rising") {
                 wasCorrect = closingLine >= sigCurrentLine;
                 actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_RISE" : "ENTRY_REVERSED";
+              }
+            }
+          }
+        }
+
+        // ── PERFECT LINE (perfect_line_perfect, perfect_line_strong, perfect_line_lean): CLV check ──
+        if (pred.signal_type?.startsWith("perfect_line")) {
+          // Try signal_factors first, then parse line from prediction text (e.g. "OVER 7.5")
+          let sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to ?? sf.fanduel_line ?? sf.line;
+          if (sigCurrentLine == null) {
+            const lineMatch = (pred.prediction || "").match(/([\d.]+)/);
+            if (lineMatch) sigCurrentLine = parseFloat(lineMatch[1]);
+          }
+          if (sigCurrentLine != null && closingLine != null) {
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER") || predText.includes("TAKE") || predText.includes("COVER");
+            const isUnder = predText.includes("UNDER") || predText.includes("FADE");
+
+            if (isOver) {
+              wasCorrect = closingLine >= sigCurrentLine;
+              actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
+            } else if (isUnder) {
+              wasCorrect = closingLine <= sigCurrentLine;
+              actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
+            } else {
+              // Fallback: infer from predicted_direction
+              const dir = pred.predicted_direction;
+              if (dir === "dropping" || dir === "under") {
+                wasCorrect = closingLine <= sigCurrentLine;
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_DROP" : "CLV_NEGATIVE_DROP";
+              } else if (dir === "rising" || dir === "over") {
+                wasCorrect = closingLine >= sigCurrentLine;
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_RISE" : "CLV_NEGATIVE_RISE";
               }
             }
           }
