@@ -3462,7 +3462,9 @@ export type Database = {
           hours_before_tip: number | null
           id: string
           line_at_alert: number | null
+          line_changes_after_alert: number | null
           line_movement_after_alert: number | null
+          line_trajectory: Json | null
           movement_reversed: boolean | null
           player_name: string | null
           post_alert_snapshots: number | null
@@ -3470,6 +3472,8 @@ export type Database = {
           predicted_magnitude: number | null
           prediction: string
           prop_type: string
+          recommendation_status: string | null
+          recommendation_updated_at: string | null
           reversal_magnitude: number | null
           signal_factors: Json | null
           signal_type: string
@@ -3495,7 +3499,9 @@ export type Database = {
           hours_before_tip?: number | null
           id?: string
           line_at_alert?: number | null
+          line_changes_after_alert?: number | null
           line_movement_after_alert?: number | null
+          line_trajectory?: Json | null
           movement_reversed?: boolean | null
           player_name?: string | null
           post_alert_snapshots?: number | null
@@ -3503,6 +3509,8 @@ export type Database = {
           predicted_magnitude?: number | null
           prediction: string
           prop_type: string
+          recommendation_status?: string | null
+          recommendation_updated_at?: string | null
           reversal_magnitude?: number | null
           signal_factors?: Json | null
           signal_type: string
@@ -3528,7 +3536,9 @@ export type Database = {
           hours_before_tip?: number | null
           id?: string
           line_at_alert?: number | null
+          line_changes_after_alert?: number | null
           line_movement_after_alert?: number | null
+          line_trajectory?: Json | null
           movement_reversed?: boolean | null
           player_name?: string | null
           post_alert_snapshots?: number | null
@@ -3536,6 +3546,8 @@ export type Database = {
           predicted_magnitude?: number | null
           prediction?: string
           prop_type?: string
+          recommendation_status?: string | null
+          recommendation_updated_at?: string | null
           reversal_magnitude?: number | null
           signal_factors?: Json | null
           signal_type?: string

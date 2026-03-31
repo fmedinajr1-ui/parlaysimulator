@@ -495,4 +495,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.score-parlays-dna]
+  verify_jwt = false
+
+[functions.post-alert-line-monitor]
 verify_jwt = false
