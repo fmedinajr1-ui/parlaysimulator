@@ -29,7 +29,8 @@ Deno.serve(async (req) => {
       .is("was_correct", null)
       .gte("created_at", sevenDaysAgo)
       .lte("created_at", twoHoursAgo.toISOString())
-      .limit(200);
+      .order("created_at", { ascending: false })
+      .limit(300);
 
     if (fetchErr) throw new Error(`Fetch unverified: ${fetchErr.message}`);
     log(`Found ${unverified?.length || 0} unverified predictions (2h+ old)`);
