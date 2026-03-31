@@ -784,6 +784,9 @@ Deno.serve(async (req) => {
       time_to_tip_hours: s.hours_to_tip,
       edge_at_signal: Math.abs(s.edge_score),
       signal_factors: {
+        current_line: s.line,
+        over_price: s.over_price,
+        under_price: s.under_price,
         market_type: s.market_type,
         opponent: s.opponent,
         avg_stat: s.avg_stat,
