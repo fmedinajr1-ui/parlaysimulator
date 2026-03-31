@@ -59,6 +59,28 @@ Deno.serve(async (req) => {
     let incorrect = 0;
 
     for (const [eventId, preds] of byEvent) {
+      // Check if the game has actually started by looking at commence_time
+      const { data: commenceData } = await supabase
+        .from("fanduel_line_timeline")
+        .select("commence_time")
+        .eq("event_id", eventId)
+        .not("commence_time", "is", null)
+        .limit(1);
+
+      if (commenceData && commenceData.length > 0) {
+        const gameStart = new Date(commenceData[0].commence_time);
+        if (now < gameStart) {
+          log(`Skipping event ${eventId} — game hasn't started yet (starts ${commenceData[0].commence_time})`);
+          continue;
+        }
+        // For CLV-based signals, require game to be at least 3 hours past start
+        const threeHoursAfterStart = new Date(gameStart.getTime() + 3 * 60 * 60 * 1000);
+        if (now < threeHoursAfterStart) {
+          log(`Skipping event ${eventId} — game likely still in progress (started ${commenceData[0].commence_time})`);
+          continue;
+        }
+      }
+
       const { data: timeline } = await supabase
         .from("fanduel_line_timeline")
         .select("player_name, prop_type, line, snapshot_time")
