@@ -158,12 +158,55 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TAKE_IT_NOW: CLV check — did closing line move favorably for the recommended side? ──
+        // ── TAKE_IT_NOW: CLV check + TRAP DETECTION ──
         if (pred.signal_type === "take_it_now") {
           const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to;
           const sigOpeningLine = sf.opening_line ?? sf.openingLine;
-          if (sigCurrentLine != null && closingLine != null) {
-            // Extract recommended side from prediction text (e.g., "OVER 7.5" or "UNDER 4.5")
+
+          // Gather all post-alert snapshots to detect reversals
+          const alertTime = pred.alert_sent_at || pred.created_at;
+          const postAlertSnapshots = playerTimeline.filter(
+            t => new Date(t.snapshot_time) > new Date(alertTime)
+          );
+          const postAlertCount = postAlertSnapshots.length;
+          const closingLineVal = playerTimeline[0].line; // latest snapshot
+
+          // Calculate line movement after alert
+          let lineMovementAfterAlert: number | null = null;
+          let movementReversed = false;
+          let reversalMagnitude: number | null = null;
+          let trapType: string | null = null;
+          let wasTrap = false;
+
+          if (sigCurrentLine != null && closingLineVal != null) {
+            lineMovementAfterAlert = closingLineVal - sigCurrentLine;
+
+            // Detect reversal: line moved BACK toward opening after our alert
+            if (sigOpeningLine != null) {
+              const driftAtAlert = sigCurrentLine - sigOpeningLine; // e.g. -2.0 (dropped)
+              const driftAtClose = closingLineVal - sigOpeningLine; // e.g. -0.5 (reversed up)
+
+              // Reversal = closing drift is less extreme than alert drift (line came back)
+              if (Math.abs(driftAtClose) < Math.abs(driftAtAlert) * 0.5) {
+                movementReversed = true;
+                reversalMagnitude = Math.abs(driftAtAlert) - Math.abs(driftAtClose);
+
+                // Classify trap type
+                const hoursBeforeTip = pred.hours_before_tip ?? pred.time_to_tip_hours;
+                if (hoursBeforeTip != null && hoursBeforeTip < 2) {
+                  trapType = "late_bait_and_reverse"; // FanDuel moved line close to tip then snapped back
+                } else if (hoursBeforeTip != null && hoursBeforeTip >= 6) {
+                  trapType = "early_steam_fake"; // Fake early movement to draw action
+                } else {
+                  trapType = "bait_and_reverse"; // Standard trap
+                }
+                wasTrap = true;
+                log(`🪤 TRAP DETECTED: ${pred.player_name} ${pred.prop_type} — ${trapType} (reversed ${reversalMagnitude?.toFixed(1)} pts)`);
+              }
+            }
+          }
+
+          if (sigCurrentLine != null && closingLineVal != null) {
             const predText = (pred.prediction || "").toUpperCase();
             const isOver = predText.includes("OVER");
             const isUnder = predText.includes("UNDER");
@@ -171,18 +214,14 @@ Deno.serve(async (req) => {
             const isFade = predText.includes("FADE") || predText.includes("BACK");
 
             if (isOver || isUnder || isTake || isFade) {
-              // CLV: closing line moved in a direction that makes our entry better
-              // OVER 7.5 is confirmed if closing >= signal line (line rose = we got value)
-              // UNDER 4.5 is confirmed if closing <= signal line (line dropped = we got value)
               if (isOver || isTake) {
-                wasCorrect = closingLine >= sigCurrentLine;
+                wasCorrect = closingLineVal >= sigCurrentLine;
                 actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
               } else {
-                wasCorrect = closingLine <= sigCurrentLine;
+                wasCorrect = closingLineVal <= sigCurrentLine;
                 actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
               }
             } else {
-              // Fallback: infer direction from opening→current drift
               let dir = pred.predicted_direction;
               if (!dir || dir === "snapback" || dir === "revert") {
                 if (sigOpeningLine != null) {
@@ -190,13 +229,38 @@ Deno.serve(async (req) => {
                 }
               }
               if (dir === "dropping") {
-                wasCorrect = closingLine <= sigCurrentLine;
+                wasCorrect = closingLineVal <= sigCurrentLine;
                 actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_DROP" : "ENTRY_REVERSED";
               } else if (dir === "rising") {
-                wasCorrect = closingLine >= sigCurrentLine;
+                wasCorrect = closingLineVal >= sigCurrentLine;
                 actualOutcome = wasCorrect ? "ENTRY_CONFIRMED_RISE" : "ENTRY_REVERSED";
               }
             }
+          }
+
+          // Store enriched trap data alongside outcome
+          if (wasCorrect !== null) {
+            await supabase
+              .from("fanduel_prediction_accuracy")
+              .update({
+                was_correct: wasCorrect,
+                actual_outcome: actualOutcome,
+                actual_value: closingLine,
+                verified_at: now.toISOString(),
+                closing_line: closingLineVal,
+                line_movement_after_alert: lineMovementAfterAlert,
+                movement_reversed: movementReversed,
+                reversal_magnitude: reversalMagnitude,
+                was_trap: wasTrap,
+                trap_type: trapType,
+                post_alert_snapshots: postAlertCount,
+              })
+              .eq("id", pred.id);
+
+            verified++;
+            if (wasCorrect) correct++;
+            else incorrect++;
+            continue; // Skip the generic update below
           }
         }
 
