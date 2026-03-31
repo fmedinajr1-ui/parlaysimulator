@@ -148,7 +148,9 @@ Deno.serve(async (req) => {
           newStatus = "REVERSED";
           reversals++;
 
-          const side = pred.predicted_direction || "OVER";
+          const predText = (pred.prediction || "").toUpperCase();
+          const originalSide = predText.includes("OVER") || predText.includes("TAKE") ? "OVER" : "UNDER";
+          const oppositeSide = originalSide === "OVER" ? "UNDER" : "OVER";
           const minutesSinceAlert = Math.round(
             (now.getTime() - new Date(alertTime).getTime()) / 60000
           );
@@ -156,20 +158,67 @@ Deno.serve(async (req) => {
             (1 - Math.abs(currentDriftFromOpen) / Math.abs(alertDriftFromOpen)) * 100
           );
 
-          // Check if flip creates edge on opposite side
-          const oppositeSide = side === "OVER" ? "UNDER" : "OVER";
-          const flipEdge = Math.abs(currentDriftFromOpen) > 0.1;
+          // ── AUTO-FLIP VALIDATION: Check L10 stats for opposite side ──
+          let flipValidated = false;
+          let flipReason = "";
+          let flipL10Avg: number | null = null;
+          let flipHitRate: number | null = null;
+
+          const isTeamMarket = ["spreads", "totals", "moneyline"].includes(pred.prop_type || "");
+
+          if (!isTeamMarket) {
+            // Query unified_props for L10 data on this player+prop
+            const { data: propsData } = await supabase
+              .from("unified_props")
+              .select("l10_avg, l10_hit_rate_over, l10_hit_rate_under, fanduel_line")
+              .eq("player_name", pred.player_name)
+              .eq("prop_type", pred.prop_type)
+              .order("last_updated", { ascending: false })
+              .limit(1);
+
+            if (propsData && propsData.length > 0) {
+              const p = propsData[0];
+              flipL10Avg = p.l10_avg;
+              const flipLine = currentLine;
+
+              if (oppositeSide === "OVER") {
+                flipHitRate = p.l10_hit_rate_over;
+                // Validate: L10 avg should be ABOVE the line for OVER
+                if (flipL10Avg != null && flipL10Avg > flipLine && (flipHitRate ?? 0) >= 0.5) {
+                  flipValidated = true;
+                  flipReason = `L10 avg ${flipL10Avg.toFixed(1)} > line ${flipLine} | Hit rate: ${((flipHitRate ?? 0) * 100).toFixed(0)}%`;
+                }
+              } else {
+                flipHitRate = p.l10_hit_rate_under;
+                // Validate: L10 avg should be BELOW the line for UNDER
+                if (flipL10Avg != null && flipL10Avg < flipLine && (flipHitRate ?? 0) >= 0.5) {
+                  flipValidated = true;
+                  flipReason = `L10 avg ${flipL10Avg.toFixed(1)} < line ${flipLine} | Hit rate: ${((flipHitRate ?? 0) * 100).toFixed(0)}%`;
+                }
+              }
+            }
+          }
+
+          // Build alert message
+          const flipBlock = flipValidated
+            ? [
+                ``,
+                `✅ *FLIP VALIDATED: ${oppositeSide} ${currentLine}*`,
+                `📊 ${flipReason}`,
+                `💡 Opposite side has statistical edge — consider flipping`,
+              ].join("\n")
+            : Math.abs(currentDriftFromOpen) > 0.1
+            ? `\n⚠️ Flip to ${oppositeSide} ${currentLine} possible but *NOT confirmed* by L10 data`
+            : "";
 
           alertMessage = [
             `⚠️ *LINE REVERSED* — Take It Now Update`,
             ``,
-            `🔄 ${pred.player_name} ${side} ${alertLine} ${pred.prop_type}`,
+            `🔄 ${pred.player_name} ${originalSide} ${alertLine} ${pred.prop_type}`,
             `📗 Line moved: ${alertLine} → ${currentLine} (${lineChanges} changes in ${minutesSinceAlert}min)`,
             `📊 Reversed ${reversalPct}% back toward opener (${openingLine})`,
             `❌ Original recommendation NO LONGER VALID`,
-            flipEdge
-              ? `\n💡 *Flip Signal:* ${oppositeSide} ${currentLine} may now have edge`
-              : ``,
+            flipBlock,
             ``,
             `_Odds: O ${currentOverPrice || "N/A"} / U ${currentUnderPrice || "N/A"}_`,
           ]
