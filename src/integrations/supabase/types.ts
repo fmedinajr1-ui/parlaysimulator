@@ -3452,65 +3452,101 @@ export type Database = {
         Row: {
           actual_outcome: string | null
           actual_value: number | null
+          alert_sent_at: string | null
+          closing_line: number | null
           confidence_at_signal: number | null
           created_at: string
+          drift_pct_at_alert: number | null
           edge_at_signal: number | null
           event_id: string | null
+          hours_before_tip: number | null
           id: string
+          line_at_alert: number | null
+          line_movement_after_alert: number | null
+          movement_reversed: boolean | null
           player_name: string | null
+          post_alert_snapshots: number | null
           predicted_direction: string | null
           predicted_magnitude: number | null
           prediction: string
           prop_type: string
+          reversal_magnitude: number | null
           signal_factors: Json | null
           signal_type: string
+          snapshots_at_alert: number | null
           sport: string
           time_to_tip_hours: number | null
+          trap_type: string | null
           velocity_at_signal: number | null
           verified_at: string | null
           was_correct: boolean | null
+          was_trap: boolean | null
         }
         Insert: {
           actual_outcome?: string | null
           actual_value?: number | null
+          alert_sent_at?: string | null
+          closing_line?: number | null
           confidence_at_signal?: number | null
           created_at?: string
+          drift_pct_at_alert?: number | null
           edge_at_signal?: number | null
           event_id?: string | null
+          hours_before_tip?: number | null
           id?: string
+          line_at_alert?: number | null
+          line_movement_after_alert?: number | null
+          movement_reversed?: boolean | null
           player_name?: string | null
+          post_alert_snapshots?: number | null
           predicted_direction?: string | null
           predicted_magnitude?: number | null
           prediction: string
           prop_type: string
+          reversal_magnitude?: number | null
           signal_factors?: Json | null
           signal_type: string
+          snapshots_at_alert?: number | null
           sport: string
           time_to_tip_hours?: number | null
+          trap_type?: string | null
           velocity_at_signal?: number | null
           verified_at?: string | null
           was_correct?: boolean | null
+          was_trap?: boolean | null
         }
         Update: {
           actual_outcome?: string | null
           actual_value?: number | null
+          alert_sent_at?: string | null
+          closing_line?: number | null
           confidence_at_signal?: number | null
           created_at?: string
+          drift_pct_at_alert?: number | null
           edge_at_signal?: number | null
           event_id?: string | null
+          hours_before_tip?: number | null
           id?: string
+          line_at_alert?: number | null
+          line_movement_after_alert?: number | null
+          movement_reversed?: boolean | null
           player_name?: string | null
+          post_alert_snapshots?: number | null
           predicted_direction?: string | null
           predicted_magnitude?: number | null
           prediction?: string
           prop_type?: string
+          reversal_magnitude?: number | null
           signal_factors?: Json | null
           signal_type?: string
+          snapshots_at_alert?: number | null
           sport?: string
           time_to_tip_hours?: number | null
+          trap_type?: string | null
           velocity_at_signal?: number | null
           verified_at?: string | null
           was_correct?: boolean | null
+          was_trap?: boolean | null
         }
         Relationships: []
       }
