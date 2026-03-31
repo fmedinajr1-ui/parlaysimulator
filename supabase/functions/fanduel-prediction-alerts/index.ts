@@ -672,6 +672,11 @@ Deno.serve(async (req) => {
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: driftPct,
         signal_factors: { opening_line: last.opening_line, current_line: last.line, driftPct },
+        // Trap detection fields
+        line_at_alert: last.line,
+        hours_before_tip: last.hours_to_tip,
+        alert_sent_at: new Date().toISOString(),
+        drift_pct_at_alert: driftPct,
       };
 
       addSignal(`${last.event_id}|${last.player_name}`, confidence, alertText, record);
