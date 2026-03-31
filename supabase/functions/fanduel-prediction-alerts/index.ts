@@ -7,21 +7,12 @@ const corsHeaders = {
 
 // ── ACCURACY-DRIVEN SIGNAL GATES ──
 // Historical accuracy badges are now DYNAMIC — queried from fanduel_prediction_accuracy
-// Priority tiers remain: P0 (perfect_line/scale_in) → P5 (velocity_spike ML)
-// KILLED: cascade, velocity_spike (totals/spreads/points/threes/rebounds), snapback (points/3s)
+// Priority tiers: P0 (perfect_line/scale_in) → P5 (velocity_spike) → P6 (cascade)
+// All signal types are now ACTIVE — velocity_spike and cascade fully restored
 
-const KILLED_SIGNALS = new Set(["cascade"]);
-// velocity_spike is now conditionally killed (see below)
-const KILLED_VELOCITY_MARKETS = new Set(["totals", "spreads", "player_points", "player_threes", "player_rebounds"]);
-// velocity_spike ONLY survives for moneyline dropping (57.9%)
-function isKilledSignal(signalType: string, propType: string, direction?: string): boolean {
-  if (KILLED_SIGNALS.has(signalType)) return true;
-  if (signalType === "velocity_spike") {
-    // Only moneyline dropping survives
-    if (propType === "moneyline" && direction === "dropping") return false;
-    return true;
-  }
-  return false;
+const KILLED_SIGNALS = new Set<string>(); // No killed signals
+function isKilledSignal(signalType: string, _propType: string, _direction?: string): boolean {
+  return KILLED_SIGNALS.has(signalType);
 }
 
 const COMBO_PROPS = new Set([
