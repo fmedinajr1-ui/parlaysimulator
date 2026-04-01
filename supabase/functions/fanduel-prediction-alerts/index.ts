@@ -10,9 +10,11 @@ const corsHeaders = {
 // Priority tiers: P0 (perfect_line/scale_in) → P5 (velocity_spike) → P6 (cascade)
 // All signal types are now ACTIVE — velocity_spike and cascade fully restored
 
-const KILLED_SIGNALS = new Set<string>(); // No killed signals
-function isKilledSignal(signalType: string, _propType: string, _direction?: string): boolean {
-  return KILLED_SIGNALS.has(signalType);
+const KILLED_VELOCITY_MARKETS = new Set(["spreads", "totals"]);
+function isKilledSignal(signalType: string, propType: string, _direction?: string): boolean {
+  // Gate velocity_spike on Spreads/Totals — 1-13 combined (7.7% accuracy)
+  if (signalType === "velocity_spike" && KILLED_VELOCITY_MARKETS.has(propType)) return true;
+  return false;
 }
 
 const COMBO_PROPS = new Set([
