@@ -337,12 +337,14 @@ Deno.serve(async (req) => {
             } else {
               // Fallback: infer from predicted_direction
               const dir = pred.predicted_direction;
-              if (dir === "dropping" || dir === "under") {
+              if (dir === "dropping" || dir === "under" || dir === "fade") {
+                // FADE = betting against this line (expect CLV drop or line was overpriced)
                 wasCorrect = closingLine <= sigCurrentLine;
-                actualOutcome = wasCorrect ? "CLV_POSITIVE_DROP" : "CLV_NEGATIVE_DROP";
-              } else if (dir === "rising" || dir === "over") {
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_FADE" : "CLV_NEGATIVE_FADE";
+              } else if (dir === "rising" || dir === "over" || dir === "back") {
+                // BACK = betting on this line (expect CLV rise or line was underpriced)
                 wasCorrect = closingLine >= sigCurrentLine;
-                actualOutcome = wasCorrect ? "CLV_POSITIVE_RISE" : "CLV_NEGATIVE_RISE";
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_BACK" : "CLV_NEGATIVE_BACK";
               }
             }
           }
