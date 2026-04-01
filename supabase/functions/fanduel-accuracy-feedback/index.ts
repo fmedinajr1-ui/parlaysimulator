@@ -103,9 +103,24 @@ Deno.serve(async (req) => {
         let wasCorrect: boolean | null = null;
         let actualOutcome = "unverifiable";
 
+        // ── Helper: resolve line at signal time (from signal_factors or nearest timeline snapshot) ──
+        const resolveLineAtSignal = (): number | null => {
+          const fromSF = sf.line_to ?? sf.currentLine ?? sf.current_line;
+          if (fromSF != null) return Number(fromSF);
+          // Fallback: find the timeline snapshot closest to prediction created_at
+          const predTime = new Date(pred.created_at).getTime();
+          let closest: any = null;
+          let closestDelta = Infinity;
+          for (const t of playerTimeline) {
+            const d = Math.abs(new Date(t.snapshot_time).getTime() - predTime);
+            if (d < closestDelta) { closestDelta = d; closest = t; }
+          }
+          return closest ? Number(closest.line) : null;
+        };
+
         // ── VELOCITY SPIKE: did line continue moving in predicted direction? ──
-        if (pred.signal_type === "velocity_spike") {
-          const lineAtSignal = sf.line_to ?? sf.currentLine;
+        if (pred.signal_type === "velocity_spike" || pred.signal_type === "live_velocity_spike") {
+          const lineAtSignal = resolveLineAtSignal();
           if (lineAtSignal != null && closingLine != null) {
             if (pred.predicted_direction === "dropping") {
               wasCorrect = closingLine < lineAtSignal;
@@ -118,11 +133,8 @@ Deno.serve(async (req) => {
         }
 
         // ── LINE ABOUT TO MOVE: did line continue in predicted direction? ──
-        if (pred.signal_type === "line_about_to_move") {
-          // signal_factors has: lineDiff, velocityPerHour, learnedAvgVelocity
-          // predicted_direction is "dropping" or "rising"
-          // Check if from signal time to close, line moved further in that direction
-          const lineAtSignal = sf.line_to ?? sf.currentLine;
+        if (pred.signal_type === "line_about_to_move" || pred.signal_type === "live_line_about_to_move") {
+          const lineAtSignal = resolveLineAtSignal();
           if (lineAtSignal != null && closingLine != null) {
             if (pred.predicted_direction === "dropping") {
               wasCorrect = closingLine < lineAtSignal;
@@ -142,11 +154,9 @@ Deno.serve(async (req) => {
         }
 
         // ── CASCADE: did the pending props also move? ──
-        if (pred.signal_type === "cascade") {
+        if (pred.signal_type === "cascade" || pred.signal_type === "live_cascade") {
           const pendingProps: string[] = sf.pending_props || [];
-          const movedProps: string[] = sf.moved_props || [];
           if (pendingProps.length > 0) {
-            // Check each pending prop — did it eventually move (any line change)?
             let pendingThatMoved = 0;
             for (const pp of pendingProps) {
               const ppTimeline = timeline.filter(
@@ -159,23 +169,42 @@ Deno.serve(async (req) => {
               }
             }
             const moveRate = pendingThatMoved / pendingProps.length;
-            wasCorrect = moveRate >= 0.5; // at least half the pending props moved
+            wasCorrect = moveRate >= 0.5;
             actualOutcome = wasCorrect
               ? `CASCADE_CONFIRMED (${pendingThatMoved}/${pendingProps.length} moved)`
               : `CASCADE_MISSED (${pendingThatMoved}/${pendingProps.length} moved)`;
           }
         }
 
+        // ── LIVE DRIFT: CLV check (same logic as take_it_now) ──
+        if (pred.signal_type === "live_drift") {
+          const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to;
+          if (sigCurrentLine != null && closingLine != null) {
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER");
+            const isUnder = predText.includes("UNDER");
+            if (isOver) {
+              wasCorrect = closingLine >= Number(sigCurrentLine);
+              actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
+            } else if (isUnder) {
+              wasCorrect = closingLine <= Number(sigCurrentLine);
+              actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
+            }
+          }
+        }
+
         // ── LIVE LINE MOVING: did live movement continue? ──
-        if (pred.signal_type === "live_line_moving") {
-          const lineAtSignal = sf.line_to ?? sf.currentLine;
-          if (lineAtSignal != null && closingLine != null) {
-            if (pred.predicted_direction === "dropping") {
-              wasCorrect = closingLine <= lineAtSignal;
-              actualOutcome = wasCorrect ? "LIVE_DROP_CONFIRMED" : "LIVE_REVERSED";
-            } else if (pred.predicted_direction === "rising") {
-              wasCorrect = closingLine >= lineAtSignal;
-              actualOutcome = wasCorrect ? "LIVE_RISE_CONFIRMED" : "LIVE_REVERSED";
+        if (pred.signal_type === "live_line_moving" || pred.signal_type === "live_cascade" || pred.signal_type === "live_velocity_spike") {
+          if (wasCorrect === null) {
+            const lineAtSignal = resolveLineAtSignal();
+            if (lineAtSignal != null && closingLine != null) {
+              if (pred.predicted_direction === "dropping") {
+                wasCorrect = closingLine <= lineAtSignal;
+                actualOutcome = wasCorrect ? "LIVE_DROP_CONFIRMED" : "LIVE_REVERSED";
+              } else if (pred.predicted_direction === "rising") {
+                wasCorrect = closingLine >= lineAtSignal;
+                actualOutcome = wasCorrect ? "LIVE_RISE_CONFIRMED" : "LIVE_REVERSED";
+              }
             }
           }
         }
