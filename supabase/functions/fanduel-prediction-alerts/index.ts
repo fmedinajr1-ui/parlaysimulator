@@ -559,8 +559,8 @@ Deno.serve(async (req) => {
       const avgReaction = learnedPattern?.avg_reaction_time_minutes || 12;
       const remaining = Math.max(0, avgReaction - elapsed);
 
-      // Dynamic accuracy badge from real verified data
-      const accuracyBadge = dynamicAccBadge("line_about_to_move", first.prop_type);
+      // Dynamic accuracy badge uses the classified signal type
+      const accuracyBadge = dynamicAccBadge(classifiedSignalType, first.prop_type);
 
       const reason = isContrarian
         ? (side === "UNDER"
@@ -577,8 +577,17 @@ Deno.serve(async (req) => {
         ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
         : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
 
+      // Signal-specific label and emoji
+      const signalLabel = classifiedSignalType === "velocity_spike"
+        ? "VELOCITY SPIKE"
+        : classifiedSignalType === "cascade"
+        ? "CASCADE ALERT"
+        : (live ? "LINE MOVING NOW" : "LINE ABOUT TO MOVE");
+      const signalEmoji = classifiedSignalType === "velocity_spike" ? "⚡" 
+        : classifiedSignalType === "cascade" ? "🌊" : "🔮";
+
       const alertText = [
-        `🔮 *${live ? "LINE MOVING NOW" : "LINE ABOUT TO MOVE"}*${liveTag} — ${esc(first.sport)}`,
+        `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
         marketLabel,
         fdLineBadge(last.line, last.over_price, last.under_price, side),
@@ -593,8 +602,9 @@ Deno.serve(async (req) => {
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
       ].filter(Boolean).join("\n");
 
+      const liveSignalType = live ? `live_${classifiedSignalType}` : classifiedSignalType;
       const record = {
-        signal_type: live ? "live_line_moving" : "line_about_to_move",
+        signal_type: liveSignalType,
         sport: first.sport, prop_type: first.prop_type,
         player_name: first.player_name, event_id: first.event_id,
         prediction: `${side} ${last.line}`,
@@ -604,7 +614,7 @@ Deno.serve(async (req) => {
         velocity_at_signal: velocityPerHour,
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: absLineDiff,
-        signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity },
+        signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType },
       };
 
       addSignal(`${first.event_id}|${first.player_name}`, confidence, alertText, record);
