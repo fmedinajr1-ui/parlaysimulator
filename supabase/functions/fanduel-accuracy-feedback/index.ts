@@ -176,19 +176,37 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── LIVE DRIFT: CLV check (same logic as take_it_now) ──
+        // ── LIVE DRIFT: CLV check or snapback verification ──
         if (pred.signal_type === "live_drift") {
           const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to;
+          const sigOpeningLine = sf.opening_line ?? sf.openingLine;
           if (sigCurrentLine != null && closingLine != null) {
             const predText = (pred.prediction || "").toUpperCase();
             const isOver = predText.includes("OVER");
             const isUnder = predText.includes("UNDER");
-            if (isOver) {
+            const isSnapback = pred.predicted_direction === "snapback";
+
+            if (isSnapback && sigOpeningLine != null) {
+              // Snapback = line drifted away from opening, we predict it reverts back
+              const driftAtSignal = Math.abs(Number(sigCurrentLine) - Number(sigOpeningLine));
+              const driftAtClose = Math.abs(closingLine - Number(sigOpeningLine));
+              wasCorrect = driftAtClose < driftAtSignal;
+              actualOutcome = wasCorrect ? "DRIFT_SNAPPED_BACK" : "DRIFT_CONTINUED";
+            } else if (isOver) {
               wasCorrect = closingLine >= Number(sigCurrentLine);
               actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
             } else if (isUnder) {
               wasCorrect = closingLine <= Number(sigCurrentLine);
               actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
+            } else if (isSnapback) {
+              // Snapback without opening line: use prediction text to infer direction
+              const lineMatch = predText.match(/([\d.]+)/);
+              if (lineMatch) {
+                const predLine = parseFloat(lineMatch[1]);
+                // For snapback, "OVER X" means line dropped below X and should revert up
+                wasCorrect = Math.abs(closingLine - predLine) < Math.abs(Number(sigCurrentLine) - predLine);
+                actualOutcome = wasCorrect ? "DRIFT_SNAPPED_BACK" : "DRIFT_CONTINUED";
+              }
             }
           }
         }
