@@ -614,7 +614,7 @@ Deno.serve(async (req) => {
         velocity_at_signal: velocityPerHour,
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: absLineDiff,
-        signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType },
+        signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType, currentLine: last.line, line_to: last.line, opening_line: first.line },
       };
 
       addSignal(`${first.event_id}|${first.player_name}`, confidence, alertText, record);
