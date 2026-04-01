@@ -501,6 +501,35 @@ Deno.serve(async (req) => {
       const isCombo = COMBO_PROPS.has(first.prop_type);
       const comboBoost = isCombo ? 15 : 0;
       const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
+
+      // ── CLASSIFY SIGNAL TYPE: velocity_spike vs cascade vs line_about_to_move ──
+      // Cascade: ≥3 snapshots all moving in same direction (consistent drift)
+      const isCascade = snapshots.length >= 3 && (() => {
+        const diffs = [];
+        for (let i = 1; i < snapshots.length; i++) {
+          diffs.push(snapshots[i].line - snapshots[i - 1].line);
+        }
+        const allSameDir = diffs.every(d => d > 0) || diffs.every(d => d < 0);
+        const consistency = diffs.filter(d => Math.sign(d) === Math.sign(lineDiff)).length / diffs.length;
+        return allSameDir || consistency >= 0.8;
+      })();
+      // Velocity spike: high velocity (≥4.0/hr) with ≥3 snapshots and ≥50% directional consistency
+      const isVelocitySpike = velocityPerHour >= 4.0 && snapshots.length >= 3;
+      
+      let classifiedSignalType: string;
+      if (isVelocitySpike) {
+        classifiedSignalType = "velocity_spike";
+      } else if (isCascade) {
+        classifiedSignalType = "cascade";
+      } else {
+        classifiedSignalType = "line_about_to_move";
+      }
+
+      // Apply kill gates for specific signal/market combos
+      if (isKilledSignal(classifiedSignalType, first.prop_type)) {
+        log(`🚫 KILLED ${classifiedSignalType} on ${first.prop_type}`);
+        continue;
+      }
       const live = isLive(last);
 
       // ── CROSS-REFERENCE GATE (player props + team markets) ──
