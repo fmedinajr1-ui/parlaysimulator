@@ -560,7 +560,7 @@ Deno.serve(async (req) => {
       const direction = lineDiff < 0 ? "DROPPING" : "RISING";
       const isContrarian = CONTRARIAN_PROPS.has(first.prop_type);
       const rawSide = lineDiff < 0 ? "OVER" : "UNDER";
-      const side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
+      let side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
       const isCombo = COMBO_PROPS.has(first.prop_type);
       const comboBoost = isCombo ? 15 : 0;
       const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
