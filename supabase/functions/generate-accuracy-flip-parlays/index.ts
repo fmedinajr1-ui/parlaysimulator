@@ -251,6 +251,16 @@ Deno.serve(async (req) => {
           ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
           : "no data";
         const accEntry = accMap.get(accKey);
+        // Fallback: try signal_type-only accuracy if specific combo has no data
+        let fallbackAcc: { wins: number; total: number } | null = null;
+        if (!accEntry || accEntry.total < 3) {
+          let fWins = 0, fTotal = 0;
+          for (const [k, v] of accMap.entries()) {
+            if (k.startsWith(signalType + "|")) { fWins += v.wins; fTotal += v.total; }
+          }
+          if (fTotal >= 3) fallbackAcc = { wins: fWins, total: fTotal };
+        }
+        const effectiveAcc = (accEntry && accEntry.total >= 3) ? accEntry : fallbackAcc;
         const overAcc = accEntry && accEntry.over_total >= 3 ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
         const underAcc = accEntry && accEntry.under_total >= 3 ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
 
