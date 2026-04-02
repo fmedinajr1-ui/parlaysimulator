@@ -19,18 +19,31 @@ Deno.serve(async (req) => {
   const now = new Date();
   const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-  try {
-    log("=== Starting accuracy feedback loop ===");
+  // Parse optional body for settle_all mode
+  const body = await req.json().catch(() => ({}));
+  const settleAll = body?.settle_all === true;
 
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: unverified, error: fetchErr } = await supabase
+  try {
+    log(`=== Starting accuracy feedback loop ${settleAll ? '(SETTLE ALL MODE)' : ''} ===`);
+
+    const lookbackDays = settleAll ? 14 : 7;
+    const lookbackDate = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+    const queryLimit = settleAll ? 1000 : 300;
+
+    let query = supabase
       .from("fanduel_prediction_accuracy")
       .select("*")
       .is("was_correct", null)
-      .gte("created_at", sevenDaysAgo)
-      .lte("created_at", twoHoursAgo.toISOString())
+      .gte("created_at", lookbackDate)
       .order("created_at", { ascending: false })
-      .limit(300);
+      .limit(queryLimit);
+
+    // Only apply the 2-hour age filter in normal mode
+    if (!settleAll) {
+      query = query.lte("created_at", twoHoursAgo.toISOString());
+    }
+
+    const { data: unverified, error: fetchErr } = await query;
 
     if (fetchErr) throw new Error(`Fetch unverified: ${fetchErr.message}`);
     log(`Found ${unverified?.length || 0} unverified predictions (2h+ old)`);
