@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
       .select("signal_type, prop_type, sport, was_correct, prediction")
       .not("was_correct", "is", null)
       .not("signal_type", "eq", "trap_warning")
-      .gte("created_at", sixtyDaysAgo);
+      .gte("created_at", thirtyDaysAgo);
 
     if (accErr) throw accErr;
 
