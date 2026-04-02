@@ -86,9 +86,10 @@ Deno.serve(async (req) => {
           log(`Skipping event ${eventId} — game hasn't started yet (starts ${commenceData[0].commence_time})`);
           continue;
         }
-        // For CLV-based signals, require game to be at least 3 hours past start
-        const threeHoursAfterStart = new Date(gameStart.getTime() + 3 * 60 * 60 * 1000);
-        if (now < threeHoursAfterStart) {
+        // For CLV-based signals, require game to be past start + guard time
+        const guardHours = settleAll ? 0.5 : 3; // 30 min guard in settle_all, 3h normally
+        const guardTime = new Date(gameStart.getTime() + guardHours * 60 * 60 * 1000);
+        if (now < guardTime) {
           log(`Skipping event ${eventId} — game likely still in progress (started ${commenceData[0].commence_time})`);
           continue;
         }
