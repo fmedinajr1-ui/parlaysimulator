@@ -135,6 +135,21 @@ Deno.serve(async (req) => {
       return `${emoji} Historical: ${pct}% (${stats.correct}/${stats.total} verified)`;
     }
 
+    // ── 70% ACCURACY GATE — block any signal+prop combo below 70% with sufficient data ──
+    const ACCURACY_GATE_MIN_SAMPLES = 10;
+    const ACCURACY_GATE_THRESHOLD = 0.70;
+    function isAccuracyGated(signalType: string, propType: string): boolean {
+      const key = `${signalType}|${propType}`;
+      const stats = accuracyMap.get(key);
+      if (!stats || stats.total < ACCURACY_GATE_MIN_SAMPLES) return false; // not enough data, allow through
+      const rate = stats.correct / stats.total;
+      if (rate < ACCURACY_GATE_THRESHOLD) {
+        log(`🚫 ACCURACY GATE: ${signalType}|${propType} blocked (${(rate*100).toFixed(1)}% < 70%, n=${stats.total})`);
+        return true;
+      }
+      return false;
+    }
+
     if (!recentData || recentData.length === 0) {
       log("No recent data for alerts");
       return new Response(JSON.stringify({ success: true, alerts: 0 }), {
