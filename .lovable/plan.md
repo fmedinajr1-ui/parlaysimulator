@@ -1,27 +1,41 @@
 
 
-## Settle All Pending FanDuel Predictions
+## Plan: Align Accuracy-Flip Parlay Generator with Alert Kill/Flip Rules
 
 ### Problem
-861 pending predictions are stuck unsettled due to two bottlenecks in `fanduel-accuracy-feedback`:
-1. **`limit(300)`** — only processes 300 records per run
-2. **3-hour post-game guard** — skips events less than 3 hours after tip-off
+The `fanduel-prediction-alerts` function has strict kill gates and auto-flip rules for player props, but `generate-accuracy-flip-parlays` uses a softer "TRAP_SIGNAL_TYPES" approach that doesn't fully match. The parlay generator still considers killed signals as valid legs.
 
-For games from March 29–April 1, all games are long over, so the guard isn't the issue — the 300 limit is just not enough to chew through the backlog in scheduled runs.
+### What's Missing in the Parlay Generator
 
-### Plan
+| Rule | Alerts Function | Parlay Generator |
+|------|----------------|-----------------|
+| Kill `velocity_spike` on spreads/totals | ✅ | ❌ Missing |
+| Kill `velocity_spike` + `live_velocity_spike` on ALL player props | ✅ | ❌ Only treats as "trap flip" |
+| Kill `line_about_to_move` + `live_line_about_to_move` on ALL player props | ✅ | ❌ Only treats as "trap flip" |
+| Auto-flip `cascade` player prop OVERs to UNDER | ✅ | ⚠️ Partially (via trap logic) |
 
-**Edit `supabase/functions/fanduel-accuracy-feedback/index.ts`:**
+### Changes to `generate-accuracy-flip-parlays/index.ts`
 
-1. **Raise the query limit from 300 → 1000** to process more records per invocation
-2. **Accept a `settle_all` body parameter** — when `true`, skip the 2-hour age filter and 3-hour post-game guard for records older than 6 hours, allowing a single manual invocation to blast through the entire backlog
-3. **Extend the 7-day lookback to 14 days** when `settle_all` is true to catch any stragglers from March 29
+1. **Add the same constants and helper functions** from the alerts function:
+   - `KILLED_VELOCITY_MARKETS` set (spreads, totals)
+   - `PLAYER_PROP_TYPES` set (all player prop types)
+   - `isPlayerPropType()` function
+   - `isKilledSignal()` function (exact same logic)
 
-**Then invoke the function manually** with `{ "settle_all": true }` to settle all 861 pending records in one shot and send the accuracy report to Telegram.
+2. **Apply kill gate when classifying picks** — before a pick enters either `bestLegs` or `flipLegs`, check `isKilledSignal()`. If killed, skip entirely (don't use as any leg).
 
-### Technical Details
-- Add `const body = await req.json().catch(() => ({}))` at top
-- When `body.settle_all === true`: remove the `lte('created_at', twoHoursAgo)` filter, set lookback to 14 days, increase limit to 1000, and relax the 3-hour post-game guard to 30 minutes (safety net for truly live games)
-- No schema changes needed — just function logic
-- Redeploy and invoke once manually
+3. **Apply cascade auto-flip** — if signal is `cascade`, prop is a player prop, and prediction is OVER, auto-flip to UNDER and route to flip bucket.
+
+4. **Remove the loose `TRAP_SIGNAL_TYPES` approach** — replace with the exact same gating logic the alerts function uses so both systems are identical.
+
+5. **Update tracking insert** to include a `kill_gate_applied` or `trap_flag` field reflecting what rule was triggered.
+
+### Technical Detail
+
+The core change replaces the current block at lines 179-273 with:
+- First: skip any pick where `isKilledSignal(signal_type, prop_type)` returns true
+- Then: for cascade + player prop + OVER → auto-flip to UNDER and put in flip bucket
+- Then: normal best/flip classification as before
+
+This ensures no "toxic" signal ever appears in a parlay leg, matching the alerts pipeline exactly.
 
