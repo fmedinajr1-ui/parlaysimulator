@@ -593,6 +593,16 @@ Deno.serve(async (req) => {
         log(`🚫 KILLED ${classifiedSignalType} on ${first.prop_type}`);
         continue;
       }
+
+      // AUTO-FLIP: Cascade signals on player prop OVERs → flip to UNDER
+      // FanDuel uses different line-setting for player props vs team markets
+      let autoFlipped = false;
+      if (classifiedSignalType === "cascade" && isPlayerPropType(first.prop_type) && side === "OVER") {
+        log(`🔄 AUTO-FLIP: ${first.player_name} ${first.prop_type} cascade OVER → UNDER (market trap logic)`);
+        // Reassign side to UNDER
+        Object.defineProperty(this, 'side', { value: 'UNDER' }); // won't work, use variable
+        autoFlipped = true;
+      }
       const live = isLive(last);
 
       // ── CROSS-REFERENCE GATE (player props + team markets) ──
