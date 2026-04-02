@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[accuracy-flip-parlays] ${msg}`);
 
   try {
-    log("=== Generating Accuracy-Based Flip 2-Leg Parlays (with Market Trap Logic) ===");
+    log("=== Generating Accuracy-Based Flip 2-Leg Parlays (Kill Gate + Auto-Flip Aligned) ===");
 
     // 1. Get historical accuracy by signal_type + prop_type + sport (min 5 settled)
     const { data: allSettled, error: accErr } = await supabase
