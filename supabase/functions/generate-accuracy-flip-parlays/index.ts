@@ -47,6 +47,12 @@ const TEAM_MARKETS = ["moneyline", "spreads", "totals", "spread", "total", "mone
 const isTeamMarket = (propType: string) =>
   TEAM_MARKETS.some(m => (propType || "").toLowerCase().includes(m));
 
+// Extract line number from prediction string like "OVER 21.5" → 21.5
+const extractLineFromPrediction = (prediction: string): number | null => {
+  const match = (prediction || "").match(/[\d]+\.?\d*/);
+  return match ? parseFloat(match[0]) : null;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -63,14 +69,14 @@ Deno.serve(async (req) => {
     log("=== Generating Accuracy-Based Flip 2-Leg Parlays (Kill Gate + Auto-Flip Aligned) ===");
 
     // 1. Get historical accuracy by signal_type + prop_type + sport (min 5 settled)
-    // Limit to last 14 days to avoid query timeout
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    // Use 30-day lookback (14 was too narrow, 60 caused timeouts)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data: allSettled, error: accErr } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, prop_type, sport, was_correct, prediction")
       .not("was_correct", "is", null)
       .not("signal_type", "eq", "trap_warning")
-      .gte("created_at", fourteenDaysAgo);
+      .gte("created_at", thirtyDaysAgo);
 
     if (accErr) throw accErr;
 
@@ -245,6 +251,16 @@ Deno.serve(async (req) => {
           ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
           : "no data";
         const accEntry = accMap.get(accKey);
+        // Fallback: try signal_type-only accuracy if specific combo has no data
+        let fallbackAcc: { wins: number; total: number } | null = null;
+        if (!accEntry || accEntry.total < 3) {
+          let fWins = 0, fTotal = 0;
+          for (const [k, v] of accMap.entries()) {
+            if (k.startsWith(signalType + "|")) { fWins += v.wins; fTotal += v.total; }
+          }
+          if (fTotal >= 3) fallbackAcc = { wins: fWins, total: fTotal };
+        }
+        const effectiveAcc = (accEntry && accEntry.total >= 3) ? accEntry : fallbackAcc;
         const overAcc = accEntry && accEntry.over_total >= 3 ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
         const underAcc = accEntry && accEntry.under_total >= 3 ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
 
@@ -257,12 +273,12 @@ Deno.serve(async (req) => {
           prediction: flippedPred,
           original_prediction: pick.prediction || "",
           event_id: pick.event_id || "",
-          accuracy: accEntry ? (accEntry.wins / accEntry.total) * 100 : 0,
-          accuracy_record: accEntry ? `${accEntry.wins}-${accEntry.losses}` : "0-0",
+          accuracy: effectiveAcc ? (effectiveAcc.wins / effectiveAcc.total) * 100 : 0,
+          accuracy_record: effectiveAcc ? `${effectiveAcc.wins}-${effectiveAcc.total - effectiveAcc.wins}` : "0-0",
           signal_factors: sf,
           is_flip: true,
           flipped_prediction: flippedPred,
-          line: sf.line ?? sf.fanduel_line ?? null,
+          line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLineFromPrediction(pick.prediction) ?? null,
           over_price: sf.over_price ?? null,
           under_price: sf.under_price ?? null,
           trap_flag: "kill_gate_faded",
@@ -322,7 +338,7 @@ Deno.serve(async (req) => {
         signal_factors: sf,
         is_flip: false,
         flipped_prediction: flippedPrediction,
-        line: sf.line ?? sf.fanduel_line ?? null,
+        line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLineFromPrediction(pick.prediction) ?? null,
         over_price: sf.over_price ?? null,
         under_price: sf.under_price ?? null,
         trap_flag: trapFlag,
@@ -455,9 +471,11 @@ Deno.serve(async (req) => {
       msgLines.push(`━━━ *Pair ${i + 1}* ${isCrossSport ? "🌍 Cross-Sport" : "🏟 Same-Sport"} ━━━`);
       msgLines.push("");
 
-      // Leg 1: Best accuracy
+      // Leg 1: Best accuracy — show side + line + prop clearly
+      const bestPredSide = bestIsOver ? "OVER" : "FADE";
+      const bestLineStr = p.bestLeg.line != null ? ` ${p.bestLeg.line}` : "";
       msgLines.push(`✅ *LEG 1 — BEST ACCURACY* ${bestSport}`);
-      msgLines.push(`*${p.bestLeg.player_name}* ${p.bestLeg.prediction} ${formatProp(p.bestLeg.prop_type)}${bestOdds ? ` (${bestOdds})` : ""}`);
+      msgLines.push(`*${p.bestLeg.player_name}* ${p.bestLeg.prediction}${bestLineStr} ${formatProp(p.bestLeg.prop_type)}${bestOdds ? ` (${bestOdds})` : ""}`);
       msgLines.push(`📊 Signal: ${p.bestLeg.signal_type.replace(/_/g, " ")} | *${p.bestLeg.accuracy.toFixed(1)}%* (${p.bestLeg.accuracy_record})`);
       if (p.bestLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.bestLeg.line}`);
       if (p.bestLeg.over_accuracy != null && p.bestLeg.under_accuracy != null) {
@@ -472,14 +490,15 @@ Deno.serve(async (req) => {
       }
       msgLines.push("");
 
-      // Leg 2: Flipped (faded) — show original → flipped clearly
+      // Leg 2: Flipped (faded) — show original → flipped with line number clearly
       const flipTrapLabel = trapLabel(p.flipLeg.trap_flag);
       const originalSide = (p.flipLeg.original_prediction || "").replace(/[0-9.]+/g, "").trim().toUpperCase();
-      const flippedSide = (p.flipLeg.flipped_prediction || p.flipLeg.prediction || "").replace(/[0-9.]+/g, "").trim().toUpperCase();
-      const lineVal = p.flipLeg.line != null ? ` ${p.flipLeg.line}` : "";
+      const flippedPredLower2 = (p.flipLeg.flipped_prediction || p.flipLeg.prediction || "").toLowerCase();
+      const flippedSideClean = flippedPredLower2.includes("over") ? "OVER" : "UNDER";
+      const flipLineStr = p.flipLeg.line != null ? ` ${p.flipLeg.line}` : "";
 
       msgLines.push(`🔄 *LEG 2 — FLIPPED (FADE)*${flipTrapLabel} ${flipSport}`);
-      msgLines.push(`*${p.flipLeg.player_name}* ~${originalSide}~ → *${flippedSide}*${lineVal} ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
+      msgLines.push(`*${p.flipLeg.player_name}* ~${originalSide}~ → *${flippedSideClean}${flipLineStr}* ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
       msgLines.push(`📊 Original: ${p.flipLeg.signal_type.replace(/_/g, " ")} was *${p.flipLeg.accuracy.toFixed(1)}%* (${p.flipLeg.accuracy_record}) — FADING`);
       if (p.flipLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.flipLeg.line}`);
       if (p.flipLeg.over_accuracy != null && p.flipLeg.under_accuracy != null) {
