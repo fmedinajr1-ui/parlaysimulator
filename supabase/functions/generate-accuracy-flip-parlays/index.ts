@@ -417,6 +417,7 @@ Deno.serve(async (req) => {
 
     const trapLabel = (flag: string) => {
       if (flag === "auto_flipped") return " 🪤 TRAP→FLIP";
+      if (flag === "kill_gate_faded") return " 🚫→🔄 KILL GATE FADE";
       if (flag === "trap_suppressed") return " 🪤 TRAP FADE";
       return "";
     };
