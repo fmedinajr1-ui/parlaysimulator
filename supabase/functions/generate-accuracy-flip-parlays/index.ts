@@ -5,13 +5,47 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Market trap theory: player prop overs with velocity/cascade are traps
-const TRAP_SIGNAL_TYPES = ["live_velocity_spike", "cascade", "live_line_about_to_move"];
+// === Kill Gate + Auto-Flip logic (aligned with fanduel-prediction-alerts) ===
+
+// Markets where velocity_spike is killed (spreads/totals only)
+const KILLED_VELOCITY_MARKETS = new Set(["spreads", "totals", "spread", "total"]);
+
+// All player prop types
+const PLAYER_PROP_TYPES = new Set([
+  "player_points", "player_rebounds", "player_assists",
+  "player_threes", "player_blocks", "player_steals",
+  "player_turnovers", "player_pts_rebs_asts",
+  "player_pts_rebs", "player_pts_asts", "player_rebs_asts",
+  "player_fantasy_score", "player_double_double",
+  "Points", "Rebounds", "Assists", "3-Pointers Made",
+  "Blocks", "Steals", "Turnovers", "Pts+Rebs+Asts",
+  "Pts+Rebs", "Pts+Asts", "Rebs+Asts", "Fantasy Score",
+  "Double Double",
+]);
+
+const isPlayerPropType = (propType: string): boolean => {
+  if (PLAYER_PROP_TYPES.has(propType)) return true;
+  const lower = (propType || "").toLowerCase();
+  return lower.includes("player_") || lower.includes("points") ||
+    lower.includes("rebounds") || lower.includes("assists") ||
+    lower.includes("threes") || lower.includes("blocks") ||
+    lower.includes("steals") || lower.includes("turnovers");
+};
+
+// Exact same kill logic as fanduel-prediction-alerts
+const isKilledSignal = (signalType: string, propType: string): boolean => {
+  // Kill velocity_spike on spreads/totals
+  if (signalType === "velocity_spike" && KILLED_VELOCITY_MARKETS.has((propType || "").toLowerCase())) return true;
+  // Kill all toxic signals on player props
+  if (isPlayerPropType(propType)) {
+    if (["velocity_spike", "live_velocity_spike", "line_about_to_move", "live_line_about_to_move"].includes(signalType)) return true;
+  }
+  return false;
+};
+
 const TEAM_MARKETS = ["moneyline", "spreads", "totals", "spread", "total", "money_line"];
 const isTeamMarket = (propType: string) =>
   TEAM_MARKETS.some(m => (propType || "").toLowerCase().includes(m));
-const isPlayerPropOver = (prediction: string, propType: string) =>
-  !isTeamMarket(propType) && (prediction || "").toLowerCase().includes("over");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
