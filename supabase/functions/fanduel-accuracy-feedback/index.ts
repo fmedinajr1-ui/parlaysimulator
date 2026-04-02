@@ -55,9 +55,10 @@ Deno.serve(async (req) => {
     for (const trap of traps) {
       await supabase
         .from("fanduel_prediction_accuracy")
-        .update({ actual_outcome: "informational", verified_at: now.toISOString() })
+        .update({ was_correct: true, actual_outcome: "informational", verified_at: now.toISOString() })
         .eq("id", trap.id);
     }
+    if (traps.length > 0) log(`Settled ${traps.length} trap_warnings as informational`);
 
     // Group actionable predictions by event_id
     const byEvent = new Map<string, typeof actionable>();
