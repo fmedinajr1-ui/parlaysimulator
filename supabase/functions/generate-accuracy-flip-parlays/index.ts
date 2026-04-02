@@ -252,6 +252,7 @@ Deno.serve(async (req) => {
           sport: pick.sport || "",
           signal_type: signalType,
           prediction: flippedPred,
+          original_prediction: pick.prediction || "",
           event_id: pick.event_id || "",
           accuracy: accEntry ? (accEntry.wins / accEntry.total) * 100 : 0,
           accuracy_record: accEntry ? `${accEntry.wins}-${accEntry.losses}` : "0-0",
