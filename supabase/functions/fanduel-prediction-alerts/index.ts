@@ -135,6 +135,21 @@ Deno.serve(async (req) => {
       return `${emoji} Historical: ${pct}% (${stats.correct}/${stats.total} verified)`;
     }
 
+    // ── 70% ACCURACY GATE — block any signal+prop combo below 70% with sufficient data ──
+    const ACCURACY_GATE_MIN_SAMPLES = 10;
+    const ACCURACY_GATE_THRESHOLD = 0.70;
+    function isAccuracyGated(signalType: string, propType: string): boolean {
+      const key = `${signalType}|${propType}`;
+      const stats = accuracyMap.get(key);
+      if (!stats || stats.total < ACCURACY_GATE_MIN_SAMPLES) return false; // not enough data, allow through
+      const rate = stats.correct / stats.total;
+      if (rate < ACCURACY_GATE_THRESHOLD) {
+        log(`🚫 ACCURACY GATE: ${signalType}|${propType} blocked (${(rate*100).toFixed(1)}% < 70%, n=${stats.total})`);
+        return true;
+      }
+      return false;
+    }
+
     if (!recentData || recentData.length === 0) {
       log("No recent data for alerts");
       return new Response(JSON.stringify({ success: true, alerts: 0 }), {
@@ -812,10 +827,17 @@ Deno.serve(async (req) => {
 
     const telegramAlerts: string[] = [];
     const predictionRecords: any[] = [];
+    let gatedCount = 0;
     for (const { alert, record } of selectedSignals) {
+      // ── 70% ACCURACY GATE: skip signals below threshold ──
+      if (isAccuracyGated(record?.signal_type, record?.prop_type)) {
+        gatedCount++;
+        continue;
+      }
       telegramAlerts.push(alert);
       predictionRecords.push(record);
     }
+    if (gatedCount > 0) log(`🚫 Accuracy gate blocked ${gatedCount} signals below 70%`);
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
     let dedupedRecords = predictionRecords;
