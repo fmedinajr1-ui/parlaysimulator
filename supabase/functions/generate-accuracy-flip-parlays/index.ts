@@ -63,11 +63,14 @@ Deno.serve(async (req) => {
     log("=== Generating Accuracy-Based Flip 2-Leg Parlays (Kill Gate + Auto-Flip Aligned) ===");
 
     // 1. Get historical accuracy by signal_type + prop_type + sport (min 5 settled)
+    // Limit to last 14 days to avoid query timeout
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
     const { data: allSettled, error: accErr } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, prop_type, sport, was_correct, prediction")
       .not("was_correct", "is", null)
-      .not("signal_type", "eq", "trap_warning");
+      .not("signal_type", "eq", "trap_warning")
+      .gte("created_at", fourteenDaysAgo);
 
     if (accErr) throw accErr;
 
@@ -190,6 +193,7 @@ Deno.serve(async (req) => {
       sport: string;
       signal_type: string;
       prediction: string;
+      original_prediction: string; // what the signal originally said before any flip
       event_id: string;
       accuracy: number;
       accuracy_record: string;
@@ -199,7 +203,7 @@ Deno.serve(async (req) => {
       line: number | null;
       over_price: number | null;
       under_price: number | null;
-      trap_flag: string; // "none" | "auto_flipped" | "trap_suppressed"
+      trap_flag: string; // "none" | "auto_flipped" | "kill_gate_faded"
       money_direction: string; // where money is flowing
       over_accuracy: number | null;
       under_accuracy: number | null;
@@ -251,6 +255,7 @@ Deno.serve(async (req) => {
           sport: pick.sport || "",
           signal_type: signalType,
           prediction: flippedPred,
+          original_prediction: pick.prediction || "",
           event_id: pick.event_id || "",
           accuracy: accEntry ? (accEntry.wins / accEntry.total) * 100 : 0,
           accuracy_record: accEntry ? `${accEntry.wins}-${accEntry.losses}` : "0-0",
@@ -310,6 +315,7 @@ Deno.serve(async (req) => {
         sport: pick.sport || "",
         signal_type: signalType,
         prediction: effectivePrediction,
+        original_prediction: pick.prediction || "",
         event_id: pick.event_id || "",
         accuracy: 0,
         accuracy_record: "",
@@ -466,10 +472,14 @@ Deno.serve(async (req) => {
       }
       msgLines.push("");
 
-      // Leg 2: Flipped (faded)
+      // Leg 2: Flipped (faded) — show original → flipped clearly
       const flipTrapLabel = trapLabel(p.flipLeg.trap_flag);
+      const originalSide = (p.flipLeg.original_prediction || "").replace(/[0-9.]+/g, "").trim().toUpperCase();
+      const flippedSide = (p.flipLeg.flipped_prediction || p.flipLeg.prediction || "").replace(/[0-9.]+/g, "").trim().toUpperCase();
+      const lineVal = p.flipLeg.line != null ? ` ${p.flipLeg.line}` : "";
+
       msgLines.push(`🔄 *LEG 2 — FLIPPED (FADE)*${flipTrapLabel} ${flipSport}`);
-      msgLines.push(`*${p.flipLeg.player_name}* ${p.flipLeg.flipped_prediction} ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
+      msgLines.push(`*${p.flipLeg.player_name}* ~${originalSide}~ → *${flippedSide}*${lineVal} ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
       msgLines.push(`📊 Original: ${p.flipLeg.signal_type.replace(/_/g, " ")} was *${p.flipLeg.accuracy.toFixed(1)}%* (${p.flipLeg.accuracy_record}) — FADING`);
       if (p.flipLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.flipLeg.line}`);
       if (p.flipLeg.over_accuracy != null && p.flipLeg.under_accuracy != null) {
