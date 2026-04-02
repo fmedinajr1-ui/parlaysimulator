@@ -19,18 +19,31 @@ Deno.serve(async (req) => {
   const now = new Date();
   const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-  try {
-    log("=== Starting accuracy feedback loop ===");
+  // Parse optional body for settle_all mode
+  const body = await req.json().catch(() => ({}));
+  const settleAll = body?.settle_all === true;
 
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: unverified, error: fetchErr } = await supabase
+  try {
+    log(`=== Starting accuracy feedback loop ${settleAll ? '(SETTLE ALL MODE)' : ''} ===`);
+
+    const lookbackDays = settleAll ? 14 : 7;
+    const lookbackDate = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+    const queryLimit = settleAll ? 1000 : 300;
+
+    let query = supabase
       .from("fanduel_prediction_accuracy")
       .select("*")
       .is("was_correct", null)
-      .gte("created_at", sevenDaysAgo)
-      .lte("created_at", twoHoursAgo.toISOString())
+      .gte("created_at", lookbackDate)
       .order("created_at", { ascending: false })
-      .limit(300);
+      .limit(queryLimit);
+
+    // Only apply the 2-hour age filter in normal mode
+    if (!settleAll) {
+      query = query.lte("created_at", twoHoursAgo.toISOString());
+    }
+
+    const { data: unverified, error: fetchErr } = await query;
 
     if (fetchErr) throw new Error(`Fetch unverified: ${fetchErr.message}`);
     log(`Found ${unverified?.length || 0} unverified predictions (2h+ old)`);
@@ -42,9 +55,10 @@ Deno.serve(async (req) => {
     for (const trap of traps) {
       await supabase
         .from("fanduel_prediction_accuracy")
-        .update({ actual_outcome: "informational", verified_at: now.toISOString() })
+        .update({ was_correct: true, actual_outcome: "informational", verified_at: now.toISOString() })
         .eq("id", trap.id);
     }
+    if (traps.length > 0) log(`Settled ${traps.length} trap_warnings as informational`);
 
     // Group actionable predictions by event_id
     const byEvent = new Map<string, typeof actionable>();
@@ -73,9 +87,10 @@ Deno.serve(async (req) => {
           log(`Skipping event ${eventId} — game hasn't started yet (starts ${commenceData[0].commence_time})`);
           continue;
         }
-        // For CLV-based signals, require game to be at least 3 hours past start
-        const threeHoursAfterStart = new Date(gameStart.getTime() + 3 * 60 * 60 * 1000);
-        if (now < threeHoursAfterStart) {
+        // For CLV-based signals, require game to be past start + guard time
+        const guardHours = settleAll ? 0.5 : 3; // 30 min guard in settle_all, 3h normally
+        const guardTime = new Date(gameStart.getTime() + guardHours * 60 * 60 * 1000);
+        if (now < guardTime) {
           log(`Skipping event ${eventId} — game likely still in progress (started ${commenceData[0].commence_time})`);
           continue;
         }
