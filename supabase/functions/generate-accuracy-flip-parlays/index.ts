@@ -5,6 +5,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Market trap theory: player prop overs with velocity/cascade are traps
+const TRAP_SIGNAL_TYPES = ["live_velocity_spike", "cascade", "live_line_about_to_move"];
+const TEAM_MARKETS = ["moneyline", "spreads", "totals", "spread", "total", "money_line"];
+const isTeamMarket = (propType: string) =>
+  TEAM_MARKETS.some(m => (propType || "").toLowerCase().includes(m));
+const isPlayerPropOver = (prediction: string, propType: string) =>
+  !isTeamMarket(propType) && (prediction || "").toLowerCase().includes("over");
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -18,18 +26,45 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[accuracy-flip-parlays] ${msg}`);
 
   try {
-    log("=== Generating Accuracy-Based Flip 2-Leg Parlays ===");
+    log("=== Generating Accuracy-Based Flip 2-Leg Parlays (with Market Trap Logic) ===");
 
     // 1. Get historical accuracy by signal_type + prop_type + sport (min 5 settled)
     const { data: allSettled, error: accErr } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, prop_type, sport, was_correct, prediction")
       .not("was_correct", "is", null)
-      .not("signal_type", "eq", "trap_warning"); // trap_warning is informational
+      .not("signal_type", "eq", "trap_warning");
 
     if (accErr) throw accErr;
 
-    // Build accuracy map
+    // Also get recent line movements to understand where money is going
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: recentMovements } = await supabase
+      .from("line_movements")
+      .select("event_id, description, market_type, bookmaker, price_change, point_change, drift_direction, books_consensus")
+      .gte("detected_at", twoHoursAgo)
+      .order("detected_at", { ascending: false })
+      .limit(200);
+
+    // Build money flow map: event_id → direction summary
+    const moneyFlowMap = new Map<string, { direction: string; consensus: number; magnitude: number }>();
+    if (recentMovements) {
+      for (const mv of recentMovements) {
+        if (!mv.event_id) continue;
+        const existing = moneyFlowMap.get(mv.event_id);
+        const mag = Math.abs(mv.price_change || 0);
+        if (!existing || mag > existing.magnitude) {
+          moneyFlowMap.set(mv.event_id, {
+            direction: mv.drift_direction || (mv.price_change > 0 ? "up" : "down"),
+            consensus: mv.books_consensus || 1,
+            magnitude: mag,
+          });
+        }
+      }
+    }
+    log(`Money flow data: ${moneyFlowMap.size} events tracked`);
+
+    // Build accuracy map with side-level granularity (over vs under)
     interface AccuracyEntry {
       signal_type: string;
       prop_type: string;
@@ -38,6 +73,10 @@ Deno.serve(async (req) => {
       losses: number;
       total: number;
       accuracy: number;
+      over_wins: number;
+      over_total: number;
+      under_wins: number;
+      under_total: number;
     }
 
     const accMap = new Map<string, AccuracyEntry>();
@@ -45,19 +84,25 @@ Deno.serve(async (req) => {
       const key = `${r.signal_type}|${r.prop_type}|${r.sport}`;
       if (!accMap.has(key)) {
         accMap.set(key, {
-          signal_type: r.signal_type,
-          prop_type: r.prop_type,
-          sport: r.sport,
+          signal_type: r.signal_type, prop_type: r.prop_type, sport: r.sport,
           wins: 0, losses: 0, total: 0, accuracy: 0,
+          over_wins: 0, over_total: 0, under_wins: 0, under_total: 0,
         });
       }
       const entry = accMap.get(key)!;
       entry.total++;
-      if (r.was_correct) entry.wins++;
-      else entry.losses++;
+      const isOver = (r.prediction || "").toLowerCase().includes("over");
+      if (isOver) {
+        entry.over_total++;
+        if (r.was_correct) { entry.wins++; entry.over_wins++; }
+        else entry.losses++;
+      } else {
+        entry.under_total++;
+        if (r.was_correct) { entry.wins++; entry.under_wins++; }
+        else entry.losses++;
+      }
     }
 
-    // Calculate accuracy and filter min 5 samples
     const accuracyList: AccuracyEntry[] = [];
     for (const entry of accMap.values()) {
       if (entry.total >= 5) {
@@ -65,10 +110,8 @@ Deno.serve(async (req) => {
         accuracyList.push(entry);
       }
     }
-
     accuracyList.sort((a, b) => b.accuracy - a.accuracy);
 
-    // Top performers (>= 70% accuracy) and bottom performers (<= 40% accuracy for flip)
     const topPerformers = accuracyList.filter(a => a.accuracy >= 70);
     const bottomPerformers = accuracyList.filter(a => a.accuracy <= 40);
 
@@ -102,7 +145,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3. Classify today's picks into "best accuracy" and "worst accuracy (flip candidates)"
+    // 3. Classify picks with market trap awareness
     const topAccKeys = new Set(topPerformers.map(a => `${a.signal_type}|${a.prop_type}|${a.sport}`));
     const bottomAccMap = new Map(bottomPerformers.map(a => [`${a.signal_type}|${a.prop_type}|${a.sport}`, a]));
 
@@ -122,20 +165,47 @@ Deno.serve(async (req) => {
       line: number | null;
       over_price: number | null;
       under_price: number | null;
+      trap_flag: string; // "none" | "auto_flipped" | "trap_suppressed"
+      money_direction: string; // where money is flowing
+      over_accuracy: number | null;
+      under_accuracy: number | null;
     }
 
     const bestLegs: EnrichedPick[] = [];
     const flipLegs: EnrichedPick[] = [];
+    let trapFlips = 0;
+    let trapSuppressed = 0;
 
     for (const pick of todayPicks) {
       const accKey = `${pick.signal_type}|${pick.prop_type}|${pick.sport}`;
       const sf = (pick.signal_factors || {}) as Record<string, any>;
-
       const predLower = (pick.prediction || "").toLowerCase();
       const isOver = predLower.includes("over");
+
       const flippedPrediction = isOver
         ? pick.prediction.replace(/over/i, "UNDER")
         : pick.prediction.replace(/under/i, "OVER");
+
+      // Money flow context
+      const flow = moneyFlowMap.get(pick.event_id || "");
+      const moneyDir = flow
+        ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
+        : "no data";
+
+      // Side-level accuracy from the map
+      const accEntry = accMap.get(accKey);
+      const overAcc = accEntry && accEntry.over_total >= 3
+        ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
+      const underAcc = accEntry && accEntry.under_total >= 3
+        ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
+
+      // MARKET TRAP LOGIC:
+      // If this is a player prop OVER from a velocity/cascade signal → it's likely a trap
+      const isTrapSignal = TRAP_SIGNAL_TYPES.includes(pick.signal_type || "");
+      const isPlayerOver = isPlayerPropOver(pick.prediction, pick.prop_type);
+      const isTrap = isTrapSignal && isPlayerOver;
+
+      let trapFlag = "none";
 
       const enriched: EnrichedPick = {
         id: pick.id,
@@ -153,45 +223,73 @@ Deno.serve(async (req) => {
         line: sf.line ?? sf.fanduel_line ?? null,
         over_price: sf.over_price ?? null,
         under_price: sf.under_price ?? null,
+        trap_flag: "none",
+        money_direction: moneyDir,
+        over_accuracy: overAcc,
+        under_accuracy: underAcc,
       };
 
-      // Check if this pick falls in a top-accuracy bucket
+      // For BEST legs: if trap signal + player prop over → auto-flip it into flip bucket instead
       if (topAccKeys.has(accKey)) {
         const acc = accuracyList.find(a => `${a.signal_type}|${a.prop_type}|${a.sport}` === accKey)!;
         enriched.accuracy = acc.accuracy;
         enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
-        enriched.is_flip = false;
-        bestLegs.push(enriched);
+
+        if (isTrap) {
+          // Trap detected: don't use as best leg, auto-flip into flip bucket
+          enriched.is_flip = true;
+          enriched.trap_flag = "auto_flipped";
+          trapFlips++;
+          flipLegs.push(enriched);
+          log(`TRAP AUTO-FLIP: ${pick.player_name} ${pick.prediction} ${pick.prop_type} (${pick.signal_type}) → flipped to UNDER`);
+        } else {
+          enriched.is_flip = false;
+          bestLegs.push(enriched);
+        }
       }
 
-      // Check if this pick falls in a bottom-accuracy bucket (flip candidate)
-      if (bottomAccMap.has(accKey)) {
+      // For BOTTOM accuracy picks → flip candidates (normal flow)
+      if (bottomAccMap.has(accKey) && !isTrap) {
         const acc = bottomAccMap.get(accKey)!;
         enriched.accuracy = acc.accuracy;
         enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
         enriched.is_flip = true;
+        enriched.trap_flag = "none";
         flipLegs.push(enriched);
+      }
+
+      // Also: any player prop OVER from trap signals not in top/bottom → suppress
+      if (isTrap && !topAccKeys.has(accKey) && !bottomAccMap.has(accKey)) {
+        // Still add as flip candidate with trap flag
+        const acc = accMap.get(accKey);
+        if (acc && acc.total >= 3) {
+          enriched.accuracy = (acc.wins / acc.total) * 100;
+          enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
+          enriched.is_flip = true;
+          enriched.trap_flag = "trap_suppressed";
+          trapSuppressed++;
+          flipLegs.push(enriched);
+        }
       }
     }
 
-    // Sort best by accuracy desc, flips by accuracy asc (worst first = best flip)
     bestLegs.sort((a, b) => b.accuracy - a.accuracy);
     flipLegs.sort((a, b) => a.accuracy - b.accuracy);
 
-    log(`Best legs (verified, >=70%): ${bestLegs.length}, Flip legs (verified, <=40%): ${flipLegs.length}`);
+    log(`Best legs: ${bestLegs.length}, Flip legs: ${flipLegs.length} (${trapFlips} trap-flipped, ${trapSuppressed} trap-suppressed)`);
 
     if (bestLegs.length === 0 || flipLegs.length === 0) {
       return new Response(JSON.stringify({
         success: true, parlays: 0,
-        reason: `Need both high-accuracy (${bestLegs.length}) and low-accuracy flip (${flipLegs.length}) legs`,
-        top_performers: topPerformers.slice(0, 5).map(t => `${t.signal_type}|${t.prop_type}|${t.sport}: ${t.accuracy.toFixed(1)}%`),
-        bottom_performers: bottomPerformers.slice(0, 5).map(b => `${b.signal_type}|${b.prop_type}|${b.sport}: ${b.accuracy.toFixed(1)}%`),
+        reason: `Need both high-accuracy (${bestLegs.length}) and flip (${flipLegs.length}) legs`,
+        trap_flips: trapFlips,
+        trap_suppressed: trapSuppressed,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // 5. Build parlays: pair best + flip, different events/players
+    // 4. Build parlays: pair best + flip, different events/players
     interface AccuracyFlipParlay {
       bestLeg: EnrichedPick;
       flipLeg: EnrichedPick;
@@ -224,7 +322,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 6. Build Telegram message
+    // 5. Build Telegram message with money flow + trap context
     const SPORT_EMOJI: Record<string, string> = { NBA: "🏀", MLB: "⚾", NHL: "🏒", NCAAB: "🏀", NFL: "🏈" };
 
     const formatProp = (pt: string) =>
@@ -235,9 +333,16 @@ Deno.serve(async (req) => {
       return price > 0 ? `+${price}` : `${price}`;
     };
 
+    const trapLabel = (flag: string) => {
+      if (flag === "auto_flipped") return " 🪤 TRAP→FLIP";
+      if (flag === "trap_suppressed") return " 🪤 TRAP FADE";
+      return "";
+    };
+
     const msgLines: string[] = [
       `🎯🔄 *Accuracy + Flip 2-Leg Parlays*`,
-      `_Leg 1: Highest accuracy signal | Leg 2: Lowest accuracy FLIPPED_`,
+      `_Leg 1: Best accuracy | Leg 2: Worst accuracy FLIPPED_`,
+      `_🪤 Market trap logic active: player prop overs from velocity/cascade auto-faded_`,
       "",
     ];
 
@@ -256,7 +361,6 @@ Deno.serve(async (req) => {
 
       const bestSport = SPORT_EMOJI[p.bestLeg.sport] || "🎯";
       const flipSport = SPORT_EMOJI[p.flipLeg.sport] || "🎯";
-
       const isCrossSport = p.bestLeg.sport !== p.flipLeg.sport;
 
       msgLines.push(`━━━ *Pair ${i + 1}* ${isCrossSport ? "🌍 Cross-Sport" : "🏟 Same-Sport"} ━━━`);
@@ -265,36 +369,45 @@ Deno.serve(async (req) => {
       // Leg 1: Best accuracy
       msgLines.push(`✅ *LEG 1 — BEST ACCURACY* ${bestSport}`);
       msgLines.push(`*${p.bestLeg.player_name}* ${p.bestLeg.prediction} ${formatProp(p.bestLeg.prop_type)}${bestOdds ? ` (${bestOdds})` : ""}`);
-      msgLines.push(`📊 Signal: ${p.bestLeg.signal_type.replace(/_/g, " ")} | *${p.bestLeg.accuracy.toFixed(1)}%* accuracy (${p.bestLeg.accuracy_record})`);
-      if (p.bestLeg.line != null) {
-        msgLines.push(`📗 FanDuel Line: ${p.bestLeg.line}`);
+      msgLines.push(`📊 Signal: ${p.bestLeg.signal_type.replace(/_/g, " ")} | *${p.bestLeg.accuracy.toFixed(1)}%* (${p.bestLeg.accuracy_record})`);
+      if (p.bestLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.bestLeg.line}`);
+      if (p.bestLeg.over_accuracy != null && p.bestLeg.under_accuracy != null) {
+        msgLines.push(`📉 Side accuracy: Over ${p.bestLeg.over_accuracy.toFixed(0)}% | Under ${p.bestLeg.under_accuracy.toFixed(0)}%`);
       }
       if (bestSf.avg_stat != null || bestSf.l10_avg != null) {
         const avg = bestSf.avg_stat ?? bestSf.l10_avg;
-        msgLines.push(`📈 Avg: ${avg.toFixed ? avg.toFixed(1) : avg}${bestSf.hit_rate != null ? ` | Hit Rate: ${(bestSf.hit_rate * 100).toFixed(0)}%` : ""}`);
+        msgLines.push(`📈 Avg: ${avg.toFixed ? avg.toFixed(1) : avg}${bestSf.hit_rate != null ? ` | Hit: ${(bestSf.hit_rate * 100).toFixed(0)}%` : ""}`);
+      }
+      if (p.bestLeg.money_direction !== "no data") {
+        msgLines.push(`💰 Money flow: ${p.bestLeg.money_direction}`);
       }
       msgLines.push("");
 
       // Leg 2: Flipped (faded)
-      msgLines.push(`🔄 *LEG 2 — FLIPPED (FADE)* ${flipSport}`);
+      const flipTrapLabel = trapLabel(p.flipLeg.trap_flag);
+      msgLines.push(`🔄 *LEG 2 — FLIPPED (FADE)*${flipTrapLabel} ${flipSport}`);
       msgLines.push(`*${p.flipLeg.player_name}* ${p.flipLeg.flipped_prediction} ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
-      msgLines.push(`📊 Original signal: ${p.flipLeg.signal_type.replace(/_/g, " ")} was *${p.flipLeg.accuracy.toFixed(1)}%* (${p.flipLeg.accuracy_record}) — FADING IT`);
-      if (p.flipLeg.line != null) {
-        msgLines.push(`📗 FanDuel Line: ${p.flipLeg.line}`);
+      msgLines.push(`📊 Original: ${p.flipLeg.signal_type.replace(/_/g, " ")} was *${p.flipLeg.accuracy.toFixed(1)}%* (${p.flipLeg.accuracy_record}) — FADING`);
+      if (p.flipLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.flipLeg.line}`);
+      if (p.flipLeg.over_accuracy != null && p.flipLeg.under_accuracy != null) {
+        msgLines.push(`📉 Side accuracy: Over ${p.flipLeg.over_accuracy.toFixed(0)}% | Under ${p.flipLeg.under_accuracy.toFixed(0)}%`);
       }
       if (flipSf.avg_stat != null || flipSf.l10_avg != null) {
         const avg = flipSf.avg_stat ?? flipSf.l10_avg;
-        msgLines.push(`📈 Avg: ${avg.toFixed ? avg.toFixed(1) : avg}${flipSf.hit_rate != null ? ` | Hit Rate: ${(flipSf.hit_rate * 100).toFixed(0)}%` : ""}`);
+        msgLines.push(`📈 Avg: ${avg.toFixed ? avg.toFixed(1) : avg}${flipSf.hit_rate != null ? ` | Hit: ${(flipSf.hit_rate * 100).toFixed(0)}%` : ""}`);
+      }
+      if (p.flipLeg.money_direction !== "no data") {
+        msgLines.push(`💰 Money flow: ${p.flipLeg.money_direction}`);
       }
       msgLines.push("");
     }
 
-    msgLines.push(`_Strategy: Ride the best, fade the worst_`);
-    msgLines.push(`_${bestLegs.length} high-accuracy + ${flipLegs.length} flip candidates available_`);
+    msgLines.push(`_Strategy: Ride the best, fade the worst + trap-aware_`);
+    msgLines.push(`_${bestLegs.length} high-acc + ${flipLegs.length} flip legs (${trapFlips} trap-flipped)_`);
 
     const message = msgLines.join("\n");
 
-    // 7. Save to tracking table for calibration
+    // 6. Save to tracking table
     const trackingRows = parlays.map(p => ({
       parlay_date: new Date().toISOString().split("T")[0],
       best_leg_player: p.bestLeg.player_name,
@@ -318,13 +431,10 @@ Deno.serve(async (req) => {
       .from("accuracy_flip_parlay_tracking")
       .insert(trackingRows);
 
-    if (trackErr) {
-      log(`Tracking insert error: ${trackErr.message}`);
-    } else {
-      log(`Saved ${trackingRows.length} parlays to tracking table ✅`);
-    }
+    if (trackErr) log(`Tracking insert error: ${trackErr.message}`);
+    else log(`Saved ${trackingRows.length} parlays to tracking ✅`);
 
-    // 8. Send via Telegram
+    // 7. Send via Telegram
     try {
       await supabase.functions.invoke("bot-send-telegram", {
         body: { message, parse_mode: "Markdown", admin_only: true },
@@ -339,10 +449,12 @@ Deno.serve(async (req) => {
       parlays: parlays.length,
       best_legs_available: bestLegs.length,
       flip_legs_available: flipLegs.length,
+      trap_flips: trapFlips,
+      trap_suppressed: trapSuppressed,
       tracked: !trackErr,
       pairs: parlays.map(p => ({
         best: `${p.bestLeg.player_name} ${p.bestLeg.prediction} (${p.bestLeg.accuracy.toFixed(1)}%)`,
-        flip: `${p.flipLeg.player_name} ${p.flipLeg.flipped_prediction} (fading ${p.flipLeg.accuracy.toFixed(1)}%)`,
+        flip: `${p.flipLeg.player_name} ${p.flipLeg.flipped_prediction} (fading ${p.flipLeg.accuracy.toFixed(1)}%)${p.flipLeg.trap_flag !== "none" ? " 🪤" : ""}`,
       })),
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
