@@ -5,13 +5,47 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Market trap theory: player prop overs with velocity/cascade are traps
-const TRAP_SIGNAL_TYPES = ["live_velocity_spike", "cascade", "live_line_about_to_move"];
+// === Kill Gate + Auto-Flip logic (aligned with fanduel-prediction-alerts) ===
+
+// Markets where velocity_spike is killed (spreads/totals only)
+const KILLED_VELOCITY_MARKETS = new Set(["spreads", "totals", "spread", "total"]);
+
+// All player prop types
+const PLAYER_PROP_TYPES = new Set([
+  "player_points", "player_rebounds", "player_assists",
+  "player_threes", "player_blocks", "player_steals",
+  "player_turnovers", "player_pts_rebs_asts",
+  "player_pts_rebs", "player_pts_asts", "player_rebs_asts",
+  "player_fantasy_score", "player_double_double",
+  "Points", "Rebounds", "Assists", "3-Pointers Made",
+  "Blocks", "Steals", "Turnovers", "Pts+Rebs+Asts",
+  "Pts+Rebs", "Pts+Asts", "Rebs+Asts", "Fantasy Score",
+  "Double Double",
+]);
+
+const isPlayerPropType = (propType: string): boolean => {
+  if (PLAYER_PROP_TYPES.has(propType)) return true;
+  const lower = (propType || "").toLowerCase();
+  return lower.includes("player_") || lower.includes("points") ||
+    lower.includes("rebounds") || lower.includes("assists") ||
+    lower.includes("threes") || lower.includes("blocks") ||
+    lower.includes("steals") || lower.includes("turnovers");
+};
+
+// Exact same kill logic as fanduel-prediction-alerts
+const isKilledSignal = (signalType: string, propType: string): boolean => {
+  // Kill velocity_spike on spreads/totals
+  if (signalType === "velocity_spike" && KILLED_VELOCITY_MARKETS.has((propType || "").toLowerCase())) return true;
+  // Kill all toxic signals on player props
+  if (isPlayerPropType(propType)) {
+    if (["velocity_spike", "live_velocity_spike", "line_about_to_move", "live_line_about_to_move"].includes(signalType)) return true;
+  }
+  return false;
+};
+
 const TEAM_MARKETS = ["moneyline", "spreads", "totals", "spread", "total", "money_line"];
 const isTeamMarket = (propType: string) =>
   TEAM_MARKETS.some(m => (propType || "").toLowerCase().includes(m));
-const isPlayerPropOver = (prediction: string, propType: string) =>
-  !isTeamMarket(propType) && (prediction || "").toLowerCase().includes("over");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -26,7 +60,7 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[accuracy-flip-parlays] ${msg}`);
 
   try {
-    log("=== Generating Accuracy-Based Flip 2-Leg Parlays (with Market Trap Logic) ===");
+    log("=== Generating Accuracy-Based Flip 2-Leg Parlays (Kill Gate + Auto-Flip Aligned) ===");
 
     // 1. Get historical accuracy by signal_type + prop_type + sport (min 5 settled)
     const { data: allSettled, error: accErr } = await supabase
@@ -177,14 +211,82 @@ Deno.serve(async (req) => {
     let trapSuppressed = 0;
 
     for (const pick of todayPicks) {
-      const accKey = `${pick.signal_type}|${pick.prop_type}|${pick.sport}`;
+      const signalType = pick.signal_type || "";
+      const propType = pick.prop_type || "";
+      const accKey = `${signalType}|${propType}|${pick.sport}`;
       const sf = (pick.signal_factors || {}) as Record<string, any>;
       const predLower = (pick.prediction || "").toLowerCase();
       const isOver = predLower.includes("over");
+      const isPlayerProp = isPlayerPropType(propType);
 
-      const flippedPrediction = isOver
-        ? pick.prediction.replace(/over/i, "UNDER")
-        : pick.prediction.replace(/under/i, "OVER");
+      // === KILL GATE: toxic signals on player props → route to flip bucket as fades ===
+      // === Kill velocity_spike on spreads/totals → skip entirely (no value even as fade) ===
+      if (signalType === "velocity_spike" && KILLED_VELOCITY_MARKETS.has(propType.toLowerCase())) {
+        trapSuppressed++;
+        log(`KILLED (team market velocity): ${pick.player_name} ${pick.prediction} ${propType} (${signalType}) — skipped`);
+        continue;
+      }
+
+      const isKilledPlayerProp = isPlayerPropType(propType) &&
+        ["velocity_spike", "live_velocity_spike", "line_about_to_move", "live_line_about_to_move"].includes(signalType);
+
+      if (isKilledPlayerProp) {
+        // Don't skip — route to flip bucket as a fade candidate
+        const flippedPred = isOver
+          ? (pick.prediction || "").replace(/over/i, "UNDER")
+          : (pick.prediction || "").replace(/under/i, "OVER");
+
+        const flow = moneyFlowMap.get(pick.event_id || "");
+        const moneyDir = flow
+          ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
+          : "no data";
+        const accEntry = accMap.get(accKey);
+        const overAcc = accEntry && accEntry.over_total >= 3 ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
+        const underAcc = accEntry && accEntry.under_total >= 3 ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
+
+        const enriched: EnrichedPick = {
+          id: pick.id,
+          player_name: pick.player_name || "Unknown",
+          prop_type: propType,
+          sport: pick.sport || "",
+          signal_type: signalType,
+          prediction: flippedPred,
+          event_id: pick.event_id || "",
+          accuracy: accEntry ? (accEntry.wins / accEntry.total) * 100 : 0,
+          accuracy_record: accEntry ? `${accEntry.wins}-${accEntry.losses}` : "0-0",
+          signal_factors: sf,
+          is_flip: true,
+          flipped_prediction: flippedPred,
+          line: sf.line ?? sf.fanduel_line ?? null,
+          over_price: sf.over_price ?? null,
+          under_price: sf.under_price ?? null,
+          trap_flag: "kill_gate_faded",
+          money_direction: moneyDir,
+          over_accuracy: overAcc,
+          under_accuracy: underAcc,
+        };
+        trapFlips++;
+        flipLegs.push(enriched);
+        log(`KILL→FADE: ${pick.player_name} ${pick.prediction} → ${flippedPred} ${propType} (${signalType})`);
+        continue;
+      }
+
+      // === CASCADE AUTO-FLIP: cascade + player prop + OVER → force to UNDER ===
+      let effectivePrediction = pick.prediction || "";
+      let effectiveIsOver = isOver;
+      let autoFlipped = false;
+
+      if (signalType === "cascade" && isPlayerProp && isOver) {
+        effectivePrediction = effectivePrediction.replace(/over/i, "UNDER");
+        effectiveIsOver = false;
+        autoFlipped = true;
+        trapFlips++;
+        log(`CASCADE AUTO-FLIP: ${pick.player_name} ${pick.prediction} → ${effectivePrediction} (${propType})`);
+      }
+
+      const flippedPrediction = effectiveIsOver
+        ? effectivePrediction.replace(/over/i, "UNDER")
+        : effectivePrediction.replace(/under/i, "OVER");
 
       // Money flow context
       const flow = moneyFlowMap.get(pick.event_id || "");
@@ -199,21 +301,15 @@ Deno.serve(async (req) => {
       const underAcc = accEntry && accEntry.under_total >= 3
         ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
 
-      // MARKET TRAP LOGIC:
-      // If this is a player prop OVER from a velocity/cascade signal → it's likely a trap
-      const isTrapSignal = TRAP_SIGNAL_TYPES.includes(pick.signal_type || "");
-      const isPlayerOver = isPlayerPropOver(pick.prediction, pick.prop_type);
-      const isTrap = isTrapSignal && isPlayerOver;
-
-      let trapFlag = "none";
+      const trapFlag = autoFlipped ? "auto_flipped" : "none";
 
       const enriched: EnrichedPick = {
         id: pick.id,
         player_name: pick.player_name || "Unknown",
-        prop_type: pick.prop_type || "",
+        prop_type: propType,
         sport: pick.sport || "",
-        signal_type: pick.signal_type || "",
-        prediction: pick.prediction || "",
+        signal_type: signalType,
+        prediction: effectivePrediction,
         event_id: pick.event_id || "",
         accuracy: 0,
         accuracy_record: "",
@@ -223,53 +319,39 @@ Deno.serve(async (req) => {
         line: sf.line ?? sf.fanduel_line ?? null,
         over_price: sf.over_price ?? null,
         under_price: sf.under_price ?? null,
-        trap_flag: "none",
+        trap_flag: trapFlag,
         money_direction: moneyDir,
         over_accuracy: overAcc,
         under_accuracy: underAcc,
       };
 
-      // For BEST legs: if trap signal + player prop over → auto-flip it into flip bucket instead
+      // If auto-flipped cascade, route directly to flip bucket
+      if (autoFlipped) {
+        const acc = accMap.get(accKey);
+        if (acc) {
+          enriched.accuracy = (acc.wins / acc.total) * 100;
+          enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
+        }
+        enriched.is_flip = true;
+        flipLegs.push(enriched);
+        continue;
+      }
+
+      // Normal classification: best legs (high accuracy) or flip legs (low accuracy)
       if (topAccKeys.has(accKey)) {
         const acc = accuracyList.find(a => `${a.signal_type}|${a.prop_type}|${a.sport}` === accKey)!;
         enriched.accuracy = acc.accuracy;
         enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
-
-        if (isTrap) {
-          // Trap detected: don't use as best leg, auto-flip into flip bucket
-          enriched.is_flip = true;
-          enriched.trap_flag = "auto_flipped";
-          trapFlips++;
-          flipLegs.push(enriched);
-          log(`TRAP AUTO-FLIP: ${pick.player_name} ${pick.prediction} ${pick.prop_type} (${pick.signal_type}) → flipped to UNDER`);
-        } else {
-          enriched.is_flip = false;
-          bestLegs.push(enriched);
-        }
+        enriched.is_flip = false;
+        bestLegs.push(enriched);
       }
 
-      // For BOTTOM accuracy picks → flip candidates (normal flow)
-      if (bottomAccMap.has(accKey) && !isTrap) {
+      if (bottomAccMap.has(accKey)) {
         const acc = bottomAccMap.get(accKey)!;
         enriched.accuracy = acc.accuracy;
         enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
         enriched.is_flip = true;
-        enriched.trap_flag = "none";
         flipLegs.push(enriched);
-      }
-
-      // Also: any player prop OVER from trap signals not in top/bottom → suppress
-      if (isTrap && !topAccKeys.has(accKey) && !bottomAccMap.has(accKey)) {
-        // Still add as flip candidate with trap flag
-        const acc = accMap.get(accKey);
-        if (acc && acc.total >= 3) {
-          enriched.accuracy = (acc.wins / acc.total) * 100;
-          enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
-          enriched.is_flip = true;
-          enriched.trap_flag = "trap_suppressed";
-          trapSuppressed++;
-          flipLegs.push(enriched);
-        }
       }
     }
 
@@ -335,6 +417,7 @@ Deno.serve(async (req) => {
 
     const trapLabel = (flag: string) => {
       if (flag === "auto_flipped") return " 🪤 TRAP→FLIP";
+      if (flag === "kill_gate_faded") return " 🚫→🔄 KILL GATE FADE";
       if (flag === "trap_suppressed") return " 🪤 TRAP FADE";
       return "";
     };
