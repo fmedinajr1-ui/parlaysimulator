@@ -671,6 +671,7 @@ Deno.serve(async (req) => {
         accuracyBadge || null,
         crossRefBadge || null,
         `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
+        autoFlipped ? `🪤 *AUTO-FLIPPED: Cascade OVER → UNDER (FanDuel trap)*` : null,
         `💡 ${reason}`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
       ].filter(Boolean).join("\n");
