@@ -138,6 +138,9 @@ Deno.serve(async (req) => {
     // ── 70% ACCURACY GATE — block any signal+prop combo below 70% with sufficient data ──
     const ACCURACY_GATE_MIN_SAMPLES = 10;
     const ACCURACY_GATE_THRESHOLD = 0.70;
+    // ── FLIP LOGIC: if a signal consistently loses (<40%, n>=15), flip the side ──
+    const FLIP_MIN_SAMPLES = 15;
+    const FLIP_THRESHOLD = 0.40; // must be consistently on the downside
     function isAccuracyGated(signalType: string, propType: string): boolean {
       const key = `${signalType}|${propType}`;
       const stats = accuracyMap.get(key);
@@ -148,6 +151,27 @@ Deno.serve(async (req) => {
         return true;
       }
       return false;
+    }
+    function shouldFlip(signalType: string, propType: string): { flip: boolean; winRate: number; samples: number } {
+      const key = `${signalType}|${propType}`;
+      const stats = accuracyMap.get(key);
+      if (!stats || stats.total < FLIP_MIN_SAMPLES) return { flip: false, winRate: 0, samples: 0 };
+      const rate = stats.correct / stats.total;
+      if (rate < FLIP_THRESHOLD) {
+        log(`🔄 FLIP CANDIDATE: ${signalType}|${propType} (${(rate*100).toFixed(1)}% win rate, n=${stats.total}) — consistent downside`);
+        return { flip: true, winRate: rate, samples: stats.total };
+      }
+      return { flip: false, winRate: rate, samples: stats.total };
+    }
+    function flipSide(side: string): string {
+      return side === "OVER" ? "UNDER" : side === "UNDER" ? "OVER" : side === "BACK" ? "FADE" : side === "FADE" ? "BACK" : side;
+    }
+    function flipPrediction(prediction: string): string {
+      if (prediction.startsWith("OVER")) return prediction.replace("OVER", "UNDER");
+      if (prediction.startsWith("UNDER")) return prediction.replace("UNDER", "OVER");
+      if (prediction.startsWith("BACK")) return prediction.replace("BACK", "FADE");
+      if (prediction.startsWith("FADE")) return prediction.replace("FADE", "BACK");
+      return prediction;
     }
 
     if (!recentData || recentData.length === 0) {
