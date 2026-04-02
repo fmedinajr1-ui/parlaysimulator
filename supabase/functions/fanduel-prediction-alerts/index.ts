@@ -658,6 +658,7 @@ Deno.serve(async (req) => {
       const signalEmoji = classifiedSignalType === "velocity_spike" ? "⚡" 
         : classifiedSignalType === "cascade" ? "🌊" : "🔮";
 
+      const flipTag = autoFlipped ? "\n🪤 *AUTO-FLIPPED: Market Trap → UNDER*" : "";
       const alertText = [
         `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
