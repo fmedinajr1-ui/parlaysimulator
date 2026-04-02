@@ -129,8 +129,6 @@ Deno.serve(async (req) => {
 
     for (const pick of todayPicks) {
       const accKey = `${pick.signal_type}|${pick.prop_type}|${pick.sport}`;
-      const verKey = `${(pick.player_name || "").toLowerCase().trim()}|${(pick.prop_type || "").toLowerCase().trim()}`;
-      const hasVerifiedLine = verifiedKeys.has(verKey);
       const sf = (pick.signal_factors || {}) as Record<string, any>;
 
       const predLower = (pick.prediction || "").toLowerCase();
@@ -158,7 +156,7 @@ Deno.serve(async (req) => {
       };
 
       // Check if this pick falls in a top-accuracy bucket
-      if (topAccKeys.has(accKey) && hasVerifiedLine) {
+      if (topAccKeys.has(accKey)) {
         const acc = accuracyList.find(a => `${a.signal_type}|${a.prop_type}|${a.sport}` === accKey)!;
         enriched.accuracy = acc.accuracy;
         enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
@@ -167,7 +165,7 @@ Deno.serve(async (req) => {
       }
 
       // Check if this pick falls in a bottom-accuracy bucket (flip candidate)
-      if (bottomAccMap.has(accKey) && hasVerifiedLine) {
+      if (bottomAccMap.has(accKey)) {
         const acc = bottomAccMap.get(accKey)!;
         enriched.accuracy = acc.accuracy;
         enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
