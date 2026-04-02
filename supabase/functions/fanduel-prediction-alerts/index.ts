@@ -141,6 +141,10 @@ Deno.serve(async (req) => {
     // ── FLIP LOGIC: if a signal consistently loses (<40%, n>=15), flip the side ──
     const FLIP_MIN_SAMPLES = 15;
     const FLIP_THRESHOLD = 0.40; // must be consistently on the downside
+    // Force-flip props with extreme downside (skip L10 validation)
+    const FORCE_FLIP_THRESHOLD = 0.35; // <35% accuracy
+    const FORCE_FLIP_MIN_SAMPLES = 50; // need strong evidence
+    const FORCE_FLIP_PROP_TYPES = new Set(["player_rebounds", "player_assists", "player_rebounds_assists"]);
     function isAccuracyGated(signalType: string, propType: string): boolean {
       const key = `${signalType}|${propType}`;
       const stats = accuracyMap.get(key);
