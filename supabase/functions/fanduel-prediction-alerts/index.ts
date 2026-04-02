@@ -853,10 +853,70 @@ Deno.serve(async (req) => {
     const predictionRecords: any[] = [];
     const gatedRecords: any[] = []; // Still recorded in DB for flip-logic tracking
     let gatedCount = 0;
+    let flippedCount = 0;
     for (const { alert, record } of selectedSignals) {
       // ── 70% ACCURACY GATE: record in DB but suppress from Telegram ──
       if (isAccuracyGated(record?.signal_type, record?.prop_type)) {
         gatedCount++;
+
+        // ── FLIP LOGIC: if consistent downside history, flip and send ──
+        const flipCheck = shouldFlip(record?.signal_type, record?.prop_type);
+        if (flipCheck.flip && record?.prediction) {
+          const origPrediction = record.prediction;
+          const origSide = origPrediction.split(" ")[0]; // "OVER", "UNDER", "BACK", "FADE"
+          const flippedSideStr = flipSide(origSide);
+          const flippedPred = flipPrediction(origPrediction);
+
+          // Validate flip with L10 data for player props (skip team markets)
+          const isTeamMarket = TEAM_MARKET_TYPES.has(record.prop_type);
+          let flipValidated = isTeamMarket; // team markets auto-validate (no L10)
+
+          if (!isTeamMarket) {
+            const { data: propsData } = await supabase
+              .from("unified_props")
+              .select("l10_avg, l10_hit_rate_over, l10_hit_rate_under, fanduel_line")
+              .eq("player_name", record.player_name)
+              .eq("prop_type", record.prop_type)
+              .order("last_updated", { ascending: false })
+              .limit(1);
+
+            if (propsData && propsData.length > 0) {
+              const p = propsData[0];
+              const line = Number(record.prediction.split(" ")[1]) || p.fanduel_line;
+              if (flippedSideStr === "OVER" && p.l10_avg != null && p.l10_avg > line && (p.l10_hit_rate_over ?? 0) >= 0.5) {
+                flipValidated = true;
+              } else if (flippedSideStr === "UNDER" && p.l10_avg != null && p.l10_avg < line && (p.l10_hit_rate_under ?? 0) >= 0.5) {
+                flipValidated = true;
+              }
+            }
+          }
+
+          if (flipValidated) {
+            flippedCount++;
+            log(`🔄 FLIPPED: ${record.player_name} ${record.prop_type} ${origSide} → ${flippedSideStr} (original ${(flipCheck.winRate*100).toFixed(0)}% in ${flipCheck.samples} samples)`);
+
+            // Build flipped alert text
+            const flippedAlert = [
+              `🔄 *FLIP SIGNAL* — ${esc(record.sport)}`,
+              `${esc(record.player_name)} ${esc(record.prop_type).replace("player_", "").toUpperCase()}`,
+              `Original ${origSide} was ${(flipCheck.winRate*100).toFixed(0)}% accuracy (${flipCheck.samples} samples)`,
+              `✅ *Action: ${flippedPred}*`,
+              `💡 Consistent miss pattern — flipped to opposite side`,
+              `⚠️ _Flip signal — lower confidence, use with caution_`,
+            ].filter(Boolean).join("\n");
+
+            telegramAlerts.push(flippedAlert);
+            // Record the flipped version
+            record.prediction = flippedPred;
+            record.predicted_direction = `flipped_${record.predicted_direction || "unknown"}`;
+            record.signal_type = `flipped_${record.signal_type}`;
+            predictionRecords.push(record);
+            continue;
+          } else {
+            log(`🔄 FLIP BLOCKED: ${record.player_name} ${record.prop_type} — L10 doesn't support ${flippedSideStr}`);
+          }
+        }
+
         record.gated = true; // mark as accuracy-gated
         gatedRecords.push(record);
         continue;
@@ -864,7 +924,7 @@ Deno.serve(async (req) => {
       telegramAlerts.push(alert);
       predictionRecords.push(record);
     }
-    if (gatedCount > 0) log(`🚫 Accuracy gate suppressed ${gatedCount} alerts (still recording in DB for flip tracking)`);
+    if (gatedCount > 0) log(`🚫 Accuracy gate suppressed ${gatedCount} alerts (${flippedCount} flipped, rest recorded for tracking)`);
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
     const allRecordsForDb = [...predictionRecords, ...gatedRecords];
