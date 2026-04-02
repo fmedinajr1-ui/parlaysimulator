@@ -312,6 +312,7 @@ Deno.serve(async (req) => {
         sport: pick.sport || "",
         signal_type: signalType,
         prediction: effectivePrediction,
+        original_prediction: pick.prediction || "",
         event_id: pick.event_id || "",
         accuracy: 0,
         accuracy_record: "",
