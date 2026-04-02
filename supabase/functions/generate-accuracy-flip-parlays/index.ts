@@ -455,9 +455,11 @@ Deno.serve(async (req) => {
       msgLines.push(`━━━ *Pair ${i + 1}* ${isCrossSport ? "🌍 Cross-Sport" : "🏟 Same-Sport"} ━━━`);
       msgLines.push("");
 
-      // Leg 1: Best accuracy
+      // Leg 1: Best accuracy — show side + line + prop clearly
+      const bestPredSide = bestIsOver ? "OVER" : "FADE";
+      const bestLineStr = p.bestLeg.line != null ? ` ${p.bestLeg.line}` : "";
       msgLines.push(`✅ *LEG 1 — BEST ACCURACY* ${bestSport}`);
-      msgLines.push(`*${p.bestLeg.player_name}* ${p.bestLeg.prediction} ${formatProp(p.bestLeg.prop_type)}${bestOdds ? ` (${bestOdds})` : ""}`);
+      msgLines.push(`*${p.bestLeg.player_name}* ${p.bestLeg.prediction}${bestLineStr} ${formatProp(p.bestLeg.prop_type)}${bestOdds ? ` (${bestOdds})` : ""}`);
       msgLines.push(`📊 Signal: ${p.bestLeg.signal_type.replace(/_/g, " ")} | *${p.bestLeg.accuracy.toFixed(1)}%* (${p.bestLeg.accuracy_record})`);
       if (p.bestLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.bestLeg.line}`);
       if (p.bestLeg.over_accuracy != null && p.bestLeg.under_accuracy != null) {
