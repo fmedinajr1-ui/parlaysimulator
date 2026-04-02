@@ -190,6 +190,7 @@ Deno.serve(async (req) => {
       sport: string;
       signal_type: string;
       prediction: string;
+      original_prediction: string; // what the signal originally said before any flip
       event_id: string;
       accuracy: number;
       accuracy_record: string;
@@ -199,7 +200,7 @@ Deno.serve(async (req) => {
       line: number | null;
       over_price: number | null;
       under_price: number | null;
-      trap_flag: string; // "none" | "auto_flipped" | "trap_suppressed"
+      trap_flag: string; // "none" | "auto_flipped" | "kill_gate_faded"
       money_direction: string; // where money is flowing
       over_accuracy: number | null;
       under_accuracy: number | null;
