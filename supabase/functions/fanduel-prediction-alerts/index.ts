@@ -599,8 +599,7 @@ Deno.serve(async (req) => {
       let autoFlipped = false;
       if (classifiedSignalType === "cascade" && isPlayerPropType(first.prop_type) && side === "OVER") {
         log(`🔄 AUTO-FLIP: ${first.player_name} ${first.prop_type} cascade OVER → UNDER (market trap logic)`);
-        // Reassign side to UNDER
-        Object.defineProperty(this, 'side', { value: 'UNDER' }); // won't work, use variable
+        side = "UNDER";
         autoFlipped = true;
       }
       const live = isLive(last);
