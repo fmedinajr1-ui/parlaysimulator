@@ -843,8 +843,9 @@ Deno.serve(async (req) => {
     if (gatedCount > 0) log(`🚫 Accuracy gate suppressed ${gatedCount} alerts (still recording in DB for flip tracking)`);
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
-    let dedupedRecords = predictionRecords;
-    if (predictionRecords.length > 0) {
+    const allRecordsForDb = [...predictionRecords, ...gatedRecords];
+    let dedupedRecords = allRecordsForDb;
+    if (allRecordsForDb.length > 0) {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       const { data: recentPreds } = await supabase
         .from("fanduel_prediction_accuracy")
@@ -856,7 +857,7 @@ Deno.serve(async (req) => {
         (recentPreds || []).map((r: any) => `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`)
       );
 
-      dedupedRecords = predictionRecords.filter(r => {
+      dedupedRecords = allRecordsForDb.filter(r => {
         const key = `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`;
         if (recentKeys.has(key)) {
           log(`⏭ Dedup: skipping ${r.player_name} ${r.prop_type} ${r.signal_type}`);
@@ -865,12 +866,14 @@ Deno.serve(async (req) => {
         return true;
       });
 
-      log(`Dedup: ${predictionRecords.length} → ${dedupedRecords.length} records (${predictionRecords.length - dedupedRecords.length} skipped)`);
+      log(`Dedup: ${allRecordsForDb.length} → ${dedupedRecords.length} records (${allRecordsForDb.length - dedupedRecords.length} skipped)`);
     }
 
-    // Store prediction records (deduped)
+    // Store ALL prediction records (including gated ones) for accuracy tracking
     if (dedupedRecords.length > 0) {
-      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(dedupedRecords);
+      // Strip the 'gated' flag before insert (not a DB column)
+      const cleanRecords = dedupedRecords.map(({ gated, ...rest }) => rest);
+      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(cleanRecords);
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
