@@ -895,17 +895,25 @@ Deno.serve(async (req) => {
             }
           }
 
-          if (flipValidated) {
+          // Force-flip override: extreme downside NBA player props skip L10 validation
+          const isForceFlip = !isTeamMarket && 
+            FORCE_FLIP_PROP_TYPES.has(record.prop_type) && 
+            flipCheck.samples >= FORCE_FLIP_MIN_SAMPLES && 
+            flipCheck.winRate < FORCE_FLIP_THRESHOLD &&
+            (record.sport || "").toUpperCase().includes("NBA");
+
+          if (flipValidated || isForceFlip) {
             flippedCount++;
-            log(`🔄 FLIPPED: ${record.player_name} ${record.prop_type} ${origSide} → ${flippedSideStr} (original ${(flipCheck.winRate*100).toFixed(0)}% in ${flipCheck.samples} samples)`);
+            const flipLabel = isForceFlip && !flipValidated ? "FORCE-FLIP" : "FLIPPED";
+            log(`🔄 ${flipLabel}: ${record.player_name} ${record.prop_type} ${origSide} → ${flippedSideStr} (original ${(flipCheck.winRate*100).toFixed(0)}% in ${flipCheck.samples} samples)`);
 
             // Build flipped alert text
             const flippedAlert = [
-              `🔄 *FLIP SIGNAL* — ${esc(record.sport)}`,
+              `🔄 *${isForceFlip ? "FORCE FLIP" : "FLIP SIGNAL"}* — ${esc(record.sport)}`,
               `${esc(record.player_name)} ${esc(record.prop_type).replace("player_", "").toUpperCase()}`,
               `Original ${origSide} was ${(flipCheck.winRate*100).toFixed(0)}% accuracy (${flipCheck.samples} samples)`,
               `✅ *Action: ${flippedPred}*`,
-              `💡 Consistent miss pattern — flipped to opposite side`,
+              isForceFlip ? `🎯 Extreme downside pattern — forced flip (NBA rebounds/assists)` : `💡 Consistent miss pattern — flipped to opposite side`,
               `⚠️ _Flip signal — lower confidence, use with caution_`,
             ].filter(Boolean).join("\n");
 
