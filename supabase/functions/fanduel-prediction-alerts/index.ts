@@ -11,9 +11,29 @@ const corsHeaders = {
 // All signal types are now ACTIVE — velocity_spike and cascade fully restored
 
 const KILLED_VELOCITY_MARKETS = new Set(["spreads", "totals"]);
+const PLAYER_PROP_TYPES = new Set([
+  "player_points", "player_rebounds", "player_assists", "player_threes",
+  "player_steals", "player_blocks", "player_turnovers",
+  "player_points_rebounds_assists", "player_rebounds_assists",
+  "player_points_assists", "player_points_rebounds",
+  "player_fantasy_score", "player_double_double",
+]);
+
+function isPlayerPropType(propType: string): boolean {
+  return PLAYER_PROP_TYPES.has(propType) || propType.startsWith("player_");
+}
+
 function isKilledSignal(signalType: string, propType: string, _direction?: string): boolean {
   // Gate velocity_spike on Spreads/Totals — 1-13 combined (7.7% accuracy)
   if (signalType === "velocity_spike" && KILLED_VELOCITY_MARKETS.has(propType)) return true;
+  
+  // KILL velocity_spike and line_about_to_move on ALL player props — toxic signals
+  // FanDuel inflates player prop lines to trap public OVER bettors
+  if (isPlayerPropType(propType)) {
+    if (signalType === "velocity_spike" || signalType === "live_velocity_spike") return true;
+    if (signalType === "line_about_to_move" || signalType === "live_line_about_to_move") return true;
+  }
+  
   return false;
 }
 
@@ -540,7 +560,7 @@ Deno.serve(async (req) => {
       const direction = lineDiff < 0 ? "DROPPING" : "RISING";
       const isContrarian = CONTRARIAN_PROPS.has(first.prop_type);
       const rawSide = lineDiff < 0 ? "OVER" : "UNDER";
-      const side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
+      let side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
       const isCombo = COMBO_PROPS.has(first.prop_type);
       const comboBoost = isCombo ? 15 : 0;
       const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
@@ -572,6 +592,15 @@ Deno.serve(async (req) => {
       if (isKilledSignal(classifiedSignalType, first.prop_type)) {
         log(`🚫 KILLED ${classifiedSignalType} on ${first.prop_type}`);
         continue;
+      }
+
+      // AUTO-FLIP: Cascade signals on player prop OVERs → flip to UNDER
+      // FanDuel uses different line-setting for player props vs team markets
+      let autoFlipped = false;
+      if (classifiedSignalType === "cascade" && isPlayerPropType(first.prop_type) && side === "OVER") {
+        log(`🔄 AUTO-FLIP: ${first.player_name} ${first.prop_type} cascade OVER → UNDER (market trap logic)`);
+        side = "UNDER";
+        autoFlipped = true;
       }
       const live = isLive(last);
 
@@ -629,6 +658,7 @@ Deno.serve(async (req) => {
       const signalEmoji = classifiedSignalType === "velocity_spike" ? "⚡" 
         : classifiedSignalType === "cascade" ? "🌊" : "🔮";
 
+      const flipTag = autoFlipped ? "\n🪤 *AUTO-FLIPPED: Market Trap → UNDER*" : "";
       const alertText = [
         `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
@@ -641,6 +671,7 @@ Deno.serve(async (req) => {
         accuracyBadge || null,
         crossRefBadge || null,
         `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
+        autoFlipped ? `🪤 *AUTO-FLIPPED: Cascade OVER → UNDER (FanDuel trap)*` : null,
         `💡 ${reason}`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
       ].filter(Boolean).join("\n");
