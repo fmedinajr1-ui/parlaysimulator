@@ -14,6 +14,87 @@ export type Database = {
   }
   public: {
     Tables: {
+      accuracy_flip_parlay_tracking: {
+        Row: {
+          best_leg_accuracy: number | null
+          best_leg_line: number | null
+          best_leg_outcome: string | null
+          best_leg_player: string
+          best_leg_prediction: string | null
+          best_leg_prop_type: string | null
+          best_leg_signal_type: string | null
+          best_leg_sport: string | null
+          created_at: string
+          flip_leg_flipped_prediction: string | null
+          flip_leg_line: number | null
+          flip_leg_original_accuracy: number | null
+          flip_leg_original_prediction: string | null
+          flip_leg_outcome: string | null
+          flip_leg_player: string
+          flip_leg_prop_type: string | null
+          flip_leg_signal_type: string | null
+          flip_leg_sport: string | null
+          id: string
+          notes: string | null
+          parlay_date: string
+          parlay_outcome: string | null
+          settled_at: string | null
+          strategy: string | null
+        }
+        Insert: {
+          best_leg_accuracy?: number | null
+          best_leg_line?: number | null
+          best_leg_outcome?: string | null
+          best_leg_player: string
+          best_leg_prediction?: string | null
+          best_leg_prop_type?: string | null
+          best_leg_signal_type?: string | null
+          best_leg_sport?: string | null
+          created_at?: string
+          flip_leg_flipped_prediction?: string | null
+          flip_leg_line?: number | null
+          flip_leg_original_accuracy?: number | null
+          flip_leg_original_prediction?: string | null
+          flip_leg_outcome?: string | null
+          flip_leg_player: string
+          flip_leg_prop_type?: string | null
+          flip_leg_signal_type?: string | null
+          flip_leg_sport?: string | null
+          id?: string
+          notes?: string | null
+          parlay_date?: string
+          parlay_outcome?: string | null
+          settled_at?: string | null
+          strategy?: string | null
+        }
+        Update: {
+          best_leg_accuracy?: number | null
+          best_leg_line?: number | null
+          best_leg_outcome?: string | null
+          best_leg_player?: string
+          best_leg_prediction?: string | null
+          best_leg_prop_type?: string | null
+          best_leg_signal_type?: string | null
+          best_leg_sport?: string | null
+          created_at?: string
+          flip_leg_flipped_prediction?: string | null
+          flip_leg_line?: number | null
+          flip_leg_original_accuracy?: number | null
+          flip_leg_original_prediction?: string | null
+          flip_leg_outcome?: string | null
+          flip_leg_player?: string
+          flip_leg_prop_type?: string | null
+          flip_leg_signal_type?: string | null
+          flip_leg_sport?: string | null
+          id?: string
+          notes?: string | null
+          parlay_date?: string
+          parlay_outcome?: string | null
+          settled_at?: string | null
+          strategy?: string | null
+        }
+        Relationships: []
+      }
       ai_avoid_patterns: {
         Row: {
           accuracy_rate: number | null

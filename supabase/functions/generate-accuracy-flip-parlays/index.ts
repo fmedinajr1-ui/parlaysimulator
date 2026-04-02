@@ -294,7 +294,37 @@ Deno.serve(async (req) => {
 
     const message = msgLines.join("\n");
 
-    // 7. Send via Telegram
+    // 7. Save to tracking table for calibration
+    const trackingRows = parlays.map(p => ({
+      parlay_date: new Date().toISOString().split("T")[0],
+      best_leg_player: p.bestLeg.player_name,
+      best_leg_prop_type: p.bestLeg.prop_type,
+      best_leg_sport: p.bestLeg.sport,
+      best_leg_signal_type: p.bestLeg.signal_type,
+      best_leg_prediction: p.bestLeg.prediction,
+      best_leg_accuracy: p.bestLeg.accuracy,
+      best_leg_line: p.bestLeg.line,
+      flip_leg_player: p.flipLeg.player_name,
+      flip_leg_prop_type: p.flipLeg.prop_type,
+      flip_leg_sport: p.flipLeg.sport,
+      flip_leg_signal_type: p.flipLeg.signal_type,
+      flip_leg_original_prediction: p.flipLeg.prediction,
+      flip_leg_flipped_prediction: p.flipLeg.flipped_prediction,
+      flip_leg_original_accuracy: p.flipLeg.accuracy,
+      flip_leg_line: p.flipLeg.line,
+    }));
+
+    const { error: trackErr } = await supabase
+      .from("accuracy_flip_parlay_tracking")
+      .insert(trackingRows);
+
+    if (trackErr) {
+      log(`Tracking insert error: ${trackErr.message}`);
+    } else {
+      log(`Saved ${trackingRows.length} parlays to tracking table ✅`);
+    }
+
+    // 8. Send via Telegram
     try {
       await supabase.functions.invoke("bot-send-telegram", {
         body: { message, parse_mode: "Markdown", admin_only: true },
@@ -309,6 +339,7 @@ Deno.serve(async (req) => {
       parlays: parlays.length,
       best_legs_available: bestLegs.length,
       flip_legs_available: flipLegs.length,
+      tracked: !trackErr,
       pairs: parlays.map(p => ({
         best: `${p.bestLeg.player_name} ${p.bestLeg.prediction} (${p.bestLeg.accuracy.toFixed(1)}%)`,
         flip: `${p.flipLeg.player_name} ${p.flipLeg.flipped_prediction} (fading ${p.flipLeg.accuracy.toFixed(1)}%)`,
