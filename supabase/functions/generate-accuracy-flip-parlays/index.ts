@@ -219,10 +219,55 @@ Deno.serve(async (req) => {
       const isOver = predLower.includes("over");
       const isPlayerProp = isPlayerPropType(propType);
 
-      // === KILL GATE: skip entirely if signal is toxic ===
-      if (isKilledSignal(signalType, propType)) {
+      // === KILL GATE: toxic signals on player props → route to flip bucket as fades ===
+      // === Kill velocity_spike on spreads/totals → skip entirely (no value even as fade) ===
+      if (signalType === "velocity_spike" && KILLED_VELOCITY_MARKETS.has(propType.toLowerCase())) {
         trapSuppressed++;
-        log(`KILLED: ${pick.player_name} ${pick.prediction} ${propType} (${signalType}) — toxic signal skipped`);
+        log(`KILLED (team market velocity): ${pick.player_name} ${pick.prediction} ${propType} (${signalType}) — skipped`);
+        continue;
+      }
+
+      const isKilledPlayerProp = isPlayerPropType(propType) &&
+        ["velocity_spike", "live_velocity_spike", "line_about_to_move", "live_line_about_to_move"].includes(signalType);
+
+      if (isKilledPlayerProp) {
+        // Don't skip — route to flip bucket as a fade candidate
+        const flippedPred = isOver
+          ? (pick.prediction || "").replace(/over/i, "UNDER")
+          : (pick.prediction || "").replace(/under/i, "OVER");
+
+        const flow = moneyFlowMap.get(pick.event_id || "");
+        const moneyDir = flow
+          ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
+          : "no data";
+        const accEntry = accMap.get(accKey);
+        const overAcc = accEntry && accEntry.over_total >= 3 ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
+        const underAcc = accEntry && accEntry.under_total >= 3 ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
+
+        const enriched: EnrichedPick = {
+          id: pick.id,
+          player_name: pick.player_name || "Unknown",
+          prop_type: propType,
+          sport: pick.sport || "",
+          signal_type: signalType,
+          prediction: flippedPred,
+          event_id: pick.event_id || "",
+          accuracy: accEntry ? (accEntry.wins / accEntry.total) * 100 : 0,
+          accuracy_record: accEntry ? `${accEntry.wins}-${accEntry.losses}` : "0-0",
+          signal_factors: sf,
+          is_flip: true,
+          flipped_prediction: flippedPred,
+          line: sf.line ?? sf.fanduel_line ?? null,
+          over_price: sf.over_price ?? null,
+          under_price: sf.under_price ?? null,
+          trap_flag: "kill_gate_faded",
+          money_direction: moneyDir,
+          over_accuracy: overAcc,
+          under_accuracy: underAcc,
+        };
+        trapFlips++;
+        flipLegs.push(enriched);
+        log(`KILL→FADE: ${pick.player_name} ${pick.prediction} → ${flippedPred} ${propType} (${signalType})`);
         continue;
       }
 
