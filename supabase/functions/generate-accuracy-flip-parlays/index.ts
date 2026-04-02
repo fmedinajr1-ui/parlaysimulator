@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
           signal_factors: sf,
           is_flip: true,
           flipped_prediction: flippedPred,
-          line: sf.line ?? sf.fanduel_line ?? null,
+          line: sf.line ?? sf.fanduel_line ?? pick.line ?? null,
           over_price: sf.over_price ?? null,
           under_price: sf.under_price ?? null,
           trap_flag: "kill_gate_faded",
