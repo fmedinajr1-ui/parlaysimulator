@@ -47,6 +47,12 @@ const TEAM_MARKETS = ["moneyline", "spreads", "totals", "spread", "total", "mone
 const isTeamMarket = (propType: string) =>
   TEAM_MARKETS.some(m => (propType || "").toLowerCase().includes(m));
 
+// Extract line number from prediction string like "OVER 21.5" → 21.5
+const extractLineFromPrediction = (prediction: string): number | null => {
+  const match = (prediction || "").match(/[\d]+\.?\d*/);
+  return match ? parseFloat(match[0]) : null;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
