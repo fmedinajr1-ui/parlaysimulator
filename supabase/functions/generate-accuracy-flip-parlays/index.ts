@@ -63,14 +63,14 @@ Deno.serve(async (req) => {
     log("=== Generating Accuracy-Based Flip 2-Leg Parlays (Kill Gate + Auto-Flip Aligned) ===");
 
     // 1. Get historical accuracy by signal_type + prop_type + sport (min 5 settled)
-    // Limit to last 14 days to avoid query timeout
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    // Use 60-day lookback (14 days was too narrow for toxic signal combos)
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
     const { data: allSettled, error: accErr } = await supabase
       .from("fanduel_prediction_accuracy")
       .select("signal_type, prop_type, sport, was_correct, prediction")
       .not("was_correct", "is", null)
       .not("signal_type", "eq", "trap_warning")
-      .gte("created_at", fourteenDaysAgo);
+      .gte("created_at", sixtyDaysAgo);
 
     if (accErr) throw accErr;
 
