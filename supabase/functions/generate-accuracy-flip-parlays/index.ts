@@ -102,20 +102,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3. Cross-reference against unified_props for verified FanDuel lines
-    const { data: verifiedProps } = await supabase
-      .from("unified_props")
-      .select("player_name, prop_type, line, has_real_line")
-      .eq("has_real_line", true);
-
-    const verifiedKeys = new Set<string>();
-    if (verifiedProps) {
-      for (const vp of verifiedProps) {
-        verifiedKeys.add(`${(vp.player_name || "").toLowerCase().trim()}|${(vp.prop_type || "").toLowerCase().trim()}`);
-      }
-    }
-
-    // 4. Classify today's picks into "best accuracy" and "worst accuracy (flip candidates)"
+    // 3. Classify today's picks into "best accuracy" and "worst accuracy (flip candidates)"
     const topAccKeys = new Set(topPerformers.map(a => `${a.signal_type}|${a.prop_type}|${a.sport}`));
     const bottomAccMap = new Map(bottomPerformers.map(a => [`${a.signal_type}|${a.prop_type}|${a.sport}`, a]));
 
