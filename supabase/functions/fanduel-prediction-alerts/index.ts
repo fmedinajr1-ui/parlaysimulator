@@ -827,10 +827,17 @@ Deno.serve(async (req) => {
 
     const telegramAlerts: string[] = [];
     const predictionRecords: any[] = [];
+    let gatedCount = 0;
     for (const { alert, record } of selectedSignals) {
+      // ── 70% ACCURACY GATE: skip signals below threshold ──
+      if (isAccuracyGated(record?.signal_type, record?.prop_type)) {
+        gatedCount++;
+        continue;
+      }
       telegramAlerts.push(alert);
       predictionRecords.push(record);
     }
+    if (gatedCount > 0) log(`🚫 Accuracy gate blocked ${gatedCount} signals below 70%`);
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
     let dedupedRecords = predictionRecords;
