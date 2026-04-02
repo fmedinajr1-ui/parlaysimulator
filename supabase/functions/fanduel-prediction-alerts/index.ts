@@ -827,21 +827,25 @@ Deno.serve(async (req) => {
 
     const telegramAlerts: string[] = [];
     const predictionRecords: any[] = [];
+    const gatedRecords: any[] = []; // Still recorded in DB for flip-logic tracking
     let gatedCount = 0;
     for (const { alert, record } of selectedSignals) {
-      // ── 70% ACCURACY GATE: skip signals below threshold ──
+      // ── 70% ACCURACY GATE: record in DB but suppress from Telegram ──
       if (isAccuracyGated(record?.signal_type, record?.prop_type)) {
         gatedCount++;
+        record.gated = true; // mark as accuracy-gated
+        gatedRecords.push(record);
         continue;
       }
       telegramAlerts.push(alert);
       predictionRecords.push(record);
     }
-    if (gatedCount > 0) log(`🚫 Accuracy gate blocked ${gatedCount} signals below 70%`);
+    if (gatedCount > 0) log(`🚫 Accuracy gate suppressed ${gatedCount} alerts (still recording in DB for flip tracking)`);
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
-    let dedupedRecords = predictionRecords;
-    if (predictionRecords.length > 0) {
+    const allRecordsForDb = [...predictionRecords, ...gatedRecords];
+    let dedupedRecords = allRecordsForDb;
+    if (allRecordsForDb.length > 0) {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       const { data: recentPreds } = await supabase
         .from("fanduel_prediction_accuracy")
@@ -853,7 +857,7 @@ Deno.serve(async (req) => {
         (recentPreds || []).map((r: any) => `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`)
       );
 
-      dedupedRecords = predictionRecords.filter(r => {
+      dedupedRecords = allRecordsForDb.filter(r => {
         const key = `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`;
         if (recentKeys.has(key)) {
           log(`⏭ Dedup: skipping ${r.player_name} ${r.prop_type} ${r.signal_type}`);
@@ -862,12 +866,14 @@ Deno.serve(async (req) => {
         return true;
       });
 
-      log(`Dedup: ${predictionRecords.length} → ${dedupedRecords.length} records (${predictionRecords.length - dedupedRecords.length} skipped)`);
+      log(`Dedup: ${allRecordsForDb.length} → ${dedupedRecords.length} records (${allRecordsForDb.length - dedupedRecords.length} skipped)`);
     }
 
-    // Store prediction records (deduped)
+    // Store ALL prediction records (including gated ones) for accuracy tracking
     if (dedupedRecords.length > 0) {
-      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(dedupedRecords);
+      // Strip the 'gated' flag before insert (not a DB column)
+      const cleanRecords = dedupedRecords.map(({ gated, ...rest }) => rest);
+      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(cleanRecords);
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
