@@ -474,14 +474,15 @@ Deno.serve(async (req) => {
       }
       msgLines.push("");
 
-      // Leg 2: Flipped (faded) — show original → flipped clearly
+      // Leg 2: Flipped (faded) — show original → flipped with line number clearly
       const flipTrapLabel = trapLabel(p.flipLeg.trap_flag);
       const originalSide = (p.flipLeg.original_prediction || "").replace(/[0-9.]+/g, "").trim().toUpperCase();
-      const flippedSide = (p.flipLeg.flipped_prediction || p.flipLeg.prediction || "").replace(/[0-9.]+/g, "").trim().toUpperCase();
-      const lineVal = p.flipLeg.line != null ? ` ${p.flipLeg.line}` : "";
+      const flippedPredLower2 = (p.flipLeg.flipped_prediction || p.flipLeg.prediction || "").toLowerCase();
+      const flippedSideClean = flippedPredLower2.includes("over") ? "OVER" : "UNDER";
+      const flipLineStr = p.flipLeg.line != null ? ` ${p.flipLeg.line}` : "";
 
       msgLines.push(`🔄 *LEG 2 — FLIPPED (FADE)*${flipTrapLabel} ${flipSport}`);
-      msgLines.push(`*${p.flipLeg.player_name}* ~${originalSide}~ → *${flippedSide}*${lineVal} ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
+      msgLines.push(`*${p.flipLeg.player_name}* ~${originalSide}~ → *${flippedSideClean}${flipLineStr}* ${formatProp(p.flipLeg.prop_type)}${flipOdds ? ` (${flipOdds})` : ""}`);
       msgLines.push(`📊 Original: ${p.flipLeg.signal_type.replace(/_/g, " ")} was *${p.flipLeg.accuracy.toFixed(1)}%* (${p.flipLeg.accuracy_record}) — FADING`);
       if (p.flipLeg.line != null) msgLines.push(`📗 FanDuel Line: ${p.flipLeg.line}`);
       if (p.flipLeg.over_accuracy != null && p.flipLeg.under_accuracy != null) {
