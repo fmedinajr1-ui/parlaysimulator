@@ -827,17 +827,20 @@ Deno.serve(async (req) => {
 
     const telegramAlerts: string[] = [];
     const predictionRecords: any[] = [];
+    const gatedRecords: any[] = []; // Still recorded in DB for flip-logic tracking
     let gatedCount = 0;
     for (const { alert, record } of selectedSignals) {
-      // ── 70% ACCURACY GATE: skip signals below threshold ──
+      // ── 70% ACCURACY GATE: record in DB but suppress from Telegram ──
       if (isAccuracyGated(record?.signal_type, record?.prop_type)) {
         gatedCount++;
+        record.gated = true; // mark as accuracy-gated
+        gatedRecords.push(record);
         continue;
       }
       telegramAlerts.push(alert);
       predictionRecords.push(record);
     }
-    if (gatedCount > 0) log(`🚫 Accuracy gate blocked ${gatedCount} signals below 70%`);
+    if (gatedCount > 0) log(`🚫 Accuracy gate suppressed ${gatedCount} alerts (still recording in DB for flip tracking)`);
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
     let dedupedRecords = predictionRecords;
