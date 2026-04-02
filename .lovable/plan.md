@@ -1,48 +1,27 @@
 
 
-## Current State
+## Settle All Pending FanDuel Predictions
 
-Right now the system:
-1. **Captures the line at alert time** (`line_at_alert`, `drift_pct_at_alert`, `alert_sent_at`) when a "Take It Now" fires
-2. **Counts post-alert snapshots** (`post_alert_snapshots`) but only at verification time (after the game)
-3. **Detects traps retroactively** by comparing the closing line to the alert-time line
+### Problem
+861 pending predictions are stuck unsettled due to two bottlenecks in `fanduel-accuracy-feedback`:
+1. **`limit(300)`** — only processes 300 records per run
+2. **3-hour post-game guard** — skips events less than 3 hours after tip-off
 
-**What's missing:** There is no **real-time post-alert monitoring** — the system fires a signal, then doesn't look at that line again until the game ends. If FanDuel reverses the line 30 minutes later, we find out after the fact. We never send a follow-up alert saying "line reversed — recommendation changed."
+For games from March 29–April 1, all games are long over, so the guard isn't the issue — the 300 limit is just not enough to chew through the backlog in scheduled runs.
 
----
+### Plan
 
-## Plan: Post-Alert Line Tracker + Live Recommendation Updates
+**Edit `supabase/functions/fanduel-accuracy-feedback/index.ts`:**
 
-### 1. Add tracking columns to `fanduel_prediction_accuracy`
-- `line_changes_after_alert` (integer) — count of distinct line movements post-alert
-- `line_trajectory` (jsonb) — array of `{line, time, delta_from_alert}` snapshots captured after the signal
-- `recommendation_status` (text) — `ACTIVE` | `REVERSED` | `UPGRADED` | `DEAD`
-- `recommendation_updated_at` (timestamptz)
+1. **Raise the query limit from 300 → 1000** to process more records per invocation
+2. **Accept a `settle_all` body parameter** — when `true`, skip the 2-hour age filter and 3-hour post-game guard for records older than 6 hours, allowing a single manual invocation to blast through the entire backlog
+3. **Extend the 7-day lookback to 14 days** when `settle_all` is true to catch any stragglers from March 29
 
-### 2. Create new edge function: `post-alert-line-monitor`
-Runs on a 5-minute cron (same as the scanner). For each **unsettled** "Take It Now" prediction:
-- Query `fanduel_line_timeline` for all snapshots after `alert_sent_at`
-- Count distinct line changes and build the trajectory array
-- Detect three scenarios:
-  - **Reversal** (line moved back >40% toward opener): Update recommendation to `REVERSED`, send Telegram warning: "⚠️ LINE REVERSED — original Take It Now on [Player] [Prop] is no longer valid"
-  - **Continued drift** (line kept moving in same direction): Update to `UPGRADED` with note that edge grew
-  - **Stable** (line hasn't moved significantly): Keep `ACTIVE`
-- Persist updates to `fanduel_prediction_accuracy`
-
-### 3. Send live Telegram follow-ups
-When a reversal or significant change is detected:
-- "🔄 **LINE UPDATE** — [Player] [Prop]: Line moved from [alert_line] → [current_line] ([X] changes in [Y] minutes). **Recommendation: REVERSED/STILL ACTIVE**"
-- Include whether the new line creates an edge on the opposite side (flip recommendation)
-
-### 4. Update `fanduel-accuracy-feedback` to use trajectory data
-Instead of only comparing alert vs closing, use the full trajectory to classify traps more precisely (e.g., "reversed within 15 min" vs "held for 2 hours then reversed").
-
----
+**Then invoke the function manually** with `{ "settle_all": true }` to settle all 861 pending records in one shot and send the accuracy report to Telegram.
 
 ### Technical Details
-
-- **Cron**: Reuse existing 5-min schedule pattern
-- **Query scope**: Only monitor predictions where `was_correct IS NULL` and `signal_type = 'take_it_now'` and `alert_sent_at` is within last 12 hours
-- **Flip logic**: If reversal creates ≥10% edge on opposite side AND L10 supports it, send a new "Take It Now" in the opposite direction
-- **Dedup**: Don't send more than one reversal alert per prediction
+- Add `const body = await req.json().catch(() => ({}))` at top
+- When `body.settle_all === true`: remove the `lte('created_at', twoHoursAgo)` filter, set lookback to 14 days, increase limit to 1000, and relax the 3-hour post-game guard to 30 minutes (safety net for truly live games)
+- No schema changes needed — just function logic
+- Redeploy and invoke once manually
 
