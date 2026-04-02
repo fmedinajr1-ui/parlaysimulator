@@ -63,9 +63,42 @@ serve(async (req) => {
         if (action.action === 'flip') {
           const leg = legs[action.leg_index] as any;
           const oldSide = leg.side;
-          leg.side = oldSide?.toLowerCase() === 'over' ? 'under' : 'over';
+          const newSide = oldSide?.toLowerCase() === 'over' ? 'under' : 'over';
+
+          // Only allow flip if the player has historical evidence of underperforming on the current side
+          const playerName = leg.player_name || leg.playerName || '';
+          const propType = leg.prop_type || '';
+
+          // Check bot_player_performance for current side hit rate
+          const { data: perfData } = await supabase
+            .from('bot_player_performance')
+            .select('hit_rate, legs_played')
+            .eq('player_name', playerName)
+            .eq('prop_type', propType)
+            .eq('side', oldSide?.toLowerCase() || 'over')
+            .maybeSingle();
+
+          // Check bot_weak_leg_tracker for miss history on current side
+          const { data: weakData } = await supabase
+            .from('bot_weak_leg_tracker')
+            .select('miss_count')
+            .eq('player_name', playerName)
+            .eq('prop_type', propType)
+            .eq('side', oldSide?.toLowerCase() || 'over')
+            .maybeSingle();
+
+          const hasDownsideHistory =
+            (perfData && perfData.legs_played >= 3 && perfData.hit_rate < 0.45) ||
+            (weakData && (weakData.miss_count || 0) >= 2);
+
+          if (!hasDownsideHistory) {
+            changes.push(`SKIP FLIP leg ${action.leg_index}: ${playerName} ${propType} ${oldSide} — no downside history`);
+            continue;
+          }
+
+          leg.side = newSide;
           legs[action.leg_index] = leg;
-          changes.push(`FLIP leg ${action.leg_index}: ${leg.player_name} ${oldSide} → ${leg.side}`);
+          changes.push(`FLIP leg ${action.leg_index}: ${playerName} ${oldSide} → ${newSide} (hit_rate: ${perfData?.hit_rate ?? 'N/A'}, misses: ${weakData?.miss_count ?? 0})`);
         } else if (action.action === 'drop') {
           const leg = legs[action.leg_index] as any;
           changes.push(`DROP leg ${action.leg_index}: ${leg.player_name} ${leg.prop_type}`);
