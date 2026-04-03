@@ -407,10 +407,22 @@ Deno.serve(async (req) => {
 
       if (bottomAccMap.has(accKey)) {
         const acc = bottomAccMap.get(accKey)!;
-        enriched.accuracy = acc.accuracy;
-        enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
-        enriched.is_flip = true;
-        flipLegs.push(enriched);
+        // Direction-aware flip: only flip if the SPECIFIC SIDE's accuracy is poor
+        const sideAcc = effectiveIsOver ? overAcc : underAcc;
+        const overallBad = acc.accuracy <= 40;
+        const sideBad = sideAcc !== null ? sideAcc <= 40 : overallBad;
+
+        if (sideBad) {
+          enriched.accuracy = acc.accuracy;
+          enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
+          enriched.is_flip = true;
+          enriched.prediction = flippedPrediction;
+          enriched.flipped_prediction = flippedPrediction;
+          flipLegs.push(enriched);
+        } else {
+          // Side accuracy is fine — don't flip, skip this as a flip candidate
+          log(`SKIP FLIP: ${pick.player_name} ${effectivePrediction} — side acc ${sideAcc?.toFixed(0)}% > 40%, not flipping`);
+        }
       }
     }
 
