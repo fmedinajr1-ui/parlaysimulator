@@ -1541,10 +1541,10 @@ const BLOCKED_CATEGORIES = new Set([
   'BIG_ASSIST_OVER', // 10.3% hit rate → 0% Mar 15-27
   'VOLUME_SCORER',   // 0% hit rate across ALL strategies
   'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
-  'REBOUNDS',        // 13% hit rate Mar 15-27 — toxic category
-  'HIGH_REB_UNDER',  // 29% hit rate Mar 15-27 — below threshold
   'uncategorized',   // No signal — unclassified legs drag down win rate
   // MLB categories — UNBLOCKED (data pipeline now active)
+  // REBOUNDS unblocked — CASH_LOCK_FLIP_MAP forces to under side
+  // HIGH_REB_UNDER unblocked — calibration engine manages eligibility
 ]);
 
 // ============= CASH LOCK FLIP MAP (force historically-losing categories to winning side) =============
