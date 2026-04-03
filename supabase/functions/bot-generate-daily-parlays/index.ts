@@ -8600,11 +8600,12 @@ async function generateTierParlays(
       }
       
       let pickedOne = false;
+      const gateCounters = { global: 0, parlay: 0, execL10: 0, execWinPattern: 0, godMode: 0, grindOver: 0, antiCorr: 0, spread: 0, sideStack: 0, hitRate: 0, oddsValue: 0, buffer: 0, hybrid: 0, ml: 0 };
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
       if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile || isSweetSpotL3Profile, profile.strategy)) {
-        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] GlobalGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        gateCounters.global++;
         continue;
       }
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
@@ -8612,7 +8613,7 @@ async function generateTierParlays(
       // Relax team usage cap for matchup_team_stack profiles (allow same-team stacking)
       const effectiveConfig = isMatchupTeamStackProfile ? { ...config, maxTeamUsage: 6 } : config;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) {
-        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] ParlayGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        gateCounters.parlay++;
         continue;
       }
       
@@ -8621,6 +8622,7 @@ async function generateTierParlays(
          const rawL10 = (pick as any).l10_hit_rate || (pick as any).confidence_score || 0;
          const legL10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
          if (legL10Pct < 90) {
+           gateCounters.execWinPattern++;
            continue;
          }
        }
@@ -8630,6 +8632,7 @@ async function generateTierParlays(
       if (tier === 'execution' && 'player_name' in pick && !isSweetSpotL3Profile) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
         if (!matchupResult.pass) {
+          gateCounters.godMode++;
           continue;
         }
         // Apply sliding penalty to composite for borderline matchups
@@ -8648,7 +8651,7 @@ async function generateTierParlays(
         strategyName !== 'bench_under' &&
         strategyName !== 'grind_under_core'
       ) {
-        console.log(`[GrindOverBlock] Skipped: ${pick.player_name || 'unknown'} OVER in GRIND+tough defense game`);
+        gateCounters.grindOver++;
         rejectionCounters.envCluster = (rejectionCounters.envCluster || 0) + 1;
         continue;
       }
