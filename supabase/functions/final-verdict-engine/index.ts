@@ -79,10 +79,11 @@ serve(async (req) => {
       supabase.from('bot_category_weights')
         .select('category, side, weight, bayesian_hit_rate, is_blocked'),
 
-      // Verified FanDuel lines
+      // Verified FanDuel lines (active props with a line)
       supabase.from('unified_props')
-        .select('player_name, prop_type, line, has_real_line')
-        .eq('has_real_line', true),
+        .select('player_name, prop_type, current_line')
+        .eq('is_active', true)
+        .not('current_line', 'is', null),
 
       // Mispriced lines for drift detection
       supabase.from('mispriced_lines')
