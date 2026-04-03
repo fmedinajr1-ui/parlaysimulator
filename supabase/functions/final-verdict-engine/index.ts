@@ -208,11 +208,11 @@ serve(async (req) => {
       // Signal 3: Line Projection confirmation
       const lp = lpMap.get(key);
       if (lp) {
-        const lpDirection = (lp.direction || '').toLowerCase();
-        if (lpDirection === c.side || (lpDirection === '' && lp.edge_pct > 0)) {
+        const lpSide = (lp.recommended_side || lp.predicted_line_direction || '').toLowerCase();
+        if (lpSide === c.side || (lpSide === '' && lp.edge_pct > 0)) {
           c.line_projection_agrees = true;
           c.engines_agreeing.push('line_projection');
-          c.engine_details.line_projection = { projected: lp.projected_value, fdLine: lp.fanduel_line, edge: lp.edge_pct, grade: lp.signal_grade };
+          c.engine_details.line_projection = { projected: lp.projected_value, fdLine: lp.fanduel_line, edge: lp.edge_pct, grade: lp.edge_grade };
         }
       }
 
