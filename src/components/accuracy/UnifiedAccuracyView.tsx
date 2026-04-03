@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { RefreshCw, AlertTriangle, CheckCircle, AlertCircle, Info, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettledPicksCount } from "@/hooks/useSettledPicks";
+import { ParlayAccuracyCard } from "./ParlayAccuracyCard";
 
 type TimePeriod = 7 | 30 | 90 | 365;
 
