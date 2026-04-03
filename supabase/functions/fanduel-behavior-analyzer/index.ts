@@ -332,6 +332,9 @@ Deno.serve(async (req) => {
       if (snapshots.length < 3) continue;
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+
+      // SUPPRESS: live team markets are game-score noise, not signals
+      if (isLiveTeamMarketNoise(last)) continue;
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
       if (timeDiffMin < 10) continue;
 
