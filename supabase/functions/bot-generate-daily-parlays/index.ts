@@ -12270,6 +12270,32 @@ Deno.serve(async (req) => {
 
         const wasUsed = usedPickKeys.has(key);
 
+        // Derive specific rejection reason instead of generic 'not_selected'
+        let rejectionReason: string | null = null;
+        if (!wasUsed) {
+          const cs = pick.compositeScore ?? pick.composite_score ?? 0;
+          if (cs === 0 && pick.blowupBlocked) {
+            rejectionReason = 'blowup_ceiling_block';
+          } else if (cs === 0 && pick.serialKillerBlocked) {
+            rejectionReason = 'serial_killer_block';
+          } else if (cs === 0) {
+            rejectionReason = 'hard_block_zero_score';
+          } else if (cs < 30) {
+            rejectionReason = 'low_dna';
+          } else if (pick.l3TrendFail) {
+            rejectionReason = 'l3_trend_fail';
+          } else if (pick.categoryBlocked) {
+            rejectionReason = 'category_blocked';
+          } else if (allParlays.length === 0) {
+            rejectionReason = 'assembly_failed';
+          } else {
+            rejectionReason = 'not_selected';
+          }
+        }
+
+        // Use recalculated compositeScore as confidence (not raw sweet spot confidence)
+        const finalConfidence = pick.compositeScore ?? pick.composite_score ?? pick.confidence_score ?? null;
+
         poolRows.push({
           pick_date: targetDate,
           player_name: playerName,
@@ -12279,10 +12305,10 @@ Deno.serve(async (req) => {
           l10_hit_rate: pick.l10_hit_rate || pick.hit_rate || null,
           l10_avg: pick.l10_avg || pick.l10_average || null,
           l3_avg: pick.l3_avg || null,
-          confidence_score: pick.confidence_score || pick.composite_score || null,
-          composite_score: pick.composite_score || null,
+          confidence_score: finalConfidence,
+          composite_score: pick.compositeScore ?? pick.composite_score ?? null,
           projected_value: pick.projected_value || null,
-          rejection_reason: wasUsed ? null : 'not_selected',
+          rejection_reason: rejectionReason,
           was_used_in_parlay: wasUsed,
           category: pick.category || null,
         });
