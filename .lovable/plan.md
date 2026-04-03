@@ -1,41 +1,62 @@
 
 
-## Plan: Align Accuracy-Flip Parlay Generator with Alert Kill/Flip Rules
+## Problem: Kill Gate Flips Blindly in Both Directions
 
-### Problem
-The `fanduel-prediction-alerts` function has strict kill gates and auto-flip rules for player props, but `generate-accuracy-flip-parlays` uses a softer "TRAP_SIGNAL_TYPES" approach that doesn't fully match. The parlay generator still considers killed signals as valid legs.
+### What Went Wrong Tonight
 
-### What's Missing in the Parlay Generator
+Looking at the actual database records for April 2:
 
-| Rule | Alerts Function | Parlay Generator |
-|------|----------------|-----------------|
-| Kill `velocity_spike` on spreads/totals | ✅ | ❌ Missing |
-| Kill `velocity_spike` + `live_velocity_spike` on ALL player props | ✅ | ❌ Only treats as "trap flip" |
-| Kill `line_about_to_move` + `live_line_about_to_move` on ALL player props | ✅ | ❌ Only treats as "trap flip" |
-| Auto-flip `cascade` player prop OVERs to UNDER | ✅ | ⚠️ Partially (via trap logic) |
+**Brandon Miller:**
+- `velocity_spike` predicted **UNDER 28.5** PRA
+- Kill gate caught it (velocity_spike on player prop) and blindly flipped UNDER → **OVER 28.5**
+- Result: He got **25** — the original UNDER was correct, the flip lost
 
-### Changes to `generate-accuracy-flip-parlays/index.ts`
+**Miles Bridges:**
+- `velocity_spike` predicted **UNDER 21.5** PRA  
+- Kill gate caught it and flipped UNDER → **OVER 21.5**
+- Result: He got **32** — this one the flip happened to be right, but original logic was also wrong
 
-1. **Add the same constants and helper functions** from the alerts function:
-   - `KILLED_VELOCITY_MARKETS` set (spreads, totals)
-   - `PLAYER_PROP_TYPES` set (all player prop types)
-   - `isPlayerPropType()` function
-   - `isKilledSignal()` function (exact same logic)
+### Root Cause
 
-2. **Apply kill gate when classifying picks** — before a pick enters either `bestLegs` or `flipLegs`, check `isKilledSignal()`. If killed, skip entirely (don't use as any leg).
+The kill gate at lines 243-292 flips ALL killed player prop signals **regardless of direction**. It does:
+```
+isOver → flip to UNDER
+isUnder → flip to OVER   ← THIS IS WRONG
+```
 
-3. **Apply cascade auto-flip** — if signal is `cascade`, prop is a player prop, and prediction is OVER, auto-flip to UNDER and route to flip bucket.
+But the entire market trap theory says: **upward drift in player props is a public trap — OVERs are the bait.** Flipping an UNDER to OVER goes **against** the theory.
 
-4. **Remove the loose `TRAP_SIGNAL_TYPES` approach** — replace with the exact same gating logic the alerts function uses so both systems are identical.
+The historical data confirms this. For PTS+REB+AST combos:
+- `line_about_to_move` **OVER**: 0% accuracy (0/10) — terrible, should fade
+- `line_about_to_move` **UNDER**: 87.5% accuracy (7/8) — excellent, should keep
+- `velocity_spike` **UNDER**: 20% accuracy (1/5) — bad, but flipping to OVER is worse
 
-5. **Update tracking insert** to include a `kill_gate_applied` or `trap_flag` field reflecting what rule was triggered.
+### Fix: Direction-Aware Kill Gate
+
+**Rule change**: Kill gate fades should only flip **OVER → UNDER**. When the original signal is already UNDER:
+1. Check side-specific accuracy for that signal+prop combo
+2. If UNDER accuracy >= 50%: **keep it as-is** and route to best legs bucket
+3. If UNDER accuracy < 50%: **skip entirely** (don't include in any parlay)
+4. Never flip UNDER → OVER
+
+### Changes
+
+**File: `supabase/functions/generate-accuracy-flip-parlays/index.ts`**
+
+1. Modify the kill gate block (lines 243-292):
+   - If original prediction is OVER: flip to UNDER as before (trap theory)
+   - If original prediction is UNDER: check side-specific accuracy from accMap
+     - Good UNDER accuracy (>=50%): keep as UNDER, add to bestLegs
+     - Bad UNDER accuracy (<50%): skip entirely, log as "no edge either way"
+
+2. Same fix for cascade auto-flip block (lines 300-306): already correct (only flips OVER → UNDER)
+
+3. For the normal bottom-performer flip classification (lines 371-377):
+   - Add side-specific check: only flip if the *specific side's* accuracy is <=40%, not just overall accuracy
+   - If OVER accuracy is 60% but UNDER accuracy is 20%, and signal says UNDER, flip UNDER→OVER is still valid
+   - If OVER accuracy is 10% and signal says OVER, flip OVER→UNDER is valid
 
 ### Technical Detail
 
-The core change replaces the current block at lines 179-273 with:
-- First: skip any pick where `isKilledSignal(signal_type, prop_type)` returns true
-- Then: for cascade + player prop + OVER → auto-flip to UNDER and put in flip bucket
-- Then: normal best/flip classification as before
-
-This ensures no "toxic" signal ever appears in a parlay leg, matching the alerts pipeline exactly.
+The `accMap` already tracks `over_wins`, `over_total`, `under_wins`, `under_total` (lines 110-147). The fix uses this existing side-level data to make direction-aware decisions instead of relying solely on overall accuracy.
 
