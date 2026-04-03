@@ -322,6 +322,13 @@ Deno.serve(async (req) => {
       },
     },
     {
+      id: "phase3_verdict",
+      label: "Final Verdict cross-engine consensus",
+      run: async () => {
+        await invokeStep("Final Verdict engine", "final-verdict-engine", {});
+      },
+    },
+    {
       id: "phase3g",
       label: "DNA audit (mandatory post-generation)",
       run: async () => {
