@@ -4022,22 +4022,34 @@ function mapTeamBetToCategory(betType: string, side: string, odds?: number): str
 }
 
 function mapPropTypeToCategory(propType: string): string {
+  // Map to archetype categories that align with the calibration engine
   const categoryMap: Record<string, string> = {
-    'player_points': 'POINTS',
-    'player_rebounds': 'REBOUNDS',
-    'player_assists': 'ASSISTS',
-    'player_threes': 'THREES',
+    'player_points': 'STAR_FLOOR_OVER',
+    'player_rebounds': 'BIG_REBOUNDER',
+    'player_assists': 'HIGH_ASSIST',
+    'player_threes': 'THREE_POINT_SHOOTER',
     'player_blocks': 'BLOCKS',
     'player_steals': 'STEALS',
-    'player_goals': 'NHL_GOALS',
+    'player_goals': 'NHL_GOALS_SCORER',
     'player_shots_on_goal': 'NHL_SHOTS',
     'player_saves': 'NHL_SAVES',
     'player_pass_yds': 'NFL_PASS_YDS',
     'player_rush_yds': 'NFL_RUSH_YDS',
     'player_reception_yds': 'NFL_REC_YDS',
     'player_receptions': 'NFL_RECEPTIONS',
+    'player_points_rebounds_assists': 'STAR_FLOOR_OVER',
+    'player_points_rebounds': 'STAR_FLOOR_OVER',
+    'player_points_assists': 'STAR_FLOOR_OVER',
+    'player_rebounds_assists': 'BIG_REBOUNDER',
+    'points': 'STAR_FLOOR_OVER',
+    'rebounds': 'BIG_REBOUNDER',
+    'assists': 'HIGH_ASSIST',
+    'threes': 'THREE_POINT_SHOOTER',
+    'pitcher_strikeouts': 'MLB_STRIKEOUTS',
+    'batter_hits': 'MLB_HITS',
+    'batter_total_bases': 'MLB_TOTAL_BASES',
   };
-  return categoryMap[propType] || propType.toUpperCase();
+  return categoryMap[propType] || categoryMap[propType.toLowerCase()] || propType.toUpperCase();
 }
 
 // ============= AVAILABILITY GATE =============
