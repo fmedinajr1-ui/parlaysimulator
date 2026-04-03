@@ -1550,6 +1550,7 @@ const BLOCKED_CATEGORIES = new Set([
 // ============= CASH LOCK FLIP MAP (force historically-losing categories to winning side) =============
 const CASH_LOCK_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'REBOUNDS': 'under',             // 0% as over -> force under
+  'BIG_REBOUNDER': 'under',       // Archetype alias for rebounds -> force under
   'THREES': 'under',              // 0% as over -> force under
   'THREE_POINT_SHOOTER': 'under', // 34.5% as over -> force under
   'HIGH_ASSIST': 'over',          // 0% as under, 62.5% as over -> force over
