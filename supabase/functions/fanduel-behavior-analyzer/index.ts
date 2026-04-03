@@ -931,6 +931,27 @@ Deno.serve(async (req) => {
             `💡 ${reason}`,
           ].join("\n");
         }
+        // ====== CORRELATION / TEAM NEWS SHIFT ======
+        if (a.type === "correlated_movement" || a.type === "team_news_shift") {
+          const emoji = a.type === "team_news_shift" ? "📰" : "🔗";
+          const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
+          const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
+          const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) =>
+            `  ${p.name}: ${p.direction} ${p.magnitude}`
+          ).join("\n");
+          const action = a.dominant_direction === "dropping"
+            ? `OVER — lines dropping across ${(a.players_moving || []).length} players`
+            : `UNDER — lines rising across ${(a.players_moving || []).length} players`;
+          return [
+            `${emoji} *${label}* — ${esc(a.sport)}`,
+            `${esc(a.event_description)} — ${propLabel}`,
+            `${(a.players_moving || []).length} players moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
+            topPlayers,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action}*`,
+            `💡 ${a.type === "team_news_shift" ? "85%+ correlation = likely injury/lineup news" : "Coordinated movement = sharp action or news"}`,
+          ].join("\n");
+        }
         return "";
       };
 
@@ -939,6 +960,7 @@ Deno.serve(async (req) => {
       const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
       const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
       const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
+      const correlationAlerts = highConfAlerts.filter((a) => a.type === "correlated_movement" || a.type === "team_news_shift");
 
       const allFormatted: string[] = [];
       // Highest priority first
