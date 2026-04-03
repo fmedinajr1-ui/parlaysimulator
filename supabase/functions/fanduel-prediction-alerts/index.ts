@@ -493,12 +493,23 @@ Deno.serve(async (req) => {
         const spreadLine = line;
         const edge = projMargin - (-spreadLine);
 
+        // ACCURACY FILTER: Block COVER on large spreads (>=10 pts) — 0% historical accuracy
+        const absSpread = Math.abs(spreadLine);
+        if (side === "COVER" && absSpread >= 10) {
+          return { pass: false, reason: `COVER blocked on large spread ${spreadLine} — historically poor accuracy`, badge: "" };
+        }
+
         // Block if projected margin strongly contradicts the recommended side (>5pt against)
         if (side === "COVER" && edge < -5) {
           return { pass: false, reason: `Projected margin ${projMargin.toFixed(1)} doesn't cover ${spreadLine}`, badge: "" };
         }
         if (side === "FADE" && edge > 5) {
           return { pass: false, reason: `Projected margin ${projMargin.toFixed(1)} suggests cover, not fade`, badge: "" };
+        }
+
+        // ACCURACY FILTER: COVER needs stronger edge confirmation than FADE
+        if (side === "COVER" && Math.abs(edge) < 3) {
+          return { pass: false, reason: `COVER edge too thin (${edge.toFixed(1)} pts) — FADEs outperform`, badge: "" };
         }
 
         const badge = `📊 Margin: ${projMargin > 0 ? "+" : ""}${projMargin.toFixed(1)} | Spread: ${spreadLine}${Math.abs(edge) > 2 ? " ✅" : " ⚠️"}`;

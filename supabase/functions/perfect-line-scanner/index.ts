@@ -447,12 +447,23 @@ Deno.serve(async (req) => {
         const side = edge > 0 ? "COVER" : "FADE";
         if (absEdge < 2) continue; // need 2+ point edge
 
+        // ACCURACY FILTER: Suppress COVER on large spreads (>=10 pts) — historically 0% accuracy
+        const absSpread = Math.abs(currentLine);
+        if (side === "COVER" && absSpread >= 10) {
+          log(`Blocking COVER on large spread ${currentLine} for ${line.player_name} — historically poor accuracy`);
+          continue;
+        }
+
+        // ACCURACY FILTER: COVER requires higher edge threshold than FADE (FADE outperforms COVER)
+        const minEdge = side === "COVER" ? 3 : 2;
+        if (absEdge < minEdge) continue;
+
         const estimatedHitRate = Math.min(0.90, 0.50 + absEdge * 0.03);
 
         let tier: "PERFECT" | "STRONG" | "LEAN" | null = null;
         if (absEdge >= 6 && estimatedHitRate >= 0.68) tier = "PERFECT";
         else if (absEdge >= 4 && estimatedHitRate >= 0.62) tier = "STRONG";
-        else if (absEdge >= 2 && estimatedHitRate >= 0.56) tier = "LEAN";
+        else if (absEdge >= (side === "COVER" ? 3 : 2) && estimatedHitRate >= 0.56) tier = "LEAN";
         if (!tier) continue;
 
         signals.push({
