@@ -72,17 +72,18 @@ serve(async (req) => {
 
       // Line projection results
       supabase.from('line_projection_results')
-        .select('player_name, prop_type, projected_value, fanduel_line, edge_pct, signal_grade, direction')
-        .eq('projection_date', today),
+        .select('player_name, prop_type, projected_value, fanduel_line, edge_pct, edge_grade, predicted_line_direction, recommended_side')
+        .eq('game_date', today),
 
       // Category weights (Bayesian performance)
       supabase.from('bot_category_weights')
         .select('category, side, weight, bayesian_hit_rate, is_blocked'),
 
-      // Verified FanDuel lines
+      // Verified FanDuel lines (active props with a line)
       supabase.from('unified_props')
-        .select('player_name, prop_type, line, has_real_line')
-        .eq('has_real_line', true),
+        .select('player_name, prop_type, current_line')
+        .eq('is_active', true)
+        .not('current_line', 'is', null),
 
       // Mispriced lines for drift detection
       supabase.from('mispriced_lines')
@@ -123,7 +124,7 @@ serve(async (req) => {
     // Verified lines map
     const verifiedMap = new Map<string, number>();
     for (const vp of verifiedProps) {
-      verifiedMap.set(normKey(vp.player_name, vp.prop_type), vp.line);
+      verifiedMap.set(normKey(vp.player_name, vp.prop_type), vp.current_line);
     }
 
     // Mispriced map for drift detection
@@ -207,11 +208,11 @@ serve(async (req) => {
       // Signal 3: Line Projection confirmation
       const lp = lpMap.get(key);
       if (lp) {
-        const lpDirection = (lp.direction || '').toLowerCase();
-        if (lpDirection === c.side || (lpDirection === '' && lp.edge_pct > 0)) {
+        const lpSide = (lp.recommended_side || lp.predicted_line_direction || '').toLowerCase();
+        if (lpSide === c.side || (lpSide === '' && lp.edge_pct > 0)) {
           c.line_projection_agrees = true;
           c.engines_agreeing.push('line_projection');
-          c.engine_details.line_projection = { projected: lp.projected_value, fdLine: lp.fanduel_line, edge: lp.edge_pct, grade: lp.signal_grade };
+          c.engine_details.line_projection = { projected: lp.projected_value, fdLine: lp.fanduel_line, edge: lp.edge_pct, grade: lp.edge_grade };
         }
       }
 
