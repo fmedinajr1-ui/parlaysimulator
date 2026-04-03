@@ -9079,7 +9079,7 @@ async function generateTierParlays(
         console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool ${pool.playerPicks.length} picks, thin pool mode)`);
       } else {
         rejectionCounters.notEnoughLegs++;
-        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
+        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates | gates: ${JSON.stringify(gateCounters)}`);
         continue;
       }
     }
