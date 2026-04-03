@@ -124,7 +124,7 @@ serve(async (req) => {
     // Verified lines map
     const verifiedMap = new Map<string, number>();
     for (const vp of verifiedProps) {
-      verifiedMap.set(normKey(vp.player_name, vp.prop_type), vp.line);
+      verifiedMap.set(normKey(vp.player_name, vp.prop_type), vp.current_line);
     }
 
     // Mispriced map for drift detection
