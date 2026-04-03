@@ -8707,14 +8707,19 @@ async function generateTierParlays(
       }
       
       // === BUFFER GATE: Skip legs where L10 avg vs line buffer < 10% ===
+      // Skip this gate for fallback picks (from unified_props) that have no real L10 data
       if ('player_name' in pick) {
-        const pickL10Avg = (pick as any).l10_avg || (pick as any).projected_value || 0;
+        const pickL10Avg = (pick as any).l10_avg || 0;
+        const pickProjectedValue = (pick as any).projected_value || 0;
         const pickLine = (pick as any).line || (pick as any).recommended_line || 0;
         const pickSide = ((pick as any).recommended_side || (pick as any).side || 'OVER').toUpperCase();
-        if (pickL10Avg > 0 && pickLine > 0) {
+        // Only apply buffer gate when we have real L10 data (not when projected_value == line)
+        const hasRealL10 = pickL10Avg > 0 && pickL10Avg !== pickLine;
+        const avgForBuffer = hasRealL10 ? pickL10Avg : pickProjectedValue;
+        if (hasRealL10 && avgForBuffer > 0 && pickLine > 0) {
           const bufferPct = pickSide === 'OVER'
-            ? ((pickL10Avg - pickLine) / pickLine) * 100
-            : ((pickLine - pickL10Avg) / pickLine) * 100;
+            ? ((avgForBuffer - pickLine) / pickLine) * 100
+            : ((pickLine - avgForBuffer) / pickLine) * 100;
           if (bufferPct < 10) {
             continue; // Thin margin — skip
           }
