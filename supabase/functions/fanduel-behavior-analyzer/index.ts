@@ -82,6 +82,211 @@ Deno.serve(async (req) => {
       }
     };
 
+    // ══════════════════════════════════════════════════════════════
+    // TIME-DECAY WEIGHTING: recent snapshots matter exponentially more
+    // ══════════════════════════════════════════════════════════════
+    const DECAY_HALF_LIFE_MIN = 15; // weight halves every 15 min
+    function timeDecayWeight(snapshotTime: string): number {
+      const ageMin = (now.getTime() - new Date(snapshotTime).getTime()) / 60000;
+      return Math.pow(0.5, ageMin / DECAY_HALF_LIFE_MIN);
+    }
+
+    /** Weighted velocity: recent moves count more than old ones */
+    function weightedVelocity(snapshots: any[]): { velocity: number; recentBias: number } {
+      if (snapshots.length < 2) return { velocity: 0, recentBias: 0 };
+      let weightedMove = 0;
+      let totalWeight = 0;
+      let recentWeight = 0;
+      let oldWeight = 0;
+
+      for (let i = 1; i < snapshots.length; i++) {
+        const move = Math.abs(snapshots[i].line - snapshots[i - 1].line);
+        const w = timeDecayWeight(snapshots[i].snapshot_time);
+        weightedMove += move * w;
+        totalWeight += w;
+        // Track if movement is accelerating (recent half vs old half)
+        if (i >= snapshots.length / 2) recentWeight += move;
+        else oldWeight += move;
+      }
+
+      const first = snapshots[0];
+      const last = snapshots[snapshots.length - 1];
+      const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
+      const rawVelocity = timeDiffMin > 0 ? (weightedMove / totalWeight) * (60 / timeDiffMin) * snapshots.length : 0;
+
+      // recentBias > 1 means accelerating, < 1 means decelerating
+      const recentBias = oldWeight > 0 ? recentWeight / oldWeight : 1;
+
+      return { velocity: rawVelocity, recentBias };
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ADAPTIVE PATTERN LEARNING: load outcome-based thresholds
+    // ══════════════════════════════════════════════════════════════
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: outcomeRows } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("signal_type, prop_type, sport, was_correct, velocity_at_signal, confidence_at_signal")
+      .not("was_correct", "is", null)
+      .gte("created_at", thirtyDaysAgo);
+
+    // Build learned thresholds per signal_type+prop_type
+    interface LearnedThreshold {
+      winRate: number;
+      avgWinVelocity: number;
+      avgLossVelocity: number;
+      avgWinConfidence: number;
+      optimalMinVelocity: number;
+      samples: number;
+    }
+    const learnedThresholds = new Map<string, LearnedThreshold>();
+    const outcomeGroups = new Map<string, { wins: any[]; losses: any[] }>();
+
+    for (const r of outcomeRows || []) {
+      const key = `${r.signal_type}|${r.prop_type}`;
+      if (!outcomeGroups.has(key)) outcomeGroups.set(key, { wins: [], losses: [] });
+      const g = outcomeGroups.get(key)!;
+      if (r.was_correct) g.wins.push(r);
+      else g.losses.push(r);
+    }
+
+    for (const [key, g] of outcomeGroups) {
+      const total = g.wins.length + g.losses.length;
+      if (total < 5) continue;
+
+      const avgV = (arr: any[]) => {
+        const vals = arr.map(r => r.velocity_at_signal).filter(v => v != null && v > 0);
+        return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+      };
+      const avgC = (arr: any[]) => {
+        const vals = arr.map(r => r.confidence_at_signal).filter(v => v != null);
+        return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 50;
+      };
+
+      const avgWinV = avgV(g.wins);
+      const avgLossV = avgV(g.losses);
+      // Optimal minimum = midpoint between avg loss velocity and avg win velocity
+      const optimalMin = avgLossV > 0 && avgWinV > avgLossV
+        ? (avgWinV + avgLossV) / 2
+        : avgWinV * 0.7;
+
+      learnedThresholds.set(key, {
+        winRate: g.wins.length / total,
+        avgWinVelocity: avgWinV,
+        avgLossVelocity: avgLossV,
+        avgWinConfidence: avgC(g.wins),
+        optimalMinVelocity: optimalMin,
+        samples: total,
+      });
+    }
+
+    log(`Adaptive thresholds loaded: ${learnedThresholds.size} signal+prop combos from ${outcomeRows?.length || 0} outcomes`);
+
+    /** Get learned velocity floor for a signal type — falls back to static default */
+    function getAdaptiveVelocityMin(signalType: string, propType: string, staticDefault: number): number {
+      const learned = learnedThresholds.get(`${signalType}|${propType}`);
+      if (learned && learned.samples >= 10 && learned.optimalMinVelocity > 0) {
+        return learned.optimalMinVelocity;
+      }
+      return staticDefault;
+    }
+
+    /** Get learned confidence floor */
+    function getAdaptiveConfidenceMin(signalType: string, propType: string, staticDefault: number): number {
+      const learned = learnedThresholds.get(`${signalType}|${propType}`);
+      if (learned && learned.samples >= 10 && learned.winRate < 0.5) {
+        // If this combo loses more than wins, raise the confidence bar
+        return Math.max(staticDefault, learned.avgWinConfidence * 0.9);
+      }
+      return staticDefault;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // CORRELATION DETECTION: same-game multi-player shifts
+    // ══════════════════════════════════════════════════════════════
+    // Group all snapshots by event to detect coordinated movement
+    const eventGroups = new Map<string, Map<string, any[]>>();
+    for (const row of activeTimeline) {
+      if (!eventGroups.has(row.event_id)) eventGroups.set(row.event_id, new Map());
+      const eg = eventGroups.get(row.event_id)!;
+      const pk = `${row.player_name}|${row.prop_type}`;
+      if (!eg.has(pk)) eg.set(pk, []);
+      eg.get(pk)!.push(row);
+    }
+
+    // Detect correlated shifts: 3+ players in same game moving same direction on same prop
+    for (const [eventId, playerProps] of eventGroups) {
+      // Group by prop_type
+      const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string }[]>();
+
+      for (const [pk, snaps] of playerProps) {
+        if (snaps.length < 2) continue;
+        const first = snaps[0];
+        const last = snaps[snaps.length - 1];
+        const diff = last.line - first.line;
+        if (Math.abs(diff) < 0.3) continue; // Skip trivial movement
+
+        const propType = first.prop_type;
+        if (!propTypeShifts.has(propType)) propTypeShifts.set(propType, []);
+        propTypeShifts.get(propType)!.push({
+          player: first.player_name,
+          direction: diff > 0 ? "rising" : "dropping",
+          magnitude: Math.abs(diff),
+          sport: first.sport,
+          eventDesc: first.event_description,
+        });
+      }
+
+      for (const [propType, shifts] of propTypeShifts) {
+        if (shifts.length < 3) continue; // Need 3+ players shifting
+
+        // Count directions
+        const rising = shifts.filter(s => s.direction === "rising").length;
+        const dropping = shifts.filter(s => s.direction === "dropping").length;
+        const dominant = rising >= dropping ? "rising" : "dropping";
+        const dominantCount = Math.max(rising, dropping);
+        const correlationRate = dominantCount / shifts.length;
+
+        if (correlationRate >= 0.7) {
+          // Strong correlation — likely team news/injury, not sharp action on individuals
+          const avgMag = shifts.reduce((a, s) => a + s.magnitude, 0) / shifts.length;
+          const conf = Math.min(90, 60 + correlationRate * 15 + Math.min(shifts.length, 6) * 3);
+          const sampleShift = shifts[0];
+
+          // Determine signal type: correlated = team-level event
+          const isTeamWide = correlationRate >= 0.85;
+          const signalLabel = isTeamWide ? "team_news_shift" : "correlated_movement";
+
+          patterns.push({
+            sport: sampleShift.sport, prop_type: propType, pattern_type: signalLabel,
+            avg_reaction_time_minutes: 0, avg_move_size: avgMag,
+            confidence: conf, sample_size: shifts.length,
+            cascade_sequence: { players: shifts.map(s => s.player), dominant_direction: dominant, correlation: correlationRate },
+            velocity_threshold: null, snapback_pct: null, timing_window: null,
+          });
+
+          const alertKey = `${eventId}|CORRELATED|${propType}`;
+          addAlert(alertKey, conf + 5, {
+            type: signalLabel,
+            live: false,
+            sport: sampleShift.sport,
+            player_name: `${shifts.length} players`,
+            prop_type: propType,
+            event_description: sampleShift.eventDesc,
+            event_id: eventId,
+            players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+            dominant_direction: dominant,
+            correlation_rate: Math.round(correlationRate * 100),
+            avg_magnitude: Math.round(avgMag * 100) / 100,
+            confidence: conf,
+            hours_to_tip: null,
+          });
+
+          log(`🔗 CORRELATION: ${shifts.length} players ${dominant} on ${propType} in ${sampleShift.eventDesc} (${Math.round(correlationRate * 100)}% aligned)`);
+        }
+      }
+    }
+
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
 
     // Helper: is this row from a live game?
