@@ -306,6 +306,24 @@ Deno.serve(async (req) => {
     // Helper: is this row from a live game?
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
+    // ══════════════════════════════════════════════════════════════
+    // LIVE GAME NOISE SUPPRESSION
+    // Moneyline/spreads/totals during live games are game-score noise,
+    // NOT market signals. Suppress them from all pattern detectors.
+    // ══════════════════════════════════════════════════════════════
+    const TEAM_MARKET_TYPES = new Set(["moneyline", "h2h", "spreads", "totals"]);
+    const isLiveTeamMarketNoise = (row: any) => isLive(row) && TEAM_MARKET_TYPES.has(row.prop_type);
+
+    // Max sane velocity caps — anything above = in-game noise leaking through
+    const MAX_VELOCITY: Record<string, number> = {
+      player_points: 20, player_rebounds: 10, player_assists: 10,
+      player_threes: 8, player_points_rebounds_assists: 15,
+      player_points_rebounds: 12, player_points_assists: 12,
+      player_rebounds_assists: 8, player_shots_on_goal: 8,
+      player_steals: 6, player_blocks: 6, player_turnovers: 6,
+      spreads: 15, totals: 15, moneyline: 100, h2h: 100,
+    };
+
     // ====== PATTERN 0 (PRIMARY): LINE ABOUT TO MOVE ======
     // Best performing signal (57.5% win rate). Detects steady, sustained
     // directional movement that isn't a sudden spike — the line has been
@@ -314,6 +332,9 @@ Deno.serve(async (req) => {
       if (snapshots.length < 3) continue;
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+
+      // SUPPRESS: live team markets are game-score noise, not signals
+      if (isLiveTeamMarketNoise(last)) continue;
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
       if (timeDiffMin < 10) continue;
 
@@ -335,7 +356,7 @@ Deno.serve(async (req) => {
 
       // Adaptive velocity floor from outcomes (learned)
       const adaptiveMinV = getAdaptiveVelocityMin("line_about_to_move", first.prop_type, 0.3);
-      const adaptiveMaxV = 3.0;
+      const adaptiveMaxV = MAX_VELOCITY[first.prop_type] || 20;
 
       if (absLineDiff >= 0.5 && velocityPerHour >= adaptiveMinV && velocityPerHour <= adaptiveMaxV && consistencyRate >= 0.6) {
         const direction = lineDiff < 0 ? "dropping" : "rising";
@@ -377,12 +398,20 @@ Deno.serve(async (req) => {
       if (snapshots.length < 3) continue;
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+
+      // SUPPRESS: live team markets are game-score noise
+      if (isLiveTeamMarketNoise(last)) continue;
+
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
       if (timeDiffMin < 10) continue;
 
       const signedDiff = last.line - first.line;
       const lineDiff = Math.abs(signedDiff);
       const velocityPerHour = (lineDiff / timeDiffMin) * 60;
+
+      // Cap velocity at sane maximum — anything above is in-game noise
+      const maxV = MAX_VELOCITY[first.prop_type] || 20;
+      if (velocityPerHour > maxV) continue;
 
       const edgeMin = EDGE_MINIMUMS[first.prop_type] || 0.5;
       if (lineDiff < edgeMin) continue;
@@ -489,6 +518,8 @@ Deno.serve(async (req) => {
     for (const [key, snapshots] of groups) {
       if (snapshots.length < 3) continue;
       const last = snapshots[snapshots.length - 1];
+      // SUPPRESS: live team markets are game-score noise
+      if (isLiveTeamMarketNoise(last)) continue;
       const openingLine = last.opening_line;
       if (!openingLine) continue;
       const drift = Math.abs(last.line - openingLine);
@@ -587,6 +618,8 @@ Deno.serve(async (req) => {
       if (snapshots.length < MIN_SNAPSHOTS) continue; // Need 5+ data points
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+      // SUPPRESS: live team markets are game-score noise
+      if (isLiveTeamMarketNoise(last)) continue;
       const openingLine = last.opening_line || first.line;
       const currentDrift = Math.abs(last.line - openingLine);
 
