@@ -434,7 +434,20 @@ Deno.serve(async (req) => {
     }
 
     // ====== PATTERN 2: CASCADE DETECTION ======
-    for (const [playerKey, allProps] of playerGroups) {
+    // PRE-GAME ONLY: Cascades during live games are noise (19% win rate).
+    // Require opening_line comparison to detect real market-driven multi-prop shifts.
+    const preGamePlayerGroups = new Map<string, any[]>();
+    for (const row of activeTimeline) {
+      // STRICT: pre-game only, must have opening_line
+      if (!row.opening_line) continue;
+      if (typeof row.hours_to_tip !== "number" || row.hours_to_tip <= 0) continue;
+      if (!row.event_id) continue;
+      const key = `${row.event_id}|${row.player_name}`;
+      if (!preGamePlayerGroups.has(key)) preGamePlayerGroups.set(key, []);
+      preGamePlayerGroups.get(key)!.push(row);
+    }
+
+    for (const [playerKey, allProps] of preGamePlayerGroups) {
       const propMap = new Map<string, any[]>();
       for (const row of allProps) {
         if (!propMap.has(row.prop_type)) propMap.set(row.prop_type, []);
@@ -446,14 +459,15 @@ Deno.serve(async (req) => {
       const staleProps: string[] = [];
       for (const [propType, snapshots] of propMap) {
         if (snapshots.length < 2) { staleProps.push(propType); continue; }
-        const f = snapshots[0]; const l = snapshots[snapshots.length - 1];
-        Math.abs(l.line - f.line) >= 0.5 ? movedProps.push(propType) : staleProps.push(propType);
+        const last = snapshots[snapshots.length - 1];
+        // Compare against opening_line — NOT first snapshot
+        const drift = Math.abs(last.line - last.opening_line);
+        drift >= 0.5 ? movedProps.push(propType) : staleProps.push(propType);
       }
 
-      // Cascade deprioritized (19% win rate) — require 2+ moved props now
+      // Cascade deprioritized (19% win rate) — require 2+ moved props AND pending props
       if (movedProps.length >= 2 && staleProps.length > 0) {
         const sampleRow = allProps[0];
-        const live = isLive(sampleRow);
         const conf = Math.min(85, 40 + movedProps.length * 15);
         patterns.push({
           sport: sampleRow.sport, prop_type: movedProps[0], pattern_type: "cascade",
@@ -463,7 +477,7 @@ Deno.serve(async (req) => {
         });
         const dedupKey = `${sampleRow.event_id}|${sampleRow.player_name}`;
         addAlert(dedupKey, conf, {
-          type: "cascade", live, sport: sampleRow.sport,
+          type: "cascade", live: false, sport: sampleRow.sport,
           player_name: sampleRow.player_name, event_description: sampleRow.event_description,
           event_id: sampleRow.event_id, moved_props: movedProps, pending_props: staleProps,
           confidence: conf, hours_to_tip: sampleRow.hours_to_tip,
