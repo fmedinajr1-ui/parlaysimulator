@@ -395,6 +395,30 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── ACCURACY FLIP PARLAY LEGS: CLV check on OVER/UNDER prediction ──
+        if (pred.signal_type === "flipped_accuracy_fade" || pred.signal_type === "accuracy_flip_best") {
+          // Resolve line at signal time from signal_factors or line_at_alert
+          let sigLine = sf.line ?? sf.fanduel_line ?? sf.current_line ?? sf.currentLine ?? pred.line_at_alert;
+          if (sigLine == null) {
+            const lineMatch = (pred.prediction || "").match(/([\d.]+)/);
+            if (lineMatch) sigLine = parseFloat(lineMatch[1]);
+          }
+          if (sigLine != null && closingLine != null) {
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER");
+            const isUnder = predText.includes("UNDER");
+            const label = pred.signal_type === "flipped_accuracy_fade" ? "FLIP" : "BEST";
+
+            if (isOver) {
+              wasCorrect = closingLine >= Number(sigLine);
+              actualOutcome = wasCorrect ? `CLV_POSITIVE_OVER_${label}` : `CLV_NEGATIVE_OVER_${label}`;
+            } else if (isUnder) {
+              wasCorrect = closingLine <= Number(sigLine);
+              actualOutcome = wasCorrect ? `CLV_POSITIVE_UNDER_${label}` : `CLV_NEGATIVE_UNDER_${label}`;
+            }
+          }
+        }
+
         if (wasCorrect !== null) {
           await supabase
             .from("fanduel_prediction_accuracy")
