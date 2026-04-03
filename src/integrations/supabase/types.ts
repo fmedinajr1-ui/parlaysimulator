@@ -13884,6 +13884,23 @@ export type Database = {
           win_count: number
         }[]
       }
+      get_parlay_accuracy_dashboard: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_legs: number
+          label: string
+          losses: number
+          miss_by_1: number
+          miss_by_1_pct: number
+          net_profit: number
+          sample_confidence: string
+          section: string
+          total_parlays: number
+          voids: number
+          win_rate: number
+          wins: number
+        }[]
+      }
       get_projection_accuracy: {
         Args: { days_back?: number }
         Returns: {
