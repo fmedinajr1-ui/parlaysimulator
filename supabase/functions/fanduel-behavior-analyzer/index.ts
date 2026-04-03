@@ -204,9 +204,13 @@ Deno.serve(async (req) => {
     // ══════════════════════════════════════════════════════════════
     // CORRELATION DETECTION: same-game multi-player shifts
     // ══════════════════════════════════════════════════════════════
-    // Group all snapshots by event to detect coordinated movement
+    // Group ONLY pre-game snapshots with real opening lines by event for correlation
     const eventGroups = new Map<string, Map<string, any[]>>();
     for (const row of activeTimeline) {
+      // STRICT FILTER: pre-game only, must have opening_line, must have valid event_id
+      if (!row.opening_line) continue;
+      if (typeof row.hours_to_tip !== "number" || row.hours_to_tip <= 0) continue;
+      if (!row.event_id) continue;
       if (!eventGroups.has(row.event_id)) eventGroups.set(row.event_id, new Map());
       const eg = eventGroups.get(row.event_id)!;
       const pk = `${row.player_name}|${row.prop_type}`;
@@ -216,15 +220,15 @@ Deno.serve(async (req) => {
 
     // Detect correlated shifts: 3+ players in same game moving same direction on same prop
     for (const [eventId, playerProps] of eventGroups) {
-      // Group by prop_type
       const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string }[]>();
 
       for (const [pk, snaps] of playerProps) {
         if (snaps.length < 2) continue;
         const first = snaps[0];
         const last = snaps[snaps.length - 1];
-        const diff = last.line - first.line;
-        if (Math.abs(diff) < 0.3) continue; // Skip trivial movement
+        // Compare against opening_line for real movement (not snapshot-to-snapshot noise)
+        const diff = last.line - last.opening_line;
+        if (Math.abs(diff) < 0.5) continue; // Tighter threshold — must move 0.5+ from open
 
         const propType = first.prop_type;
         if (!propTypeShifts.has(propType)) propTypeShifts.set(propType, []);
