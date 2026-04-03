@@ -12096,9 +12096,13 @@ Deno.serve(async (req) => {
         console.error('[CompositeFilter] Error during composite check:', compErr);
       }
 
+      // === UNIVERSAL SANITIZER: final scrub before insert ===
+      dedupedParlays = sanitizeAllParlays(dedupedParlays);
+
       if (dedupedParlays.length === 0) {
-        console.log(`[Bot v2] All ${allParlays.length} parlays were duplicates — nothing to insert`);
+        console.log(`[Bot v2] All parlays were dropped by sanitizer or dedup — nothing to insert`);
       } else {
+        console.log(`[Bot v2] Inserting ${dedupedParlays.length} sanitized parlays`);
         const { error: insertError } = await supabase
           .from('bot_daily_parlays')
           .insert(dedupedParlays);
