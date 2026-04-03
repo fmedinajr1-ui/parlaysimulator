@@ -9567,8 +9567,12 @@ async function generateRoundRobinParlays(
     throw new Error('Round robin already generated for today. Max 1 run per day.');
   }
 
-  // 8. Insert all
-  const allToInsert = [megaParlay, ...subParlays];
+  // 8. Sanitize and insert all
+  const allToInsert = sanitizeAllParlays([megaParlay, ...subParlays]);
+  if (allToInsert.length === 0) {
+    console.log('[RoundRobin] All parlays dropped by sanitizer');
+    return;
+  }
   const { error: insertError } = await supabase
     .from('bot_daily_parlays')
     .insert(allToInsert);
