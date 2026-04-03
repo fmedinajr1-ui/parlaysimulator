@@ -520,25 +520,7 @@ Deno.serve(async (req) => {
       h2h: 50,
     };
 
-    // Sweet Spot edge minimums — drift must exceed these to be actionable
-    const EDGE_MINIMUMS: Record<string, number> = {
-      player_points: 1.5,
-      player_rebounds: 1.0,
-      player_assists: 1.0,
-      player_threes: 0.5,
-      player_points_rebounds_assists: 1.0,
-      player_points_rebounds: 1.0,
-      player_points_assists: 1.0,
-      player_rebounds_assists: 0.5,
-      player_shots_on_goal: 0.5,
-      player_steals: 0.5,
-      player_blocks: 0.5,
-      player_turnovers: 0.5,
-      spreads: 1.0,
-      totals: 1.0,
-      moneyline: 15,
-      h2h: 15,
-    };
+    // EDGE_MINIMUMS already declared above
 
     // Tightened entry: 55-80% of typical drift range
     const ENTRY_MIN_PCT = 0.55;
