@@ -129,6 +129,9 @@ export function UnifiedAccuracyView() {
         totalVerified={totalVerified}
       />
 
+      {/* Parlay Accuracy */}
+      <ParlayAccuracyCard daysBack={timePeriod} />
+
       {/* Prop Type Accuracy — Bettor Decision Guide */}
       <PropTypeAccuracyCard />
 
