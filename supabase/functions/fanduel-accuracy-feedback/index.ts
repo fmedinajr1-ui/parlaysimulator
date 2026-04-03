@@ -395,10 +395,10 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── ACCURACY FLIP PARLAY LEGS: CLV check on OVER/UNDER prediction ──
-        if (pred.signal_type === "flipped_accuracy_fade" || pred.signal_type === "accuracy_flip_best") {
+        // ── ALL FLIPPED SIGNALS + ACCURACY FLIP PARLAY LEGS: CLV check on OVER/UNDER prediction ──
+        if (pred.signal_type?.startsWith("flipped_") || pred.signal_type === "accuracy_flip_best") {
           // Resolve line at signal time from signal_factors or line_at_alert
-          let sigLine = sf.line ?? sf.fanduel_line ?? sf.current_line ?? sf.currentLine ?? pred.line_at_alert;
+          let sigLine = sf.line ?? sf.fanduel_line ?? sf.current_line ?? sf.currentLine ?? sf.line_to ?? pred.line_at_alert;
           if (sigLine == null) {
             const lineMatch = (pred.prediction || "").match(/([\d.]+)/);
             if (lineMatch) sigLine = parseFloat(lineMatch[1]);
@@ -407,7 +407,7 @@ Deno.serve(async (req) => {
             const predText = (pred.prediction || "").toUpperCase();
             const isOver = predText.includes("OVER");
             const isUnder = predText.includes("UNDER");
-            const label = pred.signal_type === "flipped_accuracy_fade" ? "FLIP" : "BEST";
+            const label = pred.signal_type === "accuracy_flip_best" ? "BEST" : "FLIP";
 
             if (isOver) {
               wasCorrect = closingLine >= Number(sigLine);
@@ -415,6 +415,16 @@ Deno.serve(async (req) => {
             } else if (isUnder) {
               wasCorrect = closingLine <= Number(sigLine);
               actualOutcome = wasCorrect ? `CLV_POSITIVE_UNDER_${label}` : `CLV_NEGATIVE_UNDER_${label}`;
+            } else {
+              // Fallback for TAKE/FADE/BACK direction text
+              const dir = pred.predicted_direction;
+              if (dir === "up" || dir === "rising") {
+                wasCorrect = closingLine >= Number(sigLine);
+                actualOutcome = wasCorrect ? `CLV_POSITIVE_BACK_${label}` : `CLV_NEGATIVE_BACK_${label}`;
+              } else if (dir === "down" || dir === "dropping") {
+                wasCorrect = closingLine <= Number(sigLine);
+                actualOutcome = wasCorrect ? `CLV_POSITIVE_FADE_${label}` : `CLV_NEGATIVE_FADE_${label}`;
+              }
             }
           }
         }
