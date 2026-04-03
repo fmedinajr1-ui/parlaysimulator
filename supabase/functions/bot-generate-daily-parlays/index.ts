@@ -8964,6 +8964,10 @@ async function generateTierParlays(
       const legPropType = 'prop_type' in pick ? normalizePropTypeCategory(pick.prop_type) :
                           'bet_type' in pick ? normalizePropTypeCategory(pick.bet_type) : 'other';
       parlayPropTypeCount.set(legPropType, (parlayPropTypeCount.get(legPropType) || 0) + 1);
+      // Track threes OVER separately for cap
+      if (normPropCheck === 'player_threes' && legSideForKill === 'over') {
+        parlayPropTypeCount.set('threes_over', (parlayPropTypeCount.get('threes_over') || 0) + 1);
+      }
       // Track side count for anti-stacking
       const legBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
       const legSide = pick.recommended_side || '';
