@@ -26,9 +26,9 @@ Deno.serve(async (req) => {
   try {
     log(`=== Starting accuracy feedback loop ${settleAll ? '(SETTLE ALL MODE)' : ''} ===`);
 
-    const lookbackDays = settleAll ? 14 : 7;
+    const lookbackDays = settleAll ? 7 : 7;
     const lookbackDate = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
-    const queryLimit = settleAll ? 1000 : 300;
+    const queryLimit = settleAll ? 100 : 300;
 
     let query = supabase
       .from("fanduel_prediction_accuracy")
