@@ -8747,9 +8747,11 @@ async function generateTierParlays(
       const effectiveMinHitRate = (isHybridProfile && 'type' in pick && pick.type === 'team') 
         ? Math.min(minHitRate, 55) 
         : minHitRate;
-      if (!isFloorCeilingStrategy && hitRatePercent < effectiveMinHitRate) continue;
+      if (!isFloorCeilingStrategy && hitRatePercent < effectiveMinHitRate) { gateCounters.hitRate++; continue; }
       
-      if ('oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) continue;
+      // Skip oddsValue gate for fallback picks (unified_props) that lack proper statistical data
+      const isFallbackPick = (pick as any).line_source === 'unified_props';
+      if (!isFallbackPick && 'oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) { gateCounters.oddsValue++; continue; }
 
       // For player picks, handle line selection
       let legData: any;
