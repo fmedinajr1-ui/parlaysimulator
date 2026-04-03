@@ -8934,6 +8934,24 @@ async function generateTierParlays(
         console.log(`[VolatileBlock] Blocked ${legData.player_name} ${legData.prop_type} — steals/blocks banned from parlays`);
         continue;
       }
+      // === SERIAL KILLER GATE: blacklist players who historically kill parlays ===
+      const legSideForKill = (legData.side || pick.recommended_side || '').toLowerCase();
+      if (isSerialKillerLeg(legData.player_name || '', legData.prop_type || '', legSideForKill)) {
+        console.log(`[SerialKiller] Blocked ${legData.player_name} ${legData.prop_type} ${legSideForKill} — historical parlay killer`);
+        continue;
+      }
+      // === POISON SIGNAL GATE: block signal+sport combos with <35% win rate ===
+      const legSignalType = legData.line_source || legData.signal_type || '';
+      const legSportForPoison = legData.sport || '';
+      if (legSignalType && isPoisonSignalSport(legSignalType, legSportForPoison)) {
+        console.log(`[PoisonGate] Blocked ${legData.player_name} ${legData.prop_type} — ${legSignalType}/${legSportForPoison} is poison`);
+        continue;
+      }
+      // === THREES OVER CAP: max 1 threes OVER per parlay ===
+      if (normPropCheck === 'player_threes' && legSideForKill === 'over' && (parlayPropTypeCount.get('threes_over') || 0) >= MAX_THREES_OVER_PER_PARLAY) {
+        console.log(`[ThreesOverCap] Blocked ${legData.player_name} — max ${MAX_THREES_OVER_PER_PARLAY} threes OVER per parlay`);
+        continue;
+      }
       // === REBOUND CAP: max 1 rebound leg per parlay ===
       if (normPropCheck === 'player_rebounds' && (parlayPropTypeCount.get('rebounds') || 0) >= MAX_REBOUND_LEGS_PER_PARLAY) {
         console.log(`[ReboundCap] Blocked ${legData.player_name} — max ${MAX_REBOUND_LEGS_PER_PARLAY} rebound leg per parlay`);
