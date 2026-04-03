@@ -20,6 +20,56 @@ const corsHeaders = {
 // Props banned from parlays — too binary/volatile
 const BLOCKED_PARLAY_PROPS = new Set(['player_steals', 'player_blocks']);
 const MAX_REBOUND_LEGS_PER_PARLAY = 1;
+const MAX_THREES_OVER_PER_PARLAY = 1;
+
+// ============= GOLD SIGNAL GATES =============
+// Serial killer players: historically destroy parlays via miss-by-1
+const SERIAL_KILLER_KEYS = new Set([
+  "malik monk|player_threes|over",
+  "gui santos|player_threes|over",
+  "joel embiid|assists|over",
+  "joel embiid|player_assists|over",
+  "coby white|player_threes|over",
+  "ben sheppard|threes|over",
+  "bilal coulibaly|player_threes|over",
+  "a.j. green|threes|over",
+  "carlton carrington|threes|over",
+  "kon knueppel|threes|over",
+  "onyeka okongwu|player_threes|over",
+  "brandon miller|player_blocks|over",
+  "derrick white|assists|under",
+  "derrick white|player_assists|under",
+]);
+
+// Poison signal+sport combos that historically lose
+const POISON_SIGNAL_SPORTS = new Set([
+  "velocity_spike|NBA",
+  "live_velocity_spike|NBA",
+  "cascade|NBA",
+  "live_line_about_to_move|NBA",
+  "live_line_about_to_move|NHL",
+  "velocity_spike|NCAAB",
+  "live_drift|ANY",
+]);
+
+function isSerialKillerLeg(playerName: string, propType: string, side: string): boolean {
+  const norm = (s: string) => (s || '').toLowerCase().trim();
+  const key = `${norm(playerName)}|${norm(propType)}|${norm(side)}`;
+  return SERIAL_KILLER_KEYS.has(key);
+}
+
+function isPoisonSignalSport(signalType: string, sport: string): boolean {
+  const normSport = (s: string) => {
+    const l = (s || '').toLowerCase();
+    if (l.includes('nba') || l.includes('basketball_nba')) return 'NBA';
+    if (l.includes('mlb') || l.includes('baseball')) return 'MLB';
+    if (l.includes('nhl') || l.includes('hockey')) return 'NHL';
+    if (l.includes('ncaa')) return 'NCAAB';
+    return s?.toUpperCase() || '';
+  };
+  const sp = normSport(sport);
+  return POISON_SIGNAL_SPORTS.has(`${signalType}|${sp}`) || POISON_SIGNAL_SPORTS.has(`${signalType}|ANY`);
+}
 
 // ============= DAY TYPE CLASSIFIER (matchup-driven prop type signal) =============
 type DayType = 'POINTS' | 'THREES' | 'REBOUNDS' | 'ASSISTS' | 'BALANCED';
