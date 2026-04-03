@@ -321,6 +321,7 @@ Deno.serve(async (req) => {
         await invokeStep("Gold signal parlay engine", "gold-signal-parlay-engine", {});
       },
     },
+    {
       id: "phase3g",
       label: "DNA audit (mandatory post-generation)",
       run: async () => {
