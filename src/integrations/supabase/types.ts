@@ -3928,6 +3928,81 @@ export type Database = {
         }
         Relationships: []
       }
+      final_verdict_picks: {
+        Row: {
+          category_blocked: boolean | null
+          category_weight: number | null
+          consensus_score: number
+          created_at: string
+          engine_details: Json | null
+          engines_agreeing: string[] | null
+          fanduel_accuracy: number | null
+          fanduel_signal_type: string | null
+          high_conviction_match: boolean | null
+          id: string
+          line: number | null
+          line_drift_ok: boolean | null
+          line_projection_agrees: boolean | null
+          outcome: string | null
+          player_name: string
+          prop_type: string
+          settled_at: string | null
+          side: string
+          sport: string | null
+          used_in_parlay: boolean | null
+          verdict_date: string
+          verdict_grade: string
+        }
+        Insert: {
+          category_blocked?: boolean | null
+          category_weight?: number | null
+          consensus_score?: number
+          created_at?: string
+          engine_details?: Json | null
+          engines_agreeing?: string[] | null
+          fanduel_accuracy?: number | null
+          fanduel_signal_type?: string | null
+          high_conviction_match?: boolean | null
+          id?: string
+          line?: number | null
+          line_drift_ok?: boolean | null
+          line_projection_agrees?: boolean | null
+          outcome?: string | null
+          player_name: string
+          prop_type: string
+          settled_at?: string | null
+          side?: string
+          sport?: string | null
+          used_in_parlay?: boolean | null
+          verdict_date?: string
+          verdict_grade: string
+        }
+        Update: {
+          category_blocked?: boolean | null
+          category_weight?: number | null
+          consensus_score?: number
+          created_at?: string
+          engine_details?: Json | null
+          engines_agreeing?: string[] | null
+          fanduel_accuracy?: number | null
+          fanduel_signal_type?: string | null
+          high_conviction_match?: boolean | null
+          id?: string
+          line?: number | null
+          line_drift_ok?: boolean | null
+          line_projection_agrees?: boolean | null
+          outcome?: string | null
+          player_name?: string
+          prop_type?: string
+          settled_at?: string | null
+          side?: string
+          sport?: string | null
+          used_in_parlay?: boolean | null
+          verdict_date?: string
+          verdict_grade?: string
+        }
+        Relationships: []
+      }
       first_scorer_props: {
         Row: {
           actual_first_scorer: string | null
