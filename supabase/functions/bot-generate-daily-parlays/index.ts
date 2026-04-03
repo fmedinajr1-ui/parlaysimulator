@@ -1541,15 +1541,16 @@ const BLOCKED_CATEGORIES = new Set([
   'BIG_ASSIST_OVER', // 10.3% hit rate → 0% Mar 15-27
   'VOLUME_SCORER',   // 0% hit rate across ALL strategies
   'ROLE_PLAYER_REB', // 0% hit rate across ALL strategies
-  'REBOUNDS',        // 13% hit rate Mar 15-27 — toxic category
-  'HIGH_REB_UNDER',  // 29% hit rate Mar 15-27 — below threshold
   'uncategorized',   // No signal — unclassified legs drag down win rate
   // MLB categories — UNBLOCKED (data pipeline now active)
+  // REBOUNDS unblocked — CASH_LOCK_FLIP_MAP forces to under side
+  // HIGH_REB_UNDER unblocked — calibration engine manages eligibility
 ]);
 
 // ============= CASH LOCK FLIP MAP (force historically-losing categories to winning side) =============
 const CASH_LOCK_FLIP_MAP: Record<string, 'over' | 'under'> = {
   'REBOUNDS': 'under',             // 0% as over -> force under
+  'BIG_REBOUNDER': 'under',       // Archetype alias for rebounds -> force under
   'THREES': 'under',              // 0% as over -> force under
   'THREE_POINT_SHOOTER': 'under', // 34.5% as over -> force under
   'HIGH_ASSIST': 'over',          // 0% as under, 62.5% as over -> force over
@@ -4022,22 +4023,34 @@ function mapTeamBetToCategory(betType: string, side: string, odds?: number): str
 }
 
 function mapPropTypeToCategory(propType: string): string {
+  // Map to archetype categories that align with the calibration engine
   const categoryMap: Record<string, string> = {
-    'player_points': 'POINTS',
-    'player_rebounds': 'REBOUNDS',
-    'player_assists': 'ASSISTS',
-    'player_threes': 'THREES',
+    'player_points': 'STAR_FLOOR_OVER',
+    'player_rebounds': 'BIG_REBOUNDER',
+    'player_assists': 'HIGH_ASSIST',
+    'player_threes': 'THREE_POINT_SHOOTER',
     'player_blocks': 'BLOCKS',
     'player_steals': 'STEALS',
-    'player_goals': 'NHL_GOALS',
+    'player_goals': 'NHL_GOALS_SCORER',
     'player_shots_on_goal': 'NHL_SHOTS',
     'player_saves': 'NHL_SAVES',
     'player_pass_yds': 'NFL_PASS_YDS',
     'player_rush_yds': 'NFL_RUSH_YDS',
     'player_reception_yds': 'NFL_REC_YDS',
     'player_receptions': 'NFL_RECEPTIONS',
+    'player_points_rebounds_assists': 'STAR_FLOOR_OVER',
+    'player_points_rebounds': 'STAR_FLOOR_OVER',
+    'player_points_assists': 'STAR_FLOOR_OVER',
+    'player_rebounds_assists': 'BIG_REBOUNDER',
+    'points': 'STAR_FLOOR_OVER',
+    'rebounds': 'BIG_REBOUNDER',
+    'assists': 'HIGH_ASSIST',
+    'threes': 'THREE_POINT_SHOOTER',
+    'pitcher_strikeouts': 'MLB_STRIKEOUTS',
+    'batter_hits': 'MLB_HITS',
+    'batter_total_bases': 'MLB_TOTAL_BASES',
   };
-  return categoryMap[propType] || propType.toUpperCase();
+  return categoryMap[propType] || categoryMap[propType.toLowerCase()] || propType.toUpperCase();
 }
 
 // ============= AVAILABILITY GATE =============
@@ -8575,6 +8588,7 @@ async function generateTierParlays(
     }
     remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
     
+    const gateCounters = { global: 0, parlay: 0, execL10: 0, execWinPattern: 0, godMode: 0, grindOver: 0, antiCorr: 0, spread: 0, sideStack: 0, hitRate: 0, oddsValue: 0, buffer: 0, hybrid: 0, ml: 0 };
     while (legs.length < effectiveMaxLegs && remainingCandidates.length > 0) {
       // After the first leg, re-sort remaining candidates by coherence bonus
       if (legs.length > 0) {
@@ -8591,7 +8605,7 @@ async function generateTierParlays(
         const pick = remainingCandidates[ci];
       
       if (!canUsePickGlobally(pick, tracker, config, tier, isSweetSpotCoreProfile || isSweetSpotPlusProfile || isSweetSpotL3Profile, profile.strategy)) {
-        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] GlobalGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        gateCounters.global++;
         continue;
       }
       // Sweet spot core/plus: always use volume mode (engine pre-vetted, allow 2 same prop type)
@@ -8599,7 +8613,7 @@ async function generateTierParlays(
       // Relax team usage cap for matchup_team_stack profiles (allow same-team stacking)
       const effectiveConfig = isMatchupTeamStackProfile ? { ...config, maxTeamUsage: 6 } : config;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, effectiveConfig, legs, parlayPropTypeCount, profile.legs, effectiveVolumeMode)) {
-        if (isSweetSpotL3Profile && legs.length < 2) console.log(`[L3Debug] ParlayGate blocked: ${(pick as any).player_name} ${(pick as any).prop_type}`);
+        gateCounters.parlay++;
         continue;
       }
       
@@ -8608,6 +8622,7 @@ async function generateTierParlays(
          const rawL10 = (pick as any).l10_hit_rate || (pick as any).confidence_score || 0;
          const legL10Pct = rawL10 <= 1 ? rawL10 * 100 : rawL10;
          if (legL10Pct < 90) {
+           gateCounters.execWinPattern++;
            continue;
          }
        }
@@ -8617,6 +8632,7 @@ async function generateTierParlays(
       if (tier === 'execution' && 'player_name' in pick && !isSweetSpotL3Profile) {
         const matchupResult = passesGodModeMatchup(pick, defenseDetailMap, tier);
         if (!matchupResult.pass) {
+          gateCounters.godMode++;
           continue;
         }
         // Apply sliding penalty to composite for borderline matchups
@@ -8635,7 +8651,7 @@ async function generateTierParlays(
         strategyName !== 'bench_under' &&
         strategyName !== 'grind_under_core'
       ) {
-        console.log(`[GrindOverBlock] Skipped: ${pick.player_name || 'unknown'} OVER in GRIND+tough defense game`);
+        gateCounters.grindOver++;
         rejectionCounters.envCluster = (rejectionCounters.envCluster || 0) + 1;
         continue;
       }
@@ -8707,14 +8723,19 @@ async function generateTierParlays(
       }
       
       // === BUFFER GATE: Skip legs where L10 avg vs line buffer < 10% ===
+      // Skip this gate for fallback picks (from unified_props) that have no real L10 data
       if ('player_name' in pick) {
-        const pickL10Avg = (pick as any).l10_avg || (pick as any).projected_value || 0;
+        const pickL10Avg = (pick as any).l10_avg || 0;
+        const pickProjectedValue = (pick as any).projected_value || 0;
         const pickLine = (pick as any).line || (pick as any).recommended_line || 0;
         const pickSide = ((pick as any).recommended_side || (pick as any).side || 'OVER').toUpperCase();
-        if (pickL10Avg > 0 && pickLine > 0) {
+        // Only apply buffer gate when we have real L10 data (not when projected_value == line)
+        const hasRealL10 = pickL10Avg > 0 && pickL10Avg !== pickLine;
+        const avgForBuffer = hasRealL10 ? pickL10Avg : pickProjectedValue;
+        if (hasRealL10 && avgForBuffer > 0 && pickLine > 0) {
           const bufferPct = pickSide === 'OVER'
-            ? ((pickL10Avg - pickLine) / pickLine) * 100
-            : ((pickLine - pickL10Avg) / pickLine) * 100;
+            ? ((avgForBuffer - pickLine) / pickLine) * 100
+            : ((pickLine - avgForBuffer) / pickLine) * 100;
           if (bufferPct < 10) {
             continue; // Thin margin — skip
           }
@@ -8726,9 +8747,11 @@ async function generateTierParlays(
       const effectiveMinHitRate = (isHybridProfile && 'type' in pick && pick.type === 'team') 
         ? Math.min(minHitRate, 55) 
         : minHitRate;
-      if (!isFloorCeilingStrategy && hitRatePercent < effectiveMinHitRate) continue;
+      if (!isFloorCeilingStrategy && hitRatePercent < effectiveMinHitRate) { gateCounters.hitRate++; continue; }
       
-      if ('oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) continue;
+      // Skip oddsValue gate for fallback picks (unified_props) that lack proper statistical data
+      const isFallbackPick = (pick as any).line_source === 'unified_props';
+      if (!isFallbackPick && 'oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) { gateCounters.oddsValue++; continue; }
 
       // For player picks, handle line selection
       let legData: any;
@@ -9058,7 +9081,7 @@ async function generateTierParlays(
         console.log(`[Bot] ${tier}/${profile.strategy}: accepting ${legs.length}-leg fallback (pool ${pool.playerPicks.length} picks, thin pool mode)`);
       } else {
         rejectionCounters.notEnoughLegs++;
-        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
+        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates | gates: ${JSON.stringify(gateCounters)}`);
         continue;
       }
     }
