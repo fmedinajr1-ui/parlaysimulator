@@ -8588,6 +8588,7 @@ async function generateTierParlays(
     }
     remainingCandidates = [...topSlice, ...remainingCandidates.slice(shuffleCount)];
     
+    const gateCounters = { global: 0, parlay: 0, execL10: 0, execWinPattern: 0, godMode: 0, grindOver: 0, antiCorr: 0, spread: 0, sideStack: 0, hitRate: 0, oddsValue: 0, buffer: 0, hybrid: 0, ml: 0 };
     while (legs.length < effectiveMaxLegs && remainingCandidates.length > 0) {
       // After the first leg, re-sort remaining candidates by coherence bonus
       if (legs.length > 0) {
@@ -8600,7 +8601,6 @@ async function generateTierParlays(
       }
       
       let pickedOne = false;
-      const gateCounters = { global: 0, parlay: 0, execL10: 0, execWinPattern: 0, godMode: 0, grindOver: 0, antiCorr: 0, spread: 0, sideStack: 0, hitRate: 0, oddsValue: 0, buffer: 0, hybrid: 0, ml: 0 };
       for (let ci = 0; ci < remainingCandidates.length; ci++) {
         const pick = remainingCandidates[ci];
       
