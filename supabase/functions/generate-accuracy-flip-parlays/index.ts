@@ -241,16 +241,10 @@ Deno.serve(async (req) => {
         ["velocity_spike", "live_velocity_spike", "line_about_to_move", "live_line_about_to_move"].includes(signalType);
 
       if (isKilledPlayerProp) {
-        // Don't skip — route to flip bucket as a fade candidate
-        const flippedPred = isOver
-          ? (pick.prediction || "").replace(/over/i, "UNDER")
-          : (pick.prediction || "").replace(/under/i, "OVER");
-
-        const flow = moneyFlowMap.get(pick.event_id || "");
-        const moneyDir = flow
-          ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
-          : "no data";
         const accEntry = accMap.get(accKey);
+        const overAcc = accEntry && accEntry.over_total >= 3 ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
+        const underAcc = accEntry && accEntry.under_total >= 3 ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
+
         // Fallback: try signal_type-only accuracy if specific combo has no data
         let fallbackAcc: { wins: number; total: number } | null = null;
         if (!accEntry || accEntry.total < 3) {
@@ -261,34 +255,77 @@ Deno.serve(async (req) => {
           if (fTotal >= 3) fallbackAcc = { wins: fWins, total: fTotal };
         }
         const effectiveAcc = (accEntry && accEntry.total >= 3) ? accEntry : fallbackAcc;
-        const overAcc = accEntry && accEntry.over_total >= 3 ? (accEntry.over_wins / accEntry.over_total) * 100 : null;
-        const underAcc = accEntry && accEntry.under_total >= 3 ? (accEntry.under_wins / accEntry.under_total) * 100 : null;
 
-        const enriched: EnrichedPick = {
-          id: pick.id,
-          player_name: pick.player_name || "Unknown",
-          prop_type: propType,
-          sport: pick.sport || "",
-          signal_type: signalType,
-          prediction: flippedPred,
-          original_prediction: pick.prediction || "",
-          event_id: pick.event_id || "",
-          accuracy: effectiveAcc ? (effectiveAcc.wins / effectiveAcc.total) * 100 : 0,
-          accuracy_record: effectiveAcc ? `${effectiveAcc.wins}-${effectiveAcc.total - effectiveAcc.wins}` : "0-0",
-          signal_factors: sf,
-          is_flip: true,
-          flipped_prediction: flippedPred,
-          line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLineFromPrediction(pick.prediction) ?? null,
-          over_price: sf.over_price ?? null,
-          under_price: sf.under_price ?? null,
-          trap_flag: "kill_gate_faded",
-          money_direction: moneyDir,
-          over_accuracy: overAcc,
-          under_accuracy: underAcc,
-        };
-        trapFlips++;
-        flipLegs.push(enriched);
-        log(`KILL→FADE: ${pick.player_name} ${pick.prediction} → ${flippedPred} ${propType} (${signalType})`);
+        const flow = moneyFlowMap.get(pick.event_id || "");
+        const moneyDir = flow
+          ? `${flow.direction} (${flow.consensus} book${flow.consensus > 1 ? "s" : ""}, Δ${flow.magnitude})`
+          : "no data";
+
+        if (isOver) {
+          // OVER on killed player prop → flip to UNDER (market trap theory: fade the public)
+          const flippedPred = (pick.prediction || "").replace(/over/i, "UNDER");
+          const enriched: EnrichedPick = {
+            id: pick.id,
+            player_name: pick.player_name || "Unknown",
+            prop_type: propType,
+            sport: pick.sport || "",
+            signal_type: signalType,
+            prediction: flippedPred,
+            original_prediction: pick.prediction || "",
+            event_id: pick.event_id || "",
+            accuracy: effectiveAcc ? (effectiveAcc.wins / effectiveAcc.total) * 100 : 0,
+            accuracy_record: effectiveAcc ? `${effectiveAcc.wins}-${effectiveAcc.total - effectiveAcc.wins}` : "0-0",
+            signal_factors: sf,
+            is_flip: true,
+            flipped_prediction: flippedPred,
+            line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLineFromPrediction(pick.prediction) ?? null,
+            over_price: sf.over_price ?? null,
+            under_price: sf.under_price ?? null,
+            trap_flag: "kill_gate_faded",
+            money_direction: moneyDir,
+            over_accuracy: overAcc,
+            under_accuracy: underAcc,
+          };
+          trapFlips++;
+          flipLegs.push(enriched);
+          log(`KILL→FADE: ${pick.player_name} ${pick.prediction} → ${flippedPred} ${propType} (${signalType})`);
+        } else {
+          // UNDER on killed player prop → NEVER flip to OVER (against trap theory)
+          // Check side-specific UNDER accuracy to decide: keep as best leg or skip entirely
+          const sideAcc = underAcc ?? (effectiveAcc ? (effectiveAcc.wins / effectiveAcc.total) * 100 : 0);
+
+          if (sideAcc >= 50) {
+            // Good UNDER accuracy → keep as-is in best legs bucket
+            const enriched: EnrichedPick = {
+              id: pick.id,
+              player_name: pick.player_name || "Unknown",
+              prop_type: propType,
+              sport: pick.sport || "",
+              signal_type: signalType,
+              prediction: pick.prediction || "",
+              original_prediction: pick.prediction || "",
+              event_id: pick.event_id || "",
+              accuracy: sideAcc,
+              accuracy_record: accEntry ? `${accEntry.under_wins}-${accEntry.under_total - accEntry.under_wins}` : "0-0",
+              signal_factors: sf,
+              is_flip: false,
+              flipped_prediction: (pick.prediction || "").replace(/under/i, "OVER"),
+              line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLineFromPrediction(pick.prediction) ?? null,
+              over_price: sf.over_price ?? null,
+              under_price: sf.under_price ?? null,
+              trap_flag: "kill_gate_kept_under",
+              money_direction: moneyDir,
+              over_accuracy: overAcc,
+              under_accuracy: underAcc,
+            };
+            bestLegs.push(enriched);
+            log(`KILL→KEEP UNDER: ${pick.player_name} ${pick.prediction} ${propType} (${signalType}) — UNDER acc ${sideAcc.toFixed(0)}% ≥ 50%, routed to best`);
+          } else {
+            // Bad UNDER accuracy → skip entirely, no edge either way
+            trapSuppressed++;
+            log(`KILL→SKIP: ${pick.player_name} ${pick.prediction} ${propType} (${signalType}) — UNDER acc ${sideAcc.toFixed(0)}% < 50%, no edge`);
+          }
+        }
         continue;
       }
 
@@ -370,10 +407,22 @@ Deno.serve(async (req) => {
 
       if (bottomAccMap.has(accKey)) {
         const acc = bottomAccMap.get(accKey)!;
-        enriched.accuracy = acc.accuracy;
-        enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
-        enriched.is_flip = true;
-        flipLegs.push(enriched);
+        // Direction-aware flip: only flip if the SPECIFIC SIDE's accuracy is poor
+        const sideAcc = effectiveIsOver ? overAcc : underAcc;
+        const overallBad = acc.accuracy <= 40;
+        const sideBad = sideAcc !== null ? sideAcc <= 40 : overallBad;
+
+        if (sideBad) {
+          enriched.accuracy = acc.accuracy;
+          enriched.accuracy_record = `${acc.wins}-${acc.losses}`;
+          enriched.is_flip = true;
+          enriched.prediction = flippedPrediction;
+          enriched.flipped_prediction = flippedPrediction;
+          flipLegs.push(enriched);
+        } else {
+          // Side accuracy is fine — don't flip, skip this as a flip candidate
+          log(`SKIP FLIP: ${pick.player_name} ${effectivePrediction} — side acc ${sideAcc?.toFixed(0)}% > 40%, not flipping`);
+        }
       }
     }
 
