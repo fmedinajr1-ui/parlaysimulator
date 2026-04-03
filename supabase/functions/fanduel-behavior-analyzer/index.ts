@@ -618,6 +618,8 @@ Deno.serve(async (req) => {
       if (snapshots.length < MIN_SNAPSHOTS) continue; // Need 5+ data points
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+      // SUPPRESS: live team markets are game-score noise
+      if (isLiveTeamMarketNoise(last)) continue;
       const openingLine = last.opening_line || first.line;
       const currentDrift = Math.abs(last.line - openingLine);
 
