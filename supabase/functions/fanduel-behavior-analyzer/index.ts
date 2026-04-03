@@ -301,14 +301,15 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      if (timeDiffMin < 10) continue; // need at least 10 min of data
+      if (timeDiffMin < 10) continue;
 
-      const lineDiff = last.line - first.line; // signed
+      const lineDiff = last.line - first.line;
       const absLineDiff = Math.abs(lineDiff);
+      
+      // Time-decay weighted velocity (recent moves count more)
+      const { velocity: wVelocity, recentBias } = weightedVelocity(snapshots);
       const velocityPerHour = (absLineDiff / timeDiffMin) * 60;
 
-      // Sustained movement: moderate velocity (0.3-1.5/hr) with consistent direction
-      // Count how many consecutive snapshots moved in the same direction
       let consistentMoves = 0;
       for (let i = 1; i < snapshots.length; i++) {
         const move = snapshots[i].line - snapshots[i - 1].line;
@@ -318,12 +319,17 @@ Deno.serve(async (req) => {
       }
       const consistencyRate = consistentMoves / (snapshots.length - 1);
 
-      // Must have: decent move size, moderate speed, and directional consistency
-      if (absLineDiff >= 0.5 && velocityPerHour >= 0.3 && velocityPerHour <= 3.0 && consistencyRate >= 0.6) {
+      // Adaptive velocity floor from outcomes (learned)
+      const adaptiveMinV = getAdaptiveVelocityMin("line_about_to_move", first.prop_type, 0.3);
+      const adaptiveMaxV = 3.0;
+
+      if (absLineDiff >= 0.5 && velocityPerHour >= adaptiveMinV && velocityPerHour <= adaptiveMaxV && consistencyRate >= 0.6) {
         const direction = lineDiff < 0 ? "dropping" : "rising";
         const live = isLive(last);
-        // Higher confidence for higher consistency and more snapshots
-        const conf = Math.min(92, 55 + consistencyRate * 20 + Math.min(snapshots.length, 8) * 2);
+        // Boost confidence when movement is accelerating (recentBias > 1)
+        const accelBonus = recentBias > 1.3 ? 5 : recentBias > 1.0 ? 2 : 0;
+        const confFloor = getAdaptiveConfidenceMin("line_about_to_move", first.prop_type, 55);
+        const conf = Math.min(92, confFloor + consistencyRate * 20 + Math.min(snapshots.length, 8) * 2 + accelBonus);
 
         patterns.push({
           sport: first.sport, prop_type: first.prop_type, pattern_type: "line_about_to_move",
@@ -334,17 +340,20 @@ Deno.serve(async (req) => {
         });
 
         const playerKey = `${first.event_id}|${first.player_name}`;
-        addAlert(playerKey, conf + 10, { // +10 priority boost so this beats velocity/cascade
+        addAlert(playerKey, conf + 10, {
           type: "line_about_to_move", live, sport: first.sport,
           player_name: first.player_name, prop_type: first.prop_type,
           event_description: first.event_description, event_id: first.event_id,
           direction, velocity: Math.round(velocityPerHour * 100) / 100,
+          weighted_velocity: Math.round(wVelocity * 100) / 100,
+          recent_bias: Math.round(recentBias * 100) / 100,
           line_from: first.line, line_to: last.line,
           lineDiff: Math.round(lineDiff * 100) / 100,
           consistencyRate: Math.round(consistencyRate * 100),
           time_span_min: Math.round(timeDiffMin), confidence: conf,
           hours_to_tip: last.hours_to_tip,
           learnedAvgVelocity: velocityPerHour,
+          adaptive_threshold: adaptiveMinV,
         });
       }
     }
