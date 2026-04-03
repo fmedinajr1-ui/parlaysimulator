@@ -356,7 +356,7 @@ Deno.serve(async (req) => {
 
       // Adaptive velocity floor from outcomes (learned)
       const adaptiveMinV = getAdaptiveVelocityMin("line_about_to_move", first.prop_type, 0.3);
-      const adaptiveMaxV = 3.0;
+      const adaptiveMaxV = MAX_VELOCITY[first.prop_type] || 20;
 
       if (absLineDiff >= 0.5 && velocityPerHour >= adaptiveMinV && velocityPerHour <= adaptiveMaxV && consistencyRate >= 0.6) {
         const direction = lineDiff < 0 ? "dropping" : "rising";
