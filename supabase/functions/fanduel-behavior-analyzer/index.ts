@@ -398,12 +398,20 @@ Deno.serve(async (req) => {
       if (snapshots.length < 3) continue;
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
+
+      // SUPPRESS: live team markets are game-score noise
+      if (isLiveTeamMarketNoise(last)) continue;
+
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
       if (timeDiffMin < 10) continue;
 
       const signedDiff = last.line - first.line;
       const lineDiff = Math.abs(signedDiff);
       const velocityPerHour = (lineDiff / timeDiffMin) * 60;
+
+      // Cap velocity at sane maximum — anything above is in-game noise
+      const maxV = MAX_VELOCITY[first.prop_type] || 20;
+      if (velocityPerHour > maxV) continue;
 
       const edgeMin = EDGE_MINIMUMS[first.prop_type] || 0.5;
       if (lineDiff < edgeMin) continue;
