@@ -72,8 +72,8 @@ serve(async (req) => {
 
       // Line projection results
       supabase.from('line_projection_results')
-        .select('player_name, prop_type, projected_value, fanduel_line, edge_pct, signal_grade, direction')
-        .eq('projection_date', today),
+        .select('player_name, prop_type, projected_value, fanduel_line, edge_pct, edge_grade, predicted_line_direction, recommended_side')
+        .eq('game_date', today),
 
       // Category weights (Bayesian performance)
       supabase.from('bot_category_weights')
