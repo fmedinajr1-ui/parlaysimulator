@@ -984,8 +984,11 @@ Deno.serve(async (req) => {
         allFormatted.push(`\n— *SNAPBACK CANDIDATES (${snapbackAlerts.length})* —`);
         allFormatted.push(...snapbackAlerts.map(formatAlert));
       }
+      if (correlationAlerts.length > 0) {
+        allFormatted.push(`\n— *🔗 CORRELATED SHIFTS (${correlationAlerts.length})* —`);
+        allFormatted.push(...correlationAlerts.map(formatAlert));
+      }
 
-      // Paginate by character count
       const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
