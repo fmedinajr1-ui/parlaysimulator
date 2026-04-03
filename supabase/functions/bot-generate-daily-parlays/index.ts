@@ -71,6 +71,74 @@ function isPoisonSignalSport(signalType: string, sport: string): boolean {
   return POISON_SIGNAL_SPORTS.has(`${signalType}|${sp}`) || POISON_SIGNAL_SPORTS.has(`${signalType}|ANY`);
 }
 
+// ============= UNIVERSAL PRE-INSERT SANITIZER =============
+// Final gate: scrubs every parlay's legs before insert regardless of generation path.
+// Returns null if parlay should be dropped entirely (< 2 clean legs).
+function sanitizeParlayLegs(parlay: any): any | null {
+  if (!parlay?.legs || !Array.isArray(parlay.legs)) return parlay;
+
+  const cleanLegs: any[] = [];
+  let threesOverCount = 0;
+  let reboundCount = 0;
+
+  for (const leg of parlay.legs) {
+    const propRaw = (leg.prop_type || '').toLowerCase().trim();
+    const sideRaw = (leg.side || '').toLowerCase().trim();
+    const playerRaw = (leg.player_name || '').toLowerCase().trim();
+    const category = (leg.category || '').toUpperCase().trim();
+
+    // Block steals/blocks props (any naming convention)
+    if (propRaw.includes('steal') || propRaw.includes('block')) {
+      console.log(`[Sanitizer] Removed ${leg.player_name} ${leg.prop_type} — volatile prop`);
+      continue;
+    }
+
+    // Block toxic categories
+    if (['BIG_ASSIST_OVER', 'VOLUME_SCORER', 'ROLE_PLAYER_REB', 'REBOUNDS', 'HIGH_REB_UNDER'].includes(category)) {
+      console.log(`[Sanitizer] Removed ${leg.player_name} ${leg.prop_type} — blocked category ${category}`);
+      continue;
+    }
+
+    // Serial killer check
+    if (isSerialKillerLeg(playerRaw, propRaw, sideRaw)) {
+      console.log(`[Sanitizer] Removed ${leg.player_name} ${leg.prop_type} ${sideRaw} — serial killer`);
+      continue;
+    }
+
+    // Threes OVER cap
+    if ((propRaw === 'threes' || propRaw === 'player_threes' || propRaw === '3pm' || propRaw === 'three_pointers') && sideRaw === 'over') {
+      threesOverCount++;
+      if (threesOverCount > MAX_THREES_OVER_PER_PARLAY) {
+        console.log(`[Sanitizer] Removed ${leg.player_name} threes OVER — cap exceeded`);
+        continue;
+      }
+    }
+
+    // Rebound cap
+    if ((propRaw === 'rebounds' || propRaw === 'player_rebounds') && reboundCount >= MAX_REBOUND_LEGS_PER_PARLAY) {
+      console.log(`[Sanitizer] Removed ${leg.player_name} rebounds — cap exceeded`);
+      continue;
+    }
+    if (propRaw === 'rebounds' || propRaw === 'player_rebounds') reboundCount++;
+
+    cleanLegs.push(leg);
+  }
+
+  // Drop parlay if fewer than 2 clean legs remain
+  if (cleanLegs.length < 2) {
+    console.log(`[Sanitizer] Dropped parlay — only ${cleanLegs.length} clean legs remain`);
+    return null;
+  }
+
+  return { ...parlay, legs: cleanLegs, leg_count: cleanLegs.length };
+}
+
+// Batch sanitize an array of parlays
+function sanitizeAllParlays(parlays: any[]): any[] {
+  return parlays.map(sanitizeParlayLegs).filter(Boolean);
+}
+
+
 // ============= DAY TYPE CLASSIFIER (matchup-driven prop type signal) =============
 type DayType = 'POINTS' | 'THREES' | 'REBOUNDS' | 'ASSISTS' | 'BALANCED';
 interface DayTypeSignal {
