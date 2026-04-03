@@ -306,6 +306,24 @@ Deno.serve(async (req) => {
     // Helper: is this row from a live game?
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
+    // ══════════════════════════════════════════════════════════════
+    // LIVE GAME NOISE SUPPRESSION
+    // Moneyline/spreads/totals during live games are game-score noise,
+    // NOT market signals. Suppress them from all pattern detectors.
+    // ══════════════════════════════════════════════════════════════
+    const TEAM_MARKET_TYPES = new Set(["moneyline", "h2h", "spreads", "totals"]);
+    const isLiveTeamMarketNoise = (row: any) => isLive(row) && TEAM_MARKET_TYPES.has(row.prop_type);
+
+    // Max sane velocity caps — anything above = in-game noise leaking through
+    const MAX_VELOCITY: Record<string, number> = {
+      player_points: 20, player_rebounds: 10, player_assists: 10,
+      player_threes: 8, player_points_rebounds_assists: 15,
+      player_points_rebounds: 12, player_points_assists: 12,
+      player_rebounds_assists: 8, player_shots_on_goal: 8,
+      player_steals: 6, player_blocks: 6, player_turnovers: 6,
+      spreads: 15, totals: 15, moneyline: 100, h2h: 100,
+    };
+
     // ====== PATTERN 0 (PRIMARY): LINE ABOUT TO MOVE ======
     // Best performing signal (57.5% win rate). Detects steady, sustained
     // directional movement that isn't a sudden spike — the line has been
