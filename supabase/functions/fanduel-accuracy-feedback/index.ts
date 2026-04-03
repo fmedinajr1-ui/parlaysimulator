@@ -26,16 +26,15 @@ Deno.serve(async (req) => {
   try {
     log(`=== Starting accuracy feedback loop ${settleAll ? '(SETTLE ALL MODE)' : ''} ===`);
 
-    const lookbackDays = settleAll ? 14 : 7;
+    const lookbackDays = 7;
     const lookbackDate = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
-    const queryLimit = settleAll ? 1000 : 300;
+    const queryLimit = settleAll ? 50 : 200;
 
     let query = supabase
       .from("fanduel_prediction_accuracy")
       .select("*")
       .is("was_correct", null)
       .gte("created_at", lookbackDate)
-      .order("created_at", { ascending: false })
       .limit(queryLimit);
 
     // Only apply the 2-hour age filter in normal mode
