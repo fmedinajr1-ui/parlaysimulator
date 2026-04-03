@@ -289,6 +289,16 @@ Deno.serve(async (req) => {
 
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
 
+    // Pre-declare EDGE_MINIMUMS (used by velocity spike and take_it_now)
+    const EDGE_MINIMUMS: Record<string, number> = {
+      player_points: 1.5, player_rebounds: 1.0, player_assists: 1.0,
+      player_threes: 0.5, player_points_rebounds_assists: 1.0,
+      player_points_rebounds: 1.0, player_points_assists: 1.0,
+      player_rebounds_assists: 0.5, player_shots_on_goal: 0.5,
+      player_steals: 0.5, player_blocks: 0.5, player_turnovers: 0.5,
+      spreads: 1.0, totals: 1.0, moneyline: 15, h2h: 15,
+    };
+
     // Helper: is this row from a live game?
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
