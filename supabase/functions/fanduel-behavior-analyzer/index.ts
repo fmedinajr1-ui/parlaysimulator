@@ -518,6 +518,8 @@ Deno.serve(async (req) => {
     for (const [key, snapshots] of groups) {
       if (snapshots.length < 3) continue;
       const last = snapshots[snapshots.length - 1];
+      // SUPPRESS: live team markets are game-score noise
+      if (isLiveTeamMarketNoise(last)) continue;
       const openingLine = last.opening_line;
       if (!openingLine) continue;
       const drift = Math.abs(last.line - openingLine);
