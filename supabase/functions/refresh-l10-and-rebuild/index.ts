@@ -315,6 +315,12 @@ Deno.serve(async (req) => {
       },
     },
     {
+      id: "phase3_gold",
+      label: "Gold Signal Parlay Engine (FanDuel predictions)",
+      run: async () => {
+        await invokeStep("Gold signal parlay engine", "gold-signal-parlay-engine", {});
+      },
+    },
       id: "phase3g",
       label: "DNA audit (mandatory post-generation)",
       run: async () => {
