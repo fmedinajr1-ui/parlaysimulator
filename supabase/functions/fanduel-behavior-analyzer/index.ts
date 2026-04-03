@@ -82,7 +82,222 @@ Deno.serve(async (req) => {
       }
     };
 
+    // ══════════════════════════════════════════════════════════════
+    // TIME-DECAY WEIGHTING: recent snapshots matter exponentially more
+    // ══════════════════════════════════════════════════════════════
+    const DECAY_HALF_LIFE_MIN = 15; // weight halves every 15 min
+    function timeDecayWeight(snapshotTime: string): number {
+      const ageMin = (now.getTime() - new Date(snapshotTime).getTime()) / 60000;
+      return Math.pow(0.5, ageMin / DECAY_HALF_LIFE_MIN);
+    }
+
+    /** Weighted velocity: recent moves count more than old ones */
+    function weightedVelocity(snapshots: any[]): { velocity: number; recentBias: number } {
+      if (snapshots.length < 2) return { velocity: 0, recentBias: 0 };
+      let weightedMove = 0;
+      let totalWeight = 0;
+      let recentWeight = 0;
+      let oldWeight = 0;
+
+      for (let i = 1; i < snapshots.length; i++) {
+        const move = Math.abs(snapshots[i].line - snapshots[i - 1].line);
+        const w = timeDecayWeight(snapshots[i].snapshot_time);
+        weightedMove += move * w;
+        totalWeight += w;
+        // Track if movement is accelerating (recent half vs old half)
+        if (i >= snapshots.length / 2) recentWeight += move;
+        else oldWeight += move;
+      }
+
+      const first = snapshots[0];
+      const last = snapshots[snapshots.length - 1];
+      const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
+      const rawVelocity = timeDiffMin > 0 ? (weightedMove / totalWeight) * (60 / timeDiffMin) * snapshots.length : 0;
+
+      // recentBias > 1 means accelerating, < 1 means decelerating
+      const recentBias = oldWeight > 0 ? recentWeight / oldWeight : 1;
+
+      return { velocity: rawVelocity, recentBias };
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ADAPTIVE PATTERN LEARNING: load outcome-based thresholds
+    // ══════════════════════════════════════════════════════════════
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: outcomeRows } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("signal_type, prop_type, sport, was_correct, velocity_at_signal, confidence_at_signal")
+      .not("was_correct", "is", null)
+      .gte("created_at", thirtyDaysAgo);
+
+    // Build learned thresholds per signal_type+prop_type
+    interface LearnedThreshold {
+      winRate: number;
+      avgWinVelocity: number;
+      avgLossVelocity: number;
+      avgWinConfidence: number;
+      optimalMinVelocity: number;
+      samples: number;
+    }
+    const learnedThresholds = new Map<string, LearnedThreshold>();
+    const outcomeGroups = new Map<string, { wins: any[]; losses: any[] }>();
+
+    for (const r of outcomeRows || []) {
+      const key = `${r.signal_type}|${r.prop_type}`;
+      if (!outcomeGroups.has(key)) outcomeGroups.set(key, { wins: [], losses: [] });
+      const g = outcomeGroups.get(key)!;
+      if (r.was_correct) g.wins.push(r);
+      else g.losses.push(r);
+    }
+
+    for (const [key, g] of outcomeGroups) {
+      const total = g.wins.length + g.losses.length;
+      if (total < 5) continue;
+
+      const avgV = (arr: any[]) => {
+        const vals = arr.map(r => r.velocity_at_signal).filter(v => v != null && v > 0);
+        return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+      };
+      const avgC = (arr: any[]) => {
+        const vals = arr.map(r => r.confidence_at_signal).filter(v => v != null);
+        return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 50;
+      };
+
+      const avgWinV = avgV(g.wins);
+      const avgLossV = avgV(g.losses);
+      // Optimal minimum = midpoint between avg loss velocity and avg win velocity
+      const optimalMin = avgLossV > 0 && avgWinV > avgLossV
+        ? (avgWinV + avgLossV) / 2
+        : avgWinV * 0.7;
+
+      learnedThresholds.set(key, {
+        winRate: g.wins.length / total,
+        avgWinVelocity: avgWinV,
+        avgLossVelocity: avgLossV,
+        avgWinConfidence: avgC(g.wins),
+        optimalMinVelocity: optimalMin,
+        samples: total,
+      });
+    }
+
+    log(`Adaptive thresholds loaded: ${learnedThresholds.size} signal+prop combos from ${outcomeRows?.length || 0} outcomes`);
+
+    /** Get learned velocity floor for a signal type — falls back to static default */
+    function getAdaptiveVelocityMin(signalType: string, propType: string, staticDefault: number): number {
+      const learned = learnedThresholds.get(`${signalType}|${propType}`);
+      if (learned && learned.samples >= 10 && learned.optimalMinVelocity > 0) {
+        return learned.optimalMinVelocity;
+      }
+      return staticDefault;
+    }
+
+    /** Get learned confidence floor */
+    function getAdaptiveConfidenceMin(signalType: string, propType: string, staticDefault: number): number {
+      const learned = learnedThresholds.get(`${signalType}|${propType}`);
+      if (learned && learned.samples >= 10 && learned.winRate < 0.5) {
+        // If this combo loses more than wins, raise the confidence bar
+        return Math.max(staticDefault, learned.avgWinConfidence * 0.9);
+      }
+      return staticDefault;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // CORRELATION DETECTION: same-game multi-player shifts
+    // ══════════════════════════════════════════════════════════════
+    // Group all snapshots by event to detect coordinated movement
+    const eventGroups = new Map<string, Map<string, any[]>>();
+    for (const row of activeTimeline) {
+      if (!eventGroups.has(row.event_id)) eventGroups.set(row.event_id, new Map());
+      const eg = eventGroups.get(row.event_id)!;
+      const pk = `${row.player_name}|${row.prop_type}`;
+      if (!eg.has(pk)) eg.set(pk, []);
+      eg.get(pk)!.push(row);
+    }
+
+    // Detect correlated shifts: 3+ players in same game moving same direction on same prop
+    for (const [eventId, playerProps] of eventGroups) {
+      // Group by prop_type
+      const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string }[]>();
+
+      for (const [pk, snaps] of playerProps) {
+        if (snaps.length < 2) continue;
+        const first = snaps[0];
+        const last = snaps[snaps.length - 1];
+        const diff = last.line - first.line;
+        if (Math.abs(diff) < 0.3) continue; // Skip trivial movement
+
+        const propType = first.prop_type;
+        if (!propTypeShifts.has(propType)) propTypeShifts.set(propType, []);
+        propTypeShifts.get(propType)!.push({
+          player: first.player_name,
+          direction: diff > 0 ? "rising" : "dropping",
+          magnitude: Math.abs(diff),
+          sport: first.sport,
+          eventDesc: first.event_description,
+        });
+      }
+
+      for (const [propType, shifts] of propTypeShifts) {
+        if (shifts.length < 3) continue; // Need 3+ players shifting
+
+        // Count directions
+        const rising = shifts.filter(s => s.direction === "rising").length;
+        const dropping = shifts.filter(s => s.direction === "dropping").length;
+        const dominant = rising >= dropping ? "rising" : "dropping";
+        const dominantCount = Math.max(rising, dropping);
+        const correlationRate = dominantCount / shifts.length;
+
+        if (correlationRate >= 0.7) {
+          // Strong correlation — likely team news/injury, not sharp action on individuals
+          const avgMag = shifts.reduce((a, s) => a + s.magnitude, 0) / shifts.length;
+          const conf = Math.min(90, 60 + correlationRate * 15 + Math.min(shifts.length, 6) * 3);
+          const sampleShift = shifts[0];
+
+          // Determine signal type: correlated = team-level event
+          const isTeamWide = correlationRate >= 0.85;
+          const signalLabel = isTeamWide ? "team_news_shift" : "correlated_movement";
+
+          patterns.push({
+            sport: sampleShift.sport, prop_type: propType, pattern_type: signalLabel,
+            avg_reaction_time_minutes: 0, avg_move_size: avgMag,
+            confidence: conf, sample_size: shifts.length,
+            cascade_sequence: { players: shifts.map(s => s.player), dominant_direction: dominant, correlation: correlationRate },
+            velocity_threshold: null, snapback_pct: null, timing_window: null,
+          });
+
+          const alertKey = `${eventId}|CORRELATED|${propType}`;
+          addAlert(alertKey, conf + 5, {
+            type: signalLabel,
+            live: false,
+            sport: sampleShift.sport,
+            player_name: `${shifts.length} players`,
+            prop_type: propType,
+            event_description: sampleShift.eventDesc,
+            event_id: eventId,
+            players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+            dominant_direction: dominant,
+            correlation_rate: Math.round(correlationRate * 100),
+            avg_magnitude: Math.round(avgMag * 100) / 100,
+            confidence: conf,
+            hours_to_tip: null,
+          });
+
+          log(`🔗 CORRELATION: ${shifts.length} players ${dominant} on ${propType} in ${sampleShift.eventDesc} (${Math.round(correlationRate * 100)}% aligned)`);
+        }
+      }
+    }
+
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "").replace(/\[/g, "(").replace(/\]/g, ")");
+
+    // Pre-declare EDGE_MINIMUMS (used by velocity spike and take_it_now)
+    const EDGE_MINIMUMS: Record<string, number> = {
+      player_points: 1.5, player_rebounds: 1.0, player_assists: 1.0,
+      player_threes: 0.5, player_points_rebounds_assists: 1.0,
+      player_points_rebounds: 1.0, player_points_assists: 1.0,
+      player_rebounds_assists: 0.5, player_shots_on_goal: 0.5,
+      player_steals: 0.5, player_blocks: 0.5, player_turnovers: 0.5,
+      spreads: 1.0, totals: 1.0, moneyline: 15, h2h: 15,
+    };
 
     // Helper: is this row from a live game?
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
@@ -96,14 +311,15 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      if (timeDiffMin < 10) continue; // need at least 10 min of data
+      if (timeDiffMin < 10) continue;
 
-      const lineDiff = last.line - first.line; // signed
+      const lineDiff = last.line - first.line;
       const absLineDiff = Math.abs(lineDiff);
+      
+      // Time-decay weighted velocity (recent moves count more)
+      const { velocity: wVelocity, recentBias } = weightedVelocity(snapshots);
       const velocityPerHour = (absLineDiff / timeDiffMin) * 60;
 
-      // Sustained movement: moderate velocity (0.3-1.5/hr) with consistent direction
-      // Count how many consecutive snapshots moved in the same direction
       let consistentMoves = 0;
       for (let i = 1; i < snapshots.length; i++) {
         const move = snapshots[i].line - snapshots[i - 1].line;
@@ -113,12 +329,17 @@ Deno.serve(async (req) => {
       }
       const consistencyRate = consistentMoves / (snapshots.length - 1);
 
-      // Must have: decent move size, moderate speed, and directional consistency
-      if (absLineDiff >= 0.5 && velocityPerHour >= 0.3 && velocityPerHour <= 3.0 && consistencyRate >= 0.6) {
+      // Adaptive velocity floor from outcomes (learned)
+      const adaptiveMinV = getAdaptiveVelocityMin("line_about_to_move", first.prop_type, 0.3);
+      const adaptiveMaxV = 3.0;
+
+      if (absLineDiff >= 0.5 && velocityPerHour >= adaptiveMinV && velocityPerHour <= adaptiveMaxV && consistencyRate >= 0.6) {
         const direction = lineDiff < 0 ? "dropping" : "rising";
         const live = isLive(last);
-        // Higher confidence for higher consistency and more snapshots
-        const conf = Math.min(92, 55 + consistencyRate * 20 + Math.min(snapshots.length, 8) * 2);
+        // Boost confidence when movement is accelerating (recentBias > 1)
+        const accelBonus = recentBias > 1.3 ? 5 : recentBias > 1.0 ? 2 : 0;
+        const confFloor = getAdaptiveConfidenceMin("line_about_to_move", first.prop_type, 55);
+        const conf = Math.min(92, confFloor + consistencyRate * 20 + Math.min(snapshots.length, 8) * 2 + accelBonus);
 
         patterns.push({
           sport: first.sport, prop_type: first.prop_type, pattern_type: "line_about_to_move",
@@ -129,54 +350,60 @@ Deno.serve(async (req) => {
         });
 
         const playerKey = `${first.event_id}|${first.player_name}`;
-        addAlert(playerKey, conf + 10, { // +10 priority boost so this beats velocity/cascade
+        addAlert(playerKey, conf + 10, {
           type: "line_about_to_move", live, sport: first.sport,
           player_name: first.player_name, prop_type: first.prop_type,
           event_description: first.event_description, event_id: first.event_id,
           direction, velocity: Math.round(velocityPerHour * 100) / 100,
+          weighted_velocity: Math.round(wVelocity * 100) / 100,
+          recent_bias: Math.round(recentBias * 100) / 100,
           line_from: first.line, line_to: last.line,
           lineDiff: Math.round(lineDiff * 100) / 100,
           consistencyRate: Math.round(consistencyRate * 100),
           time_span_min: Math.round(timeDiffMin), confidence: conf,
           hours_to_tip: last.hours_to_tip,
           learnedAvgVelocity: velocityPerHour,
+          adaptive_threshold: adaptiveMinV,
         });
       }
     }
 
-    // ====== PATTERN 1: VELOCITY SPIKES (strict — learned data shows need >= 4.0/hr) ======
-    // Learned avg velocity for correct predictions: ~8.6/hr. Require >= 4.0 minimum,
-    // plus directional consistency and minimum line move to filter noise.
+    // ====== PATTERN 1: VELOCITY SPIKES (adaptive + time-decay weighted) ======
     for (const [key, snapshots] of groups) {
-      if (snapshots.length < 3) continue; // Need 3+ snapshots (was 2)
+      if (snapshots.length < 3) continue;
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      if (timeDiffMin < 10) continue; // Need 10+ min of data (was 5)
+      if (timeDiffMin < 10) continue;
 
-      const lineDiff = Math.abs(last.line - first.line);
+      const signedDiff = last.line - first.line;
+      const lineDiff = Math.abs(signedDiff);
       const velocityPerHour = (lineDiff / timeDiffMin) * 60;
 
-      // Must have meaningful line move (not just rounding noise)
       const edgeMin = EDGE_MINIMUMS[first.prop_type] || 0.5;
       if (lineDiff < edgeMin) continue;
 
-      // Check directional consistency — at least 50% of moves same direction
+      // Time-decay weighted velocity
+      const { velocity: wVelocity, recentBias } = weightedVelocity(snapshots);
+
       let consistentMoves = 0;
-      const signedDiff = last.line - first.line;
       for (let i = 1; i < snapshots.length; i++) {
         const move = snapshots[i].line - snapshots[i - 1].line;
         if ((signedDiff > 0 && move > 0) || (signedDiff < 0 && move < 0)) consistentMoves++;
       }
       const dirConsistency = consistentMoves / (snapshots.length - 1);
-      if (dirConsistency < 0.5) continue; // Skip choppy lines
+      if (dirConsistency < 0.5) continue;
 
-      // Use learned velocity threshold from behavior_patterns if available
-      // Fallback: require >= 4.0/hr (doubled from 2.0)
-      if (velocityPerHour >= 4.0) {
+      // Adaptive velocity floor from settled outcomes
+      const adaptiveVMin = getAdaptiveVelocityMin("velocity_spike", first.prop_type, 4.0);
+
+      if (velocityPerHour >= adaptiveVMin) {
         const direction = last.line < first.line ? "dropping" : "rising";
         const live = isLive(last);
-        const conf = Math.min(95, 50 + velocityPerHour * 8 + dirConsistency * 10);
+        const accelBonus = recentBias > 1.5 ? 8 : recentBias > 1.2 ? 4 : 0;
+        const confFloor = getAdaptiveConfidenceMin("velocity_spike", first.prop_type, 50);
+        const conf = Math.min(95, confFloor + velocityPerHour * 8 + dirConsistency * 10 + accelBonus);
+
         patterns.push({
           sport: first.sport, prop_type: first.prop_type, pattern_type: "velocity_spike",
           avg_reaction_time_minutes: timeDiffMin, avg_move_size: lineDiff,
@@ -191,10 +418,13 @@ Deno.serve(async (req) => {
           player_name: first.player_name, prop_type: first.prop_type,
           event_description: first.event_description, event_id: first.event_id,
           direction, velocity: Math.round(velocityPerHour * 100) / 100,
+          weighted_velocity: Math.round(wVelocity * 100) / 100,
+          recent_bias: Math.round(recentBias * 100) / 100,
           line_from: first.line, line_to: last.line,
           dir_consistency: Math.round(dirConsistency * 100),
           time_span_min: Math.round(timeDiffMin), confidence: conf,
           hours_to_tip: last.hours_to_tip,
+          adaptive_threshold: adaptiveVMin,
         });
       }
     }
@@ -290,25 +520,7 @@ Deno.serve(async (req) => {
       h2h: 50,
     };
 
-    // Sweet Spot edge minimums — drift must exceed these to be actionable
-    const EDGE_MINIMUMS: Record<string, number> = {
-      player_points: 1.5,
-      player_rebounds: 1.0,
-      player_assists: 1.0,
-      player_threes: 0.5,
-      player_points_rebounds_assists: 1.0,
-      player_points_rebounds: 1.0,
-      player_points_assists: 1.0,
-      player_rebounds_assists: 0.5,
-      player_shots_on_goal: 0.5,
-      player_steals: 0.5,
-      player_blocks: 0.5,
-      player_turnovers: 0.5,
-      spreads: 1.0,
-      totals: 1.0,
-      moneyline: 15,
-      h2h: 15,
-    };
+    // EDGE_MINIMUMS already declared above
 
     // Tightened entry: 55-80% of typical drift range
     const ENTRY_MIN_PCT = 0.55;
@@ -711,6 +923,27 @@ Deno.serve(async (req) => {
             `💡 ${reason}`,
           ].join("\n");
         }
+        // ====== CORRELATION / TEAM NEWS SHIFT ======
+        if (a.type === "correlated_movement" || a.type === "team_news_shift") {
+          const emoji = a.type === "team_news_shift" ? "📰" : "🔗";
+          const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
+          const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
+          const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) =>
+            `  ${p.name}: ${p.direction} ${p.magnitude}`
+          ).join("\n");
+          const action = a.dominant_direction === "dropping"
+            ? `OVER — lines dropping across ${(a.players_moving || []).length} players`
+            : `UNDER — lines rising across ${(a.players_moving || []).length} players`;
+          return [
+            `${emoji} *${label}* — ${esc(a.sport)}`,
+            `${esc(a.event_description)} — ${propLabel}`,
+            `${(a.players_moving || []).length} players moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
+            topPlayers,
+            `📊 Conf: ${Math.round(a.confidence)}%`,
+            `✅ *Action: ${action}*`,
+            `💡 ${a.type === "team_news_shift" ? "85%+ correlation = likely injury/lineup news" : "Coordinated movement = sharp action or news"}`,
+          ].join("\n");
+        }
         return "";
       };
 
@@ -719,6 +952,7 @@ Deno.serve(async (req) => {
       const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
       const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
       const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
+      const correlationAlerts = highConfAlerts.filter((a) => a.type === "correlated_movement" || a.type === "team_news_shift");
 
       const allFormatted: string[] = [];
       // Highest priority first
@@ -742,8 +976,11 @@ Deno.serve(async (req) => {
         allFormatted.push(`\n— *SNAPBACK CANDIDATES (${snapbackAlerts.length})* —`);
         allFormatted.push(...snapbackAlerts.map(formatAlert));
       }
+      if (correlationAlerts.length > 0) {
+        allFormatted.push(`\n— *🔗 CORRELATED SHIFTS (${correlationAlerts.length})* —`);
+        allFormatted.push(...correlationAlerts.map(formatAlert));
+      }
 
-      // Paginate by character count
       const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
@@ -764,7 +1001,7 @@ Deno.serve(async (req) => {
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} signals — 🔥${takeItNowAlerts.length} 🎯${lineAboutToMoveAlerts.length} ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length}`, ""]
+          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} signals — 🔥${takeItNowAlerts.length} 🎯${lineAboutToMoveAlerts.length} ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length} 🔗${correlationAlerts.length}`, ""]
           : [`🧠 *Behavior${pageLabel}*`, ""];
 
         const msg = [...header, ...pages[i]].join("\n");
