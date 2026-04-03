@@ -546,6 +546,71 @@ Deno.serve(async (req) => {
     if (trackErr) log(`Tracking insert error: ${trackErr.message}`);
     else log(`Saved ${trackingRows.length} parlays to tracking ✅`);
 
+    // 6b. Insert flipped legs into fanduel_prediction_accuracy for feedback loop verification
+    const flipPredRows = parlays.map(p => {
+      const flippedPred = p.flipLeg.flipped_prediction || p.flipLeg.prediction;
+      const flippedDir = (flippedPred || "").toLowerCase().includes("over") ? "up" : "down";
+      return {
+        signal_type: `flipped_accuracy_fade`,
+        sport: p.flipLeg.sport,
+        prop_type: p.flipLeg.prop_type,
+        player_name: p.flipLeg.player_name,
+        event_id: p.flipLeg.event_id,
+        prediction: flippedPred,
+        predicted_direction: flippedDir,
+        confidence_at_signal: null,
+        velocity_at_signal: null,
+        time_to_tip_hours: p.flipLeg.signal_factors?.hours_to_tip ?? null,
+        signal_factors: {
+          ...p.flipLeg.signal_factors,
+          original_signal_type: p.flipLeg.signal_type,
+          original_prediction: p.flipLeg.original_prediction,
+          original_accuracy: p.flipLeg.accuracy,
+          trap_flag: p.flipLeg.trap_flag,
+          flip_reason: "accuracy_flip_parlay",
+          line: p.flipLeg.line,
+        },
+        line_at_alert: p.flipLeg.line ?? null,
+        hours_before_tip: p.flipLeg.signal_factors?.hours_to_tip ?? null,
+        alert_sent_at: new Date().toISOString(),
+      };
+    });
+
+    // Also insert best legs for tracking
+    const bestPredRows = parlays.map(p => {
+      const bestDir = (p.bestLeg.prediction || "").toLowerCase().includes("over") ? "up" : "down";
+      return {
+        signal_type: `accuracy_flip_best`,
+        sport: p.bestLeg.sport,
+        prop_type: p.bestLeg.prop_type,
+        player_name: p.bestLeg.player_name,
+        event_id: p.bestLeg.event_id,
+        prediction: p.bestLeg.prediction,
+        predicted_direction: bestDir,
+        confidence_at_signal: null,
+        velocity_at_signal: null,
+        time_to_tip_hours: p.bestLeg.signal_factors?.hours_to_tip ?? null,
+        signal_factors: {
+          ...p.bestLeg.signal_factors,
+          original_accuracy: p.bestLeg.accuracy,
+          flip_reason: "accuracy_flip_parlay_best_leg",
+          line: p.bestLeg.line,
+        },
+        line_at_alert: p.bestLeg.line ?? null,
+        hours_before_tip: p.bestLeg.signal_factors?.hours_to_tip ?? null,
+        alert_sent_at: new Date().toISOString(),
+      };
+    });
+
+    const allPredRows = [...flipPredRows, ...bestPredRows];
+    if (allPredRows.length > 0) {
+      const { error: predErr } = await supabase
+        .from("fanduel_prediction_accuracy")
+        .insert(allPredRows);
+      if (predErr) log(`⚠ Accuracy tracking insert error: ${predErr.message}`);
+      else log(`Inserted ${allPredRows.length} legs into accuracy tracking (${flipPredRows.length} flips, ${bestPredRows.length} best) ✅`);
+    }
+
     // 7. Send via Telegram
     try {
       await supabase.functions.invoke("bot-send-telegram", {
