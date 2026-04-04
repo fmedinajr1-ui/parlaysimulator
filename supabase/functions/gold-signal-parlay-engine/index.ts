@@ -203,11 +203,60 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[gold-signal] ${msg}`);
 
   try {
-    log("=== GOLD SIGNAL PARLAY ENGINE v1.0 ===");
+    log("=== GOLD SIGNAL PARLAY ENGINE v1.1 — Cold Streak Fix ===");
 
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
+
+    // ============= COLD-STREAK CIRCUIT BREAKER =============
+    // Check last 2 days of results. If 0 wins in 10+ parlays, tighten gates.
+    let coldStreakMode = false;
+    try {
+      const twoDaysAgo = new Date(now);
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+      const twoDaysAgoStr = twoDaysAgo.toISOString().split("T")[0];
+
+      const { data: recentParlays } = await supabase
+        .from("bot_daily_parlays")
+        .select("outcome")
+        .gte("parlay_date", twoDaysAgoStr)
+        .in("outcome", ["won", "lost"]);
+
+      if (recentParlays && recentParlays.length >= 10) {
+        const wins = recentParlays.filter((p: any) => p.outcome === "won").length;
+        if (wins === 0) {
+          coldStreakMode = true;
+          log(`🚨 COLD STREAK MODE ACTIVE: 0 wins in ${recentParlays.length} settled parlays over last 2 days`);
+        }
+      }
+    } catch (e) {
+      log(`Circuit breaker check failed: ${e}`);
+    }
+
+    // ============= PLAYER EXPOSURE CAP =============
+    // Track how many parlays each player is already in today (across all strategies)
+    const playerExposure = new Map<string, number>();
+    const MAX_PLAYER_EXPOSURE = 2;
+    try {
+      const { data: todayParlays } = await supabase
+        .from("bot_daily_parlays")
+        .select("legs")
+        .eq("parlay_date", todayStart.toISOString().split("T")[0]);
+
+      if (todayParlays) {
+        for (const p of todayParlays) {
+          const legs = Array.isArray(p.legs) ? p.legs : [];
+          for (const leg of legs) {
+            const name = ((leg as any).player_name || "").toLowerCase().trim();
+            if (name) playerExposure.set(name, (playerExposure.get(name) || 0) + 1);
+          }
+        }
+      }
+      log(`Player exposure loaded: ${playerExposure.size} players already in today's parlays`);
+    } catch (e) {
+      log(`Player exposure check failed: ${e}`);
+    }
 
     // 1. Get ALL today's unsettled predictions across all signal types
     const { data: todayPicks, error: pickErr } = await supabase
