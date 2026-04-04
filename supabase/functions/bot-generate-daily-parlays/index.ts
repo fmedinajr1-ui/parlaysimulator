@@ -1411,7 +1411,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     profiles: [
       // ============= OPTIMAL COMBO EXECUTION (PRIORITY — combinatorial optimizer) =============
       { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      // REDUCED: 4-leg optimal_combo capped at 2/day (cold streak fix Apr 3)
+      // { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       // ============= FLOOR LOCK EXECUTION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
