@@ -1400,7 +1400,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   execution: {
     count: 50,
     iterations: 25000,
-    maxPlayerUsage: 5,
+    maxPlayerUsage: 2, // Reduced from 5 — cold streak fix: cap player exposure
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 65,
