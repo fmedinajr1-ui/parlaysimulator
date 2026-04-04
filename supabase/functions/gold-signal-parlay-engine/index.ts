@@ -414,6 +414,7 @@ Deno.serve(async (req) => {
     const allGoldLegs = [...tier1Legs, ...tier2Legs];
 
     // 6. Build parlays using blueprints
+    const maxParlays = coldStreakMode ? 3 : 8; // Reduce volume 50%+ in cold streak
     const parlays: GoldParlay[] = [];
     const usedIds = new Set<string>();
 
