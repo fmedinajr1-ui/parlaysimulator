@@ -1495,7 +1495,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
       { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       // PAUSED: mispriced_edge execution (0.5% ROI) — redirected to high-ROI strategies
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
+      // REDUCED: cross_sport_4 capped (cold streak fix Apr 3)
+      // { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 68, sortBy: 'hit_rate' },
       // NCAAB EXECUTION: UNDERS ONLY
       { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
