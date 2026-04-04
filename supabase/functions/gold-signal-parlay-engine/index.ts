@@ -338,7 +338,17 @@ Deno.serve(async (req) => {
       // Gate 4: Skip trap_warning signals (informational only)
       if (signal === "trap_warning") continue;
 
-      // Gate 5: Verify FanDuel line exists (team markets exempt)
+      // Gate 5: Player exposure cap — skip players already in 2+ parlays today
+      const playerKey = playerName.toLowerCase().trim();
+      if ((playerExposure.get(playerKey) || 0) >= MAX_PLAYER_EXPOSURE) {
+        log(`EXPOSURE CAP: ${playerName} already in ${playerExposure.get(playerKey)} parlays today`);
+        continue;
+      }
+
+      // Gate 6: Cold streak mode — skip Tier 2 legs entirely
+      // (checked after tier classification below)
+
+      // Gate 7: Verify FanDuel line exists (team markets exempt)
       const isTeam = ["moneyline", "spreads", "totals"].includes(normProp(prop));
       if (!isTeam) {
         const verifyKey = `${playerName.toLowerCase().trim()}|${normProp(prop)}`;
