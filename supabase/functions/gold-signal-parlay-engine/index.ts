@@ -74,6 +74,19 @@ const SERIAL_KILLERS = new Set([
   "kon knueppel|threes|over",
   "onyeka okongwu|player_threes|over",
   "brandon miller|player_blocks|over",
+  // Cold streak offenders (Apr 1-3 data)
+  "andrew wiggins|player_points|under",
+  "andrew wiggins|points|under",
+  "jayson tatum|player_points|over",
+  "jayson tatum|points|over",
+  "sam hauser|player_rebounds|over",
+  "sam hauser|rebounds|over",
+  "lamelo ball|player_threes|over",
+  "lamelo ball|threes|over",
+  "jonathan kuminga|player_rebounds|over",
+  "jonathan kuminga|rebounds|over",
+  "jalen green|player_points|over",
+  "jalen green|points|over",
 ]);
 
 // BLOCKED prop types
