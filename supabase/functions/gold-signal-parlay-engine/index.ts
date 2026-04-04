@@ -494,7 +494,7 @@ Deno.serve(async (req) => {
     // Blueprint 4: Anchor + Best Available (2-leg, any Tier1 anchor + best Tier1/2 support)
     for (const anchor of tier1Legs) {
       if (usedIds.has(anchor.id)) continue;
-      if (parlays.length >= 6) break;
+      if (parlays.length >= maxParlays) break;
 
       const parlay = buildParlay("Gold Anchor", anchor, allGoldLegs, 2, false);
       if (parlay) {
