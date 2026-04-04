@@ -74,6 +74,19 @@ const SERIAL_KILLERS = new Set([
   "kon knueppel|threes|over",
   "onyeka okongwu|player_threes|over",
   "brandon miller|player_blocks|over",
+  // Cold streak offenders (Apr 1-3 data)
+  "andrew wiggins|player_points|under",
+  "andrew wiggins|points|under",
+  "jayson tatum|player_points|over",
+  "jayson tatum|points|over",
+  "sam hauser|player_rebounds|over",
+  "sam hauser|rebounds|over",
+  "lamelo ball|player_threes|over",
+  "lamelo ball|threes|over",
+  "jonathan kuminga|player_rebounds|over",
+  "jonathan kuminga|rebounds|over",
+  "jalen green|player_points|over",
+  "jalen green|points|over",
 ]);
 
 // BLOCKED prop types
@@ -190,11 +203,60 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[gold-signal] ${msg}`);
 
   try {
-    log("=== GOLD SIGNAL PARLAY ENGINE v1.0 ===");
+    log("=== GOLD SIGNAL PARLAY ENGINE v1.1 — Cold Streak Fix ===");
 
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
+
+    // ============= COLD-STREAK CIRCUIT BREAKER =============
+    // Check last 2 days of results. If 0 wins in 10+ parlays, tighten gates.
+    let coldStreakMode = false;
+    try {
+      const twoDaysAgo = new Date(now);
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+      const twoDaysAgoStr = twoDaysAgo.toISOString().split("T")[0];
+
+      const { data: recentParlays } = await supabase
+        .from("bot_daily_parlays")
+        .select("outcome")
+        .gte("parlay_date", twoDaysAgoStr)
+        .in("outcome", ["won", "lost"]);
+
+      if (recentParlays && recentParlays.length >= 10) {
+        const wins = recentParlays.filter((p: any) => p.outcome === "won").length;
+        if (wins === 0) {
+          coldStreakMode = true;
+          log(`🚨 COLD STREAK MODE ACTIVE: 0 wins in ${recentParlays.length} settled parlays over last 2 days`);
+        }
+      }
+    } catch (e) {
+      log(`Circuit breaker check failed: ${e}`);
+    }
+
+    // ============= PLAYER EXPOSURE CAP =============
+    // Track how many parlays each player is already in today (across all strategies)
+    const playerExposure = new Map<string, number>();
+    const MAX_PLAYER_EXPOSURE = 2;
+    try {
+      const { data: todayParlays } = await supabase
+        .from("bot_daily_parlays")
+        .select("legs")
+        .eq("parlay_date", todayStart.toISOString().split("T")[0]);
+
+      if (todayParlays) {
+        for (const p of todayParlays) {
+          const legs = Array.isArray(p.legs) ? p.legs : [];
+          for (const leg of legs) {
+            const name = ((leg as any).player_name || "").toLowerCase().trim();
+            if (name) playerExposure.set(name, (playerExposure.get(name) || 0) + 1);
+          }
+        }
+      }
+      log(`Player exposure loaded: ${playerExposure.size} players already in today's parlays`);
+    } catch (e) {
+      log(`Player exposure check failed: ${e}`);
+    }
 
     // 1. Get ALL today's unsettled predictions across all signal types
     const { data: todayPicks, error: pickErr } = await supabase
@@ -276,7 +338,17 @@ Deno.serve(async (req) => {
       // Gate 4: Skip trap_warning signals (informational only)
       if (signal === "trap_warning") continue;
 
-      // Gate 5: Verify FanDuel line exists (team markets exempt)
+      // Gate 5: Player exposure cap — skip players already in 2+ parlays today
+      const playerKey = playerName.toLowerCase().trim();
+      if ((playerExposure.get(playerKey) || 0) >= MAX_PLAYER_EXPOSURE) {
+        log(`EXPOSURE CAP: ${playerName} already in ${playerExposure.get(playerKey)} parlays today`);
+        continue;
+      }
+
+      // Gate 6: Cold streak mode — skip Tier 2 legs entirely
+      // (checked after tier classification below)
+
+      // Gate 7: Verify FanDuel line exists (team markets exempt)
       const isTeam = ["moneyline", "spreads", "totals"].includes(normProp(prop));
       if (!isTeam) {
         const verifyKey = `${playerName.toLowerCase().trim()}|${normProp(prop)}`;
@@ -290,6 +362,18 @@ Deno.serve(async (req) => {
       if (!t1.match && !t2.match) {
         no_match++;
         continue;
+      }
+
+      // Cold streak mode: skip Tier 2, require 80%+ win rate for Tier 1
+      if (coldStreakMode) {
+        if (!t1.match) {
+          log(`COLD STREAK SKIP: ${playerName} ${prop} — Tier 2 blocked in cold streak mode`);
+          continue;
+        }
+        if (t1.winRate < 80) {
+          log(`COLD STREAK SKIP: ${playerName} ${prop} — Tier 1 win rate ${t1.winRate}% < 80% threshold`);
+          continue;
+        }
       }
 
       const leg: GoldLeg = {
@@ -330,6 +414,7 @@ Deno.serve(async (req) => {
     const allGoldLegs = [...tier1Legs, ...tier2Legs];
 
     // 6. Build parlays using blueprints
+    const maxParlays = coldStreakMode ? 3 : 8; // Reduce volume 50%+ in cold streak
     const parlays: GoldParlay[] = [];
     const usedIds = new Set<string>();
 
@@ -409,7 +494,7 @@ Deno.serve(async (req) => {
     // Blueprint 4: Anchor + Best Available (2-leg, any Tier1 anchor + best Tier1/2 support)
     for (const anchor of tier1Legs) {
       if (usedIds.has(anchor.id)) continue;
-      if (parlays.length >= 6) break;
+      if (parlays.length >= maxParlays) break;
 
       const parlay = buildParlay("Gold Anchor", anchor, allGoldLegs, 2, false);
       if (parlay) {

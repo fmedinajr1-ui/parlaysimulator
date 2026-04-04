@@ -39,6 +39,19 @@ const SERIAL_KILLER_KEYS = new Set([
   "brandon miller|player_blocks|over",
   "derrick white|assists|under",
   "derrick white|player_assists|under",
+  // Cold streak offenders (Apr 1-3 data)
+  "andrew wiggins|player_points|under",
+  "andrew wiggins|points|under",
+  "jayson tatum|player_points|over",
+  "jayson tatum|points|over",
+  "sam hauser|player_rebounds|over",
+  "sam hauser|rebounds|over",
+  "lamelo ball|player_threes|over",
+  "lamelo ball|threes|over",
+  "jonathan kuminga|player_rebounds|over",
+  "jonathan kuminga|rebounds|over",
+  "jalen green|player_points|over",
+  "jalen green|points|over",
 ]);
 
 // Poison signal+sport combos that historically lose
@@ -1387,7 +1400,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
   execution: {
     count: 50,
     iterations: 25000,
-    maxPlayerUsage: 5,
+    maxPlayerUsage: 2, // Reduced from 5 — cold streak fix: cap player exposure
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
     minHitRate: 65,
@@ -1398,7 +1411,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     profiles: [
       // ============= OPTIMAL COMBO EXECUTION (PRIORITY — combinatorial optimizer) =============
       { legs: 3, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
+      // REDUCED: 4-leg optimal_combo capped at 2/day (cold streak fix Apr 3)
+      // { legs: 4, strategy: 'optimal_combo', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate' },
       { legs: 3, strategy: 'optimal_combo', sports: ['all'], minHitRate: 70, sortBy: 'hit_rate' },
       // ============= FLOOR LOCK EXECUTION (PRIORITY — processed first to avoid timeout) =============
       { legs: 3, strategy: 'floor_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate' },
@@ -1481,7 +1495,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'shuffle', useAltLines: false },
       { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
       // PAUSED: mispriced_edge execution (0.5% ROI) — redirected to high-ROI strategies
-      { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
+      // REDUCED: cross_sport_4 capped (cold streak fix Apr 3)
+      // { legs: 4, strategy: 'cross_sport_4', sports: ['all'], minHitRate: 58, sortBy: 'composite' },
       { legs: 3, strategy: 'double_confirmed_conviction', sports: ['basketball_nba'], minHitRate: 68, sortBy: 'hit_rate' },
       // NCAAB EXECUTION: UNDERS ONLY
       { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },

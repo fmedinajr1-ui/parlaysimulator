@@ -394,6 +394,29 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── GOLD SIGNAL LEGS (gold_tier1, gold_tier2): CLV check on OVER/UNDER prediction ──
+        if (pred.signal_type === "gold_tier1" || pred.signal_type === "gold_tier2") {
+          let sigLine = sf.line ?? sf.fanduel_line ?? sf.current_line ?? pred.line_at_alert;
+          if (sigLine == null) {
+            const lineMatch = (pred.prediction || "").match(/([\d.]+)/);
+            if (lineMatch) sigLine = parseFloat(lineMatch[1]);
+          }
+          if (sigLine != null && closingLine != null) {
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER") || predText.includes("BACK");
+            const isUnder = predText.includes("UNDER") || predText.includes("FADE");
+            const tier = pred.signal_type === "gold_tier1" ? "GOLD_T1" : "GOLD_T2";
+
+            if (isOver) {
+              wasCorrect = closingLine >= Number(sigLine);
+              actualOutcome = wasCorrect ? `CLV_POSITIVE_OVER_${tier}` : `CLV_NEGATIVE_OVER_${tier}`;
+            } else if (isUnder) {
+              wasCorrect = closingLine <= Number(sigLine);
+              actualOutcome = wasCorrect ? `CLV_POSITIVE_UNDER_${tier}` : `CLV_NEGATIVE_UNDER_${tier}`;
+            }
+          }
+        }
+
         // ── ALL FLIPPED SIGNALS + ACCURACY FLIP PARLAY LEGS: CLV check on OVER/UNDER prediction ──
         if (pred.signal_type?.startsWith("flipped_") || pred.signal_type === "accuracy_flip_best") {
           // Resolve line at signal time from signal_factors or line_at_alert
