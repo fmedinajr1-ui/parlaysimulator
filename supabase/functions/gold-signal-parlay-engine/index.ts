@@ -364,6 +364,18 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Cold streak mode: skip Tier 2, require 80%+ win rate for Tier 1
+      if (coldStreakMode) {
+        if (!t1.match) {
+          log(`COLD STREAK SKIP: ${playerName} ${prop} — Tier 2 blocked in cold streak mode`);
+          continue;
+        }
+        if (t1.winRate < 80) {
+          log(`COLD STREAK SKIP: ${playerName} ${prop} — Tier 1 win rate ${t1.winRate}% < 80% threshold`);
+          continue;
+        }
+      }
+
       const leg: GoldLeg = {
         id: pick.id,
         player_name: playerName,
