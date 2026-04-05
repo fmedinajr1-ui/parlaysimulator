@@ -6,6 +6,7 @@ import { SystemAccuracyCard } from "./SystemAccuracyCard";
 import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
 import { SettledPicksTable } from "./SettledPicksTable";
 import { SidePerformanceCard } from "./SidePerformanceCard";
+import { HonestAccuracyBanner } from "./HonestAccuracyBanner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
