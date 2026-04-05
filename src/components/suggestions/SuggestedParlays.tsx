@@ -6,10 +6,11 @@ import { AISuggestionHistory } from "./AISuggestionHistory";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Sparkles, RefreshCw, Lock, History, Shield, Zap, AlertTriangle } from "lucide-react";
+import { Loader2, Sparkles, RefreshCw, Lock, History, Zap, AlertTriangle, TrendingUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 interface UnifiedLeg {
   player_name: string;
@@ -49,6 +50,27 @@ export function SuggestedParlays() {
   const [mode, setMode] = useState<'safe' | 'high_risk'>('safe');
   const [noBetReason, setNoBetReason] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
+
+  // Fetch real parlay record for honest display
+  const { data: parlayRecord } = useQuery({
+    queryKey: ['homepage-parlay-record'],
+    queryFn: async () => {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('outcome')
+        .gte('parlay_date', cutoff.toISOString().split('T')[0])
+        .in('outcome', ['won', 'lost']);
+      if (error) throw error;
+      const won = (data || []).filter(p => p.outcome === 'won').length;
+      const lost = (data || []).filter(p => p.outcome === 'lost').length;
+      const total = won + lost;
+      return { won, lost, winRate: total > 0 ? (won / total) * 100 : 0 };
+    },
+    staleTime: 1000 * 60 * 5,
+    enabled: !!user,
+  });
 
   useEffect(() => {
     if (user && (isSubscribed || isAdmin)) {
@@ -150,6 +172,29 @@ export function SuggestedParlays() {
         </div>
       </div>
 
+      {/* Real Record Banner */}
+      {parlayRecord && (parlayRecord.won + parlayRecord.lost) > 0 && (
+        <div className={`flex items-center justify-between p-3 rounded-lg border ${
+          parlayRecord.winRate < 20 
+            ? 'bg-red-500/5 border-red-500/30' 
+            : 'bg-muted/20 border-border/50'
+        }`}>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            <span className="text-sm font-medium">
+              AI Record: {parlayRecord.won}W-{parlayRecord.lost}L
+            </span>
+          </div>
+          <Badge variant="outline" className={`text-xs ${
+            parlayRecord.winRate >= 30 ? 'text-green-400 border-green-500/30' :
+            parlayRecord.winRate >= 20 ? 'text-yellow-400 border-yellow-500/30' :
+            'text-red-400 border-red-500/30'
+          }`}>
+            {parlayRecord.winRate.toFixed(0)}% (30d)
+          </Badge>
+        </div>
+      )}
+
       <Tabs defaultValue="today" className="w-full">
         <TabsList className="grid w-full grid-cols-2 h-9 mb-4">
           <TabsTrigger value="today" className="text-xs flex items-center gap-1">
@@ -171,12 +216,12 @@ export function SuggestedParlays() {
                 onClick={() => handleModeChange('safe')}
                 className={`cursor-pointer transition-all ${
                   mode === 'safe' 
-                    ? 'bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30' 
+                    ? 'bg-primary/20 text-primary border-primary/30 hover:bg-primary/30' 
                     : 'hover:bg-muted'
                 }`}
               >
-                <Shield className="w-3 h-3 mr-1" />
-                Safe AI
+                <TrendingUp className="w-3 h-3 mr-1" />
+                Conservative
               </Badge>
               <Badge 
                 variant={mode === 'high_risk' ? 'default' : 'outline'}
@@ -188,7 +233,7 @@ export function SuggestedParlays() {
                 }`}
               >
                 <Zap className="w-3 h-3 mr-1" />
-                High Risk
+                Aggressive
               </Badge>
             </div>
             <Button

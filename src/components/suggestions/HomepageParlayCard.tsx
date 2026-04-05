@@ -79,7 +79,7 @@ export function HomepageParlayCard({ parlay, onAnalyze }: HomepageParlayCardProp
             </Badge>
           </div>
           <span className="text-xs text-muted-foreground">
-            {(win_probability_est * 100).toFixed(0)}% Win Est.
+            Edge: {(win_probability_est * 100).toFixed(0)}
           </span>
         </div>
 

@@ -6,6 +6,7 @@ import { SystemAccuracyCard } from "./SystemAccuracyCard";
 import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
 import { SettledPicksTable } from "./SettledPicksTable";
 import { SidePerformanceCard } from "./SidePerformanceCard";
+import { HonestAccuracyBanner } from "./HonestAccuracyBanner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -121,7 +122,10 @@ export function UnifiedAccuracyView() {
         </Button>
       </div>
 
-      {/* Composite Grade */}
+      {/* Honest Parlay Record — Real W/L */}
+      <HonestAccuracyBanner daysBack={timePeriod} />
+
+      {/* Composite Grade — CLV-based (labeled) */}
       <CompositeGradeCard
         grade={compositeGrade}
         gradeColor={compositeGradeColor}

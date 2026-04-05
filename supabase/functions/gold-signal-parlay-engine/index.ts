@@ -54,6 +54,7 @@ const POISON_SIGNALS: Array<{ signal: string; prop?: string; side?: string; spor
   { signal: "live_line_about_to_move", sport: "NHL" },
   { signal: "velocity_spike", sport: "NCAAB" },
   { signal: "live_drift" },
+  { signal: "snapback" },
   { signal: "line_about_to_move", prop: "player_rebounds_assists", side: "OVER" },
   { signal: "line_about_to_move", prop: "player_points_assists", side: "OVER" },
   { signal: "line_about_to_move", prop: "player_points_rebounds_assists", side: "OVER" },
@@ -503,16 +504,39 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Blueprint 5: 3-Leg Gold (only if enough high-quality legs)
-    const remainingT1 = tier1Legs.filter(l => !usedIds.has(l.id));
-    if (remainingT1.length >= 1 && allGoldLegs.filter(l => !usedIds.has(l.id)).length >= 2) {
-      const anchor = remainingT1[0];
-      const remaining = allGoldLegs.filter(l => !usedIds.has(l.id));
-      const parlay = buildParlay("Gold 3-Leg", anchor, remaining, 3, false);
-      if (parlay && parlay.projected_win_rate >= 40) {
-        parlay.legs.forEach(l => usedIds.add(l.id));
-        parlays.push(parlay);
+    // Blueprint 5: 3-Leg Gold Lock — STRICT gates for higher hit rate
+    // Requirements: ALL 3 legs Tier 1 (80%+), cross-sport diversification, max 2 per day
+    const remainingT1ForGold3 = tier1Legs.filter(l => !usedIds.has(l.id) && l.gold_win_rate >= 80);
+    let gold3LegCount = 0;
+    const MAX_GOLD_3LEG = 2;
+    
+    if (remainingT1ForGold3.length >= 3) {
+      for (const anchor of remainingT1ForGold3) {
+        if (gold3LegCount >= MAX_GOLD_3LEG) break;
+        if (usedIds.has(anchor.id)) continue;
+        
+        // Only use other Tier 1 80%+ legs as support
+        const t1Support = remainingT1ForGold3.filter(l => !usedIds.has(l.id) && l.id !== anchor.id);
+        const parlay = buildParlay("Gold 3-Leg Lock", anchor, t1Support, 3, true); // crossSportRequired = true
+        
+        if (parlay) {
+          // Verify all legs are truly Tier 1 80%+
+          const allTier1 = parlay.legs.every(l => l.tier === "TIER1" && l.gold_win_rate >= 80);
+          // Verify at least 2 different sports
+          const uniqueSports = new Set(parlay.legs.map(l => normSport(l.sport)));
+          
+          if (allTier1 && uniqueSports.size >= 2) {
+            parlay.legs.forEach(l => usedIds.add(l.id));
+            parlays.push(parlay);
+            gold3LegCount++;
+            log(`Gold 3-Leg Lock built: ${parlay.legs.map(l => `${l.player_name} ${l.side} ${l.prop_type} (${l.gold_win_rate}%)`).join(" + ")}`);
+          }
+        }
       }
+    }
+    
+    if (gold3LegCount === 0) {
+      log("No Gold 3-Leg Lock built — not enough Tier 1 80%+ legs across multiple sports");
     }
 
     parlays.sort((a, b) => b.projected_win_rate - a.projected_win_rate);
