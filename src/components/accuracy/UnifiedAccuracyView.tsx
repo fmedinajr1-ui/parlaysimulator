@@ -122,7 +122,10 @@ export function UnifiedAccuracyView() {
         </Button>
       </div>
 
-      {/* Composite Grade */}
+      {/* Honest Parlay Record — Real W/L */}
+      <HonestAccuracyBanner daysBack={timePeriod} />
+
+      {/* Composite Grade — CLV-based (labeled) */}
       <CompositeGradeCard
         grade={compositeGrade}
         gradeColor={compositeGradeColor}
