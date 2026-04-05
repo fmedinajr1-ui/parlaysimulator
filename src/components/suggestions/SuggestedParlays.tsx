@@ -6,10 +6,11 @@ import { AISuggestionHistory } from "./AISuggestionHistory";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Sparkles, RefreshCw, Lock, History, Shield, Zap, AlertTriangle } from "lucide-react";
+import { Loader2, Sparkles, RefreshCw, Lock, History, Zap, AlertTriangle, TrendingUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 interface UnifiedLeg {
   player_name: string;
