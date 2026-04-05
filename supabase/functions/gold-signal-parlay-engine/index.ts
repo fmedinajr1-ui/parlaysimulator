@@ -54,6 +54,7 @@ const POISON_SIGNALS: Array<{ signal: string; prop?: string; side?: string; spor
   { signal: "live_line_about_to_move", sport: "NHL" },
   { signal: "velocity_spike", sport: "NCAAB" },
   { signal: "live_drift" },
+  { signal: "snapback" },
   { signal: "line_about_to_move", prop: "player_rebounds_assists", side: "OVER" },
   { signal: "line_about_to_move", prop: "player_points_assists", side: "OVER" },
   { signal: "line_about_to_move", prop: "player_points_rebounds_assists", side: "OVER" },
