@@ -51,6 +51,27 @@ export function SuggestedParlays() {
   const [noBetReason, setNoBetReason] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
 
+  // Fetch real parlay record for honest display
+  const { data: parlayRecord } = useQuery({
+    queryKey: ['homepage-parlay-record'],
+    queryFn: async () => {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('outcome')
+        .gte('parlay_date', cutoff.toISOString().split('T')[0])
+        .in('outcome', ['won', 'lost']);
+      if (error) throw error;
+      const won = (data || []).filter(p => p.outcome === 'won').length;
+      const lost = (data || []).filter(p => p.outcome === 'lost').length;
+      const total = won + lost;
+      return { won, lost, winRate: total > 0 ? (won / total) * 100 : 0 };
+    },
+    staleTime: 1000 * 60 * 5,
+    enabled: !!user,
+  });
+
   useEffect(() => {
     if (user && (isSubscribed || isAdmin)) {
       fetchHomepageSuggestions(mode);
