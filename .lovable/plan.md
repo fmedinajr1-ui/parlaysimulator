@@ -1,63 +1,56 @@
 
 
-# Golden Signal Engine Improvements — Cold Streak Fix
+# Honest System Rebuild — Stop Mixed Messaging + 3-Leg Focus
 
-## Problem Analysis
+## The Real Problem
 
-The data from April 1-3 shows **0 wins across 20+ losses** in the main parlay engine (Grind Stack, Optimal Combo, Shootout Stack). Key findings:
+The app shows users inflated accuracy numbers that don't match betting reality:
+1. **"Accuracy" = line movement, not bet wins.** The feedback loop (CLV) checks if a line moved in the right direction, not if the player hit the prop. A "75% accurate" signal means the line moved right 75% of the time — the bet can still lose.
+2. **Trap Warning "100%" is fake.** Code auto-marks every trap_warning as `was_correct: true` with "informational" outcome. It's not a real betting signal.
+3. **Snapback/Live Drift at 0-17% are still generating legs.** These are actively poisoning parlays.
+4. **Projected win rates are fantasy math.** Multiplying CLV-based "win rates" produces numbers like "65% projected" that have no correlation to actual parlay outcomes.
 
-1. **Repeat offender players** are poisoning multiple parlays simultaneously:
-   - Andrew Wiggins PTS UNDER — 6 loss appearances
-   - Jayson Tatum PTS OVER — 4 losses
-   - Sam Hauser REB OVER — 4 losses
-   - LaMelo Ball 3PT OVER — 4 losses
-   - Jonathan Kuminga REB OVER — 3 losses
+## Plan (4 Changes)
 
-2. **Gold Signal legs aren't being settled** — 16 `gold_tier1` signals sitting unsettled (no `was_correct` value), so the feedback loop can't learn from them.
+### 1. Kill Snapback + Live Drift Everywhere
+Add `snapback` and `live_drift` to the POISON_SIGNALS list in the gold engine and POISON_SIGNAL_SPORTS in the daily parlay generator. These two signal types are 0-6 and 3-14 respectively — they should never generate legs.
 
-3. **Same player appearing in 4-6 parlays** — one bad game wipes out the entire day.
+**Files:** `gold-signal-parlay-engine/index.ts`, `bot-generate-daily-parlays/index.ts`
 
-4. **No cold-streak circuit breaker** — the system keeps generating full volume even during 0-20 streaks.
+### 2. Fix the Accuracy Dashboard to Show Honest Numbers
+The Accuracy Dashboard currently shows CLV-based hit rates and calls them "accuracy." Changes:
+- Add a clear label distinguishing **"Line Movement Accuracy"** (CLV) from **"Bet Win Rate"** (actual parlay outcomes)
+- Surface the actual parlay win rate from `bot_daily_parlays` (settled W/L) prominently at the top
+- Mark Trap Warning as "Informational — Not a Bet Signal" instead of showing "100%"
+- Add a red warning banner on any signal type with <30% actual bet win rate
+- Show the real number: "Your parlays are hitting at X% over the last 30 days"
 
----
+**Files:** `src/components/accuracy/UnifiedAccuracyView.tsx`, `src/hooks/useUnifiedAccuracy.ts`, new `src/components/accuracy/HonestAccuracyBanner.tsx`
 
-## Plan (5 Changes)
+### 3. Rebuild 3-Leg Parlay Logic for Higher Hit Rate
+The current 3-leg blueprint (Blueprint 5 in gold engine) has a weak 40% projected threshold and no special filtering. Rebuild it:
+- **Require ALL 3 legs to be Tier 1 (80%+ historical CLV)** — no Tier 2 mixing
+- **Require at least 2 different sports** (cross-sport diversification)
+- **Require minimum 65% individual leg hit rate** from `fanduel_prediction_accuracy` settled data (actual was_correct, not projected)
+- **Cap at 2 three-leg parlays per day** to reduce exposure
+- **Block any leg where the player has missed their last 3 consecutive props** (recent form check)
+- Add a "3-Leg Gold Lock" blueprint that's separate from the general 3-leg builder
 
-### 1. Add New Serial Killers to Blacklist
-Update both `gold-signal-parlay-engine` and `bot-generate-daily-parlays` to block the 6 new repeat offenders discovered in the data:
-- Andrew Wiggins | points | under
-- Jayson Tatum | points | over
-- Sam Hauser | rebounds | over
-- LaMelo Ball | threes | over
-- Jonathan Kuminga | rebounds | over
-- Jalen Green | points | over
+**Files:** `gold-signal-parlay-engine/index.ts`
 
-### 2. Add Daily Player Exposure Cap
-Limit any single player to appearing in a maximum of **2 parlays per day** across all strategies. Currently one bad player (e.g., Wiggins) appears in 6 parlays, turning a single miss into a 6-loss day. This is the single biggest lever to reduce correlated losses.
+### 4. Fix Homepage Suggestions to Stop Overpromising
+The `SuggestedParlays` component shows "Win Est." percentages that come from the same inflated CLV math. Changes:
+- Replace "Win Est." label with "Edge Score" (a relative quality ranking, not a probability)
+- Add the actual historical win rate for similar parlays from `bot_daily_parlays` settled data
+- Show the real track record prominently: "AI Picks: X-Y record (Z% win rate)"
+- If the system is on a losing streak, show an honest warning instead of generating more picks
+- Remove the "Safe AI" label — nothing about a 2-leg parlay from a system on a cold streak is "safe"
 
-### 3. Add Cold-Streak Circuit Breaker
-Before generating parlays, check the last 2 days of results. If the system is on a **0-win streak of 10+ parlays**, automatically:
-- Reduce generation volume by 50%
-- Require minimum leg hit rate of 65% (up from current ~50%)
-- Skip all Tier 2 legs (only use Tier 1 anchors with 80%+ historical win rate)
-
-### 4. Fix Gold Signal Settlement Gap
-The `gold_tier1` and `gold_tier2` signal types aren't being settled by the Bayesian feedback loop. Add these signal types to the settlement logic so the engine can learn from outcomes and auto-adjust.
-
-### 5. Reduce 4-Leg Parlays, Prioritize 2-Leg
-The data shows 4-leg parlays (Optimal Combo execution) are losing at a higher rate. Shift the mix:
-- Cap execution-tier 4-leg parlays at **2 per day** (down from current ~5)
-- Add **3 more 2-leg execution slots** using only Tier 1 gold combos
-- 2-leg parlays have higher individual win rates even at lower payouts
+**Files:** `src/components/suggestions/SuggestedParlays.tsx`, `src/components/suggestions/HomepageParlayCard.tsx`
 
 ---
 
-## Technical Details
+## Summary
 
-**Files modified:**
-- `supabase/functions/gold-signal-parlay-engine/index.ts` — serial killers, exposure cap, circuit breaker
-- `supabase/functions/bot-generate-daily-parlays/index.ts` — serial killers, exposure cap, 4-leg reduction
-- `supabase/functions/settle-fanduel-predictions/index.ts` (or equivalent) — add `gold_tier1`/`gold_tier2` to settlement
-
-**No database migrations needed** — all changes are edge function logic updates.
+The core issue is the system conflates "the line moved in the right direction" with "this bet will win" and presents both as "accuracy." These changes make the numbers honest, kill the signals that are proven losers, and rebuild 3-leg parlays with much stricter gates so they actually have a chance of hitting.
 
