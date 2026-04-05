@@ -63,6 +63,7 @@ const POISON_SIGNAL_SPORTS = new Set([
   "live_line_about_to_move|NHL",
   "velocity_spike|NCAAB",
   "live_drift|ANY",
+  "snapback|ANY",
 ]);
 
 function isSerialKillerLeg(playerName: string, propType: string, side: string): boolean {
