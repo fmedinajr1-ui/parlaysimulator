@@ -1355,7 +1355,7 @@ Deno.serve(async (req) => {
         });
       });
 
-    log(`Inserting ${predRows.length} new predictions (${alerts.length - predRows.length} duplicates skipped)`);
+    log(`Inserting ${predRows.length} new predictions (${gatedAlerts.length - predRows.length} duplicates skipped, ${blockedAlerts.length} cross-ref blocked)`);
 
     if (predRows.length > 0) {
       const { error } = await supabase.from("fanduel_prediction_accuracy").insert(predRows);
