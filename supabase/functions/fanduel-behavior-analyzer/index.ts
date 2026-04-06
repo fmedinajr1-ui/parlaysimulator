@@ -1390,6 +1390,13 @@ Deno.serve(async (req) => {
           return `🎯 *Alt Line Edge: ${side} ${alt} (${sign} pts)*`;
         };
 
+        // Combined stats badge (pitcher K or NBA/NHL L10)
+        const getStatsBadge = (alert: any): string => {
+          const pkBadge = getPitcherKBadge(alert);
+          if (pkBadge) return pkBadge;
+          return getPlayerL10Badge(alert);
+        };
+
         // ====== TAKE IT NOW — OPTIMAL ENTRY POINT ======
         if (a.type === "take_it_now") {
           const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
