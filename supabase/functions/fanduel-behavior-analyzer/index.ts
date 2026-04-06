@@ -250,7 +250,7 @@ Deno.serve(async (req) => {
 
     // Detect correlated shifts: 3+ players in same game moving same direction on same prop
     for (const [eventId, playerProps] of eventGroups) {
-      const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string }[]>();
+      const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string; current_line: number }[]>();
 
       for (const [pk, snaps] of playerProps) {
         if (snaps.length < 2) continue;
@@ -268,6 +268,7 @@ Deno.serve(async (req) => {
           magnitude: Math.abs(diff),
           sport: first.sport,
           eventDesc: first.event_description,
+          current_line: last.line,
         });
       }
 
@@ -308,12 +309,13 @@ Deno.serve(async (req) => {
             prop_type: propType,
             event_description: sampleShift.eventDesc,
             event_id: eventId,
-            players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+            players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line })),
             dominant_direction: dominant,
             correlation_rate: Math.round(correlationRate * 100),
             avg_magnitude: Math.round(avgMag * 100) / 100,
             confidence: conf,
             hours_to_tip: null,
+            avg_current_line: shifts.reduce((a, s) => a + s.current_line, 0) / shifts.length,
           });
 
           log(`🔗 CORRELATION: ${shifts.length} players ${dominant} on ${propType} in ${sampleShift.eventDesc} (${Math.round(correlationRate * 100)}% aligned)`);
@@ -333,7 +335,7 @@ Deno.serve(async (req) => {
               prop_type: "totals",
               event_description: sampleShift.eventDesc,
               event_id: eventId,
-              players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+              players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line })),
               dominant_direction: dominant,
               correlation_rate: Math.round(correlationRate * 100),
               avg_magnitude: Math.round(avgMag * 100) / 100,
@@ -954,7 +956,7 @@ Deno.serve(async (req) => {
           actionSide = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
         }
 
-        const lineForAlt = a.current_line ?? a.line_to ?? null;
+        const lineForAlt = a.current_line ?? a.line_to ?? a.avg_current_line ?? null;
         const buffer = getBuffer(a.prop_type || "");
         const altLine = (lineForAlt != null && buffer != null && actionSide)
           ? calcAltLine(lineForAlt, actionSide, buffer)
@@ -1196,9 +1198,23 @@ Deno.serve(async (req) => {
           const emoji = a.type === "team_news_shift" ? "📰" : "🔗";
           const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
           const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
-          const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) =>
-            `  ${p.name}: ${p.direction} ${p.magnitude}`
-          ).join("\n");
+          const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) => {
+            const playerAltText = (() => {
+              if (p.current_line == null) return "";
+              const buf = getBuffer(a.prop_type);
+              if (buf == null) return "";
+              // Determine side based on signal type and direction
+              let side: string;
+              if (a.type === "team_news_shift") {
+                side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+              } else {
+                side = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
+              }
+              const alt = calcAltLine(p.current_line, side, buf);
+              return ` → Alt ${side} ${alt}`;
+            })();
+            return `  ${p.name}: ${p.direction} ${p.magnitude}${playerAltText}`;
+          }).join("\n");
           // team_news_shift: go WITH the movement (news-driven)
           // correlated_movement: FADE the movement (market trap theory)
           let action: string;
@@ -1238,7 +1254,7 @@ Deno.serve(async (req) => {
           }
           const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
           const isTeamMarketCorr = ["h2h", "moneyline"].includes(a.prop_type);
-          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to, a.prop_type);
+          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to ?? a.avg_current_line, a.prop_type);
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
