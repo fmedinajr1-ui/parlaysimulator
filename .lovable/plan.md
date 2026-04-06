@@ -1,59 +1,79 @@
 
 
-# Fix MLB Moneyline Labels + Add Team Quality Context
+# Replace Static Alt Line Buffers with Real FanDuel Alt Lines
 
-## Problems (from screenshot)
+## Problem
+All alt line recommendations (e.g., "Alt UNDER 20.5") use hardcoded buffers (3.0 for points, 2.0 for rebounds, etc.) subtracted from the current line. These are fake — they don't reflect actual available lines on FanDuel. The `fetch-alternate-lines` edge function already exists and fetches real alternate lines from The Odds API, but it's only used by the parlay generators, not by the prediction alerts or behavior analyzer.
 
-1. **Wrong labels**: Colorado Rockies MONEYLINE says "Action: UNDER 154" and "Line dropping — market signals UNDER". Moneylines don't have OVER/UNDER — should say **TAKE** (back this team) or **FADE** (bet against)
-2. **No team quality context**: The bot blindly follows market direction without considering team quality. If a line drops from +168 to +154, that might mean sharp money is on the Rockies — but the Rockies are terrible. Meanwhile, an all-star team or a game with a rookie pitcher on the other side should factor in
+## Solution
+Call `fetch-alternate-lines` for every alert that currently shows a static alt line, and display the **real closest alt line** available on FanDuel instead of a buffer-calculated one.
 
-## Fix
+## Changes
 
-### A. Relabel Moneyline Alerts: TAKE/FADE instead of OVER/UNDER
+### 1. `fanduel-prediction-alerts/index.ts` — Replace static alt line helpers
 
-In `fanduel-prediction-alerts/index.ts`, at every point where `snapDirection` is used for display on moneyline/h2h props:
+**Remove**: `ALT_LINE_BUFFERS`, `VOLATILE_EXTRA_BUFFER`, `getAltBuffer()`, `calcAltLine()`, `getAltLineText()` (lines 401-428)
 
-- When market is moving **toward** the team (odds getting shorter / more negative) → **TAKE** (market backing this team)
-- When market is moving **away** from the team (odds getting longer / more positive) → **FADE** (market moving off this team)
+**Add**: `fetchRealAltLine()` async helper that:
+- Calls `fetch-alternate-lines` with the player's event ID, name, prop type, and sport
+- From the returned lines array, picks the best alt line for the recommended side:
+  - For OVER: find the highest line that's **below** the current line (better value for OVER)
+  - For UNDER: find the lowest line that's **above** the current line (better value for UNDER)
+- Falls back to a simple ±1.5 buffer if no real alt lines are found (API quota, missing market, etc.)
+- Caches results per event+player+prop to avoid duplicate API calls within the same scan
 
-Specifically update:
-- **Line 1069-1073**: Non-NBA direction reason text — detect moneyline and use "TAKE/FADE" labels
-- **Line 1141**: Action line — change from `OVER/UNDER {line}` to `TAKE/FADE {teamName} ({odds})`
-- **Line 927**: Velocity/cascade action line — same TAKE/FADE for moneyline
-- **`fdLineBadge` function (line 95-98)**: When prop is moneyline, show odds format properly (no over/under price split)
-- **`fmtOdds` usage**: For moneyline action, show the team's odds directly
+**Update all call sites** (velocity/cascade alerts ~line 921, Take It Now ~line 1197, and signal_factors metadata ~lines 963-964, 1247-1248):
+- Replace `getAltLineText(...)` with result from `fetchRealAltLine()`
+- Replace `calcAltLine(...)` in metadata with the real alt line value
+- Display format: `🎯 Alt Line (FanDuel): OVER 21.5 (-125)` — includes the actual odds
 
-### B. Add MLB Team Quality Context to Moneyline Decisions
+### 2. `fanduel-behavior-analyzer/index.ts` — Replace static alt lines in correlated movement
 
-**Problem**: No MLB standings in `team_season_standings` (only NBA/NFL). And no pitcher matchup data available for the game.
+**Remove**: `getBuffer()`, `calcAltLine()`, `VOLATILITY_EXTRA_BUFFER` buffer logic (wherever defined)
 
-**Solution**: Query `mlb_player_game_logs` to build a lightweight MLB team quality signal:
-1. Query recent pitcher game logs for the starting pitchers in the matchup (if detectable from the event's player props)
-2. Check if any of the team's pitchers have rookie-level innings (low IP avg, high ERA indicators)
-3. Add this as context in the Telegram alert and as a gate modifier
+**Add**: Same `fetchRealAltLine()` pattern, but batch it:
+- Before building Telegram text for correlated/team news alerts, batch-fetch alt lines for all players in the correlation group
+- Replace the inline `→ Alt UNDER 20.5` (currently buffer-calculated at line 1747) with real FanDuel alt line + odds
+- Display: `Aaron Gordon: dropping 1 → Alt UNDER 21.5 (-115)`
 
-**Specifically**:
-- Before the Take It Now loop, for MLB moneyline signals, look up which players from each team have active props in the current scan — if a team has pitcher props, extract that pitcher's L10 ERA/K stats
-- Add a helper `getMlbMoneylineContext()` that returns:
-  - Pitcher quality badge (e.g., "🔥 Ace: 8.2 K/9, 2.1 ERA" or "⚠️ Rookie/Struggling: 4.8 ERA")
-  - Team strength estimate from recent game log aggregates
-- Factor pitcher quality into confidence: ace pitcher = +10, rookie/struggling = -10
-- Show in Telegram: `⚾ SP: Cole (8.2 K/9 L10) vs TBD — pitching edge`
+### 3. Batching and Rate Limiting
 
-### C. MLB-Specific Moneyline Direction Logic
+To avoid hammering the API (each correlated movement alert can have 4-5 players):
+- Batch all alt line fetches at the **end of the scan**, after all signals are identified but before Telegram formatting
+- Use `Promise.allSettled()` with a concurrency limit of 3
+- Cache results in a `Map<string, { line: number, odds: number }>` keyed by `eventId|playerName|propType`
+- If the API returns empty or errors, fall back to displaying "Alt Line: N/A" instead of a fake buffer number
 
-For MLB moneyline, instead of blind "drift down = UNDER", apply:
-- **Line shortening** (e.g., +168 → +154, or -110 → -130): Market backing this team → **TAKE** (unless team is bottom-tier)
-- **Line lengthening** (e.g., -130 → -110, or +150 → +180): Market fading → **FADE**
-- **Override**: If available pitcher data shows the opposing team has an ace and this team has a struggling pitcher, override to FADE regardless of line movement
+### 4. Telegram Display Format
 
-### D. Rule Registry
+**Before** (static buffer):
+```
+Aaron Gordon: rising 1 → Alt UNDER 20.5
+🎯 Alt Line Edge: UNDER 20.5
+```
 
-Add `mlb_moneyline_context` rule to `bot_owner_rules`:
-- "MLB moneyline uses TAKE/FADE labels. Pitcher quality and team strength factor into direction. Never blindly follow line movement on bottom-tier teams."
+**After** (real FanDuel):
+```
+Aaron Gordon: rising 1 → Alt UNDER 21.5 (-115) [FD]
+🎯 Alt Line (FanDuel): UNDER 21.5 (-115)
+```
+
+When no real alt line available:
+```
+🎯 Alt Line: unavailable
+```
+
+## Technical Details
+
+- The `fetch-alternate-lines` function uses The Odds API (`THE_ODDS_API_KEY`), which has quota limits
+- Each call costs 1 API request — with ~20 alerts per scan and ~4 players per correlation, worst case is ~100 calls
+- Caching per scan run prevents duplicates (same player appearing in multiple signal types)
+- The prop type mapping in `fetch-alternate-lines` already handles: points, rebounds, assists, threes, PRA, spreads, totals, and combos
+- Moneyline props don't have alt lines — skip for those (already no buffer for ML)
 
 ## Scope
-- 1 edge function modified (`fanduel-prediction-alerts`)
-- 1 migration (new rule)
-- No new tables — uses existing `mlb_player_game_logs` for pitcher context
+- 2 edge functions modified (`fanduel-prediction-alerts`, `fanduel-behavior-analyzer`)
+- No migrations needed
+- No new tables
+- Uses existing `fetch-alternate-lines` function unchanged
 
