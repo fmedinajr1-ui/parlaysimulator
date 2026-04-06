@@ -1,59 +1,59 @@
 
 
-# Add Alt Line Buffer to Team News Shift Alerts
+# Apply Minutes Volatility Gate to Every FanDuel Prediction Engine
 
-## Problem
-Team News Shift and Correlated Movement alerts never show the `🎯 Alt Line Edge` in Telegram because these aggregate alerts don't include `current_line` or `line_to` in their alert object. The `getAltLineText` function receives `null` and returns empty string.
+## What This Does
+The minutes volatility gate currently only exists in `fanduel-behavior-analyzer`. This plan adds it to all prediction/parlay engines so every single FanDuel signal — whether it's a behavioral alert, prediction alert, daily parlay leg, or force-fresh pick — gets the volatile minutes check and extra buffer.
 
-Your screenshot confirms this — the Team News Shift for "Detroit Pistons @ Orlando Magic — POINTS REBOUNDS ASSISTS" shows the action but no alt line edge.
+## Engines That Need the Volatility Gate
 
-## Root Cause
-When building correlation alerts (lines 303-317), the alert object has `players_moving`, `dominant_direction`, `correlation_rate`, etc. — but no `current_line`. This is because it's an aggregate signal across multiple players, not a single player's line.
+| Engine | Current State | What Changes |
+|--------|--------------|--------------|
+| `fanduel-behavior-analyzer` | Has volatility gate | No change |
+| `fanduel-prediction-alerts` | No volatility check | Add L10 minutes lookup, warning in alerts, extra buffer in signal_factors |
+| `generate-prediction-parlays` | No volatility check | Add volatility flag to parlay leg display, penalize volatile legs in scoring |
+| `bot-generate-daily-parlays` | Has prop-type volatility block only | Add minutes CV check, penalize/flag volatile players in leg selection |
+| `bot-force-fresh-parlays` | Has prop-type block only | Add minutes CV check, penalize volatile players |
+| `bot-curated-pipeline` | None | Add volatility lookup and scoring penalty |
+| `gold-signal-parlay-engine` | None | Add volatility lookup and scoring penalty |
 
-## Fix
+## Implementation Per Engine
 
-### 1. Add average line to correlation alert objects
+### 1. Shared Volatility Lookup Pattern (reused in each file)
+Each engine will include the same volatility calculation block:
+- Collect unique player names from the picks/signals
+- Query `nba_player_game_logs` (and sport equivalents) for L10 minutes
+- Calculate CV per player, flag `isVolatile` if CV > 20%
+- Build a `volatilityMap` for fast lookup
 
-**File:** `supabase/functions/fanduel-behavior-analyzer/index.ts`
+### 2. `fanduel-prediction-alerts` (1085 lines)
+- After the L10 game logs fetch (~line 252), add a minutes volatility calculation using the same `nba_player_game_logs` data already fetched
+- In alert text builders (velocity spike ~line 673, take_it_now ~line 768, trap ~line 842): append `⚠️ VOLATILE MINUTES` warning line
+- In `signal_factors` for each record: add `is_volatile_minutes`, `minutes_cv`, `minutes_avg`
+- Alt line buffer: add `getBuffer` + `calcAltLine` helpers (same as behavior-analyzer), show `🎯 Alt Line Edge` in every alert, with extra +2 buffer for volatile players
 
-When building team_news_shift and correlated_movement alerts (~line 303 and ~line 430), calculate the average current line from the contributing shifts and include it:
+### 3. `generate-prediction-parlays`
+- After fetching today's signals (~line 30), query game logs for all player names
+- Build volatility map, add `is_volatile` flag to each `EnrichedPick`
+- Penalize volatile picks in scoring: `score *= 0.7` for volatile players
+- In Telegram formatter `formatLeg`: add `⚠️ Volatile Minutes (CV X%)` line
 
-```
-avg_current_line: average of each shift's current line value
-```
+### 4. `bot-generate-daily-parlays`
+- After enriching sweet spots, query game logs for all player names in the pool
+- Build volatility map
+- In leg selection loops: add scoring penalty (-15 points) for volatile players, similar to existing `ROLE_PLAYER_VOLATILE` in smart-check
+- Add `⚠️ CV X%` tag to volatile legs in Telegram output
 
-This requires the shift objects to carry their current line. Need to check the shift data structure and propagate the line values.
+### 5. `bot-force-fresh-parlays`
+- Same pattern: volatility lookup after player collection
+- Scoring penalty for volatile players
+- Tag in Telegram output
 
-### 2. Show per-player alt lines in Telegram formatter
-
-In the correlation/team_news_shift Telegram formatter (~line 1194-1252), enhance the display to show alt lines for each listed player:
-
-Instead of just:
-```
-Jalen Suggs: rising 1
-Tobias Harris: rising 1  
-Daniss Jenkins: rising 2
-```
-
-Show:
-```
-Jalen Suggs: rising 1 → Alt OVER 12.5
-Tobias Harris: rising 1 → Alt OVER 8.5
-Daniss Jenkins: rising 2 → Alt OVER 10.5
-```
-
-Each player's alt line = their individual current line adjusted by the prop-type buffer.
-
-### 3. Propagate line values through shift detection
-
-The shift objects (built during correlation detection) need to carry each player's `current_line` so we can compute per-player alt lines. Update the shift mapping (~lines 250-270) to include the line value from the snapshot data.
-
-### 4. Update prediction row builder
-
-For team_news_shift prediction rows (~line 957), use the average line from the alert so `recommended_alt_line` gets stored instead of being null.
+### 6. `bot-curated-pipeline` and `gold-signal-parlay-engine`
+- Same pattern applied
 
 ## Scope
-- Single file: `supabase/functions/fanduel-behavior-analyzer/index.ts`
-- No migration needed — uses existing `recommended_alt_line` column
-- Affects both Telegram display and prediction accuracy storage
+- 6 edge function files modified (behavior-analyzer stays as-is)
+- No migration needed — volatility data stored in existing `signal_factors` JSONB
+- Each file gets ~60-80 lines of volatility logic added
 
