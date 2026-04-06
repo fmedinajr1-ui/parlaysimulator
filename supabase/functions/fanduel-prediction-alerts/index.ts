@@ -1212,8 +1212,10 @@ Deno.serve(async (req) => {
         `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
         marketLabel,
-        fdLineBadge(last.line, last.over_price, last.under_price, snapDirection),
-        `Open: ${last.opening_line} → Now: ${last.line}`,
+        fdLineBadge(last.line, last.over_price, last.under_price, snapDirection, last.prop_type),
+        isMoneylineProp(last.prop_type)
+          ? `Open: ${fmtOdds(last.opening_line)} → Now: ${fmtOdds(last.line)}`
+          : `Open: ${last.opening_line} → Now: ${last.line}`,
         `Drift: ${driftPct.toFixed(1)}% — ${directionMethod === "l10_data" ? "L10 data-driven" : directionMethod === "l3_trend" ? "L3 trend signal" : "market conviction signal"}`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
@@ -1221,7 +1223,9 @@ Deno.serve(async (req) => {
         volWarningTIN || null,
         minutesBadge || null,
         altLineTextTIN || null,
-        `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
+        isMoneylineProp(last.prop_type)
+          ? `✅ *Action: ${snapDirection === "OVER" ? "TAKE" : "FADE"} ${esc(last.player_name)} (${fmtOdds(last.line)})*`
+          : `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
 
@@ -1229,7 +1233,7 @@ Deno.serve(async (req) => {
         signal_type: live ? "live_drift" : "take_it_now",
         sport: last.sport, prop_type: last.prop_type,
         player_name: last.player_name, event_id: last.event_id,
-        prediction: `${snapDirection} ${last.line}`,
+        prediction: isMoneylineProp(last.prop_type) ? `${snapDirection === "OVER" ? "TAKE" : "FADE"} ${last.player_name}` : `${snapDirection} ${last.line}`,
         predicted_direction: directionMethod,
         predicted_magnitude: absDrift,
         confidence_at_signal: confidence,
