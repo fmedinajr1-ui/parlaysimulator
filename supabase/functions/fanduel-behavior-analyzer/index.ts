@@ -18,6 +18,36 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[Behavior Analyzer] ${msg}`);
   const now = new Date();
 
+  // ====== ALT LINE BUFFER CONSTANTS (by prop type keyword) ======
+  const PROP_BUFFER: Record<string, number> = {
+    points: 3.0, pra: 3.0, pts_reb: 3.0, pts_ast: 3.0, "pts+reb": 3.0, "pts+ast": 3.0,
+    rebounds: 2.0, assists: 2.0, reb_ast: 2.0, "reb+ast": 2.0,
+    threes: 1.0, steals: 1.0, blocks: 1.0, "steals+blocks": 1.0, stl_blk: 1.0,
+    turnovers: 0.5,
+    totals: 3.0, total: 3.0,
+    spreads: 1.5, spread: 1.5,
+    // Defaults for anything else (generic player props)
+    default: 2.0,
+  };
+
+  function getBuffer(propType: string): number | null {
+    const pt = (propType || "").toLowerCase().replace("player_", "").replace(/ /g, "_");
+    // Skip non-line markets
+    if (["h2h", "moneyline", "double_double", "triple_double"].some(s => pt.includes(s))) return null;
+    for (const [key, val] of Object.entries(PROP_BUFFER)) {
+      if (key !== "default" && pt.includes(key)) return val;
+    }
+    return PROP_BUFFER.default;
+  }
+
+  function calcAltLine(currentLine: number, side: string, buffer: number): number {
+    // Round to nearest 0.5 to match FanDuel alt line increments
+    const raw = side === "OVER" || side === "over"
+      ? currentLine - buffer
+      : currentLine + buffer;
+    return Math.round(raw * 2) / 2;
+  }
+
   try {
     log("=== Starting FanDuel behavior analysis ===");
 
