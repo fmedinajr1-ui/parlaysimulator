@@ -92,10 +92,20 @@ function fmtOdds(price: number | null | undefined): string {
 }
 
 // Build the FanDuel line badge with odds
-function fdLineBadge(line: number, overPrice: number | null, underPrice: number | null, side: string): string {
+function fdLineBadge(line: number, overPrice: number | null, underPrice: number | null, side: string, propType?: string): string {
+  const isMoneyline = propType === "moneyline" || propType === "h2h";
+  if (isMoneyline) {
+    // For moneyline, line IS the odds — show it directly
+    return `📗 *FanDuel Odds: ${fmtOdds(line)}*`;
+  }
   const actionOdds = side === "OVER" ? overPrice : underPrice;
   const oddsStr = actionOdds ? ` (${fmtOdds(actionOdds)})` : "";
   return `📗 *FanDuel Line: ${line}${oddsStr}*`;
+}
+
+// Check if a prop is a moneyline/h2h market
+function isMoneylineProp(propType: string): boolean {
+  return propType === "moneyline" || propType === "h2h";
 }
 
 Deno.serve(async (req) => {
@@ -915,7 +925,7 @@ Deno.serve(async (req) => {
         `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
         marketLabel,
-        fdLineBadge(last.line, last.over_price, last.under_price, side),
+        fdLineBadge(last.line, last.over_price, last.under_price, side, first.prop_type),
         `Line ${direction}: ${first.line} → ${last.line}`,
         `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
         live ? `⏱ In-game shift detected` : `⏱ ~${remaining}min window remaining`,
@@ -924,7 +934,9 @@ Deno.serve(async (req) => {
         crossRefBadge || null,
         volWarning || null,
         altLineText || null,
-        `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
+        isMoneylineProp(first.prop_type)
+          ? `✅ *Action: ${side === "OVER" ? "TAKE" : "FADE"} ${esc(first.player_name)} (${fmtOdds(last.line)})*`
+          : `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
         autoFlipped ? `🪤 *AUTO-FLIPPED: Cascade OVER → UNDER (FanDuel trap)*` : null,
         `💡 ${reason}`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
