@@ -696,6 +696,10 @@ Deno.serve(async (req) => {
         if (leg.edge > 0) {
           msgLines.push(`✅ Edge: ${(leg.edge * 100).toFixed(1)}%`);
         }
+
+        if (sf.is_volatile_minutes && sf.minutes_cv != null) {
+          msgLines.push(`⚠️ Volatile Minutes (CV ${(sf.minutes_cv * 100).toFixed(0)}%)`);
+        }
         msgLines.push("");
       }
 
