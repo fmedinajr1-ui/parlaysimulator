@@ -956,7 +956,7 @@ Deno.serve(async (req) => {
           actionSide = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
         }
 
-        const lineForAlt = a.current_line ?? a.line_to ?? null;
+        const lineForAlt = a.current_line ?? a.line_to ?? a.avg_current_line ?? null;
         const buffer = getBuffer(a.prop_type || "");
         const altLine = (lineForAlt != null && buffer != null && actionSide)
           ? calcAltLine(lineForAlt, actionSide, buffer)
