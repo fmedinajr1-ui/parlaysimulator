@@ -1154,10 +1154,16 @@ Deno.serve(async (req) => {
       let actionSide: string | null = null;
       if (a.type === "take_it_now" || a.type === "line_about_to_move" || a.type === "velocity_spike") {
         actionSide = a.direction === "dropping" ? "UNDER" : "OVER";
-      } else if (a.type === "snapback") {
-        actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
-      }
-      if (!actionSide) return null;
+       } else if (a.type === "snapback") {
+        const isPitcherProp = a.prop_type?.startsWith("pitcher_");
+        if (isPitcherProp) {
+          // Pitcher props follow market movement (rising = OVER)
+          actionSide = (a.current_line > a.opening_line) ? "OVER" : "UNDER";
+        } else {
+          actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
+        }
+       }
+       if (!actionSide) return null;
 
       const line = a.current_line ?? a.line_to ?? null;
       if (line == null) return null;
@@ -1317,9 +1323,12 @@ Deno.serve(async (req) => {
           actionSide = a.direction === "dropping" ? "UNDER" : "OVER";
         } else if (a.type === "line_about_to_move" || a.type === "velocity_spike") {
           actionSide = a.direction === "dropping" ? "UNDER" : "OVER";
-        } else if (a.type === "snapback") {
-          actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
-        } else if (a.type === "team_news_shift") {
+         } else if (a.type === "snapback") {
+           const isPitcherPropAlt = a.prop_type?.startsWith("pitcher_");
+           actionSide = isPitcherPropAlt
+             ? (a.current_line > a.opening_line ? "OVER" : "UNDER")
+             : (a.current_line > a.opening_line ? "UNDER" : "OVER");
+         } else if (a.type === "team_news_shift") {
           actionSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
         } else if (a.type === "correlated_movement") {
           actionSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
@@ -1568,12 +1577,21 @@ Deno.serve(async (req) => {
             reason = a.current_line > a.opening_line
               ? "Total inflated above open — snaps back down"
               : "Total deflated below open — snaps back up";
-          } else {
-            action = a.current_line > a.opening_line ? "UNDER" : "OVER";
-            reason = a.current_line > a.opening_line
-              ? "Inflated above open — snaps back down"
-              : "Deflated below open — snaps back up";
-          }
+           } else {
+             const isPitcherSnapback = a.prop_type?.startsWith("pitcher_");
+             if (isPitcherSnapback) {
+               // Pitcher props follow market (rising K line = OVER)
+               action = a.current_line > a.opening_line ? "OVER" : "UNDER";
+               reason = a.current_line > a.opening_line
+                 ? "K line rising — matchup/sharp money favors OVER"
+                 : "K line dropping — matchup/sharp money favors UNDER";
+             } else {
+               action = a.current_line > a.opening_line ? "UNDER" : "OVER";
+               reason = a.current_line > a.opening_line
+                 ? "Inflated above open — snaps back down"
+                 : "Deflated below open — snaps back up";
+             }
+           }
           const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
