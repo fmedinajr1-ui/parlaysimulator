@@ -11989,6 +11989,23 @@ Deno.serve(async (req) => {
             }
           }
 
+          // === MINUTES VOLATILITY CHECK (piggyback on already-fetched game logs) ===
+          const botVolMap = new Map<string, { isVolatile: boolean; cv: number; avgMin: number }>();
+          for (const [name, logs] of playerGameLogs) {
+            const minVals: number[] = [];
+            for (const log of logs.slice(0, 10)) {
+              const mins = typeof log.min === 'string' ? parseFloat(log.min) : (log.min ? parseFloat(String(log.min)) : 0);
+              if (mins > 0) minVals.push(mins);
+            }
+            if (minVals.length < 3) continue;
+            const avg = minVals.reduce((a, b) => a + b, 0) / minVals.length;
+            const variance = minVals.reduce((s, m) => s + (m - avg) ** 2, 0) / minVals.length;
+            const cv = Math.sqrt(variance) / (avg || 1);
+            botVolMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg });
+          }
+          const botVolCount = [...botVolMap.values()].filter(v => v.isVolatile).length;
+          console.log(`[CompositeFilter] Minutes volatility: ${botVolMap.size} players, ${botVolCount} volatile (CV>20%)`);
+
           // Prop type to game log column mapping
           const propToColumn: Record<string, string> = {
             player_points: 'points', points: 'points',
