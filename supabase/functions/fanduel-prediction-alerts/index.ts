@@ -111,6 +111,18 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[Prediction Alerts] ${msg}`);
   const now = new Date();
 
+  // ====== OWNER RULES ENGINE — load rules for this function ======
+  let ownerRules: Array<{ rule_key: string; rule_logic: Record<string, unknown>; enforcement: string }> = [];
+  try {
+    const { data: rulesData } = await supabase
+      .from("bot_owner_rules")
+      .select("rule_key, rule_logic, enforcement")
+      .eq("is_active", true)
+      .contains("applies_to", ["fanduel-prediction-alerts"]);
+    ownerRules = (rulesData || []) as any;
+    if (ownerRules.length > 0) log(`Loaded ${ownerRules.length} owner rules`);
+  } catch (_) { /* rules are advisory */ }
+
   try {
     log("=== Generating FanDuel prediction alerts (accuracy-gated v2) ===");
 
@@ -1284,14 +1296,43 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
+    // ====== OWNER RULES FILTER — remove alerts that violate rules before Telegram ======
+    let rulesBlocked = 0;
+    const filteredTelegramAlerts = telegramAlerts.filter((alertText: string) => {
+      for (const rule of ownerRules) {
+        if (rule.rule_key === "pitcher_k_follow_market") {
+          const kTypes = ((rule.rule_logic as any).prop_types || []) as string[];
+          const hasK = kTypes.some((k: string) => alertText.toLowerCase().includes(k.replace("_", " ")));
+          if (hasK) {
+            // Check: rising + UNDER or dropping + OVER
+            const lower = alertText.toLowerCase();
+            if ((lower.includes("rising") && lower.includes("under")) || 
+                (lower.includes("dropping") && lower.includes("over"))) {
+              log(`🚫 RULE BLOCKED [${rule.rule_key}]: pitcher K direction violation in alert`);
+              rulesBlocked++;
+              supabase.from("bot_audit_log").insert({
+                rule_key: rule.rule_key,
+                violation_description: "Pitcher K direction violation in prediction alert",
+                action_taken: "blocked",
+                affected_table: "prediction_alerts",
+              }).then(() => {});
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    });
+    if (rulesBlocked > 0) log(`Owner rules blocked ${rulesBlocked} prediction alert(s)`);
+
     // Send Telegram alerts — paginated, priority-ordered
-    if (telegramAlerts.length > 0) {
+    if (filteredTelegramAlerts.length > 0) {
       const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
       let currentLen = 0;
 
-      for (const alert of telegramAlerts) {
+      for (const alert of filteredTelegramAlerts) {
         const alertLen = alert.length + 2;
         if (currentPage.length > 0 && currentLen + alertLen > MAX_CHARS) {
           pages.push(currentPage);
@@ -1306,7 +1347,7 @@ Deno.serve(async (req) => {
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`🎯 *FanDuel Predictions*${pageLabel}`, `${telegramAlerts.length} signal(s) — sorted by accuracy`, ""]
+          ? [`🎯 *FanDuel Predictions*${pageLabel}`, `${filteredTelegramAlerts.length} signal(s) — sorted by accuracy`, ""]
           : [`🎯 *Predictions${pageLabel}*`, ""];
 
         const msg = [...header, ...pages[i]].join("\n\n");
