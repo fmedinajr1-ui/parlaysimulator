@@ -992,6 +992,83 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ====== MLB PITCHER K CONTEXT ======
+    // Fetch L3/L10 pitcher strikeouts + matchup data for all MLB pitcher alerts
+    const MLB_PITCHER_PROPS = new Set(["pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed", "pitcher_earned_runs"]);
+    const mlbPitcherNames = [...new Set(
+      alerts
+        .filter(a => MLB_PITCHER_PROPS.has(a.prop_type) && a.player_name)
+        .map(a => a.player_name)
+    )];
+
+    interface PitcherContext { l10Avg: number; l3Avg: number; avgIP: number; matchupAvg: number | null; matchupGames: number; }
+    const pitcherContextMap = new Map<string, PitcherContext>();
+
+    if (mlbPitcherNames.length > 0) {
+      const { data: mlbLogs, error: mlbErr } = await supabase
+        .from("mlb_player_game_logs")
+        .select("player_name, opponent, game_date, pitcher_strikeouts, innings_pitched, earned_runs, pitcher_hits_allowed")
+        .in("player_name", mlbPitcherNames)
+        .not("pitcher_strikeouts", "is", null)
+        .order("game_date", { ascending: false })
+        .limit(mlbPitcherNames.length * 15);
+
+      if (!mlbErr && mlbLogs) {
+        const byPitcher = new Map<string, any[]>();
+        for (const gl of mlbLogs) {
+          if (gl.innings_pitched == null || gl.innings_pitched <= 0) continue;
+          const name = gl.player_name;
+          if (!byPitcher.has(name)) byPitcher.set(name, []);
+          byPitcher.get(name)!.push(gl);
+        }
+
+        for (const [name, logs] of byPitcher) {
+          if (logs.length < 3) continue;
+          const l10 = logs.slice(0, 10);
+          const l3 = logs.slice(0, 3);
+          const l10Ks = l10.map((g: any) => Number(g.pitcher_strikeouts) || 0);
+          const l3Ks = l3.map((g: any) => Number(g.pitcher_strikeouts) || 0);
+          const ipValues = l10.map((g: any) => Number(g.innings_pitched) || 0);
+          const l10Avg = l10Ks.reduce((a: number, b: number) => a + b, 0) / l10Ks.length;
+          const l3Avg = l3Ks.reduce((a: number, b: number) => a + b, 0) / l3Ks.length;
+          const avgIP = ipValues.reduce((a: number, b: number) => a + b, 0) / ipValues.length;
+          pitcherContextMap.set(name, { l10Avg, l3Avg, avgIP, matchupAvg: null, matchupGames: 0 });
+        }
+
+        // Resolve matchup: check opponent from event_description against game logs
+        for (const a of alerts) {
+          if (!MLB_PITCHER_PROPS.has(a.prop_type)) continue;
+          const ctx = pitcherContextMap.get(a.player_name);
+          if (!ctx) continue;
+          const edLower = (a.event_description || "").toLowerCase();
+          const logs = byPitcher.get(a.player_name) || [];
+          const oppPerf: number[] = [];
+          for (const gl of logs) {
+            const opp = (gl.opponent || "").toLowerCase();
+            if (opp && edLower.includes(opp)) {
+              oppPerf.push(Number(gl.pitcher_strikeouts) || 0);
+            }
+          }
+          if (oppPerf.length > 0) {
+            ctx.matchupAvg = oppPerf.reduce((a, b) => a + b, 0) / oppPerf.length;
+            ctx.matchupGames = oppPerf.length;
+          }
+        }
+        log(`MLB pitcher context loaded: ${pitcherContextMap.size} pitchers`);
+      }
+    }
+
+    // Helper to get pitcher K badge text
+    function getPitcherKBadge(a: any): string {
+      const ctx = pitcherContextMap.get(a.player_name);
+      if (!ctx) return "";
+      let badge = `⚾ L10 Avg: ${ctx.l10Avg.toFixed(1)} Ks | L3 Avg: ${ctx.l3Avg.toFixed(1)} Ks | Avg IP: ${ctx.avgIP.toFixed(1)}`;
+      if (ctx.matchupAvg !== null) {
+        badge += ` | vs Opp: ${ctx.matchupAvg.toFixed(1)} Ks (${ctx.matchupGames}g)`;
+      }
+      return badge;
+    }
+
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
     const predRows = alerts
       .filter(a => {
