@@ -1010,13 +1010,13 @@ Deno.serve(async (req) => {
 
       if (confidence < 55) continue;
 
-      const reason = isPitcherProp
-        ? (snapDirection === "OVER"
-          ? "K line rising — matchup/sharp money favors OVER"
-          : "K line dropping — matchup/sharp money favors UNDER")
-        : (snapDirection === "UNDER"
+      const reason = useRegression
+        ? (snapDirection === "UNDER"
           ? "Line inflated above open — expect snapback down"
-          : "Line deflated below open — expect snapback up");
+          : "Line deflated below open — expect snapback up")
+        : (snapDirection === "OVER"
+          ? `Line rising — market signals OVER (${esc(last.sport)})`
+          : `Line dropping — market signals UNDER (${esc(last.sport)})`);
       const liveTag = live ? " [🔴 LIVE]" : "";
 
       // Dynamic accuracy badge from real verified data
