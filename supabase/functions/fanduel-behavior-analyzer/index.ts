@@ -268,6 +268,7 @@ Deno.serve(async (req) => {
           magnitude: Math.abs(diff),
           sport: first.sport,
           eventDesc: first.event_description,
+          current_line: last.line,
         });
       }
 
