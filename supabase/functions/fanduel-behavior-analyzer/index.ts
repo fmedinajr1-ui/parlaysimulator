@@ -758,36 +758,51 @@ Deno.serve(async (req) => {
         }
         return true;
       })
-      .map((a) => ({
-        signal_type: a.type,
-        sport: a.sport,
-        prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
-        player_name: a.player_name,
-        event_id: a.event_id,
-        prediction: a.type === "take_it_now"
-          ? `TAKE IT NOW: ${a.current_line} (${a.drift_pct_of_range}% of range, ~${a.remaining_move} more expected)`
-          : a.type === "line_about_to_move"
-          ? `Line ${a.direction} steadily at ${a.velocity}/hr (${a.consistencyRate}% consistent)`
-          : a.type === "cascade"
-          ? `Cascade: ${a.pending_props?.join(",")} will follow ${a.moved_props?.join(",")}`
-          : a.type === "velocity_spike"
-          ? `Line ${a.direction} at ${a.velocity}/hr`
-          : a.type === "snapback"
-          ? `Snapback from ${a.current_line} toward ${a.opening_line}`
-          : `Unknown signal`,
-        predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
-        predicted_magnitude: a.velocity || a.drift_pct || a.drift_amount || null,
-        confidence_at_signal: a.confidence,
-        velocity_at_signal: a.velocity || null,
-        time_to_tip_hours: a.hours_to_tip,
-        signal_factors: a,
-        // Trap detection fields — captured at alert time
-        line_at_alert: a.current_line ?? null,
-        hours_before_tip: a.hours_to_tip ?? null,
-        alert_sent_at: new Date().toISOString(),
-        snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
-        drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
-      }));
+      .map((a) => {
+        // Determine prediction text based on signal type
+        let predictionText: string;
+        if (a.type === "take_it_now") {
+          predictionText = `TAKE IT NOW: ${a.current_line} (${a.drift_pct_of_range}% of range, ~${a.remaining_move} more expected)`;
+        } else if (a.type === "line_about_to_move") {
+          predictionText = `Line ${a.direction} steadily at ${a.velocity}/hr (${a.consistencyRate}% consistent)`;
+        } else if (a.type === "cascade") {
+          predictionText = `Cascade: ${a.pending_props?.join(",")} will follow ${a.moved_props?.join(",")}`;
+        } else if (a.type === "velocity_spike") {
+          predictionText = `Line ${a.direction} at ${a.velocity}/hr`;
+        } else if (a.type === "snapback") {
+          predictionText = `Snapback from ${a.current_line} toward ${a.opening_line}`;
+        } else if (a.type === "team_news_shift") {
+          // News-driven: go WITH the movement
+          const side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+          predictionText = `Team News Shift: ${(a.players_moving || []).length} players ${a.dominant_direction} (${a.correlation_rate || Math.round((a.cascade_sequence?.correlation || 0) * 100)}% aligned) → ${side}`;
+        } else if (a.type === "correlated_movement") {
+          // Contrarian fade: go AGAINST the movement
+          const side = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
+          predictionText = `Correlated Movement: ${(a.players_moving || []).length} players ${a.dominant_direction} → FADE to ${side}`;
+        } else {
+          predictionText = `Unknown signal`;
+        }
+
+        return ({
+          signal_type: a.type,
+          sport: a.sport,
+          prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
+          player_name: a.player_name,
+          event_id: a.event_id,
+          prediction: predictionText,
+          predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
+          predicted_magnitude: a.velocity || a.drift_pct || a.drift_amount || null,
+          confidence_at_signal: a.confidence,
+          velocity_at_signal: a.velocity || null,
+          time_to_tip_hours: a.hours_to_tip,
+          signal_factors: a,
+          line_at_alert: a.current_line ?? null,
+          hours_before_tip: a.hours_to_tip ?? null,
+          alert_sent_at: new Date().toISOString(),
+          snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
+          drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
+        });
+      });
 
     log(`Inserting ${predRows.length} new predictions (${alerts.length - predRows.length} duplicates skipped)`);
 
@@ -982,17 +997,32 @@ Deno.serve(async (req) => {
           const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) =>
             `  ${p.name}: ${p.direction} ${p.magnitude}`
           ).join("\n");
-          const action = a.dominant_direction === "dropping"
-            ? `OVER — lines dropping across ${(a.players_moving || []).length} players`
-            : `UNDER — lines rising across ${(a.players_moving || []).length} players`;
+          // team_news_shift: go WITH the movement (news-driven)
+          // correlated_movement: FADE the movement (market trap theory)
+          let action: string;
+          let reason: string;
+          const playerCount = (a.players_moving || []).length;
+          if (a.type === "team_news_shift") {
+            // Trust the news — go WITH the direction
+            action = a.dominant_direction === "dropping"
+              ? `UNDER — ${playerCount} players dropping = real news, take UNDER`
+              : `OVER — ${playerCount} players rising = real news, take OVER`;
+            reason = `85%+ correlation across ${playerCount} players = likely injury/lineup news. Following the market shift.`;
+          } else {
+            // Fade — contrarian logic for lower-correlation moves
+            action = a.dominant_direction === "dropping"
+              ? `OVER — lines dropping across ${playerCount} players (fade the trap)`
+              : `UNDER — lines rising across ${playerCount} players (fade the trap)`;
+            reason = `Coordinated movement below news threshold — fading as potential public trap.`;
+          }
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
-            `${(a.players_moving || []).length} players moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
+            `${playerCount} players moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
             topPlayers,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
-            `💡 ${a.type === "team_news_shift" ? "85%+ correlation = likely injury/lineup news" : "Coordinated movement = sharp action or news"}`,
+            `💡 ${reason}`,
           ].join("\n");
         }
         return "";
