@@ -1075,7 +1075,7 @@ Deno.serve(async (req) => {
 
     // ====== MINUTES VOLATILITY GATE ======
     // Query L10 minutes for all unique players in alerts, flag high-CV players
-    const VOLATILITY_EXTRA_BUFFER = 2.0;
+    const VOLATILITY_EXTRA_BUFFER = 2.0; // kept for volatility warning display only
     const VOLATILITY_CV_THRESHOLD = 0.20; // 20%
     const volatilityMap = new Map<string, { avgMin: number; cv: number; isVolatile: boolean }>();
 
@@ -1501,10 +1501,8 @@ Deno.serve(async (req) => {
         }
 
         const lineForAlt = a.current_line ?? a.line_to ?? a.avg_current_line ?? null;
-        const baseBuffer = getBuffer(a.prop_type || "");
-        const effectiveBuffer = (baseBuffer != null && a.is_volatile_minutes) ? baseBuffer + VOLATILITY_EXTRA_BUFFER : baseBuffer;
-        const altLine = (lineForAlt != null && effectiveBuffer != null && actionSide)
-          ? calcAltLine(lineForAlt, actionSide, effectiveBuffer)
+        const altLine = (lineForAlt != null && actionSide)
+          ? (await fetchRealAltLine(a.event_id, a.player_name, a.prop_type || "", actionSide, lineForAlt, a.sport || "NBA"))?.line ?? null
           : null;
 
         return ({
@@ -1526,7 +1524,7 @@ Deno.serve(async (req) => {
           snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
           drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
           recommended_alt_line: altLine,
-          alt_line_buffer: effectiveBuffer,
+          alt_line_source: "fanduel_real",
         });
       });
 
