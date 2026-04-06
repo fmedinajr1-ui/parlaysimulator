@@ -445,6 +445,24 @@ Deno.serve(async (req) => {
                   gameTotalUnderOdds = totalsSnap[0].fanduel_under_odds;
                 }
 
+                // Fallback: if game_market_snapshots had no totals, try unified_props
+                if (gameTotal == null) {
+                  const { data: upTotals } = await supabase
+                    .from("unified_props")
+                    .select("current_line, over_price, under_price")
+                    .eq("prop_type", "totals")
+                    .eq("is_active", true)
+                    .or(`player_name.ilike.%${parsedHome}%,player_name.ilike.%${parsedAway}%,event_description.ilike.%${parsedHome}%`)
+                    .order("last_updated", { ascending: false })
+                    .limit(1);
+                  if (upTotals && upTotals.length > 0) {
+                    gameTotal = Number(upTotals[0].current_line);
+                    gameTotalOverOdds = upTotals[0].over_price ?? null;
+                    gameTotalUnderOdds = upTotals[0].under_price ?? null;
+                    log(`📊 Totals fallback from unified_props: ${gameTotal} for ${parsedAway} @ ${parsedHome}`);
+                  }
+                }
+
                 // Get ML odds
                 const { data: mlSnap } = await supabase
                   .from("game_market_snapshots")
