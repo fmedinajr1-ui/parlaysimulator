@@ -1,33 +1,63 @@
 
 
-# Fix Team News Shift Signal Direction
+# Alt Line Buffer System — Every Sport Prop on FanDuel
 
-## Problem
-The Team News Shift and Correlated Movement signals currently use **contrarian logic** (fade the direction) for ALL scenarios. When 5+ players on the same team are dropping with 85%+ correlation, that's real news — fading it with OVER is wrong.
+## What This Does
 
-## Change
+Every player prop signal (take_it_now, line_about_to_move, velocity_spike, snapback, correlated_movement, team_news_shift) will now include a **recommended alt line** with a sport-and-stat-aware buffer. The Telegram alerts will show both the book line and the alt line edge. The database will track alt line accuracy separately.
 
-**File:** `supabase/functions/fanduel-behavior-analyzer/index.ts` (lines 985-987)
+## Buffer Table (by prop type)
 
-Split the action logic based on signal type:
+```text
+Prop Type                          Buffer
+─────────────────────────────────  ──────
+Points / PRA / Pts+Reb / Pts+Ast   3.0
+Rebounds / Assists / Reb+Ast        2.0
+Threes / Steals / Blocks            1.0
+Steals+Blocks                       1.0
+Turnovers                           0.5
+Double/Triple Double                N/A (skip)
+Totals (game)                       3.0
+Spreads                             1.5
+```
 
-1. **`team_news_shift`** (85%+ correlation, 3+ players) — go WITH the movement:
-   - Dropping → **UNDER** ("Lines dropping across X players = real news, take UNDER")
-   - Rising → **OVER** ("Lines rising across X players = real news, take OVER")
+- **OVER signals**: `alt_line = current_line - buffer` (lower line = easier to clear)
+- **UNDER signals**: `alt_line = current_line + buffer` (higher line = easier to stay under)
 
-2. **`correlated_movement`** (lower correlation) — keep contrarian fade:
-   - Dropping → **OVER** (current behavior, trap theory applies)
-   - Rising → **UNDER** (current behavior)
+## Changes
 
-This means the system trusts high-correlation team-wide shifts as legitimate market moves while still fading lower-confidence correlated noise.
+### 1. Database Migration
+Add 3 columns to `fanduel_prediction_accuracy`:
+- `recommended_alt_line` (numeric, nullable)
+- `alt_line_buffer` (numeric, nullable)  
+- `alt_line_was_correct` (boolean, nullable) — for separate settlement tracking
 
-## Also update
-- The reason text to explain WHY (news-driven vs trap fade)
-- The prediction accuracy recording so we can track if this change improves hit rate
+### 2. Edge Function: `fanduel-behavior-analyzer/index.ts`
 
-## Technical Details
-- Single file change in `fanduel-behavior-analyzer/index.ts`
-- Affects lines ~985-996 (the correlation/team_news_shift alert formatter)
-- Also need to check where these signals get written to `fanduel_prediction_accuracy` to ensure the action direction is stored correctly there too (likely earlier in the function around line 260-280)
-- Deploy via edge function update
+**A. Add buffer constants** (top of file, ~line 20):
+A `PROP_BUFFER` map keyed by prop_type returning the numeric buffer. Skip props like double_double/triple_double.
+
+**B. Calculate alt line for every alert** (~line 788-808, inside `addAlert` calls and prediction row builder):
+For each alert, compute `recommended_alt_line` based on the action side (OVER → subtract buffer, UNDER → add buffer). Store in the alert object.
+
+**C. Update prediction accuracy rows** (~lines 888-931):
+Add `recommended_alt_line` and `alt_line_buffer` to every inserted prediction row.
+
+**D. Update ALL Telegram alert formatters** (~lines 948-1174):
+For every signal type (take_it_now, line_about_to_move, velocity_spike, snapback, correlation/team_news), add a `🎯 Alt Line Edge` line showing the recommended alt line and buffer. Only for player props (skip team markets like h2h/moneyline where alt lines don't apply).
+
+Example output change:
+```
+✅ Action: OVER 28.5
+🎯 Alt Line Edge: OVER 25.5 (-3 pts)
+```
+
+### 3. Files Modified
+- `supabase/functions/fanduel-behavior-analyzer/index.ts` — buffer constants, alt line calculation, Telegram formatting, prediction storage
+- Database migration — 3 new columns on `fanduel_prediction_accuracy`
+
+### 4. What This Does NOT Change
+- Signal detection logic (thresholds, directional logic) stays the same
+- Team market signals (h2h, moneyline) skip alt line — those use odds not lines
+- Spreads and totals DO get alt lines since they have numeric lines
 
