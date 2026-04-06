@@ -250,7 +250,7 @@ Deno.serve(async (req) => {
 
     // Detect correlated shifts: 3+ players in same game moving same direction on same prop
     for (const [eventId, playerProps] of eventGroups) {
-      const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string }[]>();
+      const propTypeShifts = new Map<string, { player: string; direction: string; magnitude: number; sport: string; eventDesc: string; current_line: number }[]>();
 
       for (const [pk, snaps] of playerProps) {
         if (snaps.length < 2) continue;
@@ -309,12 +309,13 @@ Deno.serve(async (req) => {
             prop_type: propType,
             event_description: sampleShift.eventDesc,
             event_id: eventId,
-            players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+            players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line })),
             dominant_direction: dominant,
             correlation_rate: Math.round(correlationRate * 100),
             avg_magnitude: Math.round(avgMag * 100) / 100,
             confidence: conf,
             hours_to_tip: null,
+            avg_current_line: shifts.reduce((a, s) => a + s.current_line, 0) / shifts.length,
           });
 
           log(`🔗 CORRELATION: ${shifts.length} players ${dominant} on ${propType} in ${sampleShift.eventDesc} (${Math.round(correlationRate * 100)}% aligned)`);
@@ -334,7 +335,7 @@ Deno.serve(async (req) => {
               prop_type: "totals",
               event_description: sampleShift.eventDesc,
               event_id: eventId,
-              players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+              players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line })),
               dominant_direction: dominant,
               correlation_rate: Math.round(correlationRate * 100),
               avg_magnitude: Math.round(avgMag * 100) / 100,
