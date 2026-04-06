@@ -963,7 +963,11 @@ Deno.serve(async (req) => {
 
       if (driftPct < minDrift) continue;
 
-      const snapDirection = drift > 0 ? "UNDER" : "OVER";
+      // Pitcher props follow the market (rising K line = OVER), all others use regression
+      const isPitcherProp = last.prop_type?.startsWith("pitcher_");
+      const snapDirection = isPitcherProp
+        ? (drift > 0 ? "OVER" : "UNDER")   // Pitcher: follow market movement
+        : (drift > 0 ? "UNDER" : "OVER");  // Others: regression to mean
       const isCombo = COMBO_PROPS.has(last.prop_type);
       const comboBoost = isCombo ? 10 : 0;
       const confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
@@ -990,9 +994,13 @@ Deno.serve(async (req) => {
 
       if (confidence < 55) continue;
 
-      const reason = snapDirection === "UNDER"
-        ? "Line inflated above open — expect snapback down"
-        : "Line deflated below open — expect snapback up";
+      const reason = isPitcherProp
+        ? (snapDirection === "OVER"
+          ? "K line rising — matchup/sharp money favors OVER"
+          : "K line dropping — matchup/sharp money favors UNDER")
+        : (snapDirection === "UNDER"
+          ? "Line inflated above open — expect snapback down"
+          : "Line deflated below open — expect snapback up");
       const liveTag = live ? " [🔴 LIVE]" : "";
 
       // Dynamic accuracy badge from real verified data
