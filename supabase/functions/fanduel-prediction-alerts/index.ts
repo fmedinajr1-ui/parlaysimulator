@@ -981,7 +981,7 @@ Deno.serve(async (req) => {
         : classifiedSignalType === "cascade" ? "🌊" : "🔮";
 
       const volWarning = getVolatilityWarning(first.player_name);
-      const altLineText = getAltLineText(last.line, side, first.prop_type, first.player_name);
+      const altLineText = await getAltLineText(last.line, side, first.prop_type, first.player_name, first.event_id, first.sport);
       const volInfo = volatilityMap.get((first.player_name || "").toLowerCase().trim());
 
       const alertText = [
@@ -1023,8 +1023,8 @@ Deno.serve(async (req) => {
           is_volatile_minutes: volInfo?.isVolatile || false,
           minutes_cv: volInfo?.cv ?? null,
           minutes_avg: volInfo?.avgMin ?? null,
-          alt_line_buffer: getAltBuffer(first.prop_type, first.player_name),
-          recommended_alt_line: calcAltLine(last.line, side, first.prop_type, first.player_name),
+          alt_line_source: "fanduel_real",
+          recommended_alt_line: (await fetchRealAltLine(first.event_id, first.player_name, first.prop_type, side, last.line, first.sport))?.line ?? null,
         },
       };
 
@@ -1257,7 +1257,7 @@ Deno.serve(async (req) => {
         : `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`;
 
       const volWarningTIN = getVolatilityWarning(last.player_name);
-      const altLineTextTIN = getAltLineText(last.line, snapDirection, last.prop_type, last.player_name);
+      const altLineTextTIN = await getAltLineText(last.line, snapDirection, last.prop_type, last.player_name, last.event_id, last.sport);
       const volInfoTIN = volatilityMap.get((last.player_name || "").toLowerCase().trim());
 
       // Minutes badge for NBA
@@ -1307,8 +1307,8 @@ Deno.serve(async (req) => {
           is_volatile_minutes: volInfoTIN?.isVolatile || false,
           minutes_cv: volInfoTIN?.cv ?? null,
           minutes_avg: volInfoTIN?.avgMin ?? null,
-          alt_line_buffer: getAltBuffer(last.prop_type, last.player_name),
-          recommended_alt_line: calcAltLine(last.line, snapDirection, last.prop_type, last.player_name),
+          alt_line_source: "fanduel_real",
+          recommended_alt_line: (await fetchRealAltLine(last.event_id, last.player_name, last.prop_type, snapDirection, last.line, last.sport))?.line ?? null,
         },
         // Trap detection fields
         line_at_alert: last.line,
