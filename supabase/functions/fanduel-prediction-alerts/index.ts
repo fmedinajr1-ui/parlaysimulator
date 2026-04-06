@@ -1296,8 +1296,37 @@ Deno.serve(async (req) => {
       if (error) log(`⚠ Prediction insert error: ${error.message}`);
     }
 
+    // ====== OWNER RULES FILTER — remove alerts that violate rules before Telegram ======
+    let rulesBlocked = 0;
+    const filteredTelegramAlerts = telegramAlerts.filter((alertText: string) => {
+      for (const rule of ownerRules) {
+        if (rule.rule_key === "pitcher_k_follow_market") {
+          const kTypes = ((rule.rule_logic as any).prop_types || []) as string[];
+          const hasK = kTypes.some((k: string) => alertText.toLowerCase().includes(k.replace("_", " ")));
+          if (hasK) {
+            // Check: rising + UNDER or dropping + OVER
+            const lower = alertText.toLowerCase();
+            if ((lower.includes("rising") && lower.includes("under")) || 
+                (lower.includes("dropping") && lower.includes("over"))) {
+              log(`🚫 RULE BLOCKED [${rule.rule_key}]: pitcher K direction violation in alert`);
+              rulesBlocked++;
+              supabase.from("bot_audit_log").insert({
+                rule_key: rule.rule_key,
+                violation_description: "Pitcher K direction violation in prediction alert",
+                action_taken: "blocked",
+                affected_table: "prediction_alerts",
+              }).then(() => {});
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    });
+    if (rulesBlocked > 0) log(`Owner rules blocked ${rulesBlocked} prediction alert(s)`);
+
     // Send Telegram alerts — paginated, priority-ordered
-    if (telegramAlerts.length > 0) {
+    if (filteredTelegramAlerts.length > 0) {
       const MAX_CHARS = 3800;
       const pages: string[][] = [];
       let currentPage: string[] = [];
