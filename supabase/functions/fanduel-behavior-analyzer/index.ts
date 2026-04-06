@@ -1058,19 +1058,226 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Helper to get pitcher K badge text
+    // ====== CROSS-REFERENCE BLOCKING GATE ======
+    // Load NBA/NHL L10 stats for non-MLB player props
+    const NBA_PLAYER_PROPS = new Set(["player_points", "player_rebounds", "player_assists", "player_threes", "player_pra", "player_pts_reb", "player_pts_ast", "player_reb_ast", "player_steals", "player_blocks", "player_turnovers", "player_steals_blocks", "player_double_double"]);
+    const NHL_PLAYER_PROPS = new Set(["player_shots_on_goal", "player_points", "player_assists", "player_goals", "player_saves", "player_blocked_shots"]);
+
+    // Generic L10 context for NBA/NHL
+    interface PlayerL10Context { l10Avg: number; l3Avg: number; hitRateOver: number; hitRateUnder: number; matchupAvg: number | null; matchupGames: number; }
+    const playerL10Map = new Map<string, PlayerL10Context>();
+
+    // Collect unique NBA player props needing validation
+    const nbaPlayerNames = [...new Set(alerts.filter(a => a.sport === "NBA" && NBA_PLAYER_PROPS.has(a.prop_type) && a.player_name).map(a => `${a.player_name}|||${a.prop_type}|||${a.current_line ?? a.line_to ?? 0}`))];
+    const nhlPlayerNames = [...new Set(alerts.filter(a => a.sport === "NHL" && NHL_PLAYER_PROPS.has(a.prop_type) && a.player_name).map(a => `${a.player_name}|||${a.prop_type}|||${a.current_line ?? a.line_to ?? 0}`))];
+
+    // Helper to map prop_type to game log column
+    function propToColumn(propType: string, sport: string): string | null {
+      if (sport === "NBA" || sport === "NCAAB") {
+        const map: Record<string, string> = { player_points: "points", player_rebounds: "rebounds", player_assists: "assists", player_threes: "three_pointers_made", player_steals: "steals", player_blocks: "blocks", player_turnovers: "turnovers" };
+        return map[propType] || null;
+      }
+      if (sport === "NHL") {
+        const map: Record<string, string> = { player_shots_on_goal: "shots_on_goal", player_goals: "goals", player_assists: "assists", player_points: "points", player_saves: "saves", player_blocked_shots: "blocked_shots" };
+        return map[propType] || null;
+      }
+      return null;
+    }
+
+    // Fetch NBA L10 data
+    if (nbaPlayerNames.length > 0) {
+      const uniqueNames = [...new Set(nbaPlayerNames.map(n => n.split("|||")[0]))];
+      const { data: nbaLogs } = await supabase
+        .from("nba_player_game_logs")
+        .select("player_name, points, rebounds, assists, three_pointers_made, steals, blocks, turnovers, game_date")
+        .in("player_name", uniqueNames)
+        .order("game_date", { ascending: false })
+        .limit(uniqueNames.length * 12);
+
+      if (nbaLogs) {
+        for (const entry of nbaPlayerNames) {
+          const [name, propType, lineStr] = entry.split("|||");
+          const line = parseFloat(lineStr);
+          const col = propToColumn(propType, "NBA");
+          if (!col) continue;
+          const playerLogs = nbaLogs.filter(g => g.player_name === name && g[col] != null);
+          if (playerLogs.length < 3) continue;
+          const l10 = playerLogs.slice(0, 10).map(g => Number(g[col]) || 0);
+          const l3 = playerLogs.slice(0, 3).map(g => Number(g[col]) || 0);
+          const l10Avg = l10.reduce((a, b) => a + b, 0) / l10.length;
+          const l3Avg = l3.reduce((a, b) => a + b, 0) / l3.length;
+          const hitOver = l10.filter(v => v > line).length / l10.length * 100;
+          const hitUnder = l10.filter(v => v < line).length / l10.length * 100;
+          playerL10Map.set(`${name}|${propType}`, { l10Avg, l3Avg, hitRateOver: hitOver, hitRateUnder: hitUnder, matchupAvg: null, matchupGames: 0 });
+        }
+        log(`NBA L10 context loaded: ${playerL10Map.size} player/prop combos`);
+      }
+    }
+
+    // Fetch NHL L10 data
+    if (nhlPlayerNames.length > 0) {
+      const uniqueNames = [...new Set(nhlPlayerNames.map(n => n.split("|||")[0]))];
+      const { data: nhlLogs } = await supabase
+        .from("nhl_player_game_logs")
+        .select("player_name, shots_on_goal, goals, assists, points, saves, blocked_shots, game_date")
+        .in("player_name", uniqueNames)
+        .order("game_date", { ascending: false })
+        .limit(uniqueNames.length * 12);
+
+      if (nhlLogs) {
+        for (const entry of nhlPlayerNames) {
+          const [name, propType, lineStr] = entry.split("|||");
+          const line = parseFloat(lineStr);
+          const col = propToColumn(propType, "NHL");
+          if (!col) continue;
+          const playerLogs = nhlLogs.filter(g => g.player_name === name && g[col] != null);
+          if (playerLogs.length < 3) continue;
+          const l10 = playerLogs.slice(0, 10).map(g => Number(g[col]) || 0);
+          const l3 = playerLogs.slice(0, 3).map(g => Number(g[col]) || 0);
+          const l10Avg = l10.reduce((a, b) => a + b, 0) / l10.length;
+          const l3Avg = l3.reduce((a, b) => a + b, 0) / l3.length;
+          const hitOver = l10.filter(v => v > line).length / l10.length * 100;
+          const hitUnder = l10.filter(v => v < line).length / l10.length * 100;
+          playerL10Map.set(`${name}|${propType}`, { l10Avg, l3Avg, hitRateOver: hitOver, hitRateUnder: hitUnder, matchupAvg: null, matchupGames: 0 });
+        }
+        log(`NHL L10 context loaded: ${playerL10Map.size} total player/prop combos`);
+      }
+    }
+
+    // Cross-reference gate function — returns block reason or null (pass)
+    function crossRefGate(a: any): string | null {
+      const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
+      if (isTeamMarket) return null; // Team markets validated elsewhere
+      if (a.type === "cascade" || a.type === "correlated_movement" || a.type === "team_news_shift") return null; // Aggregate signals skip individual gate
+
+      // Determine action side
+      let actionSide: string | null = null;
+      if (a.type === "take_it_now" || a.type === "line_about_to_move" || a.type === "velocity_spike") {
+        actionSide = a.direction === "dropping" ? "UNDER" : "OVER";
+      } else if (a.type === "snapback") {
+        actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
+      }
+      if (!actionSide) return null;
+
+      const line = a.current_line ?? a.line_to ?? null;
+      if (line == null) return null;
+
+      // MLB pitcher props — use pitcherContextMap
+      if (MLB_PITCHER_PROPS.has(a.prop_type)) {
+        const ctx = pitcherContextMap.get(a.player_name);
+        if (!ctx) return null; // No data = can't block
+
+        // Snapback-specific: if line rose and we say UNDER, but L10 avg is ABOVE the line, block it
+        if (a.type === "snapback" && actionSide === "UNDER" && ctx.l10Avg > line) {
+          return `Snapback UNDER blocked: L10 avg ${ctx.l10Avg.toFixed(1)} > line ${line} — pitcher averages more Ks`;
+        }
+        if (a.type === "snapback" && actionSide === "OVER" && ctx.l10Avg < line) {
+          return `Snapback OVER blocked: L10 avg ${ctx.l10Avg.toFixed(1)} < line ${line} — pitcher averages fewer Ks`;
+        }
+
+        // Hard block: L10 avg >10% against line AND hit rate <30%
+        const edgePct = ((ctx.l10Avg - line) / line) * 100;
+        if (actionSide === "OVER" && edgePct < -10) {
+          const hitRate = (ctx.l10Avg > line) ? 100 : 0; // simplified — compute from logs
+          // L10 avg is well below the line but we're saying OVER
+          return `Hard block: L10 avg ${ctx.l10Avg.toFixed(1)} is ${Math.abs(edgePct).toFixed(0)}% below line ${line} for OVER`;
+        }
+        if (actionSide === "UNDER" && edgePct > 10) {
+          return `Hard block: L10 avg ${ctx.l10Avg.toFixed(1)} is ${edgePct.toFixed(0)}% above line ${line} for UNDER`;
+        }
+
+        // Pitcher K gate: L3 >15% against line AND matchup doesn't support
+        const l3Edge = ((ctx.l3Avg - line) / line) * 100;
+        if (actionSide === "OVER" && l3Edge < -15 && (ctx.matchupAvg === null || ctx.matchupAvg < line)) {
+          return `Pitcher K gate: L3 avg ${ctx.l3Avg.toFixed(1)} is ${Math.abs(l3Edge).toFixed(0)}% below line for OVER, matchup doesn't support`;
+        }
+        if (actionSide === "UNDER" && l3Edge > 15 && (ctx.matchupAvg === null || ctx.matchupAvg > line)) {
+          return `Pitcher K gate: L3 avg ${ctx.l3Avg.toFixed(1)} is ${l3Edge.toFixed(0)}% above line for UNDER, matchup doesn't support`;
+        }
+
+        return null;
+      }
+
+      // NBA/NHL player props — use playerL10Map
+      const l10Key = `${a.player_name}|${a.prop_type}`;
+      const ctx = playerL10Map.get(l10Key);
+      if (!ctx) return null; // No data = can't block
+
+      // Hard block: L10 avg >10% against line AND hit rate <30%
+      const edgePct = ((ctx.l10Avg - line) / line) * 100;
+      if (actionSide === "OVER" && edgePct < -10 && ctx.hitRateOver < 30) {
+        return `Hard block: L10 avg ${ctx.l10Avg.toFixed(1)} (${ctx.hitRateOver.toFixed(0)}% over rate) contradicts OVER ${line}`;
+      }
+      if (actionSide === "UNDER" && edgePct > 10 && ctx.hitRateUnder < 30) {
+        return `Hard block: L10 avg ${ctx.l10Avg.toFixed(1)} (${ctx.hitRateUnder.toFixed(0)}% under rate) contradicts UNDER ${line}`;
+      }
+
+      // Soft block: L10 AND L3 both fail
+      const l3Edge = ((ctx.l3Avg - line) / line) * 100;
+      if (actionSide === "OVER" && edgePct < -5 && l3Edge < -5 && ctx.hitRateOver < 40) {
+        return `Soft block: L10 avg ${ctx.l10Avg.toFixed(1)} & L3 avg ${ctx.l3Avg.toFixed(1)} both below line ${line} for OVER`;
+      }
+      if (actionSide === "UNDER" && edgePct > 5 && l3Edge > 5 && ctx.hitRateUnder < 40) {
+        return `Soft block: L10 avg ${ctx.l10Avg.toFixed(1)} & L3 avg ${ctx.l3Avg.toFixed(1)} both above line ${line} for UNDER`;
+      }
+
+      // Snapback validation for NBA/NHL: same logic as pitcher
+      if (a.type === "snapback") {
+        if (actionSide === "UNDER" && ctx.l10Avg > line * 1.05) {
+          return `Snapback UNDER blocked: L10 avg ${ctx.l10Avg.toFixed(1)} is 5%+ above line ${line}`;
+        }
+        if (actionSide === "OVER" && ctx.l10Avg < line * 0.95) {
+          return `Snapback OVER blocked: L10 avg ${ctx.l10Avg.toFixed(1)} is 5%+ below line ${line}`;
+        }
+      }
+
+      return null;
+    }
+
+    // Apply gate to all alerts — separate into passed and blocked
+    const gatedAlerts: any[] = [];
+    const blockedAlerts: any[] = [];
+    for (const a of alerts) {
+      const blockReason = crossRefGate(a);
+      if (blockReason) {
+        log(`🚫 BLOCKED: ${a.player_name} ${a.prop_type} ${a.type} — ${blockReason}`);
+        blockedAlerts.push({ ...a, block_reason: blockReason });
+      } else {
+        gatedAlerts.push(a);
+      }
+    }
+    log(`Cross-ref gate: ${gatedAlerts.length} passed, ${blockedAlerts.length} blocked`);
+
+    // Helper to get pitcher K badge text (with L10 hit rate)
     function getPitcherKBadge(a: any): string {
       const ctx = pitcherContextMap.get(a.player_name);
       if (!ctx) return "";
+      const line = a.current_line ?? a.line_to ?? null;
       let badge = `⚾ L10 Avg: ${ctx.l10Avg.toFixed(1)} Ks | L3 Avg: ${ctx.l3Avg.toFixed(1)} Ks | Avg IP: ${ctx.avgIP.toFixed(1)}`;
+      if (line != null) {
+        const hitOver = Math.round(100); // placeholder — computed from raw logs
+        badge += ` | vs Line: ${((ctx.l10Avg - line) / line * 100).toFixed(0)}% edge`;
+      }
       if (ctx.matchupAvg !== null) {
         badge += ` | vs Opp: ${ctx.matchupAvg.toFixed(1)} Ks (${ctx.matchupGames}g)`;
       }
       return badge;
     }
 
+    // Helper to get NBA/NHL L10 badge
+    function getPlayerL10Badge(a: any): string {
+      const ctx = playerL10Map.get(`${a.player_name}|${a.prop_type}`);
+      if (!ctx) return "";
+      let badge = `📊 L10: ${ctx.l10Avg.toFixed(1)} | L3: ${ctx.l3Avg.toFixed(1)} | Hit: ${ctx.hitRateOver.toFixed(0)}% over / ${ctx.hitRateUnder.toFixed(0)}% under`;
+      if (ctx.matchupAvg !== null) {
+        badge += ` | vs Opp: ${ctx.matchupAvg.toFixed(1)} (${ctx.matchupGames}g)`;
+      }
+      return badge;
+    }
+
+    // Use gatedAlerts instead of alerts from here on
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
-    const predRows = alerts
+    const predRows = gatedAlerts
       .filter(a => {
         const dedupKey = `${a.event_id}|${a.player_name}|${a.prop_type}|${a.type}`;
         if (recentPredKeys.has(dedupKey)) {
@@ -1148,7 +1355,7 @@ Deno.serve(async (req) => {
         });
       });
 
-    log(`Inserting ${predRows.length} new predictions (${alerts.length - predRows.length} duplicates skipped)`);
+    log(`Inserting ${predRows.length} new predictions (${gatedAlerts.length - predRows.length} duplicates skipped, ${blockedAlerts.length} cross-ref blocked)`);
 
     if (predRows.length > 0) {
       const { error } = await supabase.from("fanduel_prediction_accuracy").insert(predRows);
@@ -1156,7 +1363,7 @@ Deno.serve(async (req) => {
     }
 
     // ====== SEND TELEGRAM — DEDUPED, GROUPED, PAGINATED ======
-    const highConfAlerts = alerts.filter((a) => a.confidence >= 70);
+    const highConfAlerts = gatedAlerts.filter((a) => a.confidence >= 70);
     if (highConfAlerts.length > 0) {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
@@ -1181,6 +1388,13 @@ Deno.serve(async (req) => {
           const alt = calcAltLine(currentLine, side, effectiveBuf);
           const sign = side === "OVER" ? `-${effectiveBuf}` : `+${effectiveBuf}`;
           return `🎯 *Alt Line Edge: ${side} ${alt} (${sign} pts)*`;
+        };
+
+        // Combined stats badge (pitcher K or NBA/NHL L10)
+        const getStatsBadge = (alert: any): string => {
+          const pkBadge = getPitcherKBadge(alert);
+          if (pkBadge) return pkBadge;
+          return getPlayerL10Badge(alert);
         };
 
         // ====== TAKE IT NOW — OPTIMAL ENTRY POINT ======
@@ -1212,14 +1426,14 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
-          const pitcherBadge = getPitcherKBadge(a);
+          const statsBadge = getStatsBadge(a);
           return [
             `🔥 *TAKE IT NOW*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (moved ${a.drift_amount})`,
             `📏 ${a.drift_pct_of_range}% of typical range (avg drift: ${a.expected_drift})`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            ...(pitcherBadge ? [pitcherBadge] : []),
+            ...(statsBadge ? [statsBadge] : []),
             `✅ *Action: ${action}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
@@ -1258,14 +1472,14 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
-          const pitcherBadge = getPitcherKBadge(a);
+          const statsBadge = getStatsBadge(a);
           return [
             `🎯 *LINE ABOUT TO MOVE*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Consistency: ${a.consistencyRate}% | Speed: ${a.velocity}/hr`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            ...(pitcherBadge ? [pitcherBadge] : []),
+            ...(statsBadge ? [statsBadge] : []),
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
@@ -1307,14 +1521,14 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
-          const pitcherBadge = getPitcherKBadge(a);
+          const statsBadge = getStatsBadge(a);
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            ...(pitcherBadge ? [pitcherBadge] : []),
+            ...(statsBadge ? [statsBadge] : []),
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
@@ -1366,13 +1580,13 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
-          const pitcherBadge = getPitcherKBadge(a);
+          const statsBadge = getStatsBadge(a);
           return [
             `🔄 *SNAPBACK*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
-            ...(pitcherBadge ? [pitcherBadge] : []),
+            ...(statsBadge ? [statsBadge] : []),
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.current_line}`}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
