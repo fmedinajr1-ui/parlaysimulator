@@ -1752,11 +1752,11 @@ Deno.serve(async (req) => {
       if (rulesBlocked > 0) log(`Owner rules blocked ${rulesBlocked} alert(s)`);
 
       const takeItNowAlerts = filteredAlerts.filter((a: any) => a.type === "take_it_now");
-      const lineAboutToMoveAlerts = highConfAlerts.filter((a) => a.type === "line_about_to_move");
-      const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
-      const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
-      const snapbackAlerts = highConfAlerts.filter((a) => a.type === "snapback");
-      const correlationAlerts = highConfAlerts.filter((a) => a.type === "correlated_movement" || a.type === "team_news_shift");
+      const lineAboutToMoveAlerts = filteredAlerts.filter((a: any) => a.type === "line_about_to_move");
+      const velocityAlerts = filteredAlerts.filter((a: any) => a.type === "velocity_spike");
+      const cascadeAlerts = filteredAlerts.filter((a: any) => a.type === "cascade");
+      const snapbackAlerts = filteredAlerts.filter((a: any) => a.type === "snapback");
+      const correlationAlerts = filteredAlerts.filter((a: any) => a.type === "correlated_movement" || a.type === "team_news_shift");
 
       const allFormatted: string[] = [];
       // Highest priority first
