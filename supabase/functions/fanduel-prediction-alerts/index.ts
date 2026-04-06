@@ -1114,6 +1114,17 @@ Deno.serve(async (req) => {
       const altLineTextTIN = getAltLineText(last.line, snapDirection, last.prop_type, last.player_name);
       const volInfoTIN = volatilityMap.get((last.player_name || "").toLowerCase().trim());
 
+      // Minutes badge for NBA
+      let minutesBadge: string | null = null;
+      if (isNbaPlayerProp && volInfoTIN && volInfoTIN.avgMin > 0) {
+        const minStability = volInfoTIN.cv > 0.30 ? "VOLATILE" : volInfoTIN.cv > 0.20 ? "unstable" : "stable";
+        if (volInfoTIN.avgMin < 20) {
+          minutesBadge = `⚠️ L10 Min: ${volInfoTIN.avgMin.toFixed(1)} avg — minutes risk (${minStability})`;
+        } else {
+          minutesBadge = `🕐 L10 Min: ${volInfoTIN.avgMin.toFixed(1)} avg (${minStability})`;
+        }
+      }
+
       const alertText = [
         `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
@@ -1125,6 +1136,7 @@ Deno.serve(async (req) => {
         accBadge || null,
         crossRefBadgeTIN || null,
         volWarningTIN || null,
+        minutesBadge || null,
         altLineTextTIN || null,
         `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
