@@ -1130,11 +1130,30 @@ Deno.serve(async (req) => {
           let reason: string;
           const playerCount = (a.players_moving || []).length;
           if (a.type === "team_news_shift") {
-            // Trust the news — go WITH the direction
-            action = a.dominant_direction === "dropping"
-              ? `UNDER — ${playerCount} players dropping = real news, take UNDER`
-              : `OVER — ${playerCount} players rising = real news, take OVER`;
-            reason = `85%+ correlation across ${playerCount} players = likely injury/lineup news. Following the market shift.`;
+            const isTeamMarketDerived = a.prop_type === "totals" || a.prop_type === "moneyline";
+            if (isTeamMarketDerived && a.prop_type === "totals") {
+              action = a.dominant_direction === "dropping"
+                ? `UNDER — ${playerCount} player props dropping → game total likely lower`
+                : `OVER — ${playerCount} player props rising → game total likely higher`;
+              reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}.`;
+            } else if (isTeamMarketDerived && a.prop_type === "moneyline") {
+              action = a.dominant_direction === "dropping"
+                ? `FADE — ${playerCount} player props dropping → fade this side`
+                : `BACK — ${playerCount} player props rising → back this side`;
+              reason = `Derived from player prop team news shift. ${playerCount}+ players shifting = likely lineup/injury impact on ML.`;
+            } else if (a.derived_from === "team_market_cross_game") {
+              const gameCount = playerCount;
+              action = a.dominant_direction === "dropping"
+                ? `UNDER — ${gameCount} games' ${a.prop_type} dropping across ${esc(a.sport)}`
+                : `OVER — ${gameCount} games' ${a.prop_type} rising across ${esc(a.sport)}`;
+              reason = `Cross-game ${a.prop_type} correlation: ${gameCount} games shifting ${a.dominant_direction} = league-wide trend.`;
+            } else {
+              // Standard player prop team news shift
+              action = a.dominant_direction === "dropping"
+                ? `UNDER — ${playerCount} players dropping = real news, take UNDER`
+                : `OVER — ${playerCount} players rising = real news, take OVER`;
+              reason = `85%+ correlation across ${playerCount} players = likely injury/lineup news. Following the market shift.`;
+            }
           } else {
             // Fade — contrarian logic for lower-correlation moves
             action = a.dominant_direction === "dropping"
@@ -1142,10 +1161,11 @@ Deno.serve(async (req) => {
               : `UNDER — lines rising across ${playerCount} players (fade the trap)`;
             reason = `Coordinated movement below news threshold — fading as potential public trap.`;
           }
+          const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
-            `${playerCount} players moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
+            `${playerCount} ${itemLabel} moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
             topPlayers,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
