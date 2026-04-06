@@ -445,6 +445,24 @@ Deno.serve(async (req) => {
                   gameTotalUnderOdds = totalsSnap[0].fanduel_under_odds;
                 }
 
+                // Fallback: if game_market_snapshots had no totals, try unified_props
+                if (gameTotal == null) {
+                  const { data: upTotals } = await supabase
+                    .from("unified_props")
+                    .select("current_line, over_price, under_price")
+                    .eq("prop_type", "totals")
+                    .eq("is_active", true)
+                    .or(`player_name.ilike.%${parsedHome}%,player_name.ilike.%${parsedAway}%,event_description.ilike.%${parsedHome}%`)
+                    .order("last_updated", { ascending: false })
+                    .limit(1);
+                  if (upTotals && upTotals.length > 0) {
+                    gameTotal = Number(upTotals[0].current_line);
+                    gameTotalOverOdds = upTotals[0].over_price ?? null;
+                    gameTotalUnderOdds = upTotals[0].under_price ?? null;
+                    log(`📊 Totals fallback from unified_props: ${gameTotal} for ${parsedAway} @ ${parsedHome}`);
+                  }
+                }
+
                 // Get ML odds
                 const { data: mlSnap } = await supabase
                   .from("game_market_snapshots")
@@ -603,7 +621,7 @@ Deno.serve(async (req) => {
           prop_type: propType,
           event_description: `${sport} ${propType} — ${shifts.length} games moving ${dominant}`,
           event_id: topGames[0]?.event_id || "multi_game",
-          players_moving: topGames.map(s => ({ name: s.eventDesc, direction: s.direction, magnitude: s.magnitude })),
+          players_moving: topGames.map(s => ({ name: s.eventDesc, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line, opening_line: s.opening_line })),
           dominant_direction: dominant,
           correlation_rate: Math.round(correlationRate * 100),
           avg_magnitude: Math.round(avgMag * 100) / 100,
@@ -1808,9 +1826,15 @@ Deno.serve(async (req) => {
           const emoji = a.type === "team_news_shift" ? "📰" : "🔗";
           const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
           const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
+          const isLeagueWide = a.derived_from === "team_market_cross_game";
           const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) => {
             const playerVol = volatilityMap.get(p.name);
             const volTag = playerVol?.isVolatile ? ` ⚠️CV${Math.round(playerVol.cv * 100)}%` : "";
+            if (isLeagueWide && p.current_line != null) {
+              // League-wide: show game matchup with actual total line
+              const openTag = p.opening_line != null ? ` (opened ${p.opening_line})` : "";
+              return `  ${p.name}: ${p.direction} ${p.magnitude} — Total: ${p.current_line}${openTag}`;
+            }
             const playerAltText = (() => {
               if (p.current_line == null) return "";
               const side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
