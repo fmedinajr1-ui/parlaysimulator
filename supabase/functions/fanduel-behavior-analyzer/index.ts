@@ -1258,12 +1258,14 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
+          const pitcherBadge = getPitcherKBadge(a);
           return [
             `🎯 *LINE ABOUT TO MOVE*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Consistency: ${a.consistencyRate}% | Speed: ${a.velocity}/hr`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
+            ...(pitcherBadge ? [pitcherBadge] : []),
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
@@ -1305,12 +1307,14 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
+          const pitcherBadge = getPitcherKBadge(a);
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Line ${a.direction}: ${a.line_from} → ${a.line_to}`,
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
+            ...(pitcherBadge ? [pitcherBadge] : []),
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
@@ -1362,11 +1366,13 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
+          const pitcherBadge = getPitcherKBadge(a);
           return [
             `🔄 *SNAPBACK*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
+            ...(pitcherBadge ? [pitcherBadge] : []),
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.current_line}`}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
