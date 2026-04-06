@@ -621,16 +621,21 @@ serve(async (req) => {
         index: idx + 1,
         avgScore: parlay.reduce((s, p) => s + p.convictionScore, 0) / parlay.length,
         riskConfirmedCount: parlay.filter(p => p.riskConfirmed).length,
-        legs: parlay.map(p => ({
-          player_name: p.player_name,
-          prop_type: p.prop_type,
-          signal: p.signal,
-          book_line: p.book_line,
-          edge_pct: p.edge_pct,
-          confidence_tier: p.confidence_tier,
-          risk_confirmed: p.riskConfirmed,
-          player_avg: p.player_avg_l10,
-        })),
+        legs: parlay.map(p => {
+          const vol = ffVolatilityMap.get(p.player_name.toLowerCase().trim());
+          return {
+            player_name: p.player_name,
+            prop_type: p.prop_type,
+            signal: p.signal,
+            book_line: p.book_line,
+            edge_pct: p.edge_pct,
+            confidence_tier: p.confidence_tier,
+            risk_confirmed: p.riskConfirmed,
+            player_avg: p.player_avg_l10,
+            is_volatile: vol?.isVolatile || false,
+            minutes_cv: vol ? (vol.cv * 100).toFixed(0) : null,
+          };
+        }),
       })),
       totalParlays: parlays.length,
       voidedCount,

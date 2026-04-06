@@ -272,6 +272,41 @@ Deno.serve(async (req) => {
     if (pickErr) throw pickErr;
     log(`Today's pending picks: ${todayPicks?.length || 0}`);
 
+    // === MINUTES VOLATILITY GATE ===
+    const goldPlayerNames = [...new Set((todayPicks || []).map((p: any) => p.player_name).filter(Boolean))];
+    const goldVolMap = new Map<string, { isVolatile: boolean; cv: number; avgMin: number }>();
+    if (goldPlayerNames.length > 0) {
+      const sportTables = ["nba_player_game_logs", "ncaab_player_game_logs", "nhl_player_game_logs"];
+      const goldMinResults = await Promise.all(
+        sportTables.map(table =>
+          supabase.from(table).select("player_name, min").in("player_name", goldPlayerNames)
+            .order("game_date", { ascending: false }).limit(goldPlayerNames.length * 10)
+        )
+      );
+
+      const goldMinByPlayer = new Map<string, number[]>();
+      for (const res of goldMinResults) {
+        for (const row of (res.data || [])) {
+          const name = (row.player_name || "").toLowerCase().trim();
+          if (!name) continue;
+          const mins = typeof row.min === "string" ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+          if (mins <= 0) continue;
+          const existing = goldMinByPlayer.get(name) || [];
+          if (existing.length < 10) { existing.push(mins); goldMinByPlayer.set(name, existing); }
+        }
+      }
+
+      for (const [name, minutes] of goldMinByPlayer) {
+        if (minutes.length < 3) continue;
+        const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+        const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+        const cv = Math.sqrt(variance) / (avg || 1);
+        goldVolMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg });
+      }
+      const gvCount = [...goldVolMap.values()].filter(v => v.isVolatile).length;
+      log(`Minutes volatility: ${goldVolMap.size} players, ${gvCount} volatile (CV>20%)`);
+    }
+
     if (!todayPicks || todayPicks.length < 2) {
       return new Response(JSON.stringify({
         success: true, parlays: 0, reason: "Not enough today's picks",
