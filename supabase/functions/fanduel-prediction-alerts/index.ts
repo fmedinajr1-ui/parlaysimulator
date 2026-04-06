@@ -976,17 +976,105 @@ Deno.serve(async (req) => {
       if (driftPct < minDrift) continue;
 
       // Sport-aware direction logic:
-      // NBA player props → regression (books inflate lines to trap public OVER bettors)
+      // NBA player props → data-driven (L10/L3 stats determine direction)
       // Everything else (NHL, MLB, NCAAB, pitcher props, team markets) → follow market direction
       const isPitcherProp = last.prop_type?.startsWith("pitcher_");
       const isNbaPlayerProp = last.sport === "NBA" && !TEAM_MARKET_TYPES.has(last.prop_type) && !isPitcherProp;
-      const useRegression = isNbaPlayerProp;
-      const snapDirection = useRegression
-        ? (drift > 0 ? "UNDER" : "OVER")   // NBA regression: inflated = UNDER, deflated = OVER
-        : (drift > 0 ? "OVER" : "UNDER");  // All others: follow market direction
-      const isCombo = COMBO_PROPS.has(last.prop_type);
-      const comboBoost = isCombo ? 10 : 0;
-      const confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
+
+      // ── NBA DATA-DRIVEN DIRECTION ──
+      let snapDirection: string;
+      let directionMethod: string; // "l10_data" | "l3_trend" | "market_follow"
+      let directionReason: string;
+
+      if (isNbaPlayerProp) {
+        const pKey = (last.player_name || "").toLowerCase().trim();
+        const logs = playerL10.get(pKey) || [];
+        const currentLine = last.line;
+
+        // Extract stat values from game logs based on prop type
+        const statKey = last.prop_type?.replace("player_", "") || "";
+        const statValues: number[] = [];
+        for (const g of logs) {
+          let val = 0;
+          if (statKey === "points") val = g.pts ?? g.points ?? 0;
+          else if (statKey === "rebounds") val = g.reb ?? g.rebounds ?? 0;
+          else if (statKey === "assists") val = g.ast ?? g.assists ?? 0;
+          else if (statKey === "threes") val = g.fg3m ?? g.threes ?? 0;
+          else if (statKey === "steals") val = g.stl ?? g.steals ?? 0;
+          else if (statKey === "blocks") val = g.blk ?? g.blocks ?? 0;
+          else if (statKey === "points_rebounds_assists") val = (g.pts ?? 0) + (g.reb ?? 0) + (g.ast ?? 0);
+          else if (statKey === "points_rebounds") val = (g.pts ?? 0) + (g.reb ?? 0);
+          else if (statKey === "points_assists") val = (g.pts ?? 0) + (g.ast ?? 0);
+          else if (statKey === "rebounds_assists") val = (g.reb ?? 0) + (g.ast ?? 0);
+          else if (statKey === "turnovers") val = g.turnover ?? g.turnovers ?? 0;
+          else val = g.pts ?? 0; // fallback
+          statValues.push(val);
+        }
+
+        const l10Vals = statValues.slice(0, 10);
+        const l3Vals = statValues.slice(0, 3);
+        const l10Avg = l10Vals.length >= 3 ? l10Vals.reduce((a, b) => a + b, 0) / l10Vals.length : null;
+        const l3Avg = l3Vals.length >= 3 ? l3Vals.reduce((a, b) => a + b, 0) / l3Vals.length : null;
+        const overHits = l10Vals.filter(v => v > currentLine).length;
+        const underHits = l10Vals.filter(v => v < currentLine).length;
+        const overRate = l10Vals.length > 0 ? overHits / l10Vals.length : 0;
+        const underRate = l10Vals.length > 0 ? underHits / l10Vals.length : 0;
+
+        // Minutes gate for NBA
+        const volInfo = volatilityMap.get(pKey);
+        const avgMin = volInfo?.avgMin ?? 0;
+        const minCV = volInfo?.cv ?? 0;
+
+        if (avgMin > 0 && avgMin < 15) {
+          log(`🚫 BLOCKED (TIN minutes) ${last.player_name} — L10 avg ${avgMin.toFixed(0)}min < 15`);
+          continue; // Hard block: not enough minutes
+        }
+
+        // Determine direction from data
+        if (l10Avg !== null && l10Avg > currentLine && overRate >= 0.50) {
+          snapDirection = "OVER";
+          directionMethod = "l10_data";
+          directionReason = `L10 avg ${l10Avg.toFixed(1)} clears line ${currentLine} (${(overRate * 100).toFixed(0)}% hit rate)`;
+        } else if (l10Avg !== null && l10Avg < currentLine && underRate >= 0.50) {
+          snapDirection = "UNDER";
+          directionMethod = "l10_data";
+          directionReason = `L10 avg ${l10Avg.toFixed(1)} below line ${currentLine} (${(underRate * 100).toFixed(0)}% hit rate)`;
+        } else if (l3Avg !== null && l10Avg !== null && volInfo?.isVolatile && Math.abs(l3Avg - l10Avg) / l10Avg > 0.15) {
+          // Volatile player with L3 diverging from L10 — follow recent trend
+          snapDirection = l3Avg > currentLine ? "OVER" : "UNDER";
+          directionMethod = "l3_trend";
+          directionReason = `Volatile: L3 avg ${l3Avg.toFixed(1)} vs L10 avg ${l10Avg.toFixed(1)} — ${l3Avg > l10Avg ? "hot" : "cold"} streak`;
+        } else {
+          // Fallback: follow market direction (no more blind regression)
+          snapDirection = drift > 0 ? "OVER" : "UNDER";
+          directionMethod = "market_follow";
+          directionReason = `No clear data edge — following market direction (${snapDirection})`;
+        }
+
+        // Minutes warnings for confidence adjustment
+        let minutesPenalty = 0;
+        if (avgMin > 0 && avgMin < 20) {
+          directionReason += ` | ⚠️ Low minutes (${avgMin.toFixed(0)}min)`;
+          minutesPenalty = 5;
+        }
+        if (minCV > 0.30) {
+          minutesPenalty += 10;
+        }
+
+        const isCombo = COMBO_PROPS.has(last.prop_type);
+        const comboBoost = isCombo ? 10 : 0;
+        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost - minutesPenalty);
+      } else {
+        // Non-NBA: follow market direction (unchanged)
+        snapDirection = drift > 0 ? "OVER" : "UNDER";
+        directionMethod = "market_follow";
+        directionReason = snapDirection === "OVER"
+          ? `Line rising — market signals OVER (${esc(last.sport)})`
+          : `Line dropping — market signals UNDER (${esc(last.sport)})`;
+        const isCombo = COMBO_PROPS.has(last.prop_type);
+        const comboBoost = isCombo ? 10 : 0;
+        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
+      }
       const live = isLive(last);
 
       // ── CROSS-REFERENCE GATE (player props + team markets) ──
