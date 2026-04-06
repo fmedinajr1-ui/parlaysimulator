@@ -1,59 +1,72 @@
 
 
-# Apply Minutes Volatility Gate to Every FanDuel Prediction Engine
+# Fix Directional Logic: Line Dropping = UNDER, Line Rising = OVER
 
-## What This Does
-The minutes volatility gate currently only exists in `fanduel-behavior-analyzer`. This plan adds it to all prediction/parlay engines so every single FanDuel signal — whether it's a behavioral alert, prediction alert, daily parlay leg, or force-fresh pick — gets the volatile minutes check and extra buffer.
+## Problem
+Currently, for player prop signals (take_it_now, velocity_spike, line_about_to_move, cascade), the system uses **contrarian logic**: line dropping → recommend OVER. The user confirms this is wrong — when a line drops 1-2 points, the market is telling you it should be UNDER. The system should **follow the market movement** for these signals, not fade it.
 
-## Engines That Need the Volatility Gate
+**Current (wrong) logic for player props:**
+- Line dropping → OVER ("grab value before it drops more")
+- Line rising → UNDER ("grab value before it rises more")
 
-| Engine | Current State | What Changes |
-|--------|--------------|--------------|
-| `fanduel-behavior-analyzer` | Has volatility gate | No change |
-| `fanduel-prediction-alerts` | No volatility check | Add L10 minutes lookup, warning in alerts, extra buffer in signal_factors |
-| `generate-prediction-parlays` | No volatility check | Add volatility flag to parlay leg display, penalize volatile legs in scoring |
-| `bot-generate-daily-parlays` | Has prop-type volatility block only | Add minutes CV check, penalize/flag volatile players in leg selection |
-| `bot-force-fresh-parlays` | Has prop-type block only | Add minutes CV check, penalize volatile players |
-| `bot-curated-pipeline` | None | Add volatility lookup and scoring penalty |
-| `gold-signal-parlay-engine` | None | Add volatility lookup and scoring penalty |
+**Correct logic:**
+- Line dropping → UNDER (market says player will underperform)
+- Line rising → OVER (market says player will overperform)
 
-## Implementation Per Engine
+Note: Team markets (totals, spreads, moneyline) already have correct directional logic in most places. Snapback signals use regression-to-mean logic which is intentionally different and stays as-is.
 
-### 1. Shared Volatility Lookup Pattern (reused in each file)
-Each engine will include the same volatility calculation block:
-- Collect unique player names from the picks/signals
-- Query `nba_player_game_logs` (and sport equivalents) for L10 minutes
-- Calculate CV per player, flag `isVolatile` if CV > 20%
-- Build a `volatilityMap` for fast lookup
+## Changes
 
-### 2. `fanduel-prediction-alerts` (1085 lines)
-- After the L10 game logs fetch (~line 252), add a minutes volatility calculation using the same `nba_player_game_logs` data already fetched
-- In alert text builders (velocity spike ~line 673, take_it_now ~line 768, trap ~line 842): append `⚠️ VOLATILE MINUTES` warning line
-- In `signal_factors` for each record: add `is_volatile_minutes`, `minutes_cv`, `minutes_avg`
-- Alt line buffer: add `getBuffer` + `calcAltLine` helpers (same as behavior-analyzer), show `🎯 Alt Line Edge` in every alert, with extra +2 buffer for volatile players
+### File 1: `supabase/functions/fanduel-behavior-analyzer/index.ts`
 
-### 3. `generate-prediction-parlays`
-- After fetching today's signals (~line 30), query game logs for all player names
-- Build volatility map, add `is_volatile` flag to each `EnrichedPick`
-- Penalize volatile picks in scoring: `score *= 0.7` for volatile players
-- In Telegram formatter `formatLeg`: add `⚠️ Volatile Minutes (CV X%)` line
+**A. Fix actionSide assignment (~line 1031-1042)**
+- `take_it_now`: dropping → UNDER (was OVER)
+- `velocity_spike` / `line_about_to_move`: dropping → UNDER (was OVER)
+- `snapback`: no change (regression logic is correct)
+- `team_news_shift`: no change (already correct)
+- `correlated_movement`: flip to follow market — dropping → UNDER (was OVER as "fade")
 
-### 4. `bot-generate-daily-parlays`
-- After enriching sweet spots, query game logs for all player names in the pool
-- Build volatility map
-- In leg selection loops: add scoring penalty (-15 points) for volatile players, similar to existing `ROLE_PLAYER_VOLATILE` in smart-check
-- Add `⚠️ CV X%` tag to volatile legs in Telegram output
+**B. Fix Telegram formatters for each signal type:**
 
-### 5. `bot-force-fresh-parlays`
-- Same pattern: volatility lookup after player collection
-- Scoring penalty for volatile players
-- Tag in Telegram output
+1. **Take It Now (~line 1127-1130)**: Player prop action flipped:
+   - dropping → `UNDER {line}` with reason "Line dropping = sharp money on under"
+   - rising → `OVER {line}` with reason "Line rising = sharp money on over"
 
-### 6. `bot-curated-pipeline` and `gold-signal-parlay-engine`
-- Same pattern applied
+2. **Velocity Spike (~line 1171-1174)**: Same flip:
+   - dropping → `UNDER` with reason "Line consistently dropping = sharps expecting under"
+   - rising → `OVER` with reason "Line consistently rising = sharps expecting over"
+
+3. **Line About To Move (~line 1218-1221)**: Same flip:
+   - dropping → `UNDER` with reason "Line dropping = market expects fewer"
+   - rising → `OVER` with reason "Line rising = market expects more"
+
+4. **Correlated Movement (~line 1310-1315)**: Flip to follow market like team_news_shift
+
+**C. Fix predictionText (~line 1013-1016)**: Default prediction direction for standard signals flipped to match.
+
+### File 2: `supabase/functions/fanduel-prediction-alerts/index.ts`
+
+**A. Fix rawSide (~line 652)**:
+- Change `lineDiff < 0 ? "OVER" : "UNDER"` → `lineDiff < 0 ? "UNDER" : "OVER"`
+
+**B. Remove or invert CONTRARIAN_PROPS logic (~line 44, 651-653)**:
+- The contrarian flip for player_points and player_threes currently double-inverts (dropping → OVER → flipped to UNDER). With the base logic now correct (dropping → UNDER), the contrarian flip would wrongly make it OVER again. Remove the CONTRARIAN_PROPS flip entirely since the base direction is now correct.
+
+**C. Fix cascade auto-flip (~line 690-694)**:
+- Currently flips cascade OVER → UNDER. With the new base logic (dropping → UNDER already), this auto-flip would wrongly flip UNDER → OVER. Remove or adjust this cascade flip.
+
+**D. Update reason text (~line 727-733)**:
+- "Line dropping = sharp money expects under" instead of "value is OVER"
+
+## What Stays The Same
+- **Snapback** signals: regression-to-mean logic (above open → UNDER, below open → OVER) is conceptually different and stays as-is
+- **Team market totals**: already correct (dropping → UNDER)
+- **Moneyline/H2H/Spreads**: team-level logic unchanged
+- **Alt line buffer system**: no change (buffers are applied based on the action side, which will now be correct)
+- **Minutes volatility gate**: unchanged
 
 ## Scope
-- 6 edge function files modified (behavior-analyzer stays as-is)
-- No migration needed — volatility data stored in existing `signal_factors` JSONB
-- Each file gets ~60-80 lines of volatility logic added
+- 2 edge function files modified
+- No migration needed
+- Directional logic only — no new features
 
