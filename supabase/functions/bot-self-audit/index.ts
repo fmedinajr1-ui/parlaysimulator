@@ -151,6 +151,29 @@ Deno.serve(async (req) => {
           }
         }
       }
+
+      // Rule: non_nba_follow_market
+      if (rule.rule_key === "non_nba_follow_market") {
+        const nonNbaSports = (logic.sports_excluded_from_regression as string[]) || ["NHL", "MLB", "NCAAB", "NCAAF", "NFL", "WNBA", "MLS"];
+        for (const pred of (recentPredictions || [])) {
+          const p = pred as any;
+          if (!["take_it_now", "live_drift"].includes(p.signal_type)) continue;
+          const sport = (p.sport || "").toUpperCase();
+          if (!nonNbaSports.some((s: string) => sport.includes(s))) continue;
+          
+          // Check if regression was incorrectly applied (predicted_direction = "snapback" for non-NBA)
+          if (p.predicted_direction === "snapback") {
+            violations.push({
+              rule_key: rule.rule_key,
+              violation_description: `${p.player_name}: Regression/snapback logic used for ${p.sport} — should follow market direction`,
+              action_taken: rule.enforcement === "hard_block" ? "blocked" : "warned",
+              affected_record_id: p.id || "",
+              affected_table: "fanduel_prediction_accuracy",
+              metadata: { player: p.player_name, sport: p.sport, signal_type: p.signal_type, direction: p.predicted_direction },
+            });
+          }
+        }
+      }
     }
 
     // 4. Log all violations to bot_audit_log
