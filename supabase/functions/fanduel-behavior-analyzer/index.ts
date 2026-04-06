@@ -996,6 +996,21 @@ Deno.serve(async (req) => {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
 
+        // Alt line helper for Telegram display
+        const getAltLineText = (action: string, currentLine: number | null, propType: string): string => {
+          if (currentLine == null) return "";
+          const buf = getBuffer(propType);
+          if (buf == null) return "";
+          // Extract side from action text
+          const isOver = action.toUpperCase().startsWith("OVER") || action.toUpperCase().includes("OVER");
+          const isUnder = action.toUpperCase().startsWith("UNDER") || action.toUpperCase().includes("UNDER");
+          if (!isOver && !isUnder) return "";
+          const side = isOver ? "OVER" : "UNDER";
+          const alt = calcAltLine(currentLine, side, buf);
+          const sign = side === "OVER" ? `-${buf}` : `+${buf}`;
+          return `🎯 *Alt Line Edge: ${side} ${alt} (${sign} pts)*`;
+        };
+
         // ====== TAKE IT NOW — OPTIMAL ENTRY POINT ======
         if (a.type === "take_it_now") {
           const isTeamMarket = ["h2h", "moneyline", "spreads", "totals"].includes(a.prop_type);
