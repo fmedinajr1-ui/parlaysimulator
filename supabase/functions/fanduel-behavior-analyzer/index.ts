@@ -1813,14 +1813,11 @@ Deno.serve(async (req) => {
             const volTag = playerVol?.isVolatile ? ` ⚠️CV${Math.round(playerVol.cv * 100)}%` : "";
             const playerAltText = (() => {
               if (p.current_line == null) return "";
-              const baseBuf = getBuffer(a.prop_type);
-              if (baseBuf == null) return "";
-              const effectiveBuf = playerVol?.isVolatile ? baseBuf + VOLATILITY_EXTRA_BUFFER : baseBuf;
-              let side: string;
-              // Both team_news_shift and correlated_movement follow market direction
-              side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
-              const alt = calcAltLine(p.current_line, side, effectiveBuf);
-              return ` → Alt ${side} ${alt}`;
+              const side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+              const cacheKey = `${a.event_id}|${p.name}|${a.prop_type || ""}`;
+              const cached = altLineCache.get(cacheKey);
+              if (!cached) return " → Alt: N/A";
+              return ` → Alt ${side} ${cached.line} (${fmtAltOdds(cached.odds)}) [FD]`;
             })();
             return `  ${p.name}: ${p.direction} ${p.magnitude}${playerAltText}${volTag}`;
           }).join("\n");
