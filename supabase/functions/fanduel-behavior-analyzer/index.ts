@@ -1808,9 +1808,15 @@ Deno.serve(async (req) => {
           const emoji = a.type === "team_news_shift" ? "📰" : "🔗";
           const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
           const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
+          const isLeagueWide = a.derived_from === "team_market_cross_game";
           const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) => {
             const playerVol = volatilityMap.get(p.name);
             const volTag = playerVol?.isVolatile ? ` ⚠️CV${Math.round(playerVol.cv * 100)}%` : "";
+            if (isLeagueWide && p.current_line != null) {
+              // League-wide: show game matchup with actual total line
+              const openTag = p.opening_line != null ? ` (opened ${p.opening_line})` : "";
+              return `  ${p.name}: ${p.direction} ${p.magnitude} — Total: ${p.current_line}${openTag}`;
+            }
             const playerAltText = (() => {
               if (p.current_line == null) return "";
               const side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
