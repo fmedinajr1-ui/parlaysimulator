@@ -12068,7 +12068,12 @@ Deno.serve(async (req) => {
 
             // Conflict detection
             const isConflict = (side === 'over' && composite < line) || (side === 'under' && composite > line);
-            if (isConflict) {
+
+            // Minutes volatility detection
+            const botVol = botVolMap.get(playerName);
+            const isVolatilePlayer = botVol?.isVolatile || false;
+
+            if (isConflict || isVolatilePlayer) {
               const propLabelMap: Record<string, string> = {
                 player_points: 'PTS', points: 'PTS', player_rebounds: 'REB', rebounds: 'REB',
                 player_assists: 'AST', assists: 'AST', player_threes: '3PT', threes: '3PT',
@@ -12076,22 +12081,30 @@ Deno.serve(async (req) => {
                 player_turnovers: 'TO', turnovers: 'TO', player_pra: 'PRA', pra: 'PRA',
               };
               const propLabel = propLabelMap[normProp] || propLabelMap[(leg.prop_type || '').toLowerCase()] || leg.prop_type;
-              compositeConflicts.push({
-                player_name: playerName,
-                prop_type: propLabel,
-                side: side.toUpperCase(),
-                line,
-                l10_avg: Math.round(l10Avg * 100) / 100,
-                l5_avg: Math.round(l5Avg * 100) / 100,
-                l3_avg: Math.round(l3Avg * 100) / 100,
-                h2h_avg: h2hCount >= 2 ? Math.round(h2hAvg * 100) / 100 : null,
-                h2h_games: h2hCount,
-                composite: Math.round(composite * 100) / 100,
-                parlay_id: parlayId,
-                parlay_tier: parlayTier,
-                opponent: todayOpponent || 'N/A',
-              });
-              console.log(`[CompositeFilter] ❌ CONFLICT: ${playerName} ${propLabel} ${side.toUpperCase()} ${line} | L10:${l10Avg.toFixed(1)} L5:${l5Avg.toFixed(1)} L3:${l3Avg.toFixed(1)} H2H:${h2hCount >= 2 ? h2hAvg.toFixed(1) : 'N/A'}(${h2hCount}g) | Composite:${composite.toFixed(1)} vs line ${line}`);
+
+              if (isConflict) {
+                compositeConflicts.push({
+                  player_name: playerName,
+                  prop_type: propLabel,
+                  side: side.toUpperCase(),
+                  line,
+                  l10_avg: Math.round(l10Avg * 100) / 100,
+                  l5_avg: Math.round(l5Avg * 100) / 100,
+                  l3_avg: Math.round(l3Avg * 100) / 100,
+                  h2h_avg: h2hCount >= 2 ? Math.round(h2hAvg * 100) / 100 : null,
+                  h2h_games: h2hCount,
+                  composite: Math.round(composite * 100) / 100,
+                  parlay_id: parlayId,
+                  parlay_tier: parlayTier,
+                  opponent: todayOpponent || 'N/A',
+                  is_volatile: isVolatilePlayer,
+                  minutes_cv: botVol?.cv ?? null,
+                });
+                console.log(`[CompositeFilter] ❌ CONFLICT: ${playerName} ${propLabel} ${side.toUpperCase()} ${line} | L10:${l10Avg.toFixed(1)} L5:${l5Avg.toFixed(1)} L3:${l3Avg.toFixed(1)} H2H:${h2hCount >= 2 ? h2hAvg.toFixed(1) : 'N/A'}(${h2hCount}g) | Composite:${composite.toFixed(1)} vs line ${line}${isVolatilePlayer ? ` ⚠️CV${(botVol!.cv * 100).toFixed(0)}%` : ''}`);
+              } else if (isVolatilePlayer) {
+                // Log volatile but not conflicting — still penalize in scoring
+                console.log(`[CompositeFilter] ⚠️ VOLATILE: ${playerName} ${propLabel} — CV ${(botVol!.cv * 100).toFixed(0)}% (minutes unstable, -15 score penalty applied)`);
+              }
             }
           }
           console.log(`[CompositeFilter] Scan complete: ${compositeConflicts.length} conflicts found across ${allLegs.length} NBA legs`);
