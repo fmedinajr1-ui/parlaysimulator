@@ -232,6 +232,8 @@ Deno.serve(async (req) => {
       player_rebounds: "rebounds",
       player_assists: "assists",
       player_threes: "threes_made",
+      pitcher_strikeouts: "pitcher_strikeouts",
+      pitcher_outs: "pitcher_outs",
     };
     // For combo props, sum these fields
     const COMBO_STAT_FIELDS: Record<string, string[]> = {
@@ -241,6 +243,14 @@ Deno.serve(async (req) => {
       player_rebounds_assists: ["rebounds", "assists"],
     };
 
+    // MLB prop types that need mlb_player_game_logs
+    const MLB_PROP_TYPES = new Set([
+      "pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed", "pitcher_earned_runs",
+      "hits", "total_bases", "runs", "rbis", "stolen_bases", "batter_home_runs",
+      "batter_hits", "batter_rbis", "batter_runs_scored", "batter_total_bases",
+      "batter_stolen_bases", "batter_walks",
+    ]);
+
     const allPlayerNames = [...new Set(
       activeData
         .filter((r: any) => !TEAM_MARKET_TYPES.has(r.prop_type))
@@ -248,8 +258,16 @@ Deno.serve(async (req) => {
         .filter(Boolean)
     )];
 
+    // Identify MLB players (pitcher/batter props)
+    const mlbPlayerNames = [...new Set(
+      activeData
+        .filter((r: any) => MLB_PROP_TYPES.has(r.prop_type))
+        .map((r: any) => r.player_name)
+        .filter(Boolean)
+    )];
+
     // Fetch L10 game logs + matchup history for all players in parallel
-    const [l10LogsRes, matchupHistRes] = await Promise.all([
+    const [l10LogsRes, matchupHistRes, mlbLogsRes] = await Promise.all([
       allPlayerNames.length > 0
         ? supabase
             .from("nba_player_game_logs")
@@ -263,6 +281,14 @@ Deno.serve(async (req) => {
             .from("matchup_history")
             .select("player_name, opponent, prop_type, avg_stat, hit_rate_over, hit_rate_under, games_played, min_stat, max_stat")
             .in("player_name", allPlayerNames)
+        : Promise.resolve({ data: [] }),
+      mlbPlayerNames.length > 0
+        ? supabase
+            .from("mlb_player_game_logs")
+            .select("player_name, opponent, game_date, pitcher_strikeouts, innings_pitched, hits, runs, rbis, total_bases, home_runs, stolen_bases, walks, strikeouts, earned_runs, pitcher_hits_allowed, at_bats")
+            .in("player_name", mlbPlayerNames)
+            .order("game_date", { ascending: false })
+            .limit(mlbPlayerNames.length * 15)
         : Promise.resolve({ data: [] }),
     ]);
 
