@@ -1300,21 +1300,23 @@ Deno.serve(async (req) => {
           const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
           const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
           const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) => {
+            const playerVol = volatilityMap.get(p.name);
+            const volTag = playerVol?.isVolatile ? ` ⚠️CV${Math.round(playerVol.cv * 100)}%` : "";
             const playerAltText = (() => {
               if (p.current_line == null) return "";
-              const buf = getBuffer(a.prop_type);
-              if (buf == null) return "";
-              // Determine side based on signal type and direction
+              const baseBuf = getBuffer(a.prop_type);
+              if (baseBuf == null) return "";
+              const effectiveBuf = playerVol?.isVolatile ? baseBuf + VOLATILITY_EXTRA_BUFFER : baseBuf;
               let side: string;
               if (a.type === "team_news_shift") {
                 side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
               } else {
                 side = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
               }
-              const alt = calcAltLine(p.current_line, side, buf);
+              const alt = calcAltLine(p.current_line, side, effectiveBuf);
               return ` → Alt ${side} ${alt}`;
             })();
-            return `  ${p.name}: ${p.direction} ${p.magnitude}${playerAltText}`;
+            return `  ${p.name}: ${p.direction} ${p.magnitude}${playerAltText}${volTag}`;
           }).join("\n");
           // team_news_shift: go WITH the movement (news-driven)
           // correlated_movement: FADE the movement (market trap theory)
@@ -1355,7 +1357,8 @@ Deno.serve(async (req) => {
           }
           const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
           const isTeamMarketCorr = ["h2h", "moneyline"].includes(a.prop_type);
-          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to ?? a.avg_current_line, a.prop_type);
+          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to ?? a.avg_current_line, a.prop_type, a.has_volatile_players);
+          const volWarning = a.has_volatile_players ? `⚠️ *${a.volatile_player_count} VOLATILE PLAYER${a.volatile_player_count > 1 ? "S" : ""}* — extra buffer applied to flagged players` : "";
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
@@ -1363,6 +1366,7 @@ Deno.serve(async (req) => {
             topPlayers,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
+            ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
