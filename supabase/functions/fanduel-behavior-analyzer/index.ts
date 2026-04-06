@@ -1042,9 +1042,10 @@ Deno.serve(async (req) => {
         }
 
         const lineForAlt = a.current_line ?? a.line_to ?? a.avg_current_line ?? null;
-        const buffer = getBuffer(a.prop_type || "");
-        const altLine = (lineForAlt != null && buffer != null && actionSide)
-          ? calcAltLine(lineForAlt, actionSide, buffer)
+        const baseBuffer = getBuffer(a.prop_type || "");
+        const effectiveBuffer = (baseBuffer != null && a.is_volatile_minutes) ? baseBuffer + VOLATILITY_EXTRA_BUFFER : baseBuffer;
+        const altLine = (lineForAlt != null && effectiveBuffer != null && actionSide)
+          ? calcAltLine(lineForAlt, actionSide, effectiveBuffer)
           : null;
 
         return ({
