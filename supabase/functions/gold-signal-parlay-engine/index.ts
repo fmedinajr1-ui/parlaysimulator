@@ -381,7 +381,13 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Gate 6: Cold streak mode — skip Tier 2 legs entirely
+      // Gate 6: Minutes volatility — skip volatile bench players from gold parlays
+      const goldVol = goldVolMap.get(playerKey);
+      if (goldVol?.isVolatile) {
+        log(`⚠️ VOLATILE MINUTES: ${playerName} CV ${(goldVol.cv * 100).toFixed(0)}% — penalizing in gold engine`);
+      }
+
+      // Gate 6b: Cold streak mode — skip Tier 2 legs entirely
       // (checked after tier classification below)
 
       // Gate 7: Verify FanDuel line exists (team markets exempt)
