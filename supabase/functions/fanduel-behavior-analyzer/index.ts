@@ -1538,6 +1538,37 @@ Deno.serve(async (req) => {
     // ====== SEND TELEGRAM — DEDUPED, GROUPED, PAGINATED ======
     const highConfAlerts = gatedAlerts.filter((a) => a.confidence >= 70);
     if (highConfAlerts.length > 0) {
+      // Pre-fetch all alt lines in parallel so formatAlert can be sync
+      const altLinePrefetchPromises = highConfAlerts.map(async (a: any) => {
+        const line = a.current_line ?? a.line_to ?? a.avg_current_line ?? null;
+        if (line == null) return;
+        // Determine side for this alert
+        let side = "";
+        if (a.action) {
+          if (a.action.toUpperCase().includes("OVER")) side = "OVER";
+          else if (a.action.toUpperCase().includes("UNDER")) side = "UNDER";
+        }
+        if (!side && a.direction) {
+          side = a.direction === "dropping" ? "UNDER" : "OVER";
+        }
+        if (!side && a.dominant_direction) {
+          side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+        }
+        if (side) {
+          await fetchRealAltLine(a.event_id, a.player_name, a.prop_type || "", side, line, a.sport || "NBA");
+        }
+        // Also prefetch for correlated/team_news players
+        if (a.players_moving) {
+          for (const p of a.players_moving.slice(0, 4)) {
+            if (p.current_line != null && a.dominant_direction) {
+              const pSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+              await fetchRealAltLine(a.event_id, p.name, a.prop_type || "", pSide, p.current_line, a.sport || "NBA");
+            }
+          }
+        }
+      });
+      await Promise.allSettled(altLinePrefetchPromises);
+
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
 
