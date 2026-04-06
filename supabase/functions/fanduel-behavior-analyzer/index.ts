@@ -18,6 +18,46 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[Behavior Analyzer] ${msg}`);
   const now = new Date();
 
+  // ====== OWNER RULES ENGINE — load rules that apply to this function ======
+  let ownerRules: Array<{ rule_key: string; rule_logic: Record<string, unknown>; enforcement: string }> = [];
+  try {
+    const { data: rulesData } = await supabase
+      .from("bot_owner_rules")
+      .select("rule_key, rule_logic, enforcement")
+      .eq("is_active", true)
+      .contains("applies_to", ["fanduel-behavior-analyzer"]);
+    ownerRules = (rulesData || []) as any;
+    if (ownerRules.length > 0) log(`Loaded ${ownerRules.length} owner rules`);
+  } catch (_) { /* rules are advisory, don't block on failure */ }
+
+  // Helper: check if an alert violates any owner rule
+  function checkOwnerRules(alert: any): { blocked: boolean; rule?: string; reason?: string } {
+    for (const rule of ownerRules) {
+      // Rule: pitcher K must follow market
+      if (rule.rule_key === "pitcher_k_follow_market") {
+        const pt = ((alert.prop_type || "").toLowerCase());
+        const kTypes = ((rule.rule_logic as any).prop_types || []) as string[];
+        if (kTypes.some((k: string) => pt.includes(k))) {
+          const direction = (alert.direction || alert.dominant_direction || "").toLowerCase();
+          const side = ((alert.action || "").toLowerCase());
+          if (direction.includes("ris") && side.includes("under")) {
+            return { blocked: rule.enforcement === "hard_block", rule: rule.rule_key, reason: "Pitcher K rising → should be OVER, not UNDER" };
+          }
+          if (direction.includes("drop") && side.includes("over")) {
+            return { blocked: rule.enforcement === "hard_block", rule: rule.rule_key, reason: "Pitcher K dropping → should be UNDER, not OVER" };
+          }
+        }
+      }
+      // Rule: cascade needs direction
+      if (rule.rule_key === "cascade_needs_direction" && alert.type === "cascade") {
+        if (!alert.dominant_direction) {
+          return { blocked: false, rule: rule.rule_key, reason: "Cascade missing dominant direction" };
+        }
+      }
+    }
+    return { blocked: false };
+  }
+
   // ====== ALT LINE BUFFER CONSTANTS (by prop type keyword) ======
   const PROP_BUFFER: Record<string, number> = {
     points: 3.0, pra: 3.0, pts_reb: 3.0, pts_ast: 3.0, "pts+reb": 3.0, "pts+ast": 3.0,
