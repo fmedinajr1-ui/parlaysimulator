@@ -1098,13 +1098,7 @@ Deno.serve(async (req) => {
 
       if (confidence < 55) continue;
 
-      const reason = useRegression
-        ? (snapDirection === "UNDER"
-          ? "Line inflated above open — expect snapback down"
-          : "Line deflated below open — expect snapback up")
-        : (snapDirection === "OVER"
-          ? `Line rising — market signals OVER (${esc(last.sport)})`
-          : `Line dropping — market signals UNDER (${esc(last.sport)})`);
+      const reason = directionReason;
       const liveTag = live ? " [🔴 LIVE]" : "";
 
       // Dynamic accuracy badge from real verified data
@@ -1126,7 +1120,7 @@ Deno.serve(async (req) => {
         marketLabel,
         fdLineBadge(last.line, last.over_price, last.under_price, snapDirection),
         `Open: ${last.opening_line} → Now: ${last.line}`,
-        `Drift: ${driftPct.toFixed(1)}% — ${useRegression ? "historically snaps back" : "market conviction signal"}`,
+        `Drift: ${driftPct.toFixed(1)}% — ${directionMethod === "l10_data" ? "L10 data-driven" : directionMethod === "l3_trend" ? "L3 trend signal" : "market conviction signal"}`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
         crossRefBadgeTIN || null,
@@ -1141,7 +1135,7 @@ Deno.serve(async (req) => {
         sport: last.sport, prop_type: last.prop_type,
         player_name: last.player_name, event_id: last.event_id,
         prediction: `${snapDirection} ${last.line}`,
-        predicted_direction: useRegression ? "snapback" : "market_follow",
+        predicted_direction: directionMethod,
         predicted_magnitude: absDrift,
         confidence_at_signal: confidence,
         time_to_tip_hours: last.hours_to_tip,
