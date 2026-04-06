@@ -363,10 +363,83 @@ Deno.serve(async (req) => {
           // ── AUTO-GENERATE TOTALS & MONEYLINE SIGNALS from team_news_shift ──
           // When 3+ player props shift together (85%+ correlation), infer team-level signals
           if (isTeamWide) {
-            // TOTALS signal: player props dropping → game total likely lower → UNDER
+            // ── Look up actual game total line + ML odds from game_market_snapshots ──
+            let gameTotal: number | null = null;
+            let gameTotalOverOdds: number | null = null;
+            let gameTotalUnderOdds: number | null = null;
+            let homeTeam: string | null = null;
+            let awayTeam: string | null = null;
+            let homeOdds: number | null = null;
+            let awayOdds: number | null = null;
+
+            // Parse event description to find teams (format: "Away Team @ Home Team")
+            const eventDesc = sampleShift.eventDesc || "";
+            const atMatch = eventDesc.match(/^(.+?)\s*@\s*(.+)$/);
+            const parsedAway = atMatch ? atMatch[1].trim() : null;
+            const parsedHome = atMatch ? atMatch[2].trim() : null;
+
+            if (parsedHome && parsedAway) {
+              try {
+                // Get totals line
+                const { data: totalsSnap } = await supabase
+                  .from("game_market_snapshots")
+                  .select("fanduel_line, fanduel_over_odds, fanduel_under_odds")
+                  .eq("bet_type", "totals")
+                  .ilike("home_team", `%${parsedHome}%`)
+                  .ilike("away_team", `%${parsedAway}%`)
+                  .order("scan_time", { ascending: false })
+                  .limit(1);
+
+                if (totalsSnap && totalsSnap.length > 0) {
+                  gameTotal = Number(totalsSnap[0].fanduel_line);
+                  gameTotalOverOdds = totalsSnap[0].fanduel_over_odds;
+                  gameTotalUnderOdds = totalsSnap[0].fanduel_under_odds;
+                }
+
+                // Get ML odds
+                const { data: mlSnap } = await supabase
+                  .from("game_market_snapshots")
+                  .select("home_team, away_team, fanduel_home_odds, fanduel_away_odds")
+                  .ilike("bet_type", "%moneyline%")
+                  .ilike("home_team", `%${parsedHome}%`)
+                  .ilike("away_team", `%${parsedAway}%`)
+                  .order("scan_time", { ascending: false })
+                  .limit(1);
+
+                if (mlSnap && mlSnap.length > 0) {
+                  homeTeam = mlSnap[0].home_team;
+                  awayTeam = mlSnap[0].away_team;
+                  homeOdds = mlSnap[0].fanduel_home_odds;
+                  awayOdds = mlSnap[0].fanduel_away_odds;
+                }
+              } catch (e) {
+                log(`⚠️ game_market_snapshots lookup failed: ${e}`);
+              }
+            }
+
+            // Determine which team the shifting players belong to
+            // If players are rising → back that team; if dropping → fade that team
+            let teamToBack: string | null = null;
+            let teamToBackOdds: number | null = null;
+            if (homeTeam && awayTeam) {
+              // Default to home team; the players in shifts likely belong to one side
+              // Use event description positioning: players listed under "@ Home" = home team
+              const isHomeTeamShifting = parsedHome && eventDesc.includes(parsedHome);
+              if (dominant === "rising") {
+                // Rising props → back that team
+                teamToBack = isHomeTeamShifting ? homeTeam : awayTeam;
+                teamToBackOdds = isHomeTeamShifting ? homeOdds : awayOdds;
+              } else {
+                // Dropping props → fade that team = back the other
+                teamToBack = isHomeTeamShifting ? awayTeam : homeTeam;
+                teamToBackOdds = isHomeTeamShifting ? awayOdds : homeOdds;
+              }
+            }
+
+            // TOTALS signal
             const totalsAlertKey = `${eventId}|CORR_TOTALS|${propType}`;
             const totalsDirection = dominant === "dropping" ? "UNDER" : "OVER";
-            const totalsConf = Math.min(85, conf - 5); // slightly less confident than the player-level signal
+            const totalsConf = Math.min(85, conf - 5);
             addAlert(totalsAlertKey, totalsConf + 3, {
               type: "team_news_shift",
               live: false,
@@ -383,15 +456,17 @@ Deno.serve(async (req) => {
               hours_to_tip: null,
               derived_from: `player_props_${propType}`,
               derived_action: totalsDirection,
+              game_total_line: gameTotal,
+              game_total_over_odds: gameTotalOverOdds,
+              game_total_under_odds: gameTotalUnderOdds,
             });
-            log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection} (derived from ${shifts.length} player ${propType} shifts)`);
+            log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection}${gameTotal ? ` ${gameTotal}` : ''} (derived from ${shifts.length} player ${propType} shifts)`);
 
-            // MONEYLINE signal: player props dropping for one side → fade that team
-            // Only generate if it's a clear directional signal (5+ players or 90%+ correlation)
+            // MONEYLINE signal
             if (shifts.length >= 5 || correlationRate >= 0.9) {
               const mlAlertKey = `${eventId}|CORR_ML|${propType}`;
               const mlAction = dominant === "dropping" ? "FADE" : "BACK";
-              const mlConf = Math.min(80, conf - 10); // less confident than totals
+              const mlConf = Math.min(80, conf - 10);
               addAlert(mlAlertKey, mlConf + 2, {
                 type: "team_news_shift",
                 live: false,
@@ -408,8 +483,10 @@ Deno.serve(async (req) => {
                 hours_to_tip: null,
                 derived_from: `player_props_${propType}`,
                 derived_action: mlAction,
+                team_to_back: teamToBack,
+                team_to_back_odds: teamToBackOdds,
               });
-              log(`📰 AUTO-ML: ${sampleShift.eventDesc} → ${mlAction} (derived from ${shifts.length} player ${propType} shifts)`);
+              log(`📰 AUTO-ML: ${sampleShift.eventDesc} → ${mlAction}${teamToBack ? ` ${teamToBack} (${teamToBackOdds})` : ''} (derived from ${shifts.length} player ${propType} shifts)`);
             }
           }
         }
@@ -1679,15 +1756,25 @@ Deno.serve(async (req) => {
           if (a.type === "team_news_shift") {
             const isTeamMarketDerived = a.prop_type === "totals" || a.prop_type === "moneyline";
             if (isTeamMarketDerived && a.prop_type === "totals") {
+              const totalLine = a.game_total_line ? ` ${a.game_total_line}` : '';
+              const oddsTag = a.dominant_direction === "dropping" && a.game_total_under_odds
+                ? ` (${a.game_total_under_odds > 0 ? '+' : ''}${a.game_total_under_odds})`
+                : a.game_total_over_odds
+                ? ` (${a.game_total_over_odds > 0 ? '+' : ''}${a.game_total_over_odds})`
+                : '';
               action = a.dominant_direction === "dropping"
-                ? `UNDER — ${playerCount} player props dropping → game total likely lower`
-                : `OVER — ${playerCount} player props rising → game total likely higher`;
-              reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}.`;
+                ? `UNDER${totalLine}${oddsTag} — ${playerCount} player props dropping → game total likely lower`
+                : `OVER${totalLine}${oddsTag} — ${playerCount} player props rising → game total likely higher`;
+              reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}${totalLine}.`;
             } else if (isTeamMarketDerived && a.prop_type === "moneyline") {
+              const teamName = a.team_to_back || 'this side';
+              const mlOddsTag = a.team_to_back_odds
+                ? ` (${a.team_to_back_odds > 0 ? '+' : ''}${a.team_to_back_odds})`
+                : '';
               action = a.dominant_direction === "dropping"
-                ? `FADE — ${playerCount} player props dropping → fade this side`
-                : `BACK — ${playerCount} player props rising → back this side`;
-              reason = `Derived from player prop team news shift. ${playerCount}+ players shifting = likely lineup/injury impact on ML.`;
+                ? `FADE — ${playerCount} player props dropping → fade ${teamName}`
+                : `BACK ${teamName}${mlOddsTag} — ${playerCount} player props rising → back ${teamName}`;
+              reason = `Derived from player prop team news shift. ${playerCount}+ players shifting = likely lineup/injury impact on ${teamName} ML.`;
             } else if (a.derived_from === "team_market_cross_game") {
               const gameCount = playerCount;
               action = a.dominant_direction === "dropping"
