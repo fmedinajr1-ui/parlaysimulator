@@ -857,6 +857,10 @@ Deno.serve(async (req) => {
         ? `${esc(last.player_name)} ${esc(last.prop_type).toUpperCase()}`
         : `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`;
 
+      const volWarningTIN = getVolatilityWarning(last.player_name);
+      const altLineTextTIN = getAltLineText(last.line, snapDirection, last.prop_type, last.player_name);
+      const volInfoTIN = volatilityMap.get((last.player_name || "").toLowerCase().trim());
+
       const alertText = [
         `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
@@ -867,6 +871,8 @@ Deno.serve(async (req) => {
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
         crossRefBadgeTIN || null,
+        volWarningTIN || null,
+        altLineTextTIN || null,
         `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
@@ -881,7 +887,14 @@ Deno.serve(async (req) => {
         confidence_at_signal: confidence,
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: driftPct,
-        signal_factors: { opening_line: last.opening_line, current_line: last.line, driftPct },
+        signal_factors: {
+          opening_line: last.opening_line, current_line: last.line, driftPct,
+          is_volatile_minutes: volInfoTIN?.isVolatile || false,
+          minutes_cv: volInfoTIN?.cv ?? null,
+          minutes_avg: volInfoTIN?.avgMin ?? null,
+          alt_line_buffer: getAltBuffer(last.prop_type, last.player_name),
+          recommended_alt_line: calcAltLine(last.line, snapDirection, last.prop_type, last.player_name),
+        },
         // Trap detection fields
         line_at_alert: last.line,
         hours_before_tip: last.hours_to_tip,
