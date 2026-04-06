@@ -1076,8 +1076,79 @@ Deno.serve(async (req) => {
         const isCombo = COMBO_PROPS.has(last.prop_type);
         const comboBoost = isCombo ? 10 : 0;
         var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost - minutesPenalty);
+      } else if (isMoneylineProp(last.prop_type) && (last.sport === "MLB" || last.sport === "baseball_mlb")) {
+        // ── MLB MONEYLINE: TAKE/FADE with pitcher context ──
+        // Line shortening (odds getting more negative or less positive) = market backing = TAKE
+        // Line lengthening (odds getting more positive or less negative) = market fading = FADE
+        const isShortening = drift < 0; // e.g. +168 → +154 or -110 → -130
+        snapDirection = isShortening ? "OVER" : "UNDER"; // internal: OVER=TAKE, UNDER=FADE
+        directionMethod = "market_follow";
+
+        // Pitcher quality context from mlb_player_game_logs
+        let pitcherContext = "";
+        let pitcherConfidenceAdj = 0;
+        const teamName = (last.player_name || "").toLowerCase().trim();
+        
+        // Look for pitchers associated with this event via active props
+        const eventPitchers: { name: string; era: number; k9: number; ip: number; games: number }[] = [];
+        for (const [, snaps] of groups) {
+          const s = snaps[0];
+          if (s.event_id !== last.event_id) continue;
+          if (!s.prop_type?.startsWith("pitcher_")) continue;
+          const pName = (s.player_name || "").toLowerCase().trim();
+          const pLogs = mlbPlayerLogs.get(pName);
+          if (!pLogs || pLogs.length < 3) continue;
+          const l10 = pLogs.slice(0, 10);
+          const totalIP = l10.reduce((s, g) => s + (g.innings_pitched || 0), 0);
+          const totalER = l10.reduce((s, g) => s + (g.earned_runs || 0), 0);
+          const totalK = l10.reduce((s, g) => s + (g.pitcher_strikeouts || g.strikeouts || 0), 0);
+          const avgIP = totalIP / l10.length;
+          const era = avgIP > 0 ? (totalER / totalIP) * 9 : 99;
+          const k9 = avgIP > 0 ? (totalK / totalIP) * 9 : 0;
+          eventPitchers.push({ name: s.player_name, era, k9, ip: avgIP, games: l10.length });
+        }
+
+        // Identify if pitcher is ace or struggling
+        if (eventPitchers.length > 0) {
+          for (const p of eventPitchers) {
+            const isAce = p.era < 3.5 && p.k9 > 7.0;
+            const isStruggling = p.era > 5.0 || (p.ip < 4.5 && p.games >= 5);
+            const isRookie = p.games <= 5 && p.ip < 4.0;
+            if (isAce) {
+              pitcherContext += `\n⚾ SP: ${esc(p.name)} — 🔥 Ace (${p.era.toFixed(2)} ERA, ${p.k9.toFixed(1)} K/9 L10)`;
+              pitcherConfidenceAdj += 10;
+            } else if (isStruggling || isRookie) {
+              pitcherContext += `\n⚾ SP: ${esc(p.name)} — ⚠️ ${isRookie ? "Rookie" : "Struggling"} (${p.era.toFixed(2)} ERA, ${p.ip.toFixed(1)} IP/gm L10)`;
+              pitcherConfidenceAdj -= 10;
+            } else {
+              pitcherContext += `\n⚾ SP: ${esc(p.name)} (${p.era.toFixed(2)} ERA, ${p.k9.toFixed(1)} K/9 L10)`;
+            }
+          }
+        }
+
+        const action = isShortening ? "TAKE" : "FADE";
+        directionReason = isShortening
+          ? `Odds shortening ${fmtOdds(last.opening_line)} → ${fmtOdds(last.line)} — market backing ${esc(last.player_name)} (${action})`
+          : `Odds lengthening ${fmtOdds(last.opening_line)} → ${fmtOdds(last.line)} — market fading ${esc(last.player_name)} (${action})`;
+        if (pitcherContext) directionReason += pitcherContext;
+
+        const isCombo = COMBO_PROPS.has(last.prop_type);
+        const comboBoost = isCombo ? 10 : 0;
+        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost + pitcherConfidenceAdj);
+      } else if (isMoneylineProp(last.prop_type)) {
+        // ── Non-MLB Moneyline: TAKE/FADE ──
+        const isShortening = drift < 0;
+        snapDirection = isShortening ? "OVER" : "UNDER";
+        directionMethod = "market_follow";
+        const action = isShortening ? "TAKE" : "FADE";
+        directionReason = isShortening
+          ? `Odds shortening — market signals ${action} ${esc(last.player_name)} (${esc(last.sport)})`
+          : `Odds lengthening — market signals ${action} ${esc(last.player_name)} (${esc(last.sport)})`;
+        const isCombo = COMBO_PROPS.has(last.prop_type);
+        const comboBoost = isCombo ? 10 : 0;
+        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
       } else {
-        // Non-NBA: follow market direction (unchanged)
+        // Non-NBA non-moneyline: follow market direction (unchanged)
         snapDirection = drift > 0 ? "OVER" : "UNDER";
         directionMethod = "market_follow";
         directionReason = snapDirection === "OVER"
