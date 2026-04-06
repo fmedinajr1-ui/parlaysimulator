@@ -302,6 +302,30 @@ Deno.serve(async (req) => {
       if (arr.length < 10) arr.push(gl);
     }
 
+    // Build MLB L10 + L3 lookup: player → game logs (pitcher stats)
+    const MLB_STAT_MAP: Record<string, string> = {
+      pitcher_strikeouts: "pitcher_strikeouts",
+      pitcher_outs: "pitcher_outs",
+      pitcher_hits_allowed: "pitcher_hits_allowed",
+      pitcher_earned_runs: "earned_runs",
+      hits: "hits", batter_hits: "hits",
+      total_bases: "total_bases", batter_total_bases: "total_bases",
+      runs: "runs", batter_runs_scored: "runs",
+      rbis: "rbis", batter_rbis: "rbis",
+      stolen_bases: "stolen_bases", batter_stolen_bases: "stolen_bases",
+      batter_home_runs: "home_runs",
+      batter_walks: "walks",
+    };
+
+    const mlbPlayerLogs = new Map<string, any[]>();
+    for (const gl of (mlbLogsRes.data || [])) {
+      const key = gl.player_name?.toLowerCase();
+      if (!key) continue;
+      if (!mlbPlayerLogs.has(key)) mlbPlayerLogs.set(key, []);
+      mlbPlayerLogs.get(key)!.push(gl);
+    }
+    log(`MLB game logs loaded: ${mlbPlayerLogs.size} players`);
+
     // ══════════════════════════════════════════════════════════════
     // MINUTES VOLATILITY GATE — flag high-CV players across all signals
     // ══════════════════════════════════════════════════════════════
