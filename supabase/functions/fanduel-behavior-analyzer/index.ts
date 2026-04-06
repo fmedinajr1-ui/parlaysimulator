@@ -907,6 +907,91 @@ Deno.serve(async (req) => {
       (recentPreds || []).map(r => `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`)
     );
 
+    // ====== MINUTES VOLATILITY GATE ======
+    // Query L10 minutes for all unique players in alerts, flag high-CV players
+    const VOLATILITY_EXTRA_BUFFER = 2.0;
+    const VOLATILITY_CV_THRESHOLD = 0.20; // 20%
+    const volatilityMap = new Map<string, { avgMin: number; cv: number; isVolatile: boolean }>();
+
+    const sportTableMap: Record<string, { table: string; col: string }> = {
+      NBA: { table: "nba_player_game_logs", col: "minutes_played" },
+      NCAAB: { table: "ncaab_player_game_logs", col: "minutes_played" },
+      NHL: { table: "nhl_player_game_logs", col: "minutes_played" },
+    };
+
+    // Collect unique player+sport combos from individual player alerts (skip aggregate signals)
+    const playerSportPairs = new Map<string, string>();
+    for (const a of alerts) {
+      if (a.players_moving) {
+        // Aggregate signal — check each individual player
+        for (const p of a.players_moving) {
+          if (p.name && a.sport) playerSportPairs.set(p.name, a.sport);
+        }
+      } else if (a.player_name && a.sport && !a.player_name.includes(" players") && !a.player_name.includes(" games")) {
+        playerSportPairs.set(a.player_name, a.sport);
+      }
+    }
+
+    // Batch query per sport
+    for (const [sport, cfg] of Object.entries(sportTableMap)) {
+      const playersForSport = [...playerSportPairs.entries()].filter(([, s]) => s === sport).map(([name]) => name);
+      if (playersForSport.length === 0) continue;
+
+      const { data: gameLogs, error: glErr } = await supabase
+        .from(cfg.table)
+        .select(`player_name, ${cfg.col}, game_date`)
+        .in("player_name", playersForSport)
+        .order("game_date", { ascending: false })
+        .limit(playersForSport.length * 10);
+
+      if (glErr) {
+        log(`⚠ Volatility lookup error (${sport}): ${glErr.message}`);
+        continue;
+      }
+
+      // Group by player, take last 10
+      const byPlayer = new Map<string, number[]>();
+      for (const gl of (gameLogs || [])) {
+        const mins = gl[cfg.col];
+        if (mins == null || mins <= 0) continue;
+        const pName = gl.player_name;
+        if (!byPlayer.has(pName)) byPlayer.set(pName, []);
+        const arr = byPlayer.get(pName)!;
+        if (arr.length < 10) arr.push(mins);
+      }
+
+      for (const [pName, minutes] of byPlayer) {
+        if (minutes.length < 5) continue; // Need at least 5 games for meaningful CV
+        const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+        const variance = minutes.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / minutes.length;
+        const stdDev = Math.sqrt(variance);
+        const cv = avg > 0 ? stdDev / avg : 0;
+        volatilityMap.set(pName, { avgMin: Math.round(avg * 10) / 10, cv: Math.round(cv * 100) / 100, isVolatile: cv > VOLATILITY_CV_THRESHOLD });
+      }
+    }
+
+    const volatilePlayers = [...volatilityMap.entries()].filter(([, v]) => v.isVolatile);
+    if (volatilePlayers.length > 0) {
+      log(`⚠️ VOLATILE MINUTES detected: ${volatilePlayers.map(([name, v]) => `${name} (CV ${Math.round(v.cv * 100)}%, avg ${v.avgMin}min)`).join(", ")}`);
+    }
+
+    // Attach volatility data to each alert
+    for (const a of alerts) {
+      if (a.players_moving) {
+        // For aggregate signals, check if any player is volatile
+        const volPlayers = (a.players_moving || []).filter((p: any) => volatilityMap.get(p.name)?.isVolatile);
+        a.has_volatile_players = volPlayers.length > 0;
+        a.volatile_player_count = volPlayers.length;
+      } else {
+        const vol = volatilityMap.get(a.player_name);
+        if (vol) {
+          a.is_volatile_minutes = vol.isVolatile;
+          a.minutes_cv = vol.cv;
+          a.minutes_avg = vol.avgMin;
+        }
+      }
+    }
+
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
     const predRows = alerts
       .filter(a => {
