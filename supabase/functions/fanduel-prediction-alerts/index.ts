@@ -111,6 +111,18 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[Prediction Alerts] ${msg}`);
   const now = new Date();
 
+  // ====== OWNER RULES ENGINE — load rules for this function ======
+  let ownerRules: Array<{ rule_key: string; rule_logic: Record<string, unknown>; enforcement: string }> = [];
+  try {
+    const { data: rulesData } = await supabase
+      .from("bot_owner_rules")
+      .select("rule_key, rule_logic, enforcement")
+      .eq("is_active", true)
+      .contains("applies_to", ["fanduel-prediction-alerts"]);
+    ownerRules = (rulesData || []) as any;
+    if (ownerRules.length > 0) log(`Loaded ${ownerRules.length} owner rules`);
+  } catch (_) { /* rules are advisory */ }
+
   try {
     log("=== Generating FanDuel prediction alerts (accuracy-gated v2) ===");
 
