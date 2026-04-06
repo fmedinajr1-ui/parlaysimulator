@@ -940,6 +940,26 @@ Deno.serve(async (req) => {
           predictionText = `Unknown signal`;
         }
 
+        // Calculate alt line for this prediction
+        let actionSide: string | null = null;
+        if (a.type === "take_it_now") {
+          actionSide = a.direction === "dropping" ? "OVER" : "UNDER";
+        } else if (a.type === "line_about_to_move" || a.type === "velocity_spike") {
+          actionSide = a.direction === "dropping" ? "OVER" : "UNDER";
+        } else if (a.type === "snapback") {
+          actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
+        } else if (a.type === "team_news_shift") {
+          actionSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+        } else if (a.type === "correlated_movement") {
+          actionSide = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
+        }
+
+        const lineForAlt = a.current_line ?? a.line_to ?? null;
+        const buffer = getBuffer(a.prop_type || "");
+        const altLine = (lineForAlt != null && buffer != null && actionSide)
+          ? calcAltLine(lineForAlt, actionSide, buffer)
+          : null;
+
         return ({
           signal_type: a.type,
           sport: a.sport,
@@ -958,6 +978,8 @@ Deno.serve(async (req) => {
           alert_sent_at: new Date().toISOString(),
           snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
           drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
+          recommended_alt_line: altLine,
+          alt_line_buffer: buffer,
         });
       });
 
