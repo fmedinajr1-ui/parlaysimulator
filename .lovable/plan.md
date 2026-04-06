@@ -1,79 +1,58 @@
 
 
-# Replace Static Alt Line Buffers with Real FanDuel Alt Lines
+# Strengthen Moneyline Take It Now: Matchup Quality Gate
 
-## Problem
-All alt line recommendations (e.g., "Alt UNDER 20.5") use hardcoded buffers (3.0 for points, 2.0 for rebounds, etc.) subtracted from the current line. These are fake — they don't reflect actual available lines on FanDuel. The `fetch-alternate-lines` edge function already exists and fetches real alternate lines from The Odds API, but it's only used by the parlay generators, not by the prediction alerts or behavior analyzer.
+## Current Problem
 
-## Solution
-Call `fetch-alternate-lines` for every alert that currently shows a static alt line, and display the **real closest alt line** available on FanDuel instead of a buffer-calculated one.
+The Take It Now moneyline logic for **all sports** uses a bare confidence formula: `30 + driftPct * 3`. A tiny 9.6% drift gives 59% confidence — just enough to pass the 55% threshold. There's **no matchup tightness or team quality factor** in the confidence score.
 
-## Changes
+The `teamCrossReferenceGate` exists but only hard-blocks obvious traps (sub-.500 vs .500+ teams). It doesn't **adjust confidence** or require bigger drift for mismatches. Result: Memphis Grizzlies +660 (massive underdog) gets a TAKE alert on a small drift, and Colorado Rockies (worst MLB team) gets 91% confidence just because the drift was big.
 
-### 1. `fanduel-prediction-alerts/index.ts` — Replace static alt line helpers
+## Fix
 
-**Remove**: `ALT_LINE_BUFFERS`, `VOLATILE_EXTRA_BUFFER`, `getAltBuffer()`, `calcAltLine()`, `getAltLineText()` (lines 401-428)
+### 1. Add Matchup Tightness Score to Confidence Formula
 
-**Add**: `fetchRealAltLine()` async helper that:
-- Calls `fetch-alternate-lines` with the player's event ID, name, prop type, and sport
-- From the returned lines array, picks the best alt line for the recommended side:
-  - For OVER: find the highest line that's **below** the current line (better value for OVER)
-  - For UNDER: find the lowest line that's **above** the current line (better value for UNDER)
-- Falls back to a simple ±1.5 buffer if no real alt lines are found (API quota, missing market, etc.)
-- Caches results per event+player+prop to avoid duplicate API calls within the same scan
+For ALL moneyline Take It Now alerts (NBA, MLB, NHL), compute a **matchup quality modifier** from existing `teamStatsMap` data:
 
-**Update all call sites** (velocity/cascade alerts ~line 921, Take It Now ~line 1197, and signal_factors metadata ~lines 963-964, 1247-1248):
-- Replace `getAltLineText(...)` with result from `fetchRealAltLine()`
-- Replace `calcAltLine(...)` in metadata with the real alt line value
-- Display format: `🎯 Alt Line (FanDuel): OVER 21.5 (-125)` — includes the actual odds
+```text
+matchupGap = abs(teamWinPct - oppWinPct)
 
-### 2. `fanduel-behavior-analyzer/index.ts` — Replace static alt lines in correlated movement
+Tight matchup (gap < 5%)  → +10 confidence (these are real edges)
+Normal matchup (gap 5-15%) → +0 (neutral)  
+Mismatch (gap 15-25%)     → -10 confidence
+Heavy mismatch (gap > 25%) → -20 confidence
 
-**Remove**: `getBuffer()`, `calcAltLine()`, `VOLATILITY_EXTRA_BUFFER` buffer logic (wherever defined)
-
-**Add**: Same `fetchRealAltLine()` pattern, but batch it:
-- Before building Telegram text for correlated/team news alerts, batch-fetch alt lines for all players in the correlation group
-- Replace the inline `→ Alt UNDER 20.5` (currently buffer-calculated at line 1747) with real FanDuel alt line + odds
-- Display: `Aaron Gordon: dropping 1 → Alt UNDER 21.5 (-115)`
-
-### 3. Batching and Rate Limiting
-
-To avoid hammering the API (each correlated movement alert can have 4-5 players):
-- Batch all alt line fetches at the **end of the scan**, after all signals are identified but before Telegram formatting
-- Use `Promise.allSettled()` with a concurrency limit of 3
-- Cache results in a `Map<string, { line: number, odds: number }>` keyed by `eventId|playerName|propType`
-- If the API returns empty or errors, fall back to displaying "Alt Line: N/A" instead of a fake buffer number
-
-### 4. Telegram Display Format
-
-**Before** (static buffer):
-```
-Aaron Gordon: rising 1 → Alt UNDER 20.5
-🎯 Alt Line Edge: UNDER 20.5
+Star team bonus (winPct > 60%) being TAKEN → +8
+Bottom team (winPct < 35%) being TAKEN → -15
 ```
 
-**After** (real FanDuel):
-```
-Aaron Gordon: rising 1 → Alt UNDER 21.5 (-115) [FD]
-🎯 Alt Line (FanDuel): UNDER 21.5 (-115)
-```
+This means a 9.6% drift on Memphis (+660, ~30% win rate) would score: `30 + 28.8 - 15 (bottom team) - 20 (heavy mismatch) = 23.8` → **blocked** (below 55).
 
-When no real alt line available:
-```
-🎯 Alt Line: unavailable
-```
+Meanwhile a 9.6% drift on a tight matchup between two .500 teams: `30 + 28.8 + 10 = 68.8` → **passes with context**.
 
-## Technical Details
+### 2. Minimum Drift Gate for Mismatches
 
-- The `fetch-alternate-lines` function uses The Odds API (`THE_ODDS_API_KEY`), which has quota limits
-- Each call costs 1 API request — with ~20 alerts per scan and ~4 players per correlation, worst case is ~100 calls
-- Caching per scan run prevents duplicates (same player appearing in multiple signal types)
-- The prop type mapping in `fetch-alternate-lines` already handles: points, rebounds, assists, threes, PRA, spreads, totals, and combos
-- Moneyline props don't have alt lines — skip for those (already no buffer for ML)
+Add a hard floor: if matchup gap > 20% AND drift < 15%, skip the alert entirely. Small line moves on lopsided games are noise — books adjusting handle, not sharp money.
+
+### 3. Show Matchup Context in Telegram
+
+Add a matchup line to the alert body (after the cross-ref badge):
+
+- Tight: `🤝 Tight matchup: 52% vs 49% — small edge matters`
+- Mismatch: `⚠️ Mismatch: 62% vs 38% — need strong drift to trust`
+- Heavy mismatch: `🚫 Heavy mismatch: 68% vs 31% — high drift required`
+
+### 4. Apply to MLB Moneyline Too
+
+The MLB branch (line 1142-1200) currently adds pitcher context but doesn't factor team win% into confidence. Add the same matchup modifier there, stacked with the pitcher adjustment. Colorado Rockies would get: `30 + 60.6 (20.2% drift) - 15 (bottom team) - 10 (mismatch) = 65.6` instead of 91%.
+
+### 5. Update bot_owner_rules
+
+Insert rule `moneyline_matchup_quality`: "All moneyline Take It Now alerts must factor matchup tightness into confidence. Heavy mismatches require >15% drift. Bottom-tier teams receive confidence penalty."
 
 ## Scope
-- 2 edge functions modified (`fanduel-prediction-alerts`, `fanduel-behavior-analyzer`)
-- No migrations needed
-- No new tables
-- Uses existing `fetch-alternate-lines` function unchanged
+- 1 edge function modified (`fanduel-prediction-alerts`)
+- 1 migration (new rule)
+- Changes apply to lines 1201-1212 (non-MLB ML), 1142-1200 (MLB ML), and the confidence formula in each branch
+- Uses existing `teamStatsMap` data — no new queries
 
