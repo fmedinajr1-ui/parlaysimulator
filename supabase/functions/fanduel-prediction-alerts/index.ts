@@ -748,7 +748,10 @@ Deno.serve(async (req) => {
       const signalEmoji = classifiedSignalType === "velocity_spike" ? "⚡" 
         : classifiedSignalType === "cascade" ? "🌊" : "🔮";
 
-      const flipTag = autoFlipped ? "\n🪤 *AUTO-FLIPPED: Market Trap → UNDER*" : "";
+      const volWarning = getVolatilityWarning(first.player_name);
+      const altLineText = getAltLineText(last.line, side, first.prop_type, first.player_name);
+      const volInfo = volatilityMap.get((first.player_name || "").toLowerCase().trim());
+
       const alertText = [
         `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
@@ -760,6 +763,8 @@ Deno.serve(async (req) => {
         `📊 Confidence: ${Math.round(confidence)}%`,
         accuracyBadge || null,
         crossRefBadge || null,
+        volWarning || null,
+        altLineText || null,
         `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
         autoFlipped ? `🪤 *AUTO-FLIPPED: Cascade OVER → UNDER (FanDuel trap)*` : null,
         `💡 ${reason}`,
@@ -778,7 +783,15 @@ Deno.serve(async (req) => {
         velocity_at_signal: velocityPerHour,
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: absLineDiff,
-        signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType, currentLine: last.line, line_to: last.line, opening_line: first.line },
+        signal_factors: {
+          velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType,
+          currentLine: last.line, line_to: last.line, opening_line: first.line,
+          is_volatile_minutes: volInfo?.isVolatile || false,
+          minutes_cv: volInfo?.cv ?? null,
+          minutes_avg: volInfo?.avgMin ?? null,
+          alt_line_buffer: getAltBuffer(first.prop_type, first.player_name),
+          recommended_alt_line: calcAltLine(last.line, side, first.prop_type, first.player_name),
+        },
       };
 
       addSignal(`${first.event_id}|${first.player_name}`, confidence, alertText, record);
