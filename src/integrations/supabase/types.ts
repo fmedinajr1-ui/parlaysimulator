@@ -1116,6 +1116,42 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_audit_log: {
+        Row: {
+          action_taken: string
+          affected_record_id: string | null
+          affected_table: string | null
+          audit_time: string | null
+          created_at: string | null
+          id: string
+          metadata: Json | null
+          rule_key: string
+          violation_description: string
+        }
+        Insert: {
+          action_taken?: string
+          affected_record_id?: string | null
+          affected_table?: string | null
+          audit_time?: string | null
+          created_at?: string | null
+          id?: string
+          metadata?: Json | null
+          rule_key: string
+          violation_description: string
+        }
+        Update: {
+          action_taken?: string
+          affected_record_id?: string | null
+          affected_table?: string | null
+          audit_time?: string | null
+          created_at?: string | null
+          id?: string
+          metadata?: Json | null
+          rule_key?: string
+          violation_description?: string
+        }
+        Relationships: []
+      }
       bot_authorized_users: {
         Row: {
           authorized_at: string
@@ -1398,6 +1434,39 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_daily_schedule: {
+        Row: {
+          actions: string[]
+          created_at: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          window_end_et: string
+          window_name: string
+          window_start_et: string
+        }
+        Insert: {
+          actions: string[]
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          window_end_et: string
+          window_name: string
+          window_start_et: string
+        }
+        Update: {
+          actions?: string[]
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          window_end_et?: string
+          window_name?: string
+          window_start_et?: string
+        }
+        Relationships: []
+      }
       bot_diagnostic_runs: {
         Row: {
           checks_failed: number
@@ -1614,6 +1683,42 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_owner_rules: {
+        Row: {
+          applies_to: string[]
+          created_at: string | null
+          enforcement: string | null
+          id: string
+          is_active: boolean | null
+          rule_description: string
+          rule_key: string
+          rule_logic: Json
+          updated_at: string | null
+        }
+        Insert: {
+          applies_to: string[]
+          created_at?: string | null
+          enforcement?: string | null
+          id?: string
+          is_active?: boolean | null
+          rule_description: string
+          rule_key: string
+          rule_logic: Json
+          updated_at?: string | null
+        }
+        Update: {
+          applies_to?: string[]
+          created_at?: string | null
+          enforcement?: string | null
+          id?: string
+          is_active?: boolean | null
+          rule_description?: string
+          rule_key?: string
+          rule_logic?: Json
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       bot_player_performance: {
         Row: {
           avg_edge: number | null
@@ -1737,6 +1842,45 @@ export type Database = {
           summary?: string
           title?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      bot_schedule_runs: {
+        Row: {
+          actions_executed: string[] | null
+          audit_summary: Json | null
+          completed_at: string | null
+          created_at: string | null
+          id: string
+          results: Json | null
+          run_date: string
+          started_at: string | null
+          status: string | null
+          window_name: string
+        }
+        Insert: {
+          actions_executed?: string[] | null
+          audit_summary?: Json | null
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          results?: Json | null
+          run_date: string
+          started_at?: string | null
+          status?: string | null
+          window_name: string
+        }
+        Update: {
+          actions_executed?: string[] | null
+          audit_summary?: Json | null
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          results?: Json | null
+          run_date?: string
+          started_at?: string | null
+          status?: string | null
+          window_name?: string
         }
         Relationships: []
       }
