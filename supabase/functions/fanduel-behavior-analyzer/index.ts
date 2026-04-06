@@ -1249,6 +1249,8 @@ Deno.serve(async (req) => {
             ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
+        }
+        return "";
       };
 
       const takeItNowAlerts = highConfAlerts.filter((a) => a.type === "take_it_now");
