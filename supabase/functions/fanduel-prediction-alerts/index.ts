@@ -276,6 +276,85 @@ Deno.serve(async (req) => {
       if (arr.length < 10) arr.push(gl);
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // MINUTES VOLATILITY GATE — flag high-CV players across all signals
+    // ══════════════════════════════════════════════════════════════
+    interface VolatilityInfo { isVolatile: boolean; cv: number; avgMin: number; gamesUsed: number; }
+    const volatilityMap = new Map<string, VolatilityInfo>();
+
+    // Fetch L10 minutes from multiple sport game logs
+    const sportLogTables = ["nba_player_game_logs", "ncaab_player_game_logs", "nhl_player_game_logs"];
+    const minLogResults = await Promise.all(
+      sportLogTables.map(table =>
+        allPlayerNames.length > 0
+          ? supabase.from(table).select("player_name, min").in("player_name", allPlayerNames).order("game_date", { ascending: false }).limit(allPlayerNames.length * 10)
+          : Promise.resolve({ data: [] })
+      )
+    );
+
+    const minByPlayer = new Map<string, number[]>();
+    for (const res of minLogResults) {
+      for (const row of (res.data || [])) {
+        const name = (row.player_name || "").toLowerCase().trim();
+        if (!name) continue;
+        const mins = typeof row.min === "string" ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+        if (mins <= 0) continue;
+        const existing = minByPlayer.get(name) || [];
+        if (existing.length < 10) { existing.push(mins); minByPlayer.set(name, existing); }
+      }
+    }
+
+    for (const [name, minutes] of minByPlayer) {
+      if (minutes.length < 3) {
+        volatilityMap.set(name, { isVolatile: false, cv: 0, avgMin: 0, gamesUsed: minutes.length });
+        continue;
+      }
+      const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+      const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+      const std = Math.sqrt(variance);
+      const cv = avg > 0 ? std / avg : 0;
+      volatilityMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg, gamesUsed: minutes.length });
+    }
+
+    const volatileCount = [...volatilityMap.values()].filter(v => v.isVolatile).length;
+    log(`Minutes volatility: ${volatilityMap.size} players checked, ${volatileCount} volatile (CV>20%)`);
+
+    // Helper: get volatility warning text for a player
+    function getVolatilityWarning(playerName: string): string {
+      const v = volatilityMap.get((playerName || "").toLowerCase().trim());
+      if (!v || !v.isVolatile) return "";
+      return `⚠️ VOLATILE MINUTES — L10 avg ${v.avgMin.toFixed(0)}min (CV ${(v.cv * 100).toFixed(0)}%)`;
+    }
+
+    // Alt line buffer helpers
+    const ALT_LINE_BUFFERS: Record<string, number> = {
+      player_points: 3.0, player_points_rebounds_assists: 3.0, totals: 3.0, game_totals: 3.0,
+      player_rebounds: 2.0, player_assists: 2.0, player_points_rebounds: 2.0,
+      player_points_assists: 2.0, player_rebounds_assists: 2.0,
+      spreads: 1.5,
+      player_threes: 1.0, player_steals: 1.0, player_blocks: 1.0,
+    };
+    const VOLATILE_EXTRA_BUFFER = 2.0;
+
+    function getAltBuffer(propType: string, playerName: string): number {
+      const base = ALT_LINE_BUFFERS[propType] ?? 1.5;
+      const v = volatilityMap.get((playerName || "").toLowerCase().trim());
+      return v?.isVolatile ? base + VOLATILE_EXTRA_BUFFER : base;
+    }
+
+    function calcAltLine(currentLine: number, side: string, propType: string, playerName: string): number {
+      const buffer = getAltBuffer(propType, playerName);
+      if (side === "OVER") return currentLine - buffer;
+      if (side === "UNDER") return currentLine + buffer;
+      return currentLine;
+    }
+
+    function getAltLineText(currentLine: number | null, side: string, propType: string, playerName: string): string {
+      if (currentLine == null) return "";
+      const alt = calcAltLine(currentLine, side, propType, playerName);
+      return `🎯 Alt Line Edge: ${side} ${alt.toFixed(1)}`;
+    }
+
     // Build matchup lookup: player|opponent|prop_type → matchup data
     const matchupLookup = new Map<string, any>();
     for (const m of (matchupHistRes.data || [])) {
