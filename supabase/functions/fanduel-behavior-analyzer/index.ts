@@ -1670,7 +1670,7 @@ Deno.serve(async (req) => {
           }
           const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
           const isTeamMarketCorr = ["h2h", "moneyline"].includes(a.prop_type);
-          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to ?? a.avg_current_line, a.prop_type, a.has_volatile_players);
+          const altLineMsg = ""; // Per-player alt lines already shown inline for correlation alerts
           const volWarning = a.has_volatile_players ? `⚠️ *${a.volatile_player_count} VOLATILE PLAYER${a.volatile_player_count > 1 ? "S" : ""}* — extra buffer applied to flagged players` : "";
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
