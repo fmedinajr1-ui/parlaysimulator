@@ -1237,6 +1237,8 @@ Deno.serve(async (req) => {
             reason = `Coordinated movement below news threshold — fading as potential public trap.`;
           }
           const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
+          const isTeamMarketCorr = ["h2h", "moneyline"].includes(a.prop_type);
+          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to, a.prop_type);
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
@@ -1244,10 +1246,9 @@ Deno.serve(async (req) => {
             topPlayers,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
-        }
-        return "";
       };
 
       const takeItNowAlerts = highConfAlerts.filter((a) => a.type === "take_it_now");
