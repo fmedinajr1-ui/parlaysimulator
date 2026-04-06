@@ -603,7 +603,7 @@ Deno.serve(async (req) => {
           prop_type: propType,
           event_description: `${sport} ${propType} — ${shifts.length} games moving ${dominant}`,
           event_id: topGames[0]?.event_id || "multi_game",
-          players_moving: topGames.map(s => ({ name: s.eventDesc, direction: s.direction, magnitude: s.magnitude })),
+          players_moving: topGames.map(s => ({ name: s.eventDesc, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line, opening_line: s.opening_line })),
           dominant_direction: dominant,
           correlation_rate: Math.round(correlationRate * 100),
           avg_magnitude: Math.round(avgMag * 100) / 100,
