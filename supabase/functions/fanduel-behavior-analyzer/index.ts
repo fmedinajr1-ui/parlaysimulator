@@ -1727,7 +1727,31 @@ Deno.serve(async (req) => {
         return "";
       };
 
-      const takeItNowAlerts = highConfAlerts.filter((a) => a.type === "take_it_now");
+      // ====== OWNER RULES FILTER — block alerts that violate rules before Telegram ======
+      let rulesBlocked = 0;
+      const filteredAlerts = highConfAlerts.filter((a: any) => {
+        const check = checkOwnerRules(a);
+        if (check.blocked) {
+          log(`🚫 RULE BLOCKED: [${check.rule}] ${check.reason} — ${a.player_name || a.event_description}`);
+          rulesBlocked++;
+          // Log to audit
+          supabase.from("bot_audit_log").insert({
+            rule_key: check.rule,
+            violation_description: `${check.reason} — ${a.player_name || a.event_description || ""}`,
+            action_taken: "blocked",
+            affected_table: "behavior_alerts",
+            metadata: { alert_type: a.type, prop_type: a.prop_type, player: a.player_name },
+          }).then(() => {});
+          return false;
+        }
+        if (check.rule) {
+          log(`⚠️ RULE WARN: [${check.rule}] ${check.reason}`);
+        }
+        return true;
+      });
+      if (rulesBlocked > 0) log(`Owner rules blocked ${rulesBlocked} alert(s)`);
+
+      const takeItNowAlerts = filteredAlerts.filter((a: any) => a.type === "take_it_now");
       const lineAboutToMoveAlerts = highConfAlerts.filter((a) => a.type === "line_about_to_move");
       const velocityAlerts = highConfAlerts.filter((a) => a.type === "velocity_spike");
       const cascadeAlerts = highConfAlerts.filter((a) => a.type === "cascade");
