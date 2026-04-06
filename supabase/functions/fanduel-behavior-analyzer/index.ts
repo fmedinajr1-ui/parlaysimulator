@@ -1038,6 +1038,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type);
           return [
             `🔥 *TAKE IT NOW*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1045,6 +1046,7 @@ Deno.serve(async (req) => {
             `📏 ${a.drift_pct_of_range}% of typical range (avg drift: ${a.expected_drift})`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
@@ -1078,6 +1080,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type);
           return [
             `🎯 *LINE ABOUT TO MOVE*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1085,6 +1088,7 @@ Deno.serve(async (req) => {
             `Consistency: ${a.consistencyRate}% | Speed: ${a.velocity}/hr`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
