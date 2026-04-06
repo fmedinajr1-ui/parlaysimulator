@@ -77,19 +77,57 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3. Enrich and score picks
+    // 3. Minutes Volatility Gate — fetch L10 minutes for all verified players
+    const verifiedPlayerNames = [...new Set(verified.map((p: any) => p.player_name).filter(Boolean))];
+    interface VolatilityInfo { isVolatile: boolean; cv: number; avgMin: number; }
+    const volatilityMap = new Map<string, VolatilityInfo>();
+
+    if (verifiedPlayerNames.length > 0) {
+      const sportLogTables = ["nba_player_game_logs", "ncaab_player_game_logs", "nhl_player_game_logs"];
+      const minLogResults = await Promise.all(
+        sportLogTables.map(table =>
+          supabase.from(table).select("player_name, min").in("player_name", verifiedPlayerNames)
+            .order("game_date", { ascending: false }).limit(verifiedPlayerNames.length * 10)
+        )
+      );
+
+      const minByPlayer = new Map<string, number[]>();
+      for (const res of minLogResults) {
+        for (const row of (res.data || [])) {
+          const name = (row.player_name || "").toLowerCase().trim();
+          if (!name) continue;
+          const mins = typeof row.min === "string" ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+          if (mins <= 0) continue;
+          const existing = minByPlayer.get(name) || [];
+          if (existing.length < 10) { existing.push(mins); minByPlayer.set(name, existing); }
+        }
+      }
+
+      for (const [name, minutes] of minByPlayer) {
+        if (minutes.length < 3) continue;
+        const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+        const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+        const std = Math.sqrt(variance);
+        const cv = avg > 0 ? std / avg : 0;
+        volatilityMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg });
+      }
+
+      const volCount = [...volatilityMap.values()].filter(v => v.isVolatile).length;
+      log(`Minutes volatility: ${volatilityMap.size} players checked, ${volCount} volatile (CV>20%)`);
+    }
+
+    // 4. Enrich and score picks
     interface EnrichedPick {
       id: string;
       player_name: string;
       prop_type: string;
       sport: string;
       prediction: string;
-      signal_type: string; // PERFECT or STRONG
+      signal_type: string;
       confidence: number;
       edge: number;
       event_id: string;
       score: number;
-      // Rich data from signal_factors
       opponent: string;
       avg_stat: number | null;
       hit_rate: number | null;
@@ -104,6 +142,9 @@ Deno.serve(async (req) => {
       ppg: number | null;
       oppg: number | null;
       line: number | null;
+      is_volatile: boolean;
+      minutes_cv: number | null;
+      minutes_avg: number | null;
     }
 
     const picks: EnrichedPick[] = verified.map(p => {
@@ -111,7 +152,12 @@ Deno.serve(async (req) => {
       const tierBonus = p.signal_type === "PERFECT" ? 1.5 : 1.0;
       const edge = p.edge_at_signal || 0;
       const hitRate = sf.hit_rate || sf.over_rate || sf.under_rate || 0.5;
-      const score = tierBonus * edge * hitRate * 100;
+      let score = tierBonus * edge * hitRate * 100;
+
+      // Minutes volatility penalty
+      const vol = volatilityMap.get((p.player_name || "").toLowerCase().trim());
+      const isVolatile = vol?.isVolatile || false;
+      if (isVolatile) score *= 0.7; // 30% scoring penalty for volatile players
 
       return {
         id: p.id,
@@ -138,6 +184,9 @@ Deno.serve(async (req) => {
         ppg: sf.ppg ?? null,
         oppg: sf.oppg ?? null,
         line: sf.line ?? sf.fanduel_line ?? null,
+        is_volatile: isVolatile,
+        minutes_cv: vol?.cv ?? null,
+        minutes_avg: vol?.avgMin ?? null,
       };
     });
 
@@ -258,6 +307,10 @@ Deno.serve(async (req) => {
 
       if (leg.edge > 0) {
         lines.push(`✅ Edge: ${(leg.edge * 100).toFixed(1)}% ${isOver ? "above" : "below"} line`);
+      }
+
+      if (leg.is_volatile && leg.minutes_cv != null) {
+        lines.push(`⚠️ Volatile Minutes (CV ${(leg.minutes_cv * 100).toFixed(0)}%) — extra buffer applied`);
       }
 
       if (leg.floor_gap != null && leg.floor_gap > 0) {
