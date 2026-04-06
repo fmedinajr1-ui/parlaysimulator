@@ -58,34 +58,83 @@ Deno.serve(async (req) => {
     return { blocked: false };
   }
 
-  // ====== ALT LINE BUFFER CONSTANTS (by prop type keyword) ======
-  const PROP_BUFFER: Record<string, number> = {
-    points: 3.0, pra: 3.0, pts_reb: 3.0, pts_ast: 3.0, "pts+reb": 3.0, "pts+ast": 3.0,
-    rebounds: 2.0, assists: 2.0, reb_ast: 2.0, "reb+ast": 2.0,
-    threes: 1.0, steals: 1.0, blocks: 1.0, "steals+blocks": 1.0, stl_blk: 1.0,
-    turnovers: 0.5,
-    totals: 3.0, total: 3.0,
-    spreads: 1.5, spread: 1.5,
-    // Defaults for anything else (generic player props)
-    default: 2.0,
+  // ====== REAL ALT LINE FETCHER (FanDuel via The Odds API) ======
+  const SPORT_KEY_MAP: Record<string, string> = {
+    NBA: "basketball_nba", NCAAB: "basketball_ncaab",
+    MLB: "baseball_mlb", NHL: "icehockey_nhl", NFL: "americanfootball_nfl",
+  };
+  const PROP_TO_ALT_KEY: Record<string, string> = {
+    player_points: "points", player_rebounds: "rebounds", player_assists: "assists",
+    player_threes: "threes", player_points_rebounds_assists: "pra",
+    player_points_rebounds: "pts_rebs", player_points_assists: "pts_asts",
+    player_rebounds_assists: "rebs_asts", player_steals: "steals",
+    player_blocks: "blocks", player_turnovers: "turnovers",
+    spreads: "spreads", totals: "totals", points: "points", rebounds: "rebounds",
+    assists: "assists", threes: "threes", pra: "pra",
   };
 
-  function getBuffer(propType: string): number | null {
-    const pt = (propType || "").toLowerCase().replace("player_", "").replace(/ /g, "_");
-    // Skip non-line markets
-    if (["h2h", "moneyline", "double_double", "triple_double"].some(s => pt.includes(s))) return null;
-    for (const [key, val] of Object.entries(PROP_BUFFER)) {
-      if (key !== "default" && pt.includes(key)) return val;
+  const altLineCache = new Map<string, { line: number; odds: number } | null>();
+
+  async function fetchRealAltLine(
+    eventId: string, playerName: string, propType: string,
+    side: string, currentLine: number, sport: string
+  ): Promise<{ line: number; odds: number } | null> {
+    const pt = (propType || "").toLowerCase();
+    if (["h2h", "moneyline"].some(s => pt.includes(s))) return null;
+
+    const cacheKey = `${eventId}|${playerName}|${propType}`;
+    if (altLineCache.has(cacheKey)) return altLineCache.get(cacheKey)!;
+
+    // Map prop type to alt key
+    let altPropKey = PROP_TO_ALT_KEY[pt];
+    if (!altPropKey) {
+      const stripped = pt.replace("player_", "").replace(/ /g, "_");
+      altPropKey = PROP_TO_ALT_KEY[stripped];
     }
-    return PROP_BUFFER.default;
+    if (!altPropKey) { altLineCache.set(cacheKey, null); return null; }
+
+    const sportKey = SPORT_KEY_MAP[sport?.toUpperCase()] || SPORT_KEY_MAP[sport] || "basketball_nba";
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    try {
+      const resp = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({ eventId, playerName, propType: altPropKey, sport: sportKey }),
+      });
+      if (!resp.ok) { altLineCache.set(cacheKey, null); return null; }
+      const data = await resp.json();
+      const lines: { line: number; overOdds: number; underOdds: number }[] = data.lines || [];
+      if (lines.length === 0) { altLineCache.set(cacheKey, null); return null; }
+
+      const picked = pickBestAltLine(lines, side, currentLine);
+      altLineCache.set(cacheKey, picked);
+      return picked;
+    } catch (e) {
+      log(`[AltLine] fetch error for ${playerName}: ${e}`);
+      altLineCache.set(cacheKey, null);
+      return null;
+    }
   }
 
-  function calcAltLine(currentLine: number, side: string, buffer: number): number {
-    // Round to nearest 0.5 to match FanDuel alt line increments
-    const raw = side === "OVER" || side === "over"
-      ? currentLine - buffer
-      : currentLine + buffer;
-    return Math.round(raw * 2) / 2;
+  function pickBestAltLine(
+    lines: { line: number; overOdds: number; underOdds: number }[],
+    side: string, currentLine: number
+  ): { line: number; odds: number } | null {
+    const s = side.toUpperCase();
+    if (s === "OVER") {
+      const candidates = lines.filter(l => l.line < currentLine).sort((a, b) => b.line - a.line);
+      if (candidates.length > 0) return { line: candidates[0].line, odds: candidates[0].overOdds };
+    } else if (s === "UNDER") {
+      const candidates = lines.filter(l => l.line > currentLine).sort((a, b) => a.line - b.line);
+      if (candidates.length > 0) return { line: candidates[0].line, odds: candidates[0].underOdds };
+    }
+    return null;
+  }
+
+  function fmtAltOdds(odds: number): string {
+    return odds > 0 ? `+${odds}` : `${odds}`;
   }
 
   try {
