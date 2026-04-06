@@ -784,19 +784,25 @@ Deno.serve(async (req) => {
         }
 
         return ({
-        predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
-        predicted_magnitude: a.velocity || a.drift_pct || a.drift_amount || null,
-        confidence_at_signal: a.confidence,
-        velocity_at_signal: a.velocity || null,
-        time_to_tip_hours: a.hours_to_tip,
-        signal_factors: a,
-        // Trap detection fields — captured at alert time
-        line_at_alert: a.current_line ?? null,
-        hours_before_tip: a.hours_to_tip ?? null,
-        alert_sent_at: new Date().toISOString(),
-        snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
-        drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
-      }));
+          signal_type: a.type,
+          sport: a.sport,
+          prop_type: a.prop_type || a.moved_props?.[0] || "unknown",
+          player_name: a.player_name,
+          event_id: a.event_id,
+          prediction: predictionText,
+          predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
+          predicted_magnitude: a.velocity || a.drift_pct || a.drift_amount || null,
+          confidence_at_signal: a.confidence,
+          velocity_at_signal: a.velocity || null,
+          time_to_tip_hours: a.hours_to_tip,
+          signal_factors: a,
+          line_at_alert: a.current_line ?? null,
+          hours_before_tip: a.hours_to_tip ?? null,
+          alert_sent_at: new Date().toISOString(),
+          snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
+          drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
+        });
+      });
 
     log(`Inserting ${predRows.length} new predictions (${alerts.length - predRows.length} duplicates skipped)`);
 
