@@ -1756,15 +1756,25 @@ Deno.serve(async (req) => {
           if (a.type === "team_news_shift") {
             const isTeamMarketDerived = a.prop_type === "totals" || a.prop_type === "moneyline";
             if (isTeamMarketDerived && a.prop_type === "totals") {
+              const totalLine = a.game_total_line ? ` ${a.game_total_line}` : '';
+              const oddsTag = a.dominant_direction === "dropping" && a.game_total_under_odds
+                ? ` (${a.game_total_under_odds > 0 ? '+' : ''}${a.game_total_under_odds})`
+                : a.game_total_over_odds
+                ? ` (${a.game_total_over_odds > 0 ? '+' : ''}${a.game_total_over_odds})`
+                : '';
               action = a.dominant_direction === "dropping"
-                ? `UNDER — ${playerCount} player props dropping → game total likely lower`
-                : `OVER — ${playerCount} player props rising → game total likely higher`;
-              reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}.`;
+                ? `UNDER${totalLine}${oddsTag} — ${playerCount} player props dropping → game total likely lower`
+                : `OVER${totalLine}${oddsTag} — ${playerCount} player props rising → game total likely higher`;
+              reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}${totalLine}.`;
             } else if (isTeamMarketDerived && a.prop_type === "moneyline") {
+              const teamName = a.team_to_back || 'this side';
+              const mlOddsTag = a.team_to_back_odds
+                ? ` (${a.team_to_back_odds > 0 ? '+' : ''}${a.team_to_back_odds})`
+                : '';
               action = a.dominant_direction === "dropping"
-                ? `FADE — ${playerCount} player props dropping → fade this side`
-                : `BACK — ${playerCount} player props rising → back this side`;
-              reason = `Derived from player prop team news shift. ${playerCount}+ players shifting = likely lineup/injury impact on ML.`;
+                ? `FADE — ${playerCount} player props dropping → fade ${teamName}`
+                : `BACK ${teamName}${mlOddsTag} — ${playerCount} player props rising → back ${teamName}`;
+              reason = `Derived from player prop team news shift. ${playerCount}+ players shifting = likely lineup/injury impact on ${teamName} ML.`;
             } else if (a.derived_from === "team_market_cross_game") {
               const gameCount = playerCount;
               action = a.dominant_direction === "dropping"
