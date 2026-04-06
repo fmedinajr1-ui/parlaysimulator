@@ -1141,10 +1141,8 @@ Deno.serve(async (req) => {
         var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost - minutesPenalty);
       } else if (isMoneylineProp(last.prop_type) && (last.sport === "MLB" || last.sport === "baseball_mlb")) {
         // ── MLB MONEYLINE: TAKE/FADE with pitcher context ──
-        // Line shortening (odds getting more negative or less positive) = market backing = TAKE
-        // Line lengthening (odds getting more positive or less negative) = market fading = FADE
-        const isShortening = drift < 0; // e.g. +168 → +154 or -110 → -130
-        snapDirection = isShortening ? "OVER" : "UNDER"; // internal: OVER=TAKE, UNDER=FADE
+        const isShortening = drift < 0;
+        snapDirection = isShortening ? "OVER" : "UNDER";
         directionMethod = "market_follow";
 
         // Pitcher quality context from mlb_player_game_logs
@@ -1152,7 +1150,6 @@ Deno.serve(async (req) => {
         let pitcherConfidenceAdj = 0;
         const teamName = (last.player_name || "").toLowerCase().trim();
         
-        // Look for pitchers associated with this event via active props
         const eventPitchers: { name: string; era: number; k9: number; ip: number; games: number }[] = [];
         for (const [, snaps] of groups) {
           const s = snaps[0];
@@ -1171,7 +1168,6 @@ Deno.serve(async (req) => {
           eventPitchers.push({ name: s.player_name, era, k9, ip: avgIP, games: l10.length });
         }
 
-        // Identify if pitcher is ace or struggling
         if (eventPitchers.length > 0) {
           for (const p of eventPitchers) {
             const isAce = p.era < 3.5 && p.k9 > 7.0;
@@ -1195,11 +1191,47 @@ Deno.serve(async (req) => {
           : `Odds lengthening ${fmtOdds(last.opening_line)} → ${fmtOdds(last.line)} — market fading ${esc(last.player_name)} (${action})`;
         if (pitcherContext) directionReason += pitcherContext;
 
+        // ── MATCHUP QUALITY MODIFIER (MLB) ──
+        const mlbResolved = resolveTeamName(last.player_name || "");
+        const mlbStats = mlbResolved ? teamStatsMap.get(mlbResolved.toLowerCase()) : null;
+        let mlbOppStats: any = null;
+        let matchupContextLine = "";
+        let matchupQualityMod = 0;
+        if (mlbStats) {
+          const mlbParts = (last.event_description || "").split(/\s+vs?\s+/i);
+          if (mlbParts.length === 2) {
+            const opp0 = resolveTeamName(mlbParts[0].trim());
+            const opp1 = resolveTeamName(mlbParts[1].trim());
+            const oppName = opp0?.toLowerCase() === mlbResolved?.toLowerCase() ? opp1 : opp0;
+            if (oppName) mlbOppStats = teamStatsMap.get(oppName.toLowerCase());
+          }
+          const teamWinPct = mlbStats.win_pct || 0;
+          const oppWinPct = mlbOppStats?.win_pct || 0.5;
+          const matchupGap = Math.abs(teamWinPct - oppWinPct);
+
+          if (matchupGap < 0.05) { matchupQualityMod += 10; matchupContextLine = `🤝 Tight matchup: ${(teamWinPct * 100).toFixed(0)}% vs ${(oppWinPct * 100).toFixed(0)}% — small edge matters`; }
+          else if (matchupGap > 0.25) { matchupQualityMod -= 20; matchupContextLine = `🚫 Heavy mismatch: ${(teamWinPct * 100).toFixed(0)}% vs ${(oppWinPct * 100).toFixed(0)}% — high drift required`; }
+          else if (matchupGap > 0.15) { matchupQualityMod -= 10; matchupContextLine = `⚠️ Mismatch: ${(teamWinPct * 100).toFixed(0)}% vs ${(oppWinPct * 100).toFixed(0)}% — need strong drift to trust`; }
+
+          // Star / bottom team modifier (TAKE side only)
+          if (snapDirection === "OVER") {
+            if (teamWinPct > 0.60) matchupQualityMod += 8;
+            if (teamWinPct < 0.35) matchupQualityMod -= 15;
+          }
+
+          // Hard gate: heavy mismatch + small drift = noise
+          if (matchupGap > 0.20 && driftPct < 15) {
+            log(`🚫 BLOCKED (MLB ML mismatch) ${last.player_name} — gap ${(matchupGap * 100).toFixed(0)}% drift ${driftPct.toFixed(1)}% < 15%`);
+            continue;
+          }
+        }
+
         const isCombo = COMBO_PROPS.has(last.prop_type);
         const comboBoost = isCombo ? 10 : 0;
-        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost + pitcherConfidenceAdj);
+        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost + pitcherConfidenceAdj + matchupQualityMod);
+        if (matchupContextLine) directionReason += `\n${matchupContextLine}`;
       } else if (isMoneylineProp(last.prop_type)) {
-        // ── Non-MLB Moneyline: TAKE/FADE ──
+        // ── Non-MLB Moneyline: TAKE/FADE with matchup quality ──
         const isShortening = drift < 0;
         snapDirection = isShortening ? "OVER" : "UNDER";
         directionMethod = "market_follow";
@@ -1207,9 +1239,44 @@ Deno.serve(async (req) => {
         directionReason = isShortening
           ? `Odds shortening — market signals ${action} ${esc(last.player_name)} (${esc(last.sport)})`
           : `Odds lengthening — market signals ${action} ${esc(last.player_name)} (${esc(last.sport)})`;
+
+        // ── MATCHUP QUALITY MODIFIER (NBA/NHL/etc) ──
+        const mlResolved = resolveTeamName(last.player_name || "");
+        const mlStats = mlResolved ? teamStatsMap.get(mlResolved.toLowerCase()) : null;
+        let mlOppStats: any = null;
+        let mlMatchupContextLine = "";
+        let mlMatchupMod = 0;
+        if (mlStats) {
+          const mlParts = (last.event_description || "").split(/\s+vs?\s+/i);
+          if (mlParts.length === 2) {
+            const opp0 = resolveTeamName(mlParts[0].trim());
+            const opp1 = resolveTeamName(mlParts[1].trim());
+            const oppName = opp0?.toLowerCase() === mlResolved?.toLowerCase() ? opp1 : opp0;
+            if (oppName) mlOppStats = teamStatsMap.get(oppName.toLowerCase());
+          }
+          const teamWinPct = mlStats.win_pct || 0;
+          const oppWinPct = mlOppStats?.win_pct || 0.5;
+          const matchupGap = Math.abs(teamWinPct - oppWinPct);
+
+          if (matchupGap < 0.05) { mlMatchupMod += 10; mlMatchupContextLine = `🤝 Tight matchup: ${(teamWinPct * 100).toFixed(0)}% vs ${(oppWinPct * 100).toFixed(0)}% — small edge matters`; }
+          else if (matchupGap > 0.25) { mlMatchupMod -= 20; mlMatchupContextLine = `🚫 Heavy mismatch: ${(teamWinPct * 100).toFixed(0)}% vs ${(oppWinPct * 100).toFixed(0)}% — high drift required`; }
+          else if (matchupGap > 0.15) { mlMatchupMod -= 10; mlMatchupContextLine = `⚠️ Mismatch: ${(teamWinPct * 100).toFixed(0)}% vs ${(oppWinPct * 100).toFixed(0)}% — need strong drift to trust`; }
+
+          if (snapDirection === "OVER") {
+            if (teamWinPct > 0.60) mlMatchupMod += 8;
+            if (teamWinPct < 0.35) mlMatchupMod -= 15;
+          }
+
+          if (matchupGap > 0.20 && driftPct < 15) {
+            log(`🚫 BLOCKED (ML mismatch) ${last.player_name} — gap ${(matchupGap * 100).toFixed(0)}% drift ${driftPct.toFixed(1)}% < 15%`);
+            continue;
+          }
+        }
+
         const isCombo = COMBO_PROPS.has(last.prop_type);
         const comboBoost = isCombo ? 10 : 0;
-        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
+        var confidence = Math.min(92, 30 + driftPct * 3 + comboBoost + mlMatchupMod);
+        if (mlMatchupContextLine) directionReason += `\n${mlMatchupContextLine}`;
       } else {
         // Non-NBA non-moneyline: follow market direction (unchanged)
         snapDirection = drift > 0 ? "OVER" : "UNDER";
