@@ -648,9 +648,8 @@ Deno.serve(async (req) => {
       if (velocityPerHour <= learnedAvgVelocity * 0.8) continue;
 
       const direction = lineDiff < 0 ? "DROPPING" : "RISING";
-      const isContrarian = CONTRARIAN_PROPS.has(first.prop_type);
-      const rawSide = lineDiff < 0 ? "OVER" : "UNDER";
-      let side = isContrarian ? (rawSide === "OVER" ? "UNDER" : "OVER") : rawSide;
+      // Follow market movement: dropping = UNDER, rising = OVER
+      let side = lineDiff < 0 ? "UNDER" : "OVER";
       const isCombo = COMBO_PROPS.has(first.prop_type);
       const comboBoost = isCombo ? 15 : 0;
       const confidence = Math.min(95, 50 + velocityPerHour * 12 + comboBoost);
@@ -684,14 +683,8 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // AUTO-FLIP: Cascade signals on player prop OVERs → flip to UNDER
-      // FanDuel uses different line-setting for player props vs team markets
-      let autoFlipped = false;
-      if (classifiedSignalType === "cascade" && isPlayerPropType(first.prop_type) && side === "OVER") {
-        log(`🔄 AUTO-FLIP: ${first.player_name} ${first.prop_type} cascade OVER → UNDER (market trap logic)`);
-        side = "UNDER";
-        autoFlipped = true;
-      }
+      // Auto-flip removed — base direction now correctly follows market movement
+      const autoFlipped = false;
       const live = isLive(last);
 
       // ── CROSS-REFERENCE GATE (player props + team markets) ──
@@ -724,13 +717,9 @@ Deno.serve(async (req) => {
       // Dynamic accuracy badge uses the classified signal type
       const accuracyBadge = dynamicAccBadge(classifiedSignalType, first.prop_type);
 
-      const reason = isContrarian
-        ? (side === "UNDER"
-          ? "🔄 Contrarian: line dropping historically favors UNDER"
-          : "🔄 Contrarian: line rising historically favors OVER")
-        : (direction === "DROPPING"
-          ? "Line dropping = book expects fewer, value is OVER"
-          : "Line rising = book expects more, value is UNDER");
+      const reason = direction === "DROPPING"
+        ? "Line dropping = sharp money expects under"
+        : "Line rising = sharp money expects over";
       const liveTag = live ? " [🔴 LIVE]" : "";
 
       const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
@@ -777,7 +766,7 @@ Deno.serve(async (req) => {
         sport: first.sport, prop_type: first.prop_type,
         player_name: first.player_name, event_id: first.event_id,
         prediction: `${side} ${last.line}`,
-        predicted_direction: isContrarian ? (side === "OVER" ? "rising" : "dropping") : direction.toLowerCase(),
+        predicted_direction: direction.toLowerCase(),
         predicted_magnitude: absLineDiff,
         confidence_at_signal: confidence,
         velocity_at_signal: velocityPerHour,

@@ -1020,9 +1020,9 @@ Deno.serve(async (req) => {
           const side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
           predictionText = `Team News Shift: ${(a.players_moving || []).length} players ${a.dominant_direction} (${a.correlation_rate || Math.round((a.cascade_sequence?.correlation || 0) * 100)}% aligned) → ${side}`;
         } else if (a.type === "correlated_movement") {
-          // Contrarian fade: go AGAINST the movement
-          const side = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
-          predictionText = `Correlated Movement: ${(a.players_moving || []).length} players ${a.dominant_direction} → FADE to ${side}`;
+           // Follow market movement (same as team_news_shift)
+           const side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+           predictionText = `Correlated Movement: ${(a.players_moving || []).length} players ${a.dominant_direction} → ${side}`;
         } else {
           predictionText = `Unknown signal`;
         }
@@ -1030,15 +1030,15 @@ Deno.serve(async (req) => {
         // Calculate alt line for this prediction
         let actionSide: string | null = null;
         if (a.type === "take_it_now") {
-          actionSide = a.direction === "dropping" ? "OVER" : "UNDER";
+          actionSide = a.direction === "dropping" ? "UNDER" : "OVER";
         } else if (a.type === "line_about_to_move" || a.type === "velocity_spike") {
-          actionSide = a.direction === "dropping" ? "OVER" : "UNDER";
+          actionSide = a.direction === "dropping" ? "UNDER" : "OVER";
         } else if (a.type === "snapback") {
           actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
         } else if (a.type === "team_news_shift") {
           actionSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
         } else if (a.type === "correlated_movement") {
-          actionSide = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
+          actionSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
         }
 
         const lineForAlt = a.current_line ?? a.line_to ?? a.avg_current_line ?? null;
@@ -1124,10 +1124,10 @@ Deno.serve(async (req) => {
             action = a.direction === "dropping" ? `UNDER ${gameName}` : `OVER ${gameName}`;
             reason = `Total at ${a.drift_pct_of_range}% of range — ~${a.remaining_move} more expected`;
           } else {
-            action = a.direction === "dropping" ? `OVER ${a.current_line}` : `UNDER ${a.current_line}`;
+            action = a.direction === "dropping" ? `UNDER ${a.current_line}` : `OVER ${a.current_line}`;
             reason = a.direction === "dropping"
-              ? `Dropped ${a.drift_amount} pts (${a.drift_pct_of_range}% of typical ${a.expected_drift} drift) — grab OVER before it drops more`
-              : `Rose ${a.drift_amount} pts (${a.drift_pct_of_range}% of typical ${a.expected_drift} drift) — grab UNDER before it rises more`;
+              ? `Dropped ${a.drift_amount} pts (${a.drift_pct_of_range}% of typical ${a.expected_drift} drift) — line dropping = sharp money on under`
+              : `Rose ${a.drift_amount} pts (${a.drift_pct_of_range}% of typical ${a.expected_drift} drift) — line rising = sharp money on over`;
           }
           const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
@@ -1168,10 +1168,10 @@ Deno.serve(async (req) => {
               ? "Total steadily dropping = money on under"
               : "Total steadily rising = money on over";
           } else {
-            action = a.direction === "dropping" ? "OVER" : "UNDER";
+            action = a.direction === "dropping" ? "UNDER" : "OVER";
             reason = a.direction === "dropping"
-              ? "Line consistently dropping = get OVER before it moves more"
-              : "Line consistently rising = get UNDER before it moves more";
+              ? "Line consistently dropping = sharps expecting under"
+              : "Line consistently rising = sharps expecting over";
           }
           const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
@@ -1215,10 +1215,10 @@ Deno.serve(async (req) => {
               ? "Total dropping = sharps expecting low-scoring game"
               : "Total rising = sharps expecting high-scoring game";
           } else {
-            action = a.direction === "dropping" ? "OVER" : "UNDER";
+            action = a.direction === "dropping" ? "UNDER" : "OVER";
             reason = a.direction === "dropping"
-              ? "Line dropping = book expects fewer, value is OVER"
-              : "Line rising = book expects more, value is UNDER";
+              ? "Line dropping = sharp money expects under"
+              : "Line rising = sharp money expects over";
           }
           const propLabel = isTeamMarket ? a.prop_type.toUpperCase() : esc(a.prop_type).replace("player ", "").toUpperCase();
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
@@ -1308,20 +1308,16 @@ Deno.serve(async (req) => {
               if (baseBuf == null) return "";
               const effectiveBuf = playerVol?.isVolatile ? baseBuf + VOLATILITY_EXTRA_BUFFER : baseBuf;
               let side: string;
-              if (a.type === "team_news_shift") {
-                side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
-              } else {
-                side = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
-              }
+              // Both team_news_shift and correlated_movement follow market direction
+              side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
               const alt = calcAltLine(p.current_line, side, effectiveBuf);
               return ` → Alt ${side} ${alt}`;
             })();
             return `  ${p.name}: ${p.direction} ${p.magnitude}${playerAltText}${volTag}`;
           }).join("\n");
-          // team_news_shift: go WITH the movement (news-driven)
-          // correlated_movement: FADE the movement (market trap theory)
-          let action: string;
-          let reason: string;
+           // Both team_news_shift and correlated_movement: follow the market movement
+           let action: string;
+           let reason: string;
           const playerCount = (a.players_moving || []).length;
           if (a.type === "team_news_shift") {
             const isTeamMarketDerived = a.prop_type === "totals" || a.prop_type === "moneyline";
