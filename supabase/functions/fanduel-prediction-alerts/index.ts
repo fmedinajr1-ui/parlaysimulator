@@ -766,7 +766,7 @@ Deno.serve(async (req) => {
         sport: first.sport, prop_type: first.prop_type,
         player_name: first.player_name, event_id: first.event_id,
         prediction: `${side} ${last.line}`,
-        predicted_direction: isContrarian ? (side === "OVER" ? "rising" : "dropping") : direction.toLowerCase(),
+        predicted_direction: direction.toLowerCase(),
         predicted_magnitude: absLineDiff,
         confidence_at_signal: confidence,
         velocity_at_signal: velocityPerHour,
