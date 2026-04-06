@@ -1212,12 +1212,14 @@ Deno.serve(async (req) => {
             : esc(a.player_name);
           const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
           const volWarning = getVolatilityWarning(a);
+          const pitcherBadge = getPitcherKBadge(a);
           return [
             `🔥 *TAKE IT NOW*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (moved ${a.drift_amount})`,
             `📏 ${a.drift_pct_of_range}% of typical range (avg drift: ${a.expected_drift})`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
+            ...(pitcherBadge ? [pitcherBadge] : []),
             `✅ *Action: ${action}*`,
             ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
