@@ -260,6 +260,38 @@ serve(async (req) => {
       console.log(`[BlockedPropType] Removed ${preFilterCount - filteredLines.length} blocked prop type picks`);
     }
 
+    // === MINUTES VOLATILITY GATE ===
+    const allForceFreshPlayerNames = [...new Set(filteredLines.map((ml: any) => ml.player_name).filter(Boolean))];
+    const ffVolatilityMap = new Map<string, { isVolatile: boolean; cv: number; avgMin: number }>();
+    if (allForceFreshPlayerNames.length > 0) {
+      const ffMinRes = await supabase
+        .from('nba_player_game_logs')
+        .select('player_name, min')
+        .in('player_name', allForceFreshPlayerNames)
+        .order('game_date', { ascending: false })
+        .limit(allForceFreshPlayerNames.length * 10);
+
+      const ffMinByPlayer = new Map<string, number[]>();
+      for (const row of (ffMinRes.data || [])) {
+        const name = (row.player_name || '').toLowerCase().trim();
+        if (!name) continue;
+        const mins = typeof row.min === 'string' ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+        if (mins <= 0) continue;
+        const existing = ffMinByPlayer.get(name) || [];
+        if (existing.length < 10) { existing.push(mins); ffMinByPlayer.set(name, existing); }
+      }
+
+      for (const [name, minutes] of ffMinByPlayer) {
+        if (minutes.length < 3) continue;
+        const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+        const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+        const cv = Math.sqrt(variance) / (avg || 1);
+        ffVolatilityMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg });
+      }
+      const ffVolCount = [...ffVolatilityMap.values()].filter(v => v.isVolatile).length;
+      console.log(`[ForceFresh] Minutes volatility: ${ffVolatilityMap.size} players, ${ffVolCount} volatile (CV>20%)`);
+    }
+
     // Step 3: Score and enrich picks (with Sweet Spot alignment gate)
     let ssAlignedCount = 0;
     let ssConflictCount = 0;
@@ -316,7 +348,11 @@ serve(async (req) => {
         else if (playerPerf.hitRate < 0.30) playerBonus = -20;
       }
       
-      const convictionScore = Math.min(edgeMag * 0.3 + tierBonus + riskBonus + underBonus + playerBonus + ssAlignBonus, 100);
+      // === MINUTES VOLATILITY PENALTY ===
+      const ffVol = ffVolatilityMap.get(ml.player_name.toLowerCase().trim());
+      const ffVolPenalty = ffVol?.isVolatile ? -15 : 0;
+
+      const convictionScore = Math.min(edgeMag * 0.3 + tierBonus + riskBonus + underBonus + playerBonus + ssAlignBonus + ffVolPenalty, 100);
 
 
       picks.push({
@@ -585,16 +621,21 @@ serve(async (req) => {
         index: idx + 1,
         avgScore: parlay.reduce((s, p) => s + p.convictionScore, 0) / parlay.length,
         riskConfirmedCount: parlay.filter(p => p.riskConfirmed).length,
-        legs: parlay.map(p => ({
-          player_name: p.player_name,
-          prop_type: p.prop_type,
-          signal: p.signal,
-          book_line: p.book_line,
-          edge_pct: p.edge_pct,
-          confidence_tier: p.confidence_tier,
-          risk_confirmed: p.riskConfirmed,
-          player_avg: p.player_avg_l10,
-        })),
+        legs: parlay.map(p => {
+          const vol = ffVolatilityMap.get(p.player_name.toLowerCase().trim());
+          return {
+            player_name: p.player_name,
+            prop_type: p.prop_type,
+            signal: p.signal,
+            book_line: p.book_line,
+            edge_pct: p.edge_pct,
+            confidence_tier: p.confidence_tier,
+            risk_confirmed: p.riskConfirmed,
+            player_avg: p.player_avg_l10,
+            is_volatile: vol?.isVolatile || false,
+            minutes_cv: vol ? (vol.cv * 100).toFixed(0) : null,
+          };
+        }),
       })),
       totalParlays: parlays.length,
       voidedCount,

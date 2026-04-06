@@ -272,6 +272,41 @@ Deno.serve(async (req) => {
     if (pickErr) throw pickErr;
     log(`Today's pending picks: ${todayPicks?.length || 0}`);
 
+    // === MINUTES VOLATILITY GATE ===
+    const goldPlayerNames = [...new Set((todayPicks || []).map((p: any) => p.player_name).filter(Boolean))];
+    const goldVolMap = new Map<string, { isVolatile: boolean; cv: number; avgMin: number }>();
+    if (goldPlayerNames.length > 0) {
+      const sportTables = ["nba_player_game_logs", "ncaab_player_game_logs", "nhl_player_game_logs"];
+      const goldMinResults = await Promise.all(
+        sportTables.map(table =>
+          supabase.from(table).select("player_name, min").in("player_name", goldPlayerNames)
+            .order("game_date", { ascending: false }).limit(goldPlayerNames.length * 10)
+        )
+      );
+
+      const goldMinByPlayer = new Map<string, number[]>();
+      for (const res of goldMinResults) {
+        for (const row of (res.data || [])) {
+          const name = (row.player_name || "").toLowerCase().trim();
+          if (!name) continue;
+          const mins = typeof row.min === "string" ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+          if (mins <= 0) continue;
+          const existing = goldMinByPlayer.get(name) || [];
+          if (existing.length < 10) { existing.push(mins); goldMinByPlayer.set(name, existing); }
+        }
+      }
+
+      for (const [name, minutes] of goldMinByPlayer) {
+        if (minutes.length < 3) continue;
+        const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+        const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+        const cv = Math.sqrt(variance) / (avg || 1);
+        goldVolMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg });
+      }
+      const gvCount = [...goldVolMap.values()].filter(v => v.isVolatile).length;
+      log(`Minutes volatility: ${goldVolMap.size} players, ${gvCount} volatile (CV>20%)`);
+    }
+
     if (!todayPicks || todayPicks.length < 2) {
       return new Response(JSON.stringify({
         success: true, parlays: 0, reason: "Not enough today's picks",
@@ -346,7 +381,13 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Gate 6: Cold streak mode — skip Tier 2 legs entirely
+      // Gate 6: Minutes volatility — skip volatile bench players from gold parlays
+      const goldVol = goldVolMap.get(playerKey);
+      if (goldVol?.isVolatile) {
+        log(`⚠️ VOLATILE MINUTES: ${playerName} CV ${(goldVol.cv * 100).toFixed(0)}% — penalizing in gold engine`);
+      }
+
+      // Gate 6b: Cold streak mode — skip Tier 2 legs entirely
       // (checked after tier classification below)
 
       // Gate 7: Verify FanDuel line exists (team markets exempt)
@@ -377,6 +418,10 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Apply volatility penalty to win rate for scoring
+      let adjustedWinRate = t1.match ? t1.winRate : t2.winRate;
+      if (goldVol?.isVolatile) adjustedWinRate = Math.max(adjustedWinRate - 5, 50); // -5% penalty
+
       const leg: GoldLeg = {
         id: pick.id,
         player_name: playerName,
@@ -386,10 +431,15 @@ Deno.serve(async (req) => {
         prediction,
         event_id: pick.event_id || "",
         tier: t1.match ? "TIER1" : "TIER2",
-        gold_win_rate: t1.match ? t1.winRate : t2.winRate,
+        gold_win_rate: adjustedWinRate,
         side,
         line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLine(prediction),
-        signal_factors: sf,
+        signal_factors: {
+          ...sf,
+          is_volatile_minutes: goldVol?.isVolatile || false,
+          minutes_cv: goldVol?.cv ?? null,
+          minutes_avg: goldVol?.avgMin ?? null,
+        },
         confidence: pick.confidence_at_signal || 50,
         edge: pick.edge_at_signal || 0,
       };
@@ -645,6 +695,10 @@ Deno.serve(async (req) => {
 
         if (leg.edge > 0) {
           msgLines.push(`✅ Edge: ${(leg.edge * 100).toFixed(1)}%`);
+        }
+
+        if (sf.is_volatile_minutes && sf.minutes_cv != null) {
+          msgLines.push(`⚠️ Volatile Minutes (CV ${(sf.minutes_cv * 100).toFixed(0)}%)`);
         }
         msgLines.push("");
       }

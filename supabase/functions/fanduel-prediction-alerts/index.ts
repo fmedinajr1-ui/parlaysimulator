@@ -276,6 +276,85 @@ Deno.serve(async (req) => {
       if (arr.length < 10) arr.push(gl);
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // MINUTES VOLATILITY GATE — flag high-CV players across all signals
+    // ══════════════════════════════════════════════════════════════
+    interface VolatilityInfo { isVolatile: boolean; cv: number; avgMin: number; gamesUsed: number; }
+    const volatilityMap = new Map<string, VolatilityInfo>();
+
+    // Fetch L10 minutes from multiple sport game logs
+    const sportLogTables = ["nba_player_game_logs", "ncaab_player_game_logs", "nhl_player_game_logs"];
+    const minLogResults = await Promise.all(
+      sportLogTables.map(table =>
+        allPlayerNames.length > 0
+          ? supabase.from(table).select("player_name, min").in("player_name", allPlayerNames).order("game_date", { ascending: false }).limit(allPlayerNames.length * 10)
+          : Promise.resolve({ data: [] })
+      )
+    );
+
+    const minByPlayer = new Map<string, number[]>();
+    for (const res of minLogResults) {
+      for (const row of (res.data || [])) {
+        const name = (row.player_name || "").toLowerCase().trim();
+        if (!name) continue;
+        const mins = typeof row.min === "string" ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+        if (mins <= 0) continue;
+        const existing = minByPlayer.get(name) || [];
+        if (existing.length < 10) { existing.push(mins); minByPlayer.set(name, existing); }
+      }
+    }
+
+    for (const [name, minutes] of minByPlayer) {
+      if (minutes.length < 3) {
+        volatilityMap.set(name, { isVolatile: false, cv: 0, avgMin: 0, gamesUsed: minutes.length });
+        continue;
+      }
+      const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+      const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+      const std = Math.sqrt(variance);
+      const cv = avg > 0 ? std / avg : 0;
+      volatilityMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg, gamesUsed: minutes.length });
+    }
+
+    const volatileCount = [...volatilityMap.values()].filter(v => v.isVolatile).length;
+    log(`Minutes volatility: ${volatilityMap.size} players checked, ${volatileCount} volatile (CV>20%)`);
+
+    // Helper: get volatility warning text for a player
+    function getVolatilityWarning(playerName: string): string {
+      const v = volatilityMap.get((playerName || "").toLowerCase().trim());
+      if (!v || !v.isVolatile) return "";
+      return `⚠️ VOLATILE MINUTES — L10 avg ${v.avgMin.toFixed(0)}min (CV ${(v.cv * 100).toFixed(0)}%)`;
+    }
+
+    // Alt line buffer helpers
+    const ALT_LINE_BUFFERS: Record<string, number> = {
+      player_points: 3.0, player_points_rebounds_assists: 3.0, totals: 3.0, game_totals: 3.0,
+      player_rebounds: 2.0, player_assists: 2.0, player_points_rebounds: 2.0,
+      player_points_assists: 2.0, player_rebounds_assists: 2.0,
+      spreads: 1.5,
+      player_threes: 1.0, player_steals: 1.0, player_blocks: 1.0,
+    };
+    const VOLATILE_EXTRA_BUFFER = 2.0;
+
+    function getAltBuffer(propType: string, playerName: string): number {
+      const base = ALT_LINE_BUFFERS[propType] ?? 1.5;
+      const v = volatilityMap.get((playerName || "").toLowerCase().trim());
+      return v?.isVolatile ? base + VOLATILE_EXTRA_BUFFER : base;
+    }
+
+    function calcAltLine(currentLine: number, side: string, propType: string, playerName: string): number {
+      const buffer = getAltBuffer(propType, playerName);
+      if (side === "OVER") return currentLine - buffer;
+      if (side === "UNDER") return currentLine + buffer;
+      return currentLine;
+    }
+
+    function getAltLineText(currentLine: number | null, side: string, propType: string, playerName: string): string {
+      if (currentLine == null) return "";
+      const alt = calcAltLine(currentLine, side, propType, playerName);
+      return `🎯 Alt Line Edge: ${side} ${alt.toFixed(1)}`;
+    }
+
     // Build matchup lookup: player|opponent|prop_type → matchup data
     const matchupLookup = new Map<string, any>();
     for (const m of (matchupHistRes.data || [])) {
@@ -669,7 +748,10 @@ Deno.serve(async (req) => {
       const signalEmoji = classifiedSignalType === "velocity_spike" ? "⚡" 
         : classifiedSignalType === "cascade" ? "🌊" : "🔮";
 
-      const flipTag = autoFlipped ? "\n🪤 *AUTO-FLIPPED: Market Trap → UNDER*" : "";
+      const volWarning = getVolatilityWarning(first.player_name);
+      const altLineText = getAltLineText(last.line, side, first.prop_type, first.player_name);
+      const volInfo = volatilityMap.get((first.player_name || "").toLowerCase().trim());
+
       const alertText = [
         `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
@@ -681,6 +763,8 @@ Deno.serve(async (req) => {
         `📊 Confidence: ${Math.round(confidence)}%`,
         accuracyBadge || null,
         crossRefBadge || null,
+        volWarning || null,
+        altLineText || null,
         `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
         autoFlipped ? `🪤 *AUTO-FLIPPED: Cascade OVER → UNDER (FanDuel trap)*` : null,
         `💡 ${reason}`,
@@ -699,7 +783,15 @@ Deno.serve(async (req) => {
         velocity_at_signal: velocityPerHour,
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: absLineDiff,
-        signal_factors: { velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType, currentLine: last.line, line_to: last.line, opening_line: first.line },
+        signal_factors: {
+          velocityPerHour, timeDiffMin, lineDiff, learnedAvgVelocity, classifiedSignalType,
+          currentLine: last.line, line_to: last.line, opening_line: first.line,
+          is_volatile_minutes: volInfo?.isVolatile || false,
+          minutes_cv: volInfo?.cv ?? null,
+          minutes_avg: volInfo?.avgMin ?? null,
+          alt_line_buffer: getAltBuffer(first.prop_type, first.player_name),
+          recommended_alt_line: calcAltLine(last.line, side, first.prop_type, first.player_name),
+        },
       };
 
       addSignal(`${first.event_id}|${first.player_name}`, confidence, alertText, record);
@@ -765,6 +857,10 @@ Deno.serve(async (req) => {
         ? `${esc(last.player_name)} ${esc(last.prop_type).toUpperCase()}`
         : `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`;
 
+      const volWarningTIN = getVolatilityWarning(last.player_name);
+      const altLineTextTIN = getAltLineText(last.line, snapDirection, last.prop_type, last.player_name);
+      const volInfoTIN = volatilityMap.get((last.player_name || "").toLowerCase().trim());
+
       const alertText = [
         `💰 *${live ? "LIVE DRIFT" : "TAKE IT NOW"}*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
@@ -775,6 +871,8 @@ Deno.serve(async (req) => {
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
         crossRefBadgeTIN || null,
+        volWarningTIN || null,
+        altLineTextTIN || null,
         `✅ *Action: ${snapDirection} ${last.line} ${fmtOdds(snapDirection === "OVER" ? last.over_price : last.under_price)}*`,
         `💡 ${reason}`,
       ].filter(Boolean).join("\n");
@@ -789,7 +887,14 @@ Deno.serve(async (req) => {
         confidence_at_signal: confidence,
         time_to_tip_hours: last.hours_to_tip,
         edge_at_signal: driftPct,
-        signal_factors: { opening_line: last.opening_line, current_line: last.line, driftPct },
+        signal_factors: {
+          opening_line: last.opening_line, current_line: last.line, driftPct,
+          is_volatile_minutes: volInfoTIN?.isVolatile || false,
+          minutes_cv: volInfoTIN?.cv ?? null,
+          minutes_avg: volInfoTIN?.avgMin ?? null,
+          alt_line_buffer: getAltBuffer(last.prop_type, last.player_name),
+          recommended_alt_line: calcAltLine(last.line, snapDirection, last.prop_type, last.player_name),
+        },
         // Trap detection fields
         line_at_alert: last.line,
         hours_before_tip: last.hours_to_tip,
@@ -839,12 +944,16 @@ Deno.serve(async (req) => {
             ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
             : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
 
+          const volWarningTrap = getVolatilityWarning(first.player_name);
+          const volInfoTrap = volatilityMap.get((first.player_name || "").toLowerCase().trim());
+
           const alertText = [
             `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
             matchupLine ? `🏟 ${esc(matchupLine)}` : null,
             marketLabel,
             `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
             `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+            volWarningTrap || null,
             `✅ *Action: STAY AWAY — both sides are dangerous*`,
             `💡 Book is manipulating this line to trap bettors`,
           ].filter(Boolean).join("\n");
@@ -858,7 +967,12 @@ Deno.serve(async (req) => {
             predicted_magnitude: Math.abs(firstHalfDir) + Math.abs(secondHalfDir),
             confidence_at_signal: 75,
             time_to_tip_hours: last.hours_to_tip,
-            signal_factors: { firstLine: first.line, midLine: mid.line, lastLine: last.line },
+            signal_factors: {
+              firstLine: first.line, midLine: mid.line, lastLine: last.line,
+              is_volatile_minutes: volInfoTrap?.isVolatile || false,
+              minutes_cv: volInfoTrap?.cv ?? null,
+              minutes_avg: volInfoTrap?.avgMin ?? null,
+            },
           };
 
           bestSignalPerPlayer.set(playerKey, { confidence: 99, alert: alertText, record });

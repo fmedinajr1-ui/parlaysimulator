@@ -229,6 +229,38 @@ Deno.serve(async (req) => {
       if (odds) existing.bestOdds = odds;
     }
 
+    // === MINUTES VOLATILITY GATE ===
+    const curatedPlayerNames = [...new Set([...playerMap.keys()].map(k => k.split('|')[0]))];
+    const curVolMap = new Map<string, { isVolatile: boolean; cv: number; avgMin: number }>();
+    if (curatedPlayerNames.length > 0) {
+      const { data: curMinLogs } = await supabase
+        .from('nba_player_game_logs')
+        .select('player_name, min')
+        .in('player_name', curatedPlayerNames.map(n => n.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')))
+        .order('game_date', { ascending: false })
+        .limit(curatedPlayerNames.length * 10);
+
+      const curMinByPlayer = new Map<string, number[]>();
+      for (const row of (curMinLogs || [])) {
+        const name = (row.player_name || '').toLowerCase().trim();
+        if (!name) continue;
+        const mins = typeof row.min === 'string' ? parseFloat(row.min) : (row.min ? parseFloat(String(row.min)) : 0);
+        if (mins <= 0) continue;
+        const existing = curMinByPlayer.get(name) || [];
+        if (existing.length < 10) { existing.push(mins); curMinByPlayer.set(name, existing); }
+      }
+
+      for (const [name, minutes] of curMinByPlayer) {
+        if (minutes.length < 3) continue;
+        const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+        const variance = minutes.reduce((s, m) => s + (m - avg) ** 2, 0) / minutes.length;
+        const cv = Math.sqrt(variance) / (avg || 1);
+        curVolMap.set(name, { isVolatile: cv > 0.20, cv, avgMin: avg });
+      }
+      const curVolCount = [...curVolMap.values()].filter(v => v.isVolatile).length;
+      console.log(`[CuratedPipeline] Minutes volatility: ${curVolMap.size} players, ${curVolCount} volatile (CV>20%)`);
+    }
+
     // === STEP 8: Filter to multi-engine consensus picks with 65%+ L10 ===
     const curatedLegs: CuratedLeg[] = [];
 
@@ -242,6 +274,17 @@ Deno.serve(async (req) => {
 
       const [playerName] = key.split('|');
       const displayName = playerName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+      // Minutes volatility penalty: reduce effective hit rate for volatile players
+      const vol = curVolMap.get(playerName.toLowerCase().trim());
+      if (vol?.isVolatile) {
+        // Apply -5% hit rate penalty for volatile players — may push them below threshold
+        const penalizedRate = data.bestHitRate - 5;
+        if (penalizedRate < 65) {
+          console.log(`[CuratedPipeline] ⚠️ VOLATILE SKIP: ${displayName} — ${data.bestHitRate.toFixed(0)}% HR penalized to ${penalizedRate.toFixed(0)}% (CV ${(vol.cv * 100).toFixed(0)}%)`);
+          continue;
+        }
+      }
 
       // Assign role
       let role: 'SAFE' | 'BALANCED' | 'GREAT_ODDS' = 'BALANCED';
