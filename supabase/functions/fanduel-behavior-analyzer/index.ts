@@ -1067,7 +1067,7 @@ Deno.serve(async (req) => {
           snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
           drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
           recommended_alt_line: altLine,
-          alt_line_buffer: buffer,
+          alt_line_buffer: effectiveBuffer,
         });
       });
 
