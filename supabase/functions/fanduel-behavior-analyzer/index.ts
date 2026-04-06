@@ -287,7 +287,134 @@ Deno.serve(async (req) => {
           });
 
           log(`🔗 CORRELATION: ${shifts.length} players ${dominant} on ${propType} in ${sampleShift.eventDesc} (${Math.round(correlationRate * 100)}% aligned)`);
+
+          // ── AUTO-GENERATE TOTALS & MONEYLINE SIGNALS from team_news_shift ──
+          // When 3+ player props shift together (85%+ correlation), infer team-level signals
+          if (isTeamWide) {
+            // TOTALS signal: player props dropping → game total likely lower → UNDER
+            const totalsAlertKey = `${eventId}|CORR_TOTALS|${propType}`;
+            const totalsDirection = dominant === "dropping" ? "UNDER" : "OVER";
+            const totalsConf = Math.min(85, conf - 5); // slightly less confident than the player-level signal
+            addAlert(totalsAlertKey, totalsConf + 3, {
+              type: "team_news_shift",
+              live: false,
+              sport: sampleShift.sport,
+              player_name: sampleShift.eventDesc || `${shifts.length} players`,
+              prop_type: "totals",
+              event_description: sampleShift.eventDesc,
+              event_id: eventId,
+              players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+              dominant_direction: dominant,
+              correlation_rate: Math.round(correlationRate * 100),
+              avg_magnitude: Math.round(avgMag * 100) / 100,
+              confidence: totalsConf,
+              hours_to_tip: null,
+              derived_from: `player_props_${propType}`,
+              derived_action: totalsDirection,
+            });
+            log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection} (derived from ${shifts.length} player ${propType} shifts)`);
+
+            // MONEYLINE signal: player props dropping for one side → fade that team
+            // Only generate if it's a clear directional signal (5+ players or 90%+ correlation)
+            if (shifts.length >= 5 || correlationRate >= 0.9) {
+              const mlAlertKey = `${eventId}|CORR_ML|${propType}`;
+              const mlAction = dominant === "dropping" ? "FADE" : "BACK";
+              const mlConf = Math.min(80, conf - 10); // less confident than totals
+              addAlert(mlAlertKey, mlConf + 2, {
+                type: "team_news_shift",
+                live: false,
+                sport: sampleShift.sport,
+                player_name: sampleShift.eventDesc || `${shifts.length} players`,
+                prop_type: "moneyline",
+                event_description: sampleShift.eventDesc,
+                event_id: eventId,
+                players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude })),
+                dominant_direction: dominant,
+                correlation_rate: Math.round(correlationRate * 100),
+                avg_magnitude: Math.round(avgMag * 100) / 100,
+                confidence: mlConf,
+                hours_to_tip: null,
+                derived_from: `player_props_${propType}`,
+                derived_action: mlAction,
+              });
+              log(`📰 AUTO-ML: ${sampleShift.eventDesc} → ${mlAction} (derived from ${shifts.length} player ${propType} shifts)`);
+            }
+          }
         }
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // TEAM MARKET CORRELATION: Totals/Spreads moving across multiple games
+    // ══════════════════════════════════════════════════════════════
+    const teamMarketByType = new Map<string, { event_id: string; direction: string; magnitude: number; sport: string; eventDesc: string; current_line: number; opening_line: number }[]>();
+    for (const row of activeTimeline) {
+      if (!row.opening_line) continue;
+      if (typeof row.hours_to_tip !== "number" || row.hours_to_tip <= 0) continue;
+      if (!row.event_id) continue;
+      const pt = row.prop_type;
+      if (pt !== "totals" && pt !== "spreads") continue;
+
+      const diff = row.line - row.opening_line;
+      if (Math.abs(diff) < 0.5) continue;
+
+      const key = `${row.sport}|${pt}`;
+      if (!teamMarketByType.has(key)) teamMarketByType.set(key, []);
+
+      // Deduplicate by event — keep latest snapshot per event
+      const existing = teamMarketByType.get(key)!;
+      const existingIdx = existing.findIndex(e => e.event_id === row.event_id);
+      const entry = {
+        event_id: row.event_id,
+        direction: diff > 0 ? "rising" : "dropping",
+        magnitude: Math.abs(diff),
+        sport: row.sport,
+        eventDesc: row.event_description,
+        current_line: row.line,
+        opening_line: row.opening_line,
+      };
+      if (existingIdx >= 0) {
+        existing[existingIdx] = entry; // update with latest
+      } else {
+        existing.push(entry);
+      }
+    }
+
+    for (const [key, shifts] of teamMarketByType) {
+      if (shifts.length < 3) continue; // Need 3+ games shifting same direction
+      const [sport, propType] = key.split("|");
+
+      const rising = shifts.filter(s => s.direction === "rising").length;
+      const dropping = shifts.filter(s => s.direction === "dropping").length;
+      const dominant = rising >= dropping ? "rising" : "dropping";
+      const dominantCount = Math.max(rising, dropping);
+      const correlationRate = dominantCount / shifts.length;
+
+      if (correlationRate >= 0.75) {
+        const avgMag = shifts.reduce((a, s) => a + s.magnitude, 0) / shifts.length;
+        const conf = Math.min(85, 55 + correlationRate * 15 + Math.min(shifts.length, 5) * 3);
+
+        const alertKey = `TEAM_MKT_CORR|${sport}|${propType}|${dominant}`;
+        const topGames = shifts.filter(s => s.direction === dominant).slice(0, 5);
+
+        addAlert(alertKey, conf + 3, {
+          type: "team_news_shift",
+          live: false,
+          sport,
+          player_name: `${shifts.length} games`,
+          prop_type: propType,
+          event_description: `${sport} ${propType} — ${shifts.length} games moving ${dominant}`,
+          event_id: topGames[0]?.event_id || "multi_game",
+          players_moving: topGames.map(s => ({ name: s.eventDesc, direction: s.direction, magnitude: s.magnitude })),
+          dominant_direction: dominant,
+          correlation_rate: Math.round(correlationRate * 100),
+          avg_magnitude: Math.round(avgMag * 100) / 100,
+          confidence: conf,
+          hours_to_tip: null,
+          derived_from: `team_market_cross_game`,
+        });
+
+        log(`🔗 TEAM-MARKET CORRELATION: ${shifts.length} ${sport} ${propType} games ${dominant} (${Math.round(correlationRate * 100)}% aligned)`);
       }
     }
 
@@ -1003,11 +1130,30 @@ Deno.serve(async (req) => {
           let reason: string;
           const playerCount = (a.players_moving || []).length;
           if (a.type === "team_news_shift") {
-            // Trust the news — go WITH the direction
-            action = a.dominant_direction === "dropping"
-              ? `UNDER — ${playerCount} players dropping = real news, take UNDER`
-              : `OVER — ${playerCount} players rising = real news, take OVER`;
-            reason = `85%+ correlation across ${playerCount} players = likely injury/lineup news. Following the market shift.`;
+            const isTeamMarketDerived = a.prop_type === "totals" || a.prop_type === "moneyline";
+            if (isTeamMarketDerived && a.prop_type === "totals") {
+              action = a.dominant_direction === "dropping"
+                ? `UNDER — ${playerCount} player props dropping → game total likely lower`
+                : `OVER — ${playerCount} player props rising → game total likely higher`;
+              reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}.`;
+            } else if (isTeamMarketDerived && a.prop_type === "moneyline") {
+              action = a.dominant_direction === "dropping"
+                ? `FADE — ${playerCount} player props dropping → fade this side`
+                : `BACK — ${playerCount} player props rising → back this side`;
+              reason = `Derived from player prop team news shift. ${playerCount}+ players shifting = likely lineup/injury impact on ML.`;
+            } else if (a.derived_from === "team_market_cross_game") {
+              const gameCount = playerCount;
+              action = a.dominant_direction === "dropping"
+                ? `UNDER — ${gameCount} games' ${a.prop_type} dropping across ${esc(a.sport)}`
+                : `OVER — ${gameCount} games' ${a.prop_type} rising across ${esc(a.sport)}`;
+              reason = `Cross-game ${a.prop_type} correlation: ${gameCount} games shifting ${a.dominant_direction} = league-wide trend.`;
+            } else {
+              // Standard player prop team news shift
+              action = a.dominant_direction === "dropping"
+                ? `UNDER — ${playerCount} players dropping = real news, take UNDER`
+                : `OVER — ${playerCount} players rising = real news, take OVER`;
+              reason = `85%+ correlation across ${playerCount} players = likely injury/lineup news. Following the market shift.`;
+            }
           } else {
             // Fade — contrarian logic for lower-correlation moves
             action = a.dominant_direction === "dropping"
@@ -1015,10 +1161,11 @@ Deno.serve(async (req) => {
               : `UNDER — lines rising across ${playerCount} players (fade the trap)`;
             reason = `Coordinated movement below news threshold — fading as potential public trap.`;
           }
+          const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
-            `${playerCount} players moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
+            `${playerCount} ${itemLabel} moving ${a.dominant_direction} (${a.correlation_rate}% aligned)`,
             topPlayers,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
