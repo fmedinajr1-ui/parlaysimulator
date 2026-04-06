@@ -1332,7 +1332,7 @@ Deno.serve(async (req) => {
       let currentPage: string[] = [];
       let currentLen = 0;
 
-      for (const alert of telegramAlerts) {
+      for (const alert of filteredTelegramAlerts) {
         const alertLen = alert.length + 2;
         if (currentPage.length > 0 && currentLen + alertLen > MAX_CHARS) {
           pages.push(currentPage);
@@ -1347,7 +1347,7 @@ Deno.serve(async (req) => {
       for (let i = 0; i < pages.length; i++) {
         const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
         const header = i === 0
-          ? [`🎯 *FanDuel Predictions*${pageLabel}`, `${telegramAlerts.length} signal(s) — sorted by accuracy`, ""]
+          ? [`🎯 *FanDuel Predictions*${pageLabel}`, `${filteredTelegramAlerts.length} signal(s) — sorted by accuracy`, ""]
           : [`🎯 *Predictions${pageLabel}*`, ""];
 
         const msg = [...header, ...pages[i]].join("\n\n");
