@@ -418,6 +418,10 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Apply volatility penalty to win rate for scoring
+      let adjustedWinRate = t1.match ? t1.winRate : t2.winRate;
+      if (goldVol?.isVolatile) adjustedWinRate = Math.max(adjustedWinRate - 5, 50); // -5% penalty
+
       const leg: GoldLeg = {
         id: pick.id,
         player_name: playerName,
@@ -427,10 +431,15 @@ Deno.serve(async (req) => {
         prediction,
         event_id: pick.event_id || "",
         tier: t1.match ? "TIER1" : "TIER2",
-        gold_win_rate: t1.match ? t1.winRate : t2.winRate,
+        gold_win_rate: adjustedWinRate,
         side,
         line: sf.line ?? sf.fanduel_line ?? pick.line ?? extractLine(prediction),
-        signal_factors: sf,
+        signal_factors: {
+          ...sf,
+          is_volatile_minutes: goldVol?.isVolatile || false,
+          minutes_cv: goldVol?.cv ?? null,
+          minutes_avg: goldVol?.avgMin ?? null,
+        },
         confidence: pick.confidence_at_signal || 50,
         edge: pick.edge_at_signal || 0,
       };
