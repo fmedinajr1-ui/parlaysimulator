@@ -975,11 +975,15 @@ Deno.serve(async (req) => {
 
       if (driftPct < minDrift) continue;
 
-      // Pitcher props follow the market (rising K line = OVER), all others use regression
+      // Sport-aware direction logic:
+      // NBA player props → regression (books inflate lines to trap public OVER bettors)
+      // Everything else (NHL, MLB, NCAAB, pitcher props, team markets) → follow market direction
       const isPitcherProp = last.prop_type?.startsWith("pitcher_");
-      const snapDirection = isPitcherProp
-        ? (drift > 0 ? "OVER" : "UNDER")   // Pitcher: follow market movement
-        : (drift > 0 ? "UNDER" : "OVER");  // Others: regression to mean
+      const isNbaPlayerProp = last.sport === "NBA" && !TEAM_MARKET_TYPES.has(last.prop_type) && !isPitcherProp;
+      const useRegression = isNbaPlayerProp;
+      const snapDirection = useRegression
+        ? (drift > 0 ? "UNDER" : "OVER")   // NBA regression: inflated = UNDER, deflated = OVER
+        : (drift > 0 ? "OVER" : "UNDER");  // All others: follow market direction
       const isCombo = COMBO_PROPS.has(last.prop_type);
       const comboBoost = isCombo ? 10 : 0;
       const confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
@@ -1006,13 +1010,13 @@ Deno.serve(async (req) => {
 
       if (confidence < 55) continue;
 
-      const reason = isPitcherProp
-        ? (snapDirection === "OVER"
-          ? "K line rising — matchup/sharp money favors OVER"
-          : "K line dropping — matchup/sharp money favors UNDER")
-        : (snapDirection === "UNDER"
+      const reason = useRegression
+        ? (snapDirection === "UNDER"
           ? "Line inflated above open — expect snapback down"
-          : "Line deflated below open — expect snapback up");
+          : "Line deflated below open — expect snapback up")
+        : (snapDirection === "OVER"
+          ? `Line rising — market signals OVER (${esc(last.sport)})`
+          : `Line dropping — market signals UNDER (${esc(last.sport)})`);
       const liveTag = live ? " [🔴 LIVE]" : "";
 
       // Dynamic accuracy badge from real verified data
@@ -1034,7 +1038,7 @@ Deno.serve(async (req) => {
         marketLabel,
         fdLineBadge(last.line, last.over_price, last.under_price, snapDirection),
         `Open: ${last.opening_line} → Now: ${last.line}`,
-        `Drift: ${driftPct.toFixed(1)}% — historically snaps back`,
+        `Drift: ${driftPct.toFixed(1)}% — ${useRegression ? "historically snaps back" : "market conviction signal"}`,
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
         crossRefBadgeTIN || null,
@@ -1049,7 +1053,7 @@ Deno.serve(async (req) => {
         sport: last.sport, prop_type: last.prop_type,
         player_name: last.player_name, event_id: last.event_id,
         prediction: `${snapDirection} ${last.line}`,
-        predicted_direction: "snapback",
+        predicted_direction: useRegression ? "snapback" : "market_follow",
         predicted_magnitude: absDrift,
         confidence_at_signal: confidence,
         time_to_tip_hours: last.hours_to_tip,
