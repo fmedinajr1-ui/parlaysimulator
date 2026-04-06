@@ -1277,7 +1277,7 @@ Deno.serve(async (req) => {
 
     // Use gatedAlerts instead of alerts from here on
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
-    const predRows = alerts
+    const predRows = gatedAlerts
       .filter(a => {
         const dedupKey = `${a.event_id}|${a.player_name}|${a.prop_type}|${a.type}`;
         if (recentPredKeys.has(dedupKey)) {
@@ -1363,7 +1363,7 @@ Deno.serve(async (req) => {
     }
 
     // ====== SEND TELEGRAM — DEDUPED, GROUPED, PAGINATED ======
-    const highConfAlerts = alerts.filter((a) => a.confidence >= 70);
+    const highConfAlerts = gatedAlerts.filter((a) => a.confidence >= 70);
     if (highConfAlerts.length > 0) {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
