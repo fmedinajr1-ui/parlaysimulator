@@ -416,40 +416,152 @@ Deno.serve(async (req) => {
 
     /**
      * Cross-reference gate: checks if the player's L10 avg supports the recommended side/line.
+     * For MLB pitcher strikeouts: uses mlb_player_game_logs with L3/L10 + vs-opponent matchup.
      * Returns { pass, l10Avg, hitRate, matchupAvg, reason } 
      */
     function crossReferenceGate(playerName: string, propType: string, line: number, side: string, eventDesc: string): {
       pass: boolean; l10Avg: number | null; l10HitRate: number | null; matchupAvg: number | null; reason: string; badge: string;
+      l3Avg?: number | null;
     } {
       const pLower = playerName.toLowerCase();
+      const noData = { pass: true, l10Avg: null, l10HitRate: null, matchupAvg: null, reason: "no_data", badge: "", l3Avg: null };
+
+      // ── MLB PROPS: use mlb_player_game_logs ──
+      const mlbStatCol = MLB_STAT_MAP[propType];
+      if (mlbStatCol) {
+        const logs = mlbPlayerLogs.get(pLower) || [];
+        // For pitcher props, filter to games where they actually pitched
+        const isPitcherProp = propType.startsWith("pitcher_");
+        const relevantLogs = isPitcherProp
+          ? logs.filter((l: any) => l.pitcher_strikeouts != null && l.innings_pitched != null && l.innings_pitched > 0)
+          : logs;
+        
+        if (relevantLogs.length < 3) return noData;
+
+        const l10Logs = relevantLogs.slice(0, 10);
+        const l3Logs = relevantLogs.slice(0, 3);
+        const l10Values = l10Logs.map((gl: any) => Number(gl[mlbStatCol]) || 0);
+        const l3Values = l3Logs.map((gl: any) => Number(gl[mlbStatCol]) || 0);
+        const l10Avg = l10Values.reduce((a: number, b: number) => a + b, 0) / l10Values.length;
+        const l3Avg = l3Values.reduce((a: number, b: number) => a + b, 0) / l3Values.length;
+
+        // L10 hit rate
+        const l10Hits = l10Values.filter((v: number) => side === "OVER" ? v > line : v < line).length;
+        const l10HitRate = l10Hits / l10Values.length;
+
+        // Matchup: how this pitcher/batter performs vs this specific opponent
+        let matchupAvg: number | null = null;
+        let matchupGames = 0;
+        const edLower = (eventDesc || "").toLowerCase();
+        // Extract opponent from game logs — check which opponent appears in event description
+        const oppPerf: number[] = [];
+        for (const gl of relevantLogs) {
+          const opp = (gl.opponent || "").toLowerCase();
+          if (opp && edLower.includes(opp)) {
+            oppPerf.push(Number(gl[mlbStatCol]) || 0);
+          }
+        }
+        if (oppPerf.length > 0) {
+          matchupAvg = oppPerf.reduce((a, b) => a + b, 0) / oppPerf.length;
+          matchupGames = oppPerf.length;
+        }
+
+        // Also check matchup_history table
+        if (matchupAvg === null) {
+          for (const [mKey, m] of matchupLookup) {
+            if (!mKey.startsWith(`${pLower}|`)) continue;
+            if (!mKey.endsWith(`|${propType}`)) continue;
+            const oppName = mKey.split("|")[1];
+            const oppWords = oppName.split(/\s+/);
+            if (oppWords.some((w: string) => w.length > 3 && edLower.includes(w))) {
+              matchupAvg = Number(m.avg_stat);
+              matchupGames = Number(m.games_played || 0);
+              break;
+            }
+          }
+        }
+
+        // For pitcher K props: also factor in innings pitched context
+        let avgIP: number | null = null;
+        if (isPitcherProp) {
+          const ipValues = l10Logs.map((gl: any) => Number(gl.innings_pitched) || 0);
+          avgIP = ipValues.reduce((a: number, b: number) => a + b, 0) / ipValues.length;
+        }
+
+        // GATE LOGIC for pitcher strikeouts — tighter than NBA
+        const isOver = side === "OVER";
+        const avgVsLine = isOver ? l10Avg - line : line - l10Avg;
+        const pctEdge = line > 0 ? (avgVsLine / line) * 100 : 0;
+
+        // Hard block: L10 avg goes strongly AGAINST + L3 trend confirms
+        if (pctEdge < -10 && l10HitRate < 0.30) {
+          return {
+            pass: false, l10Avg, l10HitRate, matchupAvg, l3Avg,
+            reason: `L10 avg ${l10Avg.toFixed(1)} | L3 avg ${l3Avg.toFixed(1)} — ${(l10HitRate * 100).toFixed(0)}% hit rate vs line ${line}`,
+            badge: "",
+          };
+        }
+
+        // Pitcher K specific: if L3 trend is trending away hard AND matchup doesn't support
+        if (isPitcherProp && l3Values.length >= 3) {
+          const l3VsLine = isOver ? l3Avg - line : line - l3Avg;
+          const l3Edge = line > 0 ? (l3VsLine / line) * 100 : 0;
+          if (l3Edge < -15 && (matchupAvg === null || (isOver ? matchupAvg < line : matchupAvg > line))) {
+            return {
+              pass: false, l10Avg, l10HitRate, matchupAvg, l3Avg,
+              reason: `Pitcher K gate: L3 avg ${l3Avg.toFixed(1)} trending away from ${side} ${line} | matchup ${matchupAvg?.toFixed(1) ?? "N/A"}`,
+              badge: "",
+            };
+          }
+        }
+
+        // Soft block: both L10 and matchup against the line
+        if (pctEdge < -5 && l10HitRate < 0.40 && matchupAvg !== null && (isOver ? matchupAvg < line : matchupAvg > line)) {
+          return {
+            pass: false, l10Avg, l10HitRate, matchupAvg, l3Avg,
+            reason: `L10 avg ${l10Avg.toFixed(1)} + vs opp avg ${matchupAvg.toFixed(1)} both fail vs ${side} ${line}`,
+            badge: "",
+          };
+        }
+
+        // Build rich validation badge
+        let badge = `📊 L10 Avg: ${l10Avg.toFixed(1)} | L3 Avg: ${l3Avg.toFixed(1)} | L10 Hit: ${(l10HitRate * 100).toFixed(0)}%`;
+        if (matchupAvg !== null) {
+          badge += ` | vs Opp: ${matchupAvg.toFixed(1)} (${matchupGames}g)`;
+        }
+        if (avgIP !== null) {
+          badge += ` | Avg IP: ${avgIP.toFixed(1)}`;
+        }
+        if (l10HitRate >= 0.70) badge += " ✅";
+        else if (l10HitRate >= 0.50) badge += " ⚠️";
+        else badge += " 🔻";
+
+        return { pass: true, l10Avg, l10HitRate, matchupAvg, reason: "validated", badge, l3Avg };
+      }
+
+      // ── NBA/NCAAB PROPS: use nba_player_game_logs (existing logic) ──
       const logs = playerL10.get(pLower) || [];
-      const noData = { pass: true, l10Avg: null, l10HitRate: null, matchupAvg: null, reason: "no_data", badge: "" };
+      if (logs.length < 3) return noData;
 
-      if (logs.length < 3) return noData; // Not enough data — let signal through with no badge
-
-      // Calculate L10 average for this prop type
       const statFields = COMBO_STAT_FIELDS[propType] || (STAT_FIELD_MAP[propType] ? [STAT_FIELD_MAP[propType]] : null);
-      if (!statFields) return noData; // Unknown prop — let through
+      if (!statFields) return noData;
 
       const l10Values = logs.slice(0, 10).map((gl: any) =>
         statFields.reduce((sum: number, f: string) => sum + (Number(gl[f]) || 0), 0)
       );
       const l10Avg = l10Values.reduce((a: number, b: number) => a + b, 0) / l10Values.length;
 
-      // L10 hit rate vs this line
       const l10Hits = l10Values.filter((v: number) =>
         side === "OVER" ? v > line : v < line
       ).length;
       const l10HitRate = l10Hits / l10Values.length;
 
-      // Check matchup history if opponent can be extracted from event description
       let matchupAvg: number | null = null;
       let matchupHitRate: number | null = null;
       const edLower = (eventDesc || "").toLowerCase();
       for (const [mKey, m] of matchupLookup) {
         if (!mKey.startsWith(`${pLower}|`)) continue;
         if (!mKey.endsWith(`|${propType}`)) continue;
-        // Check if opponent name appears in event description
         const oppName = mKey.split("|")[1];
         const oppWords = oppName.split(/\s+/);
         if (oppWords.some((w: string) => w.length > 3 && edLower.includes(w))) {
@@ -459,12 +571,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      // GATE LOGIC: block if L10 avg clearly doesn't support the side
       const isOver = side === "OVER";
       const avgVsLine = isOver ? l10Avg - line : line - l10Avg;
       const pctEdge = (avgVsLine / line) * 100;
 
-      // Hard block: L10 avg goes AGAINST the recommended side by >10%
       if (pctEdge < -10 && l10HitRate < 0.30) {
         return {
           pass: false, l10Avg, l10HitRate, matchupAvg,
@@ -473,7 +583,6 @@ Deno.serve(async (req) => {
         };
       }
 
-      // Soft block: L10 avg slightly against AND matchup history also against
       if (pctEdge < -5 && l10HitRate < 0.40 && matchupHitRate !== null && matchupHitRate < 0.40) {
         return {
           pass: false, l10Avg, l10HitRate, matchupAvg,
@@ -482,7 +591,6 @@ Deno.serve(async (req) => {
         };
       }
 
-      // Build validation badge for alerts that pass
       let badge = `📊 L10 Avg: ${l10Avg.toFixed(1)} | L10 Hit: ${(l10HitRate * 100).toFixed(0)}%`;
       if (matchupAvg !== null) {
         badge += ` | vs Opp: ${matchupAvg.toFixed(1)} avg`;
