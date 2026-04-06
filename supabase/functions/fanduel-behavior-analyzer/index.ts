@@ -1625,7 +1625,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.player_name, a.event_id);
           const volWarning = getVolatilityWarning(a);
           const statsBadge = getStatsBadge(a);
           return [
@@ -1671,7 +1671,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.player_name, a.event_id);
           const volWarning = getVolatilityWarning(a);
           const statsBadge = getStatsBadge(a);
           return [
@@ -1720,7 +1720,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.player_name, a.event_id);
           const volWarning = getVolatilityWarning(a);
           const statsBadge = getStatsBadge(a);
           return [
@@ -1788,7 +1788,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.player_name, a.event_id);
           const volWarning = getVolatilityWarning(a);
           const statsBadge = getStatsBadge(a);
           return [
