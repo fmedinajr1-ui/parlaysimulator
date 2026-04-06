@@ -975,11 +975,15 @@ Deno.serve(async (req) => {
 
       if (driftPct < minDrift) continue;
 
-      // Pitcher props follow the market (rising K line = OVER), all others use regression
+      // Sport-aware direction logic:
+      // NBA player props → regression (books inflate lines to trap public OVER bettors)
+      // Everything else (NHL, MLB, NCAAB, pitcher props, team markets) → follow market direction
       const isPitcherProp = last.prop_type?.startsWith("pitcher_");
-      const snapDirection = isPitcherProp
-        ? (drift > 0 ? "OVER" : "UNDER")   // Pitcher: follow market movement
-        : (drift > 0 ? "UNDER" : "OVER");  // Others: regression to mean
+      const isNbaPlayerProp = last.sport === "NBA" && !TEAM_MARKET_TYPES.has(last.prop_type) && !isPitcherProp;
+      const useRegression = isNbaPlayerProp;
+      const snapDirection = useRegression
+        ? (drift > 0 ? "UNDER" : "OVER")   // NBA regression: inflated = UNDER, deflated = OVER
+        : (drift > 0 ? "OVER" : "UNDER");  // All others: follow market direction
       const isCombo = COMBO_PROPS.has(last.prop_type);
       const comboBoost = isCombo ? 10 : 0;
       const confidence = Math.min(92, 30 + driftPct * 3 + comboBoost);
