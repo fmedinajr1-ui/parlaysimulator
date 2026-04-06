@@ -1578,20 +1578,17 @@ Deno.serve(async (req) => {
           return `⚠️ *VOLATILE MINUTES* — L10 avg ${alert.minutes_avg} min (CV ${Math.round(alert.minutes_cv * 100)}%) — extra buffer applied`;
         };
 
-        // Alt line helper for Telegram display (with volatility-aware buffer)
-        const getAltLineText = (action: string, currentLine: number | null, propType: string, isVolatile?: boolean): string => {
+        // Alt line helper — uses pre-fetched cache from fetchRealAltLine
+        const getAltLineText = (action: string, currentLine: number | null, propType: string, playerName: string, eventId: string): string => {
           if (currentLine == null) return "";
-          const baseBuf = getBuffer(propType);
-          if (baseBuf == null) return "";
-          const effectiveBuf = isVolatile ? baseBuf + VOLATILITY_EXTRA_BUFFER : baseBuf;
-          // Extract side from action text
-          const isOver = action.toUpperCase().startsWith("OVER") || action.toUpperCase().includes("OVER");
-          const isUnder = action.toUpperCase().startsWith("UNDER") || action.toUpperCase().includes("UNDER");
+          const isOver = action.toUpperCase().includes("OVER");
+          const isUnder = action.toUpperCase().includes("UNDER");
           if (!isOver && !isUnder) return "";
           const side = isOver ? "OVER" : "UNDER";
-          const alt = calcAltLine(currentLine, side, effectiveBuf);
-          const sign = side === "OVER" ? `-${effectiveBuf}` : `+${effectiveBuf}`;
-          return `🎯 *Alt Line Edge: ${side} ${alt} (${sign} pts)*`;
+          const cacheKey = `${eventId}|${playerName}|${propType}`;
+          const cached = altLineCache.get(cacheKey);
+          if (!cached) return "🎯 *Alt Line: unavailable*";
+          return `🎯 *Alt Line (FanDuel): ${side} ${cached.line} (${fmtAltOdds(cached.odds)})*`;
         };
 
         // Combined stats badge (pitcher K or NBA/NHL L10)
