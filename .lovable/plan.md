@@ -1,67 +1,59 @@
 
 
-# Data-Driven NBA Direction + L10 Minutes Cross-Reference
+# Fix MLB Moneyline Labels + Add Team Quality Context
 
-## What Changes
+## Problems (from screenshot)
 
-### 1. Replace Blind NBA Regression with L10/L3-Informed Direction (lines 978-986)
+1. **Wrong labels**: Colorado Rockies MONEYLINE says "Action: UNDER 154" and "Line dropping — market signals UNDER". Moneylines don't have OVER/UNDER — should say **TAKE** (back this team) or **FADE** (bet against)
+2. **No team quality context**: The bot blindly follows market direction without considering team quality. If a line drops from +168 to +154, that might mean sharp money is on the Rockies — but the Rockies are terrible. Meanwhile, an all-star team or a game with a rookie pitcher on the other side should factor in
 
-**New helper function `resolveNbaDirection()`** inserted before the Take It Now loop. Uses data already loaded in `playerL10` and `volatilityMap`:
+## Fix
 
-```text
-Decision tree:
-1. Pull L10 values for this player+prop from playerL10 (already loaded at line 308)
-2. Calculate L10 avg, L3 avg, L10 hit rates for OVER and UNDER vs current line
+### A. Relabel Moneyline Alerts: TAKE/FADE instead of OVER/UNDER
 
-IF L10 avg > line AND OVER hit rate >= 50% → OVER ("L10 avg X clears line Y")
-IF L10 avg < line AND UNDER hit rate >= 50% → UNDER ("L10 avg X below line Y")
-IF player is volatile (from volatilityMap) AND L3 diverges from L10 by >15% → follow L3 direction
-FALLBACK (no clear edge) → follow market direction (drift up = OVER, drift down = UNDER)
-```
+In `fanduel-prediction-alerts/index.ts`, at every point where `snapDirection` is used for display on moneyline/h2h props:
 
-This replaces the current `useRegression = isNbaPlayerProp` blind logic. Snapback only happens when the DATA supports it, not as a default.
+- When market is moving **toward** the team (odds getting shorter / more negative) → **TAKE** (market backing this team)
+- When market is moving **away** from the team (odds getting longer / more positive) → **FADE** (market moving off this team)
 
-### 2. Add L10 Minutes Cross-Reference Gate
+Specifically update:
+- **Line 1069-1073**: Non-NBA direction reason text — detect moneyline and use "TAKE/FADE" labels
+- **Line 1141**: Action line — change from `OVER/UNDER {line}` to `TAKE/FADE {teamName} ({odds})`
+- **Line 927**: Velocity/cascade action line — same TAKE/FADE for moneyline
+- **`fdLineBadge` function (line 95-98)**: When prop is moneyline, show odds format properly (no over/under price split)
+- **`fmtOdds` usage**: For moneyline action, show the team's odds directly
 
-Add a minutes stability check into the Take It Now flow for NBA props. The `volatilityMap` (line 345) already has L10 minutes data. New logic:
+### B. Add MLB Team Quality Context to Moneyline Decisions
 
-- If player's L10 avg minutes < 20 AND prop line suggests starter-level production → **soft warn** ("⚠️ Low minutes risk — L10 avg 18min")
-- If player's L10 avg minutes < 15 → **hard block** (not getting enough floor time to hit)
-- If minutes CV > 30% (highly unstable) → add warning badge and reduce confidence by 10 points
-- Show minutes context in the Telegram alert: `🕐 L10 Min: 32.4 avg (stable)` or `⚠️ L10 Min: 19.2 avg (VOLATILE — CV 35%)`
+**Problem**: No MLB standings in `team_season_standings` (only NBA/NFL). And no pitcher matchup data available for the game.
 
-### 3. Update Telegram Formatting
+**Solution**: Query `mlb_player_game_logs` to build a lightweight MLB team quality signal:
+1. Query recent pitcher game logs for the starting pitchers in the matchup (if detectable from the event's player props)
+2. Check if any of the team's pitchers have rookie-level innings (low IP avg, high ERA indicators)
+3. Add this as context in the Telegram alert and as a gate modifier
 
-**Direction reason text** (replaces lines 1013-1019):
-- `"L10 avg 26.3 clears line 24.5 — data supports OVER"`
-- `"Volatile: L3 avg 31.0 vs L10 avg 24.5 — hot streak, follow OVER"`
-- `"No clear data edge — following market direction (OVER)"`
+**Specifically**:
+- Before the Take It Now loop, for MLB moneyline signals, look up which players from each team have active props in the current scan — if a team has pitcher props, extract that pitcher's L10 ERA/K stats
+- Add a helper `getMlbMoneylineContext()` that returns:
+  - Pitcher quality badge (e.g., "🔥 Ace: 8.2 K/9, 2.1 ERA" or "⚠️ Rookie/Struggling: 4.8 ERA")
+  - Team strength estimate from recent game log aggregates
+- Factor pitcher quality into confidence: ace pitcher = +10, rookie/struggling = -10
+- Show in Telegram: `⚾ SP: Cole (8.2 K/9 L10) vs TBD — pitching edge`
 
-**Minutes badge** added to alert body (after volatility warning):
-- `🕐 L10 Min: 32.4 avg (stable)` — for stable-minutes players
-- `⚠️ L10 Min: 19.2 avg — minutes risk` — for low/volatile minutes
+### C. MLB-Specific Moneyline Direction Logic
 
-**Drift line** (line 1041): Change from `"historically snaps back"` to the method used (`"l10_data"`, `"l3_trend"`, or `"market_follow"`)
+For MLB moneyline, instead of blind "drift down = UNDER", apply:
+- **Line shortening** (e.g., +168 → +154, or -110 → -130): Market backing this team → **TAKE** (unless team is bottom-tier)
+- **Line lengthening** (e.g., -130 → -110, or +150 → +180): Market fading → **FADE**
+- **Override**: If available pitcher data shows the opposing team has an ace and this team has a struggling pitcher, override to FADE regardless of line movement
 
-### 4. Update `predicted_direction` Metadata (line 1056)
+### D. Rule Registry
 
-Change from just `"snapback"` to the specific method: `"l10_data"`, `"l3_trend"`, or `"market_follow"` — so the accuracy feedback loop can learn which method works best.
-
-### 5. Update `bot_owner_rules` (Migration)
-
-Update the existing NBA direction rule to reflect the new data-driven approach:
-```sql
-INSERT INTO bot_owner_rules (rule_key, rule_description, rule_logic, applies_to)
-VALUES ('nba_data_driven_direction', 
-  'NBA player props use L10/L3 data + minutes to determine direction, not blind snapback',
-  '{"logic":"l10_avg_vs_line_determines_direction","minutes_gate":"block_under_15min_warn_under_20min","volatile_follows_l3"}',
-  ARRAY['fanduel-prediction-alerts'])
-ON CONFLICT (rule_key) DO UPDATE SET rule_description = EXCLUDED.rule_description, rule_logic = EXCLUDED.rule_logic;
-```
+Add `mlb_moneyline_context` rule to `bot_owner_rules`:
+- "MLB moneyline uses TAKE/FADE labels. Pitcher quality and team strength factor into direction. Never blindly follow line movement on bottom-tier teams."
 
 ## Scope
 - 1 edge function modified (`fanduel-prediction-alerts`)
-- 1 migration (rule update)
-- No new tables, no structural changes
-- Uses data already loaded in the function (playerL10, volatilityMap)
+- 1 migration (new rule)
+- No new tables — uses existing `mlb_player_game_logs` for pitcher context
 
