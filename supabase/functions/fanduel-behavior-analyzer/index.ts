@@ -18,6 +18,36 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[Behavior Analyzer] ${msg}`);
   const now = new Date();
 
+  // ====== ALT LINE BUFFER CONSTANTS (by prop type keyword) ======
+  const PROP_BUFFER: Record<string, number> = {
+    points: 3.0, pra: 3.0, pts_reb: 3.0, pts_ast: 3.0, "pts+reb": 3.0, "pts+ast": 3.0,
+    rebounds: 2.0, assists: 2.0, reb_ast: 2.0, "reb+ast": 2.0,
+    threes: 1.0, steals: 1.0, blocks: 1.0, "steals+blocks": 1.0, stl_blk: 1.0,
+    turnovers: 0.5,
+    totals: 3.0, total: 3.0,
+    spreads: 1.5, spread: 1.5,
+    // Defaults for anything else (generic player props)
+    default: 2.0,
+  };
+
+  function getBuffer(propType: string): number | null {
+    const pt = (propType || "").toLowerCase().replace("player_", "").replace(/ /g, "_");
+    // Skip non-line markets
+    if (["h2h", "moneyline", "double_double", "triple_double"].some(s => pt.includes(s))) return null;
+    for (const [key, val] of Object.entries(PROP_BUFFER)) {
+      if (key !== "default" && pt.includes(key)) return val;
+    }
+    return PROP_BUFFER.default;
+  }
+
+  function calcAltLine(currentLine: number, side: string, buffer: number): number {
+    // Round to nearest 0.5 to match FanDuel alt line increments
+    const raw = side === "OVER" || side === "over"
+      ? currentLine - buffer
+      : currentLine + buffer;
+    return Math.round(raw * 2) / 2;
+  }
+
   try {
     log("=== Starting FanDuel behavior analysis ===");
 
@@ -910,6 +940,26 @@ Deno.serve(async (req) => {
           predictionText = `Unknown signal`;
         }
 
+        // Calculate alt line for this prediction
+        let actionSide: string | null = null;
+        if (a.type === "take_it_now") {
+          actionSide = a.direction === "dropping" ? "OVER" : "UNDER";
+        } else if (a.type === "line_about_to_move" || a.type === "velocity_spike") {
+          actionSide = a.direction === "dropping" ? "OVER" : "UNDER";
+        } else if (a.type === "snapback") {
+          actionSide = (a.current_line > a.opening_line) ? "UNDER" : "OVER";
+        } else if (a.type === "team_news_shift") {
+          actionSide = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+        } else if (a.type === "correlated_movement") {
+          actionSide = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
+        }
+
+        const lineForAlt = a.current_line ?? a.line_to ?? null;
+        const buffer = getBuffer(a.prop_type || "");
+        const altLine = (lineForAlt != null && buffer != null && actionSide)
+          ? calcAltLine(lineForAlt, actionSide, buffer)
+          : null;
+
         return ({
           signal_type: a.type,
           sport: a.sport,
@@ -928,6 +978,8 @@ Deno.serve(async (req) => {
           alert_sent_at: new Date().toISOString(),
           snapshots_at_alert: a.snapshot_count ?? a.sample_size ?? null,
           drift_pct_at_alert: a.drift_pct_of_range ?? a.drift_pct ?? null,
+          recommended_alt_line: altLine,
+          alt_line_buffer: buffer,
         });
       });
 
@@ -943,6 +995,21 @@ Deno.serve(async (req) => {
     if (highConfAlerts.length > 0) {
       const formatAlert = (a: any): string => {
         const liveTag = a.live ? " [🔴 LIVE]" : "";
+
+        // Alt line helper for Telegram display
+        const getAltLineText = (action: string, currentLine: number | null, propType: string): string => {
+          if (currentLine == null) return "";
+          const buf = getBuffer(propType);
+          if (buf == null) return "";
+          // Extract side from action text
+          const isOver = action.toUpperCase().startsWith("OVER") || action.toUpperCase().includes("OVER");
+          const isUnder = action.toUpperCase().startsWith("UNDER") || action.toUpperCase().includes("UNDER");
+          if (!isOver && !isUnder) return "";
+          const side = isOver ? "OVER" : "UNDER";
+          const alt = calcAltLine(currentLine, side, buf);
+          const sign = side === "OVER" ? `-${buf}` : `+${buf}`;
+          return `🎯 *Alt Line Edge: ${side} ${alt} (${sign} pts)*`;
+        };
 
         // ====== TAKE IT NOW — OPTIMAL ENTRY POINT ======
         if (a.type === "take_it_now") {
@@ -971,6 +1038,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type);
           return [
             `🔥 *TAKE IT NOW*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -978,6 +1046,7 @@ Deno.serve(async (req) => {
             `📏 ${a.drift_pct_of_range}% of typical range (avg drift: ${a.expected_drift})`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
@@ -1011,6 +1080,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type);
           return [
             `🎯 *LINE ABOUT TO MOVE*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1018,6 +1088,7 @@ Deno.serve(async (req) => {
             `Consistency: ${a.consistencyRate}% | Speed: ${a.velocity}/hr`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
@@ -1054,6 +1125,7 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type);
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1061,6 +1133,7 @@ Deno.serve(async (req) => {
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
@@ -1107,12 +1180,14 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type);
           return [
             `🔄 *SNAPBACK*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.current_line}`}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
@@ -1162,6 +1237,8 @@ Deno.serve(async (req) => {
             reason = `Coordinated movement below news threshold — fading as potential public trap.`;
           }
           const itemLabel = (a.prop_type === "totals" || a.prop_type === "moneyline" || a.derived_from === "team_market_cross_game") ? "games" : "players";
+          const isTeamMarketCorr = ["h2h", "moneyline"].includes(a.prop_type);
+          const altLineMsg = isTeamMarketCorr ? "" : getAltLineText(action, a.current_line ?? a.line_to, a.prop_type);
           return [
             `${emoji} *${label}* — ${esc(a.sport)}`,
             `${esc(a.event_description)} — ${propLabel}`,
@@ -1169,6 +1246,7 @@ Deno.serve(async (req) => {
             topPlayers,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
+            ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
         }
