@@ -944,12 +944,16 @@ Deno.serve(async (req) => {
             ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
             : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
 
+          const volWarningTrap = getVolatilityWarning(first.player_name);
+          const volInfoTrap = volatilityMap.get((first.player_name || "").toLowerCase().trim());
+
           const alertText = [
             `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
             matchupLine ? `🏟 ${esc(matchupLine)}` : null,
             marketLabel,
             `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
             `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+            volWarningTrap || null,
             `✅ *Action: STAY AWAY — both sides are dangerous*`,
             `💡 Book is manipulating this line to trap bettors`,
           ].filter(Boolean).join("\n");
@@ -963,7 +967,12 @@ Deno.serve(async (req) => {
             predicted_magnitude: Math.abs(firstHalfDir) + Math.abs(secondHalfDir),
             confidence_at_signal: 75,
             time_to_tip_hours: last.hours_to_tip,
-            signal_factors: { firstLine: first.line, midLine: mid.line, lastLine: last.line },
+            signal_factors: {
+              firstLine: first.line, midLine: mid.line, lastLine: last.line,
+              is_volatile_minutes: volInfoTrap?.isVolatile || false,
+              minutes_cv: volInfoTrap?.cv ?? null,
+              minutes_avg: volInfoTrap?.avgMin ?? null,
+            },
           };
 
           bestSignalPerPlayer.set(playerKey, { confidence: 99, alert: alertText, record });
