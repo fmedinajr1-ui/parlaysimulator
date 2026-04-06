@@ -1133,7 +1133,8 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
+          const volWarning = getVolatilityWarning(a);
           return [
             `🔥 *TAKE IT NOW*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1141,6 +1142,7 @@ Deno.serve(async (req) => {
             `📏 ${a.drift_pct_of_range}% of typical range (avg drift: ${a.expected_drift})`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}*`,
+            ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
@@ -1175,7 +1177,8 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
+          const volWarning = getVolatilityWarning(a);
           return [
             `🎯 *LINE ABOUT TO MOVE*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1183,6 +1186,7 @@ Deno.serve(async (req) => {
             `Consistency: ${a.consistencyRate}% | Speed: ${a.velocity}/hr`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
+            ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
@@ -1220,7 +1224,8 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.line_to, a.prop_type, a.is_volatile_minutes);
+          const volWarning = getVolatilityWarning(a);
           return [
             `⚡ *VELOCITY*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
@@ -1228,6 +1233,7 @@ Deno.serve(async (req) => {
             `Speed: ${a.velocity}/hr over ${a.time_span_min}min`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.line_to}`}*`,
+            ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
@@ -1275,13 +1281,15 @@ Deno.serve(async (req) => {
           const displayName = (isTeamMarket && a.prop_type === "totals" && a.event_description)
             ? esc(a.event_description)
             : esc(a.player_name);
-          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type);
+          const altLineMsg = isTeamMarket ? "" : getAltLineText(action, a.current_line, a.prop_type, a.is_volatile_minutes);
+          const volWarning = getVolatilityWarning(a);
           return [
             `🔄 *SNAPBACK*${liveTag} — ${esc(a.sport)}`,
             `${displayName} ${propLabel}`,
             `Open: ${a.opening_line} → Now: ${a.current_line} (${a.drift_pct}%)`,
             `📊 Conf: ${Math.round(a.confidence)}%`,
             `✅ *Action: ${action}${isTeamMarket ? "" : ` ${a.current_line}`}*`,
+            ...(volWarning ? [volWarning] : []),
             ...(altLineMsg ? [altLineMsg] : []),
             `💡 ${reason}`,
           ].join("\n");
