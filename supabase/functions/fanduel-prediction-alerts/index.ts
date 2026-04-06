@@ -398,33 +398,96 @@ Deno.serve(async (req) => {
       return `⚠️ VOLATILE MINUTES — L10 avg ${v.avgMin.toFixed(0)}min (CV ${(v.cv * 100).toFixed(0)}%)`;
     }
 
-    // Alt line buffer helpers
-    const ALT_LINE_BUFFERS: Record<string, number> = {
-      player_points: 3.0, player_points_rebounds_assists: 3.0, totals: 3.0, game_totals: 3.0,
-      player_rebounds: 2.0, player_assists: 2.0, player_points_rebounds: 2.0,
-      player_points_assists: 2.0, player_rebounds_assists: 2.0,
-      spreads: 1.5,
-      player_threes: 1.0, player_steals: 1.0, player_blocks: 1.0,
+    // ── Real Alt Line Fetcher (FanDuel via The Odds API) ──
+    const SPORT_KEY_MAP: Record<string, string> = {
+      NBA: "basketball_nba", NCAAB: "basketball_ncaab",
+      MLB: "baseball_mlb", NHL: "icehockey_nhl", NFL: "americanfootball_nfl",
     };
-    const VOLATILE_EXTRA_BUFFER = 2.0;
+    const PROP_TO_ALT_KEY: Record<string, string> = {
+      player_points: "points", player_rebounds: "rebounds", player_assists: "assists",
+      player_threes: "threes", player_points_rebounds_assists: "pra",
+      player_points_rebounds: "pts_rebs", player_points_assists: "pts_asts",
+      player_rebounds_assists: "rebs_asts", player_steals: "steals",
+      player_blocks: "blocks", player_turnovers: "turnovers",
+      spreads: "spreads", totals: "totals",
+    };
 
-    function getAltBuffer(propType: string, playerName: string): number {
-      const base = ALT_LINE_BUFFERS[propType] ?? 1.5;
-      const v = volatilityMap.get((playerName || "").toLowerCase().trim());
-      return v?.isVolatile ? base + VOLATILE_EXTRA_BUFFER : base;
+    const altLineCache = new Map<string, { line: number; odds: number } | null>();
+
+    async function fetchRealAltLine(
+      eventId: string, playerName: string, propType: string,
+      side: string, currentLine: number, sport: string
+    ): Promise<{ line: number; odds: number } | null> {
+      // Skip moneyline — no alt lines exist
+      if (isMoneylineProp(propType)) return null;
+
+      const cacheKey = `${eventId}|${playerName}|${propType}`;
+      if (altLineCache.has(cacheKey)) {
+        const cached = altLineCache.get(cacheKey)!;
+        // Re-pick best line for the requested side from cached data
+        return cached;
+      }
+
+      const altPropKey = PROP_TO_ALT_KEY[propType];
+      if (!altPropKey) { altLineCache.set(cacheKey, null); return null; }
+
+      const sportKey = SPORT_KEY_MAP[sport?.toUpperCase()] || SPORT_KEY_MAP[sport] || "basketball_nba";
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+      try {
+        const resp = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({ eventId, playerName, propType: altPropKey, sport: sportKey }),
+        });
+        if (!resp.ok) { altLineCache.set(cacheKey, null); return null; }
+        const data = await resp.json();
+        const lines: { line: number; overOdds: number; underOdds: number }[] = data.lines || [];
+        if (lines.length === 0) { altLineCache.set(cacheKey, null); return null; }
+
+        // Pick the best alt line for the side
+        const picked = pickBestAltLine(lines, side, currentLine);
+        altLineCache.set(cacheKey, picked);
+        return picked;
+      } catch (e) {
+        console.error(`[AltLine] fetch error for ${playerName}:`, e);
+        altLineCache.set(cacheKey, null);
+        return null;
+      }
     }
 
-    function calcAltLine(currentLine: number, side: string, propType: string, playerName: string): number {
-      const buffer = getAltBuffer(propType, playerName);
-      if (side === "OVER") return currentLine - buffer;
-      if (side === "UNDER") return currentLine + buffer;
-      return currentLine;
+    function pickBestAltLine(
+      lines: { line: number; overOdds: number; underOdds: number }[],
+      side: string, currentLine: number
+    ): { line: number; odds: number } | null {
+      if (side === "OVER") {
+        // For OVER, find highest line BELOW current (easier to hit)
+        const candidates = lines.filter(l => l.line < currentLine).sort((a, b) => b.line - a.line);
+        if (candidates.length > 0) return { line: candidates[0].line, odds: candidates[0].overOdds };
+      } else if (side === "UNDER") {
+        // For UNDER, find lowest line ABOVE current (easier to hit)
+        const candidates = lines.filter(l => l.line > currentLine).sort((a, b) => a.line - b.line);
+        if (candidates.length > 0) return { line: candidates[0].line, odds: candidates[0].underOdds };
+      }
+      return null;
     }
 
-    function getAltLineText(currentLine: number | null, side: string, propType: string, playerName: string): string {
+    function fmtAltOdds(odds: number): string {
+      return odds > 0 ? `+${odds}` : `${odds}`;
+    }
+
+    async function getAltLineText(
+      currentLine: number | null, side: string, propType: string,
+      playerName: string, eventId: string, sport: string
+    ): Promise<string> {
       if (currentLine == null) return "";
-      const alt = calcAltLine(currentLine, side, propType, playerName);
-      return `🎯 Alt Line Edge: ${side} ${alt.toFixed(1)}`;
+      const alt = await fetchRealAltLine(eventId, playerName, propType, side, currentLine, sport);
+      if (!alt) return "🎯 Alt Line: unavailable";
+      return `🎯 Alt Line (FanDuel): ${side} ${alt.line} (${fmtAltOdds(alt.odds)})`;
     }
 
     // Build matchup lookup: player|opponent|prop_type → matchup data
@@ -918,7 +981,7 @@ Deno.serve(async (req) => {
         : classifiedSignalType === "cascade" ? "🌊" : "🔮";
 
       const volWarning = getVolatilityWarning(first.player_name);
-      const altLineText = getAltLineText(last.line, side, first.prop_type, first.player_name);
+      const altLineText = await getAltLineText(last.line, side, first.prop_type, first.player_name, first.event_id, first.sport);
       const volInfo = volatilityMap.get((first.player_name || "").toLowerCase().trim());
 
       const alertText = [
@@ -960,8 +1023,8 @@ Deno.serve(async (req) => {
           is_volatile_minutes: volInfo?.isVolatile || false,
           minutes_cv: volInfo?.cv ?? null,
           minutes_avg: volInfo?.avgMin ?? null,
-          alt_line_buffer: getAltBuffer(first.prop_type, first.player_name),
-          recommended_alt_line: calcAltLine(last.line, side, first.prop_type, first.player_name),
+          alt_line_source: "fanduel_real",
+          recommended_alt_line: (await fetchRealAltLine(first.event_id, first.player_name, first.prop_type, side, last.line, first.sport))?.line ?? null,
         },
       };
 
@@ -1194,7 +1257,7 @@ Deno.serve(async (req) => {
         : `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`;
 
       const volWarningTIN = getVolatilityWarning(last.player_name);
-      const altLineTextTIN = getAltLineText(last.line, snapDirection, last.prop_type, last.player_name);
+      const altLineTextTIN = await getAltLineText(last.line, snapDirection, last.prop_type, last.player_name, last.event_id, last.sport);
       const volInfoTIN = volatilityMap.get((last.player_name || "").toLowerCase().trim());
 
       // Minutes badge for NBA
@@ -1244,8 +1307,8 @@ Deno.serve(async (req) => {
           is_volatile_minutes: volInfoTIN?.isVolatile || false,
           minutes_cv: volInfoTIN?.cv ?? null,
           minutes_avg: volInfoTIN?.avgMin ?? null,
-          alt_line_buffer: getAltBuffer(last.prop_type, last.player_name),
-          recommended_alt_line: calcAltLine(last.line, snapDirection, last.prop_type, last.player_name),
+          alt_line_source: "fanduel_real",
+          recommended_alt_line: (await fetchRealAltLine(last.event_id, last.player_name, last.prop_type, snapDirection, last.line, last.sport))?.line ?? null,
         },
         // Trap detection fields
         line_at_alert: last.line,
