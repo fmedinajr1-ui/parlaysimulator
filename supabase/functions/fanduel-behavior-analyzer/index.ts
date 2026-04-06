@@ -1198,9 +1198,23 @@ Deno.serve(async (req) => {
           const emoji = a.type === "team_news_shift" ? "📰" : "🔗";
           const label = a.type === "team_news_shift" ? "TEAM NEWS SHIFT" : "CORRELATED MOVEMENT";
           const propLabel = esc(a.prop_type).replace("player ", "").toUpperCase();
-          const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) =>
-            `  ${p.name}: ${p.direction} ${p.magnitude}`
-          ).join("\n");
+          const topPlayers = (a.players_moving || []).slice(0, 4).map((p: any) => {
+            const playerAltText = (() => {
+              if (p.current_line == null) return "";
+              const buf = getBuffer(a.prop_type);
+              if (buf == null) return "";
+              // Determine side based on signal type and direction
+              let side: string;
+              if (a.type === "team_news_shift") {
+                side = a.dominant_direction === "dropping" ? "UNDER" : "OVER";
+              } else {
+                side = a.dominant_direction === "dropping" ? "OVER" : "UNDER";
+              }
+              const alt = calcAltLine(p.current_line, side, buf);
+              return ` → Alt ${side} ${alt}`;
+            })();
+            return `  ${p.name}: ${p.direction} ${p.magnitude}${playerAltText}`;
+          }).join("\n");
           // team_news_shift: go WITH the movement (news-driven)
           // correlated_movement: FADE the movement (market trap theory)
           let action: string;
