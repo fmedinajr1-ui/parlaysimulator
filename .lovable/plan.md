@@ -1,55 +1,49 @@
 
 
-# Add Actual Game Total Line + Team Name to Derived Team Market Alerts
+# Fix Take It Now Direction: Follow Market for Non-NBA Props
 
 ## Problem
-Your screenshot shows:
-- **TOTALS alert**: Says "Action: OVER" but doesn't tell you **what the game total line is** (e.g., OVER 218.5)
-- **MONEYLINE alert**: Says "BACK — back this side" but doesn't tell you **which team** to back
-
-These alerts are derived from player prop shifts but never look up the actual FanDuel team market data.
+Vince Dunn shots on goal line moved 2.5 → 1.5 (DOWN). The bot says "TAKE OVER" because the snapback regression logic treats ALL non-pitcher props the same: line drops = expect it to bounce back up (OVER). This regression model only makes sense for **NBA player props** where books inflate lines to trap public OVER bettors. For NHL, MLB position players, and other sports, a dropping line means the market expects LESS — the bot should follow that direction and say UNDER.
 
 ## Root Cause
-In `fanduel-behavior-analyzer` (~line 365-413), when a team news shift generates TOTALS and MONEYLINE signals, it only carries player prop data. It never queries `game_market_snapshots` to get:
-- The current FanDuel game total line (e.g., 218.5)
-- The team names + moneyline odds
+Lines 978-982 in `fanduel-prediction-alerts/index.ts`:
+```typescript
+const isPitcherProp = last.prop_type?.startsWith("pitcher_");
+const snapDirection = isPitcherProp
+  ? (drift > 0 ? "OVER" : "UNDER")   // Pitcher: follow market
+  : (drift > 0 ? "UNDER" : "OVER");  // Others: regression ← WRONG for non-NBA
+```
+
+The regression (contrarian) logic should ONLY apply to NBA player props. Everything else should follow the market direction like pitcher props already do.
 
 ## Fix
 
-### File: `supabase/functions/fanduel-behavior-analyzer/index.ts`
+### File: `supabase/functions/fanduel-prediction-alerts/index.ts`
 
-**A. After detecting a team news shift (~line 363), query `game_market_snapshots` for the game's team markets**
+**Replace the direction logic (~lines 978-982) with sport-aware rules:**
 
-Before generating the TOTALS/MONEYLINE derived alerts, look up the event in `game_market_snapshots`:
-- Match by home/away team names extracted from `sampleShift.eventDesc` (e.g., "Detroit Pistons @ Orlando Magic")
-- Get the latest `total` row → `fanduel_line` (e.g., 218.5)
-- Get the latest `moneyline` row → `fanduel_home_odds`, `fanduel_away_odds`, `home_team`, `away_team`
-
-**B. Attach the looked-up data to the derived alert objects**
-
-Add fields to the alert:
-- `game_total_line` for totals alerts
-- `team_to_back` + `ml_odds` for moneyline alerts
-- Determine which team to back: if player props are **rising**, the team those players belong to is likely performing better → back that team's ML
-
-**C. Update the Telegram formatting (~lines 1681-1690)**
-
-For TOTALS:
 ```
-Action: OVER 218.5 — 4 player props rising → game total likely higher
+NBA player props → regression (keep existing: drift up = UNDER, drift down = OVER)
+Everything else (NHL, MLB, NCAAB, team markets, pitcher props) → follow market (drift up = OVER, drift down = UNDER)
 ```
 
-For MONEYLINE:
-```
-Action: BACK Orlando Magic (-150) — 4 player props rising → back this side
-```
+Specifically:
+- Add a check: `const useRegression = last.sport === "NBA" && isPlayerPropType(last.prop_type) && !isPitcherProp`
+- If `useRegression` → keep current contrarian logic (drift > 0 = UNDER)
+- Otherwise → follow market direction (drift > 0 = OVER, drift < 0 = UNDER)
 
-**D. Determine team from player shifts**
+**Update the reason text (~lines 1009-1015):**
+- Regression reason: "Line inflated above open — expect snapback down" (NBA only)
+- Market-following reason: "Line moving {direction} — market signals {OVER/UNDER}" (NHL, MLB, etc.)
 
-The `event_description` contains "Detroit Pistons @ Orlando Magic". The players moving (Suggs, Banchero, Harris, Jenkins) are all Magic players. Parse the event description to extract home/away teams, then determine which team's players are shifting to identify the correct ML side.
+**Update the Telegram action line (~line 1043) and signal label:**
+- For market-following signals, change the drift text from "historically snaps back" to "market conviction signal"
+
+## Also update `bot_owner_rules`
+Add a new seed rule `non_nba_follow_market` to codify: "Non-NBA props follow market direction, not regression" — so the self-audit engine enforces this going forward.
 
 ## Scope
-- 1 edge function file modified
-- No migration needed
-- Uses existing `game_market_snapshots` table
+- 1 edge function modified (`fanduel-prediction-alerts`)
+- 1 rule insert (migration)
+- No structural changes
 
