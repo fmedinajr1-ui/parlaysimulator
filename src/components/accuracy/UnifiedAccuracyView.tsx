@@ -7,6 +7,7 @@ import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
 import { SettledPicksTable } from "./SettledPicksTable";
 import { SidePerformanceCard } from "./SidePerformanceCard";
 import { HonestAccuracyBanner } from "./HonestAccuracyBanner";
+import { DailySignalScorecard } from "./DailySignalScorecard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -124,6 +125,9 @@ export function UnifiedAccuracyView() {
 
       {/* Honest Parlay Record — Real W/L */}
       <HonestAccuracyBanner daysBack={timePeriod} />
+
+      {/* Daily Signal Scorecard */}
+      <DailySignalScorecard />
 
       {/* Composite Grade — CLV-based (labeled) */}
       <CompositeGradeCard
