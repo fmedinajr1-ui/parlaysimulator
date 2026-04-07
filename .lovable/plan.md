@@ -1,74 +1,33 @@
 
 
-# Expand to MMA, Soccer, Golf, and Lacrosse
+# Fix Pending Gold Signal Settlement
 
-## Current State
+## Problem
 
-Your system already scrapes NBA, NHL, MLB, WNBA, NCAAB, College Baseball, and Tennis. The **team market signals** (Moneyline, Spreads, Totals) are your strongest performers across all sports — MLB moneyline hits at 69.4%, spreads at 66.7%, NHL spreads at 62.1%.
+Two separate issues are causing gold signals to show as "pending":
 
-## What the Odds API Supports
+1. **Today's 10 gold signals** — These are from tonight's games (7-8 PM ET tip-offs). The feedback loop correctly waits 3 hours after game start before settling. These will auto-resolve on the next run. **No fix needed.**
 
-| Sport | API Key | Markets Available | Player Props? |
-|-------|---------|-------------------|---------------|
-| MMA/UFC | `mma_mixed_martial_arts` | h2h (fight winner) | No |
-| Soccer (MLS) | `soccer_usa_mls` | h2h, spreads, totals | No |
-| Soccer (EPL) | `soccer_epl` | h2h, spreads, totals | No |
-| Lacrosse (PLL) | `lacrosse_pll` | h2h | No |
-| Lacrosse (NCAA) | `lacrosse_ncaa` | h2h | No |
-| Golf (PGA) | Already active | outrights | No |
+2. **4 older signals stuck since March 29-April 5** — These have plenty of timeline data (289+ snapshots each) but the settlement logic can't resolve them because `signal_factors` is missing the expected keys (`line_to`, `currentLine`, `current_line`). The `resolveLineAtSignal()` function returns null, and the settlement short-circuits with no outcome.
 
-**Important**: None of these sports have player props on the Odds API. All signals will be **team/match market** based — which is actually where your best win rates already are.
+## Root Cause
 
-## What Gets Built
+The `fanduel-accuracy-feedback` function settles cascade/velocity_spike signals by comparing the line at signal time vs closing line. When `signal_factors` doesn't contain an explicit line value, it falls back to finding the nearest timeline snapshot — but if `player_name` matching is slightly off or the fallback still returns null, the signal stays permanently pending.
 
-### 1. Add Sports to Scraper Config
+## Fix
 
-Add MMA, Soccer (MLS + EPL), and Lacrosse to `TIER_2_SPORTS` in `whale-odds-scraper/index.ts`. They'll automatically get scraped for h2h, spreads, and totals when in season.
+**Edit `supabase/functions/fanduel-accuracy-feedback/index.ts`:**
 
-### 2. Update Alert Engine
+1. **Add a stale signal sweeper** at the end of the main loop — any signal older than 48 hours that still has `was_correct IS NULL` and has timeline data gets force-settled using pure timeline CLV (opening vs closing snapshot). If no timeline match exists, mark as `unverifiable` so it stops clogging the queue.
 
-Update `fanduel-prediction-alerts` to handle these sports:
-- **MMA**: h2h only — detect fight winner line movement, velocity spikes, snapbacks
-- **Soccer**: h2h + spreads + totals — same signal types as MLB/NHL team markets
-- **Lacrosse**: h2h — moneyline movement tracking
-- **Golf**: already scraped, just needs alert pipeline integration for outright odds movement
+2. **Improve `resolveLineAtSignal()` fallback** — when `signal_factors` keys are missing, parse the `prediction` text to extract the line value (e.g., "OVER 6.5" → 6.5, "FADE -235" → -235).
 
-### 3. Sport-Specific Signal Tuning
+3. **Add team-name fuzzy matching** for timeline lookups — normalize accented characters (e.g., "Montréal" → "Montreal") to prevent silent mismatches on NHL teams.
 
-Each sport needs adjusted thresholds:
-- **MMA**: Wider drift ranges (fight odds swing more), higher velocity spike threshold, TAKE/FADE labels
-- **Soccer**: Draw market awareness (3-way h2h), lower total lines (2.5 is standard), tighter spread thresholds
-- **Lacrosse**: Similar to hockey model, small sample initially so higher confidence gates
-- **Golf**: Outright futures are different — track which golfers' odds are steaming vs fading
+## Technical Details
 
-### 4. Telegram Formatting
-
-Add sport emojis and context:
-```text
-🥊 TAKE IT NOW — UFC
-Max Holloway vs Ilia Topuria
-Open: -150 → Now: -180 (steaming)
-📊 Confidence: 82%
-✅ Action: TAKE Holloway (-180)
-
-⚽ VELOCITY SPIKE — MLS
-Inter Miami vs LAFC
-Moneyline: +120 → +105 (sharp action)
-📊 Confidence: 75%
-✅ Action: TAKE Inter Miami (+105)
-```
-
-## Scope
-
-| Action | File | What |
-|--------|------|------|
-| Edit | `whale-odds-scraper/index.ts` | Add 5 sport keys to TIER_2_SPORTS |
-| Edit | `fanduel-prediction-alerts/index.ts` | Add sport-specific thresholds and formatting |
-| Edit | `telegram-webhook/index.ts` | Add sport emoji mapping for alerts |
-
-No new tables needed — `unified_props` and `fanduel_prediction_accuracy` already support arbitrary sport values. All existing signal types (Take It Now, Velocity Spike, Correlation, etc.) work on team markets out of the box.
-
-## API Budget Note
-
-Each new sport costs ~1 API call per scan cycle for odds. With 5 new sport keys at 4 scans/hour, that's ~20 extra calls/hour. Manageable within the existing quota.
+- Stale threshold: 48 hours after `created_at`
+- Force-settle logic: compare first and last timeline snapshots for the player+prop combo; if closing moved in predicted direction → correct, otherwise → incorrect
+- Unverifiable cleanup: signals with 0 timeline rows after 72 hours get marked `was_correct = null, actual_outcome = 'unverifiable'` to exclude from accuracy calculations
+- No new tables or migrations needed
 
