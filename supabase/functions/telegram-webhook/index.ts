@@ -551,6 +551,91 @@ CRITICAL RULES:
   }
 }
 
+// ==================== PARLAY TRACKER ====================
+
+const PROP_ALIASES: Record<string, string> = {
+  pts: "player_points", points: "player_points",
+  reb: "player_rebounds", rebounds: "player_rebounds",
+  ast: "player_assists", assists: "player_assists",
+  "3pt": "player_threes", threes: "player_threes",
+  blk: "player_blocks", blocks: "player_blocks",
+  stl: "player_steals", steals: "player_steals",
+  to: "player_turnovers", turnovers: "player_turnovers",
+  pra: "player_pra",
+  sog: "player_shots_on_goal", shots: "player_shots_on_goal",
+  ks: "pitcher_strikeouts", strikeouts: "pitcher_strikeouts", k: "pitcher_strikeouts",
+  tb: "total_bases", h: "hits", hr: "batter_home_runs",
+  runs: "runs", rbi: "rbis", sb: "stolen_bases",
+  saves: "player_saves", svs: "player_saves",
+  goals: "player_goals", g: "player_goals",
+};
+
+async function handleTrack(chatId: string, args: string): Promise<string> {
+  if (!args || args.trim().length === 0) {
+    return `🎯 *Parlay Tracker*
+
+Track your parlay legs with real-time line movement & team correlation alerts every 15 min until 30 min before tip.
+
+*Usage:*
+\`/track Player1 PROP O/U LINE, Player2 PROP O/U LINE, Player3 PROP O/U LINE\`
+
+*Example:*
+\`/track Seth Jarvis SOG O 2.5, Garrett Crochet Ks O 7.5, Julius Randle PTS O 23.5\`
+
+*Supported props:* PTS, REB, AST, 3PT, BLK, STL, SOG, Ks, TB, HR, H, Goals, Saves, PRA`;
+  }
+
+  // Parse legs from comma-separated format
+  const rawLegs = args.split(",").map(s => s.trim()).filter(Boolean);
+  if (rawLegs.length < 1 || rawLegs.length > 6) {
+    return "❌ Please provide 1-6 legs separated by commas.";
+  }
+
+  const legs: any[] = [];
+  for (const raw of rawLegs) {
+    // Expected: "Player Name PROP O/U LINE"
+    // e.g. "Seth Jarvis SOG O 2.5" or "Garrett Crochet Ks Over 7.5"
+    const match = raw.match(/^(.+?)\s+([\w]+)\s+(o|u|over|under)\s+([\d.]+)$/i);
+    if (!match) {
+      return `❌ Could not parse leg: "${raw}"\n\nFormat: \`Player Name PROP O/U LINE\`\nExample: \`Seth Jarvis SOG O 2.5\``;
+    }
+
+    const playerName = match[1].trim();
+    const propRaw = match[2].toLowerCase();
+    const sideRaw = match[3].toLowerCase();
+    const line = parseFloat(match[4]);
+
+    const propType = PROP_ALIASES[propRaw] || propRaw;
+    const side = sideRaw.startsWith("o") ? "over" : "under";
+
+    legs.push({ player_name: playerName, prop_type: propType, side, line });
+  }
+
+  // Call parlay-tracker-input
+  try {
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/parlay-tracker-input`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ chat_id: chatId, legs }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("[/track] Input function error:", errText);
+      return `❌ Failed to start tracker: ${errText.slice(0, 200)}`;
+    }
+
+    // Confirmation is sent by parlay-tracker-input itself
+    return null as any;
+  } catch (err) {
+    console.error("[/track] Error:", err);
+    return `❌ Tracker error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 // ==================== COMMAND HANDLERS ====================
 
 async function handleCalendar(chatId: string) {
