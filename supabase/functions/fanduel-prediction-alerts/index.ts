@@ -867,6 +867,96 @@ Deno.serve(async (req) => {
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
+    // ══════════════════════════════════════════════════════════════
+    // TEAM CORRELATION SCAN — reusable for any signal type
+    // ══════════════════════════════════════════════════════════════
+    interface CorrelationResult {
+      aligned: number;
+      total: number;
+      rate: number;
+      verdict: string;
+      verdictEmoji: string;
+      topMovers: { name: string; propType: string; current: number; prev: number; diff: number; direction: string }[];
+      textBlock: string;
+      confidenceAdj: number;
+    }
+
+    async function scanTeamCorrelation(
+      eventId: string, propType: string, side: string, playerName: string
+    ): Promise<CorrelationResult | null> {
+      if (!eventId) return null;
+
+      const { data: eventProps } = await supabase
+        .from("unified_props")
+        .select("player_name, prop_type, line, previous_line, team")
+        .eq("event_id", eventId);
+
+      if (!eventProps || eventProps.length < 2) return null;
+
+      // Filter to same prop category or same team
+      const targetTeam = eventProps.find((p: any) =>
+        p.player_name?.toLowerCase() === playerName.toLowerCase() && p.prop_type === propType
+      )?.team;
+
+      const relevantProps = eventProps.filter((p: any) =>
+        (p.prop_type === propType || (p.team && targetTeam && p.team === targetTeam)) &&
+        !(p.player_name?.toLowerCase() === playerName.toLowerCase() && p.prop_type === propType)
+      );
+
+      if (relevantProps.length === 0) return null;
+
+      const movers: CorrelationResult["topMovers"] = [];
+      for (const p of relevantProps) {
+        const prevLine = p.previous_line ?? p.line;
+        const diff = p.line - prevLine;
+        let direction = "stable";
+        if (diff > 0.25) direction = "rising";
+        else if (diff < -0.25) direction = "dropping";
+        movers.push({
+          name: p.player_name, propType: p.prop_type,
+          current: p.line, prev: prevLine,
+          diff: Math.abs(diff), direction,
+        });
+      }
+
+      const supportDir = side === "OVER" || side === "BACK" ? "rising" : "dropping";
+      const aligned = movers.filter(m => m.direction === supportDir).length;
+      const moving = movers.filter(m => m.direction !== "stable").length;
+      const rate = moving > 0 ? aligned / moving : 0;
+
+      let verdict: string, verdictEmoji: string, confidenceAdj: number;
+      const isSteaming = rate >= 0.7;
+      const isFading = rate < 0.4;
+
+      if (isSteaming) {
+        verdict = "CONFIRMED"; verdictEmoji = "✅"; confidenceAdj = 5;
+      } else if (rate >= 0.4) {
+        verdict = "PARTIAL"; verdictEmoji = "⚠️"; confidenceAdj = 0;
+      } else if (isFading) {
+        verdict = "CAUTION"; verdictEmoji = "⚠️"; confidenceAdj = -10;
+      } else {
+        verdict = "NEUTRAL"; verdictEmoji = "➖"; confidenceAdj = 0;
+      }
+
+      const dirLabel = supportDir.toUpperCase();
+      const top3 = [...movers].sort((a, b) => b.diff - a.diff).slice(0, 3);
+      const lines: string[] = [
+        `🔗 TEAM CORRELATION: ${aligned}/${movers.length} players ${dirLabel}`,
+      ];
+      for (const m of top3) {
+        const arrow = m.direction === "rising" ? "⬆️" : m.direction === "dropping" ? "⬇️" : "➖";
+        const sign = m.direction === "rising" ? "+" : m.direction === "dropping" ? "-" : "";
+        lines.push(`  ${m.name}: ${m.current} (${sign}${m.diff.toFixed(1)}) ${arrow}`);
+      }
+      const pct = Math.round(rate * 100);
+      lines.push(`📊 ${pct}% aligned ${dirLabel} → ${verdict} ${verdictEmoji}`);
+
+      return {
+        aligned, total: movers.length, rate, verdict, verdictEmoji,
+        topMovers: top3, textBlock: lines.join("\n"), confidenceAdj,
+      };
+    }
+
     // ====== SIGNAL: LINE ABOUT TO MOVE / VELOCITY SPIKE / CASCADE ======
     // All signal types restored — velocity_spike and cascade fully active
     for (const [key, snapshots] of groups) {
