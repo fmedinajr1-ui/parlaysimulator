@@ -1,84 +1,87 @@
 
 
-# Fix Settlement for Team News Shift & Correlated Movement Signals
+# Boost Correlated & Team Shift Signal Volume + Show Yesterday's Results
 
-## Root Causes
+## Current State
 
-**1. `predicted_direction` is empty on insert** (behavior-analyzer line 1533)
-The insert uses `a.direction` but these signals store direction as `a.dominant_direction`. So `predicted_direction` is always null.
+| Signal | Last 7d Volume | Hit Rate | Status |
+|--------|---------------|----------|--------|
+| take_it_now | 120 alerts | 72.7% | Working well |
+| snapback | 28 alerts | 22.7% | Terrible |  
+| team_news_shift | 8 alerts | N/A | Never settled |
+| correlated_movement | 3 alerts | N/A | Never settled |
 
-**2. No settlement handler** (accuracy-feedback)
-The settlement engine has handlers for velocity_spike, line_about_to_move, cascade, take_it_now, snapback, perfect_line, etc. — but nothing for `team_news_shift` or `correlated_movement`. These signals are fetched as unverified but silently skipped.
+Correlation signals are extremely rare because thresholds are strict:
+- Requires 3+ players shifting same direction
+- Requires 0.5+ point movement from opening line
+- Requires 70%+ directional alignment
 
-**3. `prediction` text says "Unknown signal" for correlated_movement** (behavior-analyzer)
-The correlated_movement prediction text IS being built correctly on line 1496-1499, but the DB shows "Unknown signal" for some older entries — likely from before that code was added. Current inserts should be fine.
+**Parlay generator**: Last run was December 2025 — no yesterday data exists.
 
-## Fixes
+## Changes
 
-### A. Fix `predicted_direction` on insert (behavior-analyzer, line 1533)
+### 1. Lower Correlation Detection Thresholds (behavior-analyzer)
 
-Change:
-```
-predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null)
-```
-To:
-```
-predicted_direction: a.direction || a.dominant_direction || (a.type === "snapback" ? "revert" : null)
-```
+Current → New:
+- **Minimum players**: 3 → **2** (pairs of players shifting together are still meaningful)
+- **Minimum movement**: 0.5 → **0.3** points from open (captures earlier signals)
+- **Correlation rate**: 0.7 → **0.65** for `correlated_movement`, keep 0.85 for `team_news_shift`
 
-This ensures team_news_shift and correlated_movement signals get their `dominant_direction` (e.g., "rising", "dropping") stored.
+This should 3-5x the volume of correlation signals while keeping team_news_shift high-quality.
 
-### B. Add settlement handler (accuracy-feedback, after the snapback block ~line 395)
+### 2. Reduce Snapback Volume (it's at 22.7% — waste of alerts)
 
-Add a new block for these aggregate signals. Settlement logic:
+Add a minimum confidence floor of 70 for snapback alerts before they get dispatched to Telegram. This cuts the low-quality snapback noise and makes room for more correlation alerts.
 
-- **Player prop correlations** (prop_type starts with "player_"): Check if the individual players' lines continued moving in the predicted direction. Look up each player from `signal_factors.players_moving` in `fanduel_line_timeline`, check if their closing line moved in the dominant direction vs their line at signal time.
-- **Derived totals**: Check if game total line moved in the predicted direction (OVER = line rose, UNDER = line dropped). Use `fanduel_line_timeline` with the event's totals prop.
-- **Derived moneyline**: Check if the moneyline moved in the predicted direction using the same CLV approach.
+### 3. Add "Yesterday's Signal Scorecard" to Accuracy Dashboard
 
-```
-if (pred.signal_type === "team_news_shift" || pred.signal_type === "correlated_movement") {
-  const sf = pred.signal_factors || {};
-  const players = sf.players_moving || [];
-  const dominant = sf.dominant_direction || pred.predicted_direction;
-  
-  if (players.length > 0 && dominant) {
-    // For player prop aggregates: check if majority of individual players' lines moved correctly
-    let hitsCount = 0;
-    for (const p of players) {
-      const pTimeline = timeline.filter(t => t.player_name === p.name && t.prop_type === pred.prop_type);
-      if (pTimeline.length >= 2) {
-        const close = pTimeline[0].line;
-        const open = pTimeline[pTimeline.length - 1].line;
-        if (dominant === "dropping" && close < open) hitsCount++;
-        if (dominant === "rising" && close > open) hitsCount++;
-      }
-    }
-    const hitRate = hitsCount / players.length;
-    wasCorrect = hitRate >= 0.5; // majority moved correctly
-    actualOutcome = wasCorrect 
-      ? `CORRELATION_CONFIRMED (${hitsCount}/${players.length})` 
-      : `CORRELATION_MISSED (${hitsCount}/${players.length})`;
-  } else if (pred.prop_type === "totals" || pred.prop_type === "moneyline") {
-    // Derived team market: use CLV on the game line
-    const predText = (pred.prediction || "").toUpperCase();
-    const isOver = predText.includes("OVER") || predText.includes("BACK");
-    const isUnder = predText.includes("UNDER") || predText.includes("FADE");
-    const sigLine = sf.current_line ?? sf.line ?? pred.line_at_alert;
-    if (sigLine != null && closingLine != null) {
-      if (isOver) { wasCorrect = closingLine >= sigLine; actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER"; }
-      else if (isUnder) { wasCorrect = closingLine <= sigLine; actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER"; }
-    }
-  }
-}
+New component showing a daily breakdown card:
+- Date selector defaulting to yesterday
+- Table of all signal types with hits/misses/pending for that day
+- Highlight best and worst performers
+- Show team_news_shift and correlated_movement results prominently at top
+
+### 4. Yesterday's Parlay Results Card
+
+Since the parlay generator hasn't produced recent data, add a visible "No recent parlays" state in the dashboard. When data exists, show W-L-P record for selected date.
+
+## Technical Details
+
+### Files Modified
+- `supabase/functions/fanduel-behavior-analyzer/index.ts` — Lower correlation thresholds (lines 350, 365, 374)
+- `supabase/functions/fanduel-prediction-alerts/index.ts` — Add snapback confidence floor before Telegram dispatch
+- `src/components/accuracy/DailySignalScorecard.tsx` — New component
+- `src/components/accuracy/UnifiedAccuracyView.tsx` — Add daily scorecard section
+
+### Threshold Changes
+```text
+// behavior-analyzer line 350
+Math.abs(diff) < 0.5  →  Math.abs(diff) < 0.3
+
+// behavior-analyzer line 365  
+shifts.length < 3  →  shifts.length < 2
+
+// behavior-analyzer line 374
+correlationRate >= 0.7  →  correlationRate >= 0.65
+
+// prediction-alerts: snapback dispatch
+Add: if (a.type === "snapback" && confidence < 70) skip Telegram
 ```
 
-### C. Backfill existing records
-
-Update the 11 existing unsettled records to populate `predicted_direction` from their `signal_factors->>'dominant_direction'` field, so the settlement engine can process them on next run.
+### Daily Scorecard Query
+```sql
+SELECT signal_type, 
+  COUNT(*) FILTER (WHERE was_correct = true) as hits,
+  COUNT(*) FILTER (WHERE was_correct = false) as misses,
+  COUNT(*) FILTER (WHERE was_correct IS NULL) as pending
+FROM fanduel_prediction_accuracy
+WHERE created_at::date = $selected_date
+GROUP BY signal_type
+ORDER BY (hits + misses) DESC
+```
 
 ## Scope
-- 1 edge function edited (`fanduel-behavior-analyzer`) — 1 line change
-- 1 edge function edited (`fanduel-accuracy-feedback`) — new settlement block
-- 1 data update (backfill predicted_direction on existing records)
+- 2 edge functions modified
+- 1 new component + 1 component edited
+- No migrations needed
 
