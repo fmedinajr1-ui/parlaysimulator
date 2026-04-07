@@ -17,6 +17,10 @@ Deno.serve(async (req) => {
 
   const log = (msg: string) => console.log(`[Accuracy Feedback] ${msg}`);
   const now = new Date();
+
+  // ── Normalize names for fuzzy matching (accents, casing, punctuation) ──
+  const normalizeName = (name: string): string =>
+    name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
   const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
   // Parse optional body for settle_all mode
@@ -105,9 +109,19 @@ Deno.serve(async (req) => {
       if (!timeline || timeline.length === 0) continue;
 
       for (const pred of preds) {
-        const playerTimeline = timeline.filter(
+        // ── Fuzzy match player timeline (handles accented names like Montréal) ──
+        let playerTimeline = timeline.filter(
           t => t.player_name === pred.player_name && t.prop_type === pred.prop_type
         );
+        if (playerTimeline.length === 0) {
+          const normalizedPred = normalizeName(pred.player_name);
+          playerTimeline = timeline.filter(
+            t => normalizeName(t.player_name) === normalizedPred && t.prop_type === pred.prop_type
+          );
+          if (playerTimeline.length > 0) {
+            log(`Fuzzy matched "${pred.player_name}" → "${playerTimeline[0].player_name}"`);
+          }
+        }
         if (playerTimeline.length === 0) {
           if (pred.signal_type !== "team_news_shift" && pred.signal_type !== "correlated_movement") {
             continue;
@@ -121,11 +135,18 @@ Deno.serve(async (req) => {
         let wasCorrect: boolean | null = null;
         let actualOutcome = "unverifiable";
 
-        // ── Helper: resolve line at signal time (from signal_factors or nearest timeline snapshot) ──
+        // ── Helper: resolve line at signal time (from signal_factors, prediction text, or nearest timeline snapshot) ──
         const resolveLineAtSignal = (): number | null => {
           const fromSF = sf.line_to ?? sf.currentLine ?? sf.current_line;
           if (fromSF != null) return Number(fromSF);
-          // Fallback: find the timeline snapshot closest to prediction created_at
+          // Fallback 1: parse line from prediction text (e.g. "OVER 6.5", "FADE -235", "TAKE +120")
+          const predText = pred.prediction || "";
+          const lineMatch = predText.match(/[-+]?\d+\.?\d*/);
+          if (lineMatch) {
+            const parsed = parseFloat(lineMatch[0]);
+            if (!isNaN(parsed)) return parsed;
+          }
+          // Fallback 2: find the timeline snapshot closest to prediction created_at
           const predTime = new Date(pred.created_at).getTime();
           let closest: any = null;
           let closestDelta = Infinity;
@@ -587,6 +608,109 @@ Deno.serve(async (req) => {
     }
 
     log(`=== COMPLETE: ${verified} verified, ${correct} correct, ${patternsUpdated} patterns ===`);
+
+    // ── STALE SIGNAL SWEEPER: force-settle signals stuck >48h ──
+    const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+    const seventyTwoHoursAgo = new Date(now.getTime() - 72 * 60 * 60 * 1000).toISOString();
+
+    const { data: staleSignals } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("id, event_id, player_name, prop_type, prediction, predicted_direction, signal_type, signal_factors, created_at")
+      .is("was_correct", null)
+      .lt("created_at", fortyEightHoursAgo)
+      .limit(50);
+
+    let stalSettled = 0;
+    let staleUnverifiable = 0;
+
+    for (const stale of staleSignals || []) {
+      // Find timeline for this signal with fuzzy matching
+      const normalizedName = normalizeName(stale.player_name);
+      const { data: staleTimeline } = await supabase
+        .from("fanduel_line_timeline")
+        .select("player_name, prop_type, line, snapshot_time")
+        .eq("event_id", stale.event_id)
+        .order("snapshot_time", { ascending: true })
+        .limit(500);
+
+      if (!staleTimeline || staleTimeline.length === 0) {
+        // No timeline at all — if older than 72h, mark unverifiable
+        if (stale.created_at < seventyTwoHoursAgo) {
+          await supabase.from("fanduel_prediction_accuracy").update({
+            actual_outcome: "unverifiable_no_timeline",
+            verified_at: now.toISOString(),
+          }).eq("id", stale.id);
+          staleUnverifiable++;
+          log(`🧹 Stale unverifiable (no timeline): ${stale.player_name} ${stale.prop_type}`);
+        }
+        continue;
+      }
+
+      // Fuzzy match player timeline
+      let pTimeline = staleTimeline.filter(
+        t => t.player_name === stale.player_name && t.prop_type === stale.prop_type
+      );
+      if (pTimeline.length === 0) {
+        pTimeline = staleTimeline.filter(
+          t => normalizeName(t.player_name) === normalizedName && t.prop_type === stale.prop_type
+        );
+      }
+
+      if (pTimeline.length < 2) {
+        if (stale.created_at < seventyTwoHoursAgo) {
+          await supabase.from("fanduel_prediction_accuracy").update({
+            actual_outcome: "unverifiable_insufficient_data",
+            verified_at: now.toISOString(),
+          }).eq("id", stale.id);
+          staleUnverifiable++;
+          log(`🧹 Stale unverifiable (< 2 snapshots): ${stale.player_name} ${stale.prop_type}`);
+        }
+        continue;
+      }
+
+      // Force-settle using pure CLV: opening vs closing
+      const openLine = pTimeline[0].line; // earliest
+      const closeLine = pTimeline[pTimeline.length - 1].line; // latest (ordered asc)
+      const predText = (stale.prediction || "").toUpperCase();
+      const isOver = predText.includes("OVER") || predText.includes("TAKE") || predText.includes("BACK") || predText.includes("COVER");
+      const isUnder = predText.includes("UNDER") || predText.includes("FADE");
+
+      let staleCorrect: boolean | null = null;
+      let staleOutcome = "unverifiable";
+
+      if (isOver) {
+        staleCorrect = closeLine >= openLine;
+        staleOutcome = staleCorrect ? "STALE_CLV_POSITIVE_OVER" : "STALE_CLV_NEGATIVE_OVER";
+      } else if (isUnder) {
+        staleCorrect = closeLine <= openLine;
+        staleOutcome = staleCorrect ? "STALE_CLV_POSITIVE_UNDER" : "STALE_CLV_NEGATIVE_UNDER";
+      } else {
+        // Use predicted_direction
+        const dir = stale.predicted_direction;
+        if (dir === "dropping") {
+          staleCorrect = closeLine < openLine;
+          staleOutcome = staleCorrect ? "STALE_CLV_DROP_CONFIRMED" : "STALE_CLV_DROP_REVERSED";
+        } else if (dir === "rising") {
+          staleCorrect = closeLine > openLine;
+          staleOutcome = staleCorrect ? "STALE_CLV_RISE_CONFIRMED" : "STALE_CLV_RISE_REVERSED";
+        }
+      }
+
+      if (staleCorrect !== null) {
+        await supabase.from("fanduel_prediction_accuracy").update({
+          was_correct: staleCorrect,
+          actual_outcome: staleOutcome,
+          actual_value: closeLine,
+          verified_at: now.toISOString(),
+        }).eq("id", stale.id);
+        stalSettled++;
+        log(`🧹 Stale settled: ${stale.player_name} ${stale.prop_type} → ${staleOutcome}`);
+      }
+    }
+
+    if (stalSettled > 0 || staleUnverifiable > 0) {
+      log(`🧹 Stale sweeper: ${stalSettled} settled, ${staleUnverifiable} marked unverifiable`);
+    }
 
     // Cleanup old timeline (30 day retention)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
