@@ -241,6 +241,52 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── TEAM NEWS SHIFT / CORRELATED MOVEMENT: aggregate signal settlement ──
+        if (pred.signal_type === "team_news_shift" || pred.signal_type === "correlated_movement") {
+          const players = sf.players_moving || [];
+          const dominant = sf.dominant_direction || pred.predicted_direction;
+
+          if (players.length > 0 && dominant) {
+            let hitsCount = 0;
+            let checkable = 0;
+            for (const p of players) {
+              const pName = typeof p === "string" ? p : p.name || p.player;
+              if (!pName) continue;
+              const pTimeline = playerTimeline.filter(
+                (t: any) => t.player_name === pName && t.prop_type === pred.prop_type
+              );
+              if (pTimeline.length >= 2) {
+                checkable++;
+                const close = pTimeline[0].line;
+                const open = pTimeline[pTimeline.length - 1].line;
+                if (dominant === "dropping" && close < open) hitsCount++;
+                if (dominant === "rising" && close > open) hitsCount++;
+              }
+            }
+            if (checkable > 0) {
+              const hitRate = hitsCount / checkable;
+              wasCorrect = hitRate >= 0.5;
+              actualOutcome = wasCorrect
+                ? `CORRELATION_CONFIRMED (${hitsCount}/${checkable})`
+                : `CORRELATION_MISSED (${hitsCount}/${checkable})`;
+            }
+          } else if (pred.prop_type === "totals" || pred.prop_type === "moneyline") {
+            const predText = (pred.prediction || "").toUpperCase();
+            const isOver = predText.includes("OVER") || predText.includes("BACK");
+            const isUnder = predText.includes("UNDER") || predText.includes("FADE");
+            const sigLine = sf.current_line ?? sf.line ?? pred.line_at_alert;
+            if (sigLine != null && closingLine != null) {
+              if (isOver) {
+                wasCorrect = closingLine >= Number(sigLine);
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER";
+              } else if (isUnder) {
+                wasCorrect = closingLine <= Number(sigLine);
+                actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER";
+              }
+            }
+          }
+        }
+
         // ── TAKE_IT_NOW: CLV check + TRAP DETECTION ──
         if (pred.signal_type === "take_it_now") {
           const sigCurrentLine = sf.current_line ?? sf.currentLine ?? sf.line_to;

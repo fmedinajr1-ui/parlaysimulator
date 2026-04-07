@@ -1,0 +1,1 @@
+UPDATE fanduel_prediction_accuracy SET predicted_direction = signal_factors->>'dominant_direction' WHERE signal_type IN ('team_news_shift', 'correlated_movement') AND predicted_direction IS NULL AND signal_factors->>'dominant_direction' IS NOT NULL;
