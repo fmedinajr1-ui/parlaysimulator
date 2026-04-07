@@ -1530,7 +1530,7 @@ Deno.serve(async (req) => {
           player_name: a.player_name,
           event_id: a.event_id,
           prediction: predictionText,
-          predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null),
+          predicted_direction: a.direction || a.dominant_direction || (a.type === "snapback" ? "revert" : null),
           predicted_magnitude: a.velocity || a.drift_pct || a.drift_amount || null,
           confidence_at_signal: a.confidence,
           velocity_at_signal: a.velocity || null,
