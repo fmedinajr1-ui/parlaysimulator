@@ -109,9 +109,19 @@ Deno.serve(async (req) => {
       if (!timeline || timeline.length === 0) continue;
 
       for (const pred of preds) {
-        const playerTimeline = timeline.filter(
+        // ── Fuzzy match player timeline (handles accented names like Montréal) ──
+        let playerTimeline = timeline.filter(
           t => t.player_name === pred.player_name && t.prop_type === pred.prop_type
         );
+        if (playerTimeline.length === 0) {
+          const normalizedPred = normalizeName(pred.player_name);
+          playerTimeline = timeline.filter(
+            t => normalizeName(t.player_name) === normalizedPred && t.prop_type === pred.prop_type
+          );
+          if (playerTimeline.length > 0) {
+            log(`Fuzzy matched "${pred.player_name}" → "${playerTimeline[0].player_name}"`);
+          }
+        }
         if (playerTimeline.length === 0) {
           if (pred.signal_type !== "team_news_shift" && pred.signal_type !== "correlated_movement") {
             continue;
@@ -125,11 +135,18 @@ Deno.serve(async (req) => {
         let wasCorrect: boolean | null = null;
         let actualOutcome = "unverifiable";
 
-        // ── Helper: resolve line at signal time (from signal_factors or nearest timeline snapshot) ──
+        // ── Helper: resolve line at signal time (from signal_factors, prediction text, or nearest timeline snapshot) ──
         const resolveLineAtSignal = (): number | null => {
           const fromSF = sf.line_to ?? sf.currentLine ?? sf.current_line;
           if (fromSF != null) return Number(fromSF);
-          // Fallback: find the timeline snapshot closest to prediction created_at
+          // Fallback 1: parse line from prediction text (e.g. "OVER 6.5", "FADE -235", "TAKE +120")
+          const predText = pred.prediction || "";
+          const lineMatch = predText.match(/[-+]?\d+\.?\d*/);
+          if (lineMatch) {
+            const parsed = parseFloat(lineMatch[0]);
+            if (!isNaN(parsed)) return parsed;
+          }
+          // Fallback 2: find the timeline snapshot closest to prediction created_at
           const predTime = new Date(pred.created_at).getTime();
           let closest: any = null;
           let closestDelta = Infinity;
