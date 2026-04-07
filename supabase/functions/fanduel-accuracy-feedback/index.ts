@@ -17,6 +17,10 @@ Deno.serve(async (req) => {
 
   const log = (msg: string) => console.log(`[Accuracy Feedback] ${msg}`);
   const now = new Date();
+
+  // ── Normalize names for fuzzy matching (accents, casing, punctuation) ──
+  const normalizeName = (name: string): string =>
+    name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
   const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
   // Parse optional body for settle_all mode
