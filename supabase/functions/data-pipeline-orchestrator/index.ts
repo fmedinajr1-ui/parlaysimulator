@@ -232,7 +232,7 @@ serve(async (req) => {
 
       if ((parlayCount || 0) < 10) {
         console.log(`[Pipeline] 🔄 MID-DAY RE-GEN: Only ${parlayCount || 0} pending parlays for ${today}. Triggering additional generation.`);
-        await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_ncaab', 'basketball_wnba'] });
+        await runFunction('whale-odds-scraper', { mode: 'full' });
         await runFunction('team-bets-scoring-engine', {});
         
         // Mid-day force-fresh also conditional
