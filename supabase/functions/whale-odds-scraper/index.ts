@@ -651,11 +651,12 @@ serve(async (req) => {
                   } else if (market.key === 'h2h') {
                     const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
                     const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
+                    const drawOutcome = market.outcomes.find(o => o.name === 'Draw');
                     if (homeOutcome || awayOutcome) {
                       allTeamBets.push({
                         game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
                         home_team: event.home_team, away_team: event.away_team,
-                        line: null,
+                        line: drawOutcome?.price ?? null, // store draw odds in line field for soccer/mma
                         home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
                         over_odds: null, under_odds: null,
                         bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
