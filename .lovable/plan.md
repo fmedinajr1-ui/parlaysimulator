@@ -1,94 +1,65 @@
 
 
-# Parlay Line Tracker with Correlation-Style Player Analysis
+# Add Team Correlation Analysis to Take It Now Alerts
 
-## What It Does
+## What Changes
 
-When you submit 3 legs to Telegram, the bot doesn't just track the odds on those specific lines — it also scans **all other players in the same game** to detect team-wide movement patterns, exactly like the existing correlation/team shift signals do. This gives you a full picture of whether the market is confirming or fading your pick.
+Every "Take It Now" alert sent to Telegram will now include a **team correlation scan** — showing how many other players in the same game are moving in the same direction, exactly like the parlay tracker does. This turns each Take It Now pick from a solo line read into a team-validated signal.
 
-## Example Alert (every 15 min, stopping 30 min before tip)
+## Updated Alert Format
 
 ```text
-📊 PARLAY TRACKER — 2:15 PM ET
+💰 TAKE IT NOW — NHL
+Seth Jarvis SHOTS ON GOAL
+Open: 2.5 → Now: 3.0 (moved 0.5)
+📏 50% of typical range (avg drift: 1.00)
+📊 Confidence: 78%
 
-1️⃣ Seth Jarvis SOG O2.5
-   Open: -152 → Now: -170 (⬆️ steaming OVER)
-   🔗 TEAM CORRELATION: 4/6 CAR players RISING
-     Aho: SOG 3.5 → 4.5 (+1.0) ⬆️
-     Svechnikov: SOG 2.5 → 3.0 (+0.5) ⬆️
-     Kotkaniemi: SOG 1.5 → 1.5 (stable)
-   📊 83% aligned RISING → confirms OVER ✅
+🔗 TEAM CORRELATION: 4/6 players RISING
+  Aho: SOG 3.5 → 4.0 (+0.5) ⬆️
+  Svechnikov: SOG 2.5 → 3.0 (+0.5) ⬆️
+  Kotkaniemi: SOG 1.5 → 1.5 (stable) ➖
+📊 80% aligned RISING → CONFIRMED ✅
 
-2️⃣ Garrett Crochet Ks O7.5
-   Open: -140 → Now: -130 (⬇️ drifting back)
-   🔗 TEAM CORRELATION: 2/4 BOS pitchers DROPPING
-     Crochet: Ks 7.5 → 7.5 (stable, odds fading)
-     Arroyo: Ks 4.5 → 4.0 (-0.5) ⬇️
-   📊 50% mixed → ⚠️ CAUTION
+✅ Action: OVER 3.0 (-152)
+💡 Line rising = sharp money on over
+```
 
-3️⃣ Julius Randle PTS O23.5
-   Open: -118 → Now: -125 (⬆️ slight steam)
-   🔗 TEAM CORRELATION: 5/7 MIN players RISING
-     Randle: PTS 23.5 → 24.5 (+1.0) ⬆️
-     Edwards: PTS 28.5 → 29.5 (+1.0) ⬆️
-     Gobert: REB 12.5 → 13.0 (+0.5) ⬆️
-   📊 71% aligned RISING → supports OVER ✅
-
-Overall: 2/3 legs confirmed by team correlation ✅
+If correlation is low or opposing, it adds a warning:
+```text
+🔗 TEAM CORRELATION: 1/5 players RISING
+📊 25% aligned → ⚠️ CAUTION — team not confirming
 ```
 
 ## Technical Plan
 
-### A. New table: `tracked_parlays`
+### File: `supabase/functions/fanduel-prediction-alerts/index.ts`
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| id | UUID | PK |
-| chat_id | TEXT | Telegram chat |
-| legs | JSONB | `[{player_name, prop_type, side, line, initial_price, sport, event_id, commence_time}]` |
-| leg_snapshots | JSONB | Running history of price + team correlation per check |
-| status | TEXT | active / completed / expired |
-| final_verdict_sent | BOOLEAN | Prevents duplicate final alerts |
-| created_at | TIMESTAMPTZ | Submission time |
+1. **Add correlation scan function** — reuse the same logic from `parlay-tracker-monitor`:
+   - For each Take It Now signal, query `unified_props` for all players in the same `event_id`
+   - Filter to same prop category or same team
+   - Compare each player's `line` vs `previous_line` to determine direction and magnitude
+   - Calculate alignment percentage (% moving in the direction that supports the pick)
 
-### B. New edge function: `parlay-tracker-input`
+2. **Add verdict logic** — same thresholds as parlay tracker:
+   - ≥70% aligned + steaming = CONFIRMED ✅
+   - ≥40% aligned = PARTIAL ⚠️
+   - <40% + fading = TRAP WARNING 🚨
 
-- Parses Telegram message (e.g. "Track: Jarvis SOG O2.5, Crochet Ks O7.5, Randle PTS O23.5")
-- Looks up each leg in `unified_props` to get current price, event_id, commence_time, sport
-- Inserts into `tracked_parlays`
-- Sends confirmation to Telegram
+3. **Inject correlation block into alert text** — after the confidence line, before the action line:
+   - Show top 3 movers by magnitude
+   - Show alignment percentage and verdict
+   - Add correlation rate to `signal_factors` in the prediction record for accuracy tracking
 
-### C. New edge function: `parlay-tracker-monitor` (cron every 15 min)
+4. **Boost/penalize confidence** based on correlation:
+   - ≥70% aligned: +5 confidence
+   - <30% aligned: -10 confidence (may block marginal signals)
 
-For each active tracked parlay:
-
-1. **Leg odds check** — query `unified_props` for current price vs initial price → steam/fade
-2. **Team correlation scan** — for each leg, query `unified_props` for ALL players in the same `event_id` and same prop category:
-   - Compare each player's current line vs their opening line
-   - Calculate direction (rising/dropping) and magnitude for each
-   - Compute correlation rate (% of players moving same direction)
-   - Build `players_moving` array identical to the behavior analyzer format
-3. **Verdict per leg**:
-   - Steam + high correlation (≥70% aligned) = ✅ CONFIRMED
-   - Steam + low correlation = ⚠️ PARTIAL
-   - Fade + high opposite correlation = 🚨 TRAP WARNING
-   - Stable = ➖ NEUTRAL
-4. **Overall parlay health** = count of confirmed legs
-5. **30-min final verdict** — sends lock-in or bail recommendation
-
-### D. Telegram alert format
-
-Uses the same player-by-player breakdown as correlation signals:
-- Each player listed with `name: direction magnitude`
-- Correlation rate shown as `X% aligned RISING/DROPPING`
-- Action recommendation per leg and overall
-
-## Scope
+### Scope
 
 | Action | File |
 |--------|------|
-| Migration | Create `tracked_parlays` table |
-| Create | `supabase/functions/parlay-tracker-input/index.ts` |
-| Create | `supabase/functions/parlay-tracker-monitor/index.ts` |
-| Cron | 15-min schedule for monitor |
+| Edit | `supabase/functions/fanduel-prediction-alerts/index.ts` |
+
+No new tables or functions needed. This enriches the existing Take It Now pipeline with the same correlation logic already proven in the parlay tracker.
 
