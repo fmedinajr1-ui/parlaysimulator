@@ -90,7 +90,6 @@ serve(async (req) => {
         // Use 'full' mode scraper for scheduled full scrapes
         await runFunction('whale-odds-scraper', { 
           mode: 'full',
-          sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'] 
         });
       } else {
         console.log(`[Pipeline] Low budget (${budgetRemaining} remaining), using targeted scrape only`);
@@ -167,7 +166,7 @@ serve(async (req) => {
 
       if (hoursAgo > 6) {
         console.warn(`[Pipeline] ⚠️ Data is ${hoursAgo.toFixed(1)}h stale -- triggering collect first`);
-        await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
+        await runFunction('whale-odds-scraper', { mode: 'full' });
         await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
         await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA'] });
       } else {
@@ -233,7 +232,7 @@ serve(async (req) => {
 
       if ((parlayCount || 0) < 10) {
         console.log(`[Pipeline] 🔄 MID-DAY RE-GEN: Only ${parlayCount || 0} pending parlays for ${today}. Triggering additional generation.`);
-        await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_ncaab', 'basketball_wnba'] });
+        await runFunction('whale-odds-scraper', { mode: 'full' });
         await runFunction('team-bets-scoring-engine', {});
         
         // Mid-day force-fresh also conditional

@@ -9,8 +9,11 @@ const corsHeaders = {
 // ============ SPORT TIERS ============
 // Tier 1: Always fetch (best historical data)
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
-// Tier 2: Fetch if games exist (seasonal)
-const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'baseball_mlb', 'tennis_atp', 'tennis_wta', 'tennis_pingpong', 'mma_mixed_martial_arts', 'soccer_usa_mls', 'soccer_epl', 'lacrosse_pll', 'lacrosse_ncaa'];
+// Tier 1.5: Team-market-only sports — very cheap (1 API call per event, no player props)
+// Placed before prop-heavy sports so they don't get budget-starved
+const TIER_1_5_TEAM_ONLY = ['mma_mixed_martial_arts', 'soccer_usa_mls', 'soccer_epl', 'lacrosse_pll', 'lacrosse_ncaa'];
+// Tier 2: Fetch if games exist (seasonal) — prop-heavy, more API calls
+const TIER_2_SPORTS = ['baseball_mlb', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
 // Golf: Outright/futures markets (seasonal — only active during tournament weeks)
 const GOLF_SPORTS = [
   'golf_masters_tournament_winner',
@@ -21,7 +24,7 @@ const GOLF_SPORTS = [
 // Tier 3: Skip for now (offseason / low volume)
 // NFL, NCAAF - not fetched to save API budget
 
-const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_2_SPORTS, ...GOLF_SPORTS];
+const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_1_5_TEAM_ONLY, ...TIER_2_SPORTS, ...GOLF_SPORTS];
 
 // Batched player prop markets (comma-separated to reduce API calls)
 const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
@@ -217,7 +220,8 @@ serve(async (req) => {
 
           if (resp.ok) {
             const events: OddsAPIEvent[] = await resp.json();
-            const windowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            // Use 72h window (matches full scrape) so multi-day-out sports like MMA/Soccer are detected
+            const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);
             const todayEvents = events.filter(e =>
               new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now
             );
@@ -647,11 +651,12 @@ serve(async (req) => {
                   } else if (market.key === 'h2h') {
                     const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
                     const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
+                    const drawOutcome = market.outcomes.find(o => o.name === 'Draw');
                     if (homeOutcome || awayOutcome) {
                       allTeamBets.push({
                         game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
                         home_team: event.home_team, away_team: event.away_team,
-                        line: null,
+                        line: drawOutcome?.price ?? null, // store draw odds in line field for soccer/mma
                         home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
                         over_odds: null, under_odds: null,
                         bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
