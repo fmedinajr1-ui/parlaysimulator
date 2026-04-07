@@ -1192,6 +1192,10 @@ function formatLegDisplay(leg: any): string {
     else if (sportKey.includes('mlb') || sportKey.includes('baseball') || sportKey.includes('pitcher') || sportKey.includes('hitter') || sportKey.includes('batter')) sportEmoji = '⚾';
     else if (sportKey.includes('ncaab')) sportEmoji = '🏀';
     else if (sportKey.includes('nfl') || sportKey.includes('ncaaf')) sportEmoji = '🏈';
+    else if (sportKey.includes('mma') || sportKey.includes('ufc')) sportEmoji = '🥊';
+    else if (sportKey.includes('soccer') || sportKey.includes('mls') || sportKey.includes('epl')) sportEmoji = '⚽';
+    else if (sportKey.includes('golf') || sportKey.includes('pga')) sportEmoji = '⛳';
+    else if (sportKey.includes('lacrosse') || sportKey.includes('pll')) sportEmoji = '🥍';
 
     const name = leg.player_name || 'Player';
     const side = (leg.side || 'over').toUpperCase();
@@ -2000,6 +2004,10 @@ async function handleScanLines(chatId: string) {
     const SPORT_EMOJI: Record<string, string> = {
       'basketball_ncaab': '🏀', 'basketball_nba': '🏀', 'icehockey_nhl': '🏒',
       'baseball_mlb': '⚾', 'americanfootball_nfl': '🏈',
+      'mma_mixed_martial_arts': '🥊', 'mma': '🥊',
+      'soccer_usa_mls': '⚽', 'soccer_mls': '⚽', 'soccer_epl': '⚽',
+      'lacrosse_pll': '🥍', 'lacrosse_ncaa': '🥍', 'lacrosse': '🥍',
+      'golf_pga': '⛳',
     };
     const SPORT_LABEL: Record<string, string> = {
       'basketball_ncaab': 'NCAAB', 'basketball_nba': 'NBA', 'icehockey_nhl': 'NHL',
