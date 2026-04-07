@@ -574,15 +574,15 @@ async function handleTrack(chatId: string, args: string): Promise<string> {
   if (!args || args.trim().length === 0) {
     return `🎯 *Parlay Tracker*
 
-Track your parlay legs with real-time line movement & team correlation alerts every 15 min until 30 min before tip.
+Track your parlay with real-time line & team correlation alerts.
 
-*Usage:*
-\`/track Player1 PROP O/U LINE, Player2 PROP O/U LINE, Player3 PROP O/U LINE\`
+*Just type naturally:*
+\`/track Jarvis SOG over 2.5, Crochet strikeouts over 7.5, Randle points over 23.5\`
 
-*Example:*
-\`/track Seth Jarvis SOG O 2.5, Garrett Crochet Ks O 7.5, Julius Randle PTS O 23.5\`
+Or even simpler:
+\`/track Jarvis sog o 2.5, Crochet ks o 7.5, Randle pts o 23.5\`
 
-*Supported props:* PTS, REB, AST, 3PT, BLK, STL, SOG, Ks, TB, HR, H, Goals, Saves, PRA`;
+*Props:* pts, reb, ast, 3pt, sog, ks, hr, tb, goals, saves, pra`;
   }
 
   // Parse legs from comma-separated format
@@ -593,20 +593,47 @@ Track your parlay legs with real-time line movement & team correlation alerts ev
 
   const legs: any[] = [];
   for (const raw of rawLegs) {
-    // Expected: "Player Name PROP O/U LINE"
-    // e.g. "Seth Jarvis SOG O 2.5" or "Garrett Crochet Ks Over 7.5"
-    const match = raw.match(/^(.+?)\s+([\w]+)\s+(o|u|over|under)\s+([\d.]+)$/i);
-    if (!match) {
-      return `❌ Could not parse leg: "${raw}"\n\nFormat: \`Player Name PROP O/U LINE\`\nExample: \`Seth Jarvis SOG O 2.5\``;
+    // Tokenize and find over/under + number from the end
+    const tokens = raw.trim().split(/\s+/);
+    
+    // Find the line number (last token that's a number)
+    let lineIdx = -1;
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      if (/^\d+\.?\d*$/.test(tokens[i])) { lineIdx = i; break; }
     }
+    if (lineIdx < 0) {
+      return `❌ No line number found in: "${raw}"\n\nExample: \`Jarvis SOG O 2.5\``;
+    }
+    const line = parseFloat(tokens[lineIdx]);
 
-    const playerName = match[1].trim();
-    const propRaw = match[2].toLowerCase();
-    const sideRaw = match[3].toLowerCase();
-    const line = parseFloat(match[4]);
+    // Find over/under (scan backwards from line)
+    let sideIdx = -1;
+    for (let i = lineIdx - 1; i >= 0; i--) {
+      if (/^(o|u|over|under)$/i.test(tokens[i])) { sideIdx = i; break; }
+    }
+    if (sideIdx < 0) {
+      return `❌ Missing over/under in: "${raw}"\n\nExample: \`Jarvis SOG O 2.5\``;
+    }
+    const side = tokens[sideIdx].toLowerCase().startsWith("o") ? "over" : "under";
 
+    // Find prop type (token before over/under)
+    let propIdx = -1;
+    for (let i = sideIdx - 1; i >= 0; i--) {
+      if (PROP_ALIASES[tokens[i].toLowerCase()]) { propIdx = i; break; }
+    }
+    // If no alias match, use the token right before over/under
+    if (propIdx < 0) propIdx = sideIdx - 1;
+    if (propIdx < 0) {
+      return `❌ Missing prop type in: "${raw}"\n\nExample: \`Jarvis SOG O 2.5\``;
+    }
+    const propRaw = tokens[propIdx].toLowerCase();
     const propType = PROP_ALIASES[propRaw] || propRaw;
-    const side = sideRaw.startsWith("o") ? "over" : "under";
+
+    // Everything before the prop is the player name
+    const playerName = tokens.slice(0, propIdx).join(" ");
+    if (!playerName) {
+      return `❌ Missing player name in: "${raw}"\n\nExample: \`Jarvis SOG O 2.5\``;
+    }
 
     legs.push({ player_name: playerName, prop_type: propType, side, line });
   }
