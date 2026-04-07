@@ -217,7 +217,8 @@ serve(async (req) => {
 
           if (resp.ok) {
             const events: OddsAPIEvent[] = await resp.json();
-            const windowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            // Use 72h window (matches full scrape) so multi-day-out sports like MMA/Soccer are detected
+            const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);
             const todayEvents = events.filter(e =>
               new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now
             );
