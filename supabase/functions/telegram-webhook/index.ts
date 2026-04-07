@@ -2012,6 +2012,10 @@ async function handleScanLines(chatId: string) {
     const SPORT_LABEL: Record<string, string> = {
       'basketball_ncaab': 'NCAAB', 'basketball_nba': 'NBA', 'icehockey_nhl': 'NHL',
       'baseball_mlb': 'MLB', 'americanfootball_nfl': 'NFL',
+      'mma_mixed_martial_arts': 'UFC/MMA', 'mma': 'UFC/MMA',
+      'soccer_usa_mls': 'MLS', 'soccer_mls': 'MLS', 'soccer_epl': 'EPL',
+      'lacrosse_pll': 'PLL', 'lacrosse_ncaa': 'NCAA LAX', 'lacrosse': 'LAX',
+      'golf_pga': 'PGA',
     };
 
     // Group by sport
