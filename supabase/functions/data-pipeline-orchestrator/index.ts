@@ -166,7 +166,7 @@ serve(async (req) => {
 
       if (hoursAgo > 6) {
         console.warn(`[Pipeline] ⚠️ Data is ${hoursAgo.toFixed(1)}h stale -- triggering collect first`);
-        await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
+        await runFunction('whale-odds-scraper', { mode: 'full' });
         await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
         await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA'] });
       } else {
