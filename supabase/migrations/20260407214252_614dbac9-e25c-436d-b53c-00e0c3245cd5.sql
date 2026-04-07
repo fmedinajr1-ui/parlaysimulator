@@ -1,0 +1,1 @@
+UPDATE api_budget_tracker SET calls_used = 2400 WHERE date = '2026-04-07';
