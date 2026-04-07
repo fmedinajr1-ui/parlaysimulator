@@ -1309,7 +1309,7 @@ Deno.serve(async (req) => {
         crossRefBadgeTIN = teamGate.badge;
       }
 
-      if (confidence < 55) continue;
+      if (confidence < 70) continue; // Raised from 55 to reduce low-quality snapback noise (22.7% hit rate)
 
       const reason = directionReason;
       const liveTag = live ? " [🔴 LIVE]" : "";

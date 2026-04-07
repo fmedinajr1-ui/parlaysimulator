@@ -347,7 +347,7 @@ Deno.serve(async (req) => {
         const last = snaps[snaps.length - 1];
         // Compare against opening_line for real movement (not snapshot-to-snapshot noise)
         const diff = last.line - last.opening_line;
-        if (Math.abs(diff) < 0.5) continue; // Tighter threshold — must move 0.5+ from open
+        if (Math.abs(diff) < 0.3) continue; // Lowered threshold — captures earlier correlation signals (0.3+ from open)
 
         const propType = first.prop_type;
         if (!propTypeShifts.has(propType)) propTypeShifts.set(propType, []);
@@ -362,7 +362,7 @@ Deno.serve(async (req) => {
       }
 
       for (const [propType, shifts] of propTypeShifts) {
-        if (shifts.length < 3) continue; // Need 3+ players shifting
+        if (shifts.length < 2) continue; // Need 2+ players shifting (lowered from 3 to capture pair correlations)
 
         // Count directions
         const rising = shifts.filter(s => s.direction === "rising").length;
@@ -371,7 +371,7 @@ Deno.serve(async (req) => {
         const dominantCount = Math.max(rising, dropping);
         const correlationRate = dominantCount / shifts.length;
 
-        if (correlationRate >= 0.7) {
+        if (correlationRate >= 0.65) {
           // Strong correlation — likely team news/injury, not sharp action on individuals
           const avgMag = shifts.reduce((a, s) => a + s.magnitude, 0) / shifts.length;
           const conf = Math.min(90, 60 + correlationRate * 15 + Math.min(shifts.length, 6) * 3);
