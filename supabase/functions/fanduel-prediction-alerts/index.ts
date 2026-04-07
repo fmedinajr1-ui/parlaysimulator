@@ -76,6 +76,14 @@ const PROP_MIN_VELOCITY: Record<string, number> = {
   player_rebounds_assists: 0.8,
   player_points_assists: 0.8,
   player_points_rebounds: 0.8,
+  // MMA: fight odds swing harder, need wider threshold
+  h2h_mma: 3.0,
+  // Soccer: tighter thresholds for low-scoring markets
+  totals_soccer: 0.5,
+  spreads_soccer: 0.5,
+  h2h_soccer: 1.5,
+  // Lacrosse: similar to hockey
+  h2h_lacrosse: 1.5,
 };
 
 // Minimum drift gates for take_it_now — lowered for earlier alerts
@@ -402,6 +410,10 @@ Deno.serve(async (req) => {
     const SPORT_KEY_MAP: Record<string, string> = {
       NBA: "basketball_nba", NCAAB: "basketball_ncaab",
       MLB: "baseball_mlb", NHL: "icehockey_nhl", NFL: "americanfootball_nfl",
+      MMA: "mma_mixed_martial_arts", UFC: "mma_mixed_martial_arts",
+      MLS: "soccer_usa_mls", EPL: "soccer_epl", SOCCER: "soccer_usa_mls",
+      LACROSSE: "lacrosse_pll", PLL: "lacrosse_pll",
+      GOLF: "golf_masters_tournament_winner",
     };
     const PROP_TO_ALT_KEY: Record<string, string> = {
       player_points: "points", player_rebounds: "rebounds", player_assists: "assists",

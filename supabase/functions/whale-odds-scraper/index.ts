@@ -10,7 +10,7 @@ const corsHeaders = {
 // Tier 1: Always fetch (best historical data)
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
 // Tier 2: Fetch if games exist (seasonal)
-const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'baseball_mlb', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
+const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'baseball_mlb', 'tennis_atp', 'tennis_wta', 'tennis_pingpong', 'mma_mixed_martial_arts', 'soccer_usa_mls', 'soccer_epl', 'lacrosse_pll', 'lacrosse_ncaa'];
 // Golf: Outright/futures markets (seasonal — only active during tournament weeks)
 const GOLF_SPORTS = [
   'golf_masters_tournament_winner',
@@ -116,6 +116,10 @@ function normalizeSportKey(sportKey: string): string {
   if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
   if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
   if (sportKey.startsWith('tennis_pingpong')) return 'tennis_pingpong';
+  if (sportKey.startsWith('mma_')) return 'mma';
+  if (sportKey.startsWith('soccer_usa')) return 'soccer_mls';
+  if (sportKey.startsWith('soccer_epl')) return 'soccer_epl';
+  if (sportKey.startsWith('lacrosse_')) return 'lacrosse';
   return sportKey;
 }
 
