@@ -12806,6 +12806,36 @@ export type Database = {
         }
         Relationships: []
       }
+      tracked_parlays: {
+        Row: {
+          chat_id: string
+          created_at: string
+          final_verdict_sent: boolean
+          id: string
+          leg_snapshots: Json
+          legs: Json
+          status: string
+        }
+        Insert: {
+          chat_id: string
+          created_at?: string
+          final_verdict_sent?: boolean
+          id?: string
+          leg_snapshots?: Json
+          legs?: Json
+          status?: string
+        }
+        Update: {
+          chat_id?: string
+          created_at?: string
+          final_verdict_sent?: boolean
+          id?: string
+          leg_snapshots?: Json
+          legs?: Json
+          status?: string
+        }
+        Relationships: []
+      }
       trap_patterns: {
         Row: {
           bet_type: string
