@@ -9,8 +9,11 @@ const corsHeaders = {
 // ============ SPORT TIERS ============
 // Tier 1: Always fetch (best historical data)
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
-// Tier 2: Fetch if games exist (seasonal)
-const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'baseball_mlb', 'tennis_atp', 'tennis_wta', 'tennis_pingpong', 'mma_mixed_martial_arts', 'soccer_usa_mls', 'soccer_epl', 'lacrosse_pll', 'lacrosse_ncaa'];
+// Tier 1.5: Team-market-only sports — very cheap (1 API call per event, no player props)
+// Placed before prop-heavy sports so they don't get budget-starved
+const TIER_1_5_TEAM_ONLY = ['mma_mixed_martial_arts', 'soccer_usa_mls', 'soccer_epl', 'lacrosse_pll', 'lacrosse_ncaa'];
+// Tier 2: Fetch if games exist (seasonal) — prop-heavy, more API calls
+const TIER_2_SPORTS = ['baseball_mlb', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
 // Golf: Outright/futures markets (seasonal — only active during tournament weeks)
 const GOLF_SPORTS = [
   'golf_masters_tournament_winner',
@@ -21,7 +24,7 @@ const GOLF_SPORTS = [
 // Tier 3: Skip for now (offseason / low volume)
 // NFL, NCAAF - not fetched to save API budget
 
-const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_2_SPORTS, ...GOLF_SPORTS];
+const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_1_5_TEAM_ONLY, ...TIER_2_SPORTS, ...GOLF_SPORTS];
 
 // Batched player prop markets (comma-separated to reduce API calls)
 const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
