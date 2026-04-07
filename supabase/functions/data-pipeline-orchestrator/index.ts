@@ -90,7 +90,6 @@ serve(async (req) => {
         // Use 'full' mode scraper for scheduled full scrapes
         await runFunction('whale-odds-scraper', { 
           mode: 'full',
-          sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'] 
         });
       } else {
         console.log(`[Pipeline] Low budget (${budgetRemaining} remaining), using targeted scrape only`);
