@@ -114,8 +114,8 @@ Deno.serve(async (req) => {
           }
         }
 
-        const closingLine = playerTimeline[0].line; // latest (sorted desc)
-        const openingLine = playerTimeline[playerTimeline.length - 1].line; // earliest
+        const closingLine = playerTimeline.length > 0 ? playerTimeline[0].line : null;
+        const openingLine = playerTimeline.length > 0 ? playerTimeline[playerTimeline.length - 1].line : null;
 
         const sf = pred.signal_factors || {};
         let wasCorrect: boolean | null = null;
