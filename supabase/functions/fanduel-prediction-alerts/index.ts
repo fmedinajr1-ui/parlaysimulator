@@ -1399,6 +1399,13 @@ Deno.serve(async (req) => {
         crossRefBadgeTIN = teamGate.badge;
       }
 
+      // ── TEAM CORRELATION SCAN for Take It Now ──
+      const correlation = await scanTeamCorrelation(last.event_id, last.prop_type, snapDirection, last.player_name);
+      if (correlation) {
+        confidence = Math.min(95, Math.max(0, confidence + correlation.confidenceAdj));
+        log(`🔗 TIN Correlation: ${last.player_name} ${last.prop_type} — ${correlation.aligned}/${correlation.total} aligned (${Math.round(correlation.rate * 100)}%) → ${correlation.verdict} (adj ${correlation.confidenceAdj > 0 ? "+" : ""}${correlation.confidenceAdj})`);
+      }
+
       if (confidence < 70) continue; // Raised from 55 to reduce low-quality snapback noise (22.7% hit rate)
 
       const reason = directionReason;
@@ -1440,6 +1447,7 @@ Deno.serve(async (req) => {
         `📊 Confidence: ${Math.round(confidence)}%`,
         accBadge || null,
         crossRefBadgeTIN || null,
+        correlation?.textBlock || null,
         volWarningTIN || null,
         minutesBadge || null,
         altLineTextTIN || null,
@@ -1466,6 +1474,10 @@ Deno.serve(async (req) => {
           minutes_avg: volInfoTIN?.avgMin ?? null,
           alt_line_source: "fanduel_real",
           recommended_alt_line: (await fetchRealAltLine(last.event_id, last.player_name, last.prop_type, snapDirection, last.line, last.sport))?.line ?? null,
+          correlation_rate: correlation?.rate ?? null,
+          correlation_verdict: correlation?.verdict ?? null,
+          correlation_aligned: correlation?.aligned ?? null,
+          correlation_total: correlation?.total ?? null,
         },
         // Trap detection fields
         line_at_alert: last.line,
