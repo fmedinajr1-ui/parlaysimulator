@@ -1,58 +1,84 @@
 
 
-# Strengthen Moneyline Take It Now: Matchup Quality Gate
+# Fix Settlement for Team News Shift & Correlated Movement Signals
 
-## Current Problem
+## Root Causes
 
-The Take It Now moneyline logic for **all sports** uses a bare confidence formula: `30 + driftPct * 3`. A tiny 9.6% drift gives 59% confidence — just enough to pass the 55% threshold. There's **no matchup tightness or team quality factor** in the confidence score.
+**1. `predicted_direction` is empty on insert** (behavior-analyzer line 1533)
+The insert uses `a.direction` but these signals store direction as `a.dominant_direction`. So `predicted_direction` is always null.
 
-The `teamCrossReferenceGate` exists but only hard-blocks obvious traps (sub-.500 vs .500+ teams). It doesn't **adjust confidence** or require bigger drift for mismatches. Result: Memphis Grizzlies +660 (massive underdog) gets a TAKE alert on a small drift, and Colorado Rockies (worst MLB team) gets 91% confidence just because the drift was big.
+**2. No settlement handler** (accuracy-feedback)
+The settlement engine has handlers for velocity_spike, line_about_to_move, cascade, take_it_now, snapback, perfect_line, etc. — but nothing for `team_news_shift` or `correlated_movement`. These signals are fetched as unverified but silently skipped.
 
-## Fix
+**3. `prediction` text says "Unknown signal" for correlated_movement** (behavior-analyzer)
+The correlated_movement prediction text IS being built correctly on line 1496-1499, but the DB shows "Unknown signal" for some older entries — likely from before that code was added. Current inserts should be fine.
 
-### 1. Add Matchup Tightness Score to Confidence Formula
+## Fixes
 
-For ALL moneyline Take It Now alerts (NBA, MLB, NHL), compute a **matchup quality modifier** from existing `teamStatsMap` data:
+### A. Fix `predicted_direction` on insert (behavior-analyzer, line 1533)
 
-```text
-matchupGap = abs(teamWinPct - oppWinPct)
-
-Tight matchup (gap < 5%)  → +10 confidence (these are real edges)
-Normal matchup (gap 5-15%) → +0 (neutral)  
-Mismatch (gap 15-25%)     → -10 confidence
-Heavy mismatch (gap > 25%) → -20 confidence
-
-Star team bonus (winPct > 60%) being TAKEN → +8
-Bottom team (winPct < 35%) being TAKEN → -15
+Change:
+```
+predicted_direction: a.direction || (a.type === "snapback" ? "revert" : null)
+```
+To:
+```
+predicted_direction: a.direction || a.dominant_direction || (a.type === "snapback" ? "revert" : null)
 ```
 
-This means a 9.6% drift on Memphis (+660, ~30% win rate) would score: `30 + 28.8 - 15 (bottom team) - 20 (heavy mismatch) = 23.8` → **blocked** (below 55).
+This ensures team_news_shift and correlated_movement signals get their `dominant_direction` (e.g., "rising", "dropping") stored.
 
-Meanwhile a 9.6% drift on a tight matchup between two .500 teams: `30 + 28.8 + 10 = 68.8` → **passes with context**.
+### B. Add settlement handler (accuracy-feedback, after the snapback block ~line 395)
 
-### 2. Minimum Drift Gate for Mismatches
+Add a new block for these aggregate signals. Settlement logic:
 
-Add a hard floor: if matchup gap > 20% AND drift < 15%, skip the alert entirely. Small line moves on lopsided games are noise — books adjusting handle, not sharp money.
+- **Player prop correlations** (prop_type starts with "player_"): Check if the individual players' lines continued moving in the predicted direction. Look up each player from `signal_factors.players_moving` in `fanduel_line_timeline`, check if their closing line moved in the dominant direction vs their line at signal time.
+- **Derived totals**: Check if game total line moved in the predicted direction (OVER = line rose, UNDER = line dropped). Use `fanduel_line_timeline` with the event's totals prop.
+- **Derived moneyline**: Check if the moneyline moved in the predicted direction using the same CLV approach.
 
-### 3. Show Matchup Context in Telegram
+```
+if (pred.signal_type === "team_news_shift" || pred.signal_type === "correlated_movement") {
+  const sf = pred.signal_factors || {};
+  const players = sf.players_moving || [];
+  const dominant = sf.dominant_direction || pred.predicted_direction;
+  
+  if (players.length > 0 && dominant) {
+    // For player prop aggregates: check if majority of individual players' lines moved correctly
+    let hitsCount = 0;
+    for (const p of players) {
+      const pTimeline = timeline.filter(t => t.player_name === p.name && t.prop_type === pred.prop_type);
+      if (pTimeline.length >= 2) {
+        const close = pTimeline[0].line;
+        const open = pTimeline[pTimeline.length - 1].line;
+        if (dominant === "dropping" && close < open) hitsCount++;
+        if (dominant === "rising" && close > open) hitsCount++;
+      }
+    }
+    const hitRate = hitsCount / players.length;
+    wasCorrect = hitRate >= 0.5; // majority moved correctly
+    actualOutcome = wasCorrect 
+      ? `CORRELATION_CONFIRMED (${hitsCount}/${players.length})` 
+      : `CORRELATION_MISSED (${hitsCount}/${players.length})`;
+  } else if (pred.prop_type === "totals" || pred.prop_type === "moneyline") {
+    // Derived team market: use CLV on the game line
+    const predText = (pred.prediction || "").toUpperCase();
+    const isOver = predText.includes("OVER") || predText.includes("BACK");
+    const isUnder = predText.includes("UNDER") || predText.includes("FADE");
+    const sigLine = sf.current_line ?? sf.line ?? pred.line_at_alert;
+    if (sigLine != null && closingLine != null) {
+      if (isOver) { wasCorrect = closingLine >= sigLine; actualOutcome = wasCorrect ? "CLV_POSITIVE_OVER" : "CLV_NEGATIVE_OVER"; }
+      else if (isUnder) { wasCorrect = closingLine <= sigLine; actualOutcome = wasCorrect ? "CLV_POSITIVE_UNDER" : "CLV_NEGATIVE_UNDER"; }
+    }
+  }
+}
+```
 
-Add a matchup line to the alert body (after the cross-ref badge):
+### C. Backfill existing records
 
-- Tight: `🤝 Tight matchup: 52% vs 49% — small edge matters`
-- Mismatch: `⚠️ Mismatch: 62% vs 38% — need strong drift to trust`
-- Heavy mismatch: `🚫 Heavy mismatch: 68% vs 31% — high drift required`
-
-### 4. Apply to MLB Moneyline Too
-
-The MLB branch (line 1142-1200) currently adds pitcher context but doesn't factor team win% into confidence. Add the same matchup modifier there, stacked with the pitcher adjustment. Colorado Rockies would get: `30 + 60.6 (20.2% drift) - 15 (bottom team) - 10 (mismatch) = 65.6` instead of 91%.
-
-### 5. Update bot_owner_rules
-
-Insert rule `moneyline_matchup_quality`: "All moneyline Take It Now alerts must factor matchup tightness into confidence. Heavy mismatches require >15% drift. Bottom-tier teams receive confidence penalty."
+Update the 11 existing unsettled records to populate `predicted_direction` from their `signal_factors->>'dominant_direction'` field, so the settlement engine can process them on next run.
 
 ## Scope
-- 1 edge function modified (`fanduel-prediction-alerts`)
-- 1 migration (new rule)
-- Changes apply to lines 1201-1212 (non-MLB ML), 1142-1200 (MLB ML), and the confidence formula in each branch
-- Uses existing `teamStatsMap` data — no new queries
+- 1 edge function edited (`fanduel-behavior-analyzer`) — 1 line change
+- 1 edge function edited (`fanduel-accuracy-feedback`) — new settlement block
+- 1 data update (backfill predicted_direction on existing records)
 
