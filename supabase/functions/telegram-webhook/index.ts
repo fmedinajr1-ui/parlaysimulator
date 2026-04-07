@@ -4787,6 +4787,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /weekly — Full weekly rundown + forward leans
 /rankings — Team OFF/DEF rankings
 /rankings [TEAM] — Single team profile
+/track — Track a parlay with line alerts
 
 *User Management:*
 /setpassword [pw] [max] — Create password
@@ -4869,6 +4870,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/pipeline") { await handlePipelineSummary(chatId); return null; }
     if (cmd === "/rankings") return await handleRankings(chatId, args);
     if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
+    if (cmd === "/track") return await handleTrack(chatId, args);
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
@@ -4938,6 +4940,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
   if (cmd === "/cancel") return await handleCancelSubscription(chatId);
   if (cmd === "/lookup") { return await handleLookup(chatId, args); }
   if (cmd === "/plan") return await handleStakePlan(chatId);
+  if (cmd === "/track") return await handleTrack(chatId, args);
   if (cmd === "/help") {
     return `📋 *Parlay Farm — Help*
 
@@ -4947,6 +4950,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /accuracy — Sweet Spot engine accuracy
 /bankroll — Set/view your bankroll
 /lookup [player] — Player cross-reference report
+/track — Track a parlay with line alerts
 /calendar — Your monthly P&L
 /roi — Your personal ROI
 /streaks — Hot & cold streaks
