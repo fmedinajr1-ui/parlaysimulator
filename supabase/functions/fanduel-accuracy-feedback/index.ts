@@ -108,7 +108,11 @@ Deno.serve(async (req) => {
         const playerTimeline = timeline.filter(
           t => t.player_name === pred.player_name && t.prop_type === pred.prop_type
         );
-        if (playerTimeline.length === 0) continue;
+        if (playerTimeline.length === 0) {
+          if (pred.signal_type !== "team_news_shift" && pred.signal_type !== "correlated_movement") {
+            continue;
+          }
+        }
 
         const closingLine = playerTimeline[0].line; // latest (sorted desc)
         const openingLine = playerTimeline[playerTimeline.length - 1].line; // earliest
@@ -252,7 +256,7 @@ Deno.serve(async (req) => {
             for (const p of players) {
               const pName = typeof p === "string" ? p : p.name || p.player;
               if (!pName) continue;
-              const pTimeline = playerTimeline.filter(
+              const pTimeline = timeline.filter(
                 (t: any) => t.player_name === pName && t.prop_type === pred.prop_type
               );
               if (pTimeline.length >= 2) {
