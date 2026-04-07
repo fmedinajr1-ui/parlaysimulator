@@ -1,29 +1,94 @@
 
 
-# Fix & Settle Correlation/Team Shift Signals Now
+# Parlay Line Tracker with Correlation-Style Player Analysis
 
-## Two Bugs to Fix
+## What It Does
 
-**Bug 1 — Line 111**: `if (playerTimeline.length === 0) continue;` skips correlation signals because their `player_name` is an aggregate like "3 players" which doesn't match any timeline entry.
+When you submit 3 legs to Telegram, the bot doesn't just track the odds on those specific lines — it also scans **all other players in the same game** to detect team-wide movement patterns, exactly like the existing correlation/team shift signals do. This gives you a full picture of whether the market is confirming or fading your pick.
 
-**Fix**: Allow correlation/team shift signals to pass through:
-```typescript
-if (playerTimeline.length === 0) {
-  if (pred.signal_type !== "team_news_shift" && pred.signal_type !== "correlated_movement") {
-    continue;
-  }
-}
+## Example Alert (every 15 min, stopping 30 min before tip)
+
+```text
+📊 PARLAY TRACKER — 2:15 PM ET
+
+1️⃣ Seth Jarvis SOG O2.5
+   Open: -152 → Now: -170 (⬆️ steaming OVER)
+   🔗 TEAM CORRELATION: 4/6 CAR players RISING
+     Aho: SOG 3.5 → 4.5 (+1.0) ⬆️
+     Svechnikov: SOG 2.5 → 3.0 (+0.5) ⬆️
+     Kotkaniemi: SOG 1.5 → 1.5 (stable)
+   📊 83% aligned RISING → confirms OVER ✅
+
+2️⃣ Garrett Crochet Ks O7.5
+   Open: -140 → Now: -130 (⬇️ drifting back)
+   🔗 TEAM CORRELATION: 2/4 BOS pitchers DROPPING
+     Crochet: Ks 7.5 → 7.5 (stable, odds fading)
+     Arroyo: Ks 4.5 → 4.0 (-0.5) ⬇️
+   📊 50% mixed → ⚠️ CAUTION
+
+3️⃣ Julius Randle PTS O23.5
+   Open: -118 → Now: -125 (⬆️ slight steam)
+   🔗 TEAM CORRELATION: 5/7 MIN players RISING
+     Randle: PTS 23.5 → 24.5 (+1.0) ⬆️
+     Edwards: PTS 28.5 → 29.5 (+1.0) ⬆️
+     Gobert: REB 12.5 → 13.0 (+0.5) ⬆️
+   📊 71% aligned RISING → supports OVER ✅
+
+Overall: 2/3 legs confirmed by team correlation ✅
 ```
 
-**Bug 2 — Line 255**: The settlement handler searches `playerTimeline` (already empty) instead of `timeline` (full event data) when looking up individual players.
+## Technical Plan
 
-**Fix**: Change `playerTimeline.filter(` to `timeline.filter(` on line 255.
+### A. New table: `tracked_parlays`
 
-## After Deploy: Invoke Immediately
+| Column | Type | Purpose |
+|--------|------|---------|
+| id | UUID | PK |
+| chat_id | TEXT | Telegram chat |
+| legs | JSONB | `[{player_name, prop_type, side, line, initial_price, sport, event_id, commence_time}]` |
+| leg_snapshots | JSONB | Running history of price + team correlation per check |
+| status | TEXT | active / completed / expired |
+| final_verdict_sent | BOOLEAN | Prevents duplicate final alerts |
+| created_at | TIMESTAMPTZ | Submission time |
 
-Call the edge function right after deploying to settle the 11 pending records now — not waiting for the next scheduled run.
+### B. New edge function: `parlay-tracker-input`
+
+- Parses Telegram message (e.g. "Track: Jarvis SOG O2.5, Crochet Ks O7.5, Randle PTS O23.5")
+- Looks up each leg in `unified_props` to get current price, event_id, commence_time, sport
+- Inserts into `tracked_parlays`
+- Sends confirmation to Telegram
+
+### C. New edge function: `parlay-tracker-monitor` (cron every 15 min)
+
+For each active tracked parlay:
+
+1. **Leg odds check** — query `unified_props` for current price vs initial price → steam/fade
+2. **Team correlation scan** — for each leg, query `unified_props` for ALL players in the same `event_id` and same prop category:
+   - Compare each player's current line vs their opening line
+   - Calculate direction (rising/dropping) and magnitude for each
+   - Compute correlation rate (% of players moving same direction)
+   - Build `players_moving` array identical to the behavior analyzer format
+3. **Verdict per leg**:
+   - Steam + high correlation (≥70% aligned) = ✅ CONFIRMED
+   - Steam + low correlation = ⚠️ PARTIAL
+   - Fade + high opposite correlation = 🚨 TRAP WARNING
+   - Stable = ➖ NEUTRAL
+4. **Overall parlay health** = count of confirmed legs
+5. **30-min final verdict** — sends lock-in or bail recommendation
+
+### D. Telegram alert format
+
+Uses the same player-by-player breakdown as correlation signals:
+- Each player listed with `name: direction magnitude`
+- Correlation rate shown as `X% aligned RISING/DROPPING`
+- Action recommendation per leg and overall
 
 ## Scope
-- 1 file edited: `supabase/functions/fanduel-accuracy-feedback/index.ts` (lines 111, 255)
-- Immediate invocation after deploy
+
+| Action | File |
+|--------|------|
+| Migration | Create `tracked_parlays` table |
+| Create | `supabase/functions/parlay-tracker-input/index.ts` |
+| Create | `supabase/functions/parlay-tracker-monitor/index.ts` |
+| Cron | 15-min schedule for monitor |
 
