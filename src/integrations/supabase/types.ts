@@ -5442,6 +5442,75 @@ export type Database = {
         }
         Relationships: []
       }
+      hrb_rbi_line_timeline: {
+        Row: {
+          commence_time: string | null
+          created_at: string
+          drift_velocity: number | null
+          event_description: string | null
+          event_id: string
+          hours_to_tip: number | null
+          id: string
+          line: number
+          line_change_from_open: number | null
+          opening_line: number | null
+          opening_over_price: number | null
+          opening_under_price: number | null
+          over_price: number | null
+          player_name: string
+          price_change_from_open: number | null
+          prop_type: string
+          snapshot_phase: string | null
+          snapshot_time: string
+          sport: string
+          under_price: number | null
+        }
+        Insert: {
+          commence_time?: string | null
+          created_at?: string
+          drift_velocity?: number | null
+          event_description?: string | null
+          event_id: string
+          hours_to_tip?: number | null
+          id?: string
+          line: number
+          line_change_from_open?: number | null
+          opening_line?: number | null
+          opening_over_price?: number | null
+          opening_under_price?: number | null
+          over_price?: number | null
+          player_name: string
+          price_change_from_open?: number | null
+          prop_type?: string
+          snapshot_phase?: string | null
+          snapshot_time?: string
+          sport?: string
+          under_price?: number | null
+        }
+        Update: {
+          commence_time?: string | null
+          created_at?: string
+          drift_velocity?: number | null
+          event_description?: string | null
+          event_id?: string
+          hours_to_tip?: number | null
+          id?: string
+          line?: number
+          line_change_from_open?: number | null
+          opening_line?: number | null
+          opening_over_price?: number | null
+          opening_under_price?: number | null
+          over_price?: number | null
+          player_name?: string
+          price_change_from_open?: number | null
+          prop_type?: string
+          snapshot_phase?: string | null
+          snapshot_time?: string
+          sport?: string
+          under_price?: number | null
+        }
+        Relationships: []
+      }
       injury_reports: {
         Row: {
           created_at: string | null
