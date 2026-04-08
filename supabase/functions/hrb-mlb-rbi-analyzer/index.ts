@@ -6,7 +6,7 @@ const corsHeaders = {
 };
 
 const HALF_LIFE_MIN = 15;
-const MIN_CONFIDENCE = 50;
+const MIN_CONFIDENCE = 40; // Lower for RBI props which have subtler movement
 const TELEGRAM_THRESHOLD = 75;
 
 interface Snapshot {
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
       const currentLine = Number(latest.line);
       if (openLine > 0) {
         const driftPct = Math.abs(currentLine - openLine) / openLine;
-        if (driftPct >= 0.08) {
+        if (driftPct >= 0.04) { // RBI lines are small (0.5-1.5), 4% drift is significant
           const snapbackDir = currentLine > openLine ? 'down' : 'up';
           const prediction = snapbackDir === 'up' ? 'Over' : 'Under';
           const confidence = Math.min(90, Math.round(55 + driftPct * 200));
