@@ -3796,6 +3796,63 @@ export type Database = {
         }
         Relationships: []
       }
+      fanduel_prediction_alerts: {
+        Row: {
+          actual_outcome: string | null
+          bookmaker: string | null
+          commence_time: string | null
+          confidence: number
+          created_at: string
+          event_description: string | null
+          event_id: string
+          id: string
+          metadata: Json | null
+          player_name: string
+          prediction: string
+          prop_type: string | null
+          settled_at: string | null
+          signal_type: string
+          sport: string | null
+          was_correct: boolean | null
+        }
+        Insert: {
+          actual_outcome?: string | null
+          bookmaker?: string | null
+          commence_time?: string | null
+          confidence?: number
+          created_at?: string
+          event_description?: string | null
+          event_id: string
+          id?: string
+          metadata?: Json | null
+          player_name: string
+          prediction: string
+          prop_type?: string | null
+          settled_at?: string | null
+          signal_type: string
+          sport?: string | null
+          was_correct?: boolean | null
+        }
+        Update: {
+          actual_outcome?: string | null
+          bookmaker?: string | null
+          commence_time?: string | null
+          confidence?: number
+          created_at?: string
+          event_description?: string | null
+          event_id?: string
+          id?: string
+          metadata?: Json | null
+          player_name?: string
+          prediction?: string
+          prop_type?: string | null
+          settled_at?: string | null
+          signal_type?: string
+          sport?: string | null
+          was_correct?: boolean | null
+        }
+        Relationships: []
+      }
       fanduel_trap_accuracy_metrics: {
         Row: {
           accuracy_rate: number | null
