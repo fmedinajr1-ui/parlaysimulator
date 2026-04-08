@@ -1,77 +1,61 @@
 
 
-# Hard Rock Bet MLB RBI Behavioral Analyzer
+# Deep L10 Cross-Reference for HRB RBI Alerts
 
-## Overview
+## Problem
+Cascade alerts show "Over RBIs (undefined)" in Telegram because:
+1. Cascade signals skip L10 validation entirely — no per-player RBI stats are fetched
+2. The cascade metadata doesn't include `line` (always 0.5 for RBIs)
+3. No individual player breakdown — just a blob of names with no context on who actually supports the OVER/UNDER call
 
-Build a two-function pipeline that mirrors the existing FanDuel behavior analysis system, but targets **Hard Rock Bet MLB RBI lines** (over/under). This gives you a second bookmaker's perspective on RBI movement — useful for cross-book confirmation and catching HRB-specific sharp action.
+## Fix — Enrich Cascades with Per-Player L10 Analysis
 
-## Architecture
+**File: `supabase/functions/hrb-mlb-rbi-analyzer/index.ts`**
 
-```text
-┌─────────────────────────┐     ┌──────────────────────────┐
-│ hrb-mlb-rbi-scanner     │────▶│ hrb_rbi_line_timeline    │
-│ (scrapes HRB every 5m)  │     │ (new table)              │
-└─────────────────────────┘     └──────────┬───────────────┘
-                                           │
-                                ┌──────────▼───────────────┐
-                                │ hrb-mlb-rbi-analyzer     │
-                                │ (velocity, cascade,      │
-                                │  snapback, correlation)  │
-                                └──────────┬───────────────┘
-                                           │
-                                ┌──────────▼───────────────┐
-                                │ fanduel_prediction_alerts │
-                                │ (reuses existing table,   │
-                                │  tagged bookmaker: 'hrb') │
-                                └───────────────────────────┘
-```
+### 1. Add per-player L10 lookup for cascade alerts
+Before inserting cascade alerts, fetch L10 RBI stats for every player in the cascade from `mlb_player_game_logs`. For each player compute:
+- **L10 RBI avg** (e.g., 0.7)
+- **L10 hit rate vs 0.5 line** — how many of last 10 games had RBIs > 0.5 (OVER) or < 0.5 (UNDER)
+- **L3 RBI avg** — recent 3-game trend to detect hot/cold streaks
+- **Individual lean** — does this player's history support the cascade direction?
 
-## Step 1 — New Database Table
+### 2. Split cascade into confirmed vs. contradicted players
+- **Confirmed**: L10 avg supports the cascade direction (e.g., Over + L10 avg > 0.5, or Under + L10 avg ≤ 0.3)
+- **Neutral**: L10 avg is borderline (0.3–0.5 for Under, 0.5–0.7 for Over)
+- **Contradicted**: L10 avg opposes the cascade direction
 
-Create `hrb_rbi_line_timeline` to store Hard Rock Bet MLB RBI snapshots:
-- Columns mirror `fanduel_line_timeline`: event_id, player_name, prop_type (always `batter_rbis`), line, over_price, under_price, snapshot_phase, snapshot_time, hours_to_tip, line_change_from_open, drift_velocity, opening_line, event_description, commence_time, sport (always `MLB`)
-- Partial index on recent data for fast analyzer queries
-- RLS disabled (service-role only access)
+Adjust cascade confidence based on confirmation ratio. If <40% of players confirm, downgrade or block the alert.
 
-## Step 2 — `hrb-mlb-rbi-scanner` Edge Function
+### 3. Fix the "undefined" line in Telegram messages
+- Always set `metadata.line = 0.5` on cascade alerts (RBI lines are always 0.5)
+- Include per-player breakdown in Telegram message:
+  ```
+  🌊 CASCADE
+  Athletics @ New York Yankees → Over 0.5 RBIs
+  🎯 88% conf | 8/12 players confirm
 
-Scrapes Hard Rock Bet MLB RBI lines from The Odds API every 5 minutes:
-- Fetches `baseball_mlb` events, then per-event `batter_rbis` props filtered to `bookmakers=hardrockbet`
-- Computes opening line tracking (morning_open phase), drift velocity, line change from open
-- Inserts snapshots into `hrb_rbi_line_timeline`
-- 30-day retention cleanup
-- Uses existing `THE_ODDS_API_KEY` secret
+  ✅ Aaron Judge: L10 avg 0.7 (7/10 over)
+  ✅ Jazz Chisholm Jr.: L10 avg 0.9 (8/10 over)
+  ⚠️ Jose Caballero: L10 avg 0.2 (2/10 over)
+  ...
+  ```
 
-## Step 3 — `hrb-mlb-rbi-analyzer` Edge Function
+### 4. Enrich individual alerts too
+For non-cascade alerts that already have L10, also add:
+- **L10 hit rate** (games hitting over/under the line) — not just average
+- **L3 trend** — hot or cold indicator
+- Include in Telegram: `L10: 0.7 avg (7/10 over) | L3: 1.0 🔥`
 
-Detects behavioral patterns on HRB RBI lines, modeled after the FanDuel behavior analyzer but simplified to RBI-only:
-
-**Pattern detection:**
-1. **Line About to Move** — sustained directional drift across 3+ snapshots (consistency >= 60%)
-2. **Velocity Spike** — rapid RBI line movement (adaptive thresholds from historical outcomes)
-3. **Cascade** — when multiple players' RBI lines shift together (team-level signal)
-4. **Snapback Candidate** — line drifted 8%+ from open, potential correction
-5. **Correlated Movement** — 2+ players' RBI lines moving same direction in same game
-
-**Output:**
-- Writes alerts to `fanduel_prediction_alerts` table with `bookmaker: 'hrb'` tag to distinguish from FanDuel signals
-- Includes signal metadata: velocity, direction, line_from, line_to, confidence score
-- Cross-references with `mlb_player_game_logs` for L10 RBI averages to validate OVER/UNDER side
-- Sends Telegram notifications for high-confidence alerts (75+)
-
-## Step 4 — Cron Schedule
-
-Schedule both functions:
-- `hrb-mlb-rbi-scanner`: every 5 minutes during game windows
-- `hrb-mlb-rbi-analyzer`: every 5 minutes, offset by 1 minute after scanner
+### 5. Strengthen L10 blocking logic
+Current blocking thresholds are too loose (Over blocked only if L10 < 0.25, Under blocked only if L10 > 1.0). Tighten:
+- **Over 0.5 RBIs**: Block if L10 hit rate < 30% (player rarely gets RBIs)
+- **Under 0.5 RBIs**: Block if L10 hit rate > 80% (player almost always gets RBIs)
 
 ## Technical Details
 
-- All API calls use `bookmakers=hardrockbet` filter
-- Markets param: `batter_rbis` only (focused scope)
-- Time-decay weighting with 15-min half-life (same as FanDuel analyzer)
-- Adaptive thresholds loaded from `fanduel_prediction_accuracy` for any existing HRB-tagged outcomes
-- Deduplication: best alert per player, confidence-ranked
-- Live game noise suppression inherited from FanDuel analyzer pattern
+- Batch L10 lookups: collect all unique player names across all cascade alerts, query once with `.in('player_name', [...])`, then distribute results
+- L3 computed from the first 3 rows of the same L10 query (no extra DB call)
+- Hit rate = count of games where `rbis >= 1` / total games (for Over 0.5 line)
+- Cascade confirmation ratio directly modifies confidence: `adjusted = base * (confirmedRatio * 0.6 + 0.4)`
+- No new tables or migrations needed
 
