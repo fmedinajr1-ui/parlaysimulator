@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
       .not('was_correct', 'is', null)
       .limit(500);
 
-    let velocityThreshold = 0.02; // default
+    let velocityThreshold = 0.005; // RBI lines move in 0.5 increments, need lower threshold
     if (accuracyData && accuracyData.length >= 20) {
       const correctDrifts = accuracyData
         .filter((a: any) => a.was_correct && a.drift_pct_at_alert)
