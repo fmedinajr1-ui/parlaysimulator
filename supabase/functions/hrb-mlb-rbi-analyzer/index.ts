@@ -6,8 +6,8 @@ const corsHeaders = {
 };
 
 const HALF_LIFE_MIN = 15;
-const MIN_CONFIDENCE = 40; // Lower for RBI props which have subtler movement
-const TELEGRAM_THRESHOLD = 75;
+const MIN_CONFIDENCE = 40;
+const TELEGRAM_THRESHOLD = 70;
 
 interface Snapshot {
   id: string;
@@ -17,8 +17,11 @@ interface Snapshot {
   over_price: number | null;
   under_price: number | null;
   opening_line: number | null;
+  opening_over_price: number | null;
+  opening_under_price: number | null;
   drift_velocity: number | null;
   line_change_from_open: number | null;
+  price_change_from_open: number | null;
   snapshot_time: string;
   event_description: string | null;
   commence_time: string | null;
@@ -52,7 +55,6 @@ Deno.serve(async (req) => {
   const log = (msg: string) => console.log(`[hrb-rbi-analyzer] ${msg}`);
 
   try {
-    // Load recent snapshots (last 6 hours)
     const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const { data: snapshots, error: snapErr } = await supabase
       .from('hrb_rbi_line_timeline')
@@ -80,27 +82,12 @@ Deno.serve(async (req) => {
 
     const alerts: Alert[] = [];
 
-    // Load adaptive thresholds from historical accuracy
-    const { data: accuracyData } = await supabase
-      .from('fanduel_prediction_accuracy')
-      .select('signal_type, was_correct, drift_pct_at_alert')
-      .eq('bookmaker', 'hrb')
-      .not('was_correct', 'is', null)
-      .limit(500);
+    // RBI lines are almost always 0.5 — the signal is in PRICE movement
+    // Price movement thresholds (in American odds points)
+    const PRICE_MOVE_THRESHOLD = 15;   // 15+ point price swing = notable
+    const PRICE_SPIKE_THRESHOLD = 30;  // 30+ point swing = velocity spike
+    const PRICE_SNAPBACK_THRESHOLD = 50; // 50+ from open = snapback candidate
 
-    let velocityThreshold = 0.005; // RBI lines move in 0.5 increments, need lower threshold
-    if (accuracyData && accuracyData.length >= 20) {
-      const correctDrifts = accuracyData
-        .filter((a: any) => a.was_correct && a.drift_pct_at_alert)
-        .map((a: any) => Math.abs(a.drift_pct_at_alert));
-      if (correctDrifts.length > 5) {
-        correctDrifts.sort((a: number, b: number) => a - b);
-        velocityThreshold = correctDrifts[Math.floor(correctDrifts.length * 0.25)] || 0.02;
-      }
-    }
-    log(`Adaptive velocity threshold: ${velocityThreshold}`);
-
-    // Pattern 1-4: Per-player analysis
     for (const [key, snaps] of Object.entries(groups)) {
       if (snaps.length < 2) continue;
       const latest = snaps[0];
@@ -110,38 +97,45 @@ Deno.serve(async (req) => {
       // Only analyze pre-game
       if (latest.hours_to_tip != null && latest.hours_to_tip < 0) continue;
 
-      // Pattern 1: Line About to Move (sustained directional drift)
+      const currentOver = Number(latest.over_price) || 0;
+      const openingOver = Number(latest.opening_over_price) || Number(snaps[snaps.length - 1].over_price) || 0;
+      const priceDrift = currentOver - openingOver;
+      const absPriceDrift = Math.abs(priceDrift);
+
+      // Pattern 1: Sustained Price Drift (price moving consistently in one direction)
       if (snaps.length >= 3) {
-        const directions = snaps.slice(0, 5).map((s, i) => {
-          if (i === snaps.length - 1) return 0;
+        const priceChanges = snaps.slice(0, Math.min(8, snaps.length)).map((s, i) => {
+          if (i >= snaps.length - 1) return 0;
           const next = snaps[i + 1];
-          return Number(s.line) - Number(next.line);
+          return (Number(s.over_price) || 0) - (Number(next.over_price) || 0);
         }).filter(d => d !== 0);
 
-        if (directions.length >= 2) {
-          const positiveCount = directions.filter(d => d > 0).length;
-          const negativeCount = directions.filter(d => d < 0).length;
-          const consistency = Math.max(positiveCount, negativeCount) / directions.length;
+        if (priceChanges.length >= 2) {
+          const positiveCount = priceChanges.filter(d => d > 0).length;
+          const negativeCount = priceChanges.filter(d => d < 0).length;
+          const consistency = Math.max(positiveCount, negativeCount) / priceChanges.length;
 
-          if (consistency >= 0.6) {
-            const direction = positiveCount > negativeCount ? 'up' : 'down';
-            const prediction = direction === 'up' ? 'Over' : 'Under';
-            const weightedMag = directions.reduce((sum, d, i) =>
-              sum + Math.abs(d) * timeDecayWeight(snaps[i].snapshot_time), 0);
-            const confidence = Math.min(95, Math.round(consistency * 100 * (1 + weightedMag)));
+          if (consistency >= 0.6 && absPriceDrift >= PRICE_MOVE_THRESHOLD) {
+            // Price going UP on over = market moving toward Over (more value)
+            // Price going DOWN on over = market moving toward Under (sharps on under)
+            const direction = priceDrift > 0 ? 'over_price_rising' : 'over_price_dropping';
+            const prediction = priceDrift > 0 ? 'Over' : 'Under';
+            const confidence = Math.min(95, Math.round(
+              consistency * 70 + Math.min(absPriceDrift / 2, 25)
+            ));
 
             if (confidence >= MIN_CONFIDENCE) {
               alerts.push({
                 player_name: playerName,
                 event_id: eventId,
-                signal_type: 'line_about_to_move',
+                signal_type: 'price_drift',
                 prediction,
                 confidence,
                 metadata: {
                   direction, consistency: Math.round(consistency * 100),
-                  snapshots_analyzed: directions.length,
-                  line_from: Number(snaps[snaps.length - 1].line),
-                  line_to: Number(latest.line),
+                  snapshots_analyzed: priceChanges.length,
+                  opening_over: openingOver, current_over: currentOver,
+                  price_change: priceDrift, line: Number(latest.line),
                 },
                 event_description: latest.event_description,
                 commence_time: latest.commence_time,
@@ -151,54 +145,29 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Pattern 2: Velocity Spike
-      const velocity = latest.drift_velocity != null ? Math.abs(Number(latest.drift_velocity)) : 0;
-      if (velocity > velocityThreshold) {
-        const direction = Number(latest.drift_velocity) > 0 ? 'up' : 'down';
-        const prediction = direction === 'up' ? 'Over' : 'Under';
-        const confidence = Math.min(95, Math.round(60 + velocity * 500));
-
-        if (confidence >= MIN_CONFIDENCE) {
-          alerts.push({
-            player_name: playerName,
-            event_id: eventId,
-            signal_type: 'velocity_spike',
-            prediction,
-            confidence,
-            metadata: {
-              velocity: Math.round(velocity * 1000) / 1000,
-              direction,
-              threshold: velocityThreshold,
-              line: Number(latest.line),
-            },
-            event_description: latest.event_description,
-            commence_time: latest.commence_time,
-          });
-        }
-      }
-
-      // Pattern 3: Snapback Candidate (8%+ drift from open)
-      const openLine = Number(latest.opening_line);
-      const currentLine = Number(latest.line);
-      if (openLine > 0) {
-        const driftPct = Math.abs(currentLine - openLine) / openLine;
-        if (driftPct >= 0.04) { // RBI lines are small (0.5-1.5), 4% drift is significant
-          const snapbackDir = currentLine > openLine ? 'down' : 'up';
-          const prediction = snapbackDir === 'up' ? 'Over' : 'Under';
-          const confidence = Math.min(90, Math.round(55 + driftPct * 200));
+      // Pattern 2: Price Velocity Spike (rapid price movement between recent snapshots)
+      if (snaps.length >= 2) {
+        const recentPriceChange = Math.abs(
+          (Number(snaps[0].over_price) || 0) - (Number(snaps[1].over_price) || 0)
+        );
+        
+        if (recentPriceChange >= PRICE_SPIKE_THRESHOLD) {
+          const direction = (Number(snaps[0].over_price) || 0) > (Number(snaps[1].over_price) || 0) ? 'up' : 'down';
+          const prediction = direction === 'up' ? 'Over' : 'Under';
+          const confidence = Math.min(95, Math.round(55 + recentPriceChange / 3));
 
           if (confidence >= MIN_CONFIDENCE) {
             alerts.push({
               player_name: playerName,
               event_id: eventId,
-              signal_type: 'snapback_candidate',
+              signal_type: 'velocity_spike',
               prediction,
               confidence,
               metadata: {
-                opening_line: openLine,
-                current_line: currentLine,
-                drift_pct: Math.round(driftPct * 100),
-                expected_correction: snapbackDir,
+                price_change: recentPriceChange, direction,
+                from_price: Number(snaps[1].over_price),
+                to_price: Number(snaps[0].over_price),
+                line: Number(latest.line),
               },
               event_description: latest.event_description,
               commence_time: latest.commence_time,
@@ -206,40 +175,66 @@ Deno.serve(async (req) => {
           }
         }
       }
+
+      // Pattern 3: Snapback Candidate (price drifted significantly from open)
+      if (absPriceDrift >= PRICE_SNAPBACK_THRESHOLD) {
+        // Expect correction back toward opening price
+        const snapbackPrediction = priceDrift > 0 ? 'Under' : 'Over';
+        const confidence = Math.min(90, Math.round(50 + absPriceDrift / 4));
+
+        if (confidence >= MIN_CONFIDENCE) {
+          alerts.push({
+            player_name: playerName,
+            event_id: eventId,
+            signal_type: 'snapback_candidate',
+            prediction: snapbackPrediction,
+            confidence,
+            metadata: {
+              opening_over: openingOver, current_over: currentOver,
+              drift_points: priceDrift,
+              expected_correction: snapbackPrediction === 'Over' ? 'price_rise' : 'price_drop',
+              line: Number(latest.line),
+            },
+            event_description: latest.event_description,
+            commence_time: latest.commence_time,
+          });
+        }
+      }
     }
 
-    // Pattern 4: Cascade Detection (team-level, 2+ players moving same direction)
-    const eventGroups: Record<string, { player: string; direction: number; line: number }[]> = {};
+    // Pattern 4: Cascade Detection (multiple players in same game, prices moving same direction)
+    const eventPriceMoves: Record<string, { player: string; direction: number; change: number; line: number }[]> = {};
     for (const [key, snaps] of Object.entries(groups)) {
       if (snaps.length < 2) continue;
       const latest = snaps[0];
-      const prev = snaps[1];
-      const diff = Number(latest.line) - Number(prev.line);
-      if (diff === 0) continue;
+      const openOver = Number(latest.opening_over_price) || Number(snaps[snaps.length - 1].over_price) || 0;
+      const curOver = Number(latest.over_price) || 0;
+      const diff = curOver - openOver;
+      if (Math.abs(diff) < 10) continue; // need at least 10 point move
 
       const eventId = latest.event_id;
-      if (!eventGroups[eventId]) eventGroups[eventId] = [];
-      eventGroups[eventId].push({
+      if (!eventPriceMoves[eventId]) eventPriceMoves[eventId] = [];
+      eventPriceMoves[eventId].push({
         player: latest.player_name,
         direction: diff > 0 ? 1 : -1,
+        change: diff,
         line: Number(latest.line),
       });
     }
 
-    for (const [eventId, players] of Object.entries(eventGroups)) {
+    for (const [eventId, players] of Object.entries(eventPriceMoves)) {
       if (players.length < 2) continue;
       const upCount = players.filter(p => p.direction > 0).length;
       const downCount = players.filter(p => p.direction < 0).length;
       const alignment = Math.max(upCount, downCount) / players.length;
 
-      if (alignment >= 0.65 && Math.max(upCount, downCount) >= 2) {
-        const direction = upCount > downCount ? 'up' : 'down';
-        const prediction = direction === 'up' ? 'Over' : 'Under';
-        const confidence = Math.min(90, Math.round(60 + alignment * 30));
-        const firstPlayer = players[0];
-        const eventSnaps = groups[`${eventId}::${firstPlayer.player}`];
-        const eventDesc = eventSnaps?.[0]?.event_description || eventId;
-        const commenceTime = eventSnaps?.[0]?.commence_time || null;
+      if (alignment >= 0.6 && Math.max(upCount, downCount) >= 2) {
+        const direction = upCount > downCount ? 'over_prices_rising' : 'over_prices_dropping';
+        const prediction = upCount > downCount ? 'Over' : 'Under';
+        const confidence = Math.min(90, Math.round(55 + alignment * 30 + players.length * 3));
+        const firstSnaps = groups[`${eventId}::${players[0].player}`];
+        const eventDesc = firstSnaps?.[0]?.event_description || eventId;
+        const commenceTime = firstSnaps?.[0]?.commence_time || null;
 
         alerts.push({
           player_name: `TEAM CASCADE (${players.map(p => p.player).join(', ')})`,
@@ -250,7 +245,7 @@ Deno.serve(async (req) => {
           metadata: {
             direction, alignment: Math.round(alignment * 100),
             players_involved: players.length,
-            player_details: players,
+            player_details: players.map(p => ({ player: p.player, change: p.change })),
           },
           event_description: eventDesc,
           commence_time: commenceTime,
@@ -277,14 +272,13 @@ Deno.serve(async (req) => {
 
       if (gameLogs && gameLogs.length >= 3) {
         const l10Avg = gameLogs.reduce((s: number, g: any) => s + (Number(g.rbis) || 0), 0) / gameLogs.length;
-        const line = alert.metadata.line || alert.metadata.current_line || 0;
+        const line = alert.metadata.line || 0.5;
 
-        // Validate: Over prediction needs L10 avg >= line, Under needs L10 avg <= line
-        if (alert.prediction === 'Over' && l10Avg < line * 0.7) {
+        if (alert.prediction === 'Over' && l10Avg < line * 0.5) {
           log(`L10 block: ${alert.player_name} Over ${line} but L10 avg ${l10Avg.toFixed(1)}`);
           continue;
         }
-        if (alert.prediction === 'Under' && l10Avg > line * 1.3) {
+        if (alert.prediction === 'Under' && l10Avg > line * 2.0) {
           log(`L10 block: ${alert.player_name} Under ${line} but L10 avg ${l10Avg.toFixed(1)}`);
           continue;
         }
@@ -341,7 +335,7 @@ Deno.serve(async (req) => {
     const telegramAlerts = finalAlerts.filter(a => a.confidence >= TELEGRAM_THRESHOLD);
     if (telegramAlerts.length > 0) {
       const signalEmojis: Record<string, string> = {
-        'line_about_to_move': '🔮',
+        'price_drift': '🔮',
         'velocity_spike': '⚡',
         'cascade': '🌊',
         'snapback_candidate': '🔄',
@@ -349,8 +343,9 @@ Deno.serve(async (req) => {
 
       const lines = telegramAlerts.map(a => {
         const emoji = signalEmojis[a.signal_type] || '📊';
-        const l10 = a.metadata.l10_rbi_avg ? ` | L10: ${a.metadata.l10_rbi_avg}` : '';
-        return `${emoji} ${a.signal_type.replace(/_/g, ' ').toUpperCase()}\n${a.player_name} → ${a.prediction} RBIs\n🎯 ${a.confidence}% conf${l10}\n${a.event_description || ''}`;
+        const l10 = a.metadata.l10_rbi_avg != null ? ` | L10: ${a.metadata.l10_rbi_avg}` : '';
+        const priceInfo = a.metadata.price_change != null ? ` | Δ${a.metadata.price_change > 0 ? '+' : ''}${a.metadata.price_change}` : '';
+        return `${emoji} ${a.signal_type.replace(/_/g, ' ').toUpperCase()}\n${a.player_name} → ${a.prediction} RBIs (${a.metadata.line})\n🎯 ${a.confidence}% conf${priceInfo}${l10}\n${a.event_description || ''}`;
       });
 
       const message = `🏟️ *HRB MLB RBI Alerts*\n\n${lines.join('\n\n')}`;
@@ -359,7 +354,10 @@ Deno.serve(async (req) => {
         await supabase.functions.invoke('bot-send-telegram', {
           body: { message, parse_mode: 'Markdown', admin_only: true },
         });
-      } catch (_) { /* ignore */ }
+        log(`Sent ${telegramAlerts.length} alerts to Telegram`);
+      } catch (e) {
+        log(`Telegram send error: ${e}`);
+      }
     }
 
     return new Response(JSON.stringify({
