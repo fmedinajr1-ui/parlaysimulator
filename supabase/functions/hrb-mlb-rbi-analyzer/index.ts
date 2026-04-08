@@ -8,6 +8,12 @@ const corsHeaders = {
 const HALF_LIFE_MIN = 15;
 const MIN_CONFIDENCE = 40;
 const TELEGRAM_THRESHOLD = 70;
+const RBI_LINE = 0.5;
+
+// Price movement thresholds (American odds points)
+const PRICE_MOVE_THRESHOLD = 15;
+const PRICE_SPIKE_THRESHOLD = 30;
+const PRICE_SNAPBACK_THRESHOLD = 50;
 
 interface Snapshot {
   id: string;
@@ -39,9 +45,83 @@ interface Alert {
   commence_time: string | null;
 }
 
-function timeDecayWeight(snapshotTime: string): number {
-  const ageMin = (Date.now() - new Date(snapshotTime).getTime()) / 60000;
-  return Math.exp(-0.693 * ageMin / HALF_LIFE_MIN);
+interface PlayerL10Stats {
+  l10Avg: number;
+  l3Avg: number;
+  l10HitRate: number; // % of games with ≥1 RBI (over 0.5)
+  l10Games: number;
+  trend: string; // 'hot' | 'cold' | 'stable'
+}
+
+// Batch fetch L10 RBI stats for multiple players at once
+async function batchFetchL10Stats(
+  supabase: any,
+  playerNames: string[]
+): Promise<Record<string, PlayerL10Stats>> {
+  const results: Record<string, PlayerL10Stats> = {};
+  if (playerNames.length === 0) return results;
+
+  // Deduplicate
+  const unique = [...new Set(playerNames)];
+
+  // Batch query - get last 10 games for all players
+  const { data: gameLogs } = await supabase
+    .from('mlb_player_game_logs')
+    .select('player_name, rbis, game_date')
+    .in('player_name', unique)
+    .order('game_date', { ascending: false })
+    .limit(unique.length * 12); // slightly over to ensure coverage
+
+  if (!gameLogs || gameLogs.length === 0) return results;
+
+  // Group by player, take first 10 per player
+  const playerGames: Record<string, number[]> = {};
+  for (const g of gameLogs) {
+    if (!playerGames[g.player_name]) playerGames[g.player_name] = [];
+    if (playerGames[g.player_name].length < 10) {
+      playerGames[g.player_name].push(Number(g.rbis) || 0);
+    }
+  }
+
+  for (const [name, rbis] of Object.entries(playerGames)) {
+    if (rbis.length < 3) continue;
+    const l10Avg = rbis.reduce((s, r) => s + r, 0) / rbis.length;
+    const l3 = rbis.slice(0, 3);
+    const l3Avg = l3.reduce((s, r) => s + r, 0) / l3.length;
+    const l10HitRate = rbis.filter(r => r >= 1).length / rbis.length;
+
+    // Trend: compare L3 to L10
+    let trend = 'stable';
+    if (l3Avg > l10Avg * 1.3) trend = 'hot';
+    else if (l3Avg < l10Avg * 0.7) trend = 'cold';
+
+    results[name] = {
+      l10Avg: Math.round(l10Avg * 100) / 100,
+      l3Avg: Math.round(l3Avg * 100) / 100,
+      l10HitRate: Math.round(l10HitRate * 100) / 100,
+      l10Games: rbis.length,
+      trend,
+    };
+  }
+
+  return results;
+}
+
+// Determine if a player's L10 confirms the predicted direction
+function getPlayerConfirmation(
+  stats: PlayerL10Stats,
+  prediction: string
+): 'confirmed' | 'neutral' | 'contradicted' {
+  if (prediction === 'Over') {
+    if (stats.l10HitRate >= 0.5) return 'confirmed';
+    if (stats.l10HitRate >= 0.3) return 'neutral';
+    return 'contradicted';
+  } else {
+    // Under
+    if (stats.l10HitRate <= 0.3) return 'confirmed';
+    if (stats.l10HitRate <= 0.5) return 'neutral';
+    return 'contradicted';
+  }
 }
 
 Deno.serve(async (req) => {
@@ -82,12 +162,6 @@ Deno.serve(async (req) => {
 
     const alerts: Alert[] = [];
 
-    // RBI lines are almost always 0.5 — the signal is in PRICE movement
-    // Price movement thresholds (in American odds points)
-    const PRICE_MOVE_THRESHOLD = 15;   // 15+ point price swing = notable
-    const PRICE_SPIKE_THRESHOLD = 30;  // 30+ point swing = velocity spike
-    const PRICE_SNAPBACK_THRESHOLD = 50; // 50+ from open = snapback candidate
-
     for (const [key, snaps] of Object.entries(groups)) {
       if (snaps.length < 2) continue;
       const latest = snaps[0];
@@ -102,7 +176,7 @@ Deno.serve(async (req) => {
       const priceDrift = currentOver - openingOver;
       const absPriceDrift = Math.abs(priceDrift);
 
-      // Pattern 1: Sustained Price Drift (price moving consistently in one direction)
+      // Pattern 1: Sustained Price Drift
       if (snaps.length >= 3) {
         const priceChanges = snaps.slice(0, Math.min(8, snaps.length)).map((s, i) => {
           if (i >= snaps.length - 1) return 0;
@@ -116,8 +190,6 @@ Deno.serve(async (req) => {
           const consistency = Math.max(positiveCount, negativeCount) / priceChanges.length;
 
           if (consistency >= 0.6 && absPriceDrift >= PRICE_MOVE_THRESHOLD) {
-            // Price going UP on over = market moving toward Over (more value)
-            // Price going DOWN on over = market moving toward Under (sharps on under)
             const direction = priceDrift > 0 ? 'over_price_rising' : 'over_price_dropping';
             const prediction = priceDrift > 0 ? 'Over' : 'Under';
             const confidence = Math.min(95, Math.round(
@@ -126,16 +198,13 @@ Deno.serve(async (req) => {
 
             if (confidence >= MIN_CONFIDENCE) {
               alerts.push({
-                player_name: playerName,
-                event_id: eventId,
-                signal_type: 'price_drift',
-                prediction,
-                confidence,
+                player_name: playerName, event_id: eventId,
+                signal_type: 'price_drift', prediction, confidence,
                 metadata: {
                   direction, consistency: Math.round(consistency * 100),
                   snapshots_analyzed: priceChanges.length,
                   opening_over: openingOver, current_over: currentOver,
-                  price_change: priceDrift, line: Number(latest.line),
+                  price_change: priceDrift, line: RBI_LINE,
                 },
                 event_description: latest.event_description,
                 commence_time: latest.commence_time,
@@ -145,12 +214,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Pattern 2: Price Velocity Spike (rapid price movement between recent snapshots)
+      // Pattern 2: Price Velocity Spike
       if (snaps.length >= 2) {
         const recentPriceChange = Math.abs(
           (Number(snaps[0].over_price) || 0) - (Number(snaps[1].over_price) || 0)
         );
-        
+
         if (recentPriceChange >= PRICE_SPIKE_THRESHOLD) {
           const direction = (Number(snaps[0].over_price) || 0) > (Number(snaps[1].over_price) || 0) ? 'up' : 'down';
           const prediction = direction === 'up' ? 'Over' : 'Under';
@@ -158,16 +227,13 @@ Deno.serve(async (req) => {
 
           if (confidence >= MIN_CONFIDENCE) {
             alerts.push({
-              player_name: playerName,
-              event_id: eventId,
-              signal_type: 'velocity_spike',
-              prediction,
-              confidence,
+              player_name: playerName, event_id: eventId,
+              signal_type: 'velocity_spike', prediction, confidence,
               metadata: {
                 price_change: recentPriceChange, direction,
                 from_price: Number(snaps[1].over_price),
                 to_price: Number(snaps[0].over_price),
-                line: Number(latest.line),
+                line: RBI_LINE,
               },
               event_description: latest.event_description,
               commence_time: latest.commence_time,
@@ -176,24 +242,20 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Pattern 3: Snapback Candidate (price drifted significantly from open)
+      // Pattern 3: Snapback Candidate
       if (absPriceDrift >= PRICE_SNAPBACK_THRESHOLD) {
-        // Expect correction back toward opening price
         const snapbackPrediction = priceDrift > 0 ? 'Under' : 'Over';
         const confidence = Math.min(90, Math.round(50 + absPriceDrift / 4));
 
         if (confidence >= MIN_CONFIDENCE) {
           alerts.push({
-            player_name: playerName,
-            event_id: eventId,
-            signal_type: 'snapback_candidate',
-            prediction: snapbackPrediction,
-            confidence,
+            player_name: playerName, event_id: eventId,
+            signal_type: 'snapback_candidate', prediction: snapbackPrediction, confidence,
             metadata: {
               opening_over: openingOver, current_over: currentOver,
               drift_points: priceDrift,
               expected_correction: snapbackPrediction === 'Over' ? 'price_rise' : 'price_drop',
-              line: Number(latest.line),
+              line: RBI_LINE,
             },
             event_description: latest.event_description,
             commence_time: latest.commence_time,
@@ -202,15 +264,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Pattern 4: Cascade Detection (multiple players in same game, prices moving same direction)
-    const eventPriceMoves: Record<string, { player: string; direction: number; change: number; line: number }[]> = {};
+    // Pattern 4: Cascade Detection
+    const eventPriceMoves: Record<string, { player: string; direction: number; change: number }[]> = {};
     for (const [key, snaps] of Object.entries(groups)) {
       if (snaps.length < 2) continue;
       const latest = snaps[0];
       const openOver = Number(latest.opening_over_price) || Number(snaps[snaps.length - 1].over_price) || 0;
       const curOver = Number(latest.over_price) || 0;
       const diff = curOver - openOver;
-      if (Math.abs(diff) < 10) continue; // need at least 10 point move
+      if (Math.abs(diff) < 10) continue;
 
       const eventId = latest.event_id;
       if (!eventPriceMoves[eventId]) eventPriceMoves[eventId] = [];
@@ -218,9 +280,12 @@ Deno.serve(async (req) => {
         player: latest.player_name,
         direction: diff > 0 ? 1 : -1,
         change: diff,
-        line: Number(latest.line),
       });
     }
+
+    // Collect all cascade player names for batch L10 lookup
+    const cascadePlayerNames: string[] = [];
+    const cascadeEvents: { eventId: string; players: { player: string; direction: number; change: number }[] }[] = [];
 
     for (const [eventId, players] of Object.entries(eventPriceMoves)) {
       if (players.length < 2) continue;
@@ -229,62 +294,119 @@ Deno.serve(async (req) => {
       const alignment = Math.max(upCount, downCount) / players.length;
 
       if (alignment >= 0.6 && Math.max(upCount, downCount) >= 2) {
-        const direction = upCount > downCount ? 'over_prices_rising' : 'over_prices_dropping';
-        const prediction = upCount > downCount ? 'Over' : 'Under';
-        const confidence = Math.min(90, Math.round(55 + alignment * 30 + players.length * 3));
-        const firstSnaps = groups[`${eventId}::${players[0].player}`];
-        const eventDesc = firstSnaps?.[0]?.event_description || eventId;
-        const commenceTime = firstSnaps?.[0]?.commence_time || null;
+        cascadeEvents.push({ eventId, players });
+        for (const p of players) cascadePlayerNames.push(p.player);
+      }
+    }
 
-        alerts.push({
-          player_name: `TEAM CASCADE (${players.map(p => p.player).join(', ')})`,
-          event_id: eventId,
-          signal_type: 'cascade',
-          prediction,
-          confidence,
-          metadata: {
-            direction, alignment: Math.round(alignment * 100),
-            players_involved: players.length,
-            player_details: players.map(p => ({ player: p.player, change: p.change })),
-          },
-          event_description: eventDesc,
-          commence_time: commenceTime,
+    // Batch fetch L10 stats for ALL players (individual alerts + cascades)
+    const allPlayerNames = [
+      ...alerts.filter(a => a.signal_type !== 'cascade').map(a => a.player_name),
+      ...cascadePlayerNames,
+    ];
+    const l10Stats = await batchFetchL10Stats(supabase, allPlayerNames);
+    log(`Fetched L10 stats for ${Object.keys(l10Stats).length} players`);
+
+    // Build cascade alerts with per-player L10 enrichment
+    for (const { eventId, players } of cascadeEvents) {
+      const upCount = players.filter(p => p.direction > 0).length;
+      const downCount = players.filter(p => p.direction < 0).length;
+      const direction = upCount > downCount ? 'over_prices_rising' : 'over_prices_dropping';
+      const prediction = upCount > downCount ? 'Over' : 'Under';
+      const alignment = Math.max(upCount, downCount) / players.length;
+      let confidence = Math.min(90, Math.round(55 + alignment * 30 + players.length * 3));
+
+      const firstSnaps = groups[`${eventId}::${players[0].player}`];
+      const eventDesc = firstSnaps?.[0]?.event_description || eventId;
+      const commenceTime = firstSnaps?.[0]?.commence_time || null;
+
+      // Per-player L10 analysis
+      const playerBreakdown: { player: string; change: number; status: string; l10Avg?: number; l10HitRate?: number; l3Avg?: number; trend?: string }[] = [];
+      let confirmed = 0;
+      let neutral = 0;
+      let contradicted = 0;
+
+      for (const p of players) {
+        const stats = l10Stats[p.player];
+        if (!stats) {
+          playerBreakdown.push({ player: p.player, change: p.change, status: 'no_data' });
+          neutral++;
+          continue;
+        }
+
+        const confirmation = getPlayerConfirmation(stats, prediction);
+        if (confirmation === 'confirmed') confirmed++;
+        else if (confirmation === 'neutral') neutral++;
+        else contradicted++;
+
+        playerBreakdown.push({
+          player: p.player, change: p.change, status: confirmation,
+          l10Avg: stats.l10Avg, l10HitRate: stats.l10HitRate,
+          l3Avg: stats.l3Avg, trend: stats.trend,
         });
       }
+
+      const totalWithData = confirmed + neutral + contradicted;
+      const confirmedRatio = totalWithData > 0 ? confirmed / totalWithData : 0.5;
+
+      // Block cascade if <40% of players confirm
+      if (totalWithData >= 2 && confirmedRatio < 0.4) {
+        log(`Cascade blocked: ${eventDesc} — only ${confirmed}/${totalWithData} confirm ${prediction}`);
+        continue;
+      }
+
+      // Adjust confidence based on confirmation ratio
+      confidence = Math.round(confidence * (confirmedRatio * 0.6 + 0.4));
+
+      if (confidence < MIN_CONFIDENCE) continue;
+
+      alerts.push({
+        player_name: `TEAM CASCADE (${players.map(p => p.player).join(', ')})`,
+        event_id: eventId,
+        signal_type: 'cascade',
+        prediction,
+        confidence,
+        metadata: {
+          direction, alignment: Math.round(alignment * 100),
+          players_involved: players.length,
+          line: RBI_LINE,
+          confirmed, neutral, contradicted,
+          confirmed_ratio: Math.round(confirmedRatio * 100),
+          player_breakdown: playerBreakdown,
+        },
+        event_description: eventDesc,
+        commence_time: commenceTime,
+      });
     }
 
     log(`Detected ${alerts.length} raw alerts`);
 
-    // L10 validation via mlb_player_game_logs
+    // L10 validation for individual (non-cascade) alerts using batched stats
     const validatedAlerts: Alert[] = [];
     for (const alert of alerts) {
       if (alert.signal_type === 'cascade') {
+        // Already validated during cascade construction
         validatedAlerts.push(alert);
         continue;
       }
 
-      const { data: gameLogs } = await supabase
-        .from('mlb_player_game_logs')
-        .select('rbis')
-        .eq('player_name', alert.player_name)
-        .order('game_date', { ascending: false })
-        .limit(10);
-
-      if (gameLogs && gameLogs.length >= 3) {
-        const l10Avg = gameLogs.reduce((s: number, g: any) => s + (Number(g.rbis) || 0), 0) / gameLogs.length;
-        const line = alert.metadata.line || 0.5;
-
-        if (alert.prediction === 'Over' && l10Avg < line * 0.5) {
-          log(`L10 block: ${alert.player_name} Over ${line} but L10 avg ${l10Avg.toFixed(1)}`);
+      const stats = l10Stats[alert.player_name];
+      if (stats) {
+        // Tightened blocking: use hit rate instead of average
+        if (alert.prediction === 'Over' && stats.l10HitRate < 0.3) {
+          log(`L10 block: ${alert.player_name} Over — hit rate ${(stats.l10HitRate * 100).toFixed(0)}% (<30%)`);
           continue;
         }
-        if (alert.prediction === 'Under' && l10Avg > line * 2.0) {
-          log(`L10 block: ${alert.player_name} Under ${line} but L10 avg ${l10Avg.toFixed(1)}`);
+        if (alert.prediction === 'Under' && stats.l10HitRate > 0.8) {
+          log(`L10 block: ${alert.player_name} Under — hit rate ${(stats.l10HitRate * 100).toFixed(0)}% (>80%)`);
           continue;
         }
 
-        alert.metadata.l10_rbi_avg = Math.round(l10Avg * 100) / 100;
-        alert.metadata.l10_sample = gameLogs.length;
+        alert.metadata.l10_rbi_avg = stats.l10Avg;
+        alert.metadata.l3_rbi_avg = stats.l3Avg;
+        alert.metadata.l10_hit_rate = stats.l10HitRate;
+        alert.metadata.l10_sample = stats.l10Games;
+        alert.metadata.trend = stats.trend;
       }
 
       validatedAlerts.push(alert);
@@ -343,9 +465,38 @@ Deno.serve(async (req) => {
 
       const lines = telegramAlerts.map(a => {
         const emoji = signalEmojis[a.signal_type] || '📊';
-        const l10 = a.metadata.l10_rbi_avg != null ? ` | L10: ${a.metadata.l10_rbi_avg}` : '';
-        const priceInfo = a.metadata.price_change != null ? ` | Δ${a.metadata.price_change > 0 ? '+' : ''}${a.metadata.price_change}` : '';
-        return `${emoji} ${a.signal_type.replace(/_/g, ' ').toUpperCase()}\n${a.player_name} → ${a.prediction} RBIs (${a.metadata.line})\n🎯 ${a.confidence}% conf${priceInfo}${l10}\n${a.event_description || ''}`;
+
+        if (a.signal_type === 'cascade') {
+          // Rich cascade message with per-player breakdown
+          const bd = a.metadata.player_breakdown || [];
+          const statusEmoji = (s: string) => s === 'confirmed' ? '✅' : s === 'contradicted' ? '❌' : '⚠️';
+          const trendEmoji = (t: string) => t === 'hot' ? '🔥' : t === 'cold' ? '🧊' : '';
+
+          const playerLines = bd.map((p: any) => {
+            if (p.status === 'no_data') return `⚪ ${p.player}: No L10 data`;
+            const hitPct = Math.round((p.l10HitRate || 0) * 100);
+            const hitCount = Math.round((p.l10HitRate || 0) * (l10Stats[p.player]?.l10Games || 10));
+            const games = l10Stats[p.player]?.l10Games || 10;
+            return `${statusEmoji(p.status)} ${p.player}: L10 ${p.l10Avg} avg (${hitCount}/${games} over) ${trendEmoji(p.trend || '')}`;
+          }).join('\n');
+
+          return `${emoji} CASCADE\n${a.event_description || ''} → ${a.prediction} ${a.metadata.line} RBIs\n🎯 ${a.confidence}% conf | ${a.metadata.confirmed}/${a.metadata.players_involved} players confirm\n\n${playerLines}`;
+        }
+
+        // Individual alert with enriched L10 data
+        const l10Info: string[] = [];
+        if (a.metadata.l10_rbi_avg != null) {
+          const hitPct = Math.round((a.metadata.l10_hit_rate || 0) * 100);
+          const hitCount = Math.round((a.metadata.l10_hit_rate || 0) * (a.metadata.l10_sample || 10));
+          l10Info.push(`L10: ${a.metadata.l10_rbi_avg} avg (${hitCount}/${a.metadata.l10_sample} over)`);
+        }
+        if (a.metadata.l3_rbi_avg != null) {
+          const trendE = a.metadata.trend === 'hot' ? '🔥' : a.metadata.trend === 'cold' ? '🧊' : '';
+          l10Info.push(`L3: ${a.metadata.l3_rbi_avg} ${trendE}`);
+        }
+        const priceInfo = a.metadata.price_change != null ? `Δ${a.metadata.price_change > 0 ? '+' : ''}${a.metadata.price_change}` : '';
+
+        return `${emoji} ${a.signal_type.replace(/_/g, ' ').toUpperCase()}\n${a.player_name} → ${a.prediction} ${a.metadata.line} RBIs\n🎯 ${a.confidence}% conf${priceInfo ? ` | ${priceInfo}` : ''}\n${l10Info.length > 0 ? l10Info.join(' | ') + '\n' : ''}${a.event_description || ''}`;
       });
 
       const message = `🏟️ *HRB MLB RBI Alerts*\n\n${lines.join('\n\n')}`;
@@ -367,6 +518,7 @@ Deno.serve(async (req) => {
       validated_alerts: validatedAlerts.length,
       final_alerts: finalAlerts.length,
       telegram_sent: telegramAlerts.length,
+      l10_players_fetched: Object.keys(l10Stats).length,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
