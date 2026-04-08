@@ -499,3 +499,9 @@ verify_jwt = false
 
 [functions.post-alert-line-monitor]
 verify_jwt = false
+
+[functions.hrb-mlb-rbi-scanner]
+verify_jwt = false
+
+[functions.hrb-mlb-rbi-analyzer]
+verify_jwt = false
