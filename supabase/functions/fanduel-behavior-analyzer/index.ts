@@ -1467,7 +1467,7 @@ Deno.serve(async (req) => {
 
     // Use gatedAlerts instead of alerts from here on
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
-    const predRows = gatedAlerts
+    const predRows = (await Promise.all(gatedAlerts
       .filter(a => {
         const dedupKey = `${a.event_id}|${a.player_name}|${a.prop_type}|${a.type}`;
         if (recentPredKeys.has(dedupKey)) {
@@ -1476,7 +1476,7 @@ Deno.serve(async (req) => {
         }
         return true;
       })
-      .map((a) => {
+      .map(async (a) => {
         // Determine prediction text based on signal type
         let predictionText: string;
         if (a.type === "take_it_now") {
@@ -1544,7 +1544,7 @@ Deno.serve(async (req) => {
           recommended_alt_line: altLine,
           alt_line_source: "fanduel_real",
         });
-      });
+      }))).filter(Boolean);
 
     log(`Inserting ${predRows.length} new predictions (${gatedAlerts.length - predRows.length} duplicates skipped, ${blockedAlerts.length} cross-ref blocked)`);
 
