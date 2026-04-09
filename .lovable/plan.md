@@ -1,51 +1,68 @@
 
 
-# Export All Backend Logic
+# Fix All 6 Settlement Bugs
 
-## Scope
-245 edge functions, 352 SQL migrations, plus config. No UI code.
+## Migration (run first)
 
-## Structure
-The export will be a single organized directory at `/mnt/documents/backend-export/` with this layout:
+Create `settlement_runs` table and add `cascade_confirmation_rate` + `settlement_method` columns to `fanduel_prediction_accuracy`. Also backfill existing `trap_warning` records from `was_correct: true` to `was_correct: null`.
 
-```text
-backend-export/
-  README.md                    -- Table of contents + architecture overview
-  edge-functions/
-    <function-name>/index.ts   -- All 245 edge functions (1:1 copy)
-  migrations/
-    *.sql                      -- All 352 migrations in order
-  config/
-    config.toml                -- Supabase config
-  PIPELINE_FLOW.md             -- Documents the pipeline orchestration
-  SIGNAL_CLASSIFICATION.md     -- Documents signal types and classification logic
+```sql
+-- 1. settlement_runs table (Bug 3)
+CREATE TABLE IF NOT EXISTS public.settlement_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_date text NOT NULL,
+  settled_count integer NOT NULL DEFAULT 0,
+  completed_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.settlement_runs ENABLE ROW LEVEL SECURITY;
+CREATE INDEX idx_settlement_runs_date ON public.settlement_runs(run_date);
+
+-- 2. New columns on fanduel_prediction_accuracy (Bug 6)
+ALTER TABLE public.fanduel_prediction_accuracy 
+  ADD COLUMN IF NOT EXISTS cascade_confirmation_rate real,
+  ADD COLUMN IF NOT EXISTS settlement_method text;
+
+-- 3. Backfill trap_warnings to null (Bug 1)
+UPDATE public.fanduel_prediction_accuracy 
+  SET was_correct = null, actual_outcome = 'informational_excluded'
+  WHERE signal_type = 'trap_warning' AND was_correct = true;
 ```
 
-## What Each File Contains
+## Function Changes (5 files)
 
-### README.md
-- Lists all edge functions grouped by category (pipeline orchestrators, signal engines, settlement, parlays, data ingestion, scrapers, telegram, verification)
-- Quick reference of key tables and RPC functions
+### 1. `fanduel-accuracy-feedback/index.ts` — Bug 1 + Bug 2 + Bug 6
 
-### PIPELINE_FLOW.md
-- Morning Prep Pipeline (10 AM ET) step-by-step
-- Data Pipeline Orchestrator (11 AM / 6:30 PM / 7:30 PM ET) phases
-- Refresh & Rebuild flow
-- Cron schedule summary
+**Bug 1** (lines 58-63): Change trap_warning settlement from `was_correct: true` to `was_correct: null, actual_outcome: 'informational_excluded'`.
 
-### SIGNAL_CLASSIFICATION.md
-- Signal types: cascade, snapback, velocity_spike, price_drift, correlated_movement, team_news_shift, gold_tier1/tier2
-- Classification thresholds and directional rules
-- Settlement logic per signal type (CLV vs outcome-based)
-- Accuracy gating rules (60%+ for parlays, matchup cross-reference gates)
+**Bug 2** (lines 102-106 vs 633): The main loop fetches timeline `ascending: false` (newest first), so `playerTimeline[0]` = closing. The stale sweeper fetches `ascending: true` (oldest first), so `pTimeline[0]` = opening. Fix: change main loop to `ascending: true` and swap the `closingLine`/`openingLine` assignments at line 131-132 to match.
 
-## Implementation
-1. Copy all edge function `index.ts` files to the export directory
-2. Copy all migration SQL files
-3. Copy `supabase/config.toml`
-4. Generate the 3 markdown docs by reading key orchestrator functions and summarizing the logic
-5. Package as a zip file for download
+**Bug 6** (lines 196-216): After cascade settlement, store `cascade_confirmation_rate` on the update and tag `settlement_method: 'clv'` on all CLV settlements.
 
-## Output
-- `/mnt/documents/backend-export.zip` — single downloadable archive
+Also: add `.neq('actual_outcome', 'informational_excluded')` to the accuracy rollup query at line 544.
+
+### 2. `auto-settle-parlays/index.ts` — Bug 3
+
+**Lines 400-419**: Remove the `calculate_calibration_factors` and `update_strategy_performance` RPC calls. Replace with a `settlement_runs` insert to log what was settled. Calibration is now only triggered by `calibrate-bot-weights`.
+
+### 3. `calibrate-bot-weights/index.ts` — Bug 5 + Bug 3 guard
+
+**Bug 5** (lines 310-342): After the existing sweep pass that blocks categories, add a **rehabilitation pass** that queries `is_blocked = true` categories (excluding `force-blocked%` reasons). If they have 20+ picks and hit rate ≥ 52%, unblock them at half weight (0.5).
+
+**Bug 3 guard**: Add optional `force_run` body param. If not set, check `settlement_runs` — only proceed if the latest run for today is ≥ 2 hours old (meaning settlement has stabilized). Skip otherwise with a log message.
+
+### 4. `bot-settle-and-learn/index.ts` — Bug 4
+
+**Lines 1178-1187**: Replace the batch streak logic with chronological sequential processing. Instead of aggregating hits/misses and computing `hits - misses`, sort the settled legs by `settled_at` ascending and update the streak one leg at a time: hit extends positive or resets to +1, miss extends negative or resets to -1.
+
+### 5. `settlement-weight-updater/index.ts` — No changes needed
+
+Already implements Bayesian smoothing correctly. No bugs identified in this file.
+
+## Files Changed
+1. **Migration**: `settlement_runs` table + 2 columns + trap_warning backfill
+2. **Edit**: `supabase/functions/fanduel-accuracy-feedback/index.ts`
+3. **Edit**: `supabase/functions/auto-settle-parlays/index.ts`
+4. **Edit**: `supabase/functions/calibrate-bot-weights/index.ts`
+5. **Edit**: `supabase/functions/bot-settle-and-learn/index.ts`
 
