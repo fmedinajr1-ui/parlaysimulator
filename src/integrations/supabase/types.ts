@@ -14344,6 +14344,7 @@ export type Database = {
           within_5_pct: number
         }[]
       }
+      get_rbi_accuracy_dashboard: { Args: never; Returns: Json }
       get_recent_line_movements: {
         Args: { p_limit?: number; p_sport?: string }
         Returns: {
