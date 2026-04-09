@@ -3483,11 +3483,13 @@ function calculateCompositeScore(
     baseScore = Math.round(baseScore * 1.15);
   }
 
-  // === PROP-TYPE PERFORMANCE MULTIPLIER: Wire bot_prop_type_performance hit rates into scoring ===
-  // This applies AFTER category weight but BEFORE player bonus — captures prop-level edge
-  // A prop type with 65% historical accuracy scores higher than one at 50% even within the same signal category
-  // propTypeHitRateMultipliers is populated by loadPropTypePerformance() from bot_prop_type_performance table
-  // Intentionally uses a gentle multiplier range (0.5x–1.5x) to avoid over-fitting to small samples
+  // === PROP-TYPE PERFORMANCE MULTIPLIER ===
+  if (propType) {
+    const ptMultiplier = propTypeHitRateMultipliers.get(propType) ?? propTypeHitRateMultipliers.get(normalizePropType(propType));
+    if (ptMultiplier && ptMultiplier !== 1.0) {
+      baseScore = Math.round(baseScore * ptMultiplier);
+    }
+  }
 
   // === PLAYER PERFORMANCE BONUS: Proven winners get boosted, serial losers get penalized ===
   if (playerBonus && playerBonus !== 0) {
