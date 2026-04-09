@@ -136,16 +136,51 @@ Deno.serve(async (req) => {
     // Parse request body for options
     let fullRebuild = false;
     let sport = 'basketball_nba'; // Default to NBA
+    let forceRun = false;
     
     try {
       const body = await req.json();
       fullRebuild = body.fullRebuild ?? false;
       sport = body.sport ?? 'basketball_nba';
+      forceRun = body.force_run ?? false;
     } catch {
       // No body, use defaults
     }
 
-    console.log(`[Calibrate] Starting calibration (fullRebuild: ${fullRebuild}, sport: ${sport})`);
+    console.log(`[Calibrate] Starting calibration (fullRebuild: ${fullRebuild}, sport: ${sport}, forceRun: ${forceRun})`);
+
+    // Bug 3 guard: only run if settlement has stabilized (latest run ≥2h old)
+    if (!forceRun && !fullRebuild) {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date());
+
+      const { data: recentRuns } = await supabase
+        .from('settlement_runs')
+        .select('completed_at')
+        .eq('run_date', today)
+        .order('completed_at', { ascending: false })
+        .limit(1);
+
+      if (!recentRuns || recentRuns.length === 0) {
+        console.log('[Calibrate] No settlement runs found for today — skipping (use force_run to override)');
+        return new Response(
+          JSON.stringify({ success: false, reason: 'no_settlement_runs_today', hint: 'Use force_run: true to override' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const latestRun = new Date(recentRuns[0].completed_at);
+      if (latestRun > new Date(twoHoursAgo)) {
+        console.log(`[Calibrate] Latest settlement run is too recent (${recentRuns[0].completed_at}) — waiting for stabilization`);
+        return new Response(
+          JSON.stringify({ success: false, reason: 'settlement_not_stabilized', latest_run: recentRuns[0].completed_at }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      console.log(`[Calibrate] Settlement stabilized (latest run: ${recentRuns[0].completed_at}) — proceeding`);
+    }
 
     // 1. Get actual hit rates from category_sweet_spots
     // Query settled outcomes grouped by category and recommended_side
@@ -344,6 +379,38 @@ Deno.serve(async (req) => {
     if (sweepBlocked > 0) {
       console.log(`[Calibrate] Sweep pass blocked ${sweepBlocked} additional categories`);
       blocked += sweepBlocked;
+    }
+
+    // Bug 5 fix: Rehabilitation pass — unblock recovered categories
+    let rehabilitated = 0;
+    const { data: blockedWeights } = await supabase
+      .from('bot_category_weights')
+      .select('id, category, side, current_hit_rate, total_picks, block_reason')
+      .eq('is_blocked', true)
+      .not('block_reason', 'like', 'force-blocked%');
+
+    for (const w of blockedWeights || []) {
+      // Rehabilitation: 20+ picks since blocking AND hit rate now above 52%
+      if ((w.total_picks ?? 0) >= 20 && (w.current_hit_rate ?? 0) >= 52) {
+        const { error: rehabError } = await supabase
+          .from('bot_category_weights')
+          .update({
+            is_blocked: false,
+            block_reason: null,
+            weight: BASE_WEIGHT * 0.5, // start at half weight, earn back trust
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', w.id);
+
+        if (!rehabError) {
+          rehabilitated++;
+          console.log(`[Calibrate] Rehabilitated: ${w.category}/${w.side} (hit rate ${w.current_hit_rate}%, ${w.total_picks} picks)`);
+        }
+      }
+    }
+
+    if (rehabilitated > 0) {
+      console.log(`[Calibrate] Rehabilitation pass unblocked ${rehabilitated} categories at half weight`);
     }
 
     // 4. Log the calibration run

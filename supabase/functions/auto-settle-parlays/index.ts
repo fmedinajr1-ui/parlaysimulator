@@ -397,25 +397,22 @@ serve(async (req) => {
     console.log(`Pending: ${results.filter(r => r.status === 'pending').length}`);
     console.log(`Errors: ${results.filter(r => r.status === 'error').length}`);
     
-    // After settling parlays, update calibration factors and strategy performance
-    if (results.filter(r => r.status === 'settled').length > 0) {
-      console.log('\nUpdating calibration and strategy metrics...');
+    // Log settlement run for calibrate-bot-weights to consume (Bug 3 fix)
+    const settledCount = results.filter(r => r.status === 'settled').length;
+    if (settledCount > 0) {
+      console.log(`\nLogging settlement run (${settledCount} settled)...`);
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date());
       try {
-        const { error: calibError } = await supabase.rpc('calculate_calibration_factors');
-        if (calibError) {
-          console.error('Failed to update calibration:', calibError);
-        } else {
-          console.log('Calibration factors updated');
-        }
-        
-        const { error: stratError } = await supabase.rpc('update_strategy_performance');
-        if (stratError) {
-          console.error('Failed to update strategy performance:', stratError);
-        } else {
-          console.log('Strategy performance updated');
-        }
-      } catch (updateErr) {
-        console.error('Error updating metrics:', updateErr);
+        await supabase.from('settlement_runs').insert({
+          run_date: today,
+          settled_count: settledCount,
+          completed_at: new Date().toISOString(),
+        });
+        console.log('Settlement run logged — calibration deferred to calibrate-bot-weights');
+      } catch (logErr) {
+        console.error('Error logging settlement run:', logErr);
       }
     }
     
