@@ -3680,6 +3680,7 @@ export type Database = {
           alert_sent_at: string | null
           alt_line_buffer: number | null
           alt_line_was_correct: boolean | null
+          cascade_confirmation_rate: number | null
           closing_line: number | null
           confidence_at_signal: number | null
           created_at: string
@@ -3703,6 +3704,7 @@ export type Database = {
           recommendation_updated_at: string | null
           recommended_alt_line: number | null
           reversal_magnitude: number | null
+          settlement_method: string | null
           signal_factors: Json | null
           signal_type: string
           snapshots_at_alert: number | null
@@ -3720,6 +3722,7 @@ export type Database = {
           alert_sent_at?: string | null
           alt_line_buffer?: number | null
           alt_line_was_correct?: boolean | null
+          cascade_confirmation_rate?: number | null
           closing_line?: number | null
           confidence_at_signal?: number | null
           created_at?: string
@@ -3743,6 +3746,7 @@ export type Database = {
           recommendation_updated_at?: string | null
           recommended_alt_line?: number | null
           reversal_magnitude?: number | null
+          settlement_method?: string | null
           signal_factors?: Json | null
           signal_type: string
           snapshots_at_alert?: number | null
@@ -3760,6 +3764,7 @@ export type Database = {
           alert_sent_at?: string | null
           alt_line_buffer?: number | null
           alt_line_was_correct?: boolean | null
+          cascade_confirmation_rate?: number | null
           closing_line?: number | null
           confidence_at_signal?: number | null
           created_at?: string
@@ -3783,6 +3788,7 @@ export type Database = {
           recommendation_updated_at?: string | null
           recommended_alt_line?: number | null
           reversal_magnitude?: number | null
+          settlement_method?: string | null
           signal_factors?: Json | null
           signal_type?: string
           snapshots_at_alert?: number | null
@@ -11477,6 +11483,30 @@ export type Database = {
           settlement_method?: string
           signal_id?: string
           was_correct?: boolean | null
+        }
+        Relationships: []
+      }
+      settlement_runs: {
+        Row: {
+          completed_at: string
+          created_at: string
+          id: string
+          run_date: string
+          settled_count: number
+        }
+        Insert: {
+          completed_at?: string
+          created_at?: string
+          id?: string
+          run_date: string
+          settled_count?: number
+        }
+        Update: {
+          completed_at?: string
+          created_at?: string
+          id?: string
+          run_date?: string
+          settled_count?: number
         }
         Relationships: []
       }

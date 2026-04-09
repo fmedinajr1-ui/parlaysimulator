@@ -1174,16 +1174,29 @@ Deno.serve(async (req) => {
         const newHitRate = newLegsPlayed > 0 ? newLegsWon / newLegsPlayed : 0;
         const avgEdge = stats.edges.length > 0 ? stats.edges.reduce((a, b) => a + b, 0) / stats.edges.length : (existing?.avg_edge || 0);
         
-        // Update streak
+        // Bug 4 fix: Process streak chronologically instead of batch aggregation
         let newStreak = existing?.streak || 0;
-        // Process hits then misses (simplified — last outcome determines direction)
-        if (stats.hits > 0 && stats.misses === 0) {
-          newStreak = Math.max(1, newStreak + stats.hits);
-        } else if (stats.misses > 0 && stats.hits === 0) {
-          newStreak = Math.min(-1, newStreak - stats.misses);
-        } else {
-          // Mixed — reset to net
-          newStreak = stats.hits - stats.misses;
+        // Collect individual leg outcomes with timestamps for chronological processing
+        const legOutcomes: Array<{ outcome: string; settled_at: string }> = [];
+        for (const parlay of allParlaysToProcess) {
+          const pLegs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
+          for (const leg of pLegs) {
+            const lo = (leg as any).outcome;
+            if (lo !== 'hit' && lo !== 'miss') continue;
+            if ((leg.player_name || '').toLowerCase() !== playerNameLower) continue;
+            if (normalizePropType(leg.prop_type || '') !== propType) continue;
+            if ((leg.side || 'over').toLowerCase() !== side) continue;
+            legOutcomes.push({ outcome: lo, settled_at: parlay.settled_at || parlay.created_at });
+          }
+        }
+        // Sort chronologically and update streak sequentially
+        legOutcomes.sort((a, b) => new Date(a.settled_at).getTime() - new Date(b.settled_at).getTime());
+        for (const lo of legOutcomes) {
+          if (lo.outcome === 'hit') {
+            newStreak = newStreak > 0 ? newStreak + 1 : 1;
+          } else {
+            newStreak = newStreak < 0 ? newStreak - 1 : -1;
+          }
         }
 
         if (existing) {

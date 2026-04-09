@@ -58,10 +58,10 @@ Deno.serve(async (req) => {
     for (const trap of traps) {
       await supabase
         .from("fanduel_prediction_accuracy")
-        .update({ was_correct: true, actual_outcome: "informational", verified_at: now.toISOString() })
+        .update({ was_correct: null, actual_outcome: "informational_excluded", verified_at: now.toISOString() })
         .eq("id", trap.id);
     }
-    if (traps.length > 0) log(`Settled ${traps.length} trap_warnings as informational`);
+    if (traps.length > 0) log(`Settled ${traps.length} trap_warnings as informational_excluded (excluded from accuracy)`);
 
     // Group actionable predictions by event_id
     const byEvent = new Map<string, typeof actionable>();
@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
         .from("fanduel_line_timeline")
         .select("player_name, prop_type, line, snapshot_time")
         .eq("event_id", eventId)
-        .order("snapshot_time", { ascending: false })
+        .order("snapshot_time", { ascending: true })
         .limit(500);
 
       if (!timeline || timeline.length === 0) continue;
@@ -128,8 +128,9 @@ Deno.serve(async (req) => {
           }
         }
 
-        const closingLine = playerTimeline.length > 0 ? playerTimeline[0].line : null;
-        const openingLine = playerTimeline.length > 0 ? playerTimeline[playerTimeline.length - 1].line : null;
+        // ascending order: [0] = opening (earliest), [last] = closing (latest)
+        const openingLine = playerTimeline.length > 0 ? playerTimeline[0].line : null;
+        const closingLine = playerTimeline.length > 0 ? playerTimeline[playerTimeline.length - 1].line : null;
 
         const sf = pred.signal_factors || {};
         let wasCorrect: boolean | null = null;
@@ -212,6 +213,11 @@ Deno.serve(async (req) => {
             actualOutcome = wasCorrect
               ? `CASCADE_CONFIRMED (${pendingThatMoved}/${pendingProps.length} moved)`
               : `CASCADE_MISSED (${pendingThatMoved}/${pendingProps.length} moved)`;
+            // Bug 6: store cascade confirmation rate for sub-bucket tracking
+            await supabase
+              .from("fanduel_prediction_accuracy")
+              .update({ cascade_confirmation_rate: moveRate })
+              .eq("id", pred.id);
           }
         }
 
@@ -530,6 +536,7 @@ Deno.serve(async (req) => {
               actual_outcome: actualOutcome,
               actual_value: closingLine,
               verified_at: now.toISOString(),
+              settlement_method: 'clv',
             })
             .eq("id", pred.id);
 
@@ -545,6 +552,7 @@ Deno.serve(async (req) => {
       .from("fanduel_prediction_accuracy")
       .select("signal_type, sport, prop_type, was_correct, velocity_at_signal")
       .not("was_correct", "is", null)
+      .neq("actual_outcome", "informational_excluded")
       .gte("created_at", new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString());
 
     const buckets = new Map<string, { correct: number; total: number; velocities: number[] }>();
