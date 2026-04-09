@@ -5298,6 +5298,7 @@ export type Database = {
       high_conviction_results: {
         Row: {
           actual_value: number | null
+          agreement_ratio: number | null
           analysis_date: string
           confidence_tier: string | null
           conviction_score: number | null
@@ -5305,6 +5306,7 @@ export type Database = {
           current_line: number | null
           display_prop_type: string | null
           edge_pct: number
+          engine_count: number | null
           engines: Json | null
           id: string
           outcome: string | null
@@ -5315,9 +5317,11 @@ export type Database = {
           side_agreement: boolean | null
           signal: string
           sport: string | null
+          updated_at: string | null
         }
         Insert: {
           actual_value?: number | null
+          agreement_ratio?: number | null
           analysis_date: string
           confidence_tier?: string | null
           conviction_score?: number | null
@@ -5325,6 +5329,7 @@ export type Database = {
           current_line?: number | null
           display_prop_type?: string | null
           edge_pct?: number
+          engine_count?: number | null
           engines?: Json | null
           id?: string
           outcome?: string | null
@@ -5335,9 +5340,11 @@ export type Database = {
           side_agreement?: boolean | null
           signal: string
           sport?: string | null
+          updated_at?: string | null
         }
         Update: {
           actual_value?: number | null
+          agreement_ratio?: number | null
           analysis_date?: string
           confidence_tier?: string | null
           conviction_score?: number | null
@@ -5345,6 +5352,7 @@ export type Database = {
           current_line?: number | null
           display_prop_type?: string | null
           edge_pct?: number
+          engine_count?: number | null
           engines?: Json | null
           id?: string
           outcome?: string | null
@@ -5355,6 +5363,7 @@ export type Database = {
           side_agreement?: boolean | null
           signal?: string
           sport?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }
