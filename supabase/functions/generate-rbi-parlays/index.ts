@@ -18,7 +18,7 @@ interface RbiCandidate {
   player_name: string;
   prediction: string;
   signal_type: string;
-  confidence_level: string;
+  confidence: string;
   metadata: Record<string, any>;
   created_at: string;
 }
