@@ -210,7 +210,7 @@ async function settleOutcomeMLB(
   if (!statColumn) return null;
 
   // Find game log matching signal date
-  const signalDate = signal.game_date || (signal.created_at || '').split('T')[0];
+  const signalDate = signal.metadata?.game_date || (signal.created_at || '').split('T')[0];
   const matchingLog = logs.find((l: any) => l.game_date === signalDate);
   if (!matchingLog) return null;
 
@@ -220,7 +220,7 @@ async function settleOutcomeMLB(
   const side = parseSide(signal.prediction);
   if (!side) return null;
 
-  const line = signal.line_at_alert ?? signal.metadata?.line ?? 0.5;
+  const line = signal.metadata?.line ?? 0.5;
   let wasCorrect: boolean | null = null;
 
   if (side === 'over') {
@@ -268,7 +268,7 @@ async function settleOutcomeNBA(
   const statKey = NBA_PROP_STAT_MAP[propKey];
   if (!statKey) return null;
 
-  const signalDate = signal.game_date || (signal.created_at || '').split('T')[0];
+  const signalDate = signal.metadata?.game_date || (signal.created_at || '').split('T')[0];
   const matchingLog = logs.find((l: any) => l.game_date === signalDate);
   if (!matchingLog) return null;
 
@@ -288,7 +288,7 @@ async function settleOutcomeNBA(
   const side = parseSide(signal.prediction);
   if (!side) return null;
 
-  const line = signal.line_at_alert ?? signal.metadata?.line ?? 0;
+  const line = signal.metadata?.line ?? 0;
   let wasCorrect: boolean | null = null;
 
   if (side === 'over') {
