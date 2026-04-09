@@ -7348,6 +7348,54 @@ export type Database = {
         }
         Relationships: []
       }
+      mlb_rbi_under_analysis: {
+        Row: {
+          analysis_date: string
+          created_at: string
+          id: string
+          l10_hit_rate: number | null
+          l10_rbis: number | null
+          opponent: string | null
+          opposing_pitcher: string | null
+          pitcher_era: number | null
+          pitcher_k_rate: number | null
+          player_name: string
+          score: number | null
+          team: string | null
+          tier: string | null
+        }
+        Insert: {
+          analysis_date?: string
+          created_at?: string
+          id?: string
+          l10_hit_rate?: number | null
+          l10_rbis?: number | null
+          opponent?: string | null
+          opposing_pitcher?: string | null
+          pitcher_era?: number | null
+          pitcher_k_rate?: number | null
+          player_name: string
+          score?: number | null
+          team?: string | null
+          tier?: string | null
+        }
+        Update: {
+          analysis_date?: string
+          created_at?: string
+          id?: string
+          l10_hit_rate?: number | null
+          l10_rbis?: number | null
+          opponent?: string | null
+          opposing_pitcher?: string | null
+          pitcher_era?: number | null
+          pitcher_k_rate?: number | null
+          player_name?: string
+          score?: number | null
+          team?: string | null
+          tier?: string | null
+        }
+        Relationships: []
+      }
       monthly_accuracy_snapshot: {
         Row: {
           created_at: string | null
