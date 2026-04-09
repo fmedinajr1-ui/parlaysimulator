@@ -1,61 +1,55 @@
 
 
-# Deep L10 Cross-Reference for HRB RBI Alerts
+# Cross-Reference 0-RBI Unders with Opposing Pitcher Data
 
 ## Problem
-Cascade alerts show "Over RBIs (undefined)" in Telegram because:
-1. Cascade signals skip L10 validation entirely — no per-player RBI stats are fetched
-2. The cascade metadata doesn't include `line` (always 0.5 for RBIs)
-3. No individual player breakdown — just a blob of names with no context on who actually supports the OVER/UNDER call
+We have 12+ players with 0 RBIs in their L10, but no opposing pitcher data in the database to cross-reference against. The `pp_snapshot` matchup field is null, and there's no MLB schedule table with probable starters.
 
-## Fix — Enrich Cascades with Per-Player L10 Analysis
+## What We'll Build
 
-**File: `supabase/functions/hrb-mlb-rbi-analyzer/index.ts`**
+### 1. Edge Function: `mlb-rbi-under-analyzer`
+Fetches today's MLB schedule + probable pitchers, then cross-references with our 0-RBI Under candidates.
 
-### 1. Add per-player L10 lookup for cascade alerts
-Before inserting cascade alerts, fetch L10 RBI stats for every player in the cascade from `mlb_player_game_logs`. For each player compute:
-- **L10 RBI avg** (e.g., 0.7)
-- **L10 hit rate vs 0.5 line** — how many of last 10 games had RBIs > 0.5 (OVER) or < 0.5 (UNDER)
-- **L3 RBI avg** — recent 3-game trend to detect hot/cold streaks
-- **Individual lean** — does this player's history support the cascade direction?
+**Data flow:**
+1. Query `pp_snapshot` for active `batter_rbis` props at 0.5 line
+2. Query `mlb_player_game_logs` to compute L10 RBI stats per player
+3. Filter to players with 0-2 RBIs in L10 (strong Under candidates)
+4. Fetch today's MLB schedule from a free API (MLB Stats API: `statsapi.mlb.com/api/v1/schedule`) to get opposing team + probable pitchers
+5. Cross-reference opposing pitcher's season ERA, K rate, and WHIP from `mlb_player_game_logs`
+6. Score each Under candidate: players facing high-K, low-ERA pitchers get the strongest "Under Lock" rating
+7. Send results to Telegram with a ranked list
 
-### 2. Split cascade into confirmed vs. contradicted players
-- **Confirmed**: L10 avg supports the cascade direction (e.g., Over + L10 avg > 0.5, or Under + L10 avg ≤ 0.3)
-- **Neutral**: L10 avg is borderline (0.3–0.5 for Under, 0.5–0.7 for Over)
-- **Contradicted**: L10 avg opposes the cascade direction
+**Scoring formula:**
+- Base score = 100 - (L10 hit rate * 100)
+- Pitcher K bonus: +10 if opposing pitcher avg Ks >= 7, +5 if >= 5
+- Pitcher ERA bonus: +10 if ERA < 2.50, +5 if ERA < 3.50
+- Output tiers: LOCK (score >= 90), STRONG (>= 75), LEAN (>= 60)
 
-Adjust cascade confidence based on confirmation ratio. If <40% of players confirm, downgrade or block the alert.
+### 2. Database Table: `mlb_rbi_under_analysis` (optional)
+Store daily analysis results for historical tracking.
 
-### 3. Fix the "undefined" line in Telegram messages
-- Always set `metadata.line = 0.5` on cascade alerts (RBI lines are always 0.5)
-- Include per-player breakdown in Telegram message:
-  ```
-  🌊 CASCADE
-  Athletics @ New York Yankees → Over 0.5 RBIs
-  🎯 88% conf | 8/12 players confirm
+**Columns:** player_name, team, opponent, opposing_pitcher, pitcher_era, pitcher_k_rate, l10_rbis, l10_hit_rate, score, tier, analysis_date
 
-  ✅ Aaron Judge: L10 avg 0.7 (7/10 over)
-  ✅ Jazz Chisholm Jr.: L10 avg 0.9 (8/10 over)
-  ⚠️ Jose Caballero: L10 avg 0.2 (2/10 over)
-  ...
-  ```
-
-### 4. Enrich individual alerts too
-For non-cascade alerts that already have L10, also add:
-- **L10 hit rate** (games hitting over/under the line) — not just average
-- **L3 trend** — hot or cold indicator
-- Include in Telegram: `L10: 0.7 avg (7/10 over) | L3: 1.0 🔥`
-
-### 5. Strengthen L10 blocking logic
-Current blocking thresholds are too loose (Over blocked only if L10 < 0.25, Under blocked only if L10 > 1.0). Tighten:
-- **Over 0.5 RBIs**: Block if L10 hit rate < 30% (player rarely gets RBIs)
-- **Under 0.5 RBIs**: Block if L10 hit rate > 80% (player almost always gets RBIs)
+### 3. Telegram Alert Format
+```
+⚾ RBI UNDER LOCKS — Apr 9
+━━━━━━━━━━━━━━━━━━━━
+🔒 LOCKS:
+• Francisco Lindor U 0.5 RBI
+  L10: 0 RBIs | vs Wheeler (2.79 ERA, 8.1 K/g)
+  
+💪 STRONG:
+• Austin Wells U 0.5 RBI  
+  L10: 0 RBIs | vs Skubal (2.24 ERA, 7.8 K/g)
+```
 
 ## Technical Details
+- Uses MLB Stats API (`statsapi.mlb.com`) — free, no API key needed — to get today's schedule and probable pitchers
+- Maps team abbreviations (NYM, NYY, etc.) to MLB team IDs for schedule lookup
+- Falls back to season-level pitcher stats from `mlb_player_game_logs` when probable starter data is unavailable
+- Can be scheduled daily at 10am ET via pg_cron
 
-- Batch L10 lookups: collect all unique player names across all cascade alerts, query once with `.in('player_name', [...])`, then distribute results
-- L3 computed from the first 3 rows of the same L10 query (no extra DB call)
-- Hit rate = count of games where `rbis >= 1` / total games (for Over 0.5 line)
-- Cascade confirmation ratio directly modifies confidence: `adjusted = base * (confirmedRatio * 0.6 + 0.4)`
-- No new tables or migrations needed
+## Files Changed
+1. **New:** `supabase/functions/mlb-rbi-under-analyzer/index.ts` — main edge function
+2. **Migration:** Create `mlb_rbi_under_analysis` table for historical tracking
 
