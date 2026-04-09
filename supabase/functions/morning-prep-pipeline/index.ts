@@ -61,6 +61,9 @@ Deno.serve(async (req) => {
     // Step 3: Sync all engine outputs to the unified tracker
     await invokeStep('Engine tracker sync', 'engine-tracker-sync', {});
 
+    // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
+    await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
+
     const totalDuration = Date.now() - startTime;
     const allOk = Object.values(results).every((r) => r.status === 'ok');
     const failedSteps = Object.entries(results).filter(([, r]) => r.status !== 'ok');
