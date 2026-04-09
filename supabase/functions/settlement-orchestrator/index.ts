@@ -149,9 +149,9 @@ async function settleCLV(
   const closingLine = playerTimeline[0].line;
   const openingLine = playerTimeline[playerTimeline.length - 1].line;
 
-  // Resolve line at signal time
-  const sf = signal.signal_factors || signal.metadata || {};
-  const lineAtSignal = sf.line_to ?? sf.currentLine ?? sf.current_line ?? signal.line_at_alert;
+  // Resolve line at signal time from metadata
+  const md = signal.metadata || {};
+  const lineAtSignal = md.line_to ?? md.currentLine ?? md.current_line ?? md.line;
 
   if (lineAtSignal == null || closingLine == null) return null;
 
