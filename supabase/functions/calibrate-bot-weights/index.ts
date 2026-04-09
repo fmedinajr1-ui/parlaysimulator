@@ -44,17 +44,15 @@ const STREAK_BLOCK_THRESHOLD = -5; // Tightened: block after 5 consecutive misse
 const STREAK_MILD_PENALTY_PER = 0.02;
 const STREAK_SEVERE_PENALTY_PER = 0.03;
 
-// Hard overrides — categories that must be blocked regardless of calculated stats
-const FORCE_BLOCKED: Set<string> = new Set([
-  'ML_FAVORITE__home',
-  'ML_FAVORITE__away',
-]);
+// DB-driven force blocks and boosts (loaded at runtime)
+let FORCE_BLOCKED = new Set<string>();
+let FORCE_BOOST: Record<string, number> = {};
 
-// Categories with proven high hit rates — boost weight to 1.40-1.50
-const FORCE_BOOST: Record<string, number> = {
+// Static fallback boosts (used only if DB has no data)
+const FALLBACK_FORCE_BOOST: Record<string, number> = {
   'THREE_POINT_SHOOTER__over': 1.45,
   'LOW_SCORER_UNDER__under': 1.45,
-  'HIGH_ASSIST__under': 1.20,  // Capped — actual hit rate is only 47%
+  'HIGH_ASSIST__under': 1.20,
   'LOW_LINE_REBOUNDER__under': 1.45,
 };
 
@@ -148,6 +146,37 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[Calibrate] Starting calibration (fullRebuild: ${fullRebuild}, sport: ${sport}, forceRun: ${forceRun})`);
+
+    // Load DB-driven force blocks and boosts
+    const { data: forceBlockRows } = await supabase
+      .from('bot_category_weights')
+      .select('category, side, weight')
+      .eq('is_force_blocked', true);
+
+    FORCE_BLOCKED = new Set(
+      (forceBlockRows || []).map((r: any) => `${r.category}__${r.side}`)
+    );
+    console.log(`[Calibrate] Loaded ${FORCE_BLOCKED.size} force-blocked categories from DB`);
+
+    // Load boosted categories from DB (is_boosted = true, not blocked)
+    const { data: boostRows } = await supabase
+      .from('bot_prop_type_performance')
+      .select('prop_type, boost_multiplier')
+      .eq('is_boosted', true)
+      .eq('is_blocked', false);
+
+    FORCE_BOOST = {};
+    for (const b of boostRows || []) {
+      if (b.boost_multiplier && b.boost_multiplier > 1.0) {
+        FORCE_BOOST[b.prop_type] = b.boost_multiplier;
+      }
+    }
+    if (Object.keys(FORCE_BOOST).length === 0) {
+      FORCE_BOOST = { ...FALLBACK_FORCE_BOOST };
+      console.log(`[Calibrate] Using fallback boost overrides`);
+    } else {
+      console.log(`[Calibrate] Loaded ${Object.keys(FORCE_BOOST).length} boost overrides from DB`);
+    }
 
     // Bug 3 guard: only run if settlement has stabilized (latest run ≥2h old)
     if (!forceRun && !fullRebuild) {
@@ -496,8 +525,8 @@ Deno.serve(async (req) => {
       console.log(`[Calibrate] Seeded ${seeded} new team prop categories`);
     }
 
-    // 6. Send summary via Telegram if significant changes
-    if (created > 0 || blocked > 0) {
+    // 6. Send summary via Telegram — include rehabilitated count
+    if (created > 0 || blocked > 0 || rehabilitated > 0) {
       try {
         await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
           method: 'POST',
@@ -512,6 +541,7 @@ Deno.serve(async (req) => {
               updated,
               created,
               blocked,
+              rehabilitated,
               topPerformers,
               worstPerformers,
             },

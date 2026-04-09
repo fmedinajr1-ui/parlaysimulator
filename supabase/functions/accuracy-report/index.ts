@@ -16,11 +16,12 @@ Deno.serve(async (req) => {
   );
 
   try {
-    // 1. Overall accuracy by signal type
+    // 1. Overall accuracy by signal type — split by settlement_method
     const { data: bySignal } = await supabase
       .from('fanduel_prediction_accuracy')
-      .select('signal_type, was_correct, prop_type, created_at')
-      .not('was_correct', 'is', null);
+      .select('signal_type, was_correct, prop_type, created_at, settlement_method')
+      .not('was_correct', 'is', null)
+      .neq('actual_outcome', 'informational_excluded');
 
     if (!bySignal || bySignal.length === 0) {
       return new Response(JSON.stringify({ message: 'No verified data yet' }), {
@@ -32,6 +33,12 @@ Deno.serve(async (req) => {
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const recent = bySignal.filter(r => r.created_at > cutoff);
     const allTime = bySignal;
+
+    // Split by settlement method
+    const clvRows = allTime.filter(r => r.settlement_method === 'clv');
+    const outcomeRows = allTime.filter(r => r.settlement_method === 'outcome');
+    const recentClv = recent.filter(r => r.settlement_method === 'clv');
+    const recentOutcome = recent.filter(r => r.settlement_method === 'outcome');
 
     // Helper to compute accuracy breakdown
     const breakdown = (rows: typeof bySignal, groupKey: (r: any) => string) => {
@@ -48,6 +55,12 @@ Deno.serve(async (req) => {
         .sort((a, b) => b.n - a.n);
     };
 
+    const calcAcc = (rows: typeof bySignal) => {
+      const c = rows.filter(r => r.was_correct).length;
+      const t = rows.length;
+      return { correct: c, total: t, pct: t > 0 ? Math.round(c / t * 100) : 0 };
+    };
+
     const signalBreakdown = breakdown(allTime, r => r.signal_type);
     const recentSignalBreakdown = breakdown(recent, r => r.signal_type);
     const propBreakdown = breakdown(
@@ -61,19 +74,24 @@ Deno.serve(async (req) => {
 
     // Build Telegram message
     const icon = (acc: number) => acc >= 60 ? '🟢' : acc >= 50 ? '🟡' : '🔴';
-    const totalCorrect = allTime.filter(r => r.was_correct).length;
-    const totalAll = allTime.length;
-    const overallAcc = Math.round(totalCorrect / totalAll * 100);
-
-    const recentCorrect = recent.filter(r => r.was_correct).length;
-    const recentAll = recent.length;
-    const recentAcc = recentAll > 0 ? Math.round(recentCorrect / recentAll * 100) : 0;
+    const overall = calcAcc(allTime);
+    const recentAcc = calcAcc(recent);
+    const clvAcc = calcAcc(clvRows);
+    const outcomeAcc = calcAcc(outcomeRows);
+    const recentClvAcc = calcAcc(recentClv);
+    const recentOutcomeAcc = calcAcc(recentOutcome);
 
     const lines: string[] = [
       `📊 *ACCURACY CHECK-IN REPORT*`,
       ``,
-      `*Overall:* ${icon(overallAcc)} ${overallAcc}% (${totalCorrect}/${totalAll})`,
-      `*Last 48h:* ${icon(recentAcc)} ${recentAcc}% (${recentCorrect}/${recentAll})`,
+      `*Overall:* ${icon(overall.pct)} ${overall.pct}% (${overall.correct}/${overall.total})`,
+      `*Last 48h:* ${icon(recentAcc.pct)} ${recentAcc.pct}% (${recentAcc.correct}/${recentAcc.total})`,
+      ``,
+      `*── By Settlement Method ──*`,
+      `📈 CLV (all): ${icon(clvAcc.pct)} ${clvAcc.pct}% (n=${clvAcc.total})`,
+      `🎯 Outcome (all): ${icon(outcomeAcc.pct)} ${outcomeAcc.pct}% (n=${outcomeAcc.total})`,
+      `📈 CLV (48h): ${icon(recentClvAcc.pct)} ${recentClvAcc.pct}% (n=${recentClvAcc.total})`,
+      `🎯 Outcome (48h): ${icon(recentOutcomeAcc.pct)} ${recentOutcomeAcc.pct}% (n=${recentOutcomeAcc.total})`,
       ``,
       `*── By Signal (All-Time) ──*`,
       ...signalBreakdown.map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (n=${s.n})`),
@@ -103,6 +121,14 @@ Deno.serve(async (req) => {
       if (p.n >= 15 && p.accuracy >= 70) recs.push(`🔥 Boost *${p.key}* combo alerts (${p.accuracy}%)`);
     }
 
+    // Flag divergent methods
+    if (clvAcc.total >= 20 && outcomeAcc.total >= 20) {
+      const diff = Math.abs(clvAcc.pct - outcomeAcc.pct);
+      if (diff >= 15) {
+        recs.push(`⚠️ CLV vs Outcome divergence: ${diff}pp gap — investigate signal types with mixed methods`);
+      }
+    }
+
     if (recs.length > 0) {
       lines.push(``, `*── 🧠 RECOMMENDATIONS ──*`, ...recs);
     } else {
@@ -120,7 +146,14 @@ Deno.serve(async (req) => {
       console.error('Telegram send error:', tgErr.message);
     }
 
-    return new Response(JSON.stringify({ success: true, overall: overallAcc, recentAcc, signals: signalBreakdown.length }), {
+    return new Response(JSON.stringify({
+      success: true,
+      overall: overall.pct,
+      recentAcc: recentAcc.pct,
+      clvAcc: clvAcc.pct,
+      outcomeAcc: outcomeAcc.pct,
+      signals: signalBreakdown.length,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
