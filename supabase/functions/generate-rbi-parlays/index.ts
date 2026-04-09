@@ -96,8 +96,8 @@ Deno.serve(async (req) => {
     const scored = todayAlerts.map(alert => {
       const signalAcc = signalAccMap.get(alert.signal_type);
       const accScore = signalAcc ? signalAcc.win_rate : 50;
-      const confScore = alert.confidence_level === 'HIGH' ? 20 : 
-                        alert.confidence_level === 'MEDIUM' ? 10 : 0;
+      const confScore = (alert.confidence || 0) >= 80 ? 20 : 
+                        (alert.confidence || 0) >= 60 ? 10 : 0;
       
       // L10 cross-reference bonus
       const l10HitRate = alert.metadata?.l10_hit_rate || 0.5;
