@@ -64,6 +64,12 @@ Deno.serve(async (req) => {
     // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
     await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
 
+    // Step 5: Settle previous RBI picks using actual game outcomes
+    await invokeStep('MLB RBI settler', 'mlb-rbi-settler', {});
+
+    // Step 6: Generate RBI parlays from highest-accuracy signals
+    await invokeStep('RBI parlay generator', 'generate-rbi-parlays', {});
+
     const totalDuration = Date.now() - startTime;
     const allOk = Object.values(results).every((r) => r.status === 'ok');
     const failedSteps = Object.entries(results).filter(([, r]) => r.status !== 'ok');
