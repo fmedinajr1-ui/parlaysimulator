@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
       const key = normalizeName(gl.player_name);
       if (!logMap.has(key)) logMap.set(key, []);
       logMap.get(key)!.push({
-        rbi: gl.rbi,
+        rbi: gl.rbis,
         rawName: gl.player_name,
       });
     }
