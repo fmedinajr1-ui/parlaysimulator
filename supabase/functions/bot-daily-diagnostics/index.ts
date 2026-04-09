@@ -215,6 +215,42 @@ Deno.serve(async (req) => {
       improvementMetrics.weight_stability = parseFloat(stdDev.toFixed(3));
     }
 
+    // === Brier Score Integration ===
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const brierResp = await fetch(`${supabaseUrl}/functions/v1/calculate-brier-scores`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ date: yesterday }),
+      });
+      if (brierResp.ok) {
+        const brierData = await brierResp.json();
+        improvementMetrics.brier_score = brierData.overall_brier ?? brierData.brier_score ?? null;
+        improvementMetrics.brier_by_signal = brierData.by_signal_type ?? null;
+
+        // Brier check: lower is better; > 0.30 is concerning
+        const bs = improvementMetrics.brier_score;
+        if (bs !== null && bs !== undefined) {
+          if (bs <= 0.25) {
+            checks.push({ name: 'Brier Score', status: 'pass', detail: `${bs.toFixed(3)} (well-calibrated)` });
+          } else if (bs <= 0.35) {
+            checks.push({ name: 'Brier Score', status: 'warn', detail: `${bs.toFixed(3)} (drifting)` });
+          } else {
+            checks.push({ name: 'Brier Score', status: 'fail', detail: `${bs.toFixed(3)} (miscalibrated)` });
+          }
+        }
+        console.log(`[Diagnostics] Brier score: ${bs}`);
+      } else {
+        console.warn(`[Diagnostics] Brier score fetch failed: ${brierResp.status}`);
+      }
+    } catch (brierErr) {
+      console.warn(`[Diagnostics] Brier score integration error:`, brierErr);
+    }
+
     // === STORE RESULTS ===
     const passed = checks.filter(c => c.status === 'pass').length;
     const warned = checks.filter(c => c.status === 'warn').length;

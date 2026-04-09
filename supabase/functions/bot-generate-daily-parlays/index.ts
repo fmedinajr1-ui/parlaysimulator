@@ -1581,6 +1581,7 @@ const STATIC_BLOCKED_PROP_TYPES = new Set([
 // Dynamic prop type performance data (loaded at runtime)
 let dynamicBlockedPropTypes = new Set<string>();
 let dynamicBoostedPropTypes = new Map<string, number>(); // prop_type -> boost multiplier
+let propTypeHitRateMultipliers = new Map<string, number>(); // prop_type -> historical hit-rate multiplier
 
 async function loadPropTypePerformance(supabase: any): Promise<void> {
   try {
@@ -1596,7 +1597,16 @@ async function loadPropTypePerformance(supabase: any): Promise<void> {
         propPerf.filter((p: any) => p.is_boosted)
           .map((p: any) => [p.prop_type, p.boost_multiplier && p.boost_multiplier > 1.0 ? p.boost_multiplier : 1.15])
       );
-      console.log(`[Bot] Dynamic prop gates: ${dynamicBlockedPropTypes.size} blocked, ${dynamicBoostedPropTypes.size} boosted`);
+      // Wire prop-type hit rates as score multipliers for leg scoring
+      for (const p of propPerf) {
+        if (p.hit_rate != null && p.total_legs >= 10) {
+          const hr = p.hit_rate;
+          // Normalize: 65% → 1.3x, 50% → 1.0x, 35% → 0.7x
+          const multiplier = Math.max(0.5, Math.min(1.5, hr / 50));
+          propTypeHitRateMultipliers.set(p.prop_type, multiplier);
+        }
+      }
+      console.log(`[Bot] Dynamic prop gates: ${dynamicBlockedPropTypes.size} blocked, ${dynamicBoostedPropTypes.size} boosted, ${propTypeHitRateMultipliers.size} with hit-rate multipliers`);
     }
   } catch (err) {
     console.warn(`[Bot] Failed to load prop type performance: ${err}`);
@@ -3436,7 +3446,8 @@ function calculateCompositeScore(
   calibratedHitRate?: number,
   side?: string,
   legCount?: number,
-  playerBonus?: number
+  playerBonus?: number,
+  propType?: string
 ): number {
   const hitRateScore = Math.min(100, hitRate);
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
@@ -3470,6 +3481,14 @@ function calculateCompositeScore(
   // === FIX 4: Boost player prop UNDERs — 74% historical hit rate ===
   if (side === 'under') {
     baseScore = Math.round(baseScore * 1.15);
+  }
+
+  // === PROP-TYPE PERFORMANCE MULTIPLIER ===
+  if (propType) {
+    const ptMultiplier = propTypeHitRateMultipliers.get(propType) ?? propTypeHitRateMultipliers.get(normalizePropType(propType));
+    if (ptMultiplier && ptMultiplier !== 1.0) {
+      baseScore = Math.round(baseScore * ptMultiplier);
+    }
   }
 
   // === PLAYER PERFORMANCE BONUS: Proven winners get boosted, serial losers get penalized ===
@@ -5294,7 +5313,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
     const catHitRate = calibratedHitRateMap.get(pick.category);
     const playerBonus = getPlayerBonus(pick.player_name, pick.prop_type);
-    let compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side, undefined, playerBonus);
+    let compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side, undefined, playerBonus, pick.prop_type);
     // Apply day-type matchup boost/penalty
     const dayBoost = getDayTypeBoost(pick.prop_type, currentDayTypeSignal);
     compositeScore += dayBoost;

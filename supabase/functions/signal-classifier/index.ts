@@ -90,25 +90,26 @@ Deno.serve(async (req) => {
   try {
     const body: ClassifyRequest = await req.json();
 
-    // 1. Kill gate check — read from DB, not hardcoded
+    // 1. Kill gate check — read from DB (includes is_force_blocked)
     const signalType = body.books_moved.length >= 3 ? 'cascade' : 'velocity_spike';
     const categoryKey = `${signalType}_${body.prop_type}`.toUpperCase();
 
-    // Check both standard and contrarian kill gates
+    // Check both standard and force-blocked kill gates
     const { data: killGates } = await supabase
       .from('bot_category_weights')
-      .select('category, side, is_blocked, block_reason')
-      .eq('is_blocked', true);
+      .select('category, side, is_blocked, is_force_blocked, block_reason')
+      .or('is_blocked.eq.true,is_force_blocked.eq.true');
 
     const blockedCategories = new Set(
       (killGates || []).map((g: any) => g.category)
     );
 
     if (blockedCategories.has(categoryKey)) {
-      log(`Kill gate blocked: ${categoryKey}`);
+      const gate = (killGates || []).find((g: any) => g.category === categoryKey);
+      log(`Kill gate blocked: ${categoryKey} (force=${gate?.is_force_blocked || false})`);
       return new Response(JSON.stringify({
         classified: false,
-        reason: `Kill gate: ${categoryKey} is blocked`,
+        reason: `Kill gate: ${categoryKey} is blocked${gate?.is_force_blocked ? ' (force-blocked)' : ''}`,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
