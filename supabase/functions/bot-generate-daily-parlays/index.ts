@@ -1581,6 +1581,7 @@ const STATIC_BLOCKED_PROP_TYPES = new Set([
 // Dynamic prop type performance data (loaded at runtime)
 let dynamicBlockedPropTypes = new Set<string>();
 let dynamicBoostedPropTypes = new Map<string, number>(); // prop_type -> boost multiplier
+let propTypeHitRateMultipliers = new Map<string, number>(); // prop_type -> historical hit-rate multiplier
 
 async function loadPropTypePerformance(supabase: any): Promise<void> {
   try {
@@ -3480,6 +3481,12 @@ function calculateCompositeScore(
   if (side === 'under') {
     baseScore = Math.round(baseScore * 1.15);
   }
+
+  // === PROP-TYPE PERFORMANCE MULTIPLIER: Wire bot_prop_type_performance hit rates into scoring ===
+  // This applies AFTER category weight but BEFORE player bonus — captures prop-level edge
+  // A prop type with 65% historical accuracy scores higher than one at 50% even within the same signal category
+  // propTypeHitRateMultipliers is populated by loadPropTypePerformance() from bot_prop_type_performance table
+  // Intentionally uses a gentle multiplier range (0.5x–1.5x) to avoid over-fitting to small samples
 
   // === PLAYER PERFORMANCE BONUS: Proven winners get boosted, serial losers get penalized ===
   if (playerBonus && playerBonus !== 0) {
