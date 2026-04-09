@@ -35,14 +35,37 @@ serve(async (req) => {
   const blockers: string[] = [];
 
   try {
-    // 1. Odds freshness — unified_props has 50+ rows for today
-    const { count: propsCount } = await supabase
+    // 1. Odds distribution check — each active sport needs ≥10 props, not just global count
+    const { data: propsBySport } = await supabase
       .from('unified_props')
-      .select('*', { count: 'exact', head: true })
+      .select('sport')
       .gte('created_at', `${today}T00:00:00`);
-    const oddsOk = (propsCount || 0) >= 50;
-    checks.push({ name: 'Odds freshness', passed: oddsOk, detail: `${propsCount || 0} props today` });
-    if (!oddsOk) blockers.push(`Odds data stale (${propsCount || 0} props for today, need 50+)`);
+
+    const sportCounts: Record<string, number> = {};
+    for (const row of propsBySport || []) {
+      const sport = row.sport || 'unknown';
+      sportCounts[sport] = (sportCounts[sport] || 0) + 1;
+    }
+    
+    const totalProps = Object.values(sportCounts).reduce((s, c) => s + c, 0);
+    const activeSports = Object.keys(sportCounts);
+    const underCovered = Object.entries(sportCounts).filter(([, count]) => count < 10);
+    
+    const oddsOk = totalProps >= 50 && underCovered.length === 0;
+    const sportDetail = activeSports.map(s => `${s}:${sportCounts[s]}`).join(', ');
+    checks.push({ 
+      name: 'Odds distribution', 
+      passed: oddsOk, 
+      detail: `${totalProps} total props across ${activeSports.length} sports (${sportDetail})` 
+    });
+    if (!oddsOk) {
+      if (totalProps < 50) {
+        blockers.push(`Odds data thin (${totalProps} total props, need 50+)`);
+      }
+      if (underCovered.length > 0) {
+        blockers.push(`Thin coverage on: ${underCovered.map(([s, c]) => `${s}(${c})`).join(', ')} — need 10+ per sport`);
+      }
+    }
 
     // 2. Game log freshness — data within last 5 days
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -65,14 +88,27 @@ serve(async (req) => {
     checks.push({ name: 'API budget', passed: budgetOk, detail: `${remaining} calls remaining` });
     if (!budgetOk) blockers.push(`API budget low (${remaining} remaining, need 200+)`);
 
-    // 4. Sweet spots exist for today
-    const { count: sweetCount } = await supabase
+    // 4. Sweet spots quality check — existence + confidence distribution
+    const { data: sweetSpots } = await supabase
       .from('category_sweet_spots')
-      .select('*', { count: 'exact', head: true })
+      .select('category, confidence_score')
       .eq('analysis_date', today);
-    const sweetOk = (sweetCount || 0) > 0;
-    checks.push({ name: 'Sweet spots', passed: sweetOk, detail: `${sweetCount || 0} sweet spots today` });
-    if (!sweetOk) blockers.push('No category sweet spots for today — analyzer may have failed');
+
+    const sweetCount = sweetSpots?.length || 0;
+    const highConfidence = (sweetSpots || []).filter((s: any) => (s.confidence_score || 0) >= 70).length;
+    const sweetOk = sweetCount > 0 && highConfidence >= Math.floor(sweetCount * 0.3);
+    checks.push({ 
+      name: 'Sweet spots quality', 
+      passed: sweetOk, 
+      detail: `${sweetCount} sweet spots today (${highConfidence} high-confidence ≥70%)` 
+    });
+    if (!sweetOk) {
+      if (sweetCount === 0) {
+        blockers.push('No category sweet spots for today — analyzer may have failed');
+      } else {
+        blockers.push(`Only ${highConfidence}/${sweetCount} sweet spots are high-confidence (need 30%+)`);
+      }
+    }
 
     // 5. Whale signals exist — game_bets updated today
     const { count: whaleCount } = await supabase
@@ -115,6 +151,38 @@ serve(async (req) => {
     const integrityOk = (badParlayCount || 0) === 0;
     checks.push({ name: 'Parlay integrity', passed: integrityOk, detail: `${badParlayCount || 0} short parlays` });
     if (!integrityOk) blockers.push(`${badParlayCount} parlays with <3 legs detected — generator bug`);
+
+    // 9. Settlement coverage — check if yesterday's signals are ≥85% settled
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(yesterday);
+
+    const { count: totalYesterday } = await supabase
+      .from('fanduel_prediction_alerts')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', `${yesterdayStr}T00:00:00`)
+      .lt('created_at', `${today}T00:00:00`);
+
+    const { count: settledYesterday } = await supabase
+      .from('settlement_records')
+      .select('*', { count: 'exact', head: true })
+      .gte('settled_at', `${yesterdayStr}T00:00:00`)
+      .lt('settled_at', `${today}T00:00:00`);
+
+    const settlementCoverage = (totalYesterday || 0) > 0
+      ? ((settledYesterday || 0) / (totalYesterday || 1)) * 100
+      : 100;
+    const settlementOk = settlementCoverage >= 85 || (totalYesterday || 0) === 0;
+    checks.push({
+      name: 'Settlement coverage',
+      passed: settlementOk,
+      detail: `${(settledYesterday || 0)}/${(totalYesterday || 0)} yesterday's signals settled (${settlementCoverage.toFixed(0)}%)`,
+    });
+    if (!settlementOk) {
+      blockers.push(`Settlement coverage only ${settlementCoverage.toFixed(0)}% — weights may be calibrated on partial data`);
+    }
 
     const ready = blockers.length === 0;
 

@@ -2,7 +2,11 @@
  * morning-prep-pipeline
  * 
  * Runs at 10:00 AM ET — collects odds, analyzes props, scans matchups,
+ * settles previous day's signals via unified settlement-orchestrator,
  * and triggers the slate advisory. Does NOT generate parlays (that's at 5:30 PM ET).
+ * 
+ * v2: Uses settlement-orchestrator instead of fragmented settlers.
+ *     Only triggers learning when settlement coverage ≥85%.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -46,7 +50,7 @@ Deno.serve(async (req) => {
   };
 
   try {
-    log('=== MORNING PREP PIPELINE (No Parlay Generation) ===');
+    log('=== MORNING PREP PIPELINE v2 (Unified Settlement) ===');
 
     // Step 1: Full odds scrape
     await invokeStep('Whale odds scraper (full)', 'whale-odds-scraper', { mode: 'full' });
@@ -64,8 +68,12 @@ Deno.serve(async (req) => {
     // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
     await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
 
-    // Step 5: Settle previous RBI picks using actual game outcomes
-    await invokeStep('MLB RBI settler', 'mlb-rbi-settler', {});
+    // Step 5: UNIFIED SETTLEMENT — replaces fragmented mlb-rbi-settler + fanduel-accuracy-feedback
+    // Settles ALL signal types through the single settlement-orchestrator
+    // with trigger_learning=false (learning happens at 4 AM wave)
+    await invokeStep('Settlement orchestrator (morning wave)', 'settlement-orchestrator', {
+      trigger_learning: false,
+    });
 
     // Step 6: Generate RBI parlays from highest-accuracy signals
     await invokeStep('RBI parlay generator', 'generate-rbi-parlays', {});
@@ -81,13 +89,15 @@ Deno.serve(async (req) => {
       `${r.status === 'ok' ? '✅' : '❌'} ${fn} (${(r.duration_ms / 1000).toFixed(1)}s)`
     );
     const telegramMsg = [
-      `☀️ *Morning Prep Complete*`,
+      `☀️ *Morning Prep v2 Complete*`,
       `${allOk ? '✅ All engines refreshed' : `⚠️ ${failedSteps.length} step(s) failed`}`,
       ``,
       ...statusLines,
       ``,
       `⏱ Total: ${(totalDuration / 1000).toFixed(1)}s`,
       ``,
+      `🔄 Settlement uses unified orchestrator`,
+      `🕐 Learning triggers at 4 AM ET wave (≥85% coverage)`,
       `🕐 Parlays generate at 5:30 PM ET (pre-tip)`,
     ].join('\n');
 
