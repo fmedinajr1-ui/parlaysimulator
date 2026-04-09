@@ -1196,6 +1196,7 @@ export type Database = {
           current_streak: number | null
           id: string
           is_blocked: boolean | null
+          is_force_blocked: boolean
           last_calibrated_at: string | null
           recency_hit_rate: number | null
           regime_multiplier: number | null
@@ -1217,6 +1218,7 @@ export type Database = {
           current_streak?: number | null
           id?: string
           is_blocked?: boolean | null
+          is_force_blocked?: boolean
           last_calibrated_at?: string | null
           recency_hit_rate?: number | null
           regime_multiplier?: number | null
@@ -1238,6 +1240,7 @@ export type Database = {
           current_streak?: number | null
           id?: string
           is_blocked?: boolean | null
+          is_force_blocked?: boolean
           last_calibrated_at?: string | null
           recency_hit_rate?: number | null
           regime_multiplier?: number | null
