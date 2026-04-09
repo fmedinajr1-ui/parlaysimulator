@@ -22,7 +22,7 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const source = body.source || 'manual';
     
-    console.log(`[sync-and-verify-all] Starting combined sync & verify (source: ${source})`);
+    console.log(`[sync-and-verify-all] Starting combined sync & settle (source: ${source})`);
 
     // Log job start
     const { data: jobRecord } = await supabase
@@ -66,9 +66,24 @@ serve(async (req) => {
         .eq('id', jobId);
     }
 
-    // Phase 2: Verify all engine outcomes
-    console.log('[sync-and-verify-all] Phase 2: Verifying all engine outcomes...');
+    // Phase 2: Unified settlement orchestrator (replaces verify-all-engine-outcomes)
+    console.log('[sync-and-verify-all] Phase 2: Running unified settlement orchestrator...');
     
+    const settleResponse = await fetch(`${supabaseUrl}/functions/v1/settlement-orchestrator`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseKey}`,
+      },
+      body: JSON.stringify({ trigger_learning: false })
+    });
+
+    const settleResult = await settleResponse.json().catch(() => ({ error: 'Failed to parse settle response' }));
+    console.log('[sync-and-verify-all] Settlement result:', JSON.stringify(settleResult).slice(0, 500));
+
+    // Phase 3: Also run the legacy verify for engines not yet migrated
+    console.log('[sync-and-verify-all] Phase 3: Legacy engine verification...');
+
     const verifyResponse = await fetch(`${supabaseUrl}/functions/v1/verify-all-engine-outcomes`, {
       method: 'POST',
       headers: {
@@ -99,6 +114,13 @@ serve(async (req) => {
               logsUpserted: syncResult.logsUpserted ?? 0,
               errors: syncResult.errors ?? []
             },
+            settlement: {
+              settled: settleResult.settled ?? 0,
+              clv_settled: settleResult.clv_settled ?? 0,
+              outcome_settled: settleResult.outcome_settled ?? 0,
+              coverage: settleResult.coverage ?? '0',
+              win_rate: settleResult.win_rate ?? 0,
+            },
             verify: {
               success: verifyResult.success ?? false,
               riskEngine: verifyResult.results?.riskEngine ?? {},
@@ -120,6 +142,7 @@ serve(async (req) => {
         gamesProcessed: syncResult.espnGames?.length ?? 0,
         logsUpserted: syncResult.logsUpserted ?? 0
       },
+      settlement: settleResult,
       verify: {
         success: verifyResult.success ?? false,
         summary: verifyResult.summary ?? {}
