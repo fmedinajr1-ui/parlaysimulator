@@ -80,9 +80,9 @@ Deno.serve(async (req) => {
     // Fetch game logs with RBI data
     const { data: gameLogs, error: logErr } = await supabase
       .from('mlb_player_game_logs')
-      .select('player_name, game_date, rbi, team')
+      .select('player_name, game_date, rbis, team')
       .gte('game_date', startStr)
-      .not('rbi', 'is', null)
+      .not('rbis', 'is', null)
       .limit(5000);
 
     if (logErr) throw logErr;
