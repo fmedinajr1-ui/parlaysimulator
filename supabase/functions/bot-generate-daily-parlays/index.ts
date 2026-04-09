@@ -1596,7 +1596,16 @@ async function loadPropTypePerformance(supabase: any): Promise<void> {
         propPerf.filter((p: any) => p.is_boosted)
           .map((p: any) => [p.prop_type, p.boost_multiplier && p.boost_multiplier > 1.0 ? p.boost_multiplier : 1.15])
       );
-      console.log(`[Bot] Dynamic prop gates: ${dynamicBlockedPropTypes.size} blocked, ${dynamicBoostedPropTypes.size} boosted`);
+      // Wire prop-type hit rates as score multipliers for leg scoring
+      for (const p of propPerf) {
+        if (p.hit_rate != null && p.total_legs >= 10) {
+          const hr = p.hit_rate;
+          // Normalize: 65% → 1.3x, 50% → 1.0x, 35% → 0.7x
+          const multiplier = Math.max(0.5, Math.min(1.5, hr / 50));
+          propTypeHitRateMultipliers.set(p.prop_type, multiplier);
+        }
+      }
+      console.log(`[Bot] Dynamic prop gates: ${dynamicBlockedPropTypes.size} blocked, ${dynamicBoostedPropTypes.size} boosted, ${propTypeHitRateMultipliers.size} with hit-rate multipliers`);
     }
   } catch (err) {
     console.warn(`[Bot] Failed to load prop type performance: ${err}`);
