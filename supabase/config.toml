@@ -505,3 +505,9 @@ verify_jwt = false
 
 [functions.hrb-mlb-rbi-analyzer]
 verify_jwt = false
+
+[functions.mlb-rbi-settler]
+verify_jwt = false
+
+[functions.generate-rbi-parlays]
+verify_jwt = false
