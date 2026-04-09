@@ -350,7 +350,7 @@ Deno.serve(async (req) => {
     // 1. Get unsettled signals (not already in settlement_records)
     const { data: allUnsettled, error: fetchErr } = await supabase
       .from('fanduel_prediction_alerts')
-      .select('id, player_name, prop_type, prediction, signal_type, event_id, created_at, line_at_alert, signal_factors, metadata, game_date, contrarian_flip_applied')
+      .select('id, player_name, prop_type, prediction, signal_type, event_id, created_at, metadata, contrarian_flip_applied')
       .is('was_correct', null)
       .gte('created_at', datesToSettle[datesToSettle.length - 1] + 'T00:00:00')
       .limit(1000);
