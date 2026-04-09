@@ -3802,6 +3802,7 @@ export type Database = {
           bookmaker: string | null
           commence_time: string | null
           confidence: number
+          contrarian_flip_applied: boolean | null
           created_at: string
           event_description: string | null
           event_id: string
@@ -3811,6 +3812,7 @@ export type Database = {
           prediction: string
           prop_type: string | null
           settled_at: string | null
+          settlement_method: string | null
           signal_type: string
           sport: string | null
           was_correct: boolean | null
@@ -3820,6 +3822,7 @@ export type Database = {
           bookmaker?: string | null
           commence_time?: string | null
           confidence?: number
+          contrarian_flip_applied?: boolean | null
           created_at?: string
           event_description?: string | null
           event_id: string
@@ -3829,6 +3832,7 @@ export type Database = {
           prediction: string
           prop_type?: string | null
           settled_at?: string | null
+          settlement_method?: string | null
           signal_type: string
           sport?: string | null
           was_correct?: boolean | null
@@ -3838,6 +3842,7 @@ export type Database = {
           bookmaker?: string | null
           commence_time?: string | null
           confidence?: number
+          contrarian_flip_applied?: boolean | null
           created_at?: string
           event_description?: string | null
           event_id?: string
@@ -3847,6 +3852,7 @@ export type Database = {
           prediction?: string
           prop_type?: string | null
           settled_at?: string | null
+          settlement_method?: string | null
           signal_type?: string
           sport?: string | null
           was_correct?: boolean | null
@@ -11441,6 +11447,39 @@ export type Database = {
         }
         Relationships: []
       }
+      settlement_records: {
+        Row: {
+          created_at: string
+          evidence: Json
+          id: string
+          settled_at: string
+          settled_by: string
+          settlement_method: string
+          signal_id: string
+          was_correct: boolean | null
+        }
+        Insert: {
+          created_at?: string
+          evidence?: Json
+          id?: string
+          settled_at?: string
+          settled_by: string
+          settlement_method: string
+          signal_id: string
+          was_correct?: boolean | null
+        }
+        Update: {
+          created_at?: string
+          evidence?: Json
+          id?: string
+          settled_at?: string
+          settled_by?: string
+          settlement_method?: string
+          signal_id?: string
+          was_correct?: boolean | null
+        }
+        Relationships: []
+      }
       sharp_ai_parlays: {
         Row: {
           archetype_diversity: number | null
@@ -13967,6 +14006,18 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_accuracy: {
+        Row: {
+          contrarian_flip_applied: boolean | null
+          last_settled: string | null
+          prop_type: string | null
+          settled_n: number | null
+          signal_type: string | null
+          win_rate: number | null
+          wins: number | null
+        }
+        Relationships: []
+      }
       v_3pt_matchup_favorites: {
         Row: {
           avg_3pt_vs_team: number | null
@@ -14629,6 +14680,7 @@ export type Database = {
       }
       increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
       is_collaborator: { Args: { _user_id: string }; Returns: boolean }
+      refresh_signal_accuracy: { Args: never; Returns: undefined }
       sync_matchup_history_from_logs: {
         Args: never
         Returns: {
