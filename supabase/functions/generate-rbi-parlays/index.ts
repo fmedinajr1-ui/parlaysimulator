@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     const today = new Date().toISOString().split('T')[0];
     const { data: todayAlerts, error: alertErr } = await supabase
       .from('fanduel_prediction_alerts')
-      .select('id, player_name, prediction, signal_type, confidence_level, metadata, created_at')
+      .select('id, player_name, prediction, signal_type, confidence, metadata, created_at')
       .eq('prop_type', 'batter_rbis')
       .is('was_correct', null)
       .in('signal_type', qualifyingSignals)
