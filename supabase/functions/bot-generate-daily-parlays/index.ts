@@ -3446,7 +3446,8 @@ function calculateCompositeScore(
   calibratedHitRate?: number,
   side?: string,
   legCount?: number,
-  playerBonus?: number
+  playerBonus?: number,
+  propType?: string
 ): number {
   const hitRateScore = Math.min(100, hitRate);
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
