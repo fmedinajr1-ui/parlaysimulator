@@ -13016,6 +13016,81 @@ export type Database = {
         }
         Relationships: []
       }
+      tennis_match_model: {
+        Row: {
+          actual_total_games: number | null
+          analysis_date: string
+          confidence_score: number | null
+          created_at: string
+          edge_pct: number | null
+          gender_modifier: number | null
+          h2h_avg_total_games: number | null
+          h2h_sample_size: number | null
+          id: string
+          outcome: string | null
+          player_a: string
+          player_a_avg_games_l10: number | null
+          player_b: string
+          player_b_avg_games_l10: number | null
+          pp_total_games_line: number | null
+          projected_total_games: number | null
+          recommended_side: string | null
+          settled_at: string | null
+          surface: string | null
+          surface_modifier: number | null
+          tour: string
+          updated_at: string
+        }
+        Insert: {
+          actual_total_games?: number | null
+          analysis_date?: string
+          confidence_score?: number | null
+          created_at?: string
+          edge_pct?: number | null
+          gender_modifier?: number | null
+          h2h_avg_total_games?: number | null
+          h2h_sample_size?: number | null
+          id?: string
+          outcome?: string | null
+          player_a: string
+          player_a_avg_games_l10?: number | null
+          player_b: string
+          player_b_avg_games_l10?: number | null
+          pp_total_games_line?: number | null
+          projected_total_games?: number | null
+          recommended_side?: string | null
+          settled_at?: string | null
+          surface?: string | null
+          surface_modifier?: number | null
+          tour: string
+          updated_at?: string
+        }
+        Update: {
+          actual_total_games?: number | null
+          analysis_date?: string
+          confidence_score?: number | null
+          created_at?: string
+          edge_pct?: number | null
+          gender_modifier?: number | null
+          h2h_avg_total_games?: number | null
+          h2h_sample_size?: number | null
+          id?: string
+          outcome?: string | null
+          player_a?: string
+          player_a_avg_games_l10?: number | null
+          player_b?: string
+          player_b_avg_games_l10?: number | null
+          pp_total_games_line?: number | null
+          projected_total_games?: number | null
+          recommended_side?: string | null
+          settled_at?: string | null
+          surface?: string | null
+          surface_modifier?: number | null
+          tour?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tennis_player_stats: {
         Row: {
           aces: number | null
