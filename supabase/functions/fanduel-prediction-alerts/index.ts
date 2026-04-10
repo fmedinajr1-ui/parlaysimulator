@@ -144,11 +144,12 @@ Deno.serve(async (req) => {
   try {
     log("=== Generating FanDuel prediction alerts (accuracy-gated v2) ===");
 
-    const thirtyMinAgo = new Date(now.getTime() - 20 * 60 * 1000).toISOString(); // 20min window for faster detection
+    const ALERT_WINDOW_MS = 20 * 60 * 1000; // 20-minute detection window
+    const windowAgo = new Date(now.getTime() - ALERT_WINDOW_MS).toISOString();
     const { data: recentData, error: fetchErr } = await supabase
       .from("fanduel_line_timeline")
       .select("*")
-      .gte("snapshot_time", thirtyMinAgo)
+      .gte("snapshot_time", windowAgo)
       .order("snapshot_time", { ascending: true })
       .limit(3000);
 
@@ -163,26 +164,55 @@ Deno.serve(async (req) => {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data: accuracyRows } = await supabase
       .from("fanduel_prediction_accuracy")
-      .select("signal_type, prop_type, was_correct")
+      .select("signal_type, prop_type, was_correct, settlement_method")
       .not("was_correct", "is", null)
-      .gte("created_at", thirtyDaysAgo);
+      .gte("created_at", thirtyDaysAgo)
+      .neq("actual_outcome", "informational_excluded"); // BUG A FIX: exclude trap_warnings
 
     const accuracyMap = new Map<string, { correct: number; total: number }>();
+    // BUG B FIX: separate maps for CLV vs outcome settlement
+    const clvAccuracyMap = new Map<string, { correct: number; total: number }>();
+    const outcomeAccuracyMap = new Map<string, { correct: number; total: number }>();
+
     for (const row of accuracyRows || []) {
       const key = `${row.signal_type}|${row.prop_type}`;
+
+      // Combined map (legacy — used for badge display)
       if (!accuracyMap.has(key)) accuracyMap.set(key, { correct: 0, total: 0 });
       const b = accuracyMap.get(key)!;
       b.total++;
       if (row.was_correct) b.correct++;
+
+      // Split by settlement method
+      if (row.settlement_method === "outcome") {
+        if (!outcomeAccuracyMap.has(key)) outcomeAccuracyMap.set(key, { correct: 0, total: 0 });
+        const ob = outcomeAccuracyMap.get(key)!;
+        ob.total++;
+        if (row.was_correct) ob.correct++;
+      } else {
+        if (!clvAccuracyMap.has(key)) clvAccuracyMap.set(key, { correct: 0, total: 0 });
+        const cb = clvAccuracyMap.get(key)!;
+        cb.total++;
+        if (row.was_correct) cb.correct++;
+      }
     }
 
     function dynamicAccBadge(signalType: string, propType: string): string {
       const key = `${signalType}|${propType}`;
-      const stats = accuracyMap.get(key);
-      if (!stats || stats.total < 5) return "";
-      const pct = ((stats.correct / stats.total) * 100).toFixed(1);
-      const emoji = stats.correct / stats.total >= 0.6 ? "🔥" : stats.correct / stats.total >= 0.5 ? "📈" : "⚠️";
-      return `${emoji} Historical: ${pct}% (${stats.correct}/${stats.total} verified)`;
+      // Prefer outcome accuracy if available (more meaningful than CLV)
+      const outcome = outcomeAccuracyMap.get(key);
+      const clv = clvAccuracyMap.get(key);
+      const combined = accuracyMap.get(key);
+      const best = (outcome && outcome.total >= 5) ? { ...outcome, method: "outcome" }
+        : (clv && clv.total >= 5) ? { ...clv, method: "CLV" }
+        : (combined && combined.total >= 5) ? { ...combined, method: "mixed" }
+        : null;
+      if (!best) return "";
+      const pct = ((best.correct / best.total) * 100).toFixed(1);
+      const rate = best.correct / best.total;
+      const emoji = rate >= 0.6 ? "🔥" : rate >= 0.5 ? "📈" : "⚠️";
+      const methodTag = best.method !== "mixed" ? ` [${best.method}]` : "";
+      return `${emoji} Historical: ${pct}% (${best.correct}/${best.total} verified${methodTag})`;
     }
 
     // ── 70% ACCURACY GATE — block any signal+prop combo below 70% with sufficient data ──
@@ -197,12 +227,31 @@ Deno.serve(async (req) => {
     const FORCE_FLIP_PROP_TYPES = new Set(["player_rebounds", "player_assists", "player_rebounds_assists"]);
     function isAccuracyGated(signalType: string, propType: string): boolean {
       const key = `${signalType}|${propType}`;
-      const stats = accuracyMap.get(key);
-      if (!stats || stats.total < ACCURACY_GATE_MIN_SAMPLES) return false; // not enough data, allow through
-      const rate = stats.correct / stats.total;
-      if (rate < ACCURACY_GATE_THRESHOLD) {
-        log(`🚫 ACCURACY GATE: ${signalType}|${propType} blocked (${(rate*100).toFixed(1)}% < 70%, n=${stats.total})`);
-        return true;
+      // BUG B FIX: Gate on EITHER settlement method independently
+      const outcome = outcomeAccuracyMap.get(key);
+      const clv = clvAccuracyMap.get(key);
+      if (outcome && outcome.total >= ACCURACY_GATE_MIN_SAMPLES) {
+        const rate = outcome.correct / outcome.total;
+        if (rate < ACCURACY_GATE_THRESHOLD) {
+          log(`🚫 ACCURACY GATE (outcome): ${signalType}|${propType} blocked (${(rate*100).toFixed(1)}% < 70%, n=${outcome.total})`);
+          return true;
+        }
+      }
+      if (clv && clv.total >= ACCURACY_GATE_MIN_SAMPLES) {
+        const rate = clv.correct / clv.total;
+        if (rate < ACCURACY_GATE_THRESHOLD) {
+          log(`🚫 ACCURACY GATE (CLV): ${signalType}|${propType} blocked (${(rate*100).toFixed(1)}% < 70%, n=${clv.total})`);
+          return true;
+        }
+      }
+      // Fall through to combined map for legacy rows
+      const combined = accuracyMap.get(key);
+      if (combined && combined.total >= ACCURACY_GATE_MIN_SAMPLES) {
+        const rate = combined.correct / combined.total;
+        if (rate < ACCURACY_GATE_THRESHOLD) {
+          log(`🚫 ACCURACY GATE (combined): ${signalType}|${propType} blocked (${(rate*100).toFixed(1)}% < 70%, n=${combined.total})`);
+          return true;
+        }
       }
       return false;
     }
@@ -220,11 +269,23 @@ Deno.serve(async (req) => {
     function flipSide(side: string): string {
       return side === "OVER" ? "UNDER" : side === "UNDER" ? "OVER" : side === "BACK" ? "FADE" : side === "FADE" ? "BACK" : side;
     }
-    function flipPrediction(prediction: string): string {
-      if (prediction.startsWith("OVER")) return prediction.replace("OVER", "UNDER");
-      if (prediction.startsWith("UNDER")) return prediction.replace("UNDER", "OVER");
-      if (prediction.startsWith("BACK")) return prediction.replace("BACK", "FADE");
-      if (prediction.startsWith("FADE")) return prediction.replace("FADE", "BACK");
+    function flipPrediction(prediction: string, currentLine?: number): string {
+      const upper = prediction.toUpperCase();
+      // Handle standard directional prefixes
+      if (prediction.startsWith("OVER ")) return prediction.replace("OVER ", "UNDER ");
+      if (prediction.startsWith("UNDER ")) return prediction.replace("UNDER ", "OVER ");
+      if (prediction.startsWith("BACK ")) return prediction.replace("BACK ", "FADE ");
+      if (prediction.startsWith("FADE ")) return prediction.replace("FADE ", "BACK ");
+      // Handle behavior-analyzer formats like "Line dropping steadily at 1.2/hr"
+      if (upper.includes("DROPPING") || upper.includes("UNDER")) {
+        if (currentLine != null) return `OVER ${currentLine} (flipped from: ${prediction.substring(0, 40)})`;
+        return `OVER (flipped — ${prediction.substring(0, 40)})`;
+      }
+      if (upper.includes("RISING") || upper.includes("OVER")) {
+        if (currentLine != null) return `UNDER ${currentLine} (flipped from: ${prediction.substring(0, 40)})`;
+        return `UNDER (flipped — ${prediction.substring(0, 40)})`;
+      }
+      console.warn(`[flipPrediction] Cannot determine direction from: "${prediction.substring(0, 60)}"`);
       return prediction;
     }
 
@@ -1621,7 +1682,8 @@ Deno.serve(async (req) => {
           const origPrediction = record.prediction;
           const origSide = origPrediction.split(" ")[0]; // "OVER", "UNDER", "BACK", "FADE"
           const flippedSideStr = flipSide(origSide);
-          const flippedPred = flipPrediction(origPrediction);
+          const currentLine = record.signal_factors?.current_line ?? record.signal_factors?.line_to ?? null;
+          const flippedPred = flipPrediction(origPrediction, currentLine);
 
           // Validate flip with L10 data for player props (skip team markets)
           const isTeamMarket = TEAM_MARKET_TYPES.has(record.prop_type);
@@ -1719,10 +1781,25 @@ Deno.serve(async (req) => {
 
     // Store ALL prediction records (including gated ones) for accuracy tracking
     if (dedupedRecords.length > 0) {
-      // Strip the 'gated' flag before insert (not a DB column)
-      const cleanRecords = dedupedRecords.map(({ gated, ...rest }) => rest);
-      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(cleanRecords);
-      if (error) log(`⚠ Prediction insert error: ${error.message}`);
+      const cleanRecords = dedupedRecords.map(({ gated, ...rest }) => ({
+        ...rest,
+        // BUG E FIX: tag gated records so they're excluded from accuracy gate
+        is_gated: gated === true,
+      }));
+
+      const sentRecords = cleanRecords.filter(r => !r.is_gated);
+      const gatedOnlyRecords = cleanRecords.filter(r => r.is_gated);
+
+      if (sentRecords.length > 0) {
+        const { error } = await supabase.from("fanduel_prediction_accuracy").insert(sentRecords);
+        if (error) log(`⚠ Prediction insert error: ${error.message}`);
+      }
+
+      if (gatedOnlyRecords.length > 0) {
+        const { error } = await supabase.from("fanduel_prediction_accuracy").insert(gatedOnlyRecords);
+        if (error) log(`⚠ Gated record insert error: ${error.message}`);
+        log(`Stored ${gatedOnlyRecords.length} gated records (excluded from accuracy calculations)`);
+      }
     }
 
     // ====== OWNER RULES FILTER — remove alerts that violate rules before Telegram ======

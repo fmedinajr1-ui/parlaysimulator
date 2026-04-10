@@ -553,6 +553,7 @@ Deno.serve(async (req) => {
       .select("signal_type, sport, prop_type, was_correct, velocity_at_signal")
       .not("was_correct", "is", null)
       .neq("actual_outcome", "informational_excluded")
+      .eq("is_gated", false) // BUG E companion: exclude gated records from accuracy
       .gte("created_at", new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString());
 
     const buckets = new Map<string, { correct: number; total: number; velocities: number[] }>();

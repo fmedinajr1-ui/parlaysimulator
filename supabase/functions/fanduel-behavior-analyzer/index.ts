@@ -231,7 +231,8 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      const rawVelocity = timeDiffMin > 0 ? (weightedMove / totalWeight) * (60 / timeDiffMin) * snapshots.length : 0;
+      // BUG G FIX: removed snapshots.length multiplier — velocity is weighted avg move per hour
+      const rawVelocity = timeDiffMin > 0 ? (weightedMove / totalWeight) * (60 / timeDiffMin) : 0;
 
       // recentBias > 1 means accelerating, < 1 means decelerating
       const recentBias = oldWeight > 0 ? recentWeight / oldWeight : 1;
@@ -247,7 +248,9 @@ Deno.serve(async (req) => {
       .from("fanduel_prediction_accuracy")
       .select("signal_type, prop_type, sport, was_correct, velocity_at_signal, confidence_at_signal")
       .not("was_correct", "is", null)
-      .gte("created_at", thirtyDaysAgo);
+      .gte("created_at", thirtyDaysAgo)
+      .neq("actual_outcome", "informational_excluded") // BUG J FIX: exclude trap_warnings
+      .eq("is_gated", false);                          // BUG E companion: exclude gated records
 
     // Build learned thresholds per signal_type+prop_type
     interface LearnedThreshold {
@@ -1053,7 +1056,8 @@ Deno.serve(async (req) => {
       if (group.length <= 1) continue;
       group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
       for (let i = 1; i < group.length; i++) {
-        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
+        // BUG H FIX: scope the drop to the specific prop_type that conflicted
+        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}|${group[i].prop_type}`);
         log(`⚠ Dropped conflicting signal: ${group[i].player_name} ${group[i].prop_type} (kept ${group[0].player_name})`);
       }
     }
@@ -1071,13 +1075,13 @@ Deno.serve(async (req) => {
       // Multiple alerts for same player + same prop = keep strongest only
       group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
       for (let i = 1; i < group.length; i++) {
-        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
+        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}|${group[i].prop_type}`);
         log(`⚠ Dropped same-player conflicting ${group[i].type}: ${group[i].player_name} ${group[i].prop_type}`);
       }
     }
 
     if (droppedPlayers.size > 0) {
-      alerts = alerts.filter(a => !droppedPlayers.has(`${a.event_id}|${a.player_name}`));
+      alerts = alerts.filter(a => !droppedPlayers.has(`${a.event_id}|${a.player_name}|${a.prop_type}`));
     }
 
     // ====== CROSS-RUN DEDUP: Don't re-insert same player+prop+signal within 2 hours ======
@@ -1216,7 +1220,7 @@ Deno.serve(async (req) => {
           const l10Avg = l10Ks.reduce((a: number, b: number) => a + b, 0) / l10Ks.length;
           const l3Avg = l3Ks.reduce((a: number, b: number) => a + b, 0) / l3Ks.length;
           const avgIP = ipValues.reduce((a: number, b: number) => a + b, 0) / ipValues.length;
-          pitcherContextMap.set(name, { l10Avg, l3Avg, avgIP, matchupAvg: null, matchupGames: 0 });
+          pitcherContextMap.set(name, { l10Avg, l3Avg, avgIP, matchupAvg: null, matchupGames: 0, l10Ks });
         }
 
         // Resolve matchup: check opponent from event_description against game logs
@@ -1443,11 +1447,17 @@ Deno.serve(async (req) => {
       const ctx = pitcherContextMap.get(a.player_name);
       if (!ctx) return "";
       const line = a.current_line ?? a.line_to ?? null;
-      let badge = `⚾ L10 Avg: ${ctx.l10Avg.toFixed(1)} Ks | L3 Avg: ${ctx.l3Avg.toFixed(1)} Ks | Avg IP: ${ctx.avgIP.toFixed(1)}`;
-      if (line != null) {
-        const hitOver = Math.round(100); // placeholder — computed from raw logs
-        badge += ` | vs Line: ${((ctx.l10Avg - line) / line * 100).toFixed(0)}% edge`;
+
+      // BUG I FIX: compute actual hit rate from stored l10Ks values
+      let hitRateStr = "";
+      if (line != null && ctx.l10Ks && ctx.l10Ks.length > 0) {
+        const hitsOver = ctx.l10Ks.filter((k: number) => k > line).length;
+        const hitRate = Math.round((hitsOver / ctx.l10Ks.length) * 100);
+        const edgePct = ((ctx.l10Avg - line) / line * 100).toFixed(0);
+        hitRateStr = ` | Hit Over: ${hitRate}% | Edge: ${edgePct}%`;
       }
+
+      let badge = `⚾ L10 Avg: ${ctx.l10Avg.toFixed(1)} Ks | L3 Avg: ${ctx.l3Avg.toFixed(1)} Ks | Avg IP: ${ctx.avgIP.toFixed(1)}${hitRateStr}`;
       if (ctx.matchupAvg !== null) {
         badge += ` | vs Opp: ${ctx.matchupAvg.toFixed(1)} Ks (${ctx.matchupGames}g)`;
       }
@@ -1469,9 +1479,11 @@ Deno.serve(async (req) => {
     // ====== STORE ALERTS AS PREDICTION ACCURACY RECORDS ======
     const predRows = (await Promise.all(gatedAlerts
       .filter(a => {
-        const dedupKey = `${a.event_id}|${a.player_name}|${a.prop_type}|${a.type}`;
+        // BUG F FIX: use signal_type as canonical field name (matches DB column)
+        const signalTypeKey = a.signal_type ?? a.type;
+        const dedupKey = `${a.event_id}|${a.player_name}|${a.prop_type}|${signalTypeKey}`;
         if (recentPredKeys.has(dedupKey)) {
-          log(`⏭ Skipping duplicate: ${a.player_name} ${a.prop_type} ${a.type}`);
+          log(`⏭ Skipping duplicate: ${a.player_name} ${a.prop_type} ${signalTypeKey}`);
           return false;
         }
         return true;
