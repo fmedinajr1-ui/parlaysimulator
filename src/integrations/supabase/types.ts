@@ -2174,6 +2174,7 @@ export type Database = {
           created_at: string | null
           eligibility_type: string | null
           engine_version: string | null
+          fade_only: boolean | null
           games_played: number | null
           h2h_avg_vs_opponent: number | null
           h2h_matchup_boost: number | null
@@ -2221,6 +2222,7 @@ export type Database = {
           created_at?: string | null
           eligibility_type?: string | null
           engine_version?: string | null
+          fade_only?: boolean | null
           games_played?: number | null
           h2h_avg_vs_opponent?: number | null
           h2h_matchup_boost?: number | null
@@ -2268,6 +2270,7 @@ export type Database = {
           created_at?: string | null
           eligibility_type?: string | null
           engine_version?: string | null
+          fade_only?: boolean | null
           games_played?: number | null
           h2h_avg_vs_opponent?: number | null
           h2h_matchup_boost?: number | null
