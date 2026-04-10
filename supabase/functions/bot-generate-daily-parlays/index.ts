@@ -25,32 +25,23 @@ const MAX_THREES_OVER_PER_PARLAY = 1;
 // ============= GOLD SIGNAL GATES =============
 // Serial killer players: historically destroy parlays via miss-by-1
 const SERIAL_KILLER_KEYS = new Set([
-  "malik monk|player_threes|over",
-  "gui santos|player_threes|over",
+  "malik monk|threes|over",
+  "gui santos|threes|over",
   "joel embiid|assists|over",
-  "joel embiid|player_assists|over",
-  "coby white|player_threes|over",
+  "coby white|threes|over",
   "ben sheppard|threes|over",
-  "bilal coulibaly|player_threes|over",
+  "bilal coulibaly|threes|over",
   "a.j. green|threes|over",
   "carlton carrington|threes|over",
   "kon knueppel|threes|over",
-  "onyeka okongwu|player_threes|over",
-  "brandon miller|player_blocks|over",
+  "onyeka okongwu|threes|over",
+  "brandon miller|blocks|over",
   "derrick white|assists|under",
-  "derrick white|player_assists|under",
-  // Cold streak offenders (Apr 1-3 data)
-  "andrew wiggins|player_points|under",
   "andrew wiggins|points|under",
-  "jayson tatum|player_points|over",
   "jayson tatum|points|over",
-  "sam hauser|player_rebounds|over",
   "sam hauser|rebounds|over",
-  "lamelo ball|player_threes|over",
   "lamelo ball|threes|over",
-  "jonathan kuminga|player_rebounds|over",
   "jonathan kuminga|rebounds|over",
-  "jalen green|player_points|over",
   "jalen green|points|over",
 ]);
 
@@ -68,7 +59,9 @@ const POISON_SIGNAL_SPORTS = new Set([
 
 function isSerialKillerLeg(playerName: string, propType: string, side: string): boolean {
   const norm = (s: string) => (s || '').toLowerCase().trim();
-  const key = `${norm(playerName)}|${norm(propType)}|${norm(side)}`;
+  // BUG 1 FIX: strip player_/batter_/pitcher_ prefix so keys match regardless
+  const normProp = (p: string) => norm(p).replace(/^(player_|batter_|pitcher_)/, '');
+  const key = `${norm(playerName)}|${normProp(propType)}|${norm(side)}`;
   return SERIAL_KILLER_KEYS.has(key);
 }
 
@@ -129,11 +122,16 @@ function sanitizeParlayLegs(parlay: any): any | null {
     }
 
     // Rebound cap
-    if ((propRaw === 'rebounds' || propRaw === 'player_rebounds') && reboundCount >= MAX_REBOUND_LEGS_PER_PARLAY) {
-      console.log(`[Sanitizer] Removed ${leg.player_name} rebounds — cap exceeded`);
-      continue;
+    // BUG 2 FIX: increment first, then cap — consistent with threes cap logic
+    const isReboundLeg = propRaw === 'rebounds' || propRaw === 'player_rebounds';
+    if (isReboundLeg) {
+      reboundCount++;
+      if (reboundCount > MAX_REBOUND_LEGS_PER_PARLAY) {
+        console.log(`[Sanitizer] Removed ${leg.player_name} rebounds — cap exceeded (${reboundCount}/${MAX_REBOUND_LEGS_PER_PARLAY})`);
+        reboundCount--; // un-increment since we're not including this leg
+        continue;
+      }
     }
-    if (propRaw === 'rebounds' || propRaw === 'player_rebounds') reboundCount++;
 
     cleanLegs.push(leg);
   }
@@ -262,8 +260,9 @@ function getDayTypeBoost(propType: string, daySignal: DayTypeSignal | null): num
 
   if (primaryProps.includes(normalized)) return 8;   // Matches dominant day type
   if (secondaryProps.includes(normalized)) return 4;  // Matches secondary day type
-  // Penalize props that contradict the day type (but don't hard-block)
-  return -5;
+  // BUG 3 FIX: soft penalty for props not aligned with today's dominant type
+  // -2 instead of -5 to preserve pick diversity and avoid mono-prop parlays
+  return -2;
 }
 
 // Normalize prop type variants to canonical form to prevent split tracking
@@ -492,16 +491,20 @@ async function detectWinningArchetypes(supabase: any): Promise<{ categories: Set
       const seenCategories = new Set<string>();
       
       for (const leg of legs) {
-        const cat = (leg as any).category || '';
+        const cat     = (leg as any).category || '';
+        const outcome = (leg as any).outcome;
         if (!cat) continue;
-        // Count each category once per parlay (parlay-level win rate)
-        if (!seenCategories.has(cat)) {
-          seenCategories.add(cat);
+        // BUG 4 FIX: track leg-level hits not parlay-level wins.
+        // Parlay-level win rate is confounded — the category that caused the win
+        // is indistinguishable from categories that just happened to be in the
+        // same parlay. Leg hit rate is more accurate.
+        if (outcome === 'hit' || outcome === 'miss') {
           const stats = categoryStats.get(cat) || { wins: 0, total: 0 };
           stats.total++;
-          if (isWin) stats.wins++;
+          if (outcome === 'hit') stats.wins++;
           categoryStats.set(cat, stats);
         }
+        // For unsettled legs, skip — only count resolved outcomes
       }
     }
 
@@ -693,7 +696,9 @@ function getStrategyVolumeCap(strategy: string, defaultCap: number): number {
     .replace(/_execution_.*$/, '')
     .replace(/_exploration.*$/, '')
     .replace(/_validation.*$/, '')
-    .replace(/_bankroll_doubler.*$/, '');
+    .replace(/_bankroll_doubler.*$/, '')
+    .replace(/_promoted$/, '')          // BUG 5 FIX: catches mispriced_edge_promoted
+    .replace(/_promoted_.*$/, '');      // catches _promoted_1, _promoted_hitrate etc
 
   const rates = strategyHitRates.get(base);
   if (!rates || rates.total < 5) return defaultCap; // Not enough data
@@ -715,7 +720,9 @@ function getStrategyCompositeBoost(strategy: string): number {
     .replace(/_execution_.*$/, '')
     .replace(/_exploration.*$/, '')
     .replace(/_validation.*$/, '')
-    .replace(/_bankroll_doubler.*$/, '');
+    .replace(/_bankroll_doubler.*$/, '')
+    .replace(/_promoted$/, '')          // BUG 5 FIX
+    .replace(/_promoted_.*$/, '');      // BUG 5 FIX
 
   const rates = strategyHitRates.get(base);
   if (!rates || rates.total < 5) return 0;
