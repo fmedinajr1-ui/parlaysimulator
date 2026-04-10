@@ -1682,7 +1682,8 @@ Deno.serve(async (req) => {
           const origPrediction = record.prediction;
           const origSide = origPrediction.split(" ")[0]; // "OVER", "UNDER", "BACK", "FADE"
           const flippedSideStr = flipSide(origSide);
-          const flippedPred = flipPrediction(origPrediction);
+          const currentLine = record.signal_factors?.current_line ?? record.signal_factors?.line_to ?? null;
+          const flippedPred = flipPrediction(origPrediction, currentLine);
 
           // Validate flip with L10 data for player props (skip team markets)
           const isTeamMarket = TEAM_MARKET_TYPES.has(record.prop_type);
