@@ -684,6 +684,34 @@ Deno.serve(async (req) => {
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
+    // Readable prop labels for user-facing messages
+    const READABLE_PROP_LABELS: Record<string, string> = {
+      player_points: "Points", player_rebounds: "Rebounds", player_assists: "Assists",
+      player_threes: "3-Pointers", player_blocks: "Blocks", player_steals: "Steals",
+      player_turnovers: "Turnovers", player_points_rebounds_assists: "Pts + Reb + Ast",
+      player_points_rebounds: "Pts + Reb", player_points_assists: "Pts + Ast",
+      player_rebounds_assists: "Reb + Ast", player_fantasy_score: "Fantasy Score",
+      player_double_double: "Double-Double",
+      pitcher_strikeouts: "Strikeouts", pitcher_outs: "Outs",
+      batter_hits: "Hits", batter_rbis: "RBI", batter_runs_scored: "Runs",
+      batter_total_bases: "Total Bases", batter_home_runs: "Home Runs",
+      batter_stolen_bases: "Stolen Bases", batter_walks: "Walks",
+      h2h: "Moneyline", moneyline: "Moneyline", spreads: "Spread", totals: "Total",
+    };
+    function readablePropLabel(propType: string): string {
+      return READABLE_PROP_LABELS[propType] || propType.replace(/^(player_|batter_|pitcher_)/, "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+    function getSportEmojiAlert(sport: string): string {
+      const s = (sport || "").toUpperCase();
+      if (s.includes("NBA") || s.includes("NCAAB")) return "🏀";
+      if (s.includes("MLB") || s.includes("BASEBALL")) return "⚾";
+      if (s.includes("NHL") || s.includes("HOCKEY")) return "🏒";
+      if (s.includes("NFL") || s.includes("NCAAF")) return "🏈";
+      if (s.includes("MMA") || s.includes("UFC")) return "🥊";
+      if (s.includes("SOCCER") || s.includes("MLS") || s.includes("EPL")) return "⚽";
+      return "🎯";
+    }
+
     const bestSignalPerPlayer = new Map<string, { confidence: number; alert: string; record: any }>();
     const addSignal = (playerKey: string, confidence: number, alert: string, record: any) => {
       const existing = bestSignalPerPlayer.get(playerKey);
@@ -756,34 +784,50 @@ Deno.serve(async (req) => {
       const volInfo = volatilityMap.get((first.player_name || "").toLowerCase().trim());
       const isTeamMarket = TEAM_MARKET_TYPES.has(first.prop_type);
       const matchupLine = isTeamMarket ? eventMatchup.get(first.event_id) : null;
-      const marketLabel = isTeamMarket
-        ? `${esc(first.player_name)} ${esc(first.prop_type).toUpperCase()}`
-        : `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`;
 
-      const signalLabel = classifiedSignalType.includes("velocity_spike") ? "VELOCITY SPIKE"
-        : classifiedSignalType.includes("cascade") ? "CASCADE ALERT"
-        : live ? "LINE MOVING NOW" : "LINE ABOUT TO MOVE";
+      // Readable prop + signal labels
+      const readableProp = readablePropLabel(first.prop_type);
+      const sportEmoji = getSportEmojiAlert(first.sport);
+      const signalLabel = classifiedSignalType.includes("velocity_spike") ? "SHARP MONEY SPIKE"
+        : classifiedSignalType.includes("cascade") ? "SUSTAINED LINE MOVE"
+        : live ? "LINE MOVING NOW" : "EARLY LINE SIGNAL";
       const signalEmoji = classifiedSignalType.includes("velocity_spike") ? "⚡"
         : classifiedSignalType.includes("cascade") ? "🌊" : "🔮";
       const liveTag = live ? " [🔴 LIVE]" : "";
 
+      // Why this matters — contextual narrative per signal type
+      const whyNarrative = classifiedSignalType.includes("velocity_spike")
+        ? `Sharp money is pushing this ${side} hard — line jumped ${absLineDiff.toFixed(1)} pts in ${elapsed} min. Books are adjusting because they're exposed.`
+        : classifiedSignalType.includes("cascade")
+        ? `This isn't a one-time blip — the line has moved consistently across ${snapshots.length} snapshots. Institutional money is building a position ${side.toLowerCase()}.`
+        : `Line is drifting ${direction.toLowerCase()} ahead of game time. Early movers usually have an information edge — this is the window to act.`;
+
+      // L10 context line
+      const crossRefData = crossReferenceGate(first.player_name, first.prop_type, last.line, side, last.event_description || "");
+      const l10Context = crossRefData.l10Avg != null && crossRefData.l10HitRate != null
+        ? `📊 L10 avg ${crossRefData.l10Avg.toFixed(1)} | Clears line ${(crossRefData.l10HitRate * 100).toFixed(0)}% of games`
+        : null;
+
       const alertText = [
         `${signalEmoji} *${signalLabel}*${liveTag} — ${esc(first.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
-        marketLabel,
-        fdLineBadge(last.line, last.over_price, last.under_price, side, first.prop_type),
-        `Line ${direction}: ${first.line} → ${last.line}`,
-        `Speed: ${velocityPerHour.toFixed(1)}/hr over ${elapsed}min`,
-        live ? `⏱ In-game shift detected` : `⏱ ~${remaining}min window remaining`,
-        `📊 Confidence: ${Math.round(confidence)}%`,
-        accuracyBadge || null,
-        crossRefBadge || null,
+        ``,
+        `${sportEmoji} *${esc(first.player_name)}* — ${readableProp}`,
+        isMoneylineProp(first.prop_type)
+          ? `📍 ${fmtOdds(last.line)}`
+          : `📍 ${last.line} (was ${first.line}) — moved ${direction.toLowerCase()}`,
+        ``,
+        `🧠 *Why this matters:*`,
+        whyNarrative,
+        ``,
+        l10Context || null,
+        live ? `⏱ In-game shift detected` : remaining > 0 ? `⏱ ~${remaining} min before line locks` : null,
         volWarning || null,
         altLineText || null,
+        ``,
         isMoneylineProp(first.prop_type)
-          ? `✅ *Action: ${side === "OVER" ? "TAKE" : "FADE"} ${esc(first.player_name)} (${fmtOdds(last.line)})*`
-          : `✅ *Action: ${side} ${last.line} ${fmtOdds(side === "OVER" ? last.over_price : last.under_price)}*`,
-        `💡 ${direction === "DROPPING" ? "Line dropping = sharp money on under" : "Line rising = sharp money on over"}`,
+          ? `✅ *Play: ${side === "OVER" ? "TAKE" : "FADE"} ${esc(first.player_name)} (${fmtOdds(last.line)})*`
+          : `✅ *Play: ${side} ${last.line} (${fmtOdds(side === "OVER" ? last.over_price : last.under_price)})*`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
       ].filter(Boolean).join("\n");
 
@@ -890,28 +934,34 @@ Deno.serve(async (req) => {
 
       if (isAccuracyGated("take_it_now", last.prop_type)) { log(`🚫 GATED TIN ${last.player_name} ${last.prop_type}`); continue; }
 
-      const accuracyBadge = dynamicAccBadge("take_it_now", last.prop_type);
       const volWarning = getVolatilityWarning(last.player_name);
       const altLineText = await getAltLineText(last.line, snapDirection, last.prop_type, last.player_name, last.event_id, last.sport);
       const isTeamMarket = TEAM_MARKET_TYPES.has(last.prop_type);
       const matchupLine = isTeamMarket ? eventMatchup.get(last.event_id) : null;
       const volInfo = volatilityMap.get((last.player_name || "").toLowerCase().trim());
+      const readableProp = readablePropLabel(last.prop_type);
+      const sportEmoji = getSportEmojiAlert(last.sport);
+
+      // Snapback narrative
+      const snapNarrative = `Line opened at ${last.opening_line} and drifted ${driftPct.toFixed(0)}% — that's a snapback opportunity. ${directionReason}`;
 
       const alertText = [
-        `🔥 *TAKE IT NOW*${liveTag} — ${esc(last.sport)}`,
+        `🎯 *SNAPBACK VALUE PLAY*${liveTag} — ${esc(last.sport)}`,
         matchupLine ? `🏟 ${esc(matchupLine)}` : null,
-        `${esc(last.player_name)} ${esc(last.prop_type).replace("player ", "").toUpperCase()}`,
-        fdLineBadge(last.line, last.over_price, last.under_price, snapDirection, last.prop_type),
-        `Opening: ${last.opening_line} → Current: ${last.line} (${driftPct.toFixed(1)}% drift)`,
-        `📊 Confidence: ${Math.round(confidence)}%`,
-        accuracyBadge || null,
+        ``,
+        `${sportEmoji} *${esc(last.player_name)}* — ${readableProp}`,
+        `📍 ${last.line} (opened ${last.opening_line})`,
+        ``,
+        `🧠 *Why this matters:*`,
+        snapNarrative,
+        ``,
         crossRef.badge || null,
         volWarning || null,
         altLineText || null,
+        ``,
         isMoneylineProp(last.prop_type)
-          ? `✅ *Action: ${snapDirection === "OVER" ? "TAKE" : "FADE"} ${esc(last.player_name)} (${fmtOdds(last.line)})*`
-          : `✅ *Action: ${snapDirection} ${last.line}*`,
-        `💡 ${directionReason}`,
+          ? `✅ *Play: ${snapDirection === "OVER" ? "TAKE" : "FADE"} ${esc(last.player_name)} (${fmtOdds(last.line)})*`
+          : `✅ *Play: ${snapDirection} ${last.line}*`,
         isCombo ? `🔥 *COMBO PROP* — 85-100% historical accuracy` : null,
       ].filter(Boolean).join("\n");
 
@@ -965,15 +1015,20 @@ Deno.serve(async (req) => {
         const volWarning = getVolatilityWarning(first.player_name);
         const volInfo = volatilityMap.get((first.player_name || "").toLowerCase().trim());
 
+        const readableProp = readablePropLabel(first.prop_type);
+        const sportEmoji = getSportEmojiAlert(first.sport);
         const alertText = [
-          `⚠️ *TRAP WARNING*${liveTag} — ${esc(first.sport)}`,
+          `🚨 *TRAP ALERT*${liveTag} — ${esc(first.sport)}`,
           matchupLine ? `🏟 ${esc(matchupLine)}` : null,
-          `${esc(first.player_name)} ${esc(first.prop_type).replace("player ", "").toUpperCase()}`,
-          `Line reversed: ${first.line} → ${mid.line} → ${last.line}`,
-          `🚫 Sharp reversal pattern — DO NOT TOUCH`,
+          ``,
+          `${sportEmoji} *${esc(first.player_name)}* — ${readableProp}`,
+          `📍 ${first.line} → ${mid.line} → ${last.line}`,
+          ``,
+          `🧠 *Why this matters:*`,
+          `Line moved one direction then snapped back — classic book manipulation. They're trying to bait action on both sides. Stay away.`,
+          ``,
           volWarning || null,
-          `✅ *Action: STAY AWAY — both sides are dangerous*`,
-          `💡 Book manipulating line to trap bettors`,
+          `🚫 *Action: STAY AWAY — both sides are dangerous*`,
         ].filter(Boolean).join("\n");
 
         const record = {

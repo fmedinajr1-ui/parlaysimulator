@@ -176,7 +176,6 @@ function formatSweetSpotsBroadcast(data: Record<string, any>, dateStr: string): 
   const picks = data.picks || [];
   if (picks.length === 0) return `🎯 *Sweet Spot Picks — ${dateStr}*\n\nNo qualifying picks today.`;
 
-  // BUG 11 FIX: unique emoji per prop type instead of all "📊"
   const CATEGORY_EMOJI: Record<string, string> = {
     points: '🏀', rebounds: '💪', assists: '🎯', threes: '🔥',
     steals: '🖐️', blocks: '🛡️', pra: '⭐', pts_rebs: '🔁',
@@ -202,29 +201,35 @@ function formatSweetSpotsBroadcast(data: Record<string, any>, dateStr: string): 
     return labels[cat] || cat.charAt(0).toUpperCase() + cat.slice(1);
   };
 
-  const propShort = (cat: string) => {
-    const shorts: Record<string, string> = {
-      points: 'Pts', rebounds: 'Reb', assists: 'Ast', threes: '3PT',
-      pra: 'PRA', pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
-      steals: 'Stl', blocks: 'Blk', turnovers: 'TO',
-    };
-    return shorts[cat] || cat.toUpperCase();
-  };
-
   let totalConf = 0;
   let count = 0;
 
   for (const [cat, catPicks] of Object.entries(groups)) {
     const emoji = CATEGORY_EMOJI[cat] || '📊';
-    msg += `${emoji} *${catLabel(cat)}*\n`;
+    // Category hit rate from the picks in this group
+    const catHitRates = catPicks.filter((p: any) => p.l10_hit_rate != null).map((p: any) => p.l10_hit_rate);
+    const avgCatHitRate = catHitRates.length > 0 ? Math.round((catHitRates.reduce((a: number, b: number) => a + b, 0) / catHitRates.length) * 100) : null;
+    const catHeader = avgCatHitRate != null ? `${emoji} *${catLabel(cat)}* — ${avgCatHitRate}% avg L10 hit rate` : `${emoji} *${catLabel(cat)}*`;
+    msg += `${catHeader}\n`;
     for (const p of catPicks) {
-      const side = (p.recommended_side || 'over').charAt(0).toUpperCase();
+      const side = (p.recommended_side || 'over').toUpperCase();
       const line = p.recommended_line ?? '?';
       const conf = Math.round(p.confidence_score || 0);
-      // l10_hit_rate is stored as 0.0-1.0 decimal
-      const l10 = p.l10_hit_rate != null ? `${Math.round(p.l10_hit_rate * 100)}%` : '—';
-      const l10avg = p.l10_avg != null ? ` | avg ${p.l10_avg.toFixed(1)}` : '';
-      msg += `• *${p.player_name}* — ${side} ${line} ${propShort(cat)} | ${conf}% conf, ${l10} L10${l10avg}\n`;
+      const l10avg = p.l10_avg != null ? p.l10_avg.toFixed(1) : null;
+
+      // One-liner edge explanation
+      let edgeLine = '';
+      if (l10avg != null && line !== '?') {
+        const numLine = Number(line);
+        if (side === 'OVER' && Number(l10avg) > numLine) {
+          edgeLine = ` — averaging ${l10avg} over L10 against a ${line} line`;
+        } else if (side === 'UNDER' && Number(l10avg) < numLine) {
+          edgeLine = ` — averaging ${l10avg} over L10, well under the ${line} line`;
+        }
+      }
+
+      msg += `• *${p.player_name}* — ${side} ${line}${edgeLine}\n`;
+      msg += `  🎯 ${conf}% confidence\n`;
       totalConf += conf;
       count++;
     }
@@ -248,9 +253,37 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
   const plSign = (profitLoss ?? 0) >= 0 ? '+' : '';
   const plIcon = (profitLoss ?? 0) >= 0 ? '🟢' : '🔴';
 
+  // Narrative verdict
+  let verdict = '';
+  if (winRate >= 70) verdict = 'Dominant day — nearly everything hit.';
+  else if (winRate >= 55) verdict = 'Solid day — system is grinding.';
+  else if (winRate >= 40) verdict = 'Mixed results — some edges landed, some didn\'t.';
+  else if (totalParlays > 0) verdict = 'Rough day — variance caught up with us.';
+
+  // Find what carried us / what busted us
+  const propTypeStats = new Map<string, { hits: number; total: number }>();
+  if (parlayDetails?.length > 0) {
+    for (const p of parlayDetails) {
+      for (const leg of (p.legs || [])) {
+        if (leg.outcome !== 'hit' && leg.outcome !== 'miss') continue;
+        const prop = PROP_LABELS[(leg.prop_type || '').toLowerCase()] || (leg.prop_type || '').toUpperCase();
+        const s = propTypeStats.get(prop) || { hits: 0, total: 0 };
+        s.total++;
+        if (leg.outcome === 'hit') s.hits++;
+        propTypeStats.set(prop, s);
+      }
+    }
+  }
+  const sortedProps = [...propTypeStats.entries()].sort((a, b) => (b[1].hits / b[1].total) - (a[1].hits / a[1].total));
+  const bestProp = sortedProps.find(([, s]) => s.total >= 2 && s.hits / s.total >= 0.7);
+  const worstProp = sortedProps.reverse().find(([, s]) => s.total >= 2 && s.hits / s.total <= 0.3);
+  if (bestProp) verdict += ` ${bestProp[0]} carried us.`;
+  if (worstProp) verdict += ` ${worstProp[0]} busted ${worstProp[1].total - worstProp[1].hits} tickets.`;
+
   let msg = `${plIcon} *DAILY SETTLEMENT — ${dateStr}*\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  if (verdict) msg += `💬 _${verdict}_\n\n`;
   msg += `*Result:* ${parlaysWon || 0}/${totalParlays} hit (${winRate}%)\n`;
-  msg += `*P/L:* ${plSign}$${(profitLoss ?? 0).toFixed(0)} (simulation)\n`;
+  msg += `*P/L:* ${plSign}$${(profitLoss ?? 0).toFixed(0)}\n`;
 
   if (bankroll !== undefined) {
     const prev = (bankroll - (profitLoss || 0)).toFixed(0);
@@ -312,8 +345,8 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
       }
     }
 
-    // Top busters
-    const missMap = new Map<string, { count: number; actual: number | null }>();
+    // Top busters with context
+    const missMap = new Map<string, { count: number; actual: number | null; line: number | null; side: string }>();
     for (const p of parlayDetails) {
       if (p.outcome !== 'lost') continue;
       for (const leg of (p.legs || [])) {
@@ -323,34 +356,28 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
         const key = `${leg.player_name} ${side}${leg.line} ${prop}`;
         const existing = missMap.get(key);
         if (existing) existing.count++;
-        else missMap.set(key, { count: 1, actual: leg.actual_value });
+        else missMap.set(key, { count: 1, actual: leg.actual_value, line: leg.line, side: leg.side || 'over' });
       }
     }
     const busters = [...missMap.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 5);
     if (busters.length > 0) {
       msg += `\n*Top Busters:*\n`;
-      for (const [key, { count, actual }] of busters) {
-        const actualStr = actual != null ? ` (actual: ${actual})` : '';
-        msg += `💔 ${key} — missed in ${count} parlay${count > 1 ? 's' : ''}${actualStr}\n`;
+      for (const [key, { count, actual, line, side }] of busters) {
+        const isOver = (side || 'over').toLowerCase() === 'over';
+        let context = '';
+        if (actual != null && line != null) {
+          const diff = isOver ? line - actual : actual - line;
+          if (diff > 0) context = ` — missed by ${diff.toFixed(1)}`;
+        }
+        msg += `💔 ${key} — killed ${count} parlay${count > 1 ? 's' : ''}${actual != null ? ` (actual: ${actual})` : ''}${context}\n`;
       }
     }
 
     // Prop type breakdown
-    const propTypeStats = new Map<string, { hits: number; total: number }>();
-    for (const p of parlayDetails) {
-      for (const leg of (p.legs || [])) {
-        if (leg.outcome !== 'hit' && leg.outcome !== 'miss') continue;
-        const prop = PROP_LABELS[(leg.prop_type || '').toLowerCase()] || (leg.prop_type || '').toUpperCase();
-        const s = propTypeStats.get(prop) || { hits: 0, total: 0 };
-        s.total++;
-        if (leg.outcome === 'hit') s.hits++;
-        propTypeStats.set(prop, s);
-      }
-    }
     if (propTypeStats.size > 0) {
-      const sorted = [...propTypeStats.entries()].sort((a, b) => (b[1].hits / b[1].total) - (a[1].hits / a[1].total));
+      const sorted2 = [...propTypeStats.entries()].sort((a, b) => (b[1].hits / b[1].total) - (a[1].hits / a[1].total));
       msg += `\n*Prop Breakdown:*\n`;
-      for (const [prop, { hits, total }] of sorted) {
+      for (const [prop, { hits, total }] of sorted2) {
         const pct = Math.round((hits / total) * 100);
         const bar = pct >= 70 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
         msg += `${bar} ${prop}: ${hits}/${total} (${pct}%)\n`;
