@@ -68,6 +68,9 @@ Deno.serve(async (req) => {
     // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
     await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
 
+    // Step 4.5: Tennis Total Games analyzer (non-fatal)
+    await invokeStep('Tennis games analyzer', 'tennis-games-analyzer', {});
+
     // Step 5: UNIFIED SETTLEMENT — replaces fragmented mlb-rbi-settler + fanduel-accuracy-feedback
     // Settles ALL signal types through the single settlement-orchestrator
     // with trigger_learning=false (learning happens at 4 AM wave)
