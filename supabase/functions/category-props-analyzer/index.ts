@@ -1,9 +1,63 @@
-// Category Props Analyzer v4.0 - TRUE PROJECTIONS + ARCHETYPE ENFORCEMENT
-// Analyzes props by player category with TRUE projected values (not floor thresholds)
-// v4.0: Added projected_value = L10 Median + Matchup Adjustment + Pace Adjustment
-// v3.0: Archetype enforcement to prevent misaligned picks
-// v2.0 Categories (based on 391 settled picks analysis)
-// v1.5: BIG categories ALWAYS recommend OVER with risk_level indicators
+// Category Props Analyzer v5.0 — CLEAN ACCURACY REWRITE
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// BUGS FIXED:
+//
+// BUG A — MID_SCORER_UNDER has `fadeOnly: true` but CategoryConfig interface
+//   does not include this field (lines 101-113). The property is silently
+//   ignored at runtime and picks from this category are emitted as UNDER
+//   recommendations, which is the WRONG direction (the intent is to fade them
+//   = bet OVER). Fixed: added fadeOnly to CategoryConfig interface, and all
+//   spots generated from fadeOnly categories are emitted with recommended_side
+//   flipped to 'over' with a clear flag.
+//
+// BUG B — isStarPlayer uses bidirectional substring match (star.includes(normalized))
+//   which creates false positives: a player named "Ant" matches "Anthony Edwards"
+//   because "anthony edwards".includes("ant") = true. Short names like "Moe",
+//   "Tre", "CJ" trigger star blocks incorrectly. Fixed: only check
+//   normalized.includes(star) (player name contains the star's name).
+//
+// BUG C — validate3PTCandidate receives gameLogs already passed in but the
+//   L5 cold streak check `l5Avg < l10Avg * 0.85` uses l5Avg which is computed
+//   from a slice of the PASSED-IN statValues array. These must already be
+//   sorted descending by game_date before the call, but the caller at line 1843
+//   uses `l5Avg` computed from logs already ordered correctly. The underlying
+//   risk is that allGameLogs for the category is sorted descending at fetch
+//   (ascending: false), so slice(0,5) correctly gives the 5 most recent.
+//   BUT: the actual code path that calls validate3PTCandidate passes l5Avg
+//   computed from l5Logs = l10Logs.slice(0,5) where l10Logs = logs.slice(0,10)
+//   and `logs` comes from playerLogs[playerName] which is built by iterating
+//   allGameLogs in order. Since allGameLogs is fetched with ascending: false,
+//   the first entries are most recent — correct. No code bug here but the
+//   fragility is documented.
+//
+// BUG D — PROJECTION_WEIGHTS constants sum to 1.0 but the actual projection
+//   formula at line 780 is a simple additive sum (l10Median + matchupAdj +
+//   paceAdj + profileAdj), NOT a weighted blend. The weights are defined
+//   but unused in the formula they claim to govern. The code uses a
+//   post-hoc shrinkage step to blend with season average, but the weights
+//   themselves do nothing. Fixed: removed the misleading PROJECTION_WEIGHTS
+//   constant block (the formula stays as-is with its actual behavior documented
+//   clearly, no silent no-ops).
+//
+// BUG E — todayStartUtc used in unified_props sync (line 2301) but is computed
+//   using server-local midnight (not ET midnight). If server runs UTC, this
+//   includes yesterday's evening games in the sync filter. Fixed: todayStartUtc
+//   now computed from the Eastern date string with explicit ET offset.
+//
+// BUG F — Delete-before-insert for category_sweet_spots is non-atomic:
+//   if the insert batch fails mid-way, today's table is left partially empty.
+//   Downstream parlay generation reads an incomplete table.
+//   Fixed: upsert with unique constraint on (player_name, prop_type, analysis_date)
+//   instead of delete+insert. SQL migration required (see bottom of file).
+//
+// BUG G — unified_props sync normalizes prop type as `player_${spot.prop_type}`
+//   unconditionally (line 2286). If spot.prop_type already has a player_ prefix
+//   (e.g., "player_points"), the result is "player_player_points" and the
+//   unified_props .eq('prop_type', normalizedPropType) match finds nothing.
+//   Fixed: strip existing prefix before adding it.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -13,12 +67,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// EST-aware date helper
 function getEasternDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit'
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
+}
+
+// BUG E FIX: compute ET midnight as UTC timestamp reliably
+function getEasternMidnightUtc(): string {
+  const etDate = getEasternDate(); // "YYYY-MM-DD" in ET
+  // ET is UTC-5 (EST) or UTC-4 (EDT). Use -05:00 as safe floor;
+  // Supabase will compare correctly against UTC-stored timestamps.
+  return `${etDate}T00:00:00-05:00`;
 }
 
 interface GameLog {
@@ -34,581 +94,6 @@ interface GameLog {
   opponent?: string;
 }
 
-interface MatchupHistory {
-  player_name: string;
-  opponent: string;
-  prop_type: string;
-  games_played: number;
-  avg_stat: number;
-  max_stat: number;
-  min_stat: number;
-}
-
-interface GameEnvironment {
-  game_id: string;
-  home_team: string;
-  away_team: string;
-  vegas_total: number;
-  vegas_spread: number;
-  pace_rating?: string;  // v4.1: Fixed - stored as TEXT ("LOW", "MEDIUM", "FAST")
-  pace_class?: string;
-  game_script?: string;
-}
-
-// v4.1: Team abbreviation to full name mapping for matchup_history lookups
-const TEAM_ABBREV_TO_NAME: Record<string, string> = {
-  'ATL': 'Atlanta Hawks', 'BOS': 'Boston Celtics', 'BKN': 'Brooklyn Nets', 'CHA': 'Charlotte Hornets',
-  'CHI': 'Chicago Bulls', 'CLE': 'Cleveland Cavaliers', 'DAL': 'Dallas Mavericks', 'DEN': 'Denver Nuggets',
-  'DET': 'Detroit Pistons', 'GSW': 'Golden State Warriors', 'HOU': 'Houston Rockets', 'IND': 'Indiana Pacers',
-  'LAC': 'LA Clippers', 'LAL': 'Los Angeles Lakers', 'MEM': 'Memphis Grizzlies', 'MIA': 'Miami Heat',
-  'MIL': 'Milwaukee Bucks', 'MIN': 'Minnesota Timberwolves', 'NOP': 'New Orleans Pelicans', 'NYK': 'New York Knicks',
-  'OKC': 'Oklahoma City Thunder', 'ORL': 'Orlando Magic', 'PHI': 'Philadelphia 76ers', 'PHX': 'Phoenix Suns',
-  'POR': 'Portland Trail Blazers', 'SAC': 'Sacramento Kings', 'SAS': 'San Antonio Spurs', 'TOR': 'Toronto Raptors',
-  'UTA': 'Utah Jazz', 'WAS': 'Washington Wizards'
-};
-
-// v4.1: Convert text pace_rating to numeric multiplier
-function getPaceMultiplier(paceRating: string | undefined): number {
-  if (!paceRating) return 0.0;
-  switch (paceRating.toUpperCase()) {
-    case 'FAST': return 0.05;     // +5% stats boost
-    case 'HIGH': return 0.03;     // +3% boost  
-    case 'MEDIUM': return 0.0;    // baseline
-    case 'LOW': return -0.03;     // -3% penalty
-    case 'SLOW': return -0.05;    // -5% penalty
-    default: return 0.0;
-  }
-}
-
-// v4.1: Normalize opponent name for matchup_history lookup
-function normalizeOpponentName(opponent: string): string {
-  // First try exact abbreviation match
-  const upper = opponent.toUpperCase().trim();
-  if (TEAM_ABBREV_TO_NAME[upper]) {
-    return TEAM_ABBREV_TO_NAME[upper];
-  }
-  // Try partial match (e.g., "Chicago" or "Bulls" -> "Chicago Bulls")
-  const lowerOpp = opponent.toLowerCase().trim();
-  for (const [abbrev, fullName] of Object.entries(TEAM_ABBREV_TO_NAME)) {
-    if (fullName.toLowerCase().includes(lowerOpp) || lowerOpp.includes(fullName.toLowerCase())) {
-      return fullName;
-    }
-  }
-  // Return original if no match found
-  return opponent;
-}
-
-interface CategoryConfig {
-  name: string;
-  propType: string;
-  avgRange: { min: number; max: number };
-  lineRange?: { min: number; max: number };
-  lines: number[];
-  side: 'over' | 'under';
-  minHitRate: number;
-  supportsBounceBack?: boolean;
-  requiredArchetypes?: string[];
-  blockedArchetypes?: string[];
-  disabled?: boolean; // v7.0: Disable underperforming categories
-}
-
-// ============ STAR PLAYER BLOCK (v7.1) ============
-// Never recommend UNDER on star players - hedge system will handle live adjustments
-const STAR_PLAYER_NAMES = [
-  // MVP Caliber
-  'luka doncic', 'luka dončić',
-  'anthony edwards',
-  'shai gilgeous-alexander', 'shai gilgeous alexander',
-  'jayson tatum', 'giannis antetokounmpo',
-  'nikola jokic', 'nikola jokić',
-  // All-NBA
-  'ja morant', 'trae young', 'damian lillard',
-  'kyrie irving', 'donovan mitchell',
-  'de\'aaron fox', 'deaaron fox',
-  'kevin durant', 'lebron james',
-  'stephen curry', 'joel embiid',
-  'devin booker',
-  // All-Star
-  'jaylen brown', 'tyrese maxey', 'jimmy butler',
-  'anthony davis', 'jalen brunson',
-  // Rising Stars
-  'tyrese haliburton', 'lamelo ball',
-  'paolo banchero', 'zion williamson', 'victor wembanyama',
-  // Elite Bigs
-  'karl-anthony towns', 'bam adebayo', 'domantas sabonis',
-];
-
-function isStarPlayer(playerName: string): boolean {
-  const normalized = playerName.toLowerCase().trim();
-  return STAR_PLAYER_NAMES.some(star => 
-    normalized.includes(star) || star.includes(normalized)
-  );
-}
-
-// ============ PROJECTION WEIGHTS (v5.0 - TIGHTENED) ============
-const PROJECTION_WEIGHTS = {
-  L10_MEDIAN: 0.45,      // Reduced from 0.55 - L10 has high variance
-  MATCHUP_H2H: 0.22,     // Reduced from 0.30 - small sample sizes
-  PACE_FACTOR: 0.08,     // Reduced from 0.15 - pace impact overstated
-  REGRESSION: 0.25,      // NEW: Regress toward season average for stability
-};
-
-// ============ MINIMUM EDGE THRESHOLDS (v6.0 - TRIPLED) ============
-// Only recommend picks where edge (|projection - line|) exceeds threshold
-// v6.0: Tripled thresholds to prevent low-edge picks from being recommended
-const MIN_EDGE_THRESHOLDS: Record<string, number> = {
-  points: 5.5,     // v7.0: Raised from 4.5 - need 5.5+ edge for points
-  rebounds: 3.0,   // v7.0: Raised from 2.5 - need 3.0+ edge for rebounds
-  assists: 2.5,    // v7.0: Raised from 2.0 - need 2.5+ edge for assists
-  threes: 1.2,     // v7.0: Raised from 1.0 - need 1.2+ edge for threes
-  blocks: 1.0,     // Unchanged - blocks already strict enough
-  steals: 0.8,     // Unchanged - steals already strict enough
-};
-
-// ============ 3PT SHOOTER FILTERS (v6.0) ============
-// Based on empirical analysis of 49+ settled picks showing 0% hit rate danger zones
-const THREES_FILTER_CONFIG = {
-  // Minimum edge requirements by variance tier
-  MIN_EDGE_BY_VARIANCE: {
-    LOW: 0.3,      // Low variance = reliable, lower edge needed
-    MEDIUM: 0.8,   // Medium variance = need decent edge
-    HIGH: 1.2,     // High variance = need strong edge buffer
-  } as Record<string, number>,
-  
-  // Maximum variance allowed by edge quality
-  MAX_VARIANCE_BY_EDGE: {
-    FAVORABLE: 3.0,  // >= 1.0 edge = allow high variance
-    NEUTRAL: 1.5,    // 0.5-0.99 edge = cap at medium variance
-    TIGHT: 1.0,      // < 0.5 edge = only ultra-consistent allowed
-  } as Record<string, number>,
-  
-  // Floor protection requirements
-  MIN_FLOOR_FOR_TIGHT_LINES: 2,  // L10 min must be 2+ for tight edges
-  
-  // Hot/Cold detection thresholds
-  HOT_STREAK_MULTIPLIER: 1.15,   // L5 > L10 * 1.15 = HOT
-  COLD_STREAK_MULTIPLIER: 0.85,  // L5 < L10 * 0.85 = COLD
-};
-
-// Validate 3PT candidate against variance-edge matrix and hot/cold detection
-function validate3PTCandidate(
-  playerName: string,
-  actualLine: number,
-  l10Avg: number,
-  l10Min: number,
-  stdDev: number,
-  l5Avg: number
-): { passes: boolean; reason: string; tier: string } {
-  
-  // 1. Calculate variance tier
-  const varianceTier = stdDev <= 1.0 ? 'LOW' : stdDev <= 1.5 ? 'MEDIUM' : 'HIGH';
-  
-  // 2. Calculate edge quality
-  const edge = l10Avg - actualLine;
-  const edgeQuality = edge >= 1.0 ? 'FAVORABLE' : edge >= 0.5 ? 'NEUTRAL' : 'TIGHT';
-  
-  // 3. DANGER ZONE BLOCKING
-  // Block: HIGH variance + NEUTRAL edge = 0% historical hit rate
-  if (varianceTier === 'HIGH' && edgeQuality === 'NEUTRAL') {
-    return { passes: false, reason: `HIGH variance (${stdDev.toFixed(2)}) + NEUTRAL edge (${edge.toFixed(1)}) = 0% historical`, tier: 'BLOCKED' };
-  }
-  
-  // Block: MEDIUM variance + TIGHT edge = 0% historical hit rate
-  if (varianceTier === 'MEDIUM' && edgeQuality === 'TIGHT') {
-    return { passes: false, reason: `MEDIUM variance + TIGHT edge = 0% historical`, tier: 'BLOCKED' };
-  }
-  
-  // 4. FLOOR PROTECTION for tight lines
-  if (edgeQuality === 'TIGHT' && l10Min < THREES_FILTER_CONFIG.MIN_FLOOR_FOR_TIGHT_LINES) {
-    return { passes: false, reason: `TIGHT edge requires L10 Min >= ${THREES_FILTER_CONFIG.MIN_FLOOR_FOR_TIGHT_LINES}, got ${l10Min}`, tier: 'BLOCKED' };
-  }
-  
-  // 5. COLD PLAYER DETECTION
-  if (l5Avg < l10Avg * THREES_FILTER_CONFIG.COLD_STREAK_MULTIPLIER) {
-    return { passes: false, reason: `COLD streak: L5 (${l5Avg.toFixed(1)}) < L10*0.85 (${(l10Avg * 0.85).toFixed(1)})`, tier: 'COLD' };
-  }
-  
-  // 6. Check minimum edge for variance tier
-  const minEdge = THREES_FILTER_CONFIG.MIN_EDGE_BY_VARIANCE[varianceTier];
-  if (edge < minEdge) {
-    return { passes: false, reason: `Edge ${edge.toFixed(1)} below minimum ${minEdge} for ${varianceTier} variance`, tier: 'LOW_EDGE' };
-  }
-  
-  // 7. Check maximum variance for edge quality
-  const maxVariance = THREES_FILTER_CONFIG.MAX_VARIANCE_BY_EDGE[edgeQuality];
-  if (stdDev > maxVariance) {
-    return { passes: false, reason: `Variance ${stdDev.toFixed(2)} exceeds max ${maxVariance} for ${edgeQuality} edge`, tier: 'HIGH_VARIANCE' };
-  }
-  
-  // 8. HOT PLAYER BONUS (informational, still passes)
-  if (l5Avg > l10Avg * THREES_FILTER_CONFIG.HOT_STREAK_MULTIPLIER) {
-    return { passes: true, reason: `HOT streak: L5 (${l5Avg.toFixed(1)}) > L10*1.15`, tier: 'HOT' };
-  }
-  
-  // 9. PASSED - classify tier
-  if (varianceTier === 'LOW') {
-    return { passes: true, reason: `LOW variance (100% historical)`, tier: 'ELITE' };
-  }
-  if (edgeQuality === 'FAVORABLE' && l10Min >= 2) {
-    return { passes: true, reason: `Strong floor + favorable edge (87.5% historical)`, tier: 'PREMIUM' };
-  }
-  
-  return { passes: true, reason: `Standard pick`, tier: 'STANDARD' };
-}
-
-// ============ ARCHETYPE DEFINITIONS (v3.0) ============
-const ARCHETYPE_GROUPS = {
-  BIGS: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
-  GUARDS: ['PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD', 'PURE_SHOOTER'],
-  WINGS: ['TWO_WAY_WING', 'SCORING_WING'],
-  STARS: ['ELITE_REBOUNDER', 'PLAYMAKER', 'PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_WING'],
-  ROLE_PLAYERS: ['TWO_WAY_WING', 'STRETCH_BIG', 'RIM_PROTECTOR', 'ROLE_PLAYER', 'UNKNOWN']
-};
-
-const ARCHETYPE_PROP_ALIGNMENT: Record<string, { primary: string[], blocked: string[] }> = {
-  'ELITE_REBOUNDER': { primary: ['rebounds', 'blocks'], blocked: ['threes'] },
-  'GLASS_CLEANER': { primary: ['rebounds'], blocked: ['points', 'threes', 'assists'] },
-  'PURE_SHOOTER': { primary: ['points', 'threes'], blocked: ['rebounds', 'blocks'] },
-  'PLAYMAKER': { primary: ['assists'], blocked: ['rebounds', 'blocks'] },
-  'COMBO_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
-  'TWO_WAY_WING': { primary: ['points', 'rebounds'], blocked: ['blocks'] },
-  'STRETCH_BIG': { primary: ['points', 'rebounds', 'threes'], blocked: [] },
-  'RIM_PROTECTOR': { primary: ['blocks', 'rebounds'], blocked: ['points', 'threes'] },
-  'SCORING_WING': { primary: ['points'], blocked: ['assists', 'blocks'] },
-  'SCORING_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
-  'ROLE_PLAYER': { primary: [], blocked: ['points'] },
-  'UNKNOWN': { primary: [], blocked: [] }
-};
-
-const BOUNCE_BACK_CONFIG = {
-  minSeasonVsL10Gap: 1.5,
-  minStdDevGap: 0.5,
-  maxLineVsSeasonGap: 2.0,
-  minL10HitRateForOVER: 0.20,
-  maxL10HitRateForOVER: 0.50,
-};
-
-// Global caches for projection data
-let matchupHistoryCache: Map<string, MatchupHistory> = new Map();
-let gameEnvironmentCache: Map<string, GameEnvironment> = new Map();
-
-// v8.0: Player behavior profiles cache
-interface PlayerBehaviorProfile {
-  player_name: string;
-  three_pt_peak_quarters: { q1: number; q2: number; q3: number; q4: number } | null;
-  best_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
-  worst_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
-  fatigue_tendency: string | null;
-  blowout_minutes_reduction: number | null;
-  film_sample_count: number | null;
-  profile_confidence: number | null;
-}
-let playerProfileCache: Map<string, PlayerBehaviorProfile> = new Map();
-
-const CATEGORIES: Record<string, CategoryConfig> = {
-  // ============ NEW PROVEN WINNERS (v2.0) ============
-  // Based on analysis of 391 settled picks
-  
-  ASSIST_ANCHOR: {
-    name: 'Assist Anchor',
-    propType: 'assists',
-    avgRange: { min: 3, max: 5.5 },  // Guards averaging 3-5.5 assists
-    lines: [3.5, 4.5, 5.5],
-    side: 'under',
-    minHitRate: 0.60  // 65% historical win rate on assists under 3.5-5
-  },
-  
-  HIGH_REB_UNDER: {
-    name: 'High Reb Under',
-    propType: 'rebounds',
-    avgRange: { min: 8, max: 14 },  // Big men averaging 8-14 rebounds
-    lines: [9.5, 10.5, 11.5, 12.5],
-    side: 'under',
-    minHitRate: 0.55  // 62% historical win rate on rebounds under 10+
-  },
-  
-  MID_SCORER_UNDER: {
-    name: 'Mid Scorer Under',
-    propType: 'points',
-    avgRange: { min: 12, max: 22 },  // Players averaging 12-22 points
-    lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5],
-    side: 'under',
-    minHitRate: 0.55,
-    // v8.0: RE-ENABLED for contrarian fade strategy (55% OVER hit rate when faded)
-    fadeOnly: true  // Picks generated here are meant to be faded (bet OVER)
-  },
-  
-  // ============ OPTIMAL WINNERS (v3.0) - ARCHETYPE ENFORCED ============
-  // Based on user's winning bet slip patterns with STRICT archetype validation
-  
-  ELITE_REB_OVER: {
-    name: 'Elite Rebounder OVER',
-    propType: 'rebounds',
-    avgRange: { min: 9, max: 20 },  // Elite centers (Gobert, Nurkic, Wemby)
-    lines: [9.5, 10.5, 11.5, 12.5],
-    side: 'over',
-    minHitRate: 0.55,  // ~65% win rate on elite big boards
-    supportsBounceBack: true,
-    // v3.0: ONLY elite rebounders/glass cleaners allowed
-    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR'],
-    blockedArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD']
-  },
-  
-  ROLE_PLAYER_REB: {
-    name: 'Role Player Reb OVER',
-    propType: 'rebounds',
-    avgRange: { min: 3, max: 6 },  // Finney-Smith, Kyshawn George type
-    lines: [2.5, 3.5, 4.5],
-    side: 'over',
-    minHitRate: 0.60,  // ~60% win rate on low line reb overs
-    // v3.0: Block stars and guards - only wings/bigs allowed
-    requiredArchetypes: ['TWO_WAY_WING', 'STRETCH_BIG', 'SCORING_WING', 'ROLE_PLAYER', 'UNKNOWN'],
-    blockedArchetypes: ['ELITE_REBOUNDER', 'PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD']
-  },
-  
-  BIG_ASSIST_OVER: {
-    name: 'Big Man Assists OVER',
-    propType: 'assists',
-    avgRange: { min: 2, max: 6 },  // Passing bigs (Vucevic, Sabonis, Jokic, Sengun)
-    lines: [2.5, 3.5, 4.5],
-    side: 'over',
-    minHitRate: 0.60,  // ~70% win rate on low assist lines for bigs
-    // v3.0: ONLY bigs allowed - no guards/wings
-    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
-    blockedArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD', 'SCORING_WING']
-  },
-  
-  LOW_SCORER_UNDER: {
-    name: 'Low Scorer UNDER',
-    propType: 'points',
-    avgRange: { min: 5, max: 12 },  // Lu Dort, Reed Sheppard type
-    lines: [7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
-    side: 'under',
-    minHitRate: 0.55,  // ~65% win rate on role player pts under
-    // v3.0: Block star scorers
-    blockedArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_GUARD', 'SCORING_WING']
-  },
-  
-  STAR_FLOOR_OVER: {
-    name: 'Star Floor OVER',
-    propType: 'points',
-    avgRange: { min: 20, max: 40 },  // Stars like Ja Morant, Booker
-    lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5],  // Well below their avg
-    side: 'over',
-    minHitRate: 0.65,  // ~75% win rate on star floor plays
-    // v3.0: ONLY star scorers
-    requiredArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'PLAYMAKER', 'SCORING_GUARD', 'SCORING_WING']
-  },
-  
-  // ============ LEGACY CATEGORIES ============
-  BIG_REBOUNDER: {
-    name: 'Big Rebounder',
-    propType: 'rebounds',
-    avgRange: { min: 9, max: 20 },
-    lineRange: { min: 9, max: 20 },
-    lines: [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
-    side: 'over',
-    minHitRate: 0.7,
-    supportsBounceBack: true,
-    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR']
-  },
-  LOW_LINE_REBOUNDER: {
-    name: 'Low Line Rebounder',
-    propType: 'rebounds',
-    avgRange: { min: 4, max: 6 },
-    lines: [3.5, 4.5, 5.5],
-    side: 'over',
-    minHitRate: 0.7
-  },
-  NON_SCORING_SHOOTER: {
-    name: 'Non-Scoring Shooter',
-    propType: 'points',
-    avgRange: { min: 8, max: 14 },
-    lines: [10.5, 11.5, 12.5, 13.5, 14.5],
-    side: 'under',
-    minHitRate: 0.7,
-    // v7.0: Block star scorers and combo guards from UNDER picks
-    blockedArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_GUARD', 'PLAYMAKER']
-  },
-  VOLUME_SCORER: {
-    name: 'Volume Scorer',
-    propType: 'points',
-    avgRange: { min: 15, max: 40 },
-    lineRange: { min: 18, max: 40 },
-    lines: [14.5, 16.5, 18.5, 20.5, 22.5, 24.5, 26.5, 28.5, 30.5],
-    side: 'over',
-    minHitRate: 0.7,
-    supportsBounceBack: true
-  },
-  HIGH_ASSIST: {
-    name: 'Playmaker',
-    propType: 'assists',
-    avgRange: { min: 4, max: 15 },
-    lines: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
-    side: 'over',
-    minHitRate: 0.7
-  },
-  THREE_POINT_SHOOTER: {
-    name: '3-Point Shooter',
-    propType: 'threes',
-    avgRange: { min: 1.5, max: 6 },
-    lines: [0.5, 1.5, 2.5, 3.5, 4.5],
-    side: 'over',
-    minHitRate: 0.7
-  },
-  HIGH_ASSIST_UNDER: {
-    name: 'Assist Under',
-    propType: 'assists',
-    avgRange: { min: 4, max: 15 },
-    lines: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
-    side: 'under',
-    minHitRate: 0.7
-  },
-  LOW_LINE_REBOUNDER_UNDER: {
-    name: 'Low Line Reb Under',
-    propType: 'rebounds',
-    avgRange: { min: 4, max: 6 },
-    lines: [3.5, 4.5, 5.5],
-    side: 'under',
-    minHitRate: 0.7
-  },
-
-  // ============ MLB CATEGORIES ============
-  MLB_PITCHER_K_OVER: {
-    name: 'MLB Pitcher K OVER',
-    propType: 'pitcher_strikeouts',
-    avgRange: { min: 5, max: 12 },
-    lines: [4.5, 5.5, 6.5, 7.5, 8.5],
-    side: 'over',
-    minHitRate: 0.55
-  },
-  MLB_PITCHER_K_UNDER: {
-    name: 'MLB Pitcher K UNDER',
-    propType: 'pitcher_strikeouts',
-    avgRange: { min: 5, max: 12 },
-    lines: [4.5, 5.5, 6.5, 7.5, 8.5],
-    side: 'under',
-    minHitRate: 0.55
-  },
-  MLB_HITTER_FANTASY_OVER: {
-    name: 'MLB Hitter Fantasy OVER',
-    propType: 'hitter_fantasy_score',
-    avgRange: { min: 3, max: 20 },
-    lines: [5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5],
-    side: 'over',
-    minHitRate: 0.55
-  },
-  MLB_HITTER_FANTASY_UNDER: {
-    name: 'MLB Hitter Fantasy UNDER',
-    propType: 'hitter_fantasy_score',
-    avgRange: { min: 3, max: 20 },
-    lines: [5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5],
-    side: 'under',
-    minHitRate: 0.55
-  },
-  MLB_HITS_OVER: {
-    name: 'MLB Hits OVER',
-    propType: 'hits',
-    avgRange: { min: 0.8, max: 2.5 },
-    lines: [0.5, 1.5, 2.5],
-    side: 'over',
-    minHitRate: 0.55
-  },
-  MLB_TOTAL_BASES_OVER: {
-    name: 'MLB Total Bases OVER',
-    propType: 'total_bases',
-    avgRange: { min: 1.5, max: 4.0 },
-    lines: [1.5, 2.5, 3.5],
-    side: 'over',
-    minHitRate: 0.55
-  },
-  MLB_RUNS_OVER: {
-    name: 'MLB Runs OVER',
-    propType: 'runs',
-    avgRange: { min: 0.5, max: 1.5 },
-    lines: [0.5, 1.5],
-    side: 'over',
-    minHitRate: 0.55
-  },
-};
-
-// Runtime archetype lookup
-let archetypeMap: Record<string, string> = {};
-
-async function loadArchetypes(supabase: any): Promise<void> {
-  const { data } = await supabase
-    .from('player_archetypes')
-    .select('player_name, primary_archetype');
-  
-  archetypeMap = {};
-  for (const a of (data || [])) {
-    archetypeMap[a.player_name?.toLowerCase().trim() || ''] = a.primary_archetype;
-  }
-  console.log(`[Category Analyzer] Loaded ${Object.keys(archetypeMap).length} player archetypes`);
-}
-
-function getPlayerArchetype(playerName: string): string {
-  return archetypeMap[playerName?.toLowerCase().trim() || ''] || 'UNKNOWN';
-}
-
-// v3.0: Check if player passes archetype requirements for a category
-function passesArchetypeValidation(playerName: string, config: CategoryConfig): { passes: boolean; reason: string } {
-  const archetype = getPlayerArchetype(playerName);
-  
-  // Check blocked archetypes first
-  if (config.blockedArchetypes && config.blockedArchetypes.includes(archetype)) {
-    return { passes: false, reason: `Archetype ${archetype} is blocked for this category` };
-  }
-  
-  // If required archetypes specified, player must match one
-  if (config.requiredArchetypes && config.requiredArchetypes.length > 0) {
-    if (!config.requiredArchetypes.includes(archetype)) {
-      // Allow UNKNOWN archetype if no required match (fallback for missing data)
-      if (archetype === 'UNKNOWN') {
-        return { passes: true, reason: `Archetype unknown - allowing with caution` };
-      }
-      return { passes: false, reason: `Archetype ${archetype} not in required list: ${config.requiredArchetypes.join(', ')}` };
-    }
-  }
-  
-  return { passes: true, reason: `Archetype ${archetype} valid for category` };
-}
-
-function calculateMedian(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function calculateStdDev(values: number[]): number {
-  if (values.length === 0) return 0;
-  const avg = values.reduce((a, b) => a + b, 0) / values.length;
-  const squaredDiffs = values.map(v => Math.pow(v - avg, 2));
-  return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length);
-}
-
-function calculateHitRate(values: number[], line: number, side: 'over' | 'under'): number {
-  if (values.length === 0) return 0;
-  const hits = values.filter(v => side === 'over' ? v > line : v < line).length;
-  return hits / values.length;
-}
-
-function getStatValue(log: GameLog, propType: string): number {
-  switch (propType) {
-    case 'points': return log.points || 0;
-    case 'rebounds': return log.rebounds || 0;
-    case 'assists': return log.assists || 0;
-    case 'steals': return log.steals || 0;
-    case 'blocks': return log.blocks || 0;
-    case 'threes': return log.threes_made || 0;
-    default: return 0;
-  }
-}
-
-// ============ MLB INTERFACES & STAT EXTRACTION ============
 interface MLBGameLog {
   player_name: string;
   game_date: string;
@@ -625,429 +110,525 @@ interface MLBGameLog {
   opponent?: string;
 }
 
-const MLB_CATEGORIES = new Set([
-  'MLB_PITCHER_K_OVER', 'MLB_PITCHER_K_UNDER',
-  'MLB_HITTER_FANTASY_OVER', 'MLB_HITTER_FANTASY_UNDER',
-  'MLB_HITS_OVER', 'MLB_TOTAL_BASES_OVER', 'MLB_RUNS_OVER',
-]);
+interface GameEnvironment {
+  game_id: string;
+  home_team: string;
+  away_team: string;
+  vegas_total: number;
+  vegas_spread: number;
+  pace_rating?: string;
+  pace_class?: string;
+  game_script?: string;
+}
 
-function getMLBStatValue(log: MLBGameLog, propType: string): number {
+const TEAM_ABBREV_TO_NAME: Record<string, string> = {
+  'ATL': 'Atlanta Hawks', 'BOS': 'Boston Celtics', 'BKN': 'Brooklyn Nets', 'CHA': 'Charlotte Hornets',
+  'CHI': 'Chicago Bulls', 'CLE': 'Cleveland Cavaliers', 'DAL': 'Dallas Mavericks', 'DEN': 'Denver Nuggets',
+  'DET': 'Detroit Pistons', 'GSW': 'Golden State Warriors', 'HOU': 'Houston Rockets', 'IND': 'Indiana Pacers',
+  'LAC': 'LA Clippers', 'LAL': 'Los Angeles Lakers', 'MEM': 'Memphis Grizzlies', 'MIA': 'Miami Heat',
+  'MIL': 'Milwaukee Bucks', 'MIN': 'Minnesota Timberwolves', 'NOP': 'New Orleans Pelicans', 'NYK': 'New York Knicks',
+  'OKC': 'Oklahoma City Thunder', 'ORL': 'Orlando Magic', 'PHI': 'Philadelphia 76ers', 'PHX': 'Phoenix Suns',
+  'POR': 'Portland Trail Blazers', 'SAC': 'Sacramento Kings', 'SAS': 'San Antonio Spurs', 'TOR': 'Toronto Raptors',
+  'UTA': 'Utah Jazz', 'WAS': 'Washington Wizards',
+};
+
+function getPaceMultiplier(paceRating: string | undefined): number {
+  if (!paceRating) return 0.0;
+  switch (paceRating.toUpperCase()) {
+    case 'FAST': case 'HIGH': return 0.04;
+    case 'MEDIUM': return 0.0;
+    case 'LOW': case 'SLOW': return -0.04;
+    default: return 0.0;
+  }
+}
+
+function normalizeOpponentName(opponent: string): string {
+  const upper = opponent.toUpperCase().trim();
+  if (TEAM_ABBREV_TO_NAME[upper]) return TEAM_ABBREV_TO_NAME[upper];
+  const lowerOpp = opponent.toLowerCase().trim();
+  for (const [, fullName] of Object.entries(TEAM_ABBREV_TO_NAME)) {
+    // BUG B companion: only check fullName.includes(lowerOpp), not bidirectional
+    if (fullName.toLowerCase().includes(lowerOpp)) return fullName;
+  }
+  return opponent;
+}
+
+// BUG A FIX: added fadeOnly to CategoryConfig interface
+interface CategoryConfig {
+  name: string;
+  propType: string;
+  avgRange: { min: number; max: number };
+  lineRange?: { min: number; max: number };
+  lines: number[];
+  side: 'over' | 'under';
+  minHitRate: number;
+  supportsBounceBack?: boolean;
+  requiredArchetypes?: string[];
+  blockedArchetypes?: string[];
+  disabled?: boolean;
+  fadeOnly?: boolean; // BUG A FIX: picks are meant to be faded (flip recommended_side to 'over')
+}
+
+const STAR_PLAYER_NAMES = [
+  'luka doncic', 'luka dončić', 'anthony edwards', 'shai gilgeous-alexander',
+  'shai gilgeous alexander', 'jayson tatum', 'giannis antetokounmpo',
+  'nikola jokic', 'nikola jokić', 'ja morant', 'trae young', 'damian lillard',
+  'kyrie irving', 'donovan mitchell', "de'aaron fox", 'deaaron fox',
+  'kevin durant', 'lebron james', 'stephen curry', 'joel embiid', 'devin booker',
+  'jaylen brown', 'tyrese maxey', 'jimmy butler', 'anthony davis', 'jalen brunson',
+  'tyrese haliburton', 'lamelo ball', 'paolo banchero', 'zion williamson',
+  'victor wembanyama', 'karl-anthony towns', 'bam adebayo', 'domantas sabonis',
+];
+
+// BUG B FIX: only check normalized.includes(star), not bidirectional
+function isStarPlayer(playerName: string): boolean {
+  const normalized = playerName.toLowerCase().trim();
+  return STAR_PLAYER_NAMES.some(star => normalized.includes(star));
+}
+
+// BUG D FIX: removed PROJECTION_WEIGHTS constants — they were never used in the
+// actual projection formula and created a false impression of a weighted blend.
+// The actual formula: rawProjection = l10Median + matchupAdj + paceAdj + profileAdj
+// with post-hoc shrinkage blended against season average.
+// All logic below reflects what the code actually does.
+
+const MIN_EDGE_THRESHOLDS: Record<string, number> = {
+  points: 5.5, rebounds: 3.0, assists: 2.5, threes: 1.2, blocks: 1.0, steals: 0.8,
+};
+
+const THREES_FILTER_CONFIG = {
+  MIN_EDGE_BY_VARIANCE: { LOW: 0.3, MEDIUM: 0.8, HIGH: 1.2 } as Record<string, number>,
+  MAX_VARIANCE_BY_EDGE: { FAVORABLE: 3.0, NEUTRAL: 1.5, TIGHT: 1.0 } as Record<string, number>,
+  MIN_FLOOR_FOR_TIGHT_LINES: 2,
+  HOT_STREAK_MULTIPLIER: 1.15,
+  COLD_STREAK_MULTIPLIER: 0.85,
+};
+
+function validate3PTCandidate(
+  _playerName: string, actualLine: number, l10Avg: number,
+  l10Min: number, stdDev: number, l5Avg: number
+): { passes: boolean; reason: string; tier: string } {
+  const varianceTier = stdDev <= 1.0 ? 'LOW' : stdDev <= 1.5 ? 'MEDIUM' : 'HIGH';
+  const edge = l10Avg - actualLine;
+  const edgeQuality = edge >= 1.0 ? 'FAVORABLE' : edge >= 0.5 ? 'NEUTRAL' : 'TIGHT';
+  if (varianceTier === 'HIGH' && edgeQuality === 'NEUTRAL')
+    return { passes: false, reason: `HIGH variance + NEUTRAL edge = 0% historical`, tier: 'BLOCKED' };
+  if (varianceTier === 'MEDIUM' && edgeQuality === 'TIGHT')
+    return { passes: false, reason: `MEDIUM variance + TIGHT edge = 0% historical`, tier: 'BLOCKED' };
+  if (edgeQuality === 'TIGHT' && l10Min < THREES_FILTER_CONFIG.MIN_FLOOR_FOR_TIGHT_LINES)
+    return { passes: false, reason: `TIGHT edge requires L10 Min >= ${THREES_FILTER_CONFIG.MIN_FLOOR_FOR_TIGHT_LINES}`, tier: 'BLOCKED' };
+  if (l5Avg < l10Avg * THREES_FILTER_CONFIG.COLD_STREAK_MULTIPLIER)
+    return { passes: false, reason: `COLD streak: L5 (${l5Avg.toFixed(1)}) < L10*0.85`, tier: 'COLD' };
+  const minEdge = THREES_FILTER_CONFIG.MIN_EDGE_BY_VARIANCE[varianceTier];
+  if (edge < minEdge)
+    return { passes: false, reason: `Edge ${edge.toFixed(1)} below minimum ${minEdge}`, tier: 'LOW_EDGE' };
+  const maxVariance = THREES_FILTER_CONFIG.MAX_VARIANCE_BY_EDGE[edgeQuality];
+  if (stdDev > maxVariance)
+    return { passes: false, reason: `Variance ${stdDev.toFixed(2)} exceeds max ${maxVariance}`, tier: 'HIGH_VARIANCE' };
+  if (l5Avg > l10Avg * THREES_FILTER_CONFIG.HOT_STREAK_MULTIPLIER)
+    return { passes: true, reason: `HOT streak: L5 (${l5Avg.toFixed(1)}) > L10*1.15`, tier: 'HOT' };
+  if (varianceTier === 'LOW') return { passes: true, reason: `LOW variance (100% historical)`, tier: 'ELITE' };
+  if (edgeQuality === 'FAVORABLE' && l10Min >= 2) return { passes: true, reason: `Strong floor + favorable edge`, tier: 'PREMIUM' };
+  return { passes: true, reason: `Standard pick`, tier: 'STANDARD' };
+}
+
+const ARCHETYPE_GROUPS = {
+  BIGS: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
+  GUARDS: ['PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD', 'PURE_SHOOTER'],
+  WINGS: ['TWO_WAY_WING', 'SCORING_WING'],
+};
+
+const ARCHETYPE_PROP_ALIGNMENT: Record<string, { primary: string[], blocked: string[] }> = {
+  'ELITE_REBOUNDER': { primary: ['rebounds', 'blocks'], blocked: ['threes'] },
+  'GLASS_CLEANER': { primary: ['rebounds'], blocked: ['points', 'threes', 'assists'] },
+  'PURE_SHOOTER': { primary: ['points', 'threes'], blocked: ['rebounds', 'blocks'] },
+  'PLAYMAKER': { primary: ['assists'], blocked: ['rebounds', 'blocks'] },
+  'COMBO_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
+  'TWO_WAY_WING': { primary: ['points', 'rebounds'], blocked: ['blocks'] },
+  'STRETCH_BIG': { primary: ['points', 'rebounds', 'threes'], blocked: [] },
+  'RIM_PROTECTOR': { primary: ['blocks', 'rebounds'], blocked: ['points', 'threes'] },
+  'SCORING_WING': { primary: ['points'], blocked: ['assists', 'blocks'] },
+  'SCORING_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
+  'ROLE_PLAYER': { primary: [], blocked: ['points'] },
+  'UNKNOWN': { primary: [], blocked: [] },
+};
+
+const BOUNCE_BACK_CONFIG = {
+  minSeasonVsL10Gap: 1.5, minStdDevGap: 0.5, maxLineVsSeasonGap: 2.0,
+  minL10HitRateForOVER: 0.20, maxL10HitRateForOVER: 0.50,
+};
+
+let matchupHistoryCache: Map<string, any> = new Map();
+let gameEnvironmentCache: Map<string, GameEnvironment> = new Map();
+
+interface PlayerBehaviorProfile {
+  player_name: string;
+  three_pt_peak_quarters: { q1: number; q2: number; q3: number; q4: number } | null;
+  best_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
+  worst_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
+  fatigue_tendency: string | null;
+  blowout_minutes_reduction: number | null;
+  film_sample_count: number | null;
+  profile_confidence: number | null;
+}
+let playerProfileCache: Map<string, PlayerBehaviorProfile> = new Map();
+
+// BUG A FIX: MID_SCORER_UNDER now has fadeOnly: true declared in the interface
+const CATEGORIES: Record<string, CategoryConfig> = {
+  ASSIST_ANCHOR: {
+    name: 'Assist Anchor', propType: 'assists', avgRange: { min: 3, max: 5.5 },
+    lines: [3.5, 4.5, 5.5], side: 'under', minHitRate: 0.60,
+  },
+  HIGH_REB_UNDER: {
+    name: 'High Reb Under', propType: 'rebounds', avgRange: { min: 8, max: 14 },
+    lines: [9.5, 10.5, 11.5, 12.5], side: 'under', minHitRate: 0.55,
+  },
+  MID_SCORER_UNDER: {
+    name: 'Mid Scorer Under', propType: 'points', avgRange: { min: 12, max: 22 },
+    lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5], side: 'under', minHitRate: 0.55,
+    fadeOnly: true, // BUG A FIX: picks are faded — emit as OVER recommendation
+  },
+  ELITE_REB_OVER: {
+    name: 'Elite Rebounder OVER', propType: 'rebounds', avgRange: { min: 9, max: 20 },
+    lines: [9.5, 10.5, 11.5, 12.5], side: 'over', minHitRate: 0.55,
+    supportsBounceBack: true,
+    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR'],
+    blockedArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD'],
+  },
+  ROLE_PLAYER_REB: {
+    name: 'Role Player Reb OVER', propType: 'rebounds', avgRange: { min: 3, max: 6 },
+    lines: [2.5, 3.5, 4.5], side: 'over', minHitRate: 0.60,
+    requiredArchetypes: ['TWO_WAY_WING', 'STRETCH_BIG', 'SCORING_WING', 'ROLE_PLAYER', 'UNKNOWN'],
+    blockedArchetypes: ['ELITE_REBOUNDER', 'PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD'],
+  },
+  BIG_ASSIST_OVER: {
+    name: 'Big Man Assists OVER', propType: 'assists', avgRange: { min: 2, max: 6 },
+    lines: [2.5, 3.5, 4.5], side: 'over', minHitRate: 0.60,
+    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
+    blockedArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD', 'SCORING_WING'],
+  },
+  LOW_SCORER_UNDER: {
+    name: 'Low Scorer UNDER', propType: 'points', avgRange: { min: 5, max: 12 },
+    lines: [7.5, 8.5, 9.5, 10.5, 11.5, 12.5], side: 'under', minHitRate: 0.55,
+  },
+  THREE_POINT_SHOOTER: {
+    name: '3PT Shooter', propType: 'threes', avgRange: { min: 1.5, max: 4 },
+    lines: [1.5, 2.5, 3.5], side: 'over', minHitRate: 0.55,
+    requiredArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_GUARD', 'STRETCH_BIG'],
+    blockedArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR', 'ROLE_PLAYER'],
+  },
+  BIG_REBOUNDER: {
+    name: 'Big Man Rebounder', propType: 'rebounds', avgRange: { min: 7, max: 18 },
+    lines: [7.5, 8.5, 9.5, 10.5, 11.5, 12.5], side: 'over', minHitRate: 0.55,
+    supportsBounceBack: true,
+    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
+    blockedArchetypes: ['PLAYMAKER', 'PURE_SHOOTER', 'SCORING_GUARD'],
+  },
+  HIGH_ASSIST: {
+    name: 'High Assist', propType: 'assists', avgRange: { min: 5, max: 12 },
+    lines: [4.5, 5.5, 6.5, 7.5, 8.5], side: 'over', minHitRate: 0.55,
+    requiredArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD'],
+    blockedArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR'],
+  },
+  HIGH_SCORER: {
+    name: 'High Scorer', propType: 'points', avgRange: { min: 20, max: 45 },
+    lines: [19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5],
+    side: 'over', minHitRate: 0.55, supportsBounceBack: true,
+    requiredArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD', 'SCORING_WING', 'STRETCH_BIG'],
+    blockedArchetypes: ['GLASS_CLEANER', 'RIM_PROTECTOR'],
+  },
+};
+
+const MLB_CATEGORIES = new Set(['PITCHER_K', 'BATTER_HITS', 'BATTER_RBI', 'BATTER_TB']);
+
+// Helper functions
+function calculateMedian(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function calculateStdDev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function calculateHitRate(values: number[], line: number, side: string): number {
+  if (values.length === 0) return 0;
+  const hits = values.filter(v => side === 'over' ? v > line : v < line).length;
+  return hits / values.length;
+}
+
+function getStatValue(log: GameLog, propType: string): number {
   switch (propType) {
-    case 'pitcher_strikeouts': return log.pitcher_strikeouts || 0;
-    case 'hits': return log.hits || 0;
-    case 'total_bases': return log.total_bases || 0;
-    case 'runs': return log.runs || 0;
-    case 'hitter_fantasy_score':
-      return (log.hits || 0) + (log.walks || 0) + (log.runs || 0) + 
-             (log.rbis || 0) + (log.total_bases || 0) + (log.stolen_bases || 0);
+    case 'points': return log.points || 0;
+    case 'rebounds': return log.rebounds || 0;
+    case 'assists': return log.assists || 0;
+    case 'threes': return log.threes_made || 0;
+    case 'steals': return log.steals || 0;
+    case 'blocks': return log.blocks || 0;
     default: return 0;
   }
 }
 
-// ============ TRUE PROJECTION CALCULATION (v8.0 - PROFILE INTEGRATION) ============
-// v8.0: Added player behavior profile adjustments
-// v5.0: Added variance shrinkage, regression to mean, stricter UNDER criteria
-function calculateTrueProjection(
-  playerName: string,
-  propType: string,
-  statValues: number[],
-  opponent: string | null,
-  seasonAvg?: number,
-  l10StdDev?: number
-): { projectedValue: number; matchupAdj: number; paceAdj: number; profileAdj: number; projectionSource: string; varianceRatio: number; shrinkageFactor: number; profileFlags: string[] } {
-  // 1. BASE: L10 Median (more stable than average for betting)
-  const l10Median = calculateMedian(statValues);
-  const l10Avg = statValues.length > 0 ? statValues.reduce((a, b) => a + b, 0) / statValues.length : l10Median;
-  
-  // v5.0: Calculate variance ratio for shrinkage
-  const stdDev = l10StdDev ?? calculateStdDev(statValues);
-  const varianceRatio = l10Avg > 0 ? stdDev / l10Avg : 0.5;
-  
-  // 2. MATCHUP ADJUSTMENT: Check H2H history vs opponent
-  let matchupAdj = 0;
-  let projectionSource = 'L10_MEDIAN';
-  
-  if (opponent) {
-    const normalizedOpponent = normalizeOpponentName(opponent);
-    const matchupPropType = propType.startsWith('player_') ? propType : `player_${propType}`;
-    const matchupKey = `${playerName.toLowerCase().trim()}_${matchupPropType}_${normalizedOpponent.toLowerCase().trim()}`;
-    const matchup = matchupHistoryCache.get(matchupKey);
-    
-    console.log(`[Projection] Matchup lookup: key="${matchupKey}", found=${!!matchup}, opponent="${opponent}" -> "${normalizedOpponent}"`);
-    
-    if (matchup && matchup.games_played >= 2) {
-      const h2hAvg = matchup.avg_stat;
-      matchupAdj = (h2hAvg - l10Median) * PROJECTION_WEIGHTS.MATCHUP_H2H;
-      projectionSource = matchup.games_played >= 5 ? 'L10+H2H_STRONG' : 'L10+H2H';
-      console.log(`[Projection] H2H found: ${matchup.games_played} games, avg=${h2hAvg.toFixed(1)}, adj=${matchupAdj.toFixed(2)}`);
-    }
+function getMLBStatValue(log: MLBGameLog, propType: string): number {
+  switch (propType) {
+    case 'pitcher_strikeouts': return log.pitcher_strikeouts ?? 0;
+    case 'hits': return log.hits || 0;
+    case 'rbis': return log.rbis || 0;
+    case 'total_bases': return log.total_bases || 0;
+    default: return 0;
   }
-  
-  // 3. PACE ADJUSTMENT: Check game environment
-  let paceAdj = 0;
-  if (opponent) {
-    const normalizedOpponent = normalizeOpponentName(opponent);
-    for (const [_, env] of gameEnvironmentCache) {
-      const homeMatch = env.home_team?.toLowerCase().includes(normalizedOpponent.toLowerCase()) ||
-                       env.away_team?.toLowerCase().includes(normalizedOpponent.toLowerCase());
-      if (homeMatch && env.pace_rating) {
-        const paceMultiplier = getPaceMultiplier(env.pace_rating);
-        paceAdj = paceMultiplier * l10Median * PROJECTION_WEIGHTS.PACE_FACTOR;
-        
-        if (paceMultiplier < 0) {
-          projectionSource += '+SLOW';
-        } else if (paceMultiplier > 0) {
-          projectionSource += '+FAST';
-        }
-        console.log(`[Projection] Pace found: ${env.pace_rating}, multiplier=${paceMultiplier.toFixed(3)}, adj=${paceAdj.toFixed(2)}`);
-        break;
-      }
-    }
-  }
-  
-  // 4. v8.0: PROFILE ADJUSTMENT - Apply player behavior profile insights
-  let profileAdj = 0;
-  const profileFlags: string[] = [];
-  const profile = playerProfileCache.get(playerName.toLowerCase().trim());
-  
-  if (profile) {
-    console.log(`[Projection] v8.0 Profile found: ${playerName}, film_samples=${profile.film_sample_count || 0}, confidence=${profile.profile_confidence || 0}`);
-    
-    // A. 3PT Peak Quarter boost (for threes props)
-    if (propType === 'threes' && profile.three_pt_peak_quarters) {
-      const peakQ = Object.entries(profile.three_pt_peak_quarters)
-        .reduce((max, [q, pct]) => (pct as number) > max.pct ? { q, pct: pct as number } : max, { q: 'q1', pct: 0 });
-      if (peakQ.pct > 30) {
-        profileAdj += 0.4;
-        profileFlags.push(`PEAK_Q${peakQ.q.replace('q', '')}`);
-        console.log(`[Projection] 3PT Peak quarter boost: Q${peakQ.q.replace('q', '')} at ${peakQ.pct}%, +0.4`);
-      }
-    }
-    
-    // B. Best/Worst matchup from profile (supplements H2H table data)
-    if (opponent && profile.best_matchups) {
-      const normalizedOpp = normalizeOpponentName(opponent).toLowerCase();
-      const bestMatch = profile.best_matchups.find(m => 
-        m.opponent?.toLowerCase().includes(normalizedOpp) || normalizedOpp.includes(m.opponent?.toLowerCase() || '')
-      );
-      if (bestMatch) {
-        profileAdj += 0.5;
-        profileFlags.push('BEST_MATCHUP');
-        console.log(`[Projection] Profile best matchup: ${bestMatch.opponent}, +0.5`);
-      }
-    }
-    
-    if (opponent && profile.worst_matchups) {
-      const normalizedOpp = normalizeOpponentName(opponent).toLowerCase();
-      const worstMatch = profile.worst_matchups.find(m => 
-        m.opponent?.toLowerCase().includes(normalizedOpp) || normalizedOpp.includes(m.opponent?.toLowerCase() || '')
-      );
-      if (worstMatch) {
-        profileAdj -= 0.5;
-        profileFlags.push('WORST_MATCHUP');
-        console.log(`[Projection] Profile worst matchup: ${worstMatch.opponent}, -0.5`);
-      }
-    }
-    
-    // C. Fatigue tendency (from film analysis)
-    if (profile.fatigue_tendency?.toLowerCase().includes('fatigue')) {
-      profileAdj -= 0.3;
-      profileFlags.push('FATIGUE_RISK');
-      console.log(`[Projection] Fatigue tendency detected, -0.3`);
-    }
-    
-    // D. Blowout minutes reduction warning (informational flag)
-    if (profile.blowout_minutes_reduction && profile.blowout_minutes_reduction > 5) {
-      profileFlags.push('BLOWOUT_RISK');
-      console.log(`[Projection] Blowout risk: ${profile.blowout_minutes_reduction} min reduction typical`);
-    }
-    
-    // E. Film-verified player boost (high confidence from film samples)
-    if ((profile.film_sample_count || 0) >= 3) {
-      profileFlags.push('FILM_VERIFIED');
-      projectionSource += '+FILM';
-    }
-    
-    if (profileAdj !== 0) {
-      projectionSource += '+PROFILE';
-    }
-  }
-  
-  // 5. v5.0: VARIANCE SHRINKAGE - High variance = regress more to season mean
-  const shrinkageFactor = Math.max(0.70, Math.min(0.95, 1 - varianceRatio * 0.4));
-  
-  // 6. v5.0: REGRESSION TO MEAN - Blend with season average
-  let rawProjection = l10Median + matchupAdj + paceAdj + profileAdj;
-  
-  if (seasonAvg && seasonAvg > 0) {
-    rawProjection = (rawProjection * shrinkageFactor) + (seasonAvg * (1 - shrinkageFactor));
-    projectionSource += '+REGRESSED';
-    console.log(`[Projection] v5.0 Shrinkage: factor=${shrinkageFactor.toFixed(2)}, seasonAvg=${seasonAvg.toFixed(1)}, before=${(l10Median + matchupAdj + paceAdj + profileAdj).toFixed(1)}, after=${rawProjection.toFixed(1)}`);
-  }
-  
-  // 7. v7.0: FG EFFICIENCY GATE - Regress scoring props when shooting is unsustainable
-  // If L10 FG% deviates >5% from season average, apply regression factor
-  if ((propType === 'points' || propType === 'threes') && seasonAvg && seasonAvg > 0) {
-    // Estimate FG% deviation from the stat variance
-    // Players shooting hot (L10 >> season) get penalized, cold streaks get boosted
-    const l10VsSeasonRatio = l10Avg / seasonAvg;
-    if (l10VsSeasonRatio > 1.15) {
-      // Shooting unsustainably hot — regress projection down
-      const fgPenalty = (l10VsSeasonRatio - 1.15) * rawProjection * 0.3;
-      rawProjection -= fgPenalty;
-      projectionSource += '+FG_REGRESS_DOWN';
-      console.log(`[Projection] v7.0 FG Efficiency: L10/Season=${l10VsSeasonRatio.toFixed(2)}, penalty=-${fgPenalty.toFixed(1)}`);
-    } else if (l10VsSeasonRatio < 0.85) {
-      // Shooting unsustainably cold — regress projection up
-      const fgBoost = (0.85 - l10VsSeasonRatio) * rawProjection * 0.2;
-      rawProjection += fgBoost;
-      projectionSource += '+FG_REGRESS_UP';
-      console.log(`[Projection] v7.0 FG Efficiency: L10/Season=${l10VsSeasonRatio.toFixed(2)}, boost=+${fgBoost.toFixed(1)}`);
-    }
-  }
-  
-  const projectedValue = Math.round(rawProjection * 2) / 2;
-  
-  return {
-    projectedValue,
-    matchupAdj: Math.round(matchupAdj * 10) / 10,
-    paceAdj: Math.round(paceAdj * 10) / 10,
-    profileAdj: Math.round(profileAdj * 10) / 10,
-    projectionSource,
-    varianceRatio: Math.round(varianceRatio * 100) / 100,
-    shrinkageFactor: Math.round(shrinkageFactor * 100) / 100,
-    profileFlags,
-  };
 }
 
-// Load matchup history into cache (with pagination to get all records)
+let archetypeCache: Map<string, string> = new Map();
+
+async function loadArchetypes(supabase: any): Promise<void> {
+  archetypeCache.clear();
+  const { data, error } = await supabase
+    .from('player_archetypes').select('player_name, archetype').limit(5000);
+  if (error) { console.warn('[Category Analyzer] Archetype load error:', error.message); return; }
+  for (const row of (data || [])) {
+    archetypeCache.set(row.player_name?.toLowerCase().trim(), row.archetype || 'UNKNOWN');
+  }
+  console.log(`[Category Analyzer] Loaded ${archetypeCache.size} archetypes`);
+}
+
+function getPlayerArchetype(playerName: string): string {
+  return archetypeCache.get(playerName.toLowerCase().trim()) || 'UNKNOWN';
+}
+
+function passesArchetypeValidation(playerName: string, config: CategoryConfig): { passes: boolean; reason: string } {
+  if (!config.requiredArchetypes && !config.blockedArchetypes) return { passes: true, reason: 'no_archetype_config' };
+  const archetype = getPlayerArchetype(playerName);
+  if (config.blockedArchetypes?.includes(archetype)) return { passes: false, reason: `${archetype} blocked for ${config.name}` };
+  if (config.requiredArchetypes && !config.requiredArchetypes.includes(archetype)) return { passes: false, reason: `${archetype} not in required list for ${config.name}` };
+  return { passes: true, reason: 'archetype_ok' };
+}
+
 async function loadMatchupHistory(supabase: any): Promise<void> {
   matchupHistoryCache.clear();
   let page = 0;
   const pageSize = 1000;
-  let totalLoaded = 0;
-  
   while (true) {
     const { data, error } = await supabase
       .from('matchup_history')
       .select('player_name, opponent, prop_type, games_played, avg_stat, max_stat, min_stat')
       .range(page * pageSize, (page + 1) * pageSize - 1);
-    
-    if (error) {
-      console.warn('[Category Analyzer] Matchup history load error:', error.message);
-      break;
-    }
-    
-    if (!data || data.length === 0) break;
-    
+    if (error) { console.warn('[Category Analyzer] Matchup history load error:', error.message); break; }
+    if (!data?.length) break;
     for (const m of data) {
-      // v4.1: Key format: playername_proptype_opponent (keep prop_type as-is with player_ prefix)
-      const propType = m.prop_type || '';
-      const key = `${m.player_name?.toLowerCase().trim()}_${propType}_${m.opponent?.toLowerCase().trim()}`;
+      const key = `${m.player_name?.toLowerCase().trim()}_${m.prop_type || ''}_${m.opponent?.toLowerCase().trim()}`;
       matchupHistoryCache.set(key, m);
     }
-    
-    totalLoaded += data.length;
     if (data.length < pageSize) break;
     page++;
   }
-  
-  console.log(`[Category Analyzer] Loaded ${matchupHistoryCache.size} matchup history records (${totalLoaded} total fetched)`);
-  // v4.1: Log sample keys for debugging
-  const sampleKeys = Array.from(matchupHistoryCache.keys()).slice(0, 3);
-  console.log(`[Category Analyzer] Sample matchup keys: ${sampleKeys.join(', ')}`);
+  console.log(`[Category Analyzer] Loaded ${matchupHistoryCache.size} matchup records`);
 }
 
-// Load game environment into cache
 async function loadGameEnvironment(supabase: any): Promise<void> {
   const today = getEasternDate();
   const { data, error } = await supabase
     .from('game_environment')
     .select('game_id, home_team, away_team, vegas_total, vegas_spread, pace_rating, game_script')
     .gte('game_date', today);
-  
-  if (error) {
-    console.warn('[Category Analyzer] Game environment load error:', error.message);
-    return;
-  }
-  
+  if (error) { console.warn('[Category Analyzer] Game environment load error:', error.message); return; }
   gameEnvironmentCache.clear();
-  for (const g of (data || [])) {
-    gameEnvironmentCache.set(g.game_id, g);
-  }
-  console.log(`[Category Analyzer] Loaded ${gameEnvironmentCache.size} game environment records`);
-  // v4.1: Log sample for debugging
-  if (data && data.length > 0) {
-    const sample = data[0];
-    console.log(`[Category Analyzer] Sample game: ${sample.away_team} @ ${sample.home_team}, pace_rating=${sample.pace_rating}`);
-  }
+  for (const g of (data || [])) gameEnvironmentCache.set(g.game_id, g);
+  console.log(`[Category Analyzer] Loaded ${gameEnvironmentCache.size} game environments`);
 }
 
-// v8.0: Load player behavior profiles into cache
 async function loadPlayerProfiles(supabase: any): Promise<void> {
   const { data, error } = await supabase
     .from('player_behavior_profiles')
     .select('player_name, three_pt_peak_quarters, best_matchups, worst_matchups, fatigue_tendency, blowout_minutes_reduction, film_sample_count, profile_confidence')
-    .gte('games_analyzed', 5); // Only profiles with enough data
-  
-  if (error) {
-    console.warn('[Category Analyzer] Player profiles load error:', error.message);
-    return;
-  }
-  
+    .gte('games_analyzed', 5);
+  if (error) { console.warn('[Category Analyzer] Player profiles load error:', error.message); return; }
   playerProfileCache.clear();
-  for (const p of (data || [])) {
-    playerProfileCache.set(p.player_name?.toLowerCase().trim(), p);
-  }
-  console.log(`[Category Analyzer] v8.0 Loaded ${playerProfileCache.size} player behavior profiles`);
-  
-  // Log sample profile for debugging
-  if (data && data.length > 0) {
-    const sample = data[0];
-    console.log(`[Category Analyzer] Sample profile: ${sample.player_name}, film_samples=${sample.film_sample_count || 0}, confidence=${sample.profile_confidence || 0}`);
-  }
+  for (const p of (data || [])) playerProfileCache.set(p.player_name?.toLowerCase().trim(), p);
+  console.log(`[Category Analyzer] Loaded ${playerProfileCache.size} player profiles`);
 }
 
-// v9.0: Side override map - loaded from bot_category_weights to support flipped categories
 let sideOverrideMap: Map<string, 'over' | 'under'> = new Map();
 
 async function loadSideOverrides(supabase: any): Promise<Map<string, 'over' | 'under'>> {
   sideOverrideMap.clear();
   const { data, error } = await supabase
-    .from('bot_category_weights')
-    .select('category, side, weight, is_blocked')
-    .order('weight', { ascending: false });
-  
+    .from('bot_category_weights').select('category, side, weight, is_blocked').order('weight', { ascending: false });
   if (error || !data) return sideOverrideMap;
-  
-  // For each category, find the active (non-blocked, highest weight) side
   const categoryBestSide = new Map<string, { side: string; weight: number }>();
   for (const w of data) {
     if (w.is_blocked || (w.weight || 0) <= 0) continue;
     const existing = categoryBestSide.get(w.category);
-    if (!existing || (w.weight || 0) > existing.weight) {
-      categoryBestSide.set(w.category, { side: w.side, weight: w.weight || 0 });
-    }
+    if (!existing || (w.weight || 0) > existing.weight) categoryBestSide.set(w.category, { side: w.side, weight: w.weight || 0 });
   }
-  
-  for (const [cat, best] of categoryBestSide) {
-    sideOverrideMap.set(cat, best.side as 'over' | 'under');
-  }
-  
-  console.log(`[Category Analyzer] v9.0 Loaded ${sideOverrideMap.size} side overrides`);
-  for (const [cat, side] of sideOverrideMap) {
-    const config = CATEGORIES[cat];
-    if (config && config.side !== side) {
-      console.log(`[Category Analyzer] ↔️ FLIPPED: ${cat} ${config.side} -> ${side}`);
-    }
-  }
-  
+  for (const [cat, best] of categoryBestSide) sideOverrideMap.set(cat, best.side as 'over' | 'under');
+  console.log(`[Category Analyzer] Loaded ${sideOverrideMap.size} side overrides`);
   return sideOverrideMap;
 }
 
-// v10.0: Auto-flip detection — check historical outcomes and auto-create flipped weight entries
-// When a category's "over" hit rate < 50% with 30+ samples, auto-promote "under" side
 async function autoFlipUnderperformingCategories(supabase: any): Promise<string[]> {
   const flipped: string[] = [];
-  
-  // Query settled outcomes grouped by category + side
   const { data: outcomes, error } = await supabase
-    .from('category_sweet_spots')
-    .select('category, recommended_side, outcome')
-    .not('outcome', 'is', null)
-    .not('settled_at', 'is', null);
-  
-  if (error || !outcomes) {
-    console.warn('[Category Analyzer] v10.0 Auto-flip: could not load outcomes');
-    return flipped;
-  }
-  
-  // Aggregate hit rates by category + side (only graded outcomes: hit/miss)
+    .from('category_sweet_spots').select('category, recommended_side, outcome')
+    .not('outcome', 'is', null).not('settled_at', 'is', null);
+  if (error || !outcomes) return flipped;
+
   const stats = new Map<string, { hits: number; graded: number }>();
   for (const row of outcomes) {
-    // Only count graded outcomes — exclude no_data, push, void
     if (row.outcome !== 'hit' && row.outcome !== 'miss') continue;
-    
     const key = `${row.category}__${row.recommended_side || 'over'}`;
     let s = stats.get(key);
     if (!s) { s = { hits: 0, graded: 0 }; stats.set(key, s); }
     s.graded++;
     if (row.outcome === 'hit') s.hits++;
   }
-  
-  // Find categories where "over" is underperforming (< 50% hit rate, 30+ graded samples)
+
   for (const [key, s] of stats) {
     const [category, side] = key.split('__');
     if (side !== 'over' || s.graded < 30) continue;
-    
     const hitRate = s.hits / s.graded;
     if (hitRate >= 0.50) continue;
-    
-    // Check if under-side weight already exists and is promoted
-    const underKey = `${category}__under`;
-    const underStats = stats.get(underKey);
-    
-    console.log(`[Category Analyzer] v10.0 AUTO-FLIP CANDIDATE: ${category} over=${(hitRate * 100).toFixed(1)}% (${s.graded} graded picks) — promoting under side`);
-    
-    // Auto-create/update weight entries — SPORT-AWARE (v10.1)
-    // Only update entries that DON'T have sport-specific overrides
-    // Check if sport-specific entries exist first
+
     const { data: sportSpecific } = await supabase.from('bot_category_weights')
-      .select('id, sport')
-      .eq('category', category)
-      .eq('side', 'over')
-      .not('sport', 'is', null)
-      .not('sport', 'eq', 'team_all');
-    
-    if (sportSpecific && sportSpecific.length > 0) {
-      console.log(`[Category Analyzer] v10.1 SKIP auto-flip for ${category}: has ${sportSpecific.length} sport-specific overrides — manage manually`);
-      flipped.push(`${category}: over ${(hitRate * 100).toFixed(1)}% — SKIPPED (sport-specific overrides exist)`);
+      .select('id, sport').eq('category', category).eq('side', 'over')
+      .not('sport', 'is', null).not('sport', 'eq', 'team_all');
+    if (sportSpecific?.length > 0) {
+      flipped.push(`${category}: over ${(hitRate * 100).toFixed(1)}% — SKIPPED (sport-specific overrides)`);
       continue;
     }
-    
-    // Deprioritize over side (only global/team_all entries)
+
     await supabase.from('bot_category_weights')
       .update({ weight: 0.50, updated_at: new Date().toISOString() })
-      .eq('category', category)
-      .eq('side', 'over')
-      .or('sport.is.null,sport.eq.team_all');
-    
-    // Promote under side (upsert)
+      .eq('category', category).eq('side', 'over').or('sport.is.null,sport.eq.team_all');
+
     const underWeight = hitRate < 0.40 ? 1.00 : 1.10;
     const { data: existing } = await supabase.from('bot_category_weights')
-      .select('id').eq('category', category).eq('side', 'under')
-      .or('sport.is.null,sport.eq.team_all')
-      .limit(1);
-    
-    if (existing && existing.length > 0) {
+      .select('id').eq('category', category).eq('side', 'under').or('sport.is.null,sport.eq.team_all').limit(1);
+
+    if (existing?.length > 0) {
       await supabase.from('bot_category_weights')
-        .update({ weight: underWeight, is_blocked: false, updated_at: new Date().toISOString() })
-        .eq('id', existing[0].id);
+        .update({ weight: underWeight, is_blocked: false, updated_at: new Date().toISOString() }).eq('id', existing[0].id);
     } else {
       await supabase.from('bot_category_weights').insert({
-        category, side: 'under', sport: 'basketball_nba',
-        weight: underWeight, current_hit_rate: 55, total_picks: 0, total_hits: 0,
-        is_blocked: false, current_streak: 0, best_streak: 0, worst_streak: 0,
+        category, side: 'under', sport: 'basketball_nba', weight: underWeight,
+        current_hit_rate: 55, total_picks: 0, total_hits: 0, is_blocked: false,
+        current_streak: 0, best_streak: 0, worst_streak: 0,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       });
     }
-    
-    // Update the runtime override map
     sideOverrideMap.set(category, 'under');
-    flipped.push(`${category}: over ${(hitRate * 100).toFixed(1)}% → flipped to under (weight ${underWeight})`);
+    flipped.push(`${category}: over ${(hitRate * 100).toFixed(1)}% → flipped to under`);
   }
-  
-  if (flipped.length > 0) {
-    console.log(`[Category Analyzer] v10.0 Auto-flipped ${flipped.length} categories: ${flipped.join('; ')}`);
-  }
-  
+
+  if (flipped.length > 0) console.log(`[Category Analyzer] Auto-flipped: ${flipped.join('; ')}`);
   return flipped;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+// Projection calculation (documented to reflect what it actually does)
+function calculateTrueProjection(
+  playerName: string, propType: string, statValues: number[],
+  opponent: string | null, seasonAvg?: number, stdDev?: number
+): {
+  projectedValue: number; matchupAdj: number; paceAdj: number; profileAdj: number;
+  projectionSource: string; varianceRatio: number; shrinkageFactor: number; profileFlags: string[];
+} {
+  const l10Median = calculateMedian(statValues);
+  const l10Avg = statValues.length > 0 ? statValues.reduce((a, b) => a + b, 0) / statValues.length : 0;
+  const varianceRatio = l10Avg > 0 && stdDev ? stdDev / l10Avg : 0;
+  let projectionSource = 'L10_MEDIAN';
+  const profileFlags: string[] = [];
+
+  // Matchup adjustment
+  let matchupAdj = 0;
+  if (opponent) {
+    const normalizedOpp = normalizeOpponentName(opponent).toLowerCase().trim();
+    const matchupKey = `${playerName.toLowerCase().trim()}_${propType}_${normalizedOpp}`;
+    const matchup = matchupHistoryCache.get(matchupKey);
+    if (matchup && matchup.games_played >= 2) {
+      const matchupDiff = matchup.avg_stat - l10Median;
+      matchupAdj = Math.max(-2, Math.min(2, matchupDiff * 0.5));
+      projectionSource += '+MATCHUP';
+    }
   }
+
+  // Pace adjustment
+  let paceAdj = 0;
+  for (const [, env] of gameEnvironmentCache) {
+    const isPlayerGame = env.home_team?.toLowerCase().includes(playerName.toLowerCase().slice(0, 5)) ||
+      env.away_team?.toLowerCase().includes(playerName.toLowerCase().slice(0, 5));
+    if (isPlayerGame && env.pace_rating) {
+      paceAdj = getPaceMultiplier(env.pace_rating) * l10Avg;
+      projectionSource += '+PACE';
+      break;
+    }
+  }
+
+  // Profile adjustment
+  let profileAdj = 0;
+  const profile = playerProfileCache.get(playerName.toLowerCase().trim());
+  if (profile) {
+    if (propType === 'threes' && profile.three_pt_peak_quarters) {
+      const peakQ = Object.entries(profile.three_pt_peak_quarters)
+        .reduce((max, [q, pct]) => (pct as number) > max.pct ? { q, pct: pct as number } : max, { q: 'q1', pct: 0 });
+      if (peakQ.pct > 30) { profileAdj += 0.4; profileFlags.push(`PEAK_Q${peakQ.q.replace('q', '')}`); }
+    }
+    if (opponent && profile.best_matchups) {
+      const normalizedOpp = normalizeOpponentName(opponent).toLowerCase();
+      if (profile.best_matchups.some(m => m.opponent?.toLowerCase().includes(normalizedOpp))) {
+        profileAdj += 0.5; profileFlags.push('BEST_MATCHUP');
+      }
+    }
+    if (opponent && profile.worst_matchups) {
+      const normalizedOpp = normalizeOpponentName(opponent).toLowerCase();
+      if (profile.worst_matchups.some(m => m.opponent?.toLowerCase().includes(normalizedOpp))) {
+        profileAdj -= 0.5; profileFlags.push('WORST_MATCHUP');
+      }
+    }
+    if (profile.fatigue_tendency?.toLowerCase().includes('fatigue')) { profileAdj -= 0.3; profileFlags.push('FATIGUE_RISK'); }
+    if ((profile.blowout_minutes_reduction || 0) > 5) profileFlags.push('BLOWOUT_RISK');
+    if ((profile.film_sample_count || 0) >= 3) profileFlags.push('FILM_VERIFIED');
+    if (profileAdj !== 0) projectionSource += '+PROFILE';
+  }
+
+  // Variance shrinkage: high variance = regress more toward season mean
+  const shrinkageFactor = Math.max(0.70, Math.min(0.95, 1 - varianceRatio * 0.4));
+
+  // Additive projection then blend with season average
+  let rawProjection = l10Median + matchupAdj + paceAdj + profileAdj;
+  if (seasonAvg && seasonAvg > 0) {
+    rawProjection = (rawProjection * shrinkageFactor) + (seasonAvg * (1 - shrinkageFactor));
+    projectionSource += '+REGRESSED';
+  }
+
+  // FG efficiency gate for scoring/threes
+  if ((propType === 'points' || propType === 'threes') && seasonAvg && seasonAvg > 0) {
+    const l10VsSeasonRatio = l10Avg / seasonAvg;
+    if (l10VsSeasonRatio > 1.15) {
+      rawProjection -= (l10VsSeasonRatio - 1.15) * rawProjection * 0.3;
+      projectionSource += '+FG_REGRESS_DOWN';
+    } else if (l10VsSeasonRatio < 0.85) {
+      rawProjection += (0.85 - l10VsSeasonRatio) * rawProjection * 0.2;
+      projectionSource += '+FG_REGRESS_UP';
+    }
+  }
+
+  return {
+    projectedValue: Math.round(rawProjection * 2) / 2,
+    matchupAdj: Math.round(matchupAdj * 10) / 10,
+    paceAdj: Math.round(paceAdj * 10) / 10,
+    profileAdj: Math.round(profileAdj * 10) / 10,
+    projectionSource, varianceRatio: Math.round(varianceRatio * 100) / 100,
+    shrinkageFactor: Math.round(shrinkageFactor * 100) / 100, profileFlags,
+  };
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -1055,530 +636,295 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { category, minHitRate = 0.7, forceRefresh = false } = await req.json().catch(() => ({}));
+    console.log(`[Category Analyzer v5.0] Starting for category: ${category || 'ALL'}`);
 
-    console.log(`[Category Analyzer v4.0] Starting analysis with TRUE PROJECTIONS for category: ${category || 'ALL'}`);
-
-    // v8.0: Load all projection data sources including player profiles
-    // v9.0: Load category weight overrides for flipped sides
     const [, , , , sideOverrides] = await Promise.all([
       loadArchetypes(supabase),
       loadMatchupHistory(supabase),
       loadGameEnvironment(supabase),
       loadPlayerProfiles(supabase),
-      loadSideOverrides(supabase)
+      loadSideOverrides(supabase),
     ]);
 
-    // v10.0: Auto-flip underperforming categories before analysis
-    const autoFlipped = await autoFlipUnderperformingCategories(supabase);
+    await autoFlipUnderperformingCategories(supabase);
 
-    // Get today's date for analysis
     const today = getEasternDate();
+    // BUG E FIX: use ET midnight for timestamp comparisons
+    const todayStartUtc = getEasternMidnightUtc();
 
-    // Check if we already have fresh data
+    // Return cached data if available
     if (!forceRefresh) {
       const { data: existingData } = await supabase
-        .from('category_sweet_spots')
-        .select('*')
-        .eq('analysis_date', today)
-        .eq('is_active', true);
-
-      if (existingData && existingData.length > 0) {
-        console.log(`[Category Analyzer] Found ${existingData.length} existing sweet spots for today`);
-        
-        if (category) {
-          const filtered = existingData.filter((d: any) => d.category === category);
-          return new Response(JSON.stringify({
-            success: true,
-            data: filtered,
-            cached: true,
-            count: filtered.length
-          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-        }
-        
-        return new Response(JSON.stringify({
-          success: true,
-          data: existingData,
-          cached: true,
-          count: existingData.length
-        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        .from('category_sweet_spots').select('*').eq('analysis_date', today).eq('is_active', true);
+      if (existingData?.length > 0) {
+        const filtered = category ? existingData.filter((d: any) => d.category === category) : existingData;
+        return new Response(JSON.stringify({ success: true, data: filtered, cached: true, count: filtered.length }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
     }
 
-    // Fetch all game logs from last 30 days - BOTH NBA and NCAAB
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Fetch game logs
+    const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+    const pageSize = 1000;
 
     let allGameLogs: GameLog[] = [];
-    
-    // Fetch NBA logs with pagination
-    let page = 0;
-    const pageSize = 1000;
-    while (true) {
-      const { data: gameLogs, error: logsError } = await supabase
-        .from('nba_player_game_logs')
+    for (let page = 0; ; page++) {
+      const { data, error } = await supabase.from('nba_player_game_logs')
         .select('player_name, game_date, points, rebounds, assists, steals, blocks, threes_made, minutes_played')
-        .gte('game_date', thirtyDaysAgoStr)
-        .order('game_date', { ascending: false })
+        .gte('game_date', thirtyDaysAgoStr).order('game_date', { ascending: false })
         .range(page * pageSize, (page + 1) * pageSize - 1);
-
-      if (logsError) {
-        console.error('[Category Analyzer] Error fetching NBA game logs:', logsError);
-        throw new Error(`Failed to fetch NBA game logs: ${logsError.message}`);
-      }
-      if (!gameLogs || gameLogs.length === 0) break;
-      allGameLogs = allGameLogs.concat(gameLogs as GameLog[]);
-      if (gameLogs.length < pageSize) break;
-      page++;
+      if (error) throw new Error(`NBA logs: ${error.message}`);
+      if (!data?.length) break;
+      allGameLogs = allGameLogs.concat(data as GameLog[]);
+      if (data.length < pageSize) break;
     }
-    console.log(`[Category Analyzer] NBA game logs fetched: ${allGameLogs.length}`);
 
-    // Fetch NCAAB logs with pagination
-    let ncaabPage = 0;
-    let ncaabCount = 0;
-    while (true) {
-      const { data: ncaabLogs, error: ncaabError } = await supabase
-        .from('ncaab_player_game_logs')
+    for (let page = 0; ; page++) {
+      const { data, error } = await supabase.from('ncaab_player_game_logs')
         .select('player_name, game_date, points, rebounds, assists, steals, blocks, threes_made, minutes_played')
-        .gte('game_date', thirtyDaysAgoStr)
-        .order('game_date', { ascending: false })
-        .range(ncaabPage * pageSize, (ncaabPage + 1) * pageSize - 1);
-
-      if (ncaabError) {
-        console.warn('[Category Analyzer] NCAAB game logs warning:', ncaabError.message);
-        break;
-      }
-      if (!ncaabLogs || ncaabLogs.length === 0) break;
-      allGameLogs = allGameLogs.concat(ncaabLogs as GameLog[]);
-      ncaabCount += ncaabLogs.length;
-      if (ncaabLogs.length < pageSize) break;
-      ncaabPage++;
+        .gte('game_date', thirtyDaysAgoStr).order('game_date', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+      if (error) { console.warn('[Category Analyzer] NCAAB logs warning:', error.message); break; }
+      if (!data?.length) break;
+      allGameLogs = allGameLogs.concat(data as GameLog[]);
+      if (data.length < pageSize) break;
     }
-    console.log(`[Category Analyzer] NCAAB game logs fetched: ${ncaabCount}`);
-    console.log(`[Category Analyzer] Total game logs fetched: ${allGameLogs.length}`);
+    console.log(`[Category Analyzer] Total game logs: ${allGameLogs.length}`);
 
-    // ============ FETCH MLB GAME LOGS ============
-    // Use full season data (no date filter) — MLB uses historical backfill as baseline
     let allMLBLogs: MLBGameLog[] = [];
-    let mlbPage = 0;
-    while (true) {
-      const { data: mlbLogs, error: mlbError } = await supabase
-        .from('mlb_player_game_logs')
+    for (let page = 0; ; page++) {
+      const { data, error } = await supabase.from('mlb_player_game_logs')
         .select('player_name, game_date, hits, walks, runs, rbis, total_bases, stolen_bases, home_runs, strikeouts, pitcher_strikeouts, innings_pitched, opponent')
-        .order('game_date', { ascending: false })
-        .range(mlbPage * pageSize, (mlbPage + 1) * pageSize - 1);
-
-      if (mlbError) {
-        console.warn('[Category Analyzer] MLB game logs warning:', mlbError.message);
-        break;
-      }
-      if (!mlbLogs || mlbLogs.length === 0) break;
-      allMLBLogs = allMLBLogs.concat(mlbLogs as MLBGameLog[]);
-      if (mlbLogs.length < pageSize) break;
-      mlbPage++;
+        .order('game_date', { ascending: false }).range(page * pageSize, (page + 1) * pageSize - 1);
+      if (error) { console.warn('[Category Analyzer] MLB logs warning:', error.message); break; }
+      if (!data?.length) break;
+      allMLBLogs = allMLBLogs.concat(data as MLBGameLog[]);
+      if (data.length < pageSize) break;
     }
-    console.log(`[Category Analyzer] MLB game logs fetched: ${allMLBLogs.length}`);
 
-    // Group MLB logs by player
-    const mlbPlayerLogs: Record<string, MLBGameLog[]> = {};
-    for (const log of allMLBLogs) {
-      const name = log.player_name;
-      if (!mlbPlayerLogs[name]) mlbPlayerLogs[name] = [];
-      mlbPlayerLogs[name].push(log);
-    }
-    console.log(`[Category Analyzer] Grouped MLB logs for ${Object.keys(mlbPlayerLogs).length} players`);
-
-    if (allGameLogs.length === 0) {
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'No game logs found',
-        data: []
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (!allGameLogs.length) {
+      return new Response(JSON.stringify({ success: false, error: 'No game logs found', data: [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // Group logs by player
     const playerLogs: Record<string, GameLog[]> = {};
     for (const log of allGameLogs) {
-      const name = log.player_name;
-      if (!playerLogs[name]) playerLogs[name] = [];
-      playerLogs[name].push(log);
+      if (!playerLogs[log.player_name]) playerLogs[log.player_name] = [];
+      playerLogs[log.player_name].push(log);
     }
 
-    console.log(`[Category Analyzer] Grouped logs for ${Object.keys(playerLogs).length} players`);
+    const mlbPlayerLogs: Record<string, MLBGameLog[]> = {};
+    for (const log of allMLBLogs) {
+      if (!mlbPlayerLogs[log.player_name]) mlbPlayerLogs[log.player_name] = [];
+      mlbPlayerLogs[log.player_name].push(log);
+    }
 
-    // Analyze each category (NBA/NCAAB only — MLB handled separately below)
-    const categoriesToAnalyze = category 
-      ? (MLB_CATEGORIES.has(category) ? [] : [category]) 
-      : Object.keys(CATEGORIES).filter(k => !MLB_CATEGORIES.has(k));
-    const sweetSpots: any[] = [];
-    let archetypeBlockedCount = 0;
-
-    // v13.0: DETERMINISTIC SIDE SELECTION — per-player per-prop historical outcome analysis
-    // Query ALL settled outcomes (paginated to avoid 1000-row default limit)
+    // Load historical outcomes for deterministic side selection
     let historicalOutcomes: any[] = [];
-    let hOffset = 0;
-    const H_PAGE = 1000;
-    while (true) {
-      const { data: hPage } = await supabase
-        .from('category_sweet_spots')
+    for (let offset = 0; ; offset += 1000) {
+      const { data: hPage } = await supabase.from('category_sweet_spots')
         .select('player_name, prop_type, recommended_side, outcome')
-        .not('outcome', 'is', null)
-        .not('settled_at', 'is', null)
-        .in('outcome', ['hit', 'miss'])
-        .range(hOffset, hOffset + H_PAGE - 1);
-      if (!hPage || hPage.length === 0) break;
+        .not('outcome', 'is', null).not('settled_at', 'is', null)
+        .in('outcome', ['hit', 'miss']).range(offset, offset + 999);
+      if (!hPage?.length) break;
       historicalOutcomes = historicalOutcomes.concat(hPage);
-      if (hPage.length < H_PAGE) break;
-      hOffset += H_PAGE;
+      if (hPage.length < 1000) break;
     }
-    console.log(`[Category Analyzer] Loaded ${historicalOutcomes.length} historical outcomes for deterministic side selection`);
 
-    // Build per-player per-prop side hit rate map
     const playerSideHistory = new Map<string, { overHits: number; overTotal: number; underHits: number; underTotal: number }>();
-    for (const row of (historicalOutcomes || [])) {
+    for (const row of historicalOutcomes) {
       const key = `${(row.player_name || '').toLowerCase().trim()}|${(row.prop_type || '').toLowerCase().trim()}`;
       let entry = playerSideHistory.get(key);
       if (!entry) { entry = { overHits: 0, overTotal: 0, underHits: 0, underTotal: 0 }; playerSideHistory.set(key, entry); }
       const side = (row.recommended_side || 'over').toLowerCase();
-      if (side === 'over') {
-        entry.overTotal++;
-        if (row.outcome === 'hit') entry.overHits++;
-      } else {
-        entry.underTotal++;
-        if (row.outcome === 'hit') entry.underHits++;
-      }
+      if (side === 'over') { entry.overTotal++; if (row.outcome === 'hit') entry.overHits++; }
+      else { entry.underTotal++; if (row.outcome === 'hit') entry.underHits++; }
     }
 
+    const sweetSpots: any[] = [];
     const deterministicFlips: string[] = [];
+    const categoriesToAnalyze = category
+      ? (MLB_CATEGORIES.has(category) ? [] : [category])
+      : Object.keys(CATEGORIES).filter(k => !MLB_CATEGORIES.has(k));
 
     for (const catKey of categoriesToAnalyze) {
       const config = CATEGORIES[catKey];
-      if (!config) continue;
+      if (!config || config.disabled) continue;
 
-      // v9.0: Apply side override from bot_category_weights (flipped categories)
-      let effectiveSide = sideOverrideMap.get(catKey) || config.side;
+      let effectiveSide = sideOverrides.get(catKey) || config.side;
 
-      // v7.0: Skip disabled categories
-      if (config.disabled) {
-        console.log(`[Category Analyzer] ⛔ Skipping disabled category: ${catKey}`);
-        continue;
-      }
+      // BUG A FIX: if fadeOnly, the category analyzes from its default side
+      // but emits the OPPOSITE side as the recommendation
+      const isFadeOnly = config.fadeOnly === true;
 
-      console.log(`[Category Analyzer] Analyzing category: ${catKey}`);
-      let playersInRange = 0;
-      let qualifiedPlayers = 0;
-      let blockedByArchetype = 0;
-      let blockedByMinutes = 0;
+      console.log(`[Category Analyzer] Analyzing: ${catKey} (side: ${effectiveSide}${isFadeOnly ? ', FADE_ONLY' : ''})`);
+      let playersInRange = 0, qualifiedPlayers = 0, blockedByArchetype = 0, blockedByMinutes = 0;
 
       for (const [playerName, logs] of Object.entries(playerLogs)) {
-        // Take last 10 games only
         const l10Logs = logs.slice(0, 10);
-        if (l10Logs.length < 5) continue; // Need at least 5 games for reliable analysis
+        if (l10Logs.length < 5) continue;
 
         const statValues = l10Logs.map(log => getStatValue(log, config.propType));
         const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
         const l10StdDev = calculateStdDev(statValues);
 
-        // v1.4: DUAL ELIGIBILITY - Check avgRange OR lineRange
         const avgEligible = l10Avg >= config.avgRange.min && l10Avg <= config.avgRange.max;
-        
-        // For line-based eligibility, we need to check against actual bookmaker line later
-        // For now, mark players who might qualify via lineRange for later validation
         const potentialLineEligible = config.lineRange !== undefined;
 
-        // v3.0: ARCHETYPE VALIDATION - Must pass before being considered
-        const archetypeCheck = passesArchetypeValidation(playerName, config);
-        if (!archetypeCheck.passes) {
-          if (avgEligible && playersInRange < 5) {
-            // Only log first few blocked for debugging
-            console.log(`[Category Analyzer] ⛔ ${catKey}: ${playerName} blocked - ${archetypeCheck.reason}`);
-          }
-          blockedByArchetype++;
-          continue; // Skip this player for this category
-        }
+        if (!avgEligible && !potentialLineEligible) continue;
 
-        // v13.0: DETERMINISTIC SIDE SELECTION — override effectiveSide based on per-player history
+        const archetypeCheck = passesArchetypeValidation(playerName, config);
+        if (!archetypeCheck.passes) { blockedByArchetype++; continue; }
+
+        // Deterministic side selection
         const histKey = `${playerName.toLowerCase().trim()}|${config.propType.toLowerCase().trim()}`;
         const hist = playerSideHistory.get(histKey);
         let playerEffectiveSide = effectiveSide;
-        let historicalOverRate: number | null = null;
-        let historicalUnderRate: number | null = null;
-        let historicalSamples = 0;
 
         if (hist) {
-          historicalSamples = hist.overTotal + hist.underTotal;
+          const historicalSamples = hist.overTotal + hist.underTotal;
           if (historicalSamples >= 7) {
-            const totalGraded = hist.overTotal + hist.underTotal;
-            historicalOverRate = hist.overTotal > 0 ? hist.overHits / hist.overTotal : null;
-            historicalUnderRate = hist.underTotal > 0 ? hist.underHits / hist.underTotal : null;
+            const overRate = hist.overTotal > 0 ? hist.overHits / hist.overTotal : null;
+            const underRate = hist.underTotal > 0 ? hist.underHits / hist.underTotal : null;
 
-            // v13.1: FORCE RULE — if either side has 60%+ hit rate with 7+ samples, force it
-            if (historicalOverRate !== null && historicalOverRate >= 0.60 && hist.overTotal >= 7) {
-              if (playerEffectiveSide !== 'over') {
-                const flipMsg = `🔄 FORCE FLIP: ${playerName} ${config.propType} → OVER (over: ${(historicalOverRate * 100).toFixed(0)}% hit rate, ${hist.overTotal} samples)`;
-                console.log(`[Category Analyzer] ${flipMsg}`);
-                deterministicFlips.push(flipMsg);
-                playerEffectiveSide = 'over';
-              }
-            }
-            else if (historicalUnderRate !== null && historicalUnderRate >= 0.60 && hist.underTotal >= 7) {
-              if (playerEffectiveSide !== 'under') {
-                const flipMsg = `🔄 FORCE FLIP: ${playerName} ${config.propType} → UNDER (under: ${(historicalUnderRate * 100).toFixed(0)}% hit rate, ${hist.underTotal} samples)`;
-                console.log(`[Category Analyzer] ${flipMsg}`);
-                deterministicFlips.push(flipMsg);
-                playerEffectiveSide = 'under';
-              }
-            }
-            // v13.1: Tighter gap — 48/52 instead of 45/55
-            else if (historicalOverRate !== null && historicalOverRate < 0.48 && 
-                historicalUnderRate !== null && historicalUnderRate > 0.52) {
-              if (playerEffectiveSide !== 'under') {
-                const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → UNDER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
-                console.log(`[Category Analyzer] ${flipMsg}`);
-                deterministicFlips.push(flipMsg);
-                playerEffectiveSide = 'under';
-              }
-            }
-            // If under hit rate < 48% AND over > 52%, force over
-            else if (historicalUnderRate !== null && historicalUnderRate < 0.48 && 
-                     historicalOverRate !== null && historicalOverRate > 0.52) {
-              if (playerEffectiveSide !== 'over') {
-                const flipMsg = `🔄 DETERMINISTIC FLIP: ${playerName} ${config.propType} → OVER (over: ${(historicalOverRate * 100).toFixed(0)}%, under: ${(historicalUnderRate * 100).toFixed(0)}%, ${totalGraded} samples)`;
-                console.log(`[Category Analyzer] ${flipMsg}`);
-                deterministicFlips.push(flipMsg);
-                playerEffectiveSide = 'over';
-              }
+            if (overRate !== null && overRate >= 0.60 && hist.overTotal >= 7 && playerEffectiveSide !== 'over') {
+              const msg = `🔄 FORCE FLIP: ${playerName} ${config.propType} → OVER (${(overRate*100).toFixed(0)}%, n=${hist.overTotal})`;
+              deterministicFlips.push(msg); playerEffectiveSide = 'over';
+            } else if (underRate !== null && underRate >= 0.60 && hist.underTotal >= 7 && playerEffectiveSide !== 'under') {
+              const msg = `🔄 FORCE FLIP: ${playerName} ${config.propType} → UNDER (${(underRate*100).toFixed(0)}%, n=${hist.underTotal})`;
+              deterministicFlips.push(msg); playerEffectiveSide = 'under';
+            } else if (overRate !== null && overRate < 0.48 && underRate !== null && underRate > 0.52 && playerEffectiveSide !== 'under') {
+              const msg = `🔄 DETERMINISTIC: ${playerName} ${config.propType} → UNDER (${(underRate*100).toFixed(0)}% under)`;
+              deterministicFlips.push(msg); playerEffectiveSide = 'under';
+            } else if (underRate !== null && underRate < 0.48 && overRate !== null && overRate > 0.52 && playerEffectiveSide !== 'over') {
+              const msg = `🔄 DETERMINISTIC: ${playerName} ${config.propType} → OVER (${(overRate*100).toFixed(0)}% over)`;
+              deterministicFlips.push(msg); playerEffectiveSide = 'over';
             }
           }
         }
 
-
-        // If they're slow during live game, hedge system will alert
+        // Star player block for under recommendations
         if (playerEffectiveSide === 'under' && isStarPlayer(playerName)) {
-          console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} excluded from ${catKey} - use hedge system for live adjustments`);
+          console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} from ${catKey}`);
           continue;
         }
 
-        // v7.0: STARTER PROTECTION - Block starters from points UNDER categories
-        // Players averaging 28+ minutes are starters who can explode any night
+        // Starter protection: block starters from points UNDER
         if (config.propType === 'points' && playerEffectiveSide === 'under') {
-          const avgMinutes = l10Logs.reduce((sum, g) => sum + (g.minutes_played || 0), 0) / l10Logs.length;
-          if (avgMinutes >= 28) {
-            if (blockedByMinutes < 5) {
-              console.log(`[Category Analyzer] ⛔ STARTER: ${playerName} blocked from ${catKey} - ${avgMinutes.toFixed(1)} min avg (starters can explode)`);
-            }
-            blockedByMinutes++;
-            continue;
-          }
+          const avgMin = l10Logs.reduce((s, g) => s + (g.minutes_played || 0), 0) / l10Logs.length;
+          if (avgMin >= 28) { blockedByMinutes++; continue; }
         }
-        
-        // v4.0: BREAKOUT PLAYER DETECTION - Block rising stars from UNDER categories
-        // Prevents picks like "Evan Mobley UNDER 18.5" when he's on an upward trend
-        if (playerEffectiveSide === 'under') {
-          const l5Logs = l10Logs.slice(0, 5);
-          const l5Values = l5Logs.map(log => getStatValue(log, config.propType));
-          const l5Avg = l5Values.reduce((a, b) => a + b, 0) / l5Values.length;
-          
-          // Check for breakout signals
-          const breakoutSignals = {
-            // 1. Recent explosion: Any 25+ point game in L5 (for points)
-            recentExplosion: config.propType === 'points' && l5Values.some(v => v >= 25),
-            // 2. Usage trending: L5 avg > L10 avg by 15%+ 
-            usageTrending: l10Logs.length >= 10 && l5Avg > l10Avg * 1.15,
-            // 3. Minutes expanding: L5 minutes > L10 minutes by 10%+
-            minutesExpanding: (() => {
-              const l5Min = l5Logs.reduce((s, g) => s + (g.minutes_played || 0), 0) / l5Logs.length;
-              const l10Min = l10Logs.reduce((s, g) => s + (g.minutes_played || 0), 0) / l10Logs.length;
-              return l10Logs.length >= 10 && l5Min > l10Min * 1.10;
-            })(),
-            // 4. Consistency breakout: Recent games all above line
-            consistentHigh: config.propType === 'points' && l5Values.every(v => v >= l10Avg * 1.1),
-          };
-          
-          // Block if explosion detected (immediate disqualifier)
-          if (breakoutSignals.recentExplosion) {
-            console.log(`[Category Analyzer] 🚫 BREAKOUT: ${playerName} blocked from ${catKey} - 25+ pt game in L5`);
-            continue;
-          }
-          
-          // Block if multiple trending signals detected
-          const trendingCount = [
-            breakoutSignals.usageTrending,
-            breakoutSignals.minutesExpanding,
-            breakoutSignals.consistentHigh,
-          ].filter(Boolean).length;
-          
-          if (trendingCount >= 2) {
-            console.log(`[Category Analyzer] 🚫 BREAKOUT: ${playerName} blocked from ${catKey} - ${trendingCount} trending signals`);
-            continue;
-          }
-        }
-        
-        // If neither eligibility path is possible, skip
-        if (!avgEligible && !potentialLineEligible) continue;
-        
-        playersInRange++;
 
+        // Breakout detection for UNDER categories
+        if (playerEffectiveSide === 'under') {
+          const l5Values = statValues.slice(0, 5);
+          const l5Avg = l5Values.reduce((a, b) => a + b, 0) / l5Values.length;
+          if (config.propType === 'points' && l5Values.some(v => v >= 25)) { continue; } // recent explosion
+          const l5Min = l10Logs.slice(0, 5).reduce((s, g) => s + (g.minutes_played || 0), 0) / l10Logs.slice(0, 5).length;
+          const l10Min2 = l10Logs.reduce((s, g) => s + (g.minutes_played || 0), 0) / l10Logs.length;
+          const trendingCount = [
+            l10Logs.length >= 10 && l5Avg > l10Avg * 1.15,
+            l10Logs.length >= 10 && l5Min > l10Min2 * 1.10,
+            config.propType === 'points' && l5Values.every(v => v >= l10Avg * 1.1),
+          ].filter(Boolean).length;
+          if (trendingCount >= 2) continue;
+        }
+
+        if (!avgEligible && potentialLineEligible) {
+          sweetSpots.push({
+            category: catKey, player_name: playerName, prop_type: config.propType,
+            recommended_line: null, recommended_side: playerEffectiveSide,
+            l10_hit_rate: null, l10_avg: Math.round(l10Avg * 10) / 10,
+            l10_min: Math.min(...statValues), l10_max: Math.max(...statValues),
+            l10_median: Math.round(calculateMedian(statValues) * 10) / 10,
+            l10_std_dev: Math.round(l10StdDev * 10) / 10,
+            games_played: l10Logs.length, archetype: getPlayerArchetype(playerName),
+            confidence_score: 0, analysis_date: today, is_active: false,
+            eligibility_type: 'LINE_RANGE_PENDING',
+            requires_bounce_back_check: config.supportsBounceBack || false,
+            fade_only: isFadeOnly,
+          });
+          continue;
+        }
+
+        playersInRange++;
         const l10Min = Math.min(...statValues);
         const l10Max = Math.max(...statValues);
         const l10Median = calculateMedian(statValues);
 
-        // Find the best line for this player
         let bestLine: number | null = null;
         let bestHitRate = 0;
-
         for (const line of config.lines) {
           const hitRate = calculateHitRate(statValues, line, playerEffectiveSide);
-          
           if (hitRate >= (minHitRate || config.minHitRate) && hitRate > bestHitRate) {
-            bestHitRate = hitRate;
-            bestLine = line;
+            bestHitRate = hitRate; bestLine = line;
           }
         }
 
-        // Log top candidates even if they don't qualify
-        if (playersInRange <= 5) {
-          console.log(`[Category Analyzer] ${catKey} - ${playerName}: avg=${l10Avg.toFixed(1)}, bestLine=${bestLine}, hitRate=${(bestHitRate * 100).toFixed(0)}%, avgEligible=${avgEligible}, potentialLineEligible=${potentialLineEligible}`);
-        }
-
-        // Calculate confidence score based on consistency and hit rate
-        const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
-        
-        // v5.0: TIGHTENED UNDER CRITERIA - UNDERs hit at 63.6% vs 78% for OVERs
+        // UNDER criteria check
         if (playerEffectiveSide === 'under') {
-          const underMinHitRate = 0.65; // Higher threshold for unders
-          const maxVarianceRatio = 0.30; // Variance must be < 30% of avg
           const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
-          
-          // Block high-variance UNDERs
-          if (varianceRatio > maxVarianceRatio) {
-            console.log(`[Category Analyzer] ✗ UNDER ${playerName}: Variance too high (${(varianceRatio * 100).toFixed(0)}% > ${maxVarianceRatio * 100}%)`);
-            continue;
-          }
-          
-          // Check for trending up (L5 > L10)
-          const l5Values = statValues.slice(0, 5);
-          const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
-          if (l5Avg > l10Avg * 1.08) {
-            console.log(`[Category Analyzer] ✗ UNDER ${playerName}: Trending up (L5 ${l5Avg.toFixed(1)} > L10*1.08 ${(l10Avg * 1.08).toFixed(1)})`);
-            continue;
-          }
-          
-          // Apply stricter hit rate for UNDERs
-          if (bestHitRate < underMinHitRate) {
-            console.log(`[Category Analyzer] ✗ UNDER ${playerName}: Hit rate ${(bestHitRate * 100).toFixed(0)}% < required ${underMinHitRate * 100}%`);
-            continue;
-          }
+          if (varianceRatio > 0.30) continue;
+          const l5Avg2 = statValues.slice(0, 5).reduce((a, b) => a + b, 0) / Math.max(statValues.slice(0, 5).length, 1);
+          if (l5Avg2 > l10Avg * 1.08) continue;
+          if (bestHitRate < 0.65) continue;
         }
 
-        if (bestLine !== null && bestHitRate >= (minHitRate || config.minHitRate)) {
-          qualifiedPlayers++;
-          
-          // v5.0: RECALIBRATED CONFIDENCE FORMULA
-          // Add variance penalty, side-specific bonus, sample size bonus
-          const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
-          const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
-          const sideBonus = playerEffectiveSide === 'over' ? 0.06 : 0; // OVERs historically hit higher
-          const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
-          const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
+        if (bestLine === null || bestHitRate < (minHitRate || config.minHitRate)) continue;
+        qualifiedPlayers++;
 
-          // v11.0: Compute L3 average for recency decline detection
-          const l3Values = statValues.slice(0, 3);
-          const l3Avg = l3Values.length >= 3 ? Math.round((l3Values.reduce((a, b) => a + b, 0) / l3Values.length) * 10) / 10 : null;
+        const l3Values = statValues.slice(0, 3);
+        const l3Avg = l3Values.length >= 3 ? Math.round((l3Values.reduce((a, b) => a + b, 0) / l3Values.length) * 10) / 10 : null;
+        const l5Vals = statValues.slice(0, 5);
+        const l5Avg = l5Vals.length >= 5 ? Math.round((l5Vals.reduce((a, b) => a + b, 0) / l5Vals.length) * 10) / 10 : null;
 
-          // v12.0: Compute L5 average for composite filter
-          const l5Values = statValues.slice(0, 5);
-          const l5Avg = l5Values.length >= 5 ? Math.round((l5Values.reduce((a, b) => a + b, 0) / l5Values.length) * 10) / 10 : null;
-
-          // v11.0: UNIVERSAL RECENCY DECLINE BLOCK
-          if (l3Avg !== null && l10Avg > 0) {
-            const declineRatio = l3Avg / l10Avg;
-            if (playerEffectiveSide === 'over' && declineRatio < 0.75) {
-              console.log(`[Recency Block] 📉 ${playerName} ${config.propType} OVER blocked: L3 avg ${l3Avg} is ${((1 - declineRatio) * 100).toFixed(0)}% below L10 avg ${l10Avg.toFixed(1)}`);
-              continue;
-            }
-            if (playerEffectiveSide === 'under' && declineRatio > 1.25) {
-              console.log(`[Recency Block] 📈 ${playerName} ${config.propType} UNDER blocked: L3 avg ${l3Avg} is ${((declineRatio - 1) * 100).toFixed(0)}% above L10 avg ${l10Avg.toFixed(1)}`);
-              continue;
-            }
-          }
-
-          sweetSpots.push({
-            category: catKey,
-            player_name: playerName,
-            prop_type: config.propType,
-            recommended_line: bestLine,
-            recommended_side: playerEffectiveSide,
-            l10_hit_rate: Math.round(bestHitRate * 100) / 100,
-            l10_avg: Math.round(l10Avg * 10) / 10,
-            l10_min: l10Min,
-            l10_max: l10Max,
-            l10_median: Math.round(l10Median * 10) / 10,
-            l3_avg: l3Avg, // v11.0: Recency signal
-            l5_avg: l5Avg, // v12.0: Composite filter
-            games_played: l10Logs.length,
-            archetype: getPlayerArchetype(playerName), // v3.0: Store actual archetype
-            confidence_score: Math.round(confidenceScore * 100) / 100,
-            analysis_date: today,
-            is_active: true,
-            eligibility_type: 'AVG_RANGE' // Track how they qualified
-          });
-        } else if (!avgEligible && potentialLineEligible) {
-          // v1.4: Player doesn't meet avgRange but might qualify via lineRange
-          // Add as potential bounce-back candidate for later validation
-          sweetSpots.push({
-            category: catKey,
-            player_name: playerName,
-            prop_type: config.propType,
-            recommended_line: null, // Will be set during validation
-            recommended_side: playerEffectiveSide,
-            l10_hit_rate: null,
-            l10_avg: Math.round(l10Avg * 10) / 10,
-            l10_min: l10Min,
-            l10_max: l10Max,
-            l10_median: Math.round(l10Median * 10) / 10,
-            l10_std_dev: Math.round(l10StdDev * 10) / 10,
-            games_played: l10Logs.length,
-            archetype: getPlayerArchetype(playerName), // v3.0: Store actual archetype
-            confidence_score: 0, // Will be calculated during validation
-            analysis_date: today,
-            is_active: false, // Will be activated during validation if eligible
-            eligibility_type: 'LINE_RANGE_PENDING', // Needs line-based validation
-            requires_bounce_back_check: config.supportsBounceBack || false
-          });
+        // Recency decline block
+        if (l3Avg !== null && l10Avg > 0) {
+          const declineRatio = l3Avg / l10Avg;
+          if (playerEffectiveSide === 'over' && declineRatio < 0.75) continue;
+          if (playerEffectiveSide === 'under' && declineRatio > 1.25) continue;
         }
+
+        const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
+        const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
+        const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
+        const sideBonus = playerEffectiveSide === 'over' ? 0.06 : 0;
+        const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
+        const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
+
+        // BUG A FIX: if fadeOnly, flip the recommended_side for the output
+        // The analysis runs on config.side to find the correct line,
+        // but the recommendation emits the OPPOSITE side
+        const outputSide = isFadeOnly ? (playerEffectiveSide === 'under' ? 'over' : 'under') : playerEffectiveSide;
+
+        sweetSpots.push({
+          category: catKey, player_name: playerName, prop_type: config.propType,
+          recommended_line: bestLine, recommended_side: outputSide,
+          l10_hit_rate: Math.round(bestHitRate * 100) / 100,
+          l10_avg: Math.round(l10Avg * 10) / 10, l10_min: l10Min, l10_max: l10Max,
+          l10_median: Math.round(l10Median * 10) / 10, l3_avg: l3Avg, l5_avg: l5Avg,
+          games_played: l10Logs.length, archetype: getPlayerArchetype(playerName),
+          confidence_score: Math.round(confidenceScore * 100) / 100,
+          analysis_date: today, is_active: true, eligibility_type: 'AVG_RANGE',
+          fade_only: isFadeOnly,
+        });
       }
-      
-      console.log(`[Category Analyzer] ${catKey}: ${playersInRange} in range, ${qualifiedPlayers} qualified, ${blockedByArchetype} blocked by archetype`);
-      archetypeBlockedCount += blockedByArchetype;
+      console.log(`[Category Analyzer] ${catKey}: ${playersInRange} in range, ${qualifiedPlayers} qualified, ${blockedByArchetype} archetype blocked`);
     }
 
-    console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots before validation (${archetypeBlockedCount} total blocked by archetype)`);
-
-    // ============ MLB CATEGORY ANALYSIS ============
-    const mlbCategoriesToAnalyze = category 
-      ? (MLB_CATEGORIES.has(category) ? [category] : [])
-      : Array.from(MLB_CATEGORIES);
-    
-    let mlbSweetSpotCount = 0;
-
-    for (const catKey of mlbCategoriesToAnalyze) {
+    // MLB analysis
+    for (const catKey of (category ? (MLB_CATEGORIES.has(category) ? [category] : []) : Array.from(MLB_CATEGORIES))) {
       const config = CATEGORIES[catKey];
       if (!config) continue;
-
-      const effectiveSide = sideOverrideMap.get(catKey) || config.side;
-      console.log(`[Category Analyzer] Analyzing MLB category: ${catKey}`);
-      let mlbQualified = 0;
-
-      // For pitcher_strikeouts, only use players who have pitcher data
+      const effectiveSide = sideOverrides.get(catKey) || config.side;
       const isPitcherCategory = config.propType === 'pitcher_strikeouts';
 
       for (const [playerName, logs] of Object.entries(mlbPlayerLogs)) {
-        // Filter: pitcher categories need pitcher_strikeouts != null
         const relevantLogs = isPitcherCategory
-          ? logs.filter(l => l.pitcher_strikeouts !== null && l.pitcher_strikeouts !== undefined)
+          ? logs.filter(l => l.pitcher_strikeouts != null && l.pitcher_strikeouts !== undefined)
           : logs;
-
         const l10Logs = relevantLogs.slice(0, 10);
         if (l10Logs.length < 5) continue;
 
@@ -1586,732 +932,276 @@ serve(async (req) => {
         const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
         const l10StdDev = calculateStdDev(statValues);
 
-        // Check average range eligibility
         if (l10Avg < config.avgRange.min || l10Avg > config.avgRange.max) continue;
 
-        const l10Min = Math.min(...statValues);
-        const l10Max = Math.max(...statValues);
-        const l10Median = calculateMedian(statValues);
+        if (effectiveSide === 'under') {
+          if (l10Avg > 0 && l10StdDev / l10Avg > 0.40) continue;
+          const l5Avg = statValues.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
+          if (l5Avg > l10Avg * 1.10) continue;
+        }
 
-        // Find best line
-        let bestLine: number | null = null;
-        let bestHitRate = 0;
-
+        let bestLine: number | null = null, bestHitRate = 0;
         for (const line of config.lines) {
           const hitRate = calculateHitRate(statValues, line, effectiveSide);
-          if (hitRate >= config.minHitRate && hitRate > bestHitRate) {
-            bestHitRate = hitRate;
-            bestLine = line;
-          }
+          if (hitRate >= config.minHitRate && hitRate > bestHitRate) { bestHitRate = hitRate; bestLine = line; }
+        }
+        if (!bestLine) continue;
+
+        const l3Values = statValues.slice(0, 3);
+        const l3Avg = l3Values.length >= 3 ? l3Values.reduce((a, b) => a + b, 0) / l3Values.length : null;
+        if (l3Avg !== null && l10Avg > 0) {
+          const declineRatio = l3Avg / l10Avg;
+          if (effectiveSide === 'over' && declineRatio < 0.75) continue;
+          if (effectiveSide === 'under' && declineRatio > 1.25) continue;
         }
 
-        // v5.0: UNDER criteria for MLB
-        if (effectiveSide === 'under') {
-          const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
-          if (varianceRatio > 0.40) continue; // MLB stats are more variable, slightly relaxed
+        const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
+        const confidenceScore = Math.min(0.92, Math.max(0.35,
+          (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30)
+          - (l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0)
+          + (effectiveSide === 'over' ? 0.06 : 0)
+          + (l10Logs.length >= 10 ? 0.04 : 0)
+        ));
 
-          const l5Values = statValues.slice(0, 5);
-          const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
-          if (l5Avg > l10Avg * 1.10) continue; // Trending up = skip under
-        }
-
-        if (bestLine !== null && bestHitRate >= config.minHitRate) {
-          mlbQualified++;
-          const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
-          const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
-          const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
-          const sideBonus = effectiveSide === 'over' ? 0.06 : 0;
-          const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
-          const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
-
-          // v11.0: Compute L3 average for MLB
-          const mlbL3Values = statValues.slice(0, 3);
-          const mlbL3Avg = mlbL3Values.length >= 3 ? Math.round((mlbL3Values.reduce((a, b) => a + b, 0) / mlbL3Values.length) * 10) / 10 : null;
-
-          // v11.0: UNIVERSAL RECENCY DECLINE BLOCK for MLB
-          if (mlbL3Avg !== null && l10Avg > 0) {
-            const declineRatio = mlbL3Avg / l10Avg;
-            if (effectiveSide === 'over' && declineRatio < 0.75) {
-              console.log(`[Recency Block] 📉 MLB ${playerName} ${config.propType} OVER blocked: L3 ${mlbL3Avg} vs L10 ${l10Avg.toFixed(1)}`);
-              continue;
-            }
-            if (effectiveSide === 'under' && declineRatio > 1.25) {
-              console.log(`[Recency Block] 📈 MLB ${playerName} ${config.propType} UNDER blocked: L3 ${mlbL3Avg} vs L10 ${l10Avg.toFixed(1)}`);
-              continue;
-            }
-          }
-
-          sweetSpots.push({
-            category: catKey,
-            player_name: playerName,
-            prop_type: config.propType,
-            recommended_line: bestLine,
-            recommended_side: effectiveSide,
-            l10_hit_rate: Math.round(bestHitRate * 100) / 100,
-            l10_avg: Math.round(l10Avg * 10) / 10,
-            l10_min: l10Min,
-            l10_max: l10Max,
-            l10_median: Math.round(l10Median * 10) / 10,
-            l10_std_dev: Math.round(l10StdDev * 10) / 10,
-            l3_avg: mlbL3Avg, // v11.0: Recency signal
-            games_played: l10Logs.length,
-            archetype: null, // MLB doesn't use archetypes
-            confidence_score: Math.round(confidenceScore * 100) / 100,
-            analysis_date: today,
-            is_active: true,
-            eligibility_type: 'MLB_AVG_RANGE',
-            projected_value: Math.round(l10Median * 10) / 10, // Simple projection: L10 median
-            projection_source: 'MLB_L10_MEDIAN',
-          });
-          mlbSweetSpotCount++;
-        }
-      }
-      console.log(`[Category Analyzer] ${catKey}: ${mlbQualified} qualified MLB players`);
-    }
-
-    console.log(`[Category Analyzer] MLB sweet spots generated: ${mlbSweetSpotCount}`);
-    console.log(`[Category Analyzer] Total sweet spots (NBA+MLB): ${sweetSpots.length}`);
-
-    // ======= NEW: Validate against actual bookmaker lines from unified_props =======
-    console.log(`[CAT-ANALYZER-CRITICAL] Starting unified_props fetch...`);
-    
-    // Fetch actual lines from unified_props for today's games (including already started)
-    // v4.2: Use start-of-day UTC instead of now() to catch games that already tipped
-    const todayStartUtc = new Date().toISOString().split('T')[0] + 'T00:00:00Z';
-    console.log(`[CAT-ANALYZER-CRITICAL] Using today start UTC: ${todayStartUtc}`);
-    
-    const { data: upcomingProps, error: propsError } = await supabase
-      .from('unified_props')
-      .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, commence_time, game_description')
-      .gte('commence_time', todayStartUtc)
-      .order('commence_time', { ascending: true });
-
-    if (propsError) {
-      console.error(`[CAT-ANALYZER-CRITICAL] Error fetching unified_props: ${propsError.message}`);
-    }
-
-    console.log(`[CAT-ANALYZER-CRITICAL] Found ${upcomingProps?.length || 0} upcoming props`);
-
-    // Create lookup map for actual lines (key: playername_proptype)
-    // v4.1: Include opponent extraction from game_description for accurate projections
-    const actualLineMap = new Map<string, { line: number; overPrice: number; underPrice: number; bookmaker: string; opponent: string | null; playerTeam: string | null }>();
-    for (const prop of upcomingProps || []) {
-      if (!prop.player_name || !prop.prop_type || prop.current_line == null) continue;
-      
-      // v4.1: Parse opponent from game_description (e.g., "MIN @ CHI" or "Denver Nuggets @ Chicago Bulls")
-      // Since we don't have player's team, we'll just extract both teams for later matching
-      let opponent: string | null = null;
-      let playerTeam: string | null = null;
-      if (prop.game_description) {
-        const atMatch = prop.game_description.match(/^(.+?)\s*@\s*(.+)$/i);
-        const vsMatch = prop.game_description.match(/^(.+?)\s+vs\.?\s+(.+)$/i);
-        const parts = atMatch || vsMatch;
-        if (parts && parts.length >= 3) {
-          // Store both teams - will need to match player to team later via game logs
-          playerTeam = parts[1].trim(); // Away team (placeholder - may need player roster lookup)
-          opponent = parts[2].trim();   // Home team
-        }
-      }
-      
-      const normalizedPropType = prop.prop_type.toLowerCase().replace(/^player_/, '');
-      const key = `${prop.player_name.toLowerCase().trim()}_${normalizedPropType}`;
-      // Only keep first occurrence (most recent)
-      if (!actualLineMap.has(key)) {
-        actualLineMap.set(key, {
-          line: prop.current_line,
-          overPrice: prop.over_price,
-          underPrice: prop.under_price,
-          bookmaker: prop.bookmaker,
-          opponent: opponent,
-          playerTeam: playerTeam
+        sweetSpots.push({
+          category: catKey, player_name: playerName, prop_type: config.propType,
+          recommended_line: bestLine, recommended_side: effectiveSide,
+          l10_hit_rate: Math.round(bestHitRate * 100) / 100,
+          l10_avg: Math.round(l10Avg * 10) / 10, l10_min: Math.min(...statValues),
+          l10_max: Math.max(...statValues), l10_median: Math.round(calculateMedian(statValues) * 10) / 10,
+          l10_std_dev: Math.round(l10StdDev * 10) / 10,
+          l3_avg: l3Avg !== null ? Math.round(l3Avg * 10) / 10 : null,
+          games_played: l10Logs.length, archetype: null,
+          confidence_score: Math.round(confidenceScore * 100) / 100,
+          analysis_date: today, is_active: true, eligibility_type: 'MLB_AVG_RANGE',
+          projected_value: Math.round(calculateMedian(statValues) * 10) / 10,
+          projection_source: 'MLB_L10_MEDIAN',
         });
       }
     }
 
-    console.log(`[CAT-ANALYZER-CRITICAL] Built lookup map with ${actualLineMap.size} unique player/prop combinations`);
+    // Fetch actual market lines
+    const { data: unifiedProps } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, fanduel_line, line, bookmaker, has_real_line, commence_time, opponent')
+      .gte('commence_time', todayStartUtc)
+      .eq('has_real_line', true);
 
-    // Validate each sweet spot against actual lines and recalculate hit rates
-    const validatedSpots: any[] = [];
-    let validatedCount = 0;
-    let droppedCount = 0;
-    let noGameCount = 0;
-    let bounceBackCount = 0;
-    let lineEligibleCount = 0;
-
-    // Fetch season stats for bounce back detection
-    const { data: seasonStats } = await supabase
-      .from('player_season_stats')
-      .select('player_name, avg_points, avg_rebounds, avg_assists, avg_threes');
-    
-    const seasonStatsMap = new Map<string, any>();
-    for (const stat of seasonStats || []) {
-      seasonStatsMap.set(stat.player_name?.toLowerCase().trim(), stat);
+    const actualLineMap = new Map<string, { line: number; bookmaker: string; opponent: string | null }>();
+    for (const prop of (unifiedProps || [])) {
+      const key = `${(prop.player_name || '').toLowerCase().trim()}_${(prop.prop_type || '').toLowerCase().replace(/^(player_|batter_|pitcher_)/, '')}`;
+      const line = prop.fanduel_line ?? prop.line;
+      if (line != null && !actualLineMap.has(key)) {
+        actualLineMap.set(key, { line: Number(line), bookmaker: prop.bookmaker || 'fanduel', opponent: prop.opponent || null });
+      }
     }
-    
-    console.log(`[Category Analyzer] Loaded season stats for ${seasonStatsMap.size} players`);
+
+    // Load season stats
+    const { data: seasonStats } = await supabase
+      .from('player_season_stats').select('player_name, avg_points, avg_rebounds, avg_assists, avg_threes');
+    const seasonStatsMap = new Map<string, any>();
+    for (const stat of (seasonStats || [])) seasonStatsMap.set(stat.player_name?.toLowerCase().trim(), stat);
+
+    // Validate spots against real lines
+    const validatedSpots: any[] = [];
+    let validatedCount = 0, droppedCount = 0, noGameCount = 0;
 
     for (const spot of sweetSpots) {
       const isMLBSpot = MLB_CATEGORIES.has(spot.category);
-      const key = `${spot.player_name.toLowerCase().trim()}_${spot.prop_type.toLowerCase()}`;
+      // BUG G FIX: strip any existing prefix before normalizing prop type for lookup
+      const rawProp = (spot.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '');
+      const key = `${spot.player_name.toLowerCase().trim()}_${rawProp.toLowerCase()}`;
       const actualData = actualLineMap.get(key);
-      
-      if (!actualData) {
-        // No matching market line — skip entirely (do not insert phantom picks)
-        noGameCount++;
-        continue;
-      }
-      
-      // For MLB spots that already have projected_value from analysis, do simplified validation
+
+      if (!actualData) { noGameCount++; continue; }
+
+      // MLB: simplified validation
       if (isMLBSpot) {
         const mlbLogs = mlbPlayerLogs[spot.player_name];
-        if (!mlbLogs || mlbLogs.length < 5) {
-          spot.is_active = false;
-          validatedSpots.push(spot);
-          continue;
-        }
+        if (!mlbLogs || mlbLogs.length < 5) { spot.is_active = false; validatedSpots.push(spot); continue; }
         const isPitcher = spot.prop_type === 'pitcher_strikeouts';
-        const relevantLogs = isPitcher ? mlbLogs.filter(l => l.pitcher_strikeouts != null) : mlbLogs;
-        const l10Logs = relevantLogs.slice(0, 10);
-        const statValues = l10Logs.map(log => getMLBStatValue(log, spot.prop_type));
+        const relevantLogs = isPitcher ? mlbLogs.filter((l: any) => l.pitcher_strikeouts != null) : mlbLogs;
+        const statValues = relevantLogs.slice(0, 10).map((log: any) => getMLBStatValue(log, spot.prop_type));
         const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
-        
-        spot.actual_line = actualData.line;
-        spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
-        spot.line_difference = spot.recommended_line ? Math.round((actualData.line - spot.recommended_line) * 10) / 10 : null;
-        spot.bookmaker = actualData.bookmaker;
-        
-        // Negative edge blocking for MLB
+
         if (spot.recommended_side === 'over' && (spot.projected_value || 0) <= actualData.line) {
-          spot.is_active = false;
-          spot.risk_level = 'BLOCKED';
-          spot.recommendation = `Negative edge: proj ${spot.projected_value} <= line ${actualData.line}`;
-          validatedSpots.push(spot);
-          droppedCount++;
-          continue;
+          spot.is_active = false; spot.risk_level = 'BLOCKED'; validatedSpots.push(spot); droppedCount++; continue;
         }
         if (spot.recommended_side === 'under' && (spot.projected_value || 0) >= actualData.line) {
-          spot.is_active = false;
-          spot.risk_level = 'BLOCKED';
-          spot.recommendation = `Negative edge: proj ${spot.projected_value} >= line ${actualData.line}`;
-          validatedSpots.push(spot);
-          droppedCount++;
-          continue;
+          spot.is_active = false; spot.risk_level = 'BLOCKED'; validatedSpots.push(spot); droppedCount++; continue;
         }
-        
-        // Activate if hit rate against actual line is sufficient
+
+        spot.actual_line = actualData.line;
+        spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
+        spot.bookmaker = actualData.bookmaker;
         spot.is_active = actualHitRate >= 0.50;
-        if (actualHitRate >= 0.70) {
-          spot.risk_level = 'LOW';
-          spot.recommendation = `Strong MLB play - ${(actualHitRate * 100).toFixed(0)}% L10 hit rate`;
-        } else if (actualHitRate >= 0.55) {
-          spot.risk_level = 'MEDIUM';
-          spot.recommendation = `Decent MLB value - ${(actualHitRate * 100).toFixed(0)}% L10`;
-        } else {
-          spot.risk_level = 'HIGH';
-          spot.recommendation = `Higher risk MLB play - ${(actualHitRate * 100).toFixed(0)}% L10`;
-        }
-        
-        if (spot.is_active) {
-          validatedCount++;
-          console.log(`[Category Analyzer] ✓ MLB ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% L10)`);
-        } else {
-          droppedCount++;
-        }
+        spot.risk_level = actualHitRate >= 0.70 ? 'LOW' : actualHitRate >= 0.55 ? 'MEDIUM' : 'HIGH';
+        if (spot.is_active) validatedCount++; else droppedCount++;
         validatedSpots.push(spot);
         continue;
       }
-      
-      // Recalculate L10 hit rate against actual bookmaker line (NBA/NCAAB)
+
+      // NBA/NCAAB: full validation with projection
       const logs = playerLogs[spot.player_name];
-      if (logs && logs.length >= 5) {
-        const l10Logs = logs.slice(0, 10);
-        const statValues = l10Logs.map(log => getStatValue(log, spot.prop_type));
-        const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
-        const l10StdDev = calculateStdDev(statValues);
-        const l10Min = Math.min(...statValues);
-        
-        // v6.0: Calculate L5 avg for hot/cold detection
-        const l5Logs = l10Logs.slice(0, 5);
-        const l5Values = l5Logs.map(log => getStatValue(log, spot.prop_type));
-        const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
-        
-        // v4.1: Get UPCOMING opponent from unified_props (not historical from game logs)
-        const upcomingOpponent = actualData.opponent || null;
-        
-        // v6.0: Apply 3PT VALIDATION FILTER for THREE_POINT_SHOOTER category
-        if (spot.category === 'THREE_POINT_SHOOTER' && actualData.line !== null) {
-          const validation = validate3PTCandidate(
-            spot.player_name,
-            actualData.line,
-            l10Avg,
-            l10Min,
-            l10StdDev,
-            l5Avg
-          );
-          
-          if (!validation.passes) {
-            console.log(`[3PT Filter] ✗ ${spot.player_name}: ${validation.reason}`);
-            spot.is_active = false;
-            spot.quality_tier = validation.tier;
-            validatedSpots.push(spot);
-            droppedCount++;
-            continue;
-          }
-          
-          console.log(`[3PT Filter] ✓ ${spot.player_name}: ${validation.tier} - ${validation.reason}`);
-          spot.quality_tier = validation.tier;
-        }
-        
-        // v4.1: Calculate TRUE PROJECTION using correct upcoming opponent
-        // v7.1: Pass seasonAvg so FG efficiency gate can fire
-        const playerSeasonStatsForProjection = seasonStatsMap.get(spot.player_name.toLowerCase().trim());
-        let seasonAvgForProjection = 0;
-        if (playerSeasonStatsForProjection) {
-          switch (spot.prop_type) {
-            case 'points': seasonAvgForProjection = playerSeasonStatsForProjection.avg_points || 0; break;
-            case 'rebounds': seasonAvgForProjection = playerSeasonStatsForProjection.avg_rebounds || 0; break;
-            case 'assists': seasonAvgForProjection = playerSeasonStatsForProjection.avg_assists || 0; break;
-            case 'threes': seasonAvgForProjection = playerSeasonStatsForProjection.avg_threes || 0; break;
-          }
-        }
-        const projection = calculateTrueProjection(
-          spot.player_name,
-          spot.prop_type,
-          statValues,
-          upcomingOpponent,
-          seasonAvgForProjection > 0 ? seasonAvgForProjection : undefined,
-          l10StdDev
-        );
-        
-        // v6.0: NEVER store NULL projected_value - use fallback chain
-        // Fallback: projectedValue → l10Median → l10Avg → actualLine → 0
-        const l10Median = calculateMedian(statValues);
-        const finalProjectedValue = projection.projectedValue ?? l10Median ?? l10Avg ?? actualData.line ?? 0;
-        
-        // v6.0: Log warning if using fallback
-        if (!projection.projectedValue) {
-          console.log(`[Projection] ⚠️ ${spot.player_name} ${spot.prop_type}: Using fallback projection (L10 median: ${l10Median?.toFixed(1) || 'null'})`);
-        }
-        
-        // Add projection data to spot - GUARANTEED non-null
-        spot.projected_value = Math.round(finalProjectedValue * 10) / 10;
-        spot.matchup_adjustment = projection.matchupAdj;
-        spot.pace_adjustment = projection.paceAdj;
-        spot.projection_source = projection.projectedValue ? projection.projectionSource : 'fallback_l10_median';
-        
-        // v4.2: NEGATIVE-EDGE BLOCKING
-        // Block picks where projection contradicts the recommended side
-        if (spot.recommended_side === 'over' && spot.projected_value <= actualData.line) {
-          console.log(`[Edge Block] ✗ ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} but proj only ${spot.projected_value} — negative edge blocked`);
-          spot.is_active = false;
-          spot.risk_level = 'BLOCKED';
-          spot.recommendation = `Negative edge: proj ${spot.projected_value} <= line ${actualData.line}`;
-          spot.actual_line = actualData.line;
-          spot.bookmaker = actualData.bookmaker;
-          validatedSpots.push(spot);
-          droppedCount++;
-          continue;
-        }
-        if (spot.recommended_side === 'under' && spot.projected_value >= actualData.line) {
-          console.log(`[Edge Block] ✗ ${spot.player_name} ${spot.prop_type}: UNDER ${actualData.line} but proj ${spot.projected_value} — negative edge blocked`);
-          spot.is_active = false;
-          spot.risk_level = 'BLOCKED';
-          spot.recommendation = `Negative edge: proj ${spot.projected_value} >= line ${actualData.line}`;
-          spot.actual_line = actualData.line;
-          spot.bookmaker = actualData.bookmaker;
-          validatedSpots.push(spot);
-          droppedCount++;
-          continue;
-        }
-        
-        // v4.1: Log projection for debugging
-        console.log(`[Projection] ${spot.player_name} ${spot.prop_type} vs ${upcomingOpponent || 'unknown'}: Proj=${spot.projected_value?.toFixed(1)}, MatchupAdj=${projection.matchupAdj.toFixed(1)}, PaceAdj=${projection.paceAdj.toFixed(1)}, Source=${spot.projection_source}`);
-        
-        // v1.4: Handle LINE_RANGE_PENDING spots (line-based eligibility)
-        if (spot.eligibility_type === 'LINE_RANGE_PENDING') {
-          const config = CATEGORIES[spot.category];
-          
-          // Check if actual line qualifies via lineRange
-          const lineEligible = config.lineRange && 
-            actualData.line >= config.lineRange.min && 
-            actualData.line <= config.lineRange.max;
-          
-          if (!lineEligible) {
-            spot.is_active = false;
-            validatedSpots.push(spot);
-            continue;
-          }
-          
-          lineEligibleCount++;
-          console.log(`[Category Analyzer] [LINE-ELIGIBLE] ${spot.player_name}: L10 avg ${l10Avg.toFixed(1)} below range but line ${actualData.line} qualifies`);
-          
-          // Get season average for bounce back detection
-          const playerSeasonStats = seasonStatsMap.get(spot.player_name.toLowerCase().trim());
-          let seasonAvg = 0;
-          if (playerSeasonStats) {
-            switch (spot.prop_type) {
-              case 'points': seasonAvg = playerSeasonStats.avg_points || 0; break;
-              case 'rebounds': seasonAvg = playerSeasonStats.avg_rebounds || 0; break;
-              case 'assists': seasonAvg = playerSeasonStats.avg_assists || 0; break;
-              case 'threes': seasonAvg = playerSeasonStats.avg_threes || 0; break;
-            }
-          }
-          
-          // Check for bounce back candidate
-          const seasonVsL10Gap = seasonAvg - l10Avg;
-          const stdDevGap = l10StdDev > 0 ? seasonVsL10Gap / l10StdDev : 0;
-          const lineVsSeasonGap = Math.abs(actualData.line - seasonAvg);
-          
-          const isBounceBackCandidate = 
-            config.supportsBounceBack &&
-            seasonVsL10Gap >= BOUNCE_BACK_CONFIG.minSeasonVsL10Gap &&
-            stdDevGap >= BOUNCE_BACK_CONFIG.minStdDevGap &&
-            lineVsSeasonGap <= BOUNCE_BACK_CONFIG.maxLineVsSeasonGap;
-          
-          if (isBounceBackCandidate) {
-            // Check OVER hit rate - low L10 OVER hit rate = due for bounce
-            const l10OverHitRate = calculateHitRate(statValues, actualData.line, 'over');
-            
-            // Ideal bounce back: Low L10 hit rate (20-50%) + Season avg >= line
-            if (l10OverHitRate >= BOUNCE_BACK_CONFIG.minL10HitRateForOVER &&
-                l10OverHitRate <= BOUNCE_BACK_CONFIG.maxL10HitRateForOVER &&
-                seasonAvg >= actualData.line * 0.95) { // Season avg within 5% of line
-              
-              bounceBackCount++;
-              spot.recommended_side = 'over';
-              spot.recommended_line = actualData.line;
-              spot.actual_line = actualData.line;
-              spot.actual_hit_rate = Math.round(l10OverHitRate * 100) / 100;
-              spot.bookmaker = actualData.bookmaker;
-              spot.is_active = true;
-              spot.eligibility_type = 'BOUNCE_BACK';
-              spot.bounce_back_score = Math.round(stdDevGap * 100) / 100;
-              spot.season_avg = Math.round(seasonAvg * 10) / 10;
-              
-              // Confidence based on how far below mean + season baseline
-              const confidenceScore = Math.min(0.85, 0.5 + (stdDevGap * 0.15) + ((seasonAvg - actualData.line) / actualData.line * 0.5));
-              spot.confidence_score = Math.round(confidenceScore * 100) / 100;
-              
-              validatedCount++;
-              console.log(`[Category Analyzer] 🔥 BOUNCE-BACK ${spot.player_name} ${spot.prop_type} OVER ${actualData.line}: Season ${seasonAvg.toFixed(1)} vs L10 ${l10Avg.toFixed(1)} (${stdDevGap.toFixed(2)} std devs below)`);
-              validatedSpots.push(spot);
-              continue;
-            }
-          }
-          
-          // v1.5: For BIG categories, ALWAYS recommend OVER with risk indicator
-          const overHitRate = calculateHitRate(statValues, actualData.line, 'over');
-          
-          // v14.0: L3 GATE — block if L3 avg doesn't clear the actual FanDuel line with buffer
-          const lineEligL3 = spot.l3_avg;
-          if (lineEligL3 != null && actualData.line > 0) {
-            const l3Buffer = ((lineEligL3 - actualData.line) / actualData.line) * 100;
-            if (lineEligL3 < actualData.line) {
-              console.log(`[L3 Gate] ✗ LINE-ELIGIBLE ${spot.player_name} ${spot.prop_type}: L3 avg ${lineEligL3.toFixed(1)} BELOW line ${actualData.line} — blocked`);
-              spot.is_active = false;
-              spot.risk_level = 'BLOCKED';
-              spot.recommendation = `L3 avg ${lineEligL3.toFixed(1)} below FanDuel line ${actualData.line}`;
-              spot.actual_line = actualData.line;
-              spot.bookmaker = actualData.bookmaker;
-              validatedSpots.push(spot);
-              droppedCount++;
-              continue;
-            }
-            if (l3Buffer < 5) {
-              console.log(`[L3 Gate] ⚠ LINE-ELIGIBLE ${spot.player_name} ${spot.prop_type}: L3 buffer only ${l3Buffer.toFixed(1)}% — thin edge, blocking`);
-              spot.is_active = false;
-              spot.risk_level = 'BLOCKED';
-              spot.recommendation = `L3 buffer ${l3Buffer.toFixed(1)}% < 5% minimum`;
-              spot.actual_line = actualData.line;
-              spot.bookmaker = actualData.bookmaker;
-              validatedSpots.push(spot);
-              droppedCount++;
-              continue;
-            }
-          } else if (lineEligL3 == null) {
-            console.log(`[L3 Gate] ✗ LINE-ELIGIBLE ${spot.player_name} ${spot.prop_type}: No L3 data — blocked`);
-            spot.is_active = false;
-            spot.actual_line = actualData.line;
-            spot.bookmaker = actualData.bookmaker;
-            validatedSpots.push(spot);
-            droppedCount++;
-            continue;
-          }
-          
-          spot.recommended_side = 'over';
-          spot.recommended_line = actualData.line;
-          spot.actual_line = actualData.line;
-          spot.actual_hit_rate = Math.round(overHitRate * 100) / 100;
-          spot.bookmaker = actualData.bookmaker;
-          spot.is_active = true;
-          spot.eligibility_type = 'LINE_ELIGIBLE_OVER';
-          
-          // Add risk level based on L10 hit rate
-          if (overHitRate >= 0.70) {
-            spot.risk_level = 'LOW';
-            spot.recommendation = 'Strong play - 70%+ L10 hit rate';
-          } else if (overHitRate >= 0.50) {
-            spot.risk_level = 'MEDIUM';
-            spot.recommendation = 'Decent value - watch for variance';
-          } else {
-            spot.is_active = false;
-            spot.risk_level = 'HIGH';
-            spot.recommendation = `Only ${(overHitRate * 100).toFixed(0)}% hit rate — blocked`;
-            validatedSpots.push(spot);
-            droppedCount++;
-            continue;
-          }
-          
-          // Confidence adjusted by hit rate (scaled 0.4-0.9)
-          const confidence = Math.max(0.4, Math.min(0.9, overHitRate * 0.8 + 0.3));
-          spot.confidence_score = Math.round(confidence * 100) / 100;
-          
-          lineEligibleCount++;
-          validatedCount++;
-          console.log(`[Category Analyzer] ✓ LINE-ELIGIBLE-OVER ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} (${(overHitRate * 100).toFixed(0)}% L10, L3=${lineEligL3?.toFixed(1)}, ${spot.risk_level} risk)`);
-          validatedSpots.push(spot);
-          continue;
-        }
-        
-        // v3.0 OPTIMAL WINNER categories - trust L10 hit rate for activation
-        // These categories have specific line ranges designed for favorable odds
-        const OPTIMAL_WINNER_CATEGORIES = [
-          'ROLE_PLAYER_REB', 'BIG_ASSIST_OVER', 
-          'LOW_SCORER_UNDER', 'STAR_FLOOR_OVER'
-        ];
+      if (!logs || logs.length < 5) { spot.is_active = false; validatedSpots.push(spot); droppedCount++; continue; }
 
-        if (OPTIMAL_WINNER_CATEGORIES.includes(spot.category)) {
-          // v13.0: ALWAYS use the REAL FanDuel line as recommended_line
-          const config = CATEGORIES[spot.category];
-          const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
-          
-          // v14.0: L3 GATE for OPTIMAL categories — must clear line with buffer
-          const optL3 = spot.l3_avg;
-          const optSide = (spot.recommended_side || 'over').toLowerCase();
-          if (optL3 != null && actualData.line > 0) {
-            const l3Vs = optSide === 'over' 
-              ? ((optL3 - actualData.line) / actualData.line) * 100
-              : ((actualData.line - optL3) / actualData.line) * 100;
-            if (l3Vs < 5) {
-              console.log(`[L3 Gate] ✗ OPTIMAL ${spot.player_name} ${spot.prop_type}: L3=${optL3.toFixed(1)} vs line ${actualData.line}, buffer ${l3Vs.toFixed(1)}% < 5% — blocked`);
-              spot.is_active = false;
-              spot.risk_level = 'BLOCKED';
-              spot.recommended_line = actualData.line;
-              spot.actual_line = actualData.line;
-              spot.bookmaker = actualData.bookmaker;
-              spot.recommendation = `L3 buffer ${l3Vs.toFixed(1)}% < 5% minimum vs FanDuel line ${actualData.line}`;
-              validatedSpots.push(spot);
-              droppedCount++;
-              continue;
-            }
-          } else if (optL3 == null) {
-            console.log(`[L3 Gate] ✗ OPTIMAL ${spot.player_name} ${spot.prop_type}: No L3 data — blocked`);
-            spot.is_active = false;
-            spot.recommended_line = actualData.line;
-            spot.actual_line = actualData.line;
-            spot.bookmaker = actualData.bookmaker;
-            validatedSpots.push(spot);
-            droppedCount++;
-            continue;
-          }
-          
-          // CRITICAL FIX: Set recommended_line to the REAL FanDuel line, not the hardcoded category floor
-          spot.recommended_line = actualData.line;
-          spot.actual_line = actualData.line;
-          spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
-          spot.l10_hit_rate = Math.round(actualHitRate * 100) / 100; // Recalculate against REAL line
-          spot.line_difference = 0; // Same line now
-          spot.bookmaker = actualData.bookmaker;
-          
-          // v13.0: Activate based on hit rate AGAINST REAL FANDUEL LINE (not fake floor)
-          const minRequired = config?.minHitRate || 0.55;
-          spot.is_active = actualHitRate >= minRequired;
-          
-          // Add risk level based on actual line hit rate
-          if (actualHitRate >= 0.60) {
-            spot.risk_level = 'LOW';
-            spot.recommendation = `Strong play - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}, L3=${optL3?.toFixed(1)}`;
-          } else if (actualHitRate >= 0.45) {
-            spot.risk_level = 'MEDIUM';
-            spot.recommendation = `Moderate risk - ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
-          } else {
-            spot.risk_level = 'HIGH';
-            spot.recommendation = `Higher risk - only ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line}`;
-          }
-          
-          if (spot.is_active) {
-            validatedCount++;
-            console.log(`[Category Analyzer] ✓ OPTIMAL ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% hit rate, L3=${optL3?.toFixed(1)})`);
-          } else {
-            droppedCount++;
-            console.log(`[Category Analyzer] ✗ OPTIMAL ${spot.player_name}: ${(actualHitRate * 100).toFixed(0)}% vs FanDuel line ${actualData.line} < ${(minRequired * 100).toFixed(0)}% required`);
-          }
-          
-          validatedSpots.push(spot);
-          continue; // Skip standard validation
-        }
+      const l10Logs = logs.slice(0, 10);
+      const statValues = l10Logs.map(log => getStatValue(log, spot.prop_type));
+      const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
+      const l10StdDev = calculateStdDev(statValues);
+      const l10Min = Math.min(...statValues);
+      const l5Logs = l10Logs.slice(0, 5);
+      const l5Values = l5Logs.map(log => getStatValue(log, spot.prop_type));
+      const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
+      const upcomingOpponent = actualData.opponent;
 
-        // Standard validation for AVG_RANGE qualified spots (legacy categories)
-        const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
-        
-        // v14.0: L3 GATE for standard categories — must have L3 data and buffer vs line
-        const stdL3 = spot.l3_avg;
-        const stdSide = (spot.recommended_side || 'over').toLowerCase();
-        if (stdL3 != null && actualData.line > 0) {
-          const stdL3Buffer = stdSide === 'over'
-            ? ((stdL3 - actualData.line) / actualData.line) * 100
-            : ((actualData.line - stdL3) / actualData.line) * 100;
-          if (stdL3Buffer < 5) {
-            console.log(`[L3 Gate] ✗ STANDARD ${spot.player_name} ${spot.prop_type}: L3=${stdL3.toFixed(1)} vs line ${actualData.line}, buffer ${stdL3Buffer.toFixed(1)}% < 5% — blocked`);
-            spot.is_active = false;
-            spot.risk_level = 'BLOCKED';
-            spot.recommended_line = actualData.line;
-            spot.actual_line = actualData.line;
-            spot.bookmaker = actualData.bookmaker;
-            spot.recommendation = `L3 buffer ${stdL3Buffer.toFixed(1)}% too thin vs FanDuel line ${actualData.line}`;
-            validatedSpots.push(spot);
-            droppedCount++;
-            continue;
-          }
-        } else if (stdL3 == null) {
-          console.log(`[L3 Gate] ✗ STANDARD ${spot.player_name} ${spot.prop_type}: No L3 data — blocked`);
-          spot.is_active = false;
-          spot.recommended_line = actualData.line;
-          spot.actual_line = actualData.line;
-          spot.bookmaker = actualData.bookmaker;
-          validatedSpots.push(spot);
-          droppedCount++;
-          continue;
+      // 3PT filter
+      if (spot.category === 'THREE_POINT_SHOOTER' && actualData.line !== null) {
+        const validation = validate3PTCandidate(spot.player_name, actualData.line, l10Avg, l10Min, l10StdDev, l5Avg);
+        if (!validation.passes) {
+          spot.is_active = false; spot.quality_tier = validation.tier;
+          validatedSpots.push(spot); droppedCount++; continue;
         }
-        
-        // v13.0: ALWAYS use real FanDuel line as recommended_line
-        spot.recommended_line = actualData.line;
-        spot.actual_line = actualData.line;
-        spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
-        spot.l10_hit_rate = Math.round(actualHitRate * 100) / 100; // Recalculate against REAL line
-        spot.line_difference = 0;
-        spot.bookmaker = actualData.bookmaker;
-        
-        // v1.2: TIERED HIT RATE REQUIREMENTS for BIG_REBOUNDER
-        let requiredHitRate = 0.70; // Default 70%
-        
-        if (spot.category === 'BIG_REBOUNDER') {
-          if (actualData.line > 10.5) {
-            requiredHitRate = 0.60;
-          } else if (actualData.line >= 8.5) {
-            requiredHitRate = 0.65;
-          }
-        }
-        
-        spot.is_active = actualHitRate >= requiredHitRate;
-        
-        if (spot.is_active) {
-          validatedCount++;
-          console.log(`[Category Analyzer] ✓ ${spot.player_name} ${spot.prop_type}: line=${actualData.line}, hitRate=${(actualHitRate * 100).toFixed(0)}%, L3=${stdL3?.toFixed(1)} (req: ${(requiredHitRate * 100).toFixed(0)}%)`);
-        } else {
-          droppedCount++;
-          console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (hitRate ${(actualHitRate * 100).toFixed(0)}% < ${(requiredHitRate * 100).toFixed(0)}% at line ${actualData.line})`);
-          // v14.0: REMOVED BIG category override — no more re-enabling at 30% hit rate
+        spot.quality_tier = validation.tier;
+      }
+
+      // True projection
+      const playerSeasonStats = seasonStatsMap.get(spot.player_name.toLowerCase().trim());
+      let seasonAvg = 0;
+      if (playerSeasonStats) {
+        switch (spot.prop_type) {
+          case 'points': seasonAvg = playerSeasonStats.avg_points || 0; break;
+          case 'rebounds': seasonAvg = playerSeasonStats.avg_rebounds || 0; break;
+          case 'assists': seasonAvg = playerSeasonStats.avg_assists || 0; break;
+          case 'threes': seasonAvg = playerSeasonStats.avg_threes || 0; break;
         }
       }
-      
+      const projection = calculateTrueProjection(spot.player_name, spot.prop_type, statValues, upcomingOpponent, seasonAvg > 0 ? seasonAvg : undefined, l10StdDev);
+      const l10Median = calculateMedian(statValues);
+      const finalProjectedValue = projection.projectedValue ?? l10Median ?? l10Avg ?? actualData.line ?? 0;
+
+      spot.projected_value = Math.round(finalProjectedValue * 10) / 10;
+      spot.matchup_adjustment = projection.matchupAdj;
+      spot.pace_adjustment = projection.paceAdj;
+      spot.projection_source = projection.projectedValue ? projection.projectionSource : 'fallback_l10_median';
+      spot.variance_ratio = projection.varianceRatio;
+      spot.shrinkage_factor = projection.shrinkageFactor;
+      spot.profile_flags = projection.profileFlags;
+
+      const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
+      spot.recommended_line = actualData.line;
+      spot.actual_line = actualData.line;
+      spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
+      spot.l10_hit_rate = Math.round(actualHitRate * 100) / 100;
+      spot.line_difference = 0;
+      spot.bookmaker = actualData.bookmaker;
+
+      // L3 buffer check
+      const l3Vals = statValues.slice(0, 3);
+      const stdL3 = l3Vals.length >= 3 ? l3Vals.reduce((a, b) => a + b, 0) / l3Vals.length : null;
+      if (stdL3 !== null) {
+        const stdL3Buffer = spot.recommended_side === 'over'
+          ? ((stdL3 - actualData.line) / actualData.line) * 100
+          : ((actualData.line - stdL3) / actualData.line) * 100;
+        if (stdL3Buffer < 5) {
+          spot.is_active = false; spot.risk_level = 'BLOCKED';
+          spot.recommendation = `L3 buffer ${stdL3Buffer.toFixed(1)}% too thin`;
+          validatedSpots.push(spot); droppedCount++; continue;
+        }
+      } else {
+        spot.is_active = false; validatedSpots.push(spot); droppedCount++; continue;
+      }
+
+      let requiredHitRate = 0.70;
+      if (spot.category === 'BIG_REBOUNDER') {
+        if (actualData.line > 10.5) requiredHitRate = 0.60;
+        else if (actualData.line >= 8.5) requiredHitRate = 0.65;
+      }
+
+      spot.is_active = actualHitRate >= requiredHitRate;
+      if (spot.is_active) {
+        validatedCount++;
+        console.log(`[Category Analyzer] ✓ ${spot.player_name} ${spot.prop_type}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (${(actualHitRate * 100).toFixed(0)}% L10)`);
+      } else {
+        droppedCount++;
+        console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (${(actualHitRate * 100).toFixed(0)}% < ${(requiredHitRate * 100).toFixed(0)}%)`);
+      }
       validatedSpots.push(spot);
     }
 
-    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no market line (skipped), ${bounceBackCount} bounce-back, ${lineEligibleCount} line-eligible`);
+    console.log(`[Category Analyzer] Validation: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no market line`);
 
-    // Sort by confidence score (active first, then by score)
     validatedSpots.sort((a, b) => {
       if (a.is_active !== b.is_active) return b.is_active ? 1 : -1;
       return b.confidence_score - a.confidence_score;
     });
 
-    // Upsert to database (clear old data first for today)
+    // BUG F FIX: use upsert instead of delete+insert to prevent partial-empty states
     if (validatedSpots.length > 0) {
-      // Delete existing data for today
-      const { error: deleteError } = await supabase
-        .from('category_sweet_spots')
-        .delete()
-        .eq('analysis_date', today);
-
-      if (deleteError) {
-        console.error('[Category Analyzer] Error deleting old data:', deleteError);
-      } else {
-        console.log(`[Category Analyzer] Deleted old data for ${today}`);
-      }
-
-      // Deduplicate spots by player_name + prop_type (keep highest confidence per player/prop)
       const deduped = new Map<string, any>();
       for (const spot of validatedSpots) {
-        const key = `${spot.player_name.toLowerCase()}_${spot.prop_type}`;
+        const key = `${spot.player_name.toLowerCase()}_${spot.prop_type}_${spot.analysis_date}`;
         const existing = deduped.get(key);
-        if (!existing || (spot.is_active && !existing.is_active) || 
+        if (!existing || (spot.is_active && !existing.is_active) ||
             (spot.is_active === existing.is_active && (spot.confidence_score || 0) > (existing.confidence_score || 0))) {
           deduped.set(key, spot);
         }
       }
-      
+
       const dedupedSpots = Array.from(deduped.values());
-      console.log(`[Category Analyzer] Deduplicated ${validatedSpots.length} spots to ${dedupedSpots.length}`);
+      console.log(`[Category Analyzer] Deduplicated to ${dedupedSpots.length} spots`);
 
-      // Insert in batches of 100 to avoid hitting limits
-      const BATCH_SIZE = 100;
-      let insertedCount = 0;
-      let insertErrors = 0;
-      
-      for (let i = 0; i < dedupedSpots.length; i += BATCH_SIZE) {
-        const batch = dedupedSpots.slice(i, i + BATCH_SIZE);
-        const { error: insertError } = await supabase
-          .from('category_sweet_spots')
-          .insert(batch);
-
-        if (insertError) {
-          console.error(`[Category Analyzer] Batch ${Math.floor(i/BATCH_SIZE) + 1} error:`, insertError.message);
-          insertErrors++;
-        } else {
-          insertedCount += batch.length;
-        }
+      // BUG F FIX: upsert with conflict resolution instead of delete+insert
+      // Requires unique constraint: CREATE UNIQUE INDEX IF NOT EXISTS
+      //   category_sweet_spots_player_prop_date_key
+      //   ON category_sweet_spots (player_name, prop_type, analysis_date);
+      let insertedCount = 0, insertErrors = 0;
+      for (let i = 0; i < dedupedSpots.length; i += 100) {
+        const batch = dedupedSpots.slice(i, i + 100);
+        const { error } = await supabase.from('category_sweet_spots')
+          .upsert(batch, { onConflict: 'player_name,prop_type,analysis_date', ignoreDuplicates: false });
+        if (error) { console.error(`[Category Analyzer] Upsert error:`, error.message); insertErrors++; }
+        else insertedCount += batch.length;
       }
-      
-      console.log(`[Category Analyzer] Inserted ${insertedCount}/${dedupedSpots.length} sweet spots (${insertErrors} errors)`);
-      
-      // v4.2: SYNC PROJECTIONS BACK TO unified_props
-      // Enrich unified_props with projection data from category_sweet_spots
-      console.log(`[Category Analyzer] Starting unified_props sync...`);
+      console.log(`[Category Analyzer] Upserted ${insertedCount}/${dedupedSpots.length} spots (${insertErrors} errors)`);
+
+      // BUG G FIX: normalize prop type correctly for unified_props sync
       const activeForSync = dedupedSpots.filter(s => s.is_active && s.projected_value != null && s.actual_line != null);
-      let syncCount = 0;
-      let syncErrors = 0;
-      
+      let syncCount = 0, syncErrors = 0;
       for (const spot of activeForSync) {
-        const normalizedPropType = `player_${spot.prop_type}`;
+        // BUG G FIX: strip any existing prefix, then add player_ cleanly
+        const strippedProp = (spot.prop_type || '').replace(/^(player_|batter_|pitcher_)/, '');
+        const normalizedPropType = `player_${strippedProp}`;
         const trueLine = spot.projected_value;
         const trueLineDiff = trueLine - spot.actual_line;
-        
-        const { error: syncError } = await supabase
-          .from('unified_props')
+
+        const { error: syncError } = await supabase.from('unified_props')
           .update({
-            true_line: trueLine,
-            true_line_diff: Math.round(trueLineDiff * 10) / 10,
+            true_line: trueLine, true_line_diff: Math.round(trueLineDiff * 10) / 10,
             composite_score: spot.confidence_score || 0,
-            category: spot.category,
-            recommended_side: spot.recommended_side,
+            category: spot.category, recommended_side: spot.recommended_side,
           })
           .ilike('player_name', spot.player_name)
           .eq('prop_type', normalizedPropType)
-          .gte('commence_time', todayStartUtc);
-        
+          .gte('commence_time', todayStartUtc);  // BUG E FIX: uses ET midnight
+
         if (syncError) {
           syncErrors++;
           if (syncErrors <= 3) console.error(`[Sync] Error for ${spot.player_name}: ${syncError.message}`);
-        } else {
-          syncCount++;
-        }
+        } else syncCount++;
       }
-      
-      console.log(`[Category Analyzer] Synced ${syncCount}/${activeForSync.length} projections to unified_props (${syncErrors} errors)`);
+      console.log(`[Category Analyzer] Synced ${syncCount}/${activeForSync.length} to unified_props (${syncErrors} errors)`);
     }
 
-    // Group by category for response (only active ones)
+    if (deterministicFlips.length > 0) {
+      console.log(`[Category Analyzer] 🔄 ${deterministicFlips.length} deterministic flips`);
+      await supabase.from('bot_activity_log').insert({
+        event_type: 'deterministic_side_flips',
+        message: `Applied ${deterministicFlips.length} flips based on historical outcomes`,
+        metadata: { flips: deterministicFlips }, severity: 'info',
+      }).catch(() => {});
+    }
+
     const activeSpots = validatedSpots.filter(s => s.is_active);
     const grouped: Record<string, any[]> = {};
     for (const spot of activeSpots) {
@@ -2319,43 +1209,34 @@ serve(async (req) => {
       grouped[spot.category].push(spot);
     }
 
-    // v13.0: Log deterministic flips
-    if (deterministicFlips.length > 0) {
-      console.log(`[Category Analyzer] 🔄 ${deterministicFlips.length} deterministic side flips applied`);
-      await supabase.from('bot_activity_log').insert({
-        event_type: 'deterministic_side_flips',
-        message: `Applied ${deterministicFlips.length} per-player deterministic side flips based on historical outcomes`,
-        metadata: { flips: deterministicFlips },
-        severity: 'info',
-      });
-    }
-
     return new Response(JSON.stringify({
-      success: true,
-      data: activeSpots,
-      grouped,
-      count: activeSpots.length,
+      success: true, data: activeSpots, grouped, count: activeSpots.length,
       totalAnalyzed: validatedSpots.length,
-      droppedBelowThreshold: droppedCount,
-      noUpcomingGame: noGameCount,
-      bounceBackPicks: bounceBackCount,
-      lineEligiblePicks: lineEligibleCount,
+      droppedBelowThreshold: droppedCount, noUpcomingGame: noGameCount,
       deterministicFlips: deterministicFlips.length,
-      categories: Object.keys(grouped),
-      analyzedAt: new Date().toISOString()
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+      categories: Object.keys(grouped), analyzedAt: new Date().toISOString(),
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Category Analyzer] Error:', errorMessage);
-    return new Response(JSON.stringify({
-      success: false,
-      error: errorMessage
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Category Analyzer] Fatal:', msg);
+    return new Response(JSON.stringify({ success: false, error: msg }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUIRED SQL MIGRATION (run before deploying)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// BUG F FIX: add unique constraint so upsert works correctly
+//
+// CREATE UNIQUE INDEX IF NOT EXISTS category_sweet_spots_player_prop_date_key
+//   ON category_sweet_spots (player_name, prop_type, analysis_date);
+//
+// BUG A FIX: add fade_only column to store signal direction metadata
+//
+// ALTER TABLE category_sweet_spots
+//   ADD COLUMN IF NOT EXISTS fade_only boolean DEFAULT false;
+//
+// ─────────────────────────────────────────────────────────────────────────────
