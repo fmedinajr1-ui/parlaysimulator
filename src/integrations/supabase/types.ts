@@ -3692,11 +3692,13 @@ export type Database = {
           event_id: string | null
           hours_before_tip: number | null
           id: string
+          is_gated: boolean | null
           line_at_alert: number | null
           line_changes_after_alert: number | null
           line_movement_after_alert: number | null
           line_trajectory: Json | null
           movement_reversed: boolean | null
+          pitcher_l10_hit_rate: number | null
           player_name: string | null
           post_alert_snapshots: number | null
           predicted_direction: string | null
@@ -3734,11 +3736,13 @@ export type Database = {
           event_id?: string | null
           hours_before_tip?: number | null
           id?: string
+          is_gated?: boolean | null
           line_at_alert?: number | null
           line_changes_after_alert?: number | null
           line_movement_after_alert?: number | null
           line_trajectory?: Json | null
           movement_reversed?: boolean | null
+          pitcher_l10_hit_rate?: number | null
           player_name?: string | null
           post_alert_snapshots?: number | null
           predicted_direction?: string | null
@@ -3776,11 +3780,13 @@ export type Database = {
           event_id?: string | null
           hours_before_tip?: number | null
           id?: string
+          is_gated?: boolean | null
           line_at_alert?: number | null
           line_changes_after_alert?: number | null
           line_movement_after_alert?: number | null
           line_trajectory?: Json | null
           movement_reversed?: boolean | null
+          pitcher_l10_hit_rate?: number | null
           player_name?: string | null
           post_alert_snapshots?: number | null
           predicted_direction?: string | null
