@@ -1781,10 +1781,25 @@ Deno.serve(async (req) => {
 
     // Store ALL prediction records (including gated ones) for accuracy tracking
     if (dedupedRecords.length > 0) {
-      // Strip the 'gated' flag before insert (not a DB column)
-      const cleanRecords = dedupedRecords.map(({ gated, ...rest }) => rest);
-      const { error } = await supabase.from("fanduel_prediction_accuracy").insert(cleanRecords);
-      if (error) log(`⚠ Prediction insert error: ${error.message}`);
+      const cleanRecords = dedupedRecords.map(({ gated, ...rest }) => ({
+        ...rest,
+        // BUG E FIX: tag gated records so they're excluded from accuracy gate
+        is_gated: gated === true,
+      }));
+
+      const sentRecords = cleanRecords.filter(r => !r.is_gated);
+      const gatedOnlyRecords = cleanRecords.filter(r => r.is_gated);
+
+      if (sentRecords.length > 0) {
+        const { error } = await supabase.from("fanduel_prediction_accuracy").insert(sentRecords);
+        if (error) log(`⚠ Prediction insert error: ${error.message}`);
+      }
+
+      if (gatedOnlyRecords.length > 0) {
+        const { error } = await supabase.from("fanduel_prediction_accuracy").insert(gatedOnlyRecords);
+        if (error) log(`⚠ Gated record insert error: ${error.message}`);
+        log(`Stored ${gatedOnlyRecords.length} gated records (excluded from accuracy calculations)`);
+      }
     }
 
     // ====== OWNER RULES FILTER — remove alerts that violate rules before Telegram ======
