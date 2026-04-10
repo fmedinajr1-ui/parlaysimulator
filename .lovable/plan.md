@@ -1,36 +1,135 @@
 
 
-# Update 3 Edge Functions + Run Migration
+# Telegram Message Formatting Overhaul
 
-## What's changing
+## What this changes
 
-Three edge functions get complete replacements with bug fixes, plus one migration for schema changes.
+Right now your Telegram alerts are data-heavy walls of numbers — lines, percentages, signal types, composite scores. They read like database logs, not betting advice. This plan rewrites the messaging across all three alert sources to be conversational, scannable, and actionable — like a sharp friend texting you a play.
 
-### Migration
-- Add `engine_count`, `agreement_ratio`, `updated_at` columns to `high_conviction_results`
-- Add unique constraint `(analysis_date, player_name, prop_type)` for upsert support (Bug 9)
-- Add performance indexes on `high_conviction_results` and `fanduel_prediction_accuracy`
+## Scope — 3 files, 3 types of messages
 
-### 1. `detect-mispriced-lines/index.ts` (737 lines, full replace)
-- **Bug 1**: Fix swapped MLB `player_avg_l10`/`player_avg_l20` fields
-- **Bug 2**: Re-cap `alignedEdgePct` after all boosts/multipliers (was uncapped)
-- **Bug 3**: Snapshot writes now run for both mispriced AND correct-priced results
-- **Bug 5**: Feedback accuracy reads from `fanduel_prediction_accuracy` (settled data) instead of `mispriced_lines.outcome` (never written)
+### 1. `fanduel-prediction-alerts` — Signal alerts (lines 770-916)
 
-### 2. `high-conviction-analyzer/index.ts` (289 lines, full replace)
-- **Bug 6**: Remove `bot_daily_parlays` as engine source (circular feedback loop)
-- **Bug 7**: Side agreement uses 60% majority threshold instead of unanimous `.every()`
-- **Bug 8**: Engine count bonus changed from additive to capped multiplier (1.0x–1.5x)
-- **Bug 9**: Delete-then-insert replaced with atomic upsert + stale row cleanup
+**Current format:**
+```
+⚡ VELOCITY SPIKE — NBA
+LeBron James PLAYER_POINTS
+📊 FanDuel: O 25.5 (-110) / U 25.5 (-110)
+Line RISING: 24.5 → 25.5
+Speed: 4.2/hr over 15min
+⏱ ~8min window remaining
+📊 Confidence: 78%
+✅ Action: OVER 25.5 -110
+💡 Line rising = sharp money on over
+```
 
-### 3. `bot-pipeline-doctor/index.ts` (527 lines, full replace)
-- **Bug 10**: `stale_calibration` remediation now passes `force_run: true` to `calibrate-bot-weights`
-- **Bug 11**: Remediation dedup uses exact `patternId` match instead of substring `.includes()`
-- **Bug 12**: Profit correlation minimum lowered from 7 to 3 days; graceful fallback if table missing
+**New format — conversational, explains WHY:**
+```
+⚡ VELOCITY SPIKE — NBA
 
-## Files Changed
-1. **Migration**: New columns + unique constraint + indexes on `high_conviction_results` and `fanduel_prediction_accuracy`
-2. **Replace**: `supabase/functions/detect-mispriced-lines/index.ts`
-3. **Replace**: `supabase/functions/high-conviction-analyzer/index.ts`
-4. **Replace**: `supabase/functions/bot-pipeline-doctor/index.ts`
+🏀 LeBron James — Points
+📍 25.5 (was 24.5) — moved fast
+
+🧠 Why this matters:
+Sharp money is pushing this OVER hard — line
+jumped a full point in 15 min. Books are
+adjusting because they're exposed.
+
+📊 L10 avg 27.3 | Clears line 70% of games
+⏱ ~8 min before line locks
+
+✅ Play: OVER 25.5 (-110)
+```
+
+Key changes:
+- Replace "PLAYER_POINTS" with readable "Points"
+- Add a "Why this matters" section explaining the signal in plain English
+- Show L10 context inline so you know if the player actually hits this
+- Remove composite scores and signal type jargon from user-facing text
+- Different "Why" copy per signal type (velocity = sharp money, cascade = sustained institutional, take_it_now = snapback value, trap = manipulation)
+
+### 2. `generate-rbi-parlays` — RBI parlay picks (lines 153-181)
+
+**Current format:**
+```
+⚾ RBI Parlay Picks
+
+⚾ 2-Leg RBI Lock
+  1. Aaron Judge — 🔴 OVER 0.5 RBI
+     📊 Signal: price_drift (68% acc) | Score: 83
+  2. Mookie Betts — 🟢 UNDER 0.5 RBI
+     📊 Signal: cascade (73% acc) | Score: 79
+
+📈 Signal Accuracy (60%+ only):
+  price_drift: 68% (32/47)
+  cascade: 73% (22/30)
+```
+
+**New format — tells a story per leg:**
+```
+⚾ 2-Leg RBI Lock
+
+1️⃣ Aaron Judge — OVER 0.5 RBI
+   💪 Judge has driven in a run in 7 of his
+   last 10 games. Line is drifting his way —
+   books see it too.
+   📊 68% signal accuracy | L10: 7/10 RBI games
+
+2️⃣ Mookie Betts — UNDER 0.5 RBI
+   🧊 Betts has been quiet at the plate — 0 RBI
+   in 8 of his last 10. Facing a K-heavy pitcher
+   makes this even safer.
+   📊 73% signal accuracy | L10: 2/10 RBI games
+
+━━━━━━━━━━━━━━━
+🎯 Combined edge: Both legs backed by 60%+
+   proven signal types
+```
+
+Key changes:
+- Each leg gets a 1-2 sentence narrative explaining WHY (using L10 data and metadata already available)
+- Remove "Score: 83" composite — meaningless to the reader
+- Replace "🔴 OVER" / "🟢 UNDER" with contextual emoji (💪 for over, 🧊 for under)
+- Add a summary footer instead of raw accuracy tables
+
+### 3. `bot-send-telegram` formatters — Settlement, Sweet Spots, Accuracy Report
+
+**Settlement (`formatSettlement`):**
+- Add a one-line narrative verdict: "Solid day — rebs and assists carried us, points busted 3 tickets"
+- Change "P/L: +$47 (simulation)" to just the result with context
+- Make "Top Busters" more useful: "💔 Steph Curry O6.5 3PT missed in 3 parlays — cold shooting night"
+
+**Sweet Spots (`formatSweetSpotsBroadcast`):**
+- Add a one-liner per pick explaining the edge: "Averaging 8.2 over L10 against a 6.5 line"
+- Group header should say what the category strength is: "🏀 Points — 67% hit rate this week"
+
+**Accuracy Report (`accuracy-report/index.ts`):**
+- Replace raw signal_type names with readable labels
+- Add a plain-English top-line: "System is running hot — 64% overall, rebounds carrying the book"
+- Replace `n=47` with "47 picks"
+
+### 4. Signal type display names (shared utility)
+
+Create a `SIGNAL_LABELS` map used across all files:
+```
+velocity_spike → "Sharp Money Spike"
+cascade → "Sustained Line Move"  
+line_about_to_move → "Early Line Signal"
+take_it_now → "Snapback Value Play"
+trap_warning → "Trap Alert"
+price_drift → "Steady Drift"
+```
+
+## Implementation details
+
+- **Files modified:** `fanduel-prediction-alerts/index.ts`, `generate-rbi-parlays/index.ts`, `bot-send-telegram/index.ts`, `accuracy-report/index.ts`
+- **No schema changes** — all data needed (L10, metadata, signal type) is already available at formatting time
+- **Narrative generation** uses template strings with conditionals — no AI calls, just smart copy based on the data fields already present (l10_hit_rate, signal_type, line movement direction, pitcher stats in metadata)
+- **RBI-specific narratives** pull from `metadata.l10_hit_rate`, `metadata.opposing_pitcher`, and the over/under direction to build contextual sentences
+
+## What stays the same
+- All data fields, records, and database writes are untouched
+- Signal classification, gating, and accuracy logic unchanged
+- Telegram send mechanics (pagination, chunking, parse_mode) unchanged
+- Admin-only routing and customer broadcast logic unchanged
 
