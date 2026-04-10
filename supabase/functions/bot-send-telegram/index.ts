@@ -176,7 +176,6 @@ function formatSweetSpotsBroadcast(data: Record<string, any>, dateStr: string): 
   const picks = data.picks || [];
   if (picks.length === 0) return `🎯 *Sweet Spot Picks — ${dateStr}*\n\nNo qualifying picks today.`;
 
-  // BUG 11 FIX: unique emoji per prop type instead of all "📊"
   const CATEGORY_EMOJI: Record<string, string> = {
     points: '🏀', rebounds: '💪', assists: '🎯', threes: '🔥',
     steals: '🖐️', blocks: '🛡️', pra: '⭐', pts_rebs: '🔁',
@@ -202,29 +201,35 @@ function formatSweetSpotsBroadcast(data: Record<string, any>, dateStr: string): 
     return labels[cat] || cat.charAt(0).toUpperCase() + cat.slice(1);
   };
 
-  const propShort = (cat: string) => {
-    const shorts: Record<string, string> = {
-      points: 'Pts', rebounds: 'Reb', assists: 'Ast', threes: '3PT',
-      pra: 'PRA', pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
-      steals: 'Stl', blocks: 'Blk', turnovers: 'TO',
-    };
-    return shorts[cat] || cat.toUpperCase();
-  };
-
   let totalConf = 0;
   let count = 0;
 
   for (const [cat, catPicks] of Object.entries(groups)) {
     const emoji = CATEGORY_EMOJI[cat] || '📊';
-    msg += `${emoji} *${catLabel(cat)}*\n`;
+    // Category hit rate from the picks in this group
+    const catHitRates = catPicks.filter((p: any) => p.l10_hit_rate != null).map((p: any) => p.l10_hit_rate);
+    const avgCatHitRate = catHitRates.length > 0 ? Math.round((catHitRates.reduce((a: number, b: number) => a + b, 0) / catHitRates.length) * 100) : null;
+    const catHeader = avgCatHitRate != null ? `${emoji} *${catLabel(cat)}* — ${avgCatHitRate}% avg L10 hit rate` : `${emoji} *${catLabel(cat)}*`;
+    msg += `${catHeader}\n`;
     for (const p of catPicks) {
-      const side = (p.recommended_side || 'over').charAt(0).toUpperCase();
+      const side = (p.recommended_side || 'over').toUpperCase();
       const line = p.recommended_line ?? '?';
       const conf = Math.round(p.confidence_score || 0);
-      // l10_hit_rate is stored as 0.0-1.0 decimal
-      const l10 = p.l10_hit_rate != null ? `${Math.round(p.l10_hit_rate * 100)}%` : '—';
-      const l10avg = p.l10_avg != null ? ` | avg ${p.l10_avg.toFixed(1)}` : '';
-      msg += `• *${p.player_name}* — ${side} ${line} ${propShort(cat)} | ${conf}% conf, ${l10} L10${l10avg}\n`;
+      const l10avg = p.l10_avg != null ? p.l10_avg.toFixed(1) : null;
+
+      // One-liner edge explanation
+      let edgeLine = '';
+      if (l10avg != null && line !== '?') {
+        const numLine = Number(line);
+        if (side === 'OVER' && Number(l10avg) > numLine) {
+          edgeLine = ` — averaging ${l10avg} over L10 against a ${line} line`;
+        } else if (side === 'UNDER' && Number(l10avg) < numLine) {
+          edgeLine = ` — averaging ${l10avg} over L10, well under the ${line} line`;
+        }
+      }
+
+      msg += `• *${p.player_name}* — ${side} ${line}${edgeLine}\n`;
+      msg += `  🎯 ${conf}% confidence\n`;
       totalConf += conf;
       count++;
     }
