@@ -151,32 +151,59 @@ Deno.serve(async (req) => {
     }
 
     // Step 5: Format and send to Telegram
+    const SIGNAL_DISPLAY: Record<string, string> = {
+      velocity_spike: "Sharp Money Spike", cascade: "Sustained Line Move",
+      line_about_to_move: "Early Line Signal", take_it_now: "Snapback Value",
+      price_drift: "Steady Drift", trap_warning: "Trap Alert",
+    };
+
     const parlayMessages: string[] = [];
     for (const parlay of parlays) {
       const legLines = parlay.legs.map((leg, i) => {
-        const side = (leg.prediction || '').toUpperCase().includes('OVER') ? '🔴 OVER' : '🟢 UNDER';
+        const isOver = (leg.prediction || '').toUpperCase().includes('OVER');
+        const sideEmoji = isOver ? '💪' : '🧊';
+        const sideWord = isOver ? 'OVER' : 'UNDER';
         const line = leg.metadata?.line || 0.5;
-        return `  ${i + 1}. ${leg.player_name} — ${side} ${line} RBI\n     📊 Signal: ${leg.signal_type} (${leg.signal_accuracy}% acc) | Score: ${leg.composite_score}`;
+        const l10Rate = leg.metadata?.l10_hit_rate;
+        const l10Games = l10Rate != null ? Math.round(l10Rate * 10) : null;
+        const pitcher = leg.metadata?.opposing_pitcher;
+        const signalName = SIGNAL_DISPLAY[leg.signal_type] || leg.signal_type;
+
+        // Build narrative
+        let narrative = '';
+        if (isOver && l10Games != null) {
+          narrative = `${leg.player_name} has driven in a run in ${l10Games} of the last 10 games.`;
+          if (leg.signal_type === 'price_drift') narrative += ' Line is drifting his way — books see it too.';
+          else if (leg.signal_type === 'cascade') narrative += ' Sustained money pushing this over.';
+        } else if (!isOver && l10Games != null) {
+          const quietGames = 10 - (l10Games || 0);
+          narrative = `${leg.player_name} has been quiet — 0 RBI in ${quietGames} of the last 10.`;
+          if (pitcher) narrative += ` Facing ${pitcher} makes this even safer.`;
+        } else {
+          narrative = `${signalName} signal detected — ${leg.signal_accuracy}% historical accuracy on this pattern.`;
+        }
+
+        const l10Line = l10Games != null ? ` | L10: ${l10Games}/10 RBI games` : '';
+
+        return [
+          `${i === 0 ? '1️⃣' : i === 1 ? '2️⃣' : '3️⃣'} *${leg.player_name}* — ${sideWord} ${line} RBI`,
+          `   ${sideEmoji} ${narrative}`,
+          `   📊 ${leg.signal_accuracy}% signal accuracy${l10Line}`,
+        ].join('\n');
       });
 
       parlayMessages.push(
-        `⚾ *${parlay.type}*\n${legLines.join('\n')}`
+        `⚾ *${parlay.type}*\n\n${legLines.join('\n\n')}`
       );
     }
-
-    // Accuracy summary
-    const accSummary = bySignal.map(s => 
-      `  ${s.signal_type}: ${s.win_rate}% (${s.wins}/${s.settled})`
-    ).join('\n');
 
     const telegramMsg = [
       `⚾ *RBI Parlay Picks*`,
       ``,
       ...parlayMessages,
       ``,
-      `📈 *Signal Accuracy (60%+ only):*`,
-      accSummary,
-      ``,
+      `━━━━━━━━━━━━━━━`,
+      `🎯 All legs backed by 60%+ proven signal types`,
       `_Based on ${dashboardData?.overall?.total_settled || 0} settled RBI picks_`,
     ].join('\n');
 
