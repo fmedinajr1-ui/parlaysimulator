@@ -231,7 +231,8 @@ Deno.serve(async (req) => {
       const first = snapshots[0];
       const last = snapshots[snapshots.length - 1];
       const timeDiffMin = (new Date(last.snapshot_time).getTime() - new Date(first.snapshot_time).getTime()) / 60000;
-      const rawVelocity = timeDiffMin > 0 ? (weightedMove / totalWeight) * (60 / timeDiffMin) * snapshots.length : 0;
+      // BUG G FIX: removed snapshots.length multiplier — velocity is weighted avg move per hour
+      const rawVelocity = timeDiffMin > 0 ? (weightedMove / totalWeight) * (60 / timeDiffMin) : 0;
 
       // recentBias > 1 means accelerating, < 1 means decelerating
       const recentBias = oldWeight > 0 ? recentWeight / oldWeight : 1;
@@ -247,7 +248,9 @@ Deno.serve(async (req) => {
       .from("fanduel_prediction_accuracy")
       .select("signal_type, prop_type, sport, was_correct, velocity_at_signal, confidence_at_signal")
       .not("was_correct", "is", null)
-      .gte("created_at", thirtyDaysAgo);
+      .gte("created_at", thirtyDaysAgo)
+      .neq("actual_outcome", "informational_excluded") // BUG J FIX: exclude trap_warnings
+      .eq("is_gated", false);                          // BUG E companion: exclude gated records
 
     // Build learned thresholds per signal_type+prop_type
     interface LearnedThreshold {
@@ -1053,7 +1056,8 @@ Deno.serve(async (req) => {
       if (group.length <= 1) continue;
       group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
       for (let i = 1; i < group.length; i++) {
-        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
+        // BUG H FIX: scope the drop to the specific prop_type that conflicted
+        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}|${group[i].prop_type}`);
         log(`⚠ Dropped conflicting signal: ${group[i].player_name} ${group[i].prop_type} (kept ${group[0].player_name})`);
       }
     }
@@ -1071,7 +1075,7 @@ Deno.serve(async (req) => {
       // Multiple alerts for same player + same prop = keep strongest only
       group.sort((a, b) => (b.velocity || b.confidence || 0) - (a.velocity || a.confidence || 0));
       for (let i = 1; i < group.length; i++) {
-        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}`);
+        droppedPlayers.add(`${group[i].event_id}|${group[i].player_name}|${group[i].prop_type}`);
         log(`⚠ Dropped same-player conflicting ${group[i].type}: ${group[i].player_name} ${group[i].prop_type}`);
       }
     }
