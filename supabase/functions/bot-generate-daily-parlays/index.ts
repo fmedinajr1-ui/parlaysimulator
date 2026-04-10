@@ -487,8 +487,6 @@ async function detectWinningArchetypes(supabase: any): Promise<{ categories: Set
     
     for (const parlay of settledParlays) {
       const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
-      const isWin = parlay.outcome === 'won';
-      const seenCategories = new Set<string>();
       
       for (const leg of legs) {
         const cat     = (leg as any).category || '';
