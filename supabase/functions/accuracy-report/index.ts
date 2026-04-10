@@ -72,6 +72,16 @@ Deno.serve(async (req) => {
       r => r.prop_type || 'unknown'
     );
 
+    // Readable signal labels
+    const SIGNAL_LABELS: Record<string, string> = {
+      velocity_spike: 'Sharp Money Spike', cascade: 'Sustained Line Move',
+      line_about_to_move: 'Early Line Signal', take_it_now: 'Snapback Value',
+      trap_warning: 'Trap Alert', price_drift: 'Steady Drift',
+      live_velocity_spike: 'Live Sharp Spike', live_cascade: 'Live Line Move',
+      live_line_about_to_move: 'Live Early Signal',
+    };
+    const signalName = (s: string) => SIGNAL_LABELS[s] || s.replace(/_/g, ' ');
+
     // Build Telegram message
     const icon = (acc: number) => acc >= 60 ? '🟢' : acc >= 50 ? '🟡' : '🔴';
     const overall = calcAcc(allTime);
@@ -81,44 +91,56 @@ Deno.serve(async (req) => {
     const recentClvAcc = calcAcc(recentClv);
     const recentOutcomeAcc = calcAcc(recentOutcome);
 
+    // Plain-English top-line
+    let topLine = '';
+    if (overall.pct >= 60) topLine = `System is running hot — ${overall.pct}% overall`;
+    else if (overall.pct >= 50) topLine = `System is grinding — ${overall.pct}% overall, room to improve`;
+    else topLine = `System needs work — ${overall.pct}% overall, check weak signals`;
+
+    // Find best performing signal
+    const bestSignal = signalBreakdown.filter(s => s.n >= 5).sort((a, b) => b.accuracy - a.accuracy)[0];
+    if (bestSignal) topLine += `, ${signalName(bestSignal.key)} carrying the book`;
+
     const lines: string[] = [
       `📊 *ACCURACY CHECK-IN REPORT*`,
       ``,
-      `*Overall:* ${icon(overall.pct)} ${overall.pct}% (${overall.correct}/${overall.total})`,
-      `*Last 48h:* ${icon(recentAcc.pct)} ${recentAcc.pct}% (${recentAcc.correct}/${recentAcc.total})`,
+      `💬 _${topLine}_`,
+      ``,
+      `*Overall:* ${icon(overall.pct)} ${overall.pct}% (${overall.correct}/${overall.total} picks)`,
+      `*Last 48h:* ${icon(recentAcc.pct)} ${recentAcc.pct}% (${recentAcc.correct}/${recentAcc.total} picks)`,
       ``,
       `*── By Settlement Method ──*`,
-      `📈 CLV (all): ${icon(clvAcc.pct)} ${clvAcc.pct}% (n=${clvAcc.total})`,
-      `🎯 Outcome (all): ${icon(outcomeAcc.pct)} ${outcomeAcc.pct}% (n=${outcomeAcc.total})`,
-      `📈 CLV (48h): ${icon(recentClvAcc.pct)} ${recentClvAcc.pct}% (n=${recentClvAcc.total})`,
-      `🎯 Outcome (48h): ${icon(recentOutcomeAcc.pct)} ${recentOutcomeAcc.pct}% (n=${recentOutcomeAcc.total})`,
+      `📈 CLV (all): ${icon(clvAcc.pct)} ${clvAcc.pct}% (${clvAcc.total} picks)`,
+      `🎯 Outcome (all): ${icon(outcomeAcc.pct)} ${outcomeAcc.pct}% (${outcomeAcc.total} picks)`,
+      `📈 CLV (48h): ${icon(recentClvAcc.pct)} ${recentClvAcc.pct}% (${recentClvAcc.total} picks)`,
+      `🎯 Outcome (48h): ${icon(recentOutcomeAcc.pct)} ${recentOutcomeAcc.pct}% (${recentOutcomeAcc.total} picks)`,
       ``,
       `*── By Signal (All-Time) ──*`,
-      ...signalBreakdown.map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (n=${s.n})`),
+      ...signalBreakdown.map(s => `${icon(s.accuracy)} ${signalName(s.key)}: ${s.accuracy}% (${s.n} picks)`),
       ``,
       `*── By Signal (Last 48h) ──*`,
       ...(recentSignalBreakdown.length > 0 
-        ? recentSignalBreakdown.map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (n=${s.n})`)
+        ? recentSignalBreakdown.map(s => `${icon(s.accuracy)} ${signalName(s.key)}: ${s.accuracy}% (${s.n} picks)`)
         : ['No recent verified data yet']),
       ``,
-      `*── Line-About-To-Move by Prop (All-Time) ──*`,
-      ...propBreakdown.slice(0, 10).map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (n=${s.n})`),
+      `*── Early Line Signal by Prop (All-Time) ──*`,
+      ...propBreakdown.slice(0, 10).map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (${s.n} picks)`),
       ``,
-      `*── Line-About-To-Move by Prop (Last 48h) ──*`,
+      `*── Early Line Signal by Prop (Last 48h) ──*`,
       ...(recentPropBreakdown.length > 0
-        ? recentPropBreakdown.slice(0, 10).map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (n=${s.n})`)
+        ? recentPropBreakdown.slice(0, 10).map(s => `${icon(s.accuracy)} ${s.key}: ${s.accuracy}% (${s.n} picks)`)
         : ['Not enough recent data yet']),
     ];
 
     // Recommendations
     const recs: string[] = [];
     for (const s of signalBreakdown) {
-      if (s.n >= 30 && s.accuracy < 40) recs.push(`⛔ Consider killing *${s.key}* (${s.accuracy}%)`);
-      if (s.n >= 30 && s.accuracy >= 65) recs.push(`🚀 Boost *${s.key}* — strong edge (${s.accuracy}%)`);
+      if (s.n >= 30 && s.accuracy < 40) recs.push(`⛔ Consider killing *${signalName(s.key)}* (${s.accuracy}% over ${s.n} picks)`);
+      if (s.n >= 30 && s.accuracy >= 65) recs.push(`🚀 Boost *${signalName(s.key)}* — strong edge (${s.accuracy}% over ${s.n} picks)`);
     }
     for (const p of propBreakdown) {
-      if (p.n >= 15 && p.accuracy < 40) recs.push(`🔄 Flip or suppress *${p.key}* props (${p.accuracy}%)`);
-      if (p.n >= 15 && p.accuracy >= 70) recs.push(`🔥 Boost *${p.key}* combo alerts (${p.accuracy}%)`);
+      if (p.n >= 15 && p.accuracy < 40) recs.push(`🔄 Flip or suppress *${p.key}* props (${p.accuracy}% over ${p.n} picks)`);
+      if (p.n >= 15 && p.accuracy >= 70) recs.push(`🔥 Boost *${p.key}* combo alerts (${p.accuracy}% over ${p.n} picks)`);
     }
 
     // Flag divergent methods
