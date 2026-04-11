@@ -1,41 +1,72 @@
 
 
-# Fix: MMA Props Not Showing — Data Lives in `game_bets`, Analyzer Reads `unified_props`
+# Fix Tennis Data Pipeline — PrizePicks Blocked, Need Alternative Sources
 
-## Root Cause
+## Problem
 
-The `mma-rounds-analyzer` queries `unified_props` for MMA data, but MMA props are never written there. The whale-odds-scraper writes MMA totals to `game_bets` (bet_type = "total") with over_odds/under_odds. Today's data confirms this: there are UFC fights with round totals in `game_bets` (e.g., Prado vs Radtke, O/U 1.5 rounds at -220/+170) but zero rows in `unified_props` for any MMA sport key.
+The tennis pipeline has **zero data flowing** because:
 
-This is the exact same gap that affected tennis — the analyzer was built to read from `unified_props` but no sync pipeline exists to get `game_bets` MMA totals into that table.
+1. **PrizePicks API returns 403** on every call from edge functions (Cloudflare blocks server-side requests). This has been failing consistently — it's not a transient issue.
+2. **whale-odds-scraper** fetches tennis from The Odds API but only writes H2H/spreads/totals to `game_bets` — no player-level props (total games, games won, sets, fantasy scores).
+3. **tennis-props-sync** reads `unified_props` looking for tennis data that never gets written there.
 
-## Fix
+## Solution — 3-Part Fix
 
-### 1. Create `mma-props-sync` edge function
-Same pattern as `tennis-props-sync` — bridges MMA total rounds from `game_bets` into `unified_props`:
-- Query `game_bets` where `sport = 'mma'` and `bet_type = 'total'` with today's commence_time
-- For each row, upsert into `unified_props` with:
-  - `sport` = `'mma_mixed_martial_arts'`
-  - `player_name` = `"Fighter A vs Fighter B"` (from home_team/away_team)
-  - `prop_type` = `'total_rounds'`
-  - `current_line` = the line (e.g., 1.5)
-  - `over_price` / `under_price` from over_odds/under_odds
-  - `bookmaker`, `event_id` = game_id, `commence_time`
-- Upsert keyed on event_id + prop_type + bookmaker to avoid duplicates
+### Part 1: Tennis Props via The Odds API (replace PrizePicks dependency)
 
-### 2. Update `morning-prep-pipeline`
-Add `mma-props-sync` before `mma-rounds-analyzer` (same pattern as tennis-props-sync → tennis-games-analyzer):
-- Step 4.7a: `mma-props-sync`
-- Step 4.7b: `mma-rounds-analyzer` (already exists)
+The Odds API supports tennis player prop markets. Rewrite `tennis-props-sync` to **scrape tennis props directly from The Odds API** for today's ATP/WTA events, same pattern as the NRFI scanner:
 
-### 3. Deploy and test
-- Deploy `mma-props-sync`
-- Run it to sync today's fights
-- Run `mma-rounds-analyzer` to verify it now finds props and generates picks
+1. `GET /v4/sports/tennis_atp/events` and `GET /v4/sports/tennis_wta/events` — get today's matches
+2. For each event, fetch odds with markets: `player_total_games`, `player_games_won`, `player_sets`, `player_total_sets`, `alternate_total_games` (try multiple market keys since naming varies by book)
+3. Write results directly into `unified_props` with proper columns (`sport`, `player_name`, `prop_type`, `current_line`, `over_price`, `under_price`, `bookmaker`, `event_id`, `game_description`, `commence_time`)
+4. Fallback: also sync any tennis totals already in `game_bets` (existing logic, kept as secondary source)
+
+### Part 2: Fix tennis-games-analyzer column references
+
+The analyzer still references columns that don't exist in `unified_props`:
+- `stat_type` → doesn't exist (use `prop_type`)
+- `line` → doesn't exist (use `current_line`)
+- `fanduel_line` → doesn't exist
+- `event_description` → doesn't exist (use `game_description`)
+- `opponent` → doesn't exist
+
+Fix all column references to match the actual schema.
+
+### Part 3: Cross-reference and H2H integration
+
+The analyzer already has H2H logic via `tennis_player_stats` lookups. The key props to target:
+- **Total games** — primary market, highest liquidity
+- **Games won** (per player) — cross-ref with opponent's games-lost averages
+- **Total sets** — structural indicator (2-set vs 3-set match)
+- **Fantasy scores** — PrizePicks-specific, skip for now since PP is blocked
+
+For each prop, the analyzer cross-references:
+- Player's L10 average from `tennis_player_stats`
+- H2H history from the same table
+- Surface + gender modifiers (already implemented)
 
 ## Files
 
 | File | Action |
 |------|--------|
-| `supabase/functions/mma-props-sync/index.ts` | **Create** — sync MMA totals from game_bets → unified_props |
-| `supabase/functions/morning-prep-pipeline/index.ts` | **Edit** — add mma-props-sync before mma-rounds-analyzer |
+| `supabase/functions/tennis-props-sync/index.ts` | **Rewrite** — scrape The Odds API directly for tennis props, fallback to game_bets |
+| `supabase/functions/tennis-games-analyzer/index.ts` | **Fix** — correct all column references to match unified_props schema |
+
+## Pipeline Flow After Fix
+
+```text
+morning-prep-pipeline
+  └─ whale-odds-scraper (full)     ← writes tennis H2H/totals to game_bets
+  └─ tennis-props-sync (NEW)       ← fetches tennis props from Odds API → unified_props
+  │                                   also syncs game_bets tennis totals → unified_props
+  └─ tennis-games-analyzer         ← reads unified_props, cross-refs tennis_player_stats
+                                      writes picks to category_sweet_spots + tennis_match_model
+```
+
+## What This Unlocks
+
+- Tennis picks will flow automatically whenever ATP/WTA matches are on the board
+- No dependency on PrizePicks (which is permanently blocked)
+- Total games, games won, and total sets all analyzed with H2H cross-reference
+- Self-healing stats loop (settled results update `tennis_player_stats`) already works
 
