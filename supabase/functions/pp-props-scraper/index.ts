@@ -420,9 +420,9 @@ serve(async (req) => {
   try {
     const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB', 'MLBST'] } = await req.json().catch(() => ({}));
     
-    console.log('[PP Scraper] Starting PrizePicks API fetch for sports:', sports);
+    console.log('[PP Scraper] Starting PrizePicks fetch (Firecrawl primary, direct fallback) for sports:', sports);
     
-    // Fetch directly from PrizePicks API (no Firecrawl needed)
+    // Fetch from PrizePicks: Firecrawl primary (Cloudflare bypass), direct API fallback
     const apiData = await fetchPrizePicksAPI();
     
     console.log(`[PP Scraper] API returned ${apiData.data?.length || 0} projections, ${apiData.included?.length || 0} included resources`);
