@@ -219,8 +219,10 @@ Deno.serve(async (req) => {
       }
 
       log(`Odds API scraped: ${allRows.length} prop lines across ${sportKeysSeen.size} sports`);
-    } else {
+    } else if (!apiKey) {
       log("⚠ THE_ODDS_API_KEY not set — skipping direct scrape");
+    } else {
+      log("No active tennis sports found on Odds API today");
     }
 
     // ── Part 2: Fallback — sync tennis totals from game_bets ────────────
