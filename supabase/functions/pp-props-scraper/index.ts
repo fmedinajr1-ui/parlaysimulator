@@ -217,18 +217,94 @@ const USER_AGENTS = [
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15',
 ];
 
-async function fetchPrizePicksAPI(retries = 3): Promise<any> {
-  // Try multiple API endpoints — PrizePicks has both v1 and alternate paths
+async function fetchViaFirecrawl(): Promise<any> {
+  const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
+  if (!firecrawlKey) throw new Error('FIRECRAWL_API_KEY not configured');
+
+  const ppUrl = 'https://api.prizepicks.com/projections?single_stat=true&per_page=250';
+  console.log(`[PP Scraper] Firecrawl scrape: ${ppUrl}`);
+
+  const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${firecrawlKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      url: ppUrl,
+      formats: ['html'],
+      waitFor: 5000,
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Firecrawl ${res.status}: ${txt.slice(0, 200)}`);
+  }
+
+  const scraped = await res.json();
+  const html = scraped?.data?.html || scraped?.html || '';
+  const markdown = scraped?.data?.markdown || scraped?.markdown || '';
+  
+  // Firecrawl may return the raw JSON in html body or markdown
+  // Try to extract JSON from the response
+  const content = html || markdown;
+  
+  // Look for JSON:API structure in the content
+  const jsonMatch = content.match(/\{[\s\S]*?"data"\s*:\s*\[[\s\S]*?"included"\s*:\s*\[[\s\S]*?\}\s*$/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.data?.length > 0) {
+        console.log(`[PP Scraper] ✅ Firecrawl extracted ${parsed.data.length} projections from JSON in page`);
+        return parsed;
+      }
+    } catch (e) {
+      console.log('[PP Scraper] JSON parse from page content failed, trying other patterns');
+    }
+  }
+
+  // Try: the whole content might be JSON (API endpoint returns JSON, Firecrawl wraps it)
+  try {
+    // Strip HTML tags if present
+    const stripped = content.replace(/<[^>]*>/g, '').trim();
+    if (stripped.startsWith('{')) {
+      const parsed = JSON.parse(stripped);
+      if (parsed.data?.length > 0) {
+        console.log(`[PP Scraper] ✅ Firecrawl got raw JSON — ${parsed.data.length} projections`);
+        return parsed;
+      }
+    }
+  } catch (e) {
+    // Not raw JSON
+  }
+
+  // Try: look for pre/code block containing JSON
+  const preMatch = content.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i) || content.match(/<code[^>]*>([\s\S]*?)<\/code>/i);
+  if (preMatch) {
+    try {
+      const decoded = preMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      const parsed = JSON.parse(decoded);
+      if (parsed.data?.length > 0) {
+        console.log(`[PP Scraper] ✅ Firecrawl extracted JSON from <pre> — ${parsed.data.length} projections`);
+        return parsed;
+      }
+    } catch (e) {}
+  }
+
+  throw new Error(`Firecrawl scraped page but could not extract JSON:API data (content length: ${content.length})`);
+}
+
+async function fetchDirectAPI(retries = 2): Promise<any> {
   const endpoints = [
     'https://api.prizepicks.com/projections?single_stat=true&per_page=250',
     'https://partner-api.prizepicks.com/projections?single_stat=true&per_page=250',
-    'https://api.prizepicks.com/projections?per_page=250',
   ];
   
   for (const url of endpoints) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-      console.log(`[PP Scraper] Trying ${url} (attempt ${attempt}/${retries})`);
+      console.log(`[PP Scraper] Direct API: ${url} (attempt ${attempt})`);
       
       try {
         const controller = new AbortController();
@@ -241,12 +317,6 @@ async function fetchPrizePicksAPI(retries = 3): Promise<any> {
             'X-Device-ID': crypto.randomUUID(),
             'Referer': 'https://app.prizepicks.com/',
             'Origin': 'https://app.prizepicks.com',
-            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"macOS"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-site',
           },
         });
         clearTimeout(timeoutId);
@@ -254,36 +324,42 @@ async function fetchPrizePicksAPI(retries = 3): Promise<any> {
         if (response.status === 403 || response.status === 429) {
           console.warn(`[PP Scraper] Got ${response.status} from ${url}`);
           await response.text();
-          if (attempt < retries) {
-            await new Promise(r => setTimeout(r, attempt * 2000));
-          }
           continue;
         }
         
-        if (!response.ok) {
-          const text = await response.text();
-          console.warn(`[PP Scraper] ${url} returned ${response.status}: ${text.slice(0, 100)}`);
-          break; // Try next endpoint
-        }
+        if (!response.ok) { await response.text(); break; }
         
         const data = await response.json();
-        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-          console.log(`[PP Scraper] ✅ Success from ${url} — ${data.data.length} projections`);
+        if (data.data?.length > 0) {
+          console.log(`[PP Scraper] ✅ Direct API success — ${data.data.length} projections`);
           return data;
         }
-        
-        console.warn(`[PP Scraper] ${url} returned empty data array`);
-        break; // Try next endpoint
+        break;
       } catch (err) {
-        console.warn(`[PP Scraper] ${url} attempt ${attempt} error:`, err instanceof Error ? err.message : err);
-        if (attempt < retries) {
-          await new Promise(r => setTimeout(r, attempt * 2000));
-        }
+        console.warn(`[PP Scraper] Direct attempt ${attempt} error:`, err instanceof Error ? err.message : err);
       }
     }
   }
   
-  throw new Error('All PrizePicks API endpoints returned 403 or failed — Cloudflare may be blocking server-side requests');
+  throw new Error('Direct API failed');
+}
+
+async function fetchPrizePicksAPI(): Promise<any> {
+  // Primary: Firecrawl (bypasses Cloudflare)
+  try {
+    return await fetchViaFirecrawl();
+  } catch (firecrawlErr) {
+    console.warn(`[PP Scraper] Firecrawl failed: ${firecrawlErr instanceof Error ? firecrawlErr.message : firecrawlErr}`);
+  }
+
+  // Fallback: direct API (may work if Cloudflare relaxes)
+  try {
+    return await fetchDirectAPI();
+  } catch (directErr) {
+    console.warn(`[PP Scraper] Direct API also failed: ${directErr instanceof Error ? directErr.message : directErr}`);
+  }
+
+  throw new Error('All PrizePicks fetch methods failed (Firecrawl + direct API)');
 }
 
 function parsePrizePicksResponse(apiData: any): ExtractedProjection[] {

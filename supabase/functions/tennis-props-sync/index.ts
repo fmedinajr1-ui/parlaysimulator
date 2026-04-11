@@ -200,7 +200,49 @@ Deno.serve(async (req) => {
       log("⚠ THE_ODDS_API_KEY not set — skipping direct scrape");
     }
 
-    // ── Part 2: Fallback — sync tennis totals from game_bets ────────────
+    // ── Part 2: Sync tennis props from pp_snapshot ──────────────────────
+    const { data: ppTennis } = await supabase
+      .from("pp_snapshot")
+      .select("*")
+      .or("league.eq.ATP,league.eq.WTA")
+      .eq("is_active", true)
+      .gte("captured_at", `${today}T00:00:00`);
+
+    if (ppTennis && ppTennis.length > 0) {
+      log(`pp_snapshot: ${ppTennis.length} tennis props found`);
+
+      const ppStatMap: Record<string, string> = {
+        "player_total_games": "total_games",
+        "player_games_won": "games_won",
+        "player_total_sets": "total_sets",
+        "player_fantasy_score": "fantasy_score",
+        "player_games": "total_games",
+      };
+
+      for (const pp of ppTennis) {
+        const propType = ppStatMap[pp.stat_type] || pp.stat_type;
+        const sportKey = pp.league === "WTA" ? "tennis_wta" : "tennis_atp";
+
+        allRows.push({
+          event_id: pp.event_id || `pp_${pp.league}_${pp.player_name}_${today}`,
+          sport: sportKey,
+          game_description: pp.matchup || `${pp.player_name} match`,
+          commence_time: pp.start_time,
+          player_name: pp.player_name,
+          prop_type: propType,
+          bookmaker: "prizepicks",
+          current_line: pp.pp_line,
+          over_price: -110,
+          under_price: -110,
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        });
+        propTypesWritten.add(propType);
+        sportKeysSeen.add(sportKey);
+      }
+    }
+
+    // ── Part 2b: Fallback — sync tennis totals from game_bets ───────────
     const { data: gameBets } = await supabase
       .from("game_bets")
       .select("*")
