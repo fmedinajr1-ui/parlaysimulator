@@ -4874,8 +4874,10 @@ async function handlePPTennis(chatId: string, rawText: string): Promise<string> 
   if (!pasteText) {
     return `🎾 *PrizePicks Tennis Import*
 
-Paste your PrizePicks tennis props in this format:
+📸 *Screenshot method (easiest):*
+Send a screenshot of PrizePicks tennis props with the caption /pptennis
 
+✏️ *Text method:*
 \`\`\`
 Player Name
 Stat Type Line
@@ -4887,10 +4889,6 @@ Jannik Sinner
 Total Games 22.5
 Carlos Alcaraz
 Games Won 12.5
-Coco Gauff
-Fantasy Score 45.5
-Iga Swiatek
-Total Sets 2.5
 \`\`\`
 
 Or comma-separated:
@@ -5131,7 +5129,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /fixprops — Refresh props + regen
 /healthcheck — Preflight + integrity
 /errorlog — Last 10 errors
-/pptennis — Paste PrizePicks tennis props
+/pptennis — Import tennis props (text or 📸 screenshot)
 /runtennis — Run tennis analyzer
 
 💬 Or just ask me anything!`;
