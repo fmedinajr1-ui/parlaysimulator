@@ -4865,6 +4865,203 @@ ${logLines.join('\n')}
 
   return msg;
 }
+// ==================== PRIZEPICKS TENNIS PASTE HANDLER ====================
+
+async function handlePPTennis(chatId: string, rawText: string): Promise<string> {
+  // Remove the /pptennis command prefix
+  const pasteText = rawText.replace(/^\/pptennis\s*/i, '').trim();
+  
+  if (!pasteText) {
+    return `🎾 *PrizePicks Tennis Import*
+
+Paste your PrizePicks tennis props in this format:
+
+\`\`\`
+Player Name
+Stat Type Line
+\`\`\`
+
+*Example:*
+\`\`\`
+Jannik Sinner
+Total Games 22.5
+Carlos Alcaraz
+Games Won 12.5
+Coco Gauff
+Fantasy Score 45.5
+Iga Swiatek
+Total Sets 2.5
+\`\`\`
+
+Or comma-separated:
+\`Sinner, Total Games, 22.5, Alcaraz, Games Won, 12.5\``;
+  }
+
+  await sendMessage(chatId, "⏳ Parsing tennis props...", "Markdown");
+
+  // Parse different formats
+  const props: Array<{ player_name: string; stat_type: string; pp_line: number }> = [];
+  
+  // Stat type mappings from human-readable to pp_snapshot format
+  const statMap: Record<string, string> = {
+    'total games': 'player_total_games',
+    'games won': 'player_games_won',
+    'total sets': 'player_total_sets',
+    'sets won': 'player_sets_won',
+    'fantasy score': 'player_fantasy_score',
+    'aces': 'player_aces',
+    'double faults': 'player_double_faults',
+    'games': 'player_total_games',
+    'sets': 'player_total_sets',
+    'fpts': 'player_fantasy_score',
+  };
+
+  // Try line-by-line format first (Player Name on one line, Stat Line on next)
+  const lines = pasteText.split('\n').map(l => l.trim()).filter(Boolean);
+  
+  let parsed = false;
+
+  // Pattern 1: Two-line format — "Player Name" then "Stat Type Line"
+  for (let i = 0; i < lines.length - 1; i++) {
+    const nameLine = lines[i];
+    const statLine = lines[i + 1];
+    
+    // statLine should end with a number
+    const statMatch = statLine.match(/^(.+?)\s+([\d.]+)$/);
+    // nameLine should NOT end with a number (it's a name, not a stat)
+    const nameIsNotStat = !nameLine.match(/[\d.]+$/);
+    
+    if (statMatch && nameIsNotStat) {
+      const rawStat = statMatch[1].trim().toLowerCase();
+      const line = parseFloat(statMatch[2]);
+      const mappedStat = statMap[rawStat] || rawStat.replace(/\s+/g, '_');
+      
+      if (!isNaN(line)) {
+        props.push({ player_name: nameLine, stat_type: mappedStat, pp_line: line });
+        i++; // skip the stat line
+        parsed = true;
+      }
+    }
+  }
+
+  // Pattern 2: Comma-separated — "Player, Stat, Line, Player, Stat, Line"
+  if (!parsed) {
+    const parts = pasteText.split(',').map(p => p.trim()).filter(Boolean);
+    for (let i = 0; i < parts.length - 2; i += 3) {
+      const playerName = parts[i];
+      const rawStat = parts[i + 1]?.toLowerCase();
+      const line = parseFloat(parts[i + 2]);
+      const mappedStat = statMap[rawStat] || rawStat?.replace(/\s+/g, '_');
+      
+      if (playerName && mappedStat && !isNaN(line)) {
+        props.push({ player_name: playerName, stat_type: mappedStat, pp_line: line });
+        parsed = true;
+      }
+    }
+  }
+
+  // Pattern 3: Single line "Player Stat Line" repeated
+  if (!parsed) {
+    for (const line of lines) {
+      // Try matching "Name - Stat Type - Line"
+      const dashMatch = line.match(/^(.+?)\s*[-–—]\s*(.+?)\s*[-–—]\s*([\d.]+)$/);
+      if (dashMatch) {
+        const rawStat = dashMatch[2].trim().toLowerCase();
+        const lineVal = parseFloat(dashMatch[3]);
+        const mappedStat = statMap[rawStat] || rawStat.replace(/\s+/g, '_');
+        if (!isNaN(lineVal)) {
+          props.push({ player_name: dashMatch[1].trim(), stat_type: mappedStat, pp_line: lineVal });
+          parsed = true;
+        }
+      }
+    }
+  }
+
+  if (props.length === 0) {
+    return `❌ Could not parse any tennis props from your input.
+
+Try this format:
+\`\`\`
+Jannik Sinner
+Total Games 22.5
+Carlos Alcaraz
+Games Won 12.5
+\`\`\``;
+  }
+
+  // Determine sport/league based on player gender (default to ATP)
+  const today = new Date().toISOString().split('T')[0];
+  const now = new Date().toISOString();
+
+  // Insert into pp_snapshot
+  const snapshotRows = props.map(p => ({
+    player_name: p.player_name,
+    stat_type: p.stat_type,
+    pp_line: p.pp_line,
+    sport: 'tennis',
+    league: 'ATP', // Will be overridden if WTA players detected
+    market_key: `${p.player_name.toLowerCase().replace(/\s+/g, '_')}_${p.stat_type}_${today}`,
+    captured_at: now,
+    is_active: true,
+  }));
+
+  const { error: snapErr } = await supabase.from('pp_snapshot').upsert(snapshotRows, {
+    onConflict: 'market_key',
+  });
+
+  if (snapErr) {
+    console.error('[PPTennis] pp_snapshot insert error:', snapErr);
+    return `❌ Database error: ${snapErr.message}`;
+  }
+
+  // Also insert into unified_props for the tennis analyzer
+  const unifiedStatMap: Record<string, string> = {
+    'player_total_games': 'total_games',
+    'player_games_won': 'games_won',
+    'player_total_sets': 'total_sets',
+    'player_sets_won': 'sets_won',
+    'player_fantasy_score': 'fantasy_score',
+    'player_aces': 'aces',
+    'player_double_faults': 'double_faults',
+  };
+
+  const unifiedRows = props.map(p => ({
+    player_name: p.player_name,
+    prop_type: unifiedStatMap[p.stat_type] || p.stat_type,
+    line: p.pp_line,
+    sport: 'tennis',
+    source: 'prizepicks_telegram',
+    bookmaker: 'prizepicks',
+    captured_at: now,
+    event_date: today,
+    is_active: true,
+    market_key: `pp_tennis_${p.player_name.toLowerCase().replace(/\s+/g, '_')}_${unifiedStatMap[p.stat_type] || p.stat_type}_${today}`,
+  }));
+
+  const { error: uniErr } = await supabase.from('unified_props').upsert(unifiedRows, {
+    onConflict: 'market_key',
+  });
+
+  if (uniErr) {
+    console.error('[PPTennis] unified_props insert error:', uniErr);
+  }
+
+  // Build confirmation message
+  let msg = `✅ *${props.length} Tennis Props Imported!*\n\n`;
+  for (const p of props) {
+    const label = Object.entries(statMap).find(([_, v]) => v === p.stat_type)?.[0] || p.stat_type;
+    msg += `🎾 *${p.player_name}* — ${label} ${p.pp_line}\n`;
+  }
+  msg += `\n📊 Saved to pipeline. Run /runtennis to analyze.`;
+
+  // Log it
+  await logActivity('pp_tennis_import', `Imported ${props.length} tennis props via Telegram`, {
+    chatId,
+    props: props.map(p => `${p.player_name}: ${p.stat_type} ${p.pp_line}`),
+  });
+
+  return msg;
+}
 
 // ==================== MAIN ROUTER ====================
 
@@ -4995,6 +5192,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
     if (cmd === "/rankings") return await handleRankings(chatId, args);
     if (cmd === "/weekly") return await handleWeeklyRundown(chatId);
     if (cmd === "/track") return await handleTrack(chatId, args);
+    if (cmd === "/pptennis") return await handlePPTennis(chatId, text);
+    if (cmd === "/runtennis") return await handleTriggerFunction(chatId, 'tennis-games-analyzer', 'Tennis Games Analyzer');
 
     // Generic edge function trigger handler
     async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
