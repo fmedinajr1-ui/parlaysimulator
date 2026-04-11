@@ -221,6 +221,7 @@ async function fetchViaFirecrawl(): Promise<any> {
   const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
   if (!firecrawlKey) throw new Error('FIRECRAWL_API_KEY not configured');
 
+  // Try scraping the API endpoint directly — Firecrawl renders via browser, bypassing Cloudflare
   const ppUrl = 'https://api.prizepicks.com/projections?single_stat=true&per_page=250';
   console.log(`[PP Scraper] Firecrawl scrape: ${ppUrl}`);
 
@@ -232,7 +233,7 @@ async function fetchViaFirecrawl(): Promise<any> {
     },
     body: JSON.stringify({
       url: ppUrl,
-      formats: ['html'],
+      formats: ['rawHtml'],
       waitFor: 5000,
     }),
   });
@@ -243,56 +244,43 @@ async function fetchViaFirecrawl(): Promise<any> {
   }
 
   const scraped = await res.json();
+  const rawHtml = scraped?.data?.rawHtml || scraped?.rawHtml || '';
   const html = scraped?.data?.html || scraped?.html || '';
   const markdown = scraped?.data?.markdown || scraped?.markdown || '';
   
-  // Firecrawl may return the raw JSON in html body or markdown
-  // Try to extract JSON from the response
-  const content = html || markdown;
+  console.log(`[PP Scraper] Firecrawl returned — rawHtml: ${rawHtml.length}, html: ${html.length}, markdown: ${markdown.length}`);
+  console.log(`[PP Scraper] Firecrawl content preview: ${(rawHtml || html || markdown).slice(0, 500)}`);
   
-  // Look for JSON:API structure in the content
-  const jsonMatch = content.match(/\{[\s\S]*?"data"\s*:\s*\[[\s\S]*?"included"\s*:\s*\[[\s\S]*?\}\s*$/);
-  if (jsonMatch) {
+  // The API endpoint returns raw JSON — try parsing all content sources
+  for (const content of [rawHtml, html, markdown]) {
+    if (!content || content.length < 50) continue;
+    
+    // Strip HTML wrapper if present
+    let jsonStr = content;
+    
+    // Extract from <body> or <pre> tags
+    const bodyMatch = jsonStr.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) jsonStr = bodyMatch[1];
+    const preMatch = jsonStr.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+    if (preMatch) jsonStr = preMatch[1];
+    
+    // Decode HTML entities
+    jsonStr = jsonStr.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+    
+    if (!jsonStr.startsWith('{') && !jsonStr.startsWith('[')) continue;
+    
     try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.data?.length > 0) {
-        console.log(`[PP Scraper] ✅ Firecrawl extracted ${parsed.data.length} projections from JSON in page`);
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.data && Array.isArray(parsed.data) && parsed.data.length > 0) {
+        console.log(`[PP Scraper] ✅ Firecrawl parsed ${parsed.data.length} projections`);
         return parsed;
       }
     } catch (e) {
-      console.log('[PP Scraper] JSON parse from page content failed, trying other patterns');
+      console.log(`[PP Scraper] JSON parse attempt failed: ${(e as Error).message?.slice(0, 100)}`);
     }
   }
 
-  // Try: the whole content might be JSON (API endpoint returns JSON, Firecrawl wraps it)
-  try {
-    // Strip HTML tags if present
-    const stripped = content.replace(/<[^>]*>/g, '').trim();
-    if (stripped.startsWith('{')) {
-      const parsed = JSON.parse(stripped);
-      if (parsed.data?.length > 0) {
-        console.log(`[PP Scraper] ✅ Firecrawl got raw JSON — ${parsed.data.length} projections`);
-        return parsed;
-      }
-    }
-  } catch (e) {
-    // Not raw JSON
-  }
-
-  // Try: look for pre/code block containing JSON
-  const preMatch = content.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i) || content.match(/<code[^>]*>([\s\S]*?)<\/code>/i);
-  if (preMatch) {
-    try {
-      const decoded = preMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-      const parsed = JSON.parse(decoded);
-      if (parsed.data?.length > 0) {
-        console.log(`[PP Scraper] ✅ Firecrawl extracted JSON from <pre> — ${parsed.data.length} projections`);
-        return parsed;
-      }
-    } catch (e) {}
-  }
-
-  throw new Error(`Firecrawl scraped page but could not extract JSON:API data (content length: ${content.length})`);
+  throw new Error(`Firecrawl scraped but could not extract JSON:API data (rawHtml: ${rawHtml.length}, html: ${html.length})`);
 }
 
 async function fetchDirectAPI(retries = 2): Promise<any> {
