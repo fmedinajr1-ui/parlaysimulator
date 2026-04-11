@@ -1,17 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// tennis-props-sync (v2 — broad prop_type search + diagnostics)
+// tennis-props-sync (v3 — The Odds API direct scrape + game_bets fallback)
 //
-// Queries unified_props with NO prop_type filter first, logs all unique
-// prop_types found, then filters against 10+ known tennis-games variants.
-// Falls back to any prop with line 10–60. Self-heals player stats from
-// settled tennis_match_model records.
+// PrizePicks is permanently 403-blocked from edge functions. This version
+// scrapes tennis player props directly from The Odds API for ATP/WTA events,
+// then falls back to syncing match totals from game_bets.
 //
-// Uses actual DB columns:
-//   unified_props: game_description (not event_description), current_line (not line)
-//   tennis_player_stats: player_name, surface, games_won, games_lost, etc.
-//   tennis_match_model: player_a, player_b, tour, surface, etc.
+// Also runs self-healing: updates tennis_player_stats from settled results.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const corsHeaders = {
@@ -30,42 +26,33 @@ function normName(s: string): string {
   return (s || "").toLowerCase().replace(/[.']/g, "").replace(/\s+/g, " ").trim();
 }
 
-const TENNIS_GAMES_PROP_TYPES = new Set([
-  "total games", "total_games", "games", "game total", "games played",
-  "total games played", "alternate total games", "games (sets)",
-  "fantasy_score", "player_total_games", "match_total_games",
-  "totals", "total",
-]);
+const ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports";
+const TENNIS_SPORTS = ["tennis_atp_french_open", "tennis_wta_french_open", "tennis_atp", "tennis_wta"];
 
-const TENNIS_SPORT_KEYS = [
-  "tennis_atp", "tennis_wta", "tennis", "tennis_atp_singles", "tennis_wta_singles",
-];
+// Player prop markets to request
+const PLAYER_PROP_MARKETS = [
+  "player_total_games",
+  "player_games_won", 
+  "player_total_sets",
+  "alternate_total_games",
+].join(",");
 
-function parseMatchup(desc: string): [string, string] | null {
-  const m = (desc || "").match(/^(.+?)\s+(?:vs?\.?)\s+(.+?)(?:\s*[-–—]\s*.+)?$/i);
-  return m ? [m[1].trim(), m[2].trim()] : null;
+// Match-level total markets (fallback from game_bets)
+const MATCH_TOTAL_MARKETS = ["totals", "total", "total_games"].join(",");
+
+interface OddsApiEvent {
+  id: string;
+  sport_key: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
 }
 
-function inferTour(sport: string): "ATP" | "WTA" | null {
-  const s = (sport || "").toLowerCase();
-  if (s.includes("wta")) return "WTA";
-  if (s.includes("atp")) return "ATP";
-  return null;
-}
-
-function inferTourFromLine(line: number): "ATP" | "WTA" {
-  return line < 28 ? "WTA" : "ATP";
-}
-
-function detectSurface(desc: string): string {
-  const t = (desc || "").toLowerCase();
-  if (t.includes("roland garros") || t.includes("clay") || t.includes("french open") ||
-      t.includes("monte") || t.includes("madrid") || t.includes("rome") ||
-      t.includes("barcelona")) return "clay";
-  if (t.includes("wimbledon") || t.includes("grass") || t.includes("queen") ||
-      t.includes("halle")) return "grass";
-  if (t.includes("indoor") || t.includes("rotterdam") || t.includes("sofia")) return "indoor_hard";
-  return "hard";
+interface OddsApiOutcome {
+  name: string;
+  price: number;
+  point?: number;
+  description?: string;
 }
 
 Deno.serve(async (req) => {
@@ -73,242 +60,264 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
   const log = (msg: string) => console.log(`[tennis-props-sync] ${msg}`);
   const now = new Date();
   const today = getEasternDate();
+  const apiKey = Deno.env.get("THE_ODDS_API_KEY");
 
   try {
-    log(`=== Tennis Props Sync — ${today} ===`);
+    log(`=== Tennis Props Sync v3 — ${today} ===`);
 
-    // 1. BROAD query — all tennis props regardless of prop_type
-    // unified_props uses game_description, not event_description
-    const { data: allTennisProps, error: propsErr } = await supabase
-      .from("unified_props")
-      .select("id, player_name, prop_type, current_line, over_price, under_price, bookmaker, event_id, game_description, sport, commence_time")
-      .gte("commence_time", `${today}T00:00:00`)
-      .in("sport", TENNIS_SPORT_KEYS);
+    let totalSynced = 0;
+    const propTypesWritten = new Set<string>();
+    const sportKeysSeen = new Set<string>();
+    const allRows: any[] = [];
 
-    if (propsErr) {
-      // Fallback to ilike
-      const { data: fallback, error: fbErr } = await supabase
-        .from("unified_props")
-        .select("id, player_name, prop_type, current_line, over_price, under_price, bookmaker, event_id, game_description, sport, commence_time")
-        .gte("commence_time", `${today}T00:00:00`)
-        .ilike("sport", "%tennis%");
+    // ── Part 1: Scrape The Odds API for player props ──────────────────
+    if (apiKey) {
+      for (const sportKey of TENNIS_SPORTS) {
+        try {
+          // Step 1: Get today's events
+          const eventsUrl = `${ODDS_API_BASE}/${sportKey}/events?apiKey=${apiKey}`;
+          const eventsRes = await fetch(eventsUrl);
+          if (!eventsRes.ok) {
+            const txt = await eventsRes.text();
+            log(`${sportKey} events: ${eventsRes.status} — ${txt.slice(0, 100)}`);
+            continue;
+          }
+          const events: OddsApiEvent[] = await eventsRes.json();
 
-      if (fbErr) throw new Error(`Tennis props fetch: ${fbErr.message}`);
-      if (!fallback || fallback.length === 0) {
-        const result = { success: true, tennis_props_found: 0, matches_synced: 0, reason: "No tennis props today" };
-        await supabase.from("cron_job_history").insert({
-          job_name: "tennis-props-sync", status: "completed",
-          started_at: now.toISOString(), completed_at: new Date().toISOString(),
-          duration_ms: Date.now() - now.getTime(), result,
+          // Filter to today's events (ET)
+          const todayEvents = events.filter(e => {
+            const etDate = new Intl.DateTimeFormat("en-CA", {
+              timeZone: "America/New_York",
+              year: "numeric", month: "2-digit", day: "2-digit",
+            }).format(new Date(e.commence_time));
+            return etDate === today;
+          });
+
+          log(`${sportKey}: ${todayEvents.length}/${events.length} events today`);
+          if (todayEvents.length === 0) continue;
+
+          sportKeysSeen.add(sportKey);
+
+          // Step 2: Fetch props for each event (batch max 5 to conserve API calls)
+          const eventsToFetch = todayEvents.slice(0, 8);
+          for (const event of eventsToFetch) {
+            try {
+              const oddsUrl = `${ODDS_API_BASE}/${sportKey}/events/${event.id}/odds?apiKey=${apiKey}&regions=us,us2,eu&markets=${PLAYER_PROP_MARKETS},${MATCH_TOTAL_MARKETS}&oddsFormat=american`;
+              const oddsRes = await fetch(oddsUrl);
+              if (!oddsRes.ok) {
+                const txt = await oddsRes.text();
+                log(`  ${event.away_team} vs ${event.home_team}: odds ${oddsRes.status} — ${txt.slice(0, 80)}`);
+                continue;
+              }
+
+              const oddsData = await oddsRes.json();
+              const bookmakers = oddsData.bookmakers || [];
+              const gameDesc = `${event.away_team} vs ${event.home_team}`;
+
+              for (const book of bookmakers) {
+                for (const market of book.markets || []) {
+                  const marketKey = market.key as string;
+                  // Group outcomes into over/under pairs
+                  const outcomes: OddsApiOutcome[] = market.outcomes || [];
+
+                  // Player props: each outcome has a description (player name) + name (Over/Under) + point
+                  if (marketKey.includes("player_")) {
+                    // Group by player+point
+                    const groups = new Map<string, { over?: OddsApiOutcome; under?: OddsApiOutcome }>();
+                    for (const o of outcomes) {
+                      const key = `${o.description || o.name}|${o.point ?? 0}`;
+                      if (!groups.has(key)) groups.set(key, {});
+                      const g = groups.get(key)!;
+                      if (o.name === "Over") g.over = o;
+                      else if (o.name === "Under") g.under = o;
+                    }
+
+                    for (const [groupKey, g] of groups) {
+                      const playerName = groupKey.split("|")[0];
+                      const line = g.over?.point ?? g.under?.point;
+                      if (!line || !playerName) continue;
+
+                      const propType = marketKey; // e.g. "player_total_games"
+                      propTypesWritten.add(propType);
+
+                      allRows.push({
+                        event_id: event.id,
+                        sport: sportKey.includes("wta") ? "tennis_wta" : "tennis_atp",
+                        game_description: gameDesc,
+                        commence_time: event.commence_time,
+                        player_name: playerName,
+                        prop_type: propType,
+                        bookmaker: book.key,
+                        current_line: line,
+                        over_price: g.over?.price ?? -110,
+                        under_price: g.under?.price ?? -110,
+                        is_active: true,
+                        updated_at: new Date().toISOString(),
+                      });
+                    }
+                  } else {
+                    // Match-level totals (Over/Under on total games)
+                    const overOutcome = outcomes.find(o => o.name === "Over");
+                    const underOutcome = outcomes.find(o => o.name === "Under");
+                    const line = overOutcome?.point ?? underOutcome?.point;
+                    if (!line) continue;
+
+                    propTypesWritten.add("total_games");
+
+                    allRows.push({
+                      event_id: event.id,
+                      sport: sportKey.includes("wta") ? "tennis_wta" : "tennis_atp",
+                      game_description: gameDesc,
+                      commence_time: event.commence_time,
+                      player_name: gameDesc,
+                      prop_type: "total_games",
+                      bookmaker: book.key,
+                      current_line: line,
+                      over_price: overOutcome?.price ?? -110,
+                      under_price: underOutcome?.price ?? -110,
+                      is_active: true,
+                      updated_at: new Date().toISOString(),
+                    });
+                  }
+                }
+              }
+            } catch (eventErr: any) {
+              log(`  Event error ${event.id}: ${eventErr.message}`);
+            }
+          }
+        } catch (sportErr: any) {
+          log(`Sport ${sportKey} error: ${sportErr.message}`);
+        }
+      }
+
+      log(`Odds API scraped: ${allRows.length} prop lines across ${sportKeysSeen.size} sports`);
+    } else {
+      log("⚠ THE_ODDS_API_KEY not set — skipping direct scrape");
+    }
+
+    // ── Part 2: Fallback — sync tennis totals from game_bets ────────────
+    const { data: gameBets } = await supabase
+      .from("game_bets")
+      .select("*")
+      .or("sport.ilike.%tennis%,sport.ilike.%atp%,sport.ilike.%wta%")
+      .eq("bet_type", "total")
+      .gte("commence_time", `${today}T00:00:00`);
+
+    if (gameBets && gameBets.length > 0) {
+      log(`game_bets fallback: ${gameBets.length} tennis totals`);
+      for (const b of gameBets) {
+        const line = Number(b.line);
+        if (!line || line < 10 || line > 60) continue;
+
+        const sportKey = (b.sport || "").toLowerCase().includes("wta") ? "tennis_wta" : "tennis_atp";
+        const desc = `${b.away_team} vs ${b.home_team}`;
+
+        allRows.push({
+          event_id: b.game_id || `tennis_${b.home_team}_${b.away_team}_${today}`,
+          sport: sportKey,
+          game_description: desc,
+          commence_time: b.commence_time,
+          player_name: desc,
+          prop_type: "total_games",
+          bookmaker: b.bookmaker || "consensus",
+          current_line: line,
+          over_price: b.over_odds || -110,
+          under_price: b.under_odds || -110,
+          is_active: true,
+          updated_at: new Date().toISOString(),
         });
-        return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-      (allTennisProps as any[]).push(...fallback);
-    }
-
-    const totalFound = (allTennisProps || []).length;
-    log(`Total tennis props found: ${totalFound}`);
-
-    // 2. Diagnostic: log unique prop_types and sport keys
-    const propTypesFound = [...new Set((allTennisProps || []).map((p: any) => p.prop_type).filter(Boolean))];
-    const sportKeysFound = [...new Set((allTennisProps || []).map((p: any) => p.sport).filter(Boolean))];
-    log(`Sport keys: ${sportKeysFound.join(", ")}`);
-    log(`Prop types: ${propTypesFound.join(", ")}`);
-
-    if (totalFound === 0) {
-      const result = { success: true, tennis_props_found: 0, sport_keys_seen: sportKeysFound, prop_types_seen: propTypesFound, matches_synced: 0 };
-      await supabase.from("cron_job_history").insert({
-        job_name: "tennis-props-sync", status: "completed",
-        started_at: now.toISOString(), completed_at: new Date().toISOString(),
-        duration_ms: Date.now() - now.getTime(), result,
-      });
-      return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
-    // 3. Filter to total-games props
-    const totalGamesProps = (allTennisProps || []).filter((p: any) => {
-      const pt = (p.prop_type || "").toLowerCase().trim();
-      return TENNIS_GAMES_PROP_TYPES.has(pt) || pt.includes("game") || pt.includes("total");
-    });
-
-    log(`Total-games props: ${totalGamesProps.length}`);
-
-    // Fallback: any tennis prop with line 10-60 (valid tennis games range)
-    const workingProps = totalGamesProps.length > 0
-      ? totalGamesProps
-      : (allTennisProps || []).filter((p: any) => {
-          const line = Number(p.current_line || 0);
-          return line > 10 && line < 60;
-        });
-
-    log(`Working props: ${workingProps.length}`);
-
-    // 4. De-duplicate by match
-    const matchMap = new Map<string, any>();
-    for (const prop of workingProps) {
-      const line = Number(prop.current_line || 0);
-      if (line <= 0) continue;
-
-      const matchup = parseMatchup(prop.game_description || "");
-      let matchKey: string;
-      if (matchup) {
-        matchKey = [normName(matchup[0]), normName(matchup[1])].sort().join("||");
-      } else {
-        matchKey = prop.event_id || prop.player_name || `unknown_${prop.id}`;
-      }
-
-      if (!matchMap.has(matchKey)) {
-        matchMap.set(matchKey, { prop, line, matchup });
+        propTypesWritten.add("total_games");
+        sportKeysSeen.add(sportKey);
       }
     }
 
-    log(`Unique matches: ${matchMap.size}`);
+    // ── Part 3: Deduplicate and upsert ──────────────────────────────────
+    const seen = new Map<string, any>();
+    for (const row of allRows) {
+      const key = `${row.event_id}|${row.player_name}|${row.prop_type}|${row.bookmaker}`;
+      if (!seen.has(key)) seen.set(key, row);
+    }
+    const uniqueRows = [...seen.values()];
 
-    // 5. Load settled tennis_match_model for self-healing stats
+    if (uniqueRows.length > 0) {
+      // Batch upsert in chunks of 200
+      for (let i = 0; i < uniqueRows.length; i += 200) {
+        const chunk = uniqueRows.slice(i, i + 200);
+        const { error: upsertErr } = await supabase
+          .from("unified_props")
+          .upsert(chunk, { onConflict: "event_id,player_name,prop_type,bookmaker" });
+        if (upsertErr) log(`⚠ Upsert error (chunk ${i}): ${upsertErr.message}`);
+      }
+      totalSynced = uniqueRows.length;
+      log(`✅ Synced ${totalSynced} tennis props to unified_props`);
+    } else {
+      log("No tennis props to sync today");
+    }
+
+    // ── Part 4: Self-healing — update tennis_player_stats from settled results ─
     const { data: settledPicks } = await supabase
       .from("tennis_match_model")
-      .select("player_a, player_b, tour, surface, actual_total_games, pp_total_games_line, recommended_side, outcome, settled_at")
+      .select("player_a, player_b, tour, surface, actual_total_games, outcome, settled_at")
       .not("outcome", "is", null)
       .not("actual_total_games", "is", null)
       .gte("analysis_date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
 
-    log(`Settled tennis results: ${settledPicks?.length || 0}`);
-
-    // Build per-player avg games from settled history
-    const playerAvgGames = new Map<string, { total: number; count: number }>();
-    for (const pick of settledPicks || []) {
-      const games = Number(pick.actual_total_games);
-      if (!games) continue;
-      for (const name of [pick.player_a, pick.player_b]) {
-        if (!name) continue;
-        const key = normName(name);
-        if (!playerAvgGames.has(key)) playerAvgGames.set(key, { total: 0, count: 0 });
-        const e = playerAvgGames.get(key)!;
-        e.total += games;
-        e.count++;
+    if (settledPicks && settledPicks.length > 0) {
+      // Build per-player avg games from history
+      const playerGames = new Map<string, number[]>();
+      for (const pick of settledPicks) {
+        const games = Number(pick.actual_total_games);
+        if (!games) continue;
+        for (const name of [pick.player_a, pick.player_b]) {
+          if (!name) continue;
+          const key = normName(name);
+          if (!playerGames.has(key)) playerGames.set(key, []);
+          playerGames.get(key)!.push(games);
+        }
       }
+
+      // Update stats for players with 3+ settled matches
+      let statsUpdated = 0;
+      for (const [playerKey, gamesList] of playerGames) {
+        if (gamesList.length < 3) continue;
+        const l10 = gamesList.slice(-10);
+        const l5 = gamesList.slice(-5);
+        const avgL10 = l10.reduce((a, b) => a + b, 0) / l10.length;
+        const avgL5 = l5.reduce((a, b) => a + b, 0) / l5.length;
+
+        await supabase
+          .from("tennis_player_stats")
+          .upsert({
+            player_name: playerKey,
+            surface: "all",
+            avg_games_l10: Math.round(avgL10 * 10) / 10,
+            avg_games_l5: Math.round(avgL5 * 10) / 10,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "player_name,surface" }).then(() => statsUpdated++);
+      }
+      log(`Self-healing: updated ${statsUpdated} player stats`);
     }
 
-    // 6. Sync matches to tennis_match_model
-    const modelRows: any[] = [];
-    let matchesSynced = 0;
+    // ── Part 5: Telegram ───────────────────────────────────────────────
+    const propBreakdown: Record<string, number> = {};
+    for (const r of uniqueRows) propBreakdown[r.prop_type] = (propBreakdown[r.prop_type] || 0) + 1;
 
-    const GENDER_MOD: Record<string, number> = { ATP: 0.5, WTA: -1.5 };
-    const SURFACE_MOD: Record<string, number> = {
-      WTA_clay: -0.5, WTA_grass: 0.2, WTA_hard: 0.0,
-      ATP_clay: -0.3, ATP_grass: 0.5, ATP_hard: 0.0, ATP_indoor_hard: 0.2,
-    };
-
-    for (const [, { prop, line, matchup }] of matchMap) {
-      let tour = inferTour(prop.sport || "");
-      if (!tour) tour = inferTourFromLine(line);
-      const surface = detectSurface(prop.game_description || "");
-
-      let playerA: string, playerB: string;
-      if (matchup) {
-        [playerA, playerB] = matchup;
-      } else if (prop.player_name) {
-        playerA = prop.player_name;
-        playerB = "TBD";
-      } else continue;
-
-      const genderMod = GENDER_MOD[tour] ?? 0;
-      const surfaceMod = SURFACE_MOD[`${tour}_${surface}`] ?? 0;
-      const fallback = tour === "WTA" ? 20.5 : 38.5;
-
-      // Use settled history for L10 avg if available
-      const aHist = playerAvgGames.get(normName(playerA));
-      const bHist = playerAvgGames.get(normName(playerB));
-      const aL10 = aHist && aHist.count >= 2 ? Math.round((aHist.total / aHist.count) * 10) / 10 : null;
-      const bL10 = bHist && bHist.count >= 2 ? Math.round((bHist.total / bHist.count) * 10) / 10 : null;
-
-      let naiveProjection: number;
-      if (aL10 !== null && bL10 !== null) naiveProjection = (aL10 + bL10) / 2;
-      else if (aL10 !== null) naiveProjection = aL10;
-      else if (bL10 !== null) naiveProjection = bL10;
-      else naiveProjection = fallback;
-
-      const projected = Math.round((naiveProjection + genderMod + surfaceMod) * 2) / 2;
-      const diff = projected - line;
-      const edgePct = line > 0 ? Math.abs(diff) / line * 100 : 0;
-      const recommendedSide: "over" | "under" = diff > 0 ? "over" : "under";
-
-      modelRows.push({
-        analysis_date: today,
-        player_a: playerA,
-        player_b: playerB,
-        tour,
-        surface,
-        pp_total_games_line: line,
-        projected_total_games: projected,
-        recommended_side: recommendedSide,
-        edge_pct: Math.round(edgePct * 10) / 10,
-        gender_modifier: genderMod,
-        surface_modifier: surfaceMod,
-        player_a_avg_games_l10: aL10,
-        player_b_avg_games_l10: bL10,
-        confidence_score: (aL10 !== null || bL10 !== null) ? 0.65 : 0.55,
-      });
-
-      matchesSynced++;
-    }
-
-    if (modelRows.length > 0) {
-      const { error: modelErr } = await supabase
-        .from("tennis_match_model")
-        .upsert(modelRows, { onConflict: "analysis_date,player_a,player_b,tour" });
-      if (modelErr) log(`⚠ Model upsert error: ${modelErr.message}`);
-      else log(`Synced ${modelRows.length} matches to tennis_match_model`);
-    }
-
-    // 7. Write qualifying picks (edge ≥ 3%) to category_sweet_spots
-    const MIN_EDGE = 3.0;
-    const qualifyingRows = modelRows.filter(r => r.edge_pct >= MIN_EDGE);
-
-    if (qualifyingRows.length > 0) {
-      await supabase.from("category_sweet_spots")
-        .delete().eq("analysis_date", today)
-        .in("category", ["TENNIS_GAMES_OVER", "TENNIS_GAMES_UNDER"]);
-
-      const sweetSpots = qualifyingRows.map(r => ({
-        analysis_date: today,
-        player_name: `${r.player_a} vs ${r.player_b}`,
-        prop_type: "total_games",
-        category: r.recommended_side === "over" ? "TENNIS_GAMES_OVER" : "TENNIS_GAMES_UNDER",
-        recommended_side: r.recommended_side,
-        recommended_line: r.pp_total_games_line,
-        actual_line: r.pp_total_games_line,
-        confidence_score: r.confidence_score,
-        l10_avg: r.projected_total_games,
-        l10_median: r.projected_total_games,
-        is_active: true,
-        risk_level: r.edge_pct >= 8 ? "LOW" : r.edge_pct >= 5 ? "MEDIUM" : "HIGH",
-        recommendation: `${r.recommended_side.toUpperCase()} ${r.pp_total_games_line} total games — ${r.edge_pct.toFixed(1)}% edge`,
-        projection_source: "TENNIS_SYNC_MODEL",
-        eligibility_type: "TENNIS_MATCH",
-      }));
-
-      const { error: ssErr } = await supabase.from("category_sweet_spots").insert(sweetSpots);
-      if (ssErr) log(`⚠ Sweet spots error: ${ssErr.message}`);
-      else log(`Inserted ${sweetSpots.length} tennis picks`);
-    }
-
-    // 8. Telegram
     const telegramLines = [
-      `🎾 *Tennis Props Sync — ${today}*`,
-      `Found: ${totalFound} props | Matches: ${matchesSynced} | Picks: ${qualifyingRows.length}`,
-      `Sports: ${sportKeysFound.join(", ") || "none"}`,
-      `Prop types: ${propTypesFound.slice(0, 5).join(", ")}`,
+      `🎾 *Tennis Props Sync v3 — ${today}*`,
+      `Synced: ${totalSynced} props to unified_props`,
+      `Sports: ${[...sportKeysSeen].join(", ") || "none"}`,
+      `Prop types: ${[...propTypesWritten].join(", ") || "none"}`,
+      `Sources: ${apiKey ? "Odds API" : "⚠ no API key"} + game_bets (${gameBets?.length || 0})`,
     ];
-    if (qualifyingRows.length > 0) {
-      telegramLines.push("", "📊 *Picks:*");
-      for (const r of qualifyingRows.slice(0, 5)) {
-        telegramLines.push(`• ${r.player_a} vs ${r.player_b} — ${r.recommended_side.toUpperCase()} ${r.pp_total_games_line} | Edge: ${r.edge_pct.toFixed(1)}%`);
+    if (Object.keys(propBreakdown).length > 0) {
+      telegramLines.push("", "📊 *Breakdown:*");
+      for (const [pt, count] of Object.entries(propBreakdown)) {
+        telegramLines.push(`• ${pt}: ${count}`);
       }
     }
     await supabase.functions.invoke("bot-send-telegram", {
@@ -317,11 +326,11 @@ Deno.serve(async (req) => {
 
     const result = {
       success: true,
-      tennis_props_found: totalFound,
-      sport_keys_seen: sportKeysFound,
-      prop_types_seen: propTypesFound,
-      matches_synced: matchesSynced,
-      picks_qualifying: qualifyingRows.length,
+      synced: totalSynced,
+      sport_keys: [...sportKeysSeen],
+      prop_types: [...propTypesWritten],
+      prop_breakdown: propBreakdown,
+      game_bets_fallback: gameBets?.length || 0,
     };
 
     await supabase.from("cron_job_history").insert({
