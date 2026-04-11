@@ -1,72 +1,48 @@
 
 
-# Fix Tennis Data Pipeline — PrizePicks Blocked, Need Alternative Sources
+# Get PrizePicks Tennis Props via Firecrawl (Cloudflare Bypass)
 
 ## Problem
+- PrizePicks API returns 403 from all edge function requests (Cloudflare blocks server-side calls)
+- The Odds API doesn't carry today's tennis matches — only 1 Monte Carlo event with 0 today
+- PrizePicks props (total games, games won, sets, fantasy scores) are proprietary projections not available elsewhere
 
-The tennis pipeline has **zero data flowing** because:
+## Solution: Use Firecrawl to Scrape PrizePicks
 
-1. **PrizePicks API returns 403** on every call from edge functions (Cloudflare blocks server-side requests). This has been failing consistently — it's not a transient issue.
-2. **whale-odds-scraper** fetches tennis from The Odds API but only writes H2H/spreads/totals to `game_bets` — no player-level props (total games, games won, sets, fantasy scores).
-3. **tennis-props-sync** reads `unified_props` looking for tennis data that never gets written there.
+You already have a `FIRECRAWL_API_KEY` configured. Firecrawl is a web scraping service that handles Cloudflare challenges and JavaScript rendering — exactly what's needed to bypass the 403 block.
 
-## Solution — 3-Part Fix
+### Approach
 
-### Part 1: Tennis Props via The Odds API (replace PrizePicks dependency)
+Rewrite the PrizePicks fetch logic in `pp-props-scraper` to use Firecrawl instead of direct API calls:
 
-The Odds API supports tennis player prop markets. Rewrite `tennis-props-sync` to **scrape tennis props directly from The Odds API** for today's ATP/WTA events, same pattern as the NRFI scanner:
+1. **Firecrawl scrape** of `https://api.prizepicks.com/projections?single_stat=true&per_page=250` — Firecrawl renders the page through a real browser environment, bypassing Cloudflare
+2. If Firecrawl returns the JSON response, parse it with the existing `parsePrizePicksResponse()` logic (already handles the JSON:API format perfectly)
+3. Filter for tennis sports (ATP, WTA) and map to `unified_props` with proper prop types: `total_games`, `games_won`, `total_sets`, `fantasy_score`
+4. Keep direct API fetch as a fallback (in case Cloudflare ever loosens restrictions)
 
-1. `GET /v4/sports/tennis_atp/events` and `GET /v4/sports/tennis_wta/events` — get today's matches
-2. For each event, fetch odds with markets: `player_total_games`, `player_games_won`, `player_sets`, `player_total_sets`, `alternate_total_games` (try multiple market keys since naming varies by book)
-3. Write results directly into `unified_props` with proper columns (`sport`, `player_name`, `prop_type`, `current_line`, `over_price`, `under_price`, `bookmaker`, `event_id`, `game_description`, `commence_time`)
-4. Fallback: also sync any tennis totals already in `game_bets` (existing logic, kept as secondary source)
+### Pipeline Integration
 
-### Part 2: Fix tennis-games-analyzer column references
+After scraping, the existing flow works:
+- `pp-props-scraper` writes tennis props → `pp_snapshot` + `unified_props`
+- `tennis-games-analyzer` reads `unified_props` → cross-references `tennis_player_stats` → writes picks
 
-The analyzer still references columns that don't exist in `unified_props`:
-- `stat_type` → doesn't exist (use `prop_type`)
-- `line` → doesn't exist (use `current_line`)
-- `fanduel_line` → doesn't exist
-- `event_description` → doesn't exist (use `game_description`)
-- `opponent` → doesn't exist
-
-Fix all column references to match the actual schema.
-
-### Part 3: Cross-reference and H2H integration
-
-The analyzer already has H2H logic via `tennis_player_stats` lookups. The key props to target:
-- **Total games** — primary market, highest liquidity
-- **Games won** (per player) — cross-ref with opponent's games-lost averages
-- **Total sets** — structural indicator (2-set vs 3-set match)
-- **Fantasy scores** — PrizePicks-specific, skip for now since PP is blocked
-
-For each prop, the analyzer cross-references:
-- Player's L10 average from `tennis_player_stats`
-- H2H history from the same table
-- Surface + gender modifiers (already implemented)
-
-## Files
+### Files
 
 | File | Action |
 |------|--------|
-| `supabase/functions/tennis-props-sync/index.ts` | **Rewrite** — scrape The Odds API directly for tennis props, fallback to game_bets |
-| `supabase/functions/tennis-games-analyzer/index.ts` | **Fix** — correct all column references to match unified_props schema |
+| `supabase/functions/pp-props-scraper/index.ts` | **Edit** — add Firecrawl as primary fetch method, keep direct API as fallback |
+| `supabase/functions/tennis-props-sync/index.ts` | **Edit** — also sync `pp_snapshot` tennis rows into `unified_props` (bridge PP data to the analyzer) |
 
-## Pipeline Flow After Fix
+### What Changes in pp-props-scraper
 
-```text
-morning-prep-pipeline
-  └─ whale-odds-scraper (full)     ← writes tennis H2H/totals to game_bets
-  └─ tennis-props-sync (NEW)       ← fetches tennis props from Odds API → unified_props
-  │                                   also syncs game_bets tennis totals → unified_props
-  └─ tennis-games-analyzer         ← reads unified_props, cross-refs tennis_player_stats
-                                      writes picks to category_sweet_spots + tennis_match_model
-```
+- Primary path: `POST https://api.firecrawl.dev/v1/scrape` with the PrizePicks API URL
+- Firecrawl returns rendered page content; extract JSON from the response
+- Existing `parsePrizePicksResponse()` and `processExtractedProjections()` stay unchanged
+- Fallback: try direct API fetch (current logic) if Firecrawl fails
 
-## What This Unlocks
+### What Changes in tennis-props-sync
 
-- Tennis picks will flow automatically whenever ATP/WTA matches are on the board
-- No dependency on PrizePicks (which is permanently blocked)
-- Total games, games won, and total sets all analyzed with H2H cross-reference
-- Self-healing stats loop (settled results update `tennis_player_stats`) already works
+- Add a new source: query `pp_snapshot` for today's ATP/WTA props
+- Map PP stat types (`Total Games`, `Games Won`, `Sets`, `Fantasy Score`) into `unified_props` format
+- This bridges PrizePicks data into the analyzer pipeline
 
