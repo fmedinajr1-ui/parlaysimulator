@@ -27,7 +27,6 @@ function normName(s: string): string {
 }
 
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports";
-const TENNIS_SPORTS = ["tennis_atp_french_open", "tennis_wta_french_open", "tennis_atp", "tennis_wta"];
 
 // Player prop markets to request
 const PLAYER_PROP_MARKETS = [
