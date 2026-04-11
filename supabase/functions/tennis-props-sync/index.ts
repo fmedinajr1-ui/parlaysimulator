@@ -75,8 +75,32 @@ Deno.serve(async (req) => {
     const allRows: any[] = [];
 
     // ── Part 1: Scrape The Odds API for player props ──────────────────
+    // Dynamically discover ALL active tennis sport keys (API uses tournament-specific keys
+    // like "tennis_atp_monte_carlo_masters", not generic "tennis_atp")
+    let tennisSportKeys: string[] = [];
     if (apiKey) {
-      for (const sportKey of TENNIS_SPORTS) {
+      try {
+        const sportsRes = await fetch(`${ODDS_API_BASE}?apiKey=${apiKey}`);
+        if (sportsRes.ok) {
+          const allSports = await sportsRes.json();
+          tennisSportKeys = allSports
+            .filter((s: any) => s.active && (
+              s.key?.toLowerCase().includes("tennis") ||
+              s.group?.toLowerCase().includes("tennis")
+            ))
+            .map((s: any) => s.key);
+          log(`Discovered ${tennisSportKeys.length} active tennis sports: ${tennisSportKeys.join(", ")}`);
+        } else {
+          const txt = await sportsRes.text();
+          log(`Sports discovery failed: ${sportsRes.status} — ${txt.slice(0, 100)}`);
+        }
+      } catch (e: any) {
+        log(`Sports discovery error: ${e.message}`);
+      }
+    }
+
+    if (apiKey && tennisSportKeys.length > 0) {
+      for (const sportKey of tennisSportKeys) {
         try {
           // Step 1: Get today's events
           const eventsUrl = `${ODDS_API_BASE}/${sportKey}/events?apiKey=${apiKey}`;
