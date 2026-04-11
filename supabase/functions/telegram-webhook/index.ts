@@ -4874,8 +4874,10 @@ async function handlePPTennis(chatId: string, rawText: string): Promise<string> 
   if (!pasteText) {
     return `🎾 *PrizePicks Tennis Import*
 
-Paste your PrizePicks tennis props in this format:
+📸 *Screenshot method (easiest):*
+Send a screenshot of PrizePicks tennis props with the caption /pptennis
 
+✏️ *Text method:*
 \`\`\`
 Player Name
 Stat Type Line
@@ -4887,10 +4889,6 @@ Jannik Sinner
 Total Games 22.5
 Carlos Alcaraz
 Games Won 12.5
-Coco Gauff
-Fantasy Score 45.5
-Iga Swiatek
-Total Sets 2.5
 \`\`\`
 
 Or comma-separated:
@@ -5131,7 +5129,7 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /fixprops — Refresh props + regen
 /healthcheck — Preflight + integrity
 /errorlog — Last 10 errors
-/pptennis — Paste PrizePicks tennis props
+/pptennis — Import tennis props (text or 📸 screenshot)
 /runtennis — Run tennis analyzer
 
 💬 Or just ask me anything!`;
@@ -5333,10 +5331,11 @@ Deno.serve(async (req) => {
       return new Response("OK", { status: 200 });
     }
 
-    // Handle photo messages (slip analysis)
+    // Handle photo messages (slip analysis or PP tennis screenshot)
     if (update.message?.photo && update.message.photo.length > 0) {
       const chatId = update.message.chat.id.toString();
       const username = update.message.from?.username || undefined;
+      const caption = (update.message.caption || '').trim();
       
       // Auth check
       const authorized = await isAuthorized(chatId);
@@ -5344,39 +5343,214 @@ Deno.serve(async (req) => {
         await sendMessage(chatId, "🔒 You need to be authorized first.\n\nSend /start to begin the access process.");
         return new Response("OK", { status: 200 });
       }
-      
+
+      // Download photo (shared logic)
+      let imageBase64: string;
       try {
-        await sendMessage(chatId, "📸 Analyzing your slip...");
-        await logActivity("telegram_photo", "User sent photo for slip analysis", { chatId, username });
-        
-        // Get largest photo (last in array)
         const photo = update.message.photo[update.message.photo.length - 1];
         const fileId = photo.file_id;
-        
-        // Download photo via Telegram API
         const fileResp = await fetch(`${TELEGRAM_API}/getFile`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file_id: fileId }),
         });
         const fileData = await fileResp.json();
-        
         if (!fileData.ok || !fileData.result?.file_path) {
           await sendMessage(chatId, "❌ Could not download the photo. Please try again.");
           return new Response("OK", { status: 200 });
         }
-        
         const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${fileData.result.file_path}`;
         const imageResp = await fetch(fileUrl);
         const imageBuffer = await imageResp.arrayBuffer();
-        
-        // Convert to base64
         const uint8Array = new Uint8Array(imageBuffer);
         let binary = '';
         for (let i = 0; i < uint8Array.length; i++) {
           binary += String.fromCharCode(uint8Array[i]);
         }
-        const imageBase64 = `data:image/jpeg;base64,${btoa(binary)}`;
+        imageBase64 = `data:image/jpeg;base64,${btoa(binary)}`;
+      } catch (err) {
+        console.error("[Photo] Download error:", err);
+        await sendMessage(chatId, "❌ Failed to download the photo.");
+        return new Response("OK", { status: 200 });
+      }
+
+      // ===== PP TENNIS SCREENSHOT FLOW =====
+      if (caption.toLowerCase().startsWith('/pptennis')) {
+        try {
+          await sendMessage(chatId, "🎾 Extracting tennis props from screenshot...");
+          await logActivity("telegram_pptennis_photo", "User sent PrizePicks tennis screenshot", { chatId, username });
+
+          const openAIKey = Deno.env.get("OPENAI_API_KEY");
+          if (!openAIKey) {
+            await sendMessage(chatId, "❌ Vision AI not configured.");
+            return new Response("OK", { status: 200 });
+          }
+
+          const tennisVisionPrompt = `You are extracting PrizePicks tennis player prop projections from a screenshot of the PrizePicks app.
+
+Extract EVERY player prop visible. For each prop, extract:
+- player_name: Full name exactly as shown (e.g., "Jannik Sinner")
+- stat_type: One of: "Total Games", "Games Won", "Total Sets", "Sets Won", "Fantasy Score", "Aces", "Double Faults"
+- line: The numeric projection line (e.g., 22.5)
+
+Return ONLY valid JSON:
+\`\`\`json
+{
+  "props": [
+    {"player_name": "Jannik Sinner", "stat_type": "Total Games", "line": 22.5},
+    {"player_name": "Carlos Alcaraz", "stat_type": "Games Won", "line": 12.5}
+  ]
+}
+\`\`\`
+
+If no tennis props are visible, return: {"props": []}`;
+
+          const visionResp = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${openAIKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "gpt-4o",
+              messages: [
+                { role: "system", content: tennisVisionPrompt },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: "Extract all tennis player props from this PrizePicks screenshot." },
+                    { type: "image_url", image_url: { url: imageBase64, detail: "high" } }
+                  ]
+                }
+              ],
+              max_tokens: 2000,
+            }),
+          });
+
+          if (!visionResp.ok) {
+            const errText = await visionResp.text();
+            console.error("[PPTennis Photo] Vision API error:", visionResp.status, errText);
+            await sendMessage(chatId, "❌ Vision AI failed. Try pasting the props as text with /pptennis instead.");
+            return new Response("OK", { status: 200 });
+          }
+
+          const visionData = await visionResp.json();
+          const content = visionData.choices?.[0]?.message?.content || "{}";
+          console.log("[PPTennis Photo] Vision response:", content);
+
+          // Extract JSON from response
+          let extractedProps: Array<{ player_name: string; stat_type: string; line: number }> = [];
+          const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const raw = jsonMatch[1] || jsonMatch[0];
+              const parsed = JSON.parse(raw.trim());
+              extractedProps = parsed.props || [];
+            } catch (e) {
+              console.error("[PPTennis Photo] JSON parse error:", e);
+            }
+          }
+
+          if (extractedProps.length === 0) {
+            await sendMessage(chatId, "🤔 Couldn't find tennis props in this screenshot.\n\nMake sure the PrizePicks tennis props are visible and try again, or paste them as text with /pptennis.");
+            return new Response("OK", { status: 200 });
+          }
+
+          // Map stat types and import (reuse same logic as text-based handler)
+          const statMap: Record<string, string> = {
+            'total games': 'player_total_games',
+            'games won': 'player_games_won',
+            'total sets': 'player_total_sets',
+            'sets won': 'player_sets_won',
+            'fantasy score': 'player_fantasy_score',
+            'aces': 'player_aces',
+            'double faults': 'player_double_faults',
+            'games': 'player_total_games',
+            'sets': 'player_total_sets',
+            'fpts': 'player_fantasy_score',
+          };
+
+          const today = new Date().toISOString().split('T')[0];
+          const now = new Date().toISOString();
+
+          const props = extractedProps.map(p => ({
+            player_name: p.player_name,
+            stat_type: statMap[p.stat_type.toLowerCase()] || p.stat_type.toLowerCase().replace(/\s+/g, '_'),
+            pp_line: p.line,
+          }));
+
+          // Insert into pp_snapshot
+          const snapshotRows = props.map(p => ({
+            player_name: p.player_name,
+            stat_type: p.stat_type,
+            pp_line: p.pp_line,
+            sport: 'tennis',
+            league: 'ATP',
+            market_key: `${p.player_name.toLowerCase().replace(/\s+/g, '_')}_${p.stat_type}_${today}`,
+            captured_at: now,
+            is_active: true,
+          }));
+
+          const { error: snapErr } = await supabase.from('pp_snapshot').upsert(snapshotRows, {
+            onConflict: 'market_key',
+          });
+
+          if (snapErr) {
+            console.error('[PPTennis Photo] pp_snapshot error:', snapErr);
+            await sendMessage(chatId, `❌ Database error: ${snapErr.message}`);
+            return new Response("OK", { status: 200 });
+          }
+
+          // Insert into unified_props
+          const unifiedStatMap: Record<string, string> = {
+            'player_total_games': 'total_games',
+            'player_games_won': 'games_won',
+            'player_total_sets': 'total_sets',
+            'player_sets_won': 'sets_won',
+            'player_fantasy_score': 'fantasy_score',
+            'player_aces': 'aces',
+            'player_double_faults': 'double_faults',
+          };
+
+          const unifiedRows = props.map(p => ({
+            player_name: p.player_name,
+            prop_type: unifiedStatMap[p.stat_type] || p.stat_type,
+            line: p.pp_line,
+            sport: 'tennis',
+            source: 'prizepicks_telegram',
+            bookmaker: 'prizepicks',
+            captured_at: now,
+            event_date: today,
+            is_active: true,
+            market_key: `pp_tennis_${p.player_name.toLowerCase().replace(/\s+/g, '_')}_${unifiedStatMap[p.stat_type] || p.stat_type}_${today}`,
+          }));
+
+          await supabase.from('unified_props').upsert(unifiedRows, { onConflict: 'market_key' });
+
+          // Confirmation
+          let msg = `✅ *${props.length} Tennis Props Extracted!*\n\n`;
+          for (const p of props) {
+            const label = Object.entries(statMap).find(([_, v]) => v === p.stat_type)?.[0] || p.stat_type;
+            msg += `🎾 *${p.player_name}* — ${label} ${p.pp_line}\n`;
+          }
+          msg += `\n📊 Saved to pipeline. Run /runtennis to analyze.`;
+
+          await logActivity('pp_tennis_photo_import', `Extracted ${props.length} tennis props from screenshot`, {
+            chatId, props: props.map(p => `${p.player_name}: ${p.stat_type} ${p.pp_line}`),
+          });
+
+          await sendLongMessage(chatId, msg);
+        } catch (err) {
+          console.error("[PPTennis Photo] Error:", err);
+          await sendMessage(chatId, "❌ Something went wrong extracting tennis props. Try pasting as text with /pptennis.");
+        }
+        return new Response("OK", { status: 200 });
+      }
+
+      // ===== DEFAULT SLIP ANALYSIS FLOW =====
+      try {
+        await sendMessage(chatId, "📸 Analyzing your slip...");
+        await logActivity("telegram_photo", "User sent photo for slip analysis", { chatId, username });
         
         // Call extract-parlay edge function
         const extractResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/extract-parlay`, {
