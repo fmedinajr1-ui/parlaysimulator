@@ -230,8 +230,6 @@ async function fetchViaScrapingBee(): Promise<any> {
     url: ppUrl,
     premium_proxy: 'true',
     country_code: 'us',
-    render_js: 'true',
-    json_response: 'true',
   });
 
   const res = await fetch(`https://app.scrapingbee.com/api/v1?${params.toString()}`);
