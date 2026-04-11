@@ -240,20 +240,22 @@ async function fetchViaScrapingBee(): Promise<any> {
     throw new Error(`ScrapingBee ${res.status}: ${txt.slice(0, 200)}`);
   }
 
-  const sbResponse = await res.json();
-  const body = sbResponse?.body || '';
-  console.log(`[PP Scraper] ScrapingBee body length: ${body.length}`);
+  // Without json_response, ScrapingBee returns raw page content as text
+  const body = await res.text();
+  console.log(`[PP Scraper] ScrapingBee response length: ${body.length}`);
 
   // Check for CAPTCHA
   if (body.includes('px-captcha') || body.includes('press and hold')) {
     throw new Error('ScrapingBee still got CAPTCHA page');
   }
 
-  // The API returns JSON — try parsing directly
-  let jsonStr = body;
-  // Strip any HTML wrapper
+  // The PrizePicks API endpoint returns JSON directly
+  let jsonStr = body.trim();
+  // Strip any HTML wrapper if present
   const preMatch = jsonStr.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
   if (preMatch) jsonStr = preMatch[1];
+  const bodyMatch = jsonStr.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch) jsonStr = bodyMatch[1];
   jsonStr = jsonStr.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
 
   if (jsonStr.startsWith('{')) {
@@ -263,18 +265,13 @@ async function fetchViaScrapingBee(): Promise<any> {
         console.log(`[PP Scraper] ✅ ScrapingBee got ${parsed.data.length} projections`);
         return parsed;
       }
+      console.log(`[PP Scraper] ScrapingBee JSON parsed but data empty/missing`);
     } catch (e) {
       console.log(`[PP Scraper] JSON parse failed: ${(e as Error).message?.slice(0, 100)}`);
     }
   }
 
-  // Maybe body IS the raw JSON (not wrapped in sbResponse.body)
-  if (typeof sbResponse === 'object' && sbResponse.data && Array.isArray(sbResponse.data)) {
-    console.log(`[PP Scraper] ✅ ScrapingBee returned raw JSON:API — ${sbResponse.data.length} projections`);
-    return sbResponse;
-  }
-
-  console.log(`[PP Scraper] ScrapingBee content preview: ${(body || JSON.stringify(sbResponse)).slice(0, 500)}`);
+  console.log(`[PP Scraper] ScrapingBee content preview: ${body.slice(0, 500)}`);
   throw new Error(`ScrapingBee got response (${body.length} chars) but could not extract JSON:API data`);
 }
 
