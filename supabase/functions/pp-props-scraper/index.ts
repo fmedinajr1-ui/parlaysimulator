@@ -225,14 +225,22 @@ async function fetchViaScrapingBee(): Promise<any> {
   const ppUrl = 'https://api.prizepicks.com/projections?single_stat=true&per_page=250';
   console.log(`[PP Scraper] ScrapingBee: ${ppUrl}`);
 
+  // Use stealth_proxy for best PerimeterX bypass
   const params = new URLSearchParams({
     api_key: sbKey,
     url: ppUrl,
-    premium_proxy: 'true',
+    stealth_proxy: 'true',
     country_code: 'us',
+    block_resources: 'false',
+    forward_headers: 'true',
   });
 
-  const res = await fetch(`https://app.scrapingbee.com/api/v1?${params.toString()}`);
+  const res = await fetch(`https://app.scrapingbee.com/api/v1?${params.toString()}`, {
+    headers: {
+      'Accept': 'application/json',
+      'Spb-Accept': 'application/json',
+    },
+  });
   
   if (!res.ok) {
     const txt = await res.text();
