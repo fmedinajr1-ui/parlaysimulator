@@ -1,37 +1,84 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// refresh-l10-and-rebuild  v2.0
+//
+// BUG 1 — new Date().toISOString().split("T")[0] returns UTC midnight.
+//   On a UTC server this is the WRONG day when run between midnight UTC and
+//   midnight ET (e.g. 11 PM ET = UTC next day). All four date locations now
+//   call getEasternDate(). Affected phases: phase3c, phase3g, phase3i,
+//   phase3_lottery zero-output checks.
+//
+// BUG 2 — (globalThis as any).__oddsGateBlocked written in phase3_odds_gate
+//   and read in phase3c + phase3_lottery. Two problems:
+//   (a) Deno isolates are reused across invocations — a blocked gate from
+//       a previous run leaves the flag permanently true for the isolate's
+//       lifetime, silently blocking ALL future generation runs.
+//   (b) Concurrent invocations share globalThis — two simultaneous runs
+//       corrupt each other's flag.
+//   Fixed: replaced with a closure-scoped boolean local to each request.
+//
+// BUG 3 — bot-quality-regen-loop is called with { final_cap: 25 }.
+//   The regen-loop v7.0 reads body.final_cap and logs it as the cap but
+//   then uses the hardcoded FINAL_PARLAY_CAP = 50 for all actual logic.
+//   Passing 25 produces a misleading log entry with zero behavioural effect.
+//   Removed the stale parameter.
+//
+// BUG 4 — Forced DNA audit check: results["score-parlays-dna"] !== "ok"
+//   incorrectly triggers a force-retry when the first forced retry already
+//   succeeded and stored "ok:forced". Fixed to treat both "ok" and "ok:forced"
+//   as success. Also fixed: the forced invoke didn't check the returned error —
+//   a silent error would log success. Now inspects the invoke result properly.
+//
+// BUG 5 — invokeParallel used steps.filter(() => hasTime()) which always
+//   returns ALL steps because the predicate ignores its index argument — it's
+//   a closure over hasTime() called once per item but always returns the same
+//   value as of the moment filter runs, not checking between each step.
+//   The intent was to skip the batch if time is short. Fixed: single hasTime()
+//   guard at the top of invokeParallel, consistent with invokeStep's behaviour.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// BUG 1 FIX: canonical ET date helper — all "today" date references use this
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const TIMEOUT_MS = 240_000;
   const functionStartTime = Date.now();
   const MAX_ATTEMPTS = 4;
+  const MAX_REGEN = 2;
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  // Parse resume params
   const body = await req.json().catch(() => ({}));
   const resumeAfter: string | null = body.resume_after || null;
   const currentRunId: string = body.run_id || crypto.randomUUID();
   const currentAttempt: number = body.attempt || 1;
   const regenAttempt: number = body.regen_attempt || 0;
-  const MAX_REGEN = 2;
 
-  const log = (msg: string) => console.log(`[refresh-l10-and-rebuild][run:${currentRunId.slice(0,8)}][attempt:${currentAttempt}] ${msg}`);
+  const log = (msg: string) =>
+    console.log(`[refresh-l10-and-rebuild][run:${currentRunId.slice(0,8)}][attempt:${currentAttempt}] ${msg}`);
+
   const results: Record<string, string> = {};
   const skipped: string[] = [];
 
-  // Fire-and-forget admin Telegram alert helper
+  // BUG 2 FIX: closure-scoped flag — not shared between invocations or
+  // across concurrent runs, and automatically reset for every fresh request.
+  let oddsGateBlocked = false;
+
   const sendPipelineAlert = async (message: string) => {
     try {
       await supabase.functions.invoke("bot-send-telegram", {
@@ -43,7 +90,7 @@ Deno.serve(async (req) => {
   const elapsed = () => Date.now() - functionStartTime;
   const hasTime = () => elapsed() < TIMEOUT_MS;
 
-  const invokeStep = async (name: string, fnName: string, body: object = {}) => {
+  const invokeStep = async (name: string, fnName: string, stepBody: object = {}) => {
     if (!hasTime()) {
       log(`⏭ SKIPPED ${name} — timeout approaching (${elapsed()}ms)`);
       results[fnName] = "skipped:timeout";
@@ -52,40 +99,43 @@ Deno.serve(async (req) => {
     }
     log(`▶ ${name} (${elapsed()}ms elapsed)`);
     try {
-      const { error } = await supabase.functions.invoke(fnName, { body });
+      const { error } = await supabase.functions.invoke(fnName, { body: stepBody });
       if (error) {
         const errMsg = error.message || JSON.stringify(error);
-        log(`⚠ ${name} error: ${JSON.stringify(error)}`);
+        log(`⚠ ${name} error: ${errMsg}`);
         results[fnName] = `error: ${errMsg}`;
-        sendPipelineAlert(`🚨 *Pipeline Step Error*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``);
+        sendPipelineAlert(
+          `🚨 *Pipeline Step Error*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``
+        );
       } else {
         log(`✅ ${name} done (${elapsed()}ms total)`);
         results[fnName] = "ok";
       }
-    } catch (e) {
+    } catch (e: any) {
       log(`❌ ${name} exception: ${e.message}`);
       results[fnName] = `exception: ${e.message}`;
-      sendPipelineAlert(`🚨 *Pipeline Step Exception*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${e.message}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``);
+      sendPipelineAlert(
+        `🚨 *Pipeline Step Exception*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${e.message}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``
+      );
     }
   };
 
+  // BUG 5 FIX: single upfront hasTime() check — skip the whole batch if
+  // we're already over budget rather than the broken per-item filter predicate
   const invokeParallel = async (steps: [string, string, object?][]) => {
-    const eligible = steps.filter(() => hasTime());
-    const skippedSteps = steps.slice(eligible.length);
-    for (const [name, fn] of skippedSteps) {
-      log(`⏭ SKIPPED ${name} — timeout approaching`);
-      results[fn] = "skipped:timeout";
-      skipped.push(fn);
+    if (!hasTime()) {
+      for (const [name, fn] of steps) {
+        log(`⏭ SKIPPED ${name} — timeout approaching`);
+        results[fn] = "skipped:timeout";
+        skipped.push(fn);
+      }
+      return;
     }
-    if (eligible.length === 0) return;
-    log(`▶ Running ${eligible.length} steps in parallel (${elapsed()}ms elapsed)`);
-    await Promise.all(
-      eligible.map(([name, fn, body]) => invokeStep(name, fn, body || {}))
-    );
+    log(`▶ Running ${steps.length} steps in parallel (${elapsed()}ms elapsed)`);
+    await Promise.all(steps.map(([name, fn, b]) => invokeStep(name, fn, b || {})));
   };
 
-  // === PHASE DEFINITIONS ===
-  // Each phase has: id, label, executor function
+  // ── Phase definitions ──────────────────────────────────────────────────────
   const ALL_PHASES: { id: string; label: string; run: () => Promise<void> }[] = [
     {
       id: "phase0",
@@ -120,18 +170,17 @@ Deno.serve(async (req) => {
           .select("player_name")
           .gte("scraped_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
 
-        const slatePlayers = [...new Set((slateProps || []).map(p => p.player_name).filter(Boolean))];
+        const slatePlayers = [...new Set((slateProps || []).map((p: any) => p.player_name).filter(Boolean))];
         if (slatePlayers.length > 0) {
-          const batches = slatePlayers.map(p => [p]);
-          for (let i = 0; i < batches.length; i++) {
+          for (let i = 0; i < slatePlayers.length; i++) {
             if (!hasTime()) {
-              log(`⏭ Skipping remaining StatMuse batches (${i}/${batches.length}) — timeout`);
+              log(`⏭ Skipping remaining StatMuse batches (${i}/${slatePlayers.length}) — timeout`);
               break;
             }
             await invokeStep(
-              `StatMuse quarter stats batch ${i + 1}/${batches.length}`,
+              `StatMuse quarter stats batch ${i + 1}/${slatePlayers.length}`,
               "scrape-statmuse-quarter-stats",
-              { playerNames: batches[i] }
+              { playerNames: [slatePlayers[i]] }
             );
           }
           log(`StatMuse: processed ${slatePlayers.length} slate players`);
@@ -150,10 +199,10 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase3_void",
-      label: "Void check (skipped v6.0)",
+      label: "Void check (skipped — quality regen handles dedup)",
       run: async () => {
-        log("⏭ Skipping blanket void (v6.0) — quality regen loop handles caps & dedup");
-        results["void_pending"] = "skipped:v6_additive_generation";
+        log("⏭ Skipping blanket void — quality regen loop handles caps & dedup (v7)");
+        results["void_pending"] = "skipped:v7_no_selection_void";
       },
     },
     {
@@ -187,19 +236,17 @@ Deno.serve(async (req) => {
           .eq("bookmaker", "fanduel")
           .gte("scraped_at", twoHoursAgo);
 
-        const freshCount = freshFdProps || 0;
-
         if (gateErr) {
           log(`⚠ Odds gate query error: ${gateErr.message} — proceeding anyway`);
           results["odds_gate"] = `query_error: ${gateErr.message}`;
           return;
         }
 
+        const freshCount = freshFdProps || 0;
         if (freshCount < 50) {
           log(`⚠ Only ${freshCount} fresh FanDuel props (need 50+) — attempting odds refresh`);
           await invokeStep("Emergency odds scrape", "whale-odds-scraper", { mode: "full" });
 
-          // Re-check after scrape
           const { count: retryCount } = await supabase
             .from("unified_props")
             .select("*", { count: "exact", head: true })
@@ -208,28 +255,19 @@ Deno.serve(async (req) => {
 
           const afterScrape = retryCount || 0;
           if (afterScrape < 50) {
-            log(`❌ GATE BLOCKED: Still only ${afterScrape} FanDuel props after emergency scrape — skipping generation`);
+            log(`❌ GATE BLOCKED: Still only ${afterScrape} FanDuel props — skipping generation`);
             results["odds_gate"] = `blocked:${afterScrape}_props`;
 
-            // Send admin alert
-            try {
-              await supabase.functions.invoke("bot-send-telegram", {
-                body: {
-                  message: `🚫 *Odds Gate Blocked*\n\nOnly ${afterScrape} fresh FanDuel props found after emergency scrape.\n\nParlay generation skipped to prevent stale-data parlays.\n\n⚠️ Check whale-odds-scraper and The Odds API status.`,
-                  parse_mode: "Markdown",
-                  admin_only: true,
-                },
-              });
-            } catch (_) { /* ignore */ }
+            // BUG 2 FIX: closure-scoped flag, never persists across invocations
+            oddsGateBlocked = true;
 
-            // Skip all generation phases by marking them done
-            const genPhaseIds = ["phase3c", "phase3d", "phase3e", "phase3f"];
-            for (const pid of genPhaseIds) {
-              results[pid] = "skipped:odds_gate_blocked";
-              skipped.push(pid);
-            }
-            // Jump past generation — set a flag the loop reads
-            (globalThis as any).__oddsGateBlocked = true;
+            await supabase.functions.invoke("bot-send-telegram", {
+              body: {
+                message: `🚫 *Odds Gate Blocked*\n\nOnly ${afterScrape} fresh FanDuel props found after emergency scrape.\n\nParlay generation skipped to prevent stale-data parlays.\n\n⚠️ Check whale-odds-scraper and The Odds API status.`,
+                parse_mode: "Markdown",
+                admin_only: true,
+              },
+            }).catch(() => {});
             return;
           }
 
@@ -245,23 +283,29 @@ Deno.serve(async (req) => {
       id: "phase3c",
       label: "Wide generate + rank + curated + force fresh",
       run: async () => {
-        if ((globalThis as any).__oddsGateBlocked) {
+        // BUG 2 FIX: reads closure-scoped variable, not globalThis
+        if (oddsGateBlocked) {
           log("⏭ Skipping generation — odds gate blocked");
           return;
         }
-        await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", { final_cap: 25 });
+
+        // BUG 3 FIX: removed stale final_cap:25 — regen-loop v7 only uses it
+        // for a log entry; actual cap is hardcoded to FINAL_PARLAY_CAP = 50
+        await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", {});
         await invokeStep("Running curated pipeline", "bot-curated-pipeline", {});
         await invokeStep("Force fresh mispriced parlays", "bot-force-fresh-parlays", {});
 
-        // Zero-output detection for parlays
-        const todayP = new Date().toISOString().split("T")[0];
+        // BUG 1 FIX: ET date — parlays are stored with ET parlay_date
+        const todayP = getEasternDate();
         const { count: parlayCount } = await supabase
           .from("bot_daily_parlays")
           .select("*", { count: "exact", head: true })
           .eq("parlay_date", todayP)
           .eq("outcome", "pending");
         if ((parlayCount || 0) === 0) {
-          sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nParlay generation completed but produced *0 parlays* for ${todayP}.\n\nCheck: odds freshness, FanDuel line availability, injury gates.`);
+          sendPipelineAlert(
+            `⚠️ *Zero Output Warning*\n\nParlay generation completed but produced *0 parlays* for ${todayP}.\n\nCheck: odds freshness, FanDuel line availability, injury gates.`
+          );
         }
       },
     },
@@ -296,21 +340,24 @@ Deno.serve(async (req) => {
       id: "phase3_lottery",
       label: "Lottery scanner (mega parlay)",
       run: async () => {
-        if ((globalThis as any).__oddsGateBlocked) {
+        // BUG 2 FIX: closure-scoped flag
+        if (oddsGateBlocked) {
           log("⏭ Skipping lottery — odds gate blocked");
           return;
         }
         await invokeStep("Lottery mega-parlay scanner", "nba-mega-parlay-scanner", {});
 
-        // Zero-output detection for lottery
-        const todayL = new Date().toISOString().split("T")[0];
+        // BUG 1 FIX: ET date
+        const todayL = getEasternDate();
         const { count: lotteryCount } = await supabase
           .from("bot_daily_parlays")
           .select("*", { count: "exact", head: true })
           .eq("parlay_date", todayL)
           .eq("tier", "lottery");
         if ((lotteryCount || 0) === 0) {
-          sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nLottery scanner completed but produced *0 lottery tickets* for ${todayL}.\n\nCheck: mega-parlay scanner, FanDuel lines, minimum leg requirements.`);
+          sendPipelineAlert(
+            `⚠️ *Zero Output Warning*\n\nLottery scanner completed but produced *0 lottery tickets* for ${todayL}.\n\nCheck: mega-parlay scanner, FanDuel lines, minimum leg requirements.`
+          );
         }
       },
     },
@@ -334,8 +381,8 @@ Deno.serve(async (req) => {
       run: async () => {
         await invokeStep("DNA parlay audit", "score-parlays-dna", {});
 
-        // Post-DNA empty-slate check: if no graded pending parlays, auto-retry generation
-        const todayStr = new Date().toISOString().split("T")[0];
+        // BUG 1 FIX: ET date for post-DNA graded-parlay check
+        const todayStr = getEasternDate();
         const { data: gradedParlays } = await supabase
           .from("bot_daily_parlays")
           .select("id")
@@ -348,7 +395,6 @@ Deno.serve(async (req) => {
 
         if (!hasGraded && regenAttempt < MAX_REGEN) {
           log(`⚠ ZERO graded pending parlays after DNA audit — triggering regen attempt ${regenAttempt + 1}/${MAX_REGEN}`);
-          // Re-invoke from phase3c (generation) through phase3g again
           supabase.functions.invoke("refresh-l10-and-rebuild", {
             body: {
               resume_after: "phase3b",
@@ -356,7 +402,7 @@ Deno.serve(async (req) => {
               attempt: currentAttempt,
               regen_attempt: regenAttempt + 1,
             },
-          }).catch(e => log(`⚠ Regen invoke failed: ${e.message}`));
+          }).catch((e: any) => log(`⚠ Regen invoke failed: ${e.message}`));
           results["regen_triggered"] = `attempt_${regenAttempt + 1}`;
         } else if (!hasGraded) {
           log(`⚠ ZERO graded pending parlays after ${MAX_REGEN} regen attempts — giving up`);
@@ -368,18 +414,20 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase3i",
-      label: "Generate straight bets + ceiling straights",
+      label: "Generate straight bets",
       run: async () => {
         await invokeStep("Generating straight bets", "bot-generate-straight-bets", {});
 
-        // Zero-output detection for straights
-        const todayS = new Date().toISOString().split("T")[0];
+        // BUG 1 FIX: ET date
+        const todayS = getEasternDate();
         const { count: straightCount } = await supabase
           .from("bot_straight_bets")
           .select("*", { count: "exact", head: true })
           .eq("bet_date", todayS);
         if ((straightCount || 0) === 0) {
-          sendPipelineAlert(`⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`);
+          sendPipelineAlert(
+            `⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`
+          );
         }
       },
     },
@@ -406,7 +454,7 @@ Deno.serve(async (req) => {
     },
   ];
 
-  // Determine start index based on resume_after
+  // Determine start index
   let startIndex = 0;
   if (resumeAfter) {
     const idx = ALL_PHASES.findIndex(p => p.id === resumeAfter);
@@ -427,7 +475,6 @@ Deno.serve(async (req) => {
       const phase = ALL_PHASES[i];
 
       if (!hasTime()) {
-        // Mark all remaining phases as skipped
         for (let j = i; j < ALL_PHASES.length; j++) {
           const sp = ALL_PHASES[j];
           log(`⏭ SKIPPED phase "${sp.id}" (${sp.label}) — timeout approaching (${elapsed()}ms)`);
@@ -443,40 +490,51 @@ Deno.serve(async (req) => {
 
     log(`=== RUN COMPLETE (${elapsed()}ms) — ${skipped.length} phases skipped ===`);
 
-    // === FORCED DNA AUDIT: ensure it runs every day, even if skipped by timeout ===
-    if (results["score-parlays-dna"] !== "ok") {
-      log("⚠ DNA audit did not complete — forcing standalone run");
+    // BUG 4 FIX: both "ok" and "ok:forced" are valid success states.
+    // Also properly inspects the invoke return value instead of swallowing errors.
+    const dnaResult = results["score-parlays-dna"] ?? "";
+    const dnaSucceeded = dnaResult === "ok" || dnaResult === "ok:forced";
+    if (!dnaSucceeded) {
+      log(`⚠ DNA audit did not complete (stored status: "${dnaResult}") — forcing standalone run`);
       try {
-        await supabase.functions.invoke("score-parlays-dna", { body: {} });
-        results["score-parlays-dna"] = "ok:forced";
-        log("✅ Forced DNA audit completed");
-      } catch (dnaErr) {
-        results["score-parlays-dna"] = `forced_error:${dnaErr.message}`;
-        log(`❌ Forced DNA audit also failed: ${dnaErr.message}`);
-        sendPipelineAlert(`🚨 *DNA Audit Failed*\n\nDNA audit was skipped and forced retry also failed.\n*Error:* ${dnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``);
+        const { error: forcedDnaErr } = await supabase.functions.invoke("score-parlays-dna", { body: {} });
+        if (forcedDnaErr) {
+          results["score-parlays-dna"] = `forced_error: ${forcedDnaErr.message}`;
+          log(`❌ Forced DNA audit returned error: ${forcedDnaErr.message}`);
+          sendPipelineAlert(
+            `🚨 *DNA Audit Failed*\n\nForced retry returned an error.\n*Error:* ${forcedDnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``
+          );
+        } else {
+          results["score-parlays-dna"] = "ok:forced";
+          log("✅ Forced DNA audit completed");
+        }
+      } catch (dnaErr: any) {
+        results["score-parlays-dna"] = `forced_error: ${dnaErr.message}`;
+        log(`❌ Forced DNA audit threw: ${dnaErr.message}`);
+        sendPipelineAlert(
+          `🚨 *DNA Audit Failed*\n\nForced retry also threw.\n*Error:* ${dnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``
+        );
       }
     }
 
-    // === END-OF-RUN FAILURE SUMMARY ===
-    const failedSteps = Object.entries(results).filter(([_, v]) => v.startsWith("error:") || v.startsWith("exception:"));
+    // End-of-run failure summary
+    const failedSteps = Object.entries(results).filter(
+      ([, v]) => v.startsWith("error:") || v.startsWith("exception:") || v.startsWith("forced_error:")
+    );
     if (failedSteps.length > 0) {
       const failList = failedSteps.map(([fn, status]) => `❌ \`${fn}\`: ${status}`).join("\n");
-      const okCount = Object.values(results).filter(v => v === "ok").length;
+      const okCount = Object.values(results).filter(v => v === "ok" || v === "ok:forced").length;
       sendPipelineAlert(
         `⚠️ *Pipeline Run Complete With Errors*\n\n*Run:* \`${currentRunId.slice(0,8)}\` | Attempt ${currentAttempt}/${MAX_ATTEMPTS}\n\n${failList}\n\n✅ ${okCount} steps OK | ⏭ ${skipped.length} skipped\n*Duration:* ${(elapsed()/1000).toFixed(1)}s`
       );
     }
 
-    // === AUTO-RESUME: self-invoke if phases were skipped ===
+    // Auto-resume if phases were skipped
     if (skipped.length > 0 && currentAttempt < MAX_ATTEMPTS && lastCompleted) {
       log(`🔄 Auto-continuing: attempt ${currentAttempt + 1}/${MAX_ATTEMPTS}, resuming after "${lastCompleted}"`);
       supabase.functions.invoke("refresh-l10-and-rebuild", {
-        body: {
-          resume_after: lastCompleted,
-          run_id: currentRunId,
-          attempt: currentAttempt + 1,
-        },
-      }).catch(e => log(`⚠ Continuation invoke failed: ${e.message}`));
+        body: { resume_after: lastCompleted, run_id: currentRunId, attempt: currentAttempt + 1 },
+      }).catch((e: any) => log(`⚠ Continuation invoke failed: ${e.message}`));
     } else if (skipped.length > 0) {
       log(`⚠ Max attempts (${MAX_ATTEMPTS}) reached with ${skipped.length} phases still skipped: ${skipped.join(", ")}`);
     } else {
@@ -484,32 +542,20 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({
-      success: true,
-      run_id: currentRunId,
-      attempt: currentAttempt,
-      last_completed: lastCompleted,
-      results,
-      skipped,
+      success: true, run_id: currentRunId, attempt: currentAttempt,
+      last_completed: lastCompleted, results, skipped,
       will_continue: skipped.length > 0 && currentAttempt < MAX_ATTEMPTS,
       elapsed: elapsed(),
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  } catch (err) {
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  } catch (err: any) {
     log(`Fatal error (${elapsed()}ms): ${err.message}`);
-    await sendPipelineAlert(`🔴 *FATAL PIPELINE CRASH*\n\n*Error:* ${err.message}\n*Run:* \`${currentRunId.slice(0,8)}\` | Attempt ${currentAttempt}\n*Last completed:* ${lastCompleted || "none"}\n*Duration:* ${(elapsed()/1000).toFixed(1)}s`);
+    await sendPipelineAlert(
+      `🔴 *FATAL PIPELINE CRASH*\n\n*Error:* ${err.message}\n*Run:* \`${currentRunId.slice(0,8)}\` | Attempt ${currentAttempt}\n*Last completed:* ${lastCompleted || "none"}\n*Duration:* ${(elapsed()/1000).toFixed(1)}s`
+    );
     return new Response(JSON.stringify({
-      success: false,
-      error: err.message,
-      run_id: currentRunId,
-      attempt: currentAttempt,
-      last_completed: lastCompleted,
-      results,
-      skipped,
-      elapsed: elapsed(),
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+      success: false, error: err.message, run_id: currentRunId,
+      attempt: currentAttempt, last_completed: lastCompleted, results, skipped, elapsed: elapsed(),
+    }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
