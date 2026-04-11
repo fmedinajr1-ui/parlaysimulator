@@ -330,11 +330,11 @@ async function fetchDirectAPI(retries = 2): Promise<any> {
 }
 
 async function fetchPrizePicksAPI(): Promise<any> {
-  // Primary: Firecrawl (bypasses Cloudflare)
+  // Primary: ScrapingBee with premium proxy (bypasses PerimeterX)
   try {
-    return await fetchViaFirecrawl();
-  } catch (firecrawlErr) {
-    console.warn(`[PP Scraper] Firecrawl failed: ${firecrawlErr instanceof Error ? firecrawlErr.message : firecrawlErr}`);
+    return await fetchViaScrapingBee();
+  } catch (sbErr) {
+    console.warn(`[PP Scraper] ScrapingBee failed: ${sbErr instanceof Error ? sbErr.message : sbErr}`);
   }
 
   // Fallback: direct API (may work if Cloudflare relaxes)
