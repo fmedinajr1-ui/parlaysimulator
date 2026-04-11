@@ -297,62 +297,61 @@ Deno.serve(async (req) => {
           for (let batch = 0; batch < todayEvents.length; batch += 5) {
             const chunk = todayEvents.slice(batch, batch + 5);
             await Promise.all(chunk.map(async (event) => {
-            const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${allHrMarkets}&oddsFormat=american&bookmakers=hardrockbet`;
-            try {
-              const propsResp = await fetch(propsUrl, { signal: AbortSignal.timeout(10000) });
-              if (!propsResp.ok) {
-                log(`Event ${event.id}: HTTP ${propsResp.status}`);
-                await propsResp.text();
-                return;
-              }
-              const eventData = await propsResp.json();
-              const game = `${event.away_team} @ ${event.home_team}`;
+              const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${validMarkets}&oddsFormat=american&bookmakers=hardrockbet`;
+              try {
+                const propsResp = await fetch(propsUrl, { signal: AbortSignal.timeout(10000) });
+                if (!propsResp.ok) {
+                  log(`Event ${event.id}: HTTP ${propsResp.status}`);
+                  await propsResp.text();
+                  return;
+                }
+                const eventData = await propsResp.json();
+                const game = `${event.away_team} @ ${event.home_team}`;
 
-              for (const bm of (eventData.bookmakers || [])) {
-                if (bm.key !== "hardrockbet") continue;
-                for (const market of (bm.markets || [])) {
-                  const isFirstInning = FIRST_INNING_HR_MARKETS.some(
-                    mk => market.key === mk || market.key.includes("first_inning")
-                  );
-                  const isFallback = FALLBACK_HR_MARKETS.includes(market.key);
-                  if (!isFirstInning && !isFallback) continue;
+                for (const bm of (eventData.bookmakers || [])) {
+                  if (bm.key !== "hardrockbet") continue;
+                  for (const market of (bm.markets || [])) {
+                    if (market.key !== "batter_home_runs") continue;
 
-                  const playerOutcomes = new Map<string, { over?: any; under?: any }>();
-                  for (const outcome of (market.outcomes || [])) {
-                    const playerName = outcome.description || "";
-                    if (!playerName) continue;
-                    if (!playerOutcomes.has(playerName)) playerOutcomes.set(playerName, {});
-                    const entry = playerOutcomes.get(playerName)!;
-                    const name = (outcome.name || "").toLowerCase();
-                    if (name === "over") entry.over = outcome;
-                    else if (name === "under") entry.under = outcome;
-                  }
+                    // HRB only returns Over outcomes for HR props — synthesize Under
+                    for (const outcome of (market.outcomes || [])) {
+                      const playerName = outcome.description || "";
+                      if (!playerName) continue;
+                      const name = (outcome.name || "").toLowerCase();
+                      if (name !== "over") continue;
 
-                  for (const [playerName, outcomes] of playerOutcomes) {
-                    if (outcomes.over) {
+                      const overOdds = outcome.price ?? 300;
+                      const line = outcome.point ?? 0.5;
+
                       rawProps.push({
                         player_name: playerName, prop_type: market.key, side: "over",
-                        odds: outcomes.over.price ?? -200, line: outcomes.over.point ?? 0.5,
+                        odds: overOdds, line,
                         event_id: event.id, home_team: event.home_team, away_team: event.away_team,
-                        game, bookmaker: bm.key, is_first_inning: isFirstInning,
+                        game, bookmaker: bm.key, is_first_inning: false,
                       });
-                    }
-                    if (outcomes.under) {
+
+                      // Synthesize under: if over is +300, implied over = 25%, so under implied = 75%
+                      // Convert back: -300 for 75% implied
+                      const overImplied = americanToImplied(overOdds);
+                      const underImplied = 1 - overImplied;
+                      const syntheticUnderOdds = underImplied >= 0.5
+                        ? Math.round(-100 * underImplied / (1 - underImplied))
+                        : Math.round(100 * (1 - underImplied) / underImplied);
+
                       rawProps.push({
                         player_name: playerName, prop_type: market.key, side: "under",
-                        odds: outcomes.under.price ?? 120, line: outcomes.under.point ?? 0.5,
+                        odds: syntheticUnderOdds, line,
                         event_id: event.id, home_team: event.home_team, away_team: event.away_team,
-                        game, bookmaker: bm.key, is_first_inning: isFirstInning,
+                        game, bookmaker: bm.key, is_first_inning: false,
                       });
                     }
                   }
                 }
+              } catch (e: any) {
+                log(`Event ${event.id} fetch error: ${e.message}`);
               }
-            } catch (e: any) {
-              log(`Event ${event.id} fetch error: ${e.message}`);
-            }
-          }));
-
+            }));
+          }
           if (rawProps.length > 0) scrapedFromApi = true;
           log(`HardRock HR props scraped: ${rawProps.length} (${rawProps.filter(p => p.is_first_inning).length} first-inning specific)`);
         } else {
