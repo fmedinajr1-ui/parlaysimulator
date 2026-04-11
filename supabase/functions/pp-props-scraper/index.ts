@@ -344,7 +344,7 @@ async function fetchPrizePicksAPI(): Promise<any> {
     console.warn(`[PP Scraper] Direct API also failed: ${directErr instanceof Error ? directErr.message : directErr}`);
   }
 
-  throw new Error('All PrizePicks fetch methods failed (Firecrawl + direct API)');
+  throw new Error('All PrizePicks fetch methods failed (ScrapingBee + direct API)');
 }
 
 function parsePrizePicksResponse(apiData: any): ExtractedProjection[] {
