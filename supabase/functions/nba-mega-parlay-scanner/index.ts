@@ -77,12 +77,15 @@ function hasCorrelatedProp(
     if (sameGameFirstBasket.length > 0) return true;
   }
 
+  // Gather any existing legs for this exact player
   const playerLegs = existingLegs
     .filter(l => l.player_name.toLowerCase().trim() === player)
     .map(l => normalizePropType(l.prop_type));
 
+  // No existing legs for this player — no correlation possible
   if (playerLegs.length === 0) return false;
 
+  // Check combo-base overlaps (e.g., PRA leg + Points leg = overlapping stat)
   const combos = Object.keys(COMBO_BASES);
   if (combos.includes(prop)) {
     const bases = COMBO_BASES[prop];
@@ -96,7 +99,8 @@ function hasCorrelatedProp(
     }
   }
 
-  return true; // Same player = always block
+  // Same player, different non-overlapping prop — still block
+  return true;
 }
 
 function americanToImpliedProb(odds: number): number {
@@ -227,9 +231,14 @@ Deno.serve(async (req) => {
     const existingPlayerNames: string[] = [];
     if (existingLotteryParlays && existingLotteryParlays.length > 0) {
       // If we already have 3+ tickets today, skip
-      if (existingLotteryParlays.length >= 5) {
-        console.log(`[MegaParlay] Already have ${existingLotteryParlays.length} lottery tickets today, skipping`);
-        return new Response(JSON.stringify({ success: true, skipped: true, reason: '3 tickets already generated today' }), {
+      const MAX_LOTTERY_TICKETS = 2; // 1 active tier (Standard) + 1 replay buffer
+      if (existingLotteryParlays.length >= MAX_LOTTERY_TICKETS) {
+        console.log(`[MegaParlay] Already have ${existingLotteryParlays.length}/${MAX_LOTTERY_TICKETS} lottery tickets today, skipping`);
+        return new Response(JSON.stringify({
+          success: true,
+          skipped: true,
+          reason: `${existingLotteryParlays.length} tickets already exist today (max ${MAX_LOTTERY_TICKETS})`,
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
