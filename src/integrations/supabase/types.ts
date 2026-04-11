@@ -13525,6 +13525,7 @@ export type Database = {
           id: string
           is_active: boolean | null
           is_trap_favorite: boolean | null
+          market_key: string | null
           odds_updated_at: string | null
           outcome: string | null
           over_price: number | null
@@ -13575,6 +13576,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           is_trap_favorite?: boolean | null
+          market_key?: string | null
           odds_updated_at?: string | null
           outcome?: string | null
           over_price?: number | null
@@ -13625,6 +13627,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           is_trap_favorite?: boolean | null
+          market_key?: string | null
           odds_updated_at?: string | null
           outcome?: string | null
           over_price?: number | null
