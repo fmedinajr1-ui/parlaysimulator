@@ -389,10 +389,10 @@ let archetypeCache: Map<string, string> = new Map();
 async function loadArchetypes(supabase: any): Promise<void> {
   archetypeCache.clear();
   const { data, error } = await supabase
-    .from('player_archetypes').select('player_name, archetype').limit(5000);
+    .from('player_archetypes').select('player_name, primary_archetype').limit(5000);
   if (error) { console.warn('[Category Analyzer] Archetype load error:', error.message); return; }
   for (const row of (data || [])) {
-    archetypeCache.set(row.player_name?.toLowerCase().trim(), row.archetype || 'UNKNOWN');
+    archetypeCache.set(row.player_name?.toLowerCase().trim(), row.primary_archetype || 'UNKNOWN');
   }
   console.log(`[Category Analyzer] Loaded ${archetypeCache.size} archetypes`);
 }
@@ -1195,11 +1195,13 @@ serve(async (req) => {
 
     if (deterministicFlips.length > 0) {
       console.log(`[Category Analyzer] 🔄 ${deterministicFlips.length} deterministic flips`);
-      await supabase.from('bot_activity_log').insert({
-        event_type: 'deterministic_side_flips',
-        message: `Applied ${deterministicFlips.length} flips based on historical outcomes`,
-        metadata: { flips: deterministicFlips }, severity: 'info',
-      }).catch(() => {});
+      try {
+        await supabase.from('bot_activity_log').insert({
+          event_type: 'deterministic_side_flips',
+          message: `Applied ${deterministicFlips.length} flips based on historical outcomes`,
+          metadata: { flips: deterministicFlips }, severity: 'info',
+        });
+      } catch (_) { /* ignore logging failure */ }
     }
 
     const activeSpots = validatedSpots.filter(s => s.is_active);
