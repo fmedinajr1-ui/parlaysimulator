@@ -221,66 +221,166 @@ async function fetchViaFirecrawl(): Promise<any> {
   const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
   if (!firecrawlKey) throw new Error('FIRECRAWL_API_KEY not configured');
 
-  // Try scraping the API endpoint directly — Firecrawl renders via browser, bypassing Cloudflare
-  const ppUrl = 'https://api.prizepicks.com/projections?single_stat=true&per_page=250';
-  console.log(`[PP Scraper] Firecrawl scrape: ${ppUrl}`);
+  // Strategy 1: Try the API endpoint with rawHtml
+  const apiUrl = 'https://api.prizepicks.com/projections?single_stat=true&per_page=250';
+  console.log(`[PP Scraper] Firecrawl attempt 1: API endpoint`);
 
-  const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
+  const res1 = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${firecrawlKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url: apiUrl, formats: ['rawHtml'], waitFor: 8000 }),
+  });
+
+  if (res1.ok) {
+    const scraped = await res1.json();
+    const rawHtml = scraped?.data?.rawHtml || '';
+    console.log(`[PP Scraper] API endpoint rawHtml: ${rawHtml.length} chars`);
+    
+    // Check if we got CAPTCHA
+    if (!rawHtml.includes('px-captcha') && rawHtml.length > 1000) {
+      const stripped = rawHtml.replace(/<[^>]*>/g, '').trim();
+      try {
+        const parsed = JSON.parse(stripped);
+        if (parsed.data?.length > 0) {
+          console.log(`[PP Scraper] ✅ API endpoint returned JSON — ${parsed.data.length} projections`);
+          return parsed;
+        }
+      } catch (e) {}
+    } else {
+      console.log('[PP Scraper] API endpoint returned CAPTCHA page — trying app frontend');
+    }
+  }
+
+  // Strategy 2: Scrape the actual web app and extract projection data
+  console.log('[PP Scraper] Firecrawl attempt 2: app.prizepicks.com board');
+  const res2 = await fetch('https://api.firecrawl.dev/v1/scrape', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${firecrawlKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      url: ppUrl,
-      formats: ['rawHtml'],
-      waitFor: 5000,
+      url: 'https://app.prizepicks.com/board',
+      formats: ['markdown'],
+      waitFor: 10000,
+      onlyMainContent: true,
     }),
   });
 
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Firecrawl ${res.status}: ${txt.slice(0, 200)}`);
+  if (!res2.ok) {
+    const txt = await res2.text();
+    throw new Error(`Firecrawl board scrape ${res2.status}: ${txt.slice(0, 200)}`);
   }
 
-  const scraped = await res.json();
-  const rawHtml = scraped?.data?.rawHtml || scraped?.rawHtml || '';
-  const html = scraped?.data?.html || scraped?.html || '';
-  const markdown = scraped?.data?.markdown || scraped?.markdown || '';
+  const scraped2 = await res2.json();
+  const markdown = scraped2?.data?.markdown || scraped2?.markdown || '';
+  console.log(`[PP Scraper] Board markdown: ${markdown.length} chars`);
+  console.log(`[PP Scraper] Board preview: ${markdown.slice(0, 800)}`);
+
+  if (markdown.includes('px-captcha') || markdown.length < 200) {
+    throw new Error('PrizePicks board also returned CAPTCHA — site is fully blocking automated access');
+  }
+
+  // Parse the markdown board content into projections
+  const projections = parseMarkdownBoard(markdown);
+  if (projections.length > 0) {
+    console.log(`[PP Scraper] ✅ Parsed ${projections.length} projections from board markdown`);
+    // Convert to JSON:API-like format for compatibility with existing pipeline
+    return {
+      data: projections.map((p, i) => ({
+        type: 'projection',
+        id: `md_${i}`,
+        attributes: {
+          line_score: String(p.line),
+          stat_type: p.stat_type,
+          start_time: p.game_time,
+        },
+        relationships: {
+          new_player: { data: { id: `player_${i}` } },
+          league: { data: { id: `league_${p.league}` } },
+        },
+      })),
+      included: [
+        ...projections.map((p, i) => ({
+          type: 'new_player',
+          id: `player_${i}`,
+          attributes: { display_name: p.player_name, team: p.team || '', position: '' },
+        })),
+        ...[...new Set(projections.map(p => p.league))].map(league => ({
+          type: 'league',
+          id: `league_${league}`,
+          attributes: { name: league },
+        })),
+      ],
+    };
+  }
+
+  throw new Error(`Firecrawl got board content (${markdown.length} chars) but could not parse projections`);
+}
+
+// Parse PrizePicks board markdown into projection objects
+function parseMarkdownBoard(markdown: string): ExtractedProjection[] {
+  const projections: ExtractedProjection[] = [];
+  const lines = markdown.split('\n');
   
-  console.log(`[PP Scraper] Firecrawl returned — rawHtml: ${rawHtml.length}, html: ${html.length}, markdown: ${markdown.length}`);
-  console.log(`[PP Scraper] Firecrawl content preview: ${(rawHtml || html || markdown).slice(0, 500)}`);
+  let currentLeague = '';
+  let currentPlayer = '';
+  let currentTeam = '';
   
-  // The API endpoint returns raw JSON — try parsing all content sources
-  for (const content of [rawHtml, html, markdown]) {
-    if (!content || content.length < 50) continue;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
     
-    // Strip HTML wrapper if present
-    let jsonStr = content;
+    // Detect league headers (e.g., "## NBA", "### ATP", "Tennis - ATP")
+    const leagueMatch = trimmed.match(/^#+\s*(NBA|NFL|MLB|NHL|ATP|WTA|UFC|MMA|WNBA|PGA)/i) ||
+      trimmed.match(/^(NBA|NFL|MLB|NHL|ATP|WTA|UFC|MMA|WNBA|PGA)\b/i);
+    if (leagueMatch) {
+      currentLeague = leagueMatch[1].toUpperCase();
+      continue;
+    }
     
-    // Extract from <body> or <pre> tags
-    const bodyMatch = jsonStr.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    if (bodyMatch) jsonStr = bodyMatch[1];
-    const preMatch = jsonStr.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
-    if (preMatch) jsonStr = preMatch[1];
+    // Detect player names (bold or linked text followed by team)
+    const playerMatch = trimmed.match(/\*\*([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\*\*/) ||
+      trimmed.match(/\[([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\]/);
+    if (playerMatch) {
+      currentPlayer = playerMatch[1];
+      const teamMatch = trimmed.match(/([A-Z]{2,4})\s/);
+      if (teamMatch) currentTeam = teamMatch[1];
+      continue;
+    }
     
-    // Decode HTML entities
-    jsonStr = jsonStr.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
-    
-    if (!jsonStr.startsWith('{') && !jsonStr.startsWith('[')) continue;
-    
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed.data && Array.isArray(parsed.data) && parsed.data.length > 0) {
-        console.log(`[PP Scraper] ✅ Firecrawl parsed ${parsed.data.length} projections`);
-        return parsed;
+    // Detect stat lines: "Points 22.5", "Total Games 21.5", etc.
+    const statMatch = trimmed.match(/^([\w\s+\-\.]+?)\s+([\d]+\.[\d]+|[\d]+)\s*$/);
+    if (statMatch && currentPlayer) {
+      const statType = statMatch[1].trim();
+      const line = parseFloat(statMatch[2]);
+      if (!isNaN(line) && line > 0) {
+        projections.push({
+          player_name: currentPlayer,
+          team: currentTeam,
+          stat_type: statType,
+          line: line,
+          league: currentLeague || 'NBA',
+        });
       }
-    } catch (e) {
-      console.log(`[PP Scraper] JSON parse attempt failed: ${(e as Error).message?.slice(0, 100)}`);
+    }
+    
+    // Alternative format: "Player Name | Stat Type | 22.5"
+    const pipeMatch = trimmed.match(/([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*\|\s*([\w\s+\-\.]+)\s*\|\s*([\d.]+)/);
+    if (pipeMatch) {
+      projections.push({
+        player_name: pipeMatch[1].trim(),
+        stat_type: pipeMatch[2].trim(),
+        line: parseFloat(pipeMatch[3]),
+        league: currentLeague || 'NBA',
+      });
     }
   }
-
-  throw new Error(`Firecrawl scraped but could not extract JSON:API data (rawHtml: ${rawHtml.length}, html: ${html.length})`);
+  
+  return projections;
 }
 
 async function fetchDirectAPI(retries = 2): Promise<any> {
