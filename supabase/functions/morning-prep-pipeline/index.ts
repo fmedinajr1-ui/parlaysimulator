@@ -68,8 +68,15 @@ Deno.serve(async (req) => {
     // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
     await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
 
-    // Step 4.5: Tennis Total Games analyzer (non-fatal)
+    // Step 4.5: Sync tennis totals from game_bets → unified_props, then analyze
+    await invokeStep('Tennis props sync', 'tennis-props-sync', {});
     await invokeStep('Tennis games analyzer', 'tennis-games-analyzer', {});
+
+    // Step 4.6: MLB NRFI scanner (Hard Rock Bet first-inning unders)
+    await invokeStep('HRB NRFI scanner', 'hrb-nrfi-scanner', {});
+
+    // Step 4.7: MMA total rounds analyzer (HRB vs consensus divergence)
+    await invokeStep('MMA rounds analyzer', 'mma-rounds-analyzer', {});
 
     // Step 5: UNIFIED SETTLEMENT — replaces fragmented mlb-rbi-settler + fanduel-accuracy-feedback
     // Settles ALL signal types through the single settlement-orchestrator
