@@ -1,48 +1,64 @@
 
 
-# Get PrizePicks Tennis Props via Firecrawl (Cloudflare Bypass)
+# Fix Database Error + Explain Tennis Analysis Logic
 
-## Problem
-- PrizePicks API returns 403 from all edge function requests (Cloudflare blocks server-side calls)
-- The Odds API doesn't carry today's tennis matches — only 1 Monte Carlo event with 0 today
-- PrizePicks props (total games, games won, sets, fantasy scores) are proprietary projections not available elsewhere
+## The Database Error
 
-## Solution: Use Firecrawl to Scrape PrizePicks
+The screenshot shows: `Database error: there is no unique or exclusion constraint matching the ON CONFLICT specification`
 
-You already have a `FIRECRAWL_API_KEY` configured. Firecrawl is a web scraping service that handles Cloudflare challenges and JavaScript rendering — exactly what's needed to bypass the 403 block.
+**Root cause:** Both the text and screenshot `/pptennis` handlers use `.upsert(rows, { onConflict: 'market_key' })` on `pp_snapshot` and `unified_props`, but neither table has a UNIQUE constraint on `market_key`.
 
-### Approach
+- `pp_snapshot`: only has a unique PK on `id` — no unique on `market_key`
+- `unified_props`: unique constraint is on `(event_id, player_name, prop_type, bookmaker)` — not on `market_key`
 
-Rewrite the PrizePicks fetch logic in `pp-props-scraper` to use Firecrawl instead of direct API calls:
+**Fix:** Add unique constraints via migration, then the existing upsert logic will work.
 
-1. **Firecrawl scrape** of `https://api.prizepicks.com/projections?single_stat=true&per_page=250` — Firecrawl renders the page through a real browser environment, bypassing Cloudflare
-2. If Firecrawl returns the JSON response, parse it with the existing `parsePrizePicksResponse()` logic (already handles the JSON:API format perfectly)
-3. Filter for tennis sports (ATP, WTA) and map to `unified_props` with proper prop types: `total_games`, `games_won`, `total_sets`, `fantasy_score`
-4. Keep direct API fetch as a fallback (in case Cloudflare ever loosens restrictions)
+### Migration
 
-### Pipeline Integration
+```sql
+-- pp_snapshot: add unique constraint on market_key
+ALTER TABLE public.pp_snapshot ADD CONSTRAINT pp_snapshot_market_key_unique UNIQUE (market_key);
 
-After scraping, the existing flow works:
-- `pp-props-scraper` writes tennis props → `pp_snapshot` + `unified_props`
-- `tennis-games-analyzer` reads `unified_props` → cross-references `tennis_player_stats` → writes picks
+-- unified_props: add unique index on market_key (it may have NULLs, so use a partial unique index)
+CREATE UNIQUE INDEX IF NOT EXISTS unified_props_market_key_unique 
+  ON public.unified_props (market_key) 
+  WHERE market_key IS NOT NULL;
+```
 
-### Files
+### Code Fix
 
-| File | Action |
+For `unified_props`, the upsert also writes `line` instead of `current_line` (the actual column name). Need to fix the column mapping in both the text handler and screenshot handler to use `current_line` instead of `line`, and add `commence_time` set to today so the analyzer query picks them up.
+
+### Files Changed
+
+| File | Change |
 |------|--------|
-| `supabase/functions/pp-props-scraper/index.ts` | **Edit** — add Firecrawl as primary fetch method, keep direct API as fallback |
-| `supabase/functions/tennis-props-sync/index.ts` | **Edit** — also sync `pp_snapshot` tennis rows into `unified_props` (bridge PP data to the analyzer) |
+| Migration | Add unique constraints on `market_key` for both tables |
+| `telegram-webhook/index.ts` | Fix `unified_props` column names (`current_line` not `line`, add `commence_time`) in both text and photo handlers |
 
-### What Changes in pp-props-scraper
+---
 
-- Primary path: `POST https://api.firecrawl.dev/v1/scrape` with the PrizePicks API URL
-- Firecrawl returns rendered page content; extract JSON from the response
-- Existing `parsePrizePicksResponse()` and `processExtractedProjections()` stay unchanged
-- Fallback: try direct API fetch (current logic) if Firecrawl fails
+## How the Tennis Analysis Actually Works
 
-### What Changes in tennis-props-sync
+To answer your question — yes, it uses **cross-referencing, historical data, and mathematical edge calculation**. Here's the full pipeline:
 
-- Add a new source: query `pp_snapshot` for today's ATP/WTA props
-- Map PP stat types (`Total Games`, `Games Won`, `Sets`, `Fantasy Score`) into `unified_props` format
-- This bridges PrizePicks data into the analyzer pipeline
+### Step 1: Data Import (what just failed)
+Screenshot → GPT-4o Vision extracts player names + stat types + lines → saves to `pp_snapshot` + `unified_props`
+
+### Step 2: Tennis Games Analyzer (`/runtennis`)
+The analyzer reads today's tennis props from `unified_props` and runs this model:
+
+1. **Historical Player Stats** — Cross-references `tennis_player_stats` table for each player's L10 and L5 average games per match, broken down by surface
+2. **Gender Modifier** — WTA matches get -1.5 games (shorter format, more breaks), ATP gets +0.5
+3. **Surface Modifier** — Clay reduces games (WTA clay: -0.5), grass increases them (ATP grass: +0.5), hard is neutral
+4. **H2H Cross-Reference** — Looks up head-to-head history between the two players, caps H2H influence at 25% weight
+5. **Projected Total** = `(PlayerA_L10_avg + PlayerB_L10_avg) / 2 + gender_mod + surface_mod + h2h_mod`
+6. **Edge Calculation** = `|projected_total - prizepicks_line| / prizepicks_line × 100`
+7. **Minimum Thresholds** — Requires ≥3% edge AND ≥60% confidence to emit a pick
+8. **Confidence Score** — Starts at 0.50, gets boosted by: edge size (+0.025 per %), having real L10 data (+0.08), H2H supporting the side (+0.06), under bias (+0.03)
+
+### What's Missing Right Now
+- `tennis_player_stats` is likely empty for these players, so the analyzer falls back to generic ATP average (38.5 games) or WTA average (20.5 games)
+- Without player-specific historical data, the model can only apply gender + surface modifiers against the PrizePicks line
+- The "self-healing loop" is supposed to update `tennis_player_stats` from settled outcomes, but it needs settled matches first
 
