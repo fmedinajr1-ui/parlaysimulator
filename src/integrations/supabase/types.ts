@@ -7429,6 +7429,60 @@ export type Database = {
         }
         Relationships: []
       }
+      mma_fighter_stats: {
+        Row: {
+          avg_rounds: number | null
+          created_at: string
+          dec_wins: number | null
+          draws: number | null
+          fighter_name: string
+          finish_rate: number | null
+          id: number
+          is_ufc: boolean | null
+          ko_wins: number | null
+          last_updated: string
+          losses: number | null
+          style: string | null
+          sub_wins: number | null
+          weight_class: string | null
+          wins: number | null
+        }
+        Insert: {
+          avg_rounds?: number | null
+          created_at?: string
+          dec_wins?: number | null
+          draws?: number | null
+          fighter_name: string
+          finish_rate?: number | null
+          id?: number
+          is_ufc?: boolean | null
+          ko_wins?: number | null
+          last_updated?: string
+          losses?: number | null
+          style?: string | null
+          sub_wins?: number | null
+          weight_class?: string | null
+          wins?: number | null
+        }
+        Update: {
+          avg_rounds?: number | null
+          created_at?: string
+          dec_wins?: number | null
+          draws?: number | null
+          fighter_name?: string
+          finish_rate?: number | null
+          id?: number
+          is_ufc?: boolean | null
+          ko_wins?: number | null
+          last_updated?: string
+          losses?: number | null
+          style?: string | null
+          sub_wins?: number | null
+          weight_class?: string | null
+          wins?: number | null
+        }
+        Relationships: []
+      }
       monthly_accuracy_snapshot: {
         Row: {
           created_at: string | null
