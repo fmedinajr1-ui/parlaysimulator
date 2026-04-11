@@ -75,7 +75,9 @@ Deno.serve(async (req) => {
     // Step 4.6: MLB NRFI scanner (Hard Rock Bet first-inning unders)
     await invokeStep('HRB NRFI scanner', 'hrb-nrfi-scanner', {});
 
-    // Step 4.7: MMA total rounds analyzer (HRB vs consensus divergence)
+    // Step 4.7a: Sync MMA totals from game_bets → unified_props
+    await invokeStep('MMA props sync', 'mma-props-sync', {});
+    // Step 4.7b: MMA total rounds analyzer (fighter profiles vs market lines)
     await invokeStep('MMA rounds analyzer', 'mma-rounds-analyzer', {});
 
     // Step 5: UNIFIED SETTLEMENT — replaces fragmented mlb-rbi-settler + fanduel-accuracy-feedback

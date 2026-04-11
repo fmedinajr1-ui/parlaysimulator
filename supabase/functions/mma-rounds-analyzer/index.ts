@@ -12,8 +12,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const MIN_EDGE_PCT = 4.0;
-const MIN_CONFIDENCE = 0.58;
+const MIN_EDGE_PCT = 2.5;
+const MIN_CONFIDENCE = 0.52;
 
 function getEasternDate(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -237,13 +237,15 @@ Deno.serve(async (req) => {
       const marketImplied = recommendedSide === "over" ? marketOverImplied : marketUnderImplied;
       const finalEdge = Math.max(0, bestEdge);
 
+      log(`  ${desc}: side=${recommendedSide} edge=${finalEdge.toFixed(1)}% proj=${projectedRounds.toFixed(2)} line=${line} model=${modelProb.toFixed(3)} mkt=${marketImplied.toFixed(3)} | ${profileA.dataSource}/${profileB.dataSource}`);
+
       if (finalEdge < MIN_EDGE_PCT) continue;
 
       const bothDb = profileA.dataSource === "db" && profileB.dataSource === "db";
       const anyDb = profileA.dataSource !== "default" || profileB.dataSource !== "default";
-      let confidence = 0.55 + Math.min(finalEdge * 0.015, 0.12);
-      if (bothDb) confidence += 0.08;
-      else if (anyDb) confidence += 0.03;
+      let confidence = 0.52 + Math.min(finalEdge * 0.018, 0.15);
+      if (bothDb) confidence += 0.10;
+      else if (anyDb) confidence += 0.05;
       confidence = Math.min(0.86, Math.max(0.40, confidence));
       if (confidence < MIN_CONFIDENCE) continue;
 
