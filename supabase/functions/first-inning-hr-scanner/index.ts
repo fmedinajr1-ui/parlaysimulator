@@ -288,9 +288,15 @@ Deno.serve(async (req) => {
           );
           log(`MLB events today: ${todayEvents.length} of ${allEvents.length} total`);
 
-          const allHrMarkets = [...FIRST_INNING_HR_MARKETS, ...FALLBACK_HR_MARKETS].join(",");
+          // Use only valid market keys — first-inning HR markets return 422,
+          // so we only request batter_home_runs (full-game) which HRB supports.
+          // All picks are flagged is_first_inning: false accordingly.
+          const validMarkets = "batter_home_runs";
 
-          await Promise.all(todayEvents.map(async (event) => {
+          // Process events in batches of 5 to avoid rate limits
+          for (let batch = 0; batch < todayEvents.length; batch += 5) {
+            const chunk = todayEvents.slice(batch, batch + 5);
+            await Promise.all(chunk.map(async (event) => {
             const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${allHrMarkets}&oddsFormat=american&bookmakers=hardrockbet`;
             try {
               const propsResp = await fetch(propsUrl, { signal: AbortSignal.timeout(10000) });
