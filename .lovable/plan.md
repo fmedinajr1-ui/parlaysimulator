@@ -1,51 +1,35 @@
 
-Goal: eliminate the Telegram `/pptennis` ON CONFLICT error.
 
-What I found
-- The failing statement is still `supabase.from('pp_snapshot').upsert(..., { onConflict: 'market_key' })` in both text and screenshot flows in `supabase/functions/telegram-webhook/index.ts`.
-- In the repo, I can see a migration that adds `market_key` plus a unique index for `unified_props`, but I do not see any migration that adds a unique constraint/index for `pp_snapshot.market_key`.
-- `pp_snapshot` was originally created with only a normal index on `market_key`, not a unique one, so Postgres rejects `ON CONFLICT (market_key)` exactly as shown in your screenshot.
-- The earlier `current_line` / `commence_time` webhook fix is already present, so the blocking issue now is the missing `pp_snapshot` uniqueness.
+# Fix Pipeline Errors: category-props-analyzer + nba-mega-parlay-scanner
 
-Implementation plan
-1. Add one idempotent database migration for `pp_snapshot`
-   - Deduplicate existing `pp_snapshot` rows by `market_key` first, keeping the newest row per key.
-   - Add a unique index/constraint on `public.pp_snapshot(market_key)`.
-   - Make it safe to rerun.
+## Errors Found
 
-2. Harden the same migration for `unified_props`
-   - Re-check that `market_key` exists.
-   - Ensure the partial unique index on `market_key WHERE market_key IS NOT NULL`.
-   - If duplicate `market_key` rows exist there, dedupe before creating the index so the migration cannot fail halfway.
+### 1. category-props-analyzer — TWO bugs
 
-3. Keep the webhook import logic largely unchanged
-   - Preserve `current_line`, `commence_time`, `category`, and `market_key` in both `/pptennis` code paths.
-   - Do not touch `src/integrations/supabase/types.ts`; it should refresh from the schema automatically.
+**Bug A: `.catch is not a function` (FATAL)**
+Line 1202: `await supabase.from('bot_activity_log').insert({...}).catch(() => {})` — the Supabase JS client returns a `PostgrestBuilder` (thenable but NOT a real Promise), so `.catch()` doesn't exist. This crashes the entire function.
 
-4. Validate end-to-end
-   - Test `/pptennis` with pasted text.
-   - Test `/pptennis` with a screenshot caption.
-   - Confirm both flows write to `pp_snapshot` and `unified_props` without the ON CONFLICT error.
-   - Run `/runtennis` to confirm the analyzer sees the imported props.
+**Fix:** Wrap in try/catch or convert to real promise first.
 
-Technical details
-```text
-Current blocker
-telegram-webhook -> pp_snapshot.upsert(... onConflict: 'market_key')
-                                   |
-                                   v
-No UNIQUE/EXCLUSION constraint on pp_snapshot.market_key
-                                   |
-                                   v
-Postgres error: "there is no unique or exclusion constraint matching the ON CONFLICT specification"
-```
+**Bug B: Wrong column name `archetype`**
+Line 392: `.select('player_name, archetype')` but the actual column is `primary_archetype`. This causes a warning and empty archetype cache (non-fatal but degrades quality).
 
-Files involved
-- `supabase/functions/telegram-webhook/index.ts`
-- new migration in `supabase/migrations/*`
+**Fix:** Change `archetype` → `primary_archetype` in the select and the row accessor at line 395.
 
-Expected result
-- `/pptennis` text imports succeed
-- `/pptennis` screenshot imports succeed
-- repeated imports update the same rows instead of erroring
-- `/runtennis` can read the imported props immediately
+### 2. nba-mega-parlay-scanner — `Assignment to constant variable`
+
+The deployed version has a `const` being reassigned (likely `defenseRank` or `defenseBonus` was `const` in a prior deploy). The current repo code already uses `let` for both. A **redeploy** of the function should fix this.
+
+### 3. Final Verdict — 0 picks / Lottery — 0 tickets
+
+These are downstream consequences. When category-props-analyzer crashes, it produces zero sweet spots, so the parlay generators and verdict engine have nothing to work with. Fixing bugs 1A and 1B should restore output.
+
+## Changes
+
+| File | Change |
+|------|--------|
+| `supabase/functions/category-props-analyzer/index.ts` | Line 392: `archetype` → `primary_archetype`; Line 395: `row.archetype` → `row.primary_archetype`; Line 1198-1202: wrap `.insert()` in try/catch instead of `.catch()` |
+| `supabase/functions/nba-mega-parlay-scanner/index.ts` | Redeploy (code already correct in repo) |
+
+Both functions will be redeployed after edits.
+
