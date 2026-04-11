@@ -5131,6 +5131,8 @@ async function handleMessage(chatId: string, text: string, username?: string) {
 /fixprops — Refresh props + regen
 /healthcheck — Preflight + integrity
 /errorlog — Last 10 errors
+/pptennis — Paste PrizePicks tennis props
+/runtennis — Run tennis analyzer
 
 💬 Or just ask me anything!`;
     }
