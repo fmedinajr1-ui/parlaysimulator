@@ -5337,8 +5337,8 @@ Deno.serve(async (req) => {
       const username = update.message.from?.username || undefined;
       const caption = (update.message.caption || '').trim();
       
-      // Auth check
-      const authorized = await isAuthorized(chatId);
+      // Auth check (admin always bypasses)
+      const authorized = isAdmin(chatId) || await isAuthorized(chatId);
       if (!authorized) {
         await sendMessage(chatId, "🔒 You need to be authorized first.\n\nSend /start to begin the access process.");
         return new Response("OK", { status: 200 });
