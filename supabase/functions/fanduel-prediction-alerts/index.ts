@@ -681,6 +681,19 @@ Deno.serve(async (req) => {
       eventMatchup.set(eid, arr.length >= 2 ? `${arr[0]} vs ${arr[1]}` : arr[0] || "Unknown");
     }
 
+    // Build event total drift map: did the game total go up or down?
+    const eventTotalDrift = new Map<string, number>();
+    for (const [, snapshots] of groups) {
+      const f = snapshots[0];
+      if (f.prop_type === 'totals' && snapshots.length >= 2) {
+        const l = snapshots[snapshots.length - 1];
+        const drift = l.line - f.line;
+        eventTotalDrift.set(f.event_id, drift);
+      }
+    }
+
+    const TEAM_CORRELATED_PROPS = new Set(['batter_hits', 'hits', 'batter_total_bases', 'total_bases']);
+
     const esc = (s: string) => (s || "").replace(/_/g, " ").replace(/\*/g, "");
     const isLive = (r: any) => r.snapshot_phase === "live" || (typeof r.hours_to_tip === "number" && r.hours_to_tip <= 0);
 
@@ -756,6 +769,18 @@ Deno.serve(async (req) => {
       const direction = lineDiff < 0 ? "DROPPING" : "RISING";
       const side = lineDiff < 0 ? "UNDER" : "OVER";
       const isCombo = COMBO_PROPS.has(first.prop_type);
+
+      // Correlated team total gate for hits/total_bases
+      if (TEAM_CORRELATED_PROPS.has(first.prop_type)) {
+        const totalDrift = eventTotalDrift.get(first.event_id);
+        if (totalDrift !== undefined) {
+          const totalDirection = totalDrift < 0 ? 'UNDER' : 'OVER';
+          if (totalDirection !== side) {
+            log(`🚫 BLOCKED ${first.player_name} ${first.prop_type} ${side}: team total moved ${totalDirection}`);
+            continue;
+          }
+        }
+      }
 
       // Cross-reference gate
       const isPlayerProp = !TEAM_MARKET_TYPES.has(first.prop_type);
@@ -949,6 +974,18 @@ Deno.serve(async (req) => {
       if (isTeamMarket && last.prop_type === 'spreads') {
         log(`🚫 KILLED TIN spread: ${last.player_name} (${last.line}) — below breakeven`);
         continue;
+      }
+
+      // Correlated team total gate for hits/total_bases snapbacks
+      if (TEAM_CORRELATED_PROPS.has(last.prop_type)) {
+        const totalDrift = eventTotalDrift.get(last.event_id);
+        if (totalDrift !== undefined) {
+          const totalDirection = totalDrift < 0 ? 'UNDER' : 'OVER';
+          if (totalDirection !== snapDirection) {
+            log(`🚫 BLOCKED TIN ${last.player_name} ${last.prop_type} ${snapDirection}: team total moved ${totalDirection}`);
+            continue;
+          }
+        }
       }
 
       // Flip totals snapbacks: unders historically 0% — contrarian OVER
