@@ -13,6 +13,7 @@ import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowc
 import { VolumeStakingBreakdown } from "@/components/bot-landing/VolumeStakingBreakdown";
 import { FreeTrialBanner } from "@/components/bot-landing/FreeTrialBanner";
 import { RecentWinsFeed } from "@/components/bot-landing/RecentWinsFeed";
+import { StickySubscribeCTA } from "@/components/bot-landing/StickySubscribeCTA";
 
 interface PublicStats {
   days: Array<{
@@ -105,7 +106,7 @@ export default function BotLanding() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pb-20">
       {/* Logo */}
       <div className="px-4 pt-4 pb-2">
         <ParlayFarmLogo size="sm" />
@@ -137,7 +138,9 @@ export default function BotLanding() {
 
       {/* 3. CTA while they're hyped */}
       {!(hasBotAccess || isAdmin) && (
-        <FreeTrialBanner onSubscribe={handleCheckout} isLoading={checkoutLoading} />
+        <div id="free-trial-banner">
+          <FreeTrialBanner onSubscribe={handleCheckout} isLoading={checkoutLoading} />
+        </div>
       )}
 
       {/* 4. Daily winners showcase */}
@@ -162,6 +165,11 @@ export default function BotLanding() {
             onCtaClick={handleCtaClick}
           />
         </div>
+      )}
+
+      {/* Sticky subscribe CTA for non-subscribers */}
+      {!(hasBotAccess || isAdmin) && (
+        <StickySubscribeCTA onSubscribe={handleCheckout} isLoading={checkoutLoading} />
       )}
     </div>
   );
