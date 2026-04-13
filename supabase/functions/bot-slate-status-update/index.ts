@@ -38,17 +38,28 @@ Deno.serve(async (req) => {
     const totalStake = parlays.reduce((sum, p) => sum + (p.simulated_stake || 0), 0);
 
     // Format active parlays with leg details
+    // Readable prop label map
+    const READABLE_PROPS: Record<string, string> = {
+      pitcher_strikeouts: 'Strikeouts', batter_rbis: 'RBI', batter_total_bases: 'Total Bases',
+      batter_stolen_bases: 'Stolen Bases', batter_home_runs: 'Home Runs', batter_hits: 'Hits',
+      batter_runs_scored: 'Runs', pitcher_outs: 'Outs', player_points: 'PTS',
+      player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
+    };
+
     const formattedActive = parlays.map(p => {
       const legs = Array.isArray(p.legs) ? p.legs : [];
       return {
         strategy_name: p.strategy_name,
-        legs: legs.map((leg: any) => ({
-          player_name: leg.player_name || leg.playerName || 'Unknown',
-          side: leg.side || leg.recommended_side || 'over',
-          line: leg.line || leg.recommended_line || 0,
-          prop_type: leg.prop_type || leg.propType || '',
-          hit_rate_l10: leg.hit_rate_l10 || leg.l10_hit_rate || leg.hitRate || null,
-        })),
+        legs: legs.map((leg: any) => {
+          const rawProp = leg.prop_type || leg.propType || '';
+          return {
+            player_name: leg.player_name || leg.playerName || 'Unknown',
+            side: leg.side || leg.recommended_side || 'over',
+            line: leg.line || leg.recommended_line || 0,
+            prop_type: READABLE_PROPS[rawProp] || rawProp.replace(/^(player_|batter_|pitcher_)/, '').replace(/_/g, ' '),
+            hit_rate_l10: leg.hit_rate_l10 || leg.l10_hit_rate || leg.hitRate || null,
+          };
+        }),
       };
     });
 

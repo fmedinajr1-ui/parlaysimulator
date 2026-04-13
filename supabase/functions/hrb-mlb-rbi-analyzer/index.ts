@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
       const priceDrift = currentOver - openingOver;
       const absPriceDrift = Math.abs(priceDrift);
 
-      // Pattern 1: Sustained Price Drift
+      // Pattern 1: Sustained Price Drift — UNDER ONLY for RBIs
       if (snaps.length >= 3) {
         const priceChanges = snaps.slice(0, Math.min(8, snaps.length)).map((s, i) => {
           if (i >= snaps.length - 1) return 0;
@@ -197,7 +197,9 @@ Deno.serve(async (req) => {
 
           if (consistency >= 0.6 && absPriceDrift >= PRICE_MOVE_THRESHOLD) {
             const direction = priceDrift > 0 ? 'over_price_rising' : 'over_price_dropping';
-            const prediction = priceDrift > 0 ? 'Over' : 'Under';
+            // RBI system is Under-only: over_price_rising = market expects Over = fade to Under
+            // over_price_dropping = market expects Under = take Under
+            const prediction = 'Under';
             const confidence = Math.min(95, Math.round(
               consistency * 70 + Math.min(absPriceDrift / 2, 25)
             ));
@@ -220,7 +222,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Pattern 2: Price Velocity Spike
+      // Pattern 2: Price Velocity Spike — UNDER ONLY for RBIs
       if (snaps.length >= 2) {
         const recentPriceChange = Math.abs(
           (Number(snaps[0].over_price) || 0) - (Number(snaps[1].over_price) || 0)
@@ -228,7 +230,8 @@ Deno.serve(async (req) => {
 
         if (recentPriceChange >= PRICE_SPIKE_THRESHOLD) {
           const direction = (Number(snaps[0].over_price) || 0) > (Number(snaps[1].over_price) || 0) ? 'up' : 'down';
-          const prediction = direction === 'up' ? 'Over' : 'Under';
+          // RBI system is Under-only regardless of direction
+          const prediction = 'Under';
           const confidence = Math.min(95, Math.round(55 + recentPriceChange / 3));
 
           if (confidence >= MIN_CONFIDENCE) {
@@ -248,26 +251,8 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Pattern 3: Snapback Candidate
-      if (absPriceDrift >= PRICE_SNAPBACK_THRESHOLD) {
-        const snapbackPrediction = priceDrift > 0 ? 'Under' : 'Over';
-        const confidence = Math.min(90, Math.round(50 + absPriceDrift / 4));
-
-        if (confidence >= MIN_CONFIDENCE) {
-          alerts.push({
-            player_name: playerName, event_id: eventId,
-            signal_type: 'snapback_candidate', prediction: snapbackPrediction, confidence,
-            metadata: {
-              opening_over: openingOver, current_over: currentOver,
-              drift_points: priceDrift,
-              expected_correction: snapbackPrediction === 'Over' ? 'price_rise' : 'price_drop',
-              line: RBI_LINE,
-            },
-            event_description: latest.event_description,
-            commence_time: latest.commence_time,
-          });
-        }
-      }
+      // Pattern 3: Snapback — BLOCKED entirely (poison signal per plan)
+      // Snapback signals have been identified as unreliable for RBI props
     }
 
     // Pattern 4: Cascade Detection
@@ -318,7 +303,8 @@ Deno.serve(async (req) => {
       const upCount = players.filter(p => p.direction > 0).length;
       const downCount = players.filter(p => p.direction < 0).length;
       const direction = upCount > downCount ? 'over_prices_rising' : 'over_prices_dropping';
-      const prediction = upCount > downCount ? 'Over' : 'Under';
+      // RBI system is Under-only
+      const prediction = 'Under';
       const alignment = Math.max(upCount, downCount) / players.length;
       let confidence = Math.min(90, Math.round(55 + alignment * 30 + players.length * 3));
 
@@ -413,9 +399,9 @@ Deno.serve(async (req) => {
 
       const stats = l10Stats[alert.player_name];
       if (stats) {
-        // Tightened blocking: use hit rate instead of average
-        if (alert.prediction === 'Over' && stats.l10HitRate < 0.3) {
-          log(`L10 block: ${alert.player_name} Over — hit rate ${(stats.l10HitRate * 100).toFixed(0)}% (<30%)`);
+        // Hard block: any Over alerts that somehow got through (shouldn't happen now)
+        if (alert.prediction === 'Over') {
+          log(`Direction block: ${alert.player_name} — Over not allowed in RBI system`);
           continue;
         }
         if (alert.prediction === 'Under' && stats.l10HitRate > 0.8) {
