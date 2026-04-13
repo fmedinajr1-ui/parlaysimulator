@@ -164,6 +164,7 @@ export default {
         "wolf-prowl": "wolf-prowl 1s ease-in-out infinite",
         "dog-wag": "dog-wag 0.3s ease-in-out infinite",
         "logo-glow": "logo-glow 2s ease-in-out infinite",
+        "marquee": "marquee 20s linear infinite",
       },
     },
   },
