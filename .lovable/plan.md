@@ -1,30 +1,51 @@
 
 
-# Tighten RBI 3-Leg Parlay + Add Conflict Guard
+# RBI Parlays: Unders-Only with Pitcher Quality Gate
 
-## Problem
-1. The 3-leg RBI parlay missed April 12th because Jordan Walker (the 3rd leg) had 1 RBI — weaker candidates slip into the 3rd slot
-2. Contradictory Over/Under signals fire for the same player (e.g., Hyeseong Kim, Ildemaro Vargas), creating noise and wasted picks
+## What Changes
 
-## Changes
+The RBI parlay generator will be restructured to build **Unders-only parlays** using Hard Rock Bet line data, with a mandatory pitcher quality gate ensuring every leg faces a strong arm.
 
-### 1. Add RBI Conflict Guard to `generate-rbi-parlays/index.ts`
-Before scoring candidates, deduplicate conflicting signals for the same player+prop. When both Over and Under exist for the same player, keep only the one with the highest `confidence + velocity` score. This matches the "Hard Conflict Guard" pattern used elsewhere in the system.
+## Changes to `generate-rbi-parlays/index.ts`
 
-### 2. Tighten 3rd Leg Selection in `generate-rbi-parlays/index.ts`
-Add stricter gates for the 3rd leg of the 3-Leg Sniper:
-- **L10 hit rate gate**: For Under picks, require L10 hit rate ≤ 0.3 (player had 0 RBI in 7+ of last 10). For Over picks, require L10 hit rate ≥ 0.6
-- **Minimum composite score threshold**: 3rd leg must score within 80% of the top leg's score (no weak tail picks)
-- **Lower the candidate threshold from 5 to 4** (current code requires `scored.length >= 5` which is too restrictive)
+### 1. Unders Only
+- Filter out all Over picks immediately after fetching alerts — only Under predictions enter the candidate pool
+- Remove the conflict guard logic (no need to resolve Over vs Under — Overs are simply excluded)
+- Remove L10 Over logic from scoring (no longer relevant)
 
-### 3. Invoke the parlay generator for today (April 13th)
-After deploying the updated function, invoke `generate-rbi-parlays` to get today's parlay picks and report results.
+### 2. Pitcher Quality Gate
+Before scoring, look up each Under candidate's opposing pitcher using the MLB Stats API (same approach already used by `mlb-rbi-under-analyzer`):
+- Fetch today's MLB schedule for probable pitchers
+- Look up each pitcher's ERA and K/game rate
+- **Hard gate**: Block any Under pick where the opposing pitcher has **K/game < 5 AND ERA > 3.5** — the batter must face a quality strikeout arm
+- Add pitcher stats to metadata for narrative output
 
-## Technical Detail
+### 3. Pitcher Bonus in Scoring
+- +15 for elite arms (K/game >= 7 or ERA < 2.5)
+- +8 for good arms (K/game >= 5 or ERA <= 3.5)
+- This ensures legs against aces rank highest
 
-| File | Changes |
-|------|---------|
-| `supabase/functions/generate-rbi-parlays/index.ts` | Add conflict dedup before Step 3; add L10 + score gates for 3rd leg selection; lower 3-leg threshold from 5→4 |
+### 4. Enhanced Telegram Narrative
+- Every leg includes pitcher info: "Facing [Pitcher] (X.XX ERA, Y K/game)"
+- Parlay labels updated: "2-Leg RBI Under Lock", "3-Leg RBI Under Sniper"
+- Header updated to reflect Unders-only strategy
 
-No database changes needed.
+### 5. Source from HRB Line Timeline
+- Cross-reference candidates against `hrb_rbi_line_timeline` to confirm lines are from Hard Rock Bet
+- Use HRB line data (current line, drift velocity) in scoring when available
+
+## Flow After Changes
+
+```text
+Fetch Under-only alerts → L10 Hard Gate (hit rate ≤ 0.5)
+  → Pitcher Quality Gate (K/g ≥ 5 OR ERA ≤ 3.5)
+  → Cross-ref HRB lines → Score → Build 2-3 leg Under parlays
+```
+
+## File Changes
+| File | Change |
+|------|--------|
+| `supabase/functions/generate-rbi-parlays/index.ts` | Filter Unders only, add MLB API pitcher lookup, add pitcher quality gate, add pitcher scoring bonus, update narratives, cross-ref HRB lines |
+
+No database changes needed. After deploying, the function will be invoked to generate today's April 13th Under parlay picks.
 
