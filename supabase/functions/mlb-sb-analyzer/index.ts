@@ -1,13 +1,13 @@
 /**
  * mlb-sb-analyzer
  * 
- * Analyzes stolen base props for Under 0.5 SB opportunities.
+ * Analyzes stolen base props for Over 0.5 SB opportunities.
  * Uses L10 stolen base data from mlb_player_game_logs to identify
- * players who rarely steal bases — generating high-probability Under alerts.
+ * players who frequently steal bases — generating high-probability Over alerts.
  * 
  * Gates:
- * - L10 SB avg must be between 0.0 and 0.3 (low-steal players)
- * - L10 Under hit rate must be >= 70%
+ * - L10 SB avg must be >= 0.5 (active base stealers)
+ * - L10 Over hit rate must be >= 50%
  * - Max 3 alerts per player per day
  * - 30-minute dedup window
  */
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
     if (logErr) throw logErr;
 
     // Build L10 stats per player
-    const playerStats = new Map<string, { avg: number; underRate: number; games: number }>();
+    const playerStats = new Map<string, { avg: number; overRate: number; games: number }>();
     const logsByPlayer = new Map<string, number[]>();
     
     for (const gl of (gameLogs || [])) {
@@ -79,12 +79,12 @@ Deno.serve(async (req) => {
     }
 
     for (const [name, sbs] of logsByPlayer) {
-      const l10 = sbs.slice(0, 10); // already sorted desc by game_date
-      if (l10.length < 3) continue; // need minimum sample
+      const l10 = sbs.slice(0, 10);
+      if (l10.length < 3) continue;
       const avg = l10.reduce((a, b) => a + b, 0) / l10.length;
-      const underHits = l10.filter(sb => sb === 0).length;
-      const underRate = underHits / l10.length;
-      playerStats.set(name, { avg, underRate, games: l10.length });
+      const overHits = l10.filter(sb => sb >= 1).length;
+      const overRate = overHits / l10.length;
+      playerStats.set(name, { avg, overRate, games: l10.length });
     }
 
     // 3. Check dedup - recent alerts in last 30 minutes
@@ -112,11 +112,11 @@ Deno.serve(async (req) => {
       dailyCounts.set(key, (dailyCounts.get(key) || 0) + 1);
     }
 
-    // 5. Generate alerts
+    // 5. Generate alerts — Over 0.5 SB for active stealers
     const alerts: any[] = [];
     const MAX_DAILY_PER_PLAYER = 3;
-    const MIN_UNDER_RATE = 0.70;
-    const MAX_SB_AVG = 0.3;
+    const MIN_OVER_RATE = 0.50;
+    const MIN_SB_AVG = 0.5;
 
     for (const prop of sbProps) {
       const stats = playerStats.get(prop.player_name);
@@ -125,15 +125,15 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Gate: L10 avg must be low (player doesn't steal much)
-      if (stats.avg > MAX_SB_AVG) {
-        log(`Skip ${prop.player_name}: L10 SB avg ${stats.avg.toFixed(2)} > ${MAX_SB_AVG}`);
+      // Gate: L10 avg must be high (player steals regularly)
+      if (stats.avg < MIN_SB_AVG) {
+        log(`Skip ${prop.player_name}: L10 SB avg ${stats.avg.toFixed(2)} < ${MIN_SB_AVG}`);
         continue;
       }
 
-      // Gate: Under hit rate must be high
-      if (stats.underRate < MIN_UNDER_RATE) {
-        log(`Skip ${prop.player_name}: Under rate ${(stats.underRate * 100).toFixed(0)}% < ${MIN_UNDER_RATE * 100}%`);
+      // Gate: Over hit rate must be strong
+      if (stats.overRate < MIN_OVER_RATE) {
+        log(`Skip ${prop.player_name}: Over rate ${(stats.overRate * 100).toFixed(0)}% < ${MIN_OVER_RATE * 100}%`);
         continue;
       }
 
@@ -150,21 +150,21 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const confidence = Math.min(95, Math.round(stats.underRate * 100));
+      const confidence = Math.min(95, Math.round(stats.overRate * 100));
       
       alerts.push({
         player_name: prop.player_name,
         prop_type: 'batter_stolen_bases',
-        prediction: `Under ${prop.current_line || 0.5} Stolen Bases`,
-        signal_type: 'sb_under_l10',
+        prediction: `Over ${prop.current_line || 0.5} Stolen Bases`,
+        signal_type: 'sb_over_l10',
         bookmaker: prop.bookmaker || 'fanduel',
         event_id: prop.event_id || `sb_${normalizeName(prop.player_name)}_${today}`,
         metadata: {
           l10_sb_avg: stats.avg,
-          l10_under_rate: stats.underRate,
+          l10_over_rate: stats.overRate,
           l10_games: stats.games,
           line: prop.current_line,
-          under_price: prop.under_price,
+          over_price: prop.over_price,
           game: prop.game_description,
           confidence: confidence,
         },
@@ -185,17 +185,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    log(`Generated ${inserted} SB Under alerts from ${sbProps.length} props`);
+    log(`Generated ${inserted} SB Over alerts from ${sbProps.length} props`);
 
     // Send summary to Telegram (admin only)
     if (inserted > 0) {
       const playerList = alerts.slice(0, 10).map(a => 
-        `• ${a.player_name} — Under ${a.metadata.line} SB (L10 avg: ${a.metadata.l10_sb_avg.toFixed(2)}, ${(a.metadata.l10_under_rate * 100).toFixed(0)}% Under rate)`
+        `• ${a.player_name} — Over ${a.metadata.line} SB (L10 avg: ${a.metadata.l10_sb_avg.toFixed(2)}, ${(a.metadata.l10_over_rate * 100).toFixed(0)}% Over rate)`
       ).join('\n');
 
       await supabase.functions.invoke('bot-send-telegram', {
         body: {
-          message: `⚾ *Stolen Bases Scanner*\n\n${inserted} Under SB alerts generated:\n\n${playerList}`,
+          message: `⚾ *Stolen Bases Scanner*\n\n${inserted} Over SB alerts generated:\n\n${playerList}`,
           parse_mode: 'Markdown',
           admin_only: true,
         },
