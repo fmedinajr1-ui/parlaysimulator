@@ -1,24 +1,27 @@
 
 
-# Kill Spread Snapback Signals
+# Flip Totals Snapback Direction: UNDER → OVER
 
 ## Problem
-Spread snapback (Take It Now) signals are hitting at 44% overall — below breakeven across all spread size ranges. No subset is profitable enough to keep.
+NHL game totals snapbacks went 0/5 on April 11 — all were "under" predictions. The current logic follows market direction (line dropping → UNDER), but totals appear to perform better when faded (contrarian).
 
 ## Change
 
 **File**: `supabase/functions/fanduel-prediction-alerts/index.ts`
 
-Add a kill gate for spread snapback signals right after the existing favorites-only ML gate (line 946). This blocks all spread-type Take It Now signals:
+After the spread kill gate (line 952), add a direction flip for totals snapbacks:
 
 ```typescript
-// Kill gate: spread snapbacks historically ≤50% across all ranges
-if (isTeamMarket && last.prop_type === 'spreads') {
-  log(`🚫 KILLED TIN spread: ${last.player_name} (${last.line}) — below breakeven`);
-  continue;
+// Flip totals snapbacks: unders historically 0% — contrarian OVER
+if (isTeamMarket && last.prop_type === 'totals' && snapDirection === 'UNDER') {
+  snapDirection = 'OVER';
+  directionReason = `Contrarian flip: totals unders historically 0% — taking OVER`;
+  log(`🔄 FLIPPED TIN totals to OVER: ${last.player_name} (${last.line})`);
 }
 ```
 
+This flips any totals snapback that would have been UNDER to OVER instead, while keeping OVER predictions unchanged.
+
 ## After Deploy
-Re-invoke the function to regenerate today's signals without spread snapbacks.
+Re-invoke the function to regenerate today's signals with the flipped direction.
 
