@@ -6,15 +6,13 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { HeroStats } from "@/components/bot-landing/HeroStats";
 import { PerformanceCalendar } from "@/components/bot-landing/PerformanceCalendar";
 import { PricingSection } from "@/components/bot-landing/PricingSection";
-import { WhyMultipleParlays } from "@/components/bot-landing/WhyMultipleParlays";
 import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
-
 import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowcase";
 import { VolumeStakingBreakdown } from "@/components/bot-landing/VolumeStakingBreakdown";
 import { FreeTrialBanner } from "@/components/bot-landing/FreeTrialBanner";
-
+import { RecentWinsFeed } from "@/components/bot-landing/RecentWinsFeed";
 
 interface PublicStats {
   days: Array<{
@@ -50,12 +48,10 @@ export default function BotLanding() {
   const [searchParams] = useSearchParams();
   const isSuccess = searchParams.get("success") === "true";
 
-  // Analytics tracking
   useTimeOnPage('/bot');
   const trackClick = useTrackClick();
   const heroRef = useSectionView('hero_stats');
   const calendarRef = useSectionView('performance_calendar');
-  const whyRef = useSectionView('why_multiple_parlays');
   const pricingRef = useSectionView('pricing');
 
   useEffect(() => {
@@ -110,7 +106,7 @@ export default function BotLanding() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Floating logo */}
+      {/* Logo */}
       <div className="px-4 pt-4 pb-2">
         <ParlayFarmLogo size="sm" />
       </div>
@@ -131,38 +127,31 @@ export default function BotLanding() {
         </div>
       )}
 
-
+      {/* 1. Hero — profit machine */}
       <div ref={heroRef}>
-        <HeroStats
-          totalProfit={totals.totalProfit}
-          totalWins={totals.totalWins}
-        />
+        <HeroStats totalProfit={totals.totalProfit} totalWins={totals.totalWins} />
       </div>
 
+      {/* 2. Recent wins feed — social proof */}
+      <RecentWinsFeed />
+
+      {/* 3. CTA while they're hyped */}
       {!(hasBotAccess || isAdmin) && (
-        <FreeTrialBanner
-          onSubscribe={handleCheckout}
-          isLoading={checkoutLoading}
-        />
+        <FreeTrialBanner onSubscribe={handleCheckout} isLoading={checkoutLoading} />
       )}
 
-      <div ref={calendarRef}>
-        <PerformanceCalendar
-          days={stats?.days || []}
-          hasBotAccess={hasBotAccess || isAdmin}
-        />
-      </div>
-
-      <VolumeStakingBreakdown />
-
-      <div ref={whyRef}>
-        <WhyMultipleParlays />
-      </div>
-
+      {/* 4. Daily winners showcase */}
       <DailyWinnersShowcase />
 
-      
+      {/* 5. Performance calendar */}
+      <div ref={calendarRef}>
+        <PerformanceCalendar days={stats?.days || []} hasBotAccess={hasBotAccess || isAdmin} />
+      </div>
 
+      {/* 6. Volume staking breakdown */}
+      <VolumeStakingBreakdown />
+
+      {/* 7. Pricing */}
       {!(hasBotAccess || isAdmin) && (
         <div ref={pricingRef}>
           <PricingSection

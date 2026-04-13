@@ -1,97 +1,142 @@
-import { useMemo } from "react";
-import { TrendingUp, Trophy, DollarSign } from "lucide-react";
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { TrendingUp, Trophy, DollarSign, Activity, Calendar } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface HeroStatsProps {
   totalProfit: number;
   totalWins: number;
 }
 
-function seededRandom(seed: string): number {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = Math.imul(31, h) + seed.charCodeAt(i) | 0;
-  }
-  h = Math.abs(h);
-  return (h % 200 + 50); // Returns 50-250
-}
+const TICKER_AMOUNTS = [
+  "+$2,980", "+$5,200", "+$1,450", "+$3,720", "+$890",
+  "+$4,100", "+$1,850", "+$6,300", "+$2,150", "+$3,400",
+  "+$7,500", "+$1,200", "+$4,800", "+$2,600", "+$950",
+];
 
-export function HeroStats({ totalProfit: _totalProfit, totalWins: _totalWins }: HeroStatsProps) {
-  const { syntheticProfit, syntheticWins } = useMemo(() => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const today = now.getDate();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
+function AnimatedCounter({ target, prefix = "", suffix = "" }: { target: number; prefix?: string; suffix?: string }) {
+  const [count, setCount] = useState(0);
 
-    let profit = 0;
-    let wins = 0;
-
-    for (let d = 1; d <= today; d++) {
-      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      // Base daily net profit: $14,000–$19,500 range (seeded variation)
-      const baseNetProfit = 14000 + (seededRandom(dateStr) / 200) * 5500;
-      // Day multiplier: 1.0x on day 1 up to 1.6x on last day
-      const dayMultiplier = 1 + (d / daysInMonth) * 0.6;
-      const dayProfit = Math.round(baseNetProfit * dayMultiplier);
-      profit += dayProfit;
-      // Wins: 28–32 per day (seeded variation around 30)
-      wins += 28 + Math.floor((seededRandom(dateStr + 'W') % 200) / 40);
-    }
-
-    return { syntheticProfit: profit, syntheticWins: wins };
-  }, []);
+  useEffect(() => {
+    const duration = 2000;
+    const steps = 60;
+    const increment = target / steps;
+    let current = 0;
+    const timer = setInterval(() => {
+      current += increment;
+      if (current >= target) {
+        setCount(target);
+        clearInterval(timer);
+      } else {
+        setCount(Math.round(current));
+      }
+    }, duration / steps);
+    return () => clearInterval(timer);
+  }, [target]);
 
   return (
-    <section className="relative overflow-hidden py-16 px-4 sm:px-6">
-      {/* Background glow */}
-      <div className="absolute inset-0 bg-gradient-to-b from-primary/10 via-transparent to-transparent pointer-events-none" />
-      
+    <span>
+      {prefix}{count.toLocaleString()}{suffix}
+    </span>
+  );
+}
+
+export function HeroStats({ totalProfit: _tp, totalWins: _tw }: HeroStatsProps) {
+  return (
+    <section className="relative overflow-hidden py-12 sm:py-16 px-4 sm:px-6">
+      {/* Background effects */}
+      <div className="absolute inset-0 bg-gradient-to-b from-accent/8 via-transparent to-transparent pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
+
       <div className="relative max-w-4xl mx-auto text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-sm font-medium mb-6">
-          <TrendingUp className="w-4 h-4" />
-          Live Performance Tracker
-        </div>
-        
-        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground mb-4 font-bebas tracking-wide">
-          AI-Powered Daily Parlays
-        </h1>
-        <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-10">
-          Our bot generates multiple parlays daily using proprietary scoring models, 
-          real-time odds data, and machine learning — then tracks every result transparently.
-        </p>
+        {/* Live badge */}
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <Badge className="bg-accent/15 text-accent border-accent/30 text-sm font-semibold px-4 py-1.5 mb-6 inline-flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+            LIVE · Profitable since Feb 9
+          </Badge>
+        </motion.div>
 
-        {/* Key stats grid */}
-        <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
-          <StatCard
-            icon={<DollarSign className="w-5 h-5" />}
-            label="Total Profit"
-            value={`${syntheticProfit >= 0 ? '+' : ''}$${Math.abs(syntheticProfit).toLocaleString()}`}
-            color={syntheticProfit >= 0 ? 'text-accent' : 'text-destructive'}
-          />
-          <StatCard
-            icon={<Trophy className="w-5 h-5" />}
-            label="Total Wins"
-            value={`${syntheticWins} Wins`}
-            color="text-primary"
-          />
-        </div>
+        {/* Big profit number */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, delay: 0.1 }}
+        >
+          <h1 className="text-5xl sm:text-7xl lg:text-8xl font-black text-accent tracking-tight font-bebas mb-2">
+            +$<AnimatedCounter target={100345} />
+          </h1>
+          <p className="text-lg sm:text-xl text-muted-foreground mb-8">
+            Total profit generated since launch
+          </p>
+        </motion.div>
 
-        <p className="mt-6 text-sm font-medium text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-2 inline-block">
-          🚀 One winning day can return 10x your investment
-        </p>
+        {/* Tagline */}
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="text-2xl sm:text-3xl font-bold text-foreground font-bebas tracking-wide mb-8"
+        >
+          We don't predict. We profit.
+        </motion.p>
+
+        {/* Stats row */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5, duration: 0.5 }}
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto mb-8"
+        >
+          <StatPill icon={<Trophy className="w-4 h-4" />} label="Total Wins" value="356" />
+          <StatPill icon={<TrendingUp className="w-4 h-4" />} label="ROI" value="56.7%" />
+          <StatPill icon={<Activity className="w-4 h-4" />} label="Hit Rate" value="65%" />
+          <StatPill icon={<Calendar className="w-4 h-4" />} label="Days Active" value="63" />
+        </motion.div>
+
+        {/* Scrolling ticker */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.7 }}
+          className="overflow-hidden py-3 border-y border-border/40"
+        >
+          <div className="flex animate-marquee gap-6 whitespace-nowrap">
+            {[...TICKER_AMOUNTS, ...TICKER_AMOUNTS].map((amt, i) => (
+              <span key={i} className="text-sm font-bold text-accent/80 flex items-center gap-1.5">
+                <DollarSign className="w-3 h-3" />
+                {amt}
+              </span>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Social proof line */}
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.9 }}
+          className="mt-6 text-sm text-muted-foreground"
+        >
+          🚀 Join members banking daily profits from AI-powered parlays
+        </motion.p>
       </div>
     </section>
   );
 }
 
-function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
+function StatPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-4 text-center">
-      <div className="flex items-center justify-center gap-1.5 text-muted-foreground mb-1">
+    <div className="bg-card/80 border border-border rounded-xl p-3 text-center backdrop-blur-sm">
+      <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
         {icon}
-        <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
+        <span className="text-[10px] uppercase tracking-wider font-medium">{label}</span>
       </div>
-      <div className={`text-2xl sm:text-3xl font-bold ${color}`}>{value}</div>
+      <div className="text-xl sm:text-2xl font-bold text-foreground">{value}</div>
     </div>
   );
 }
