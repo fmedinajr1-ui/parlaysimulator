@@ -169,15 +169,39 @@ Deno.serve(async (req) => {
       parlays.push({ legs: primary2Leg, type: '2-Leg RBI Lock' });
     }
 
-    // Build 3-leg parlay if enough candidates
-    if (scored.length >= 5) {
+    // Build 3-leg parlay if enough candidates (lowered threshold from 5→4)
+    if (scored.length >= 4) {
       const usedPlayers3 = new Set<string>();
       const threeleg: typeof scored = [];
+      const topScore = scored[0]?.composite_score || 0;
+
       for (const pick of scored) {
         if (usedPlayers3.has(pick.player_name)) continue;
-        if (threeleg.length >= 3) break;
+        
+        // 3rd leg gates: stricter quality requirements
+        if (threeleg.length === 2) {
+          // Gate 1: Composite score must be within 80% of the top leg
+          if (pick.composite_score < topScore * 0.8) {
+            log(`3rd leg gate: ${pick.player_name} score ${pick.composite_score} < 80% of top (${topScore})`);
+            continue;
+          }
+          // Gate 2: L10 hit rate check
+          const l10HitRate = pick.metadata?.l10_hit_rate ?? 0.5;
+          const predLower = (pick.prediction || '').toLowerCase();
+          const isOverPick = predLower.includes('over');
+          if (isOverPick && l10HitRate < 0.6) {
+            log(`3rd leg gate: ${pick.player_name} OVER but L10=${l10HitRate} < 0.6`);
+            continue;
+          }
+          if (!isOverPick && l10HitRate > 0.3) {
+            log(`3rd leg gate: ${pick.player_name} UNDER but L10=${l10HitRate} > 0.3`);
+            continue;
+          }
+        }
+
         threeleg.push(pick);
         usedPlayers3.add(pick.player_name);
+        if (threeleg.length >= 3) break;
       }
       if (threeleg.length === 3) {
         parlays.push({ legs: threeleg, type: '3-Leg RBI Sniper' });
