@@ -939,8 +939,8 @@ Deno.serve(async (req) => {
       const isTeamMarket = TEAM_MARKET_TYPES.has(last.prop_type);
 
       // Favorites-only gate for team market snapbacks (underdogs historically 0%)
-      const isMoneylineProp = last.prop_type === 'h2h' || last.prop_type === 'moneyline';
-      if (isTeamMarket && isMoneylineProp && last.line > 0) {
+      const isMLProp = last.prop_type === 'h2h' || last.prop_type === 'moneyline';
+      if (isTeamMarket && isMLProp && last.line > 0) {
         log(`🚫 BLOCKED TIN underdog: ${last.player_name} (${last.line}) — favorites only`);
         continue;
       }
