@@ -1,60 +1,46 @@
 
 
-# Tighten Perfect Line Scanner Tier Thresholds
+# Today's Alert Status + Reduce Alert Noise
 
-## Current Problem
+## What the recent changes ARE doing (confirmed working)
 
-The existing tier thresholds let through too many weak signals. Data shows:
+1. **L10 avg gate** — Active. Logs show: `L10 avg block: Adolis Garcia Under — L10 avg 0.10 outside [0.25, 0.7]`
+2. **Blocked players** — Active. Denzel Clarke blocked (no signals from him today)
+3. **Perfect Line tightened thresholds** — Active. 0 perfect_line alerts generated today (thresholds may be too tight for today's slate, but they are enforced)
 
-| Tier | Prop | Win% | Volume | Issue |
-|------|------|------|--------|-------|
-| PERFECT | Points | 50.0% | 6 | Coin flip |
-| STRONG | Points | 59.4% | 32 | Below 65% |
-| STRONG | Assists | 55.6% | 18 | Below 65% |
-| STRONG | Spreads | 55.6% | 18 | Below 65% |
-| LEAN | Assists | 40.0% | 5 | Terrible |
+## What's broken: massive alert flooding
 
-Meanwhile, PERFECT Moneyline (77%), PERFECT Spreads (71%), STRONG Moneyline (78%), and STRONG Threes (83%) are all strong.
+| Signal Type | Alerts Today | Problem |
+|---|---|---|
+| cascade | 247 | Same 2 games repeating every 5 min — daily cap doesn't work for TEAM CASCADE names |
+| snapback_candidate | 113 | Juan Brito: 63 alerts, Nick Allen: 25, Edouard Julien: 25 — no daily cap at all |
+| price_drift | 10 | Acceptable |
 
-Edge bucket analysis shows signals with <5% edge hit only 45-62%, while 5-10% edge hits 70-75%.
+### Root causes
 
-## Changes
+1. **Cascade daily cap broken** — The cap checks `player_name` in the DB, but cascade alerts use `"TEAM CASCADE (player1, player2, ...)"` with players in random order each run. The names never match, so the cap never fires.
 
-**File**: `supabase/functions/perfect-line-scanner/index.ts`
+2. **Snapback has no daily cap** — The daily cap code only lives in `hrb-mlb-rbi-analyzer`. The `fanduel-behavior-analyzer` (which generates snapback_candidate) has no per-player cap at all.
 
-### 1. Tighten Player Prop Tiers (~line 204)
+3. **Snapback is a known poison signal** — Per system memory, snapback has a 0-17% historical win rate and is formally blacklisted from parlays. Yet it's still generating 113 alerts/day and spamming Telegram.
 
-**Current:**
-```
-PERFECT: ≥15% edge, floor ≥ line, ≥80% hit rate, ≥3 games
-STRONG:  ≥10% edge, ≥65% hit rate, ≥2 games
-LEAN:    ≥5% edge,  ≥55% hit rate, ≥2 games
-```
+## Plan: 4 changes to reduce noise
 
-**New:**
-```
-PERFECT: ≥18% edge, floor ≥ line, ≥85% hit rate, ≥3 games
-STRONG:  ≥12% edge, ≥70% hit rate, ≥3 games
-LEAN:    ≥7% edge,  ≥60% hit rate, ≥3 games
-```
+### 1. Fix cascade daily cap in `hrb-mlb-rbi-analyzer` (~line 449)
+Instead of matching on `player_name` (which varies for TEAM CASCADE), match on `event_id + signal_type` combo. If the same event already has 3+ cascade alerts today, skip it.
 
-Key changes: raised all edge and hit-rate minimums, increased minimum games to 3 across all tiers to reduce small-sample noise.
+### 2. Block snapback_candidate from generating alerts in `fanduel-behavior-analyzer`
+Since snapback is a poison signal (0-17% win rate), stop inserting `snapback_candidate` rows into `fanduel_prediction_alerts` entirely. Keep the pattern detection for internal analytics but don't create alerts or send Telegram messages.
 
-### 2. Block Points and Assists from LEAN Tier (~line 207)
+### 3. Add cross-run dedup to `hrb-mlb-rbi-analyzer` insert logic
+Before inserting, check if the same `event_id + signal_type + prediction` combination was already inserted in the last 30 minutes. Skip if so. This prevents the every-5-minute cascade duplication.
 
-Add a prop-type gate after tier assignment — if prop is `player_points` or `player_assists` and tier is `LEAN`, skip. These two props underperform dramatically at LEAN level.
+### 4. Add cross-run dedup to `fanduel-behavior-analyzer` for any remaining signal types
+Same 30-minute dedup window for `price_drift` signals to prevent accumulation.
 
-### 3. Tighten Team Market Tiers
-
-**Totals** (~line 362): Raise PERFECT edge from 8→10, STRONG from 5→7, LEAN from 3→5. Raise all hit-rate thresholds by +5%.
-
-**Moneyline** (~line 411): Already performing well — raise LEAN winPct gate from 0.50→0.55 to trim weakest entries.
-
-**Spreads** (~line 464): Raise PERFECT edge from 6→8, STRONG from 4→6. Raise hit-rate thresholds by +3%.
-
-## Expected Impact
-
-- Cuts ~30-40% of low-quality LEAN/STRONG signals (the ones dragging accuracy down)
-- Preserves high-performing Moneyline and Rebounds signals
-- Overall win rate should climb from ~67% toward 72-75% range
+## Expected impact
+- Cascade alerts: 247 → ~6-10/day (one per unique game event)
+- Snapback alerts: 113 → 0 (blocked as poison signal)
+- Price drift: stays at ~10 (add dedup guard for safety)
+- Total daily noise: ~370 → ~15-20 alerts
 
