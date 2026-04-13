@@ -157,7 +157,6 @@ Deno.serve(async (req) => {
         prop_type: 'batter_stolen_bases',
         prediction: `Under ${prop.current_line || 0.5} Stolen Bases`,
         signal_type: 'sb_under_l10',
-        confidence_score: confidence,
         bookmaker: prop.bookmaker || 'fanduel',
         metadata: {
           l10_sb_avg: stats.avg,
@@ -166,6 +165,7 @@ Deno.serve(async (req) => {
           line: prop.current_line,
           under_price: prop.under_price,
           game: prop.game_description,
+          confidence: confidence,
         },
       });
     }
