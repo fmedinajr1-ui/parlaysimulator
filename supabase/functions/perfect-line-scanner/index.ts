@@ -201,10 +201,16 @@ Deno.serve(async (req) => {
           : recentAvg !== null && !isOverValue ? recentAvg < avgStat : false;
 
         let tier: "PERFECT" | "STRONG" | "LEAN" | null = null;
-        if (absEdge >= 15 && floorGap >= 0 && hitRate >= 0.80 && gamesPlayed >= 3) tier = "PERFECT";
-        else if (absEdge >= 10 && hitRate >= 0.65 && gamesPlayed >= 2) tier = "STRONG";
-        else if (absEdge >= 5 && hitRate >= 0.55 && gamesPlayed >= 2) tier = "LEAN";
+        if (absEdge >= 18 && floorGap >= 0 && hitRate >= 0.85 && gamesPlayed >= 3) tier = "PERFECT";
+        else if (absEdge >= 12 && hitRate >= 0.70 && gamesPlayed >= 3) tier = "STRONG";
+        else if (absEdge >= 7 && hitRate >= 0.60 && gamesPlayed >= 3) tier = "LEAN";
         if (!tier) continue;
+
+        // Block Points and Assists from LEAN tier — historically underperform dramatically
+        if (tier === "LEAN" && (propType === "player_points" || propType === "player_assists")) {
+          log(`Blocking LEAN ${propType} for ${line.player_name} — prop type underperforms at LEAN tier`);
+          continue;
+        }
 
         signals.push({
           tier, player_name: line.player_name, prop_type: propType,
@@ -359,9 +365,9 @@ Deno.serve(async (req) => {
         const estimatedHitRate = Math.max(ouHitRate, Math.min(0.95, 0.50 + absEdge * 0.015));
 
         let tier: "PERFECT" | "STRONG" | "LEAN" | null = null;
-        if (absEdge >= 8 && estimatedHitRate >= 0.70) tier = "PERFECT";
-        else if (absEdge >= 5 && estimatedHitRate >= 0.60) tier = "STRONG";
-        else if (absEdge >= 3 && estimatedHitRate >= 0.52) tier = "LEAN";
+        if (absEdge >= 10 && estimatedHitRate >= 0.75) tier = "PERFECT";
+        else if (absEdge >= 7 && estimatedHitRate >= 0.65) tier = "STRONG";
+        else if (absEdge >= 5 && estimatedHitRate >= 0.57) tier = "LEAN";
         if (!tier) continue;
 
         signals.push({
@@ -410,7 +416,7 @@ Deno.serve(async (req) => {
         let tier: "PERFECT" | "STRONG" | "LEAN" | null = null;
         if (absEdge >= 0.15 && winPct >= 0.65) tier = "PERFECT";
         else if (absEdge >= 0.10 && winPct >= 0.55) tier = "STRONG";
-        else if (absEdge >= 0.05 && winPct >= 0.50) tier = "LEAN";
+        else if (absEdge >= 0.05 && winPct >= 0.55) tier = "LEAN";
         if (!tier) continue;
 
         signals.push({
@@ -461,9 +467,9 @@ Deno.serve(async (req) => {
         const estimatedHitRate = Math.min(0.90, 0.50 + absEdge * 0.03);
 
         let tier: "PERFECT" | "STRONG" | "LEAN" | null = null;
-        if (absEdge >= 6 && estimatedHitRate >= 0.68) tier = "PERFECT";
-        else if (absEdge >= 4 && estimatedHitRate >= 0.62) tier = "STRONG";
-        else if (absEdge >= (side === "COVER" ? 3 : 2) && estimatedHitRate >= 0.56) tier = "LEAN";
+        if (absEdge >= 8 && estimatedHitRate >= 0.71) tier = "PERFECT";
+        else if (absEdge >= 6 && estimatedHitRate >= 0.65) tier = "STRONG";
+        else if (absEdge >= (side === "COVER" ? 3 : 2) && estimatedHitRate >= 0.59) tier = "LEAN";
         if (!tier) continue;
 
         signals.push({
