@@ -691,7 +691,7 @@ Deno.serve(async (req) => {
       lineSource: string | null;
     }
 
-    const scoredProps: ScoredProp[] = [];
+    let scoredProps: ScoredProp[] = [];
 
     for (const prop of uniqueProps) {
       const nameNorm = normalizeName(prop.player_name);
