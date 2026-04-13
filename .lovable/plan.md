@@ -1,75 +1,67 @@
 
 
-# Correlated Team Total Gate for Hits & Total Bases
+# Line-Sum vs Defensive-Allowed Mismatch Analyzer
 
-## Problem
-Player hits and total bases lines should only recommend UNDER if the team game total also dropped (confirming lower-scoring game expectation), and only OVER if the team total also rose. Currently, direction is determined purely from the player's own line movement without checking team-level context.
+## What It Does
+An automated edge function that, for every NBA/NHL/MLB game on today's slate:
+1. Sums all player prop lines per team per stat category (points, rebounds, assists for NBA; goals, shots, points for NHL; hits, RBIs, runs for MLB)
+2. Cross-references the summed lines against what the opposing team allows per game defensively
+3. Computes the gap (defensive allowed minus summed lines) and ranks all games by biggest mismatch
+4. Stores results in a new table for daily review and signal generation
 
-## Change
+## New Database Table
 
-**File**: `supabase/functions/fanduel-prediction-alerts/index.ts`
+**`line_sum_mismatch_analysis`**
+- `id` (uuid, PK)
+- `sport` (text) — basketball_nba, icehockey_nhl, baseball_mlb
+- `game_description` (text) — "Miami Heat @ Charlotte Hornets"
+- `event_id` (text)
+- `team_name` (text) — the team whose players are summed
+- `opponent_name` (text)
+- `stat_category` (text) — points, rebounds, assists, goals, etc.
+- `summed_player_lines` (numeric) — total of all player lines for this team+stat
+- `players_counted` (int) — how many players included
+- `opponent_defensive_allowed` (numeric) — what opponent allows per game
+- `opponent_defensive_rank` (int) — rank (1=best defense)
+- `gap` (numeric) — defensive_allowed minus summed_lines (positive = OVER opportunity)
+- `gap_pct` (numeric) — gap as % of defensive allowed
+- `direction_signal` (text) — OVER or UNDER based on gap
+- `analysis_date` (date)
+- `created_at` (timestamptz)
 
-### 1. Build a team total drift map (before signal loops, ~line 683)
+Unique constraint on `(sport, game_description, team_name, stat_category, analysis_date)`.
 
-After building `eventMatchup`, iterate through `groups` to find totals entries for each event and calculate their drift direction:
+## Edge Function: `line-sum-mismatch-analyzer`
 
-```typescript
-// Build event total drift map: did the game total go up or down?
-const eventTotalDrift = new Map<string, number>();
-for (const [, snapshots] of groups) {
-  const first = snapshots[0];
-  if (first.prop_type === 'totals' && snapshots.length >= 2) {
-    const last = snapshots[snapshots.length - 1];
-    const drift = last.line - first.line;
-    eventTotalDrift.set(first.event_id, drift);
-  }
-}
-```
+### Logic Flow
 
-### 2. Add correlation gate in velocity spike/cascade loop (~line 757, after `side` is determined)
+1. **Get today's games** — query `unified_props` for distinct `game_description` per sport where `commence_time` is today
+2. **NBA analysis**:
+   - For each game, extract home/away team names from `game_description` ("Away @ Home")
+   - Join player names to teams via `bdl_player_cache.team_name`
+   - Sum `current_line` per team for `player_points`, `player_rebounds`, `player_assists`
+   - Look up opponent's `stat_allowed_per_game` from `team_defensive_ratings` (position_group = 'all')
+   - Compute gap = allowed - summed
+3. **NHL analysis**:
+   - Sum `player_goals`, `player_assists`, `player_shots_on_goal` per team
+   - Cross-reference `nhl_team_defense_rankings` for `goals_against_per_game`, `shots_against_per_game`
+   - NHL player-to-team mapping derived from `game_description` team names
+4. **MLB analysis**:
+   - Sum `batter_hits`, `batter_rbis`, `batter_runs_scored` per team
+   - No MLB defensive ratings table exists yet, so store summed lines with null defensive data (future enrichment)
+5. **Rank and store** — upsert all rows, compute gap_pct, assign direction_signal (positive gap = OVER, negative = UNDER)
 
-For hits and total_bases props, check if the team total moved in the same direction. If they disagree, block the signal:
+### Team Name Resolution
+- NBA: `bdl_player_cache.team_name` matches `team_defensive_ratings.team_name` (handle "LA Clippers" vs "Los Angeles Clippers")
+- NHL: Parse team names from `game_description`, match to `nhl_team_defense_rankings.team_name`
+- MLB: Parse from `game_description`, no defensive table yet
 
-```typescript
-// Correlated team total gate for hits/total_bases
-const TEAM_CORRELATED_PROPS = new Set(['batter_hits', 'hits', 'batter_total_bases', 'total_bases']);
-if (TEAM_CORRELATED_PROPS.has(first.prop_type)) {
-  const totalDrift = eventTotalDrift.get(first.event_id);
-  if (totalDrift !== undefined) {
-    const totalDirection = totalDrift < 0 ? 'UNDER' : 'OVER';
-    if (totalDirection !== side) {
-      log(`🚫 BLOCKED ${first.player_name} ${first.prop_type} ${side}: team total moved ${totalDirection}`);
-      continue;
-    }
-  }
-}
-```
+### Pipeline Integration
+Add this function call to `morning-prep-pipeline` after the analysis phase (after step 4.7b), so it runs daily with fresh odds data.
 
-### 3. Same gate in Take It Now (snapback) loop (~line 925, after `snapDirection` is set)
-
-Apply the same check for snapback signals on hits/total_bases:
-
-```typescript
-// Correlated team total gate for hits/total_bases snapbacks
-if (TEAM_CORRELATED_PROPS.has(last.prop_type)) {
-  const totalDrift = eventTotalDrift.get(last.event_id);
-  if (totalDrift !== undefined) {
-    const totalDirection = totalDrift < 0 ? 'UNDER' : 'OVER';
-    if (totalDirection !== snapDirection) {
-      log(`🚫 BLOCKED TIN ${last.player_name} ${last.prop_type} ${snapDirection}: team total moved ${totalDirection}`);
-      continue;
-    }
-  }
-}
-```
-
-## Logic Summary
-- Player hits/TB line drops + team total drops → UNDER ✅
-- Player hits/TB line drops + team total rises → BLOCKED ❌
-- Player hits/TB line rises + team total rises → OVER ✅  
-- Player hits/TB line rises + team total drops → BLOCKED ❌
-- No team total data available → signal passes through unchanged
-
-## After Deploy
-Re-invoke the function to regenerate signals with the correlation gate active.
+## Technical Details
+- Migration creates the table with RLS disabled (internal analytics only)
+- Edge function processes all 3 sports in one invocation
+- Results ordered by `abs(gap_pct)` descending to surface biggest mismatches
+- Telegram summary sent with top 5 mismatches across all sports
 
