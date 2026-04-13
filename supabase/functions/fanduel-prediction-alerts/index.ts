@@ -951,6 +951,13 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Flip totals snapbacks: unders historically 0% — contrarian OVER
+      if (isTeamMarket && last.prop_type === 'totals' && snapDirection === 'UNDER') {
+        snapDirection = 'OVER';
+        directionReason = `Contrarian flip: totals unders historically 0% — taking OVER`;
+        log(`🔄 FLIPPED TIN totals to OVER: ${last.player_name} (${last.line})`);
+      }
+
       const matchupLine = isTeamMarket ? eventMatchup.get(last.event_id) : null;
       const volInfo = volatilityMap.get((last.player_name || "").toLowerCase().trim());
       const readableProp = readablePropLabel(last.prop_type);
