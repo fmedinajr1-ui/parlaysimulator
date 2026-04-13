@@ -506,31 +506,129 @@ Deno.serve(async (req) => {
               }
             }
 
-            // TOTALS signal
+            // TOTALS signal — with Run Production Validation Gate
             const totalsAlertKey = `${eventId}|CORR_TOTALS|${propType}`;
-            const totalsDirection = dominant === "dropping" ? "UNDER" : "OVER";
-            const totalsConf = Math.min(85, conf - 5);
-            addAlert(totalsAlertKey, totalsConf + 3, {
-              type: "team_news_shift",
-              live: false,
-              sport: sampleShift.sport,
-              player_name: sampleShift.eventDesc || `${shifts.length} players`,
-              prop_type: "totals",
-              event_description: sampleShift.eventDesc,
-              event_id: eventId,
-              players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line })),
-              dominant_direction: dominant,
-              correlation_rate: Math.round(correlationRate * 100),
-              avg_magnitude: Math.round(avgMag * 100) / 100,
-              confidence: totalsConf,
-              hours_to_tip: null,
-              derived_from: `player_props_${propType}`,
-              derived_action: totalsDirection,
-              game_total_line: gameTotal,
-              game_total_over_odds: gameTotalOverOdds,
-              game_total_under_odds: gameTotalUnderOdds,
-            });
-            log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection}${gameTotal ? ` ${gameTotal}` : ''} (derived from ${shifts.length} player ${propType} shifts)`);
+            let totalsDirection = dominant === "dropping" ? "UNDER" : "OVER";
+            let totalsConf = Math.min(85, conf - 5);
+
+            // === RUN PRODUCTION VALIDATION GATE ===
+            let batterValidation = { dropping: 0, rising: 0, total: 0, summary: '' };
+            let pitcherValidation = { kLineDirection: 'unknown' as string, summary: '' };
+            let validationBlocked = false;
+
+            try {
+              // 1. Check batter hitting props (Hits, HR, RBIs, Total Bases) for this game
+              const runPropTypes = ['batter_hits', 'batter_home_runs', 'batter_rbis', 'batter_total_bases',
+                                    'Hits', 'Home Runs', 'RBIs', 'Total Bases', 'player_hits', 'player_home_runs',
+                                    'player_rbis', 'player_total_bases'];
+              const { data: batterProps } = await supabase
+                .from('unified_props')
+                .select('player_name, prop_type, current_line, previous_line')
+                .eq('event_id', eventId)
+                .in('prop_type', runPropTypes)
+                .not('current_line', 'is', null);
+
+              if (batterProps && batterProps.length > 0) {
+                for (const bp of batterProps) {
+                  if (bp.previous_line != null && bp.current_line != null) {
+                    batterValidation.total++;
+                    if (bp.current_line < bp.previous_line) batterValidation.dropping++;
+                    else if (bp.current_line > bp.previous_line) batterValidation.rising++;
+                  }
+                }
+                if (batterValidation.total > 0) {
+                  const dropRate = batterValidation.dropping / batterValidation.total;
+                  const riseRate = batterValidation.rising / batterValidation.total;
+                  if (totalsDirection === 'UNDER') {
+                    if (dropRate >= 0.5) { totalsConf += 10; batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines dropping ✅`; }
+                    else if (riseRate >= 0.5) { totalsConf -= 15; batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines RISING ⚠️`; }
+                    else { batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines dropping (mixed)`; }
+                  } else {
+                    if (riseRate >= 0.5) { totalsConf += 10; batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines rising ✅`; }
+                    else if (dropRate >= 0.5) { totalsConf -= 15; batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines DROPPING ⚠️`; }
+                    else { batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines rising (mixed)`; }
+                  }
+                } else {
+                  batterValidation.summary = 'no hitting line movement data';
+                }
+              } else {
+                batterValidation.summary = 'no hitting props found';
+              }
+
+              // 2. Check pitcher strikeout lines
+              const kPropTypes = ['pitcher_strikeouts', 'Pitcher Strikeouts', 'pitcher_ks', 'strikeouts'];
+              const { data: pitcherProps } = await supabase
+                .from('unified_props')
+                .select('player_name, prop_type, current_line, previous_line')
+                .eq('event_id', eventId)
+                .in('prop_type', kPropTypes)
+                .not('current_line', 'is', null);
+
+              if (pitcherProps && pitcherProps.length > 0) {
+                let kRising = 0, kDropping = 0, kTotal = 0;
+                for (const pp of pitcherProps) {
+                  if (pp.previous_line != null && pp.current_line != null) {
+                    kTotal++;
+                    if (pp.current_line > pp.previous_line) kRising++;
+                    else if (pp.current_line < pp.previous_line) kDropping++;
+                  }
+                }
+                if (kTotal > 0) {
+                  if (kRising > kDropping) {
+                    pitcherValidation.kLineDirection = 'rising';
+                    pitcherValidation.summary = 'K line rising (dominant arm)';
+                    if (totalsDirection === 'UNDER') totalsConf += 5;
+                    else totalsConf -= 5;
+                  } else if (kDropping > kRising) {
+                    pitcherValidation.kLineDirection = 'dropping';
+                    pitcherValidation.summary = 'K line dropping (weaker arm)';
+                    if (totalsDirection === 'UNDER') totalsConf -= 10;
+                    else totalsConf += 5;
+                  } else {
+                    pitcherValidation.kLineDirection = 'stable';
+                    pitcherValidation.summary = 'K line stable';
+                  }
+                } else {
+                  pitcherValidation.summary = 'no K line movement';
+                }
+              } else {
+                pitcherValidation.summary = 'no pitcher K props found';
+              }
+
+              // 3. Block if confidence drops below 55
+              if (totalsConf < 55) {
+                validationBlocked = true;
+                log(`🚫 AUTO-TOTALS BLOCKED: ${sampleShift.eventDesc} → ${totalsDirection} blocked (conf ${totalsConf} < 55). Batters: ${batterValidation.summary} | Pitcher: ${pitcherValidation.summary}`);
+              }
+            } catch (valErr) {
+              log(`⚠️ Run production validation error (proceeding anyway): ${valErr}`);
+            }
+
+            if (!validationBlocked) {
+              addAlert(totalsAlertKey, totalsConf + 3, {
+                type: "team_news_shift",
+                live: false,
+                sport: sampleShift.sport,
+                player_name: sampleShift.eventDesc || `${shifts.length} players`,
+                prop_type: "totals",
+                event_description: sampleShift.eventDesc,
+                event_id: eventId,
+                players_moving: shifts.map(s => ({ name: s.player, direction: s.direction, magnitude: s.magnitude, current_line: s.current_line })),
+                dominant_direction: dominant,
+                correlation_rate: Math.round(correlationRate * 100),
+                avg_magnitude: Math.round(avgMag * 100) / 100,
+                confidence: totalsConf,
+                hours_to_tip: null,
+                derived_from: `player_props_${propType}`,
+                derived_action: totalsDirection,
+                game_total_line: gameTotal,
+                game_total_over_odds: gameTotalOverOdds,
+                game_total_under_odds: gameTotalUnderOdds,
+                batter_validation: batterValidation.summary,
+                pitcher_validation: pitcherValidation.summary,
+              });
+              log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection}${gameTotal ? ` ${gameTotal}` : ''} (derived from ${shifts.length} player ${propType} shifts) | Batters: ${batterValidation.summary} | Pitcher: ${pitcherValidation.summary}`);
+            }
 
             // MONEYLINE signal
             if (shifts.length >= 5 || correlationRate >= 0.9) {
@@ -1864,9 +1962,11 @@ Deno.serve(async (req) => {
                 : a.game_total_over_odds
                 ? ` (${a.game_total_over_odds > 0 ? '+' : ''}${a.game_total_over_odds})`
                 : '';
+              const batterTag = a.batter_validation ? `\n📊 Batters: ${a.batter_validation}` : '';
+              const pitcherTag = a.pitcher_validation ? ` | Pitcher: ${a.pitcher_validation}` : '';
               action = a.dominant_direction === "dropping"
-                ? `UNDER${totalLine}${oddsTag} — ${playerCount} player props dropping → game total likely lower`
-                : `OVER${totalLine}${oddsTag} — ${playerCount} player props rising → game total likely higher`;
+                ? `UNDER${totalLine}${oddsTag} — ${playerCount} player props dropping → game total likely lower${batterTag}${pitcherTag}`
+                : `OVER${totalLine}${oddsTag} — ${playerCount} player props rising → game total likely higher${batterTag}${pitcherTag}`;
               reason = `Derived from player prop team news shift. ${playerCount} players moving ${a.dominant_direction} → Totals ${a.dominant_direction === "dropping" ? "UNDER" : "OVER"}${totalLine}.`;
             } else if (isTeamMarketDerived && a.prop_type === "moneyline") {
               const teamName = a.team_to_back || 'this side';
