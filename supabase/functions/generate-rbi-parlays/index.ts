@@ -90,10 +90,51 @@ Deno.serve(async (req) => {
 
     log(`Found ${todayAlerts.length} qualifying RBI alerts for today`);
 
+    // Step 2.5: Conflict Guard — deduplicate contradictory Over/Under for same player
+    const playerSignalMap = new Map<string, typeof todayAlerts>();
+    for (const alert of todayAlerts) {
+      const key = alert.player_name;
+      if (!playerSignalMap.has(key)) playerSignalMap.set(key, []);
+      playerSignalMap.get(key)!.push(alert);
+    }
+
+    const deduped: typeof todayAlerts = [];
+    for (const [player, alerts] of playerSignalMap) {
+      if (alerts.length === 1) {
+        deduped.push(alerts[0]);
+        continue;
+      }
+      // Check for Over/Under conflict
+      const hasOver = alerts.some(a => (a.prediction || '').toLowerCase().includes('over'));
+      const hasUnder = alerts.some(a => (a.prediction || '').toLowerCase().includes('under'));
+      if (hasOver && hasUnder) {
+        // Keep the strongest signal: confidence + velocity*0.1
+        const scored = alerts.map(a => ({
+          ...a,
+          conflictScore: (Number(a.confidence) || 0) + ((a.metadata?.velocity || 0) * 0.1),
+        }));
+        scored.sort((a, b) => b.conflictScore - a.conflictScore);
+        deduped.push(scored[0]);
+        log(`Conflict guard: ${player} had Over+Under — kept ${scored[0].prediction} (score=${scored[0].conflictScore.toFixed(1)})`);
+      } else {
+        // No conflict, keep all
+        deduped.push(...alerts);
+      }
+    }
+
+    if (deduped.length < 2) {
+      log(`Only ${deduped.length} alerts after conflict dedup. Need at least 2.`);
+      return new Response(JSON.stringify({ parlays: [], message: `Only ${deduped.length} after dedup` }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    log(`After conflict guard: ${deduped.length} alerts (was ${todayAlerts.length})`);
+
     // Step 3: Score and rank candidates
     const signalAccMap = new Map(bySignal.map(s => [s.signal_type, s]));
     
-    const scored = todayAlerts.map(alert => {
+    const scored = deduped.map(alert => {
       const signalAcc = signalAccMap.get(alert.signal_type);
       const accScore = signalAcc ? signalAcc.win_rate : 50;
       const confScore = (alert.confidence || 0) >= 80 ? 20 : 
@@ -128,15 +169,39 @@ Deno.serve(async (req) => {
       parlays.push({ legs: primary2Leg, type: '2-Leg RBI Lock' });
     }
 
-    // Build 3-leg parlay if enough candidates
-    if (scored.length >= 5) {
+    // Build 3-leg parlay if enough candidates (lowered threshold from 5→4)
+    if (scored.length >= 4) {
       const usedPlayers3 = new Set<string>();
       const threeleg: typeof scored = [];
+      const topScore = scored[0]?.composite_score || 0;
+
       for (const pick of scored) {
         if (usedPlayers3.has(pick.player_name)) continue;
-        if (threeleg.length >= 3) break;
+        
+        // 3rd leg gates: stricter quality requirements
+        if (threeleg.length === 2) {
+          // Gate 1: Composite score must be within 80% of the top leg
+          if (pick.composite_score < topScore * 0.8) {
+            log(`3rd leg gate: ${pick.player_name} score ${pick.composite_score} < 80% of top (${topScore})`);
+            continue;
+          }
+          // Gate 2: L10 hit rate check
+          const l10HitRate = pick.metadata?.l10_hit_rate ?? 0.5;
+          const predLower = (pick.prediction || '').toLowerCase();
+          const isOverPick = predLower.includes('over');
+          if (isOverPick && l10HitRate < 0.6) {
+            log(`3rd leg gate: ${pick.player_name} OVER but L10=${l10HitRate} < 0.6`);
+            continue;
+          }
+          if (!isOverPick && l10HitRate > 0.3) {
+            log(`3rd leg gate: ${pick.player_name} UNDER but L10=${l10HitRate} > 0.3`);
+            continue;
+          }
+        }
+
         threeleg.push(pick);
         usedPlayers3.add(pick.player_name);
+        if (threeleg.length >= 3) break;
       }
       if (threeleg.length === 3) {
         parlays.push({ legs: threeleg, type: '3-Leg RBI Sniper' });
