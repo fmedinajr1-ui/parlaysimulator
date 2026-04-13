@@ -15,6 +15,12 @@ const PRICE_MOVE_THRESHOLD = 15;
 const PRICE_SPIKE_THRESHOLD = 30;
 const PRICE_SNAPBACK_THRESHOLD = 50;
 
+// Blocked players — permanently excluded from RBI alerts
+const BLOCKED_PLAYERS = new Set(['Denzel Clarke']);
+
+// Max alerts per player per day (cross-run cap)
+const DAILY_ALERT_CAP = 3;
+
 interface Snapshot {
   id: string;
   event_id: string;
@@ -379,11 +385,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    log(`Detected ${alerts.length} raw alerts`);
+    // Filter out blocked players
+    const unblockedAlerts = alerts.filter(a => {
+      if (BLOCKED_PLAYERS.has(a.player_name)) {
+        log(`🚫 Blocked player: ${a.player_name}`);
+        return false;
+      }
+      return true;
+    });
+    log(`${unblockedAlerts.length} alerts after blocked-player filter (${alerts.length - unblockedAlerts.length} blocked)`);
 
     // L10 validation for individual (non-cascade) alerts using batched stats
     const validatedAlerts: Alert[] = [];
-    for (const alert of alerts) {
+    for (const alert of unblockedAlerts) {
       if (alert.signal_type === 'cascade') {
         // Already validated during cascade construction
         validatedAlerts.push(alert);
@@ -423,8 +437,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    const finalAlerts = Object.values(bestAlerts);
+    let finalAlerts = Object.values(bestAlerts);
     log(`${finalAlerts.length} final alerts after dedup`);
+
+    // Daily cap guard: skip players who already have 3+ alerts today
+    const { data: overCapPlayers } = await supabase
+      .from('fanduel_prediction_alerts')
+      .select('player_name')
+      .eq('prop_type', 'batter_rbis')
+      .gte('created_at', new Date().toISOString().slice(0, 10));
+
+    if (overCapPlayers && overCapPlayers.length > 0) {
+      const countMap: Record<string, number> = {};
+      for (const row of overCapPlayers) {
+        countMap[row.player_name] = (countMap[row.player_name] || 0) + 1;
+      }
+      const capped = new Set(Object.entries(countMap).filter(([, c]) => c >= DAILY_ALERT_CAP).map(([p]) => p));
+      if (capped.size > 0) {
+        const before = finalAlerts.length;
+        finalAlerts = finalAlerts.filter(a => !capped.has(a.player_name));
+        log(`Daily cap: ${before - finalAlerts.length} alerts removed (players at ${DAILY_ALERT_CAP}+ today)`);
+      }
+    }
 
     // Insert into fanduel_prediction_alerts
     if (finalAlerts.length > 0) {
