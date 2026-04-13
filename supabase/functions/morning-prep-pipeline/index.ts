@@ -68,6 +68,9 @@ Deno.serve(async (req) => {
     // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
     await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
 
+    // Step 4.1: MLB Stolen Bases Under analyzer
+    await invokeStep('MLB SB Under analyzer', 'mlb-sb-analyzer', {});
+
     // Step 4.5: Sync tennis totals from game_bets → unified_props, then analyze
     await invokeStep('Tennis props sync', 'tennis-props-sync', {});
     await invokeStep('Tennis games analyzer', 'tennis-games-analyzer', {});
