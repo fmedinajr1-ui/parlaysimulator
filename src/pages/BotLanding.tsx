@@ -13,6 +13,7 @@ import { DailyWinnersShowcase } from "@/components/bot-landing/DailyWinnersShowc
 import { VolumeStakingBreakdown } from "@/components/bot-landing/VolumeStakingBreakdown";
 import { FreeTrialBanner } from "@/components/bot-landing/FreeTrialBanner";
 import { RecentWinsFeed } from "@/components/bot-landing/RecentWinsFeed";
+import { StickySubscribeCTA } from "@/components/bot-landing/StickySubscribeCTA";
 
 interface PublicStats {
   days: Array<{
