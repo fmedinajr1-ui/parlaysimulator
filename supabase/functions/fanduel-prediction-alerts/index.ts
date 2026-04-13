@@ -937,6 +937,13 @@ Deno.serve(async (req) => {
       const volWarning = getVolatilityWarning(last.player_name);
       const altLineText = await getAltLineText(last.line, snapDirection, last.prop_type, last.player_name, last.event_id, last.sport);
       const isTeamMarket = TEAM_MARKET_TYPES.has(last.prop_type);
+
+      // Favorites-only gate for team market snapbacks (underdogs historically 0%)
+      const isMLProp = last.prop_type === 'h2h' || last.prop_type === 'moneyline';
+      if (isTeamMarket && isMLProp && last.line > 0) {
+        log(`🚫 BLOCKED TIN underdog: ${last.player_name} (${last.line}) — favorites only`);
+        continue;
+      }
       const matchupLine = isTeamMarket ? eventMatchup.get(last.event_id) : null;
       const volInfo = volatilityMap.get((last.player_name || "").toLowerCase().trim());
       const readableProp = readablePropLabel(last.prop_type);
