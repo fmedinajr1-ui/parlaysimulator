@@ -54,6 +54,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Blocked players — permanently excluded from RBI alerts
+const BLOCKED_PLAYERS = new Set(['Denzel Clarke']);
+const DAILY_ALERT_CAP_RBI = 3;
+
 const KILLED_VELOCITY_MARKETS = new Set(["spreads", "totals"]);
 const PLAYER_PROP_TYPES = new Set([
   "player_points", "player_rebounds", "player_assists", "player_threes",
@@ -1207,8 +1211,60 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Block banned players from RBI alerts + daily cap
+    const preFilterCount = predictionRecords.length;
+    const filteredPredRecords = predictionRecords.filter(r => {
+      if (r.prop_type === 'batter_rbis' && BLOCKED_PLAYERS.has(r.player_name)) {
+        log(`🚫 Blocked RBI player: ${r.player_name}`);
+        return false;
+      }
+      return true;
+    });
+
+    // Daily RBI cap: query existing alerts today
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { data: rbiToday } = await supabase
+      .from("fanduel_prediction_accuracy")
+      .select("player_name")
+      .eq("prop_type", "batter_rbis")
+      .gte("created_at", todayStr);
+
+    const rbiCountMap: Record<string, number> = {};
+    for (const row of (rbiToday || [])) {
+      rbiCountMap[row.player_name] = (rbiCountMap[row.player_name] || 0) + 1;
+    }
+    const rbiCapped = new Set(Object.entries(rbiCountMap).filter(([, c]) => c >= DAILY_ALERT_CAP_RBI).map(([p]) => p));
+
+    const cappedPredRecords = filteredPredRecords.filter(r => {
+      if (r.prop_type === 'batter_rbis' && rbiCapped.has(r.player_name)) {
+        log(`🔒 Daily cap: ${r.player_name} already at ${DAILY_ALERT_CAP_RBI}+ RBI alerts today`);
+        return false;
+      }
+      return true;
+    });
+
+    // Also filter telegram alerts and gated records
+    telegramAlerts = telegramAlerts.filter((alertText: string) => {
+      for (const blocked of BLOCKED_PLAYERS) {
+        if (alertText.includes(blocked)) return false;
+      }
+      for (const capped of rbiCapped) {
+        if (alertText.includes(capped)) return false;
+      }
+      return true;
+    });
+
+    const filteredGated = gatedRecords.filter(r => {
+      if (r.prop_type === 'batter_rbis' && (BLOCKED_PLAYERS.has(r.player_name) || rbiCapped.has(r.player_name))) return false;
+      return true;
+    });
+
+    if (preFilterCount !== cappedPredRecords.length) {
+      log(`RBI guards: ${preFilterCount} → ${cappedPredRecords.length} (${preFilterCount - cappedPredRecords.length} removed)`);
+    }
+
     // Cross-run dedup
-    const allRecordsForDb = [...predictionRecords, ...gatedRecords];
+    const allRecordsForDb = [...cappedPredRecords, ...filteredGated];
     let dedupedRecords = allRecordsForDb;
     if (allRecordsForDb.length > 0) {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
