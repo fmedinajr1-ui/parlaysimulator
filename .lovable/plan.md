@@ -1,31 +1,51 @@
 
 
-# Flip SB Alerts to "Over 0.5 Stolen Bases"
+# Strengthen Team News Shift Totals with Cross-Validation
 
-## Why
+## Problem
 
-Hard Rock Bet only offers the **Over** side for stolen bases props. The current analyzer generates "Under 0.5 SB" alerts, which users can't actually bet on HRB.
+The current "Team News Shift → Totals UNDER" alert fires when 3+ player props drop in the same game. But it doesn't verify **what kind** of props are dropping. It could be 3 players' stolen bases lines dropping — which says nothing about run scoring. We need to cross-check against run-producing stats and pitching before recommending a totals Under.
 
-## The flip
+## Solution
 
-Since most players rarely steal bases, L10 avg ≤ 0.3 means the Over hits ≤ 30% of the time — that's bad for Over bets. We need to **invert the logic**: find players who DO steal bases frequently and recommend Over.
+Add a **Run Production Validation Gate** to the auto-totals derivation logic in `fanduel-behavior-analyzer/index.ts` (around line 509-533). Before emitting the totals UNDER/OVER signal, cross-reference:
 
-### Changes to `mlb-sb-analyzer/index.ts`
+### 1. Check batter hitting props for both teams
+- Query `unified_props` for the game's batters: hits, home runs, RBIs, total bases
+- If batter lines are **stable or rising**, the Under signal is weaker — downgrade confidence or block
+- If batter lines are **also dropping**, that confirms the Under thesis — boost confidence
 
-- **New gates** (inverted from current):
-  - L10 SB avg must be ≥ 0.5 (player steals regularly)
-  - L10 Over hit rate (games with ≥1 SB) must be ≥ 50%
-- **Prediction text**: `Over 0.5 Stolen Bases`
-- **Signal type**: `sb_over_l10`
-- **Metadata**: store `over_price` instead of `under_price`, `l10_over_rate` instead of `l10_under_rate`
-- **Confidence**: based on over hit rate
-- **Telegram summary**: updated wording to reflect Over picks
+### 2. Check pitcher strikeout lines
+- Query `unified_props` for pitcher strikeouts in the same game
+- Pitcher K line **dropping** = weaker pitcher expected = more runs = contradicts Under
+- Pitcher K line **rising or stable** = dominant pitcher = supports Under
 
-### Changes to `mlb-sb-settler/index.ts`
+### 3. Confidence adjustment logic
+After the existing correlation check (lines 509-532):
 
-No changes needed — it already handles both Over and Under settlement correctly (lines 129-139).
+```text
+Run-scoring props dropping (hits/HR/RBI/TB)  → +10 confidence, confirm UNDER
+Run-scoring props rising                      → -15 confidence, may block UNDER  
+Pitcher Ks rising (dominant pitcher expected)  → +5 confidence for UNDER
+Pitcher Ks dropping (weak pitcher)            → -10 confidence for UNDER
+If net adjustment drops confidence below 55   → block the totals signal entirely
+```
 
-### Impact
+### 4. Enhanced Telegram message
+Add a line showing the validation result:
+```
+✅ Action: UNDER — 3 player props dropping → game total likely lower
+📊 Batters: 4/6 hitting lines dropping | Pitcher: K line rising (dominant arm)
+```
 
-This targets players like Victor Scott II, Jose Ramirez, etc. who are active base stealers. With the 0.5 line, players averaging ≥0.5 SB/game should hit Over at a profitable rate.
+## Files to edit
+
+- `supabase/functions/fanduel-behavior-analyzer/index.ts` — Add cross-validation queries and confidence adjustments at the auto-totals generation block (lines ~509-533), and update the Telegram formatting section (lines ~1860-1870) to include the validation summary.
+
+## What this achieves
+
+- Totals UNDER only fires when batting stats confirm lower run production is expected
+- Pitcher data adds a second confirmation layer
+- Alerts that don't pass the cross-check are either blocked or downgraded to low confidence
+- Users see exactly **why** the system recommends Under (batting lines + pitcher context)
 
