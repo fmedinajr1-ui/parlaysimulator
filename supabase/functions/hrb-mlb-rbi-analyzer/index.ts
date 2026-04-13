@@ -415,6 +415,11 @@ Deno.serve(async (req) => {
           log(`L10 block: ${alert.player_name} Under — hit rate ${(stats.l10HitRate * 100).toFixed(0)}% (>80%)`);
           continue;
         }
+        // L10 avg range gate: only allow Unders in the 0.25–0.7 sweet spot
+        if (alert.prediction === 'Under' && (stats.l10Avg < 0.25 || stats.l10Avg > 0.7)) {
+          log(`L10 avg block: ${alert.player_name} Under — L10 avg ${stats.l10Avg.toFixed(2)} outside [0.25, 0.7]`);
+          continue;
+        }
 
         alert.metadata.l10_rbi_avg = stats.l10Avg;
         alert.metadata.l3_rbi_avg = stats.l3Avg;
