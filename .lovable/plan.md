@@ -1,47 +1,54 @@
-<final-text>
-Fix RBI alert direction, clean Telegram wording, and stabilize the mega parlay flow.
 
-What I found
-- `SB` means `Stolen Bases`.
-- The HRB RBI analyzer can still create `Over` alerts because its odds-movement logic still resolves some patterns to `Over`, while the `0.4–0.7` average gate only blocks bad `Under` picks. So Over-side RBI alerts can still slip through.
-- Telegram formatting is using shorthand MLB labels (`SB`, `TB`, `HR`, `Ks`) in customer/admin messages, which is why those alerts read unclearly.
-- The mega parlay error message is too generic because the rebuild pipeline only reports “non-2xx status code” instead of surfacing the real scanner failure.
-- There is also a pipeline mismatch right now: one orchestrator has lottery disabled, while `refresh-l10-and-rebuild` still calls `nba-mega-parlay-scanner`.
 
-Plan
-1. Make HRB RBI alerts truly Under-only
-   - Update `supabase/functions/hrb-mlb-rbi-analyzer/index.ts`.
-   - Fix the odds-direction mapping for `price_drift`, `velocity_spike`, and `cascade`.
-   - Add a hard final guard so only `Under 0.5 RBI` alerts can be inserted or sent.
-   - Keep the tightened `0.4–0.7` L10 average gate, hit-rate checks, caps, and dedup on those Under picks.
+# Mega Parlay + Stolen Bases Investigation
 
-2. Clean up Telegram labels
-   - Update `supabase/functions/bot-send-telegram/index.ts`.
-   - Replace shorthand MLB labels with human-readable text in user-facing summaries:
-     - `SB` → `Stolen Bases`
-     - `TB` → `Total Bases`
-     - `Ks/K` → `Strikeouts`
-   - Apply this to slate status, lottery, and related pick summaries so messages are easier to read.
+## Findings
 
-3. Make pipeline error alerts useful
-   - Update `supabase/functions/refresh-l10-and-rebuild/index.ts`.
-   - Surface the actual failed step and scanner error instead of only “Edge Function returned a non-2xx status code”.
-   - Treat expected no-output cases as clean skips/zero-output notices instead of hard failure spam when appropriate.
+### Mega Parlay: Why 0 parlays generated
 
-4. Fix the mega parlay failure path
-   - First inspect the latest live function logs and recent run output for `nba-mega-parlay-scanner`.
-   - Patch the actual failure inside `supabase/functions/nba-mega-parlay-scanner/index.ts`.
-   - Then align orchestration so lottery is handled consistently across pipelines instead of being disabled in one place and still executed in another.
+Two issues identified:
 
-5. Verify end-to-end
-   - Re-run the RBI analyzer and confirm new RBI alerts are Under-only.
-   - Re-send a slate status message and confirm labels are fully readable.
-   - Run the mega parlay step end-to-end and confirm it either produces tickets or exits cleanly with a readable reason.
+1. **No NBA games today** — The scanner found 8 NBA events from the Odds API but ALL 8 have commence times that don't match today (April 13) in Eastern Time. They're likely tomorrow's games. When there are no games today, the scanner correctly produces 0 props → 0 tickets. This is expected behavior, not a bug.
 
-Technical details
-- RBI alert logic: `supabase/functions/hrb-mlb-rbi-analyzer/index.ts`
-- Telegram formatter: `supabase/functions/bot-send-telegram/index.ts`
-- Pipeline summary/error wording: `supabase/functions/refresh-l10-and-rebuild/index.ts`
-- Mega parlay engine: `supabase/functions/nba-mega-parlay-scanner/index.ts`
-- Related slate sender: `supabase/functions/bot-slate-status-update/index.ts`
-</final-text>
+2. **Previous `const` crash (now fixed)** — Earlier runs hit `TypeError: Assignment to constant variable` at line 842 (compiled). The `let scoredProps` fix from the last edit resolved this — the 21:21:49 run completed without errors. However it still produced 0 tickets because of #1 above.
+
+3. **Fallback also empty** — The `unified_props` fallback returned 0 NBA props too, confirming there's genuinely no NBA slate today.
+
+**Verdict**: Mega parlay scanner is working correctly. It will generate tickets when there are NBA games.
+
+### Stolen Bases: Data is completely broken
+
+Critical finding — **all 4,008 game logs since April 1 show `stolen_bases = 0`**. Every single player, every single game. The SB column exists in `mlb_player_game_logs` but the data is never being populated from the source API.
+
+Meanwhile, `unified_props` has active FanDuel SB lines (0.5) for players like Victor Scott II, Jose Ramirez, James Wood, etc. — but there's no actual outcome data to settle against.
+
+**This means**:
+- We cannot validate SB accuracy because there's no real data
+- Any SB alerts would be impossible to settle
+- The `mlb-rbi-settler` doesn't handle SB props anyway
+
+## Plan
+
+### 1. Fix stolen bases data ingestion
+- Identify which edge function populates `mlb_player_game_logs` (likely an MLB game log fetcher)
+- Verify the source API returns SB data and map it to the `stolen_bases` column
+- Backfill existing game logs with correct SB data
+
+### 2. Build SB settler
+- Extend `mlb-rbi-settler` (or create `mlb-sb-settler`) to settle `batter_stolen_bases` alerts
+- Logic: Over 0.5 SB → correct if `stolen_bases >= 1`, Under 0.5 SB → correct if `stolen_bases == 0`
+
+### 3. Create SB alert system (after data is verified)
+- Add SB analysis to `hrb-mlb-rbi-analyzer` or create a dedicated analyzer
+- Use L10 SB averages to identify high-probability Under 0.5 SB picks (most players don't steal bases — Under should be heavily favored)
+- Apply similar gates: L10 avg range, hit rate threshold, dedup
+
+### 4. Add a "no games today" clean exit for mega parlay
+- When 0 events match today's date, log a clean message and skip the Telegram error alert
+- This prevents the pipeline from reporting a false "failure" on off-days
+
+### Technical details
+- **SB ingestion**: Need to inspect the MLB game log fetcher function to find where `stolen_bases` is mapped
+- **SB base rates**: With the 0.5 line, Under is likely 85%+ accurate across all players — only ~15% of player-games result in a stolen base. This makes it a strong signal category if data is fixed.
+- **Mega parlay**: No code changes needed for the scanner itself — just the clean exit messaging
+
