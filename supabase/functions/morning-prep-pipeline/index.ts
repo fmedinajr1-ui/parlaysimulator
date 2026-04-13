@@ -83,12 +83,14 @@ Deno.serve(async (req) => {
     // Step 4.8: Line-sum vs defensive-allowed mismatch analyzer (NBA/NHL/MLB)
     await invokeStep('Line-sum mismatch analyzer', 'line-sum-mismatch-analyzer', {});
 
-    // Step 5: UNIFIED SETTLEMENT — replaces fragmented mlb-rbi-settler + fanduel-accuracy-feedback
-    // Settles ALL signal types through the single settlement-orchestrator
-    // with trigger_learning=false (learning happens at 4 AM wave)
-    await invokeStep('Settlement orchestrator (morning wave)', 'settlement-orchestrator', {
-      trigger_learning: false,
-    });
+    // Step 5: UNIFIED SETTLEMENT — replaces fragmented settlers
+    // Also settle stolen bases via dedicated settler
+    await Promise.all([
+      invokeStep('Settlement orchestrator (morning wave)', 'settlement-orchestrator', {
+        trigger_learning: false,
+      }),
+      invokeStep('MLB SB settler', 'mlb-sb-settler', {}),
+    ]);
 
     // Step 6: Generate RBI parlays from highest-accuracy signals
     await invokeStep('RBI parlay generator', 'generate-rbi-parlays', {});
