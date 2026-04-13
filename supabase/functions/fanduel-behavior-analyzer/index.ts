@@ -874,21 +874,15 @@ Deno.serve(async (req) => {
       if (driftPct >= 8) {
         const live = isLive(last);
         const conf = Math.min(80, 35 + driftPct * 2);
+        // Keep pattern detection for analytics only
         patterns.push({
           sport: last.sport, prop_type: last.prop_type, pattern_type: "snapback_candidate",
           avg_reaction_time_minutes: 0, avg_move_size: drift, confidence: conf,
           sample_size: snapshots.length, cascade_sequence: null,
           velocity_threshold: null, snapback_pct: driftPct, timing_window: null,
         });
-        const playerKey = `${last.event_id}|${last.player_name}`;
-        addAlert(playerKey, conf, {
-          type: "snapback", live, sport: last.sport,
-          player_name: last.player_name, prop_type: last.prop_type,
-          event_description: last.event_description, event_id: last.event_id,
-          opening_line: openingLine, current_line: last.line,
-          drift_pct: Math.round(driftPct * 10) / 10, confidence: conf,
-          hours_to_tip: last.hours_to_tip,
-        });
+        // BLOCKED: snapback is a poison signal (0-17% win rate) — do NOT create alerts or Telegram messages
+        log(`🚫 Snapback blocked (poison signal): ${last.player_name} ${last.prop_type} drift ${driftPct.toFixed(1)}%`);
       }
     }
 

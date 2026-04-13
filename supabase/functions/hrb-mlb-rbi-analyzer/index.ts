@@ -445,24 +445,56 @@ Deno.serve(async (req) => {
     let finalAlerts = Object.values(bestAlerts);
     log(`${finalAlerts.length} final alerts after dedup`);
 
-    // Daily cap guard: skip players who already have 3+ alerts today
-    const { data: overCapPlayers } = await supabase
+    // Daily cap guard: for cascade alerts, cap by event_id+signal_type (not player_name)
+    // For individual alerts, cap by player_name as before
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { data: todayAlerts } = await supabase
       .from('fanduel_prediction_alerts')
-      .select('player_name')
+      .select('player_name, event_id, signal_type')
       .eq('prop_type', 'batter_rbis')
-      .gte('created_at', new Date().toISOString().slice(0, 10));
+      .gte('created_at', todayStr);
 
-    if (overCapPlayers && overCapPlayers.length > 0) {
-      const countMap: Record<string, number> = {};
-      for (const row of overCapPlayers) {
-        countMap[row.player_name] = (countMap[row.player_name] || 0) + 1;
+    if (todayAlerts && todayAlerts.length > 0) {
+      // Count by player_name for individual alerts
+      const playerCountMap: Record<string, number> = {};
+      // Count by event_id+signal_type for cascade alerts
+      const cascadeCountMap: Record<string, number> = {};
+      for (const row of todayAlerts) {
+        playerCountMap[row.player_name] = (playerCountMap[row.player_name] || 0) + 1;
+        if (row.signal_type === 'cascade') {
+          const key = `${row.event_id}::cascade`;
+          cascadeCountMap[key] = (cascadeCountMap[key] || 0) + 1;
+        }
       }
-      const capped = new Set(Object.entries(countMap).filter(([, c]) => c >= DAILY_ALERT_CAP).map(([p]) => p));
-      if (capped.size > 0) {
-        const before = finalAlerts.length;
-        finalAlerts = finalAlerts.filter(a => !capped.has(a.player_name));
-        log(`Daily cap: ${before - finalAlerts.length} alerts removed (players at ${DAILY_ALERT_CAP}+ today)`);
-      }
+      const cappedPlayers = new Set(Object.entries(playerCountMap).filter(([, c]) => c >= DAILY_ALERT_CAP).map(([p]) => p));
+      const cappedCascades = new Set(Object.entries(cascadeCountMap).filter(([, c]) => c >= 3).map(([k]) => k));
+
+      const before = finalAlerts.length;
+      finalAlerts = finalAlerts.filter(a => {
+        if (a.signal_type === 'cascade') {
+          const cascadeKey = `${a.event_id}::cascade`;
+          if (cappedCascades.has(cascadeKey)) return false;
+        } else {
+          if (cappedPlayers.has(a.player_name)) return false;
+        }
+        return true;
+      });
+      log(`Daily cap: ${before - finalAlerts.length} alerts removed (cascade cap=3/event, player cap=${DAILY_ALERT_CAP})`);
+    }
+
+    // Cross-run dedup: skip alerts already inserted in the last 30 minutes
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: recentInserts } = await supabase
+      .from('fanduel_prediction_alerts')
+      .select('event_id, signal_type, prediction')
+      .eq('prop_type', 'batter_rbis')
+      .gte('created_at', thirtyMinAgo);
+
+    if (recentInserts && recentInserts.length > 0) {
+      const recentKeys = new Set(recentInserts.map(r => `${r.event_id}::${r.signal_type}::${r.prediction}`));
+      const beforeDedup = finalAlerts.length;
+      finalAlerts = finalAlerts.filter(a => !recentKeys.has(`${a.event_id}::${a.signal_type}::${a.prediction}`));
+      log(`Cross-run dedup: ${beforeDedup - finalAlerts.length} alerts skipped (already inserted <30min ago)`);
     }
 
     // Insert into fanduel_prediction_alerts
