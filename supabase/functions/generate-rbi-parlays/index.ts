@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
     // Step 3: Score and rank candidates
     const signalAccMap = new Map(bySignal.map(s => [s.signal_type, s]));
     
-    const scored = todayAlerts.map(alert => {
+    const scored = deduped.map(alert => {
       const signalAcc = signalAccMap.get(alert.signal_type);
       const accScore = signalAcc ? signalAcc.win_rate : 50;
       const confScore = (alert.confidence || 0) >= 80 ? 20 : 
