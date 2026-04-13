@@ -944,6 +944,13 @@ Deno.serve(async (req) => {
         log(`🚫 BLOCKED TIN underdog: ${last.player_name} (${last.line}) — favorites only`);
         continue;
       }
+
+      // Kill gate: spread snapbacks historically ≤50% across all ranges
+      if (isTeamMarket && last.prop_type === 'spreads') {
+        log(`🚫 KILLED TIN spread: ${last.player_name} (${last.line}) — below breakeven`);
+        continue;
+      }
+
       const matchupLine = isTeamMarket ? eventMatchup.get(last.event_id) : null;
       const volInfo = volatilityMap.get((last.player_name || "").toLowerCase().trim());
       const readableProp = readablePropLabel(last.prop_type);
