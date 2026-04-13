@@ -54,6 +54,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Blocked players — permanently excluded from RBI alerts
+const BLOCKED_PLAYERS = new Set(['Denzel Clarke']);
+const DAILY_ALERT_CAP_RBI = 3;
+
 const KILLED_VELOCITY_MARKETS = new Set(["spreads", "totals"]);
 const PLAYER_PROP_TYPES = new Set([
   "player_points", "player_rebounds", "player_assists", "player_threes",
