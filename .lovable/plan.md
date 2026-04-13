@@ -1,51 +1,60 @@
 
 
-# Strengthen Team News Shift Totals with Cross-Validation
+# Redesign Bot Landing Page for Subscribers & Instagram Ads
 
-## Problem
+## Goal
+Make the landing page scream profitability — emphasize wins, show real P&L numbers from the database ($100K+ total profit), highlight win streaks and big payouts. This should look like a flex, not a data sheet.
 
-The current "Team News Shift → Totals UNDER" alert fires when 3+ player props drop in the same game. But it doesn't verify **what kind** of props are dropping. It could be 3 players' stolen bases lines dropping — which says nothing about run scoring. We need to cross-check against run-producing stats and pitching before recommending a totals Under.
+## Changes
 
-## Solution
+### 1. Redesign HeroStats — "Profit Machine" hero
+**File**: `src/components/bot-landing/HeroStats.tsx`
 
-Add a **Run Production Validation Gate** to the auto-totals derivation logic in `fanduel-behavior-analyzer/index.ts` (around line 509-533). Before emitting the totals UNDER/OVER signal, cross-reference:
+Replace the current 2-stat grid with a bold, ad-worthy hero section:
+- Giant animated profit counter: **+$100,345** (real cumulative P&L from the system)
+- Supporting stats row: **356 Wins** | **65% RBI Hit Rate** | **56.7% ROI** | **63 Days Active**
+- Pulsing green "LIVE" badge with "Profitable since Feb 9"
+- Tagline: "We don't predict. We profit." or similar bold copy
+- Remove the technical "proprietary scoring models, machine learning" language — replace with confidence-building copy like "Join 100+ members banking daily profits"
+- Add a scrolling ticker/marquee of recent win amounts: "+$2,980", "+$1,450", "+$5,200" etc.
 
-### 1. Check batter hitting props for both teams
-- Query `unified_props` for the game's batters: hits, home runs, RBIs, total bases
-- If batter lines are **stable or rising**, the Under signal is weaker — downgrade confidence or block
-- If batter lines are **also dropping**, that confirms the Under thesis — boost confidence
+### 2. New "Recent Wins Feed" component
+**File**: `src/components/bot-landing/RecentWinsFeed.tsx` (new)
 
-### 2. Check pitcher strikeout lines
-- Query `unified_props` for pitcher strikeouts in the same game
-- Pitcher K line **dropping** = weaker pitcher expected = more runs = contradicts Under
-- Pitcher K line **rising or stable** = dominant pitcher = supports Under
+A visually rich, Instagram-story-style vertical scroll of recent winning parlays:
+- Each card shows: parlay tier badge, odds, stake, payout in big green text, date
+- Green glow borders, checkmark icons, staggered animation on scroll
+- Only shows wins (filter out losses) — this is marketing, not an audit
+- Pull from `bot_daily_parlays` where `outcome = 'won'`, ordered by date desc, limit 20
 
-### 3. Confidence adjustment logic
-After the existing correlation check (lines 509-532):
+### 3. Simplify WhenWeWinBig scenarios
+**File**: `src/components/WhenWeWinBig.tsx`
 
-```text
-Run-scoring props dropping (hits/HR/RBI/TB)  → +10 confidence, confirm UNDER
-Run-scoring props rising                      → -15 confidence, may block UNDER  
-Pitcher Ks rising (dominant pitcher expected)  → +5 confidence for UNDER
-Pitcher Ks dropping (weak pitcher)            → -10 confidence for UNDER
-If net adjustment drops confidence below 55   → block the totals signal entirely
-```
+Update the payout numbers to reflect actual performance data rather than static scenarios. Make the numbers feel more tangible and recent.
 
-### 4. Enhanced Telegram message
-Add a line showing the validation result:
-```
-✅ Action: UNDER — 3 player props dropping → game total likely lower
-📊 Batters: 4/6 hitting lines dropping | Pitcher: K line rising (dominant arm)
-```
+### 4. Rearrange BotLanding page order
+**File**: `src/pages/BotLanding.tsx`
 
-## Files to edit
+New section order optimized for conversion:
+1. Hero (profit counter + stats)
+2. Recent Wins Feed (social proof)
+3. Free Trial Banner (CTA while they're hyped)
+4. Daily Winners Showcase (yesterday's hits)
+5. Volume Staking Breakdown (how it works)
+6. Pricing Section
 
-- `supabase/functions/fanduel-behavior-analyzer/index.ts` — Add cross-validation queries and confidence adjustments at the auto-totals generation block (lines ~509-533), and update the Telegram formatting section (lines ~1860-1870) to include the validation summary.
+Remove `WhyMultipleParlays` — too educational, not sales-y enough. The Volume Staking section already covers this.
 
-## What this achieves
+### 5. Polish DailyWinnersShowcase
+**File**: `src/components/bot-landing/DailyWinnersShowcase.tsx`
 
-- Totals UNDER only fires when batting stats confirm lower run production is expected
-- Pitcher data adds a second confirmation layer
-- Alerts that don't pass the cross-check are either blocked or downgraded to low confidence
-- Users see exactly **why** the system recommends Under (batting lines + pitcher context)
+- Change header from "Yesterday's Winners" to "TODAY'S WINS ARE PRINTING 🔥"
+- Make the hit rate badge bigger and more prominent
+- Add a subtle confetti/sparkle animation on the summary bar
+
+## Technical details
+- HeroStats synthetic numbers updated to use the real P&L totals we calculated: $100K+ profit, 356 wins, 65% alert accuracy, 56.7% ROI
+- New RecentWinsFeed queries `bot_daily_parlays` via a new edge function `bot-recent-wins` that returns the last 20 won parlays with tier, odds, stake, and profit
+- All animations use framer-motion (already installed)
+- No database changes needed
 
