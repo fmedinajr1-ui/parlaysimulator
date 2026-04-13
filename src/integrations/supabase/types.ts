@@ -6179,6 +6179,63 @@ export type Database = {
         }
         Relationships: []
       }
+      line_sum_mismatch_analysis: {
+        Row: {
+          analysis_date: string
+          created_at: string
+          direction_signal: string | null
+          event_id: string | null
+          game_description: string
+          gap: number | null
+          gap_pct: number | null
+          id: string
+          opponent_defensive_allowed: number | null
+          opponent_defensive_rank: number | null
+          opponent_name: string | null
+          players_counted: number | null
+          sport: string
+          stat_category: string
+          summed_player_lines: number | null
+          team_name: string
+        }
+        Insert: {
+          analysis_date?: string
+          created_at?: string
+          direction_signal?: string | null
+          event_id?: string | null
+          game_description: string
+          gap?: number | null
+          gap_pct?: number | null
+          id?: string
+          opponent_defensive_allowed?: number | null
+          opponent_defensive_rank?: number | null
+          opponent_name?: string | null
+          players_counted?: number | null
+          sport: string
+          stat_category: string
+          summed_player_lines?: number | null
+          team_name: string
+        }
+        Update: {
+          analysis_date?: string
+          created_at?: string
+          direction_signal?: string | null
+          event_id?: string | null
+          game_description?: string
+          gap?: number | null
+          gap_pct?: number | null
+          id?: string
+          opponent_defensive_allowed?: number | null
+          opponent_defensive_rank?: number | null
+          opponent_name?: string | null
+          players_counted?: number | null
+          sport?: string
+          stat_category?: string
+          summed_player_lines?: number | null
+          team_name?: string
+        }
+        Relationships: []
+      }
       lineup_alerts: {
         Row: {
           alert_type: string
