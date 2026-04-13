@@ -100,10 +100,10 @@ export function DailyWinnersShowcase() {
       >
         <div className="flex items-center gap-3 mb-2">
           <div className="h-8 w-1 bg-accent rounded-full" />
-          <h2 className="text-xl sm:text-2xl font-bold text-foreground">
-            Yesterday's Winners
+          <h2 className="text-xl sm:text-2xl font-bold text-foreground font-bebas tracking-wide">
+            🔥 WINS ARE PRINTING
           </h2>
-          <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+          <span className="text-xs text-accent bg-accent/10 border border-accent/20 px-2 py-1 rounded-full font-semibold">
             {displayDate}
           </span>
         </div>
