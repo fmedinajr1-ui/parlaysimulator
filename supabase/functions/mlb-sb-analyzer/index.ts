@@ -158,6 +158,7 @@ Deno.serve(async (req) => {
         prediction: `Under ${prop.current_line || 0.5} Stolen Bases`,
         signal_type: 'sb_under_l10',
         bookmaker: prop.bookmaker || 'fanduel',
+        event_id: prop.event_id || `sb_${normalizeName(prop.player_name)}_${today}`,
         metadata: {
           l10_sb_avg: stats.avg,
           l10_under_rate: stats.underRate,
