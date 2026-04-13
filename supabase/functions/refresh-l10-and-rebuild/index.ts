@@ -90,6 +90,14 @@ Deno.serve(async (req) => {
   const elapsed = () => Date.now() - functionStartTime;
   const hasTime = () => elapsed() < TIMEOUT_MS;
 
+  // Non-fatal steps: log warning but don't send pipeline failure alert
+  const NON_FATAL_STEPS = new Set([
+    'nba-mega-parlay-scanner', 'hrb-nrfi-scanner', 'hrb-mlb-hr-scanner',
+    'hrb-mlb-rbi-scanner', 'hrb-mlb-rbi-analyzer', 'tennis-props-sync',
+    'tennis-games-analyzer', 'mma-props-sync', 'mma-rounds-analyzer',
+    'broadcast-sweet-spots', 'bot-slate-status-update', 'engine-tracker-sync',
+  ]);
+
   const invokeStep = async (name: string, fnName: string, stepBody: object = {}) => {
     if (!hasTime()) {
       log(`⏭ SKIPPED ${name} — timeout approaching (${elapsed()}ms)`);
@@ -99,24 +107,39 @@ Deno.serve(async (req) => {
     }
     log(`▶ ${name} (${elapsed()}ms elapsed)`);
     try {
-      const { error } = await supabase.functions.invoke(fnName, { body: stepBody });
+      const { data, error } = await supabase.functions.invoke(fnName, { body: stepBody });
       if (error) {
-        const errMsg = error.message || JSON.stringify(error);
+        // Extract the real error from the response body if available
+        let errMsg = error.message || JSON.stringify(error);
+        if (typeof data === 'object' && data?.error) {
+          errMsg = `${data.error} (${errMsg})`;
+        }
         log(`⚠ ${name} error: ${errMsg}`);
         results[fnName] = `error: ${errMsg}`;
-        sendPipelineAlert(
-          `🚨 *Pipeline Step Error*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``
-        );
+
+        if (NON_FATAL_STEPS.has(fnName)) {
+          log(`ℹ ${name} is non-fatal — continuing pipeline`);
+        } else {
+          sendPipelineAlert(
+            `🚨 *Pipeline Step Error*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``
+          );
+        }
       } else {
         log(`✅ ${name} done (${elapsed()}ms total)`);
         results[fnName] = "ok";
       }
     } catch (e: any) {
-      log(`❌ ${name} exception: ${e.message}`);
-      results[fnName] = `exception: ${e.message}`;
-      sendPipelineAlert(
-        `🚨 *Pipeline Step Exception*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${e.message}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``
-      );
+      const errMsg = e.message || 'Unknown exception';
+      log(`❌ ${name} exception: ${errMsg}`);
+      results[fnName] = `exception: ${errMsg}`;
+
+      if (NON_FATAL_STEPS.has(fnName)) {
+        log(`ℹ ${name} is non-fatal — continuing pipeline`);
+      } else {
+        sendPipelineAlert(
+          `🚨 *Pipeline Step Exception*\n\n*Step:* ${name}\n*Function:* \`${fnName}\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``
+        );
+      }
     }
   };
 

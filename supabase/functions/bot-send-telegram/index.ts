@@ -35,10 +35,13 @@ const PROP_LABELS: Record<string, string> = {
   player_goals: 'G', player_shots_on_goal: 'SOG', player_blocked_shots: 'BLK',
   player_power_play_points: 'PPP', player_points_nhl: 'PTS',
   player_assists_nhl: 'A', player_saves: 'SVS', assists_nhl: 'A',
-  pitcher_strikeouts: 'Ks', total_bases: 'TB', hits: 'H',
-  runs: 'R', rbis: 'RBI', stolen_bases: 'SB', walks: 'BB',
-  hitter_fantasy_score: 'FPTS', batter_home_runs: 'HR',
+  pitcher_strikeouts: 'Strikeouts', total_bases: 'Total Bases', hits: 'Hits',
+  runs: 'Runs', rbis: 'RBI', stolen_bases: 'Stolen Bases', walks: 'Walks',
+  hitter_fantasy_score: 'FPTS', batter_home_runs: 'Home Runs',
   player_fantasy_score: 'FPTS',
+  batter_stolen_bases: 'Stolen Bases', batter_total_bases: 'Total Bases',
+  batter_hits: 'Hits', batter_rbis: 'RBI', batter_runs_scored: 'Runs',
+  batter_home_runs: 'Home Runs', pitcher_outs: 'Outs',
 };
 
 function getSportEmoji(leg: any): string {
@@ -71,8 +74,9 @@ function formatPropLabel(pt: string): string {
     player_points_rebounds: 'PR', player_points_assists: 'PA',
     player_rebounds_assists: 'RA',
     batter_hits: 'Hits', batter_rbis: 'RBI', batter_runs_scored: 'Runs',
-    batter_total_bases: 'TB', batter_home_runs: 'HR', batter_stolen_bases: 'SB',
-    pitcher_strikeouts: 'K', pitcher_outs: 'Outs',
+    batter_total_bases: 'Total Bases', batter_home_runs: 'Home Runs',
+    batter_stolen_bases: 'Stolen Bases',
+    pitcher_strikeouts: 'Strikeouts', pitcher_outs: 'Outs',
   };
   return labels[pt] || pt.replace(/^(player_|batter_|pitcher_)/, '').replace(/_/g, ' ').toUpperCase();
 }
