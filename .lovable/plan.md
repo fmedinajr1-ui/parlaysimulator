@@ -1,46 +1,37 @@
 
 
-# Today's Alert Status + Reduce Alert Noise
+# Fix: L10 Average Gate Not Applied to Cascade Alerts
 
-## What the recent changes ARE doing (confirmed working)
+## Problem
 
-1. **L10 avg gate** — Active. Logs show: `L10 avg block: Adolis Garcia Under — L10 avg 0.10 outside [0.25, 0.7]`
-2. **Blocked players** — Active. Denzel Clarke blocked (no signals from him today)
-3. **Perfect Line tightened thresholds** — Active. 0 perfect_line alerts generated today (thresholds may be too tight for today's slate, but they are enforced)
+The screenshot shows players like **Mitch Garver (L10 0 avg)** and **Luke Raley (L10 0.3 avg)** in CASCADE alerts. These should be blocked.
 
-## What's broken: massive alert flooding
+**Root cause**: Line 401-404 in `hrb-mlb-rbi-analyzer/index.ts` — cascade alerts skip the entire L10 validation block:
+```typescript
+if (alert.signal_type === 'cascade') {
+  // Already validated during cascade construction
+  validatedAlerts.push(alert);
+  continue;  // ← skips the L10 avg gate at line 418
+}
+```
 
-| Signal Type | Alerts Today | Problem |
-|---|---|---|
-| cascade | 247 | Same 2 games repeating every 5 min — daily cap doesn't work for TEAM CASCADE names |
-| snapback_candidate | 113 | Juan Brito: 63 alerts, Nick Allen: 25, Edouard Julien: 25 — no daily cap at all |
-| price_drift | 10 | Acceptable |
+The cascade construction (line 316-386) only checks the **team-level** confirmation ratio (≥40% of players must confirm). It does NOT apply the L10 average range gate to individual players within the cascade.
 
-### Root causes
+## Fix (1 change, ~10 lines)
 
-1. **Cascade daily cap broken** — The cap checks `player_name` in the DB, but cascade alerts use `"TEAM CASCADE (player1, player2, ...)"` with players in random order each run. The names never match, so the cap never fires.
+**File**: `supabase/functions/hrb-mlb-rbi-analyzer/index.ts`
 
-2. **Snapback has no daily cap** — The daily cap code only lives in `hrb-mlb-rbi-analyzer`. The `fanduel-behavior-analyzer` (which generates snapback_candidate) has no per-player cap at all.
+### Tighten range to 0.4–0.7 and apply it inside cascade construction
 
-3. **Snapback is a known poison signal** — Per system memory, snapback has a 0-17% historical win rate and is formally blacklisted from parlays. Yet it's still generating 113 alerts/day and spamming Telegram.
+In the per-player loop (~line 335), after getting `stats`, filter out players whose L10 avg is outside 0.4–0.7 before counting them toward the cascade. Players outside the range get marked `'avg_blocked'` and excluded from the confirmation ratio.
 
-## Plan: 4 changes to reduce noise
+Also update the standalone gate at line 419 from `0.25–0.7` → `0.4–0.7`.
 
-### 1. Fix cascade daily cap in `hrb-mlb-rbi-analyzer` (~line 449)
-Instead of matching on `player_name` (which varies for TEAM CASCADE), match on `event_id + signal_type` combo. If the same event already has 3+ cascade alerts today, skip it.
+This means:
+- **Mitch Garver (0.0 avg)** → blocked from cascade count
+- **Luke Raley (0.3 avg)** → blocked from cascade count  
+- **Christian Walker (0.7 avg)** → passes (right at boundary)
+- **Cole Young (0.5 avg)** → passes
 
-### 2. Block snapback_candidate from generating alerts in `fanduel-behavior-analyzer`
-Since snapback is a poison signal (0-17% win rate), stop inserting `snapback_candidate` rows into `fanduel_prediction_alerts` entirely. Keep the pattern detection for internal analytics but don't create alerts or send Telegram messages.
-
-### 3. Add cross-run dedup to `hrb-mlb-rbi-analyzer` insert logic
-Before inserting, check if the same `event_id + signal_type + prediction` combination was already inserted in the last 30 minutes. Skip if so. This prevents the every-5-minute cascade duplication.
-
-### 4. Add cross-run dedup to `fanduel-behavior-analyzer` for any remaining signal types
-Same 30-minute dedup window for `price_drift` signals to prevent accumulation.
-
-## Expected impact
-- Cascade alerts: 247 → ~6-10/day (one per unique game event)
-- Snapback alerts: 113 → 0 (blocked as poison signal)
-- Price drift: stays at ~10 (add dedup guard for safety)
-- Total daily noise: ~370 → ~15-20 alerts
+If too many players get filtered out, the cascade won't meet the 40% confirmation threshold and the whole alert gets blocked.
 
