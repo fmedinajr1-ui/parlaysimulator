@@ -340,6 +340,13 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // L10 avg range gate: block players outside 0.4–0.7 from cascade count
+        if (stats.l10Avg < 0.4 || stats.l10Avg > 0.7) {
+          log(`Cascade L10 avg block: ${p.player} — L10 avg ${stats.l10Avg.toFixed(2)} outside [0.4, 0.7]`);
+          playerBreakdown.push({ player: p.player, change: p.change, status: 'avg_blocked', l10Avg: stats.l10Avg, l10HitRate: stats.l10HitRate });
+          continue; // excluded from confirmed/neutral/contradicted counts
+        }
+
         const confirmation = getPlayerConfirmation(stats, prediction);
         if (confirmation === 'confirmed') confirmed++;
         else if (confirmation === 'neutral') neutral++;
@@ -415,9 +422,9 @@ Deno.serve(async (req) => {
           log(`L10 block: ${alert.player_name} Under — hit rate ${(stats.l10HitRate * 100).toFixed(0)}% (>80%)`);
           continue;
         }
-        // L10 avg range gate: only allow Unders in the 0.25–0.7 sweet spot
-        if (alert.prediction === 'Under' && (stats.l10Avg < 0.25 || stats.l10Avg > 0.7)) {
-          log(`L10 avg block: ${alert.player_name} Under — L10 avg ${stats.l10Avg.toFixed(2)} outside [0.25, 0.7]`);
+        // L10 avg range gate: only allow Unders in the 0.4–0.7 sweet spot
+        if (alert.prediction === 'Under' && (stats.l10Avg < 0.4 || stats.l10Avg > 0.7)) {
+          log(`L10 avg block: ${alert.player_name} Under — L10 avg ${stats.l10Avg.toFixed(2)} outside [0.4, 0.7]`);
           continue;
         }
 
