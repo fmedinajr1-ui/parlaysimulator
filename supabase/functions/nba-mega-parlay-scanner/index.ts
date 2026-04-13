@@ -493,8 +493,22 @@ Deno.serve(async (req) => {
         }
         console.log(`[MegaParlay] Loaded ${rawProps.length} props from unified_props fallback`);
       } else {
-        console.log(`[MegaParlay] unified_props fallback returned 0 props`);
+        console.log(`[MegaParlay] unified_props fallback returned 0 props — no NBA games today`);
       }
+    }
+
+    // Clean exit when no props available (no games today)
+    if (rawProps.length === 0) {
+      console.log(`[MegaParlay] No NBA props available — likely no games today. Clean exit.`);
+      return new Response(JSON.stringify({
+        success: true,
+        tickets: [],
+        total_tickets: 0,
+        message: 'No NBA games today — skipped cleanly',
+        date: today,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const exoticCount = rawProps.filter(p => p.market_type === 'exotic_player').length;
