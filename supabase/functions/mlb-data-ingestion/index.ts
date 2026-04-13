@@ -15,6 +15,8 @@ const corsHeaders = {
 
 const ESPN_SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard';
 const ESPN_SUMMARY_URL = 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary';
+const MLB_STATS_SCHEDULE_URL = 'https://statsapi.mlb.com/api/v1/schedule';
+const MLB_STATS_BOXSCORE_URL = 'https://statsapi.mlb.com/api/v1/game';
 
 interface PlayerGameLog {
   player_name: string;
@@ -339,6 +341,61 @@ Deno.serve(async (req) => {
         } // end box score loop
         await new Promise(r => setTimeout(r, 50)); // small delay between batches
       } // end batch loop
+
+      // === SUPPLEMENTAL: Fetch SB data from MLB Stats API ===
+      // ESPN doesn't include SB in box scores, so we patch from statsapi.mlb.com
+      try {
+        const formattedForMLB = dateStr; // already YYYY-MM-DD
+        const schedResp = await fetch(`${MLB_STATS_SCHEDULE_URL}?sportId=1&date=${formattedForMLB}`);
+        if (schedResp.ok) {
+          const schedData = await schedResp.json();
+          const mlbGames = schedData.dates?.[0]?.games || [];
+          const finalGames = mlbGames.filter((g: any) => g.status?.detailedState === 'Final');
+          
+          const sbUpdates: { player_name: string; game_date: string; stolen_bases: number }[] = [];
+          
+          for (const game of finalGames) {
+            try {
+              const boxResp = await fetch(`${MLB_STATS_BOXSCORE_URL}/${game.gamePk}/boxscore`);
+              if (!boxResp.ok) continue;
+              const boxData = await boxResp.json();
+              
+              for (const side of ['away', 'home']) {
+                const players = boxData.teams?.[side]?.players || {};
+                for (const [, p] of Object.entries(players) as [string, any][]) {
+                  const batting = p.stats?.batting;
+                  if (!batting || (batting.atBats || 0) === 0) continue;
+                  const sb = batting.stolenBases || 0;
+                  const name = p.person?.fullName;
+                  if (name) {
+                    sbUpdates.push({ player_name: name, game_date: dateStr, stolen_bases: sb });
+                  }
+                }
+              }
+              await new Promise(r => setTimeout(r, 30));
+            } catch { /* skip individual game */ }
+          }
+          
+          // Batch update SB values
+          if (sbUpdates.length > 0) {
+            let sbPatched = 0;
+            for (let k = 0; k < sbUpdates.length; k += 50) {
+              const chunk = sbUpdates.slice(k, k + 50);
+              for (const upd of chunk) {
+                const { error: sbErr } = await supabase
+                  .from('mlb_player_game_logs')
+                  .update({ stolen_bases: upd.stolen_bases })
+                  .eq('player_name', upd.player_name)
+                  .eq('game_date', upd.game_date);
+                if (!sbErr) sbPatched++;
+              }
+            }
+            console.log(`[MLB Ingestion] SB patch for ${dateStr}: ${sbPatched}/${sbUpdates.length} players updated`);
+          }
+        }
+      } catch (sbPatchErr) {
+        console.log(`[MLB Ingestion] SB patch failed for ${dateStr}: ${sbPatchErr}`);
+      }
     }
 
     const duration = Date.now() - startTime;

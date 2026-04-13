@@ -68,6 +68,9 @@ Deno.serve(async (req) => {
     // Step 4: MLB RBI Under/Over analyzer with pitcher cross-references
     await invokeStep('MLB RBI Under analyzer', 'mlb-rbi-under-analyzer', {});
 
+    // Step 4.1: MLB Stolen Bases Under analyzer
+    await invokeStep('MLB SB Under analyzer', 'mlb-sb-analyzer', {});
+
     // Step 4.5: Sync tennis totals from game_bets → unified_props, then analyze
     await invokeStep('Tennis props sync', 'tennis-props-sync', {});
     await invokeStep('Tennis games analyzer', 'tennis-games-analyzer', {});
@@ -83,12 +86,14 @@ Deno.serve(async (req) => {
     // Step 4.8: Line-sum vs defensive-allowed mismatch analyzer (NBA/NHL/MLB)
     await invokeStep('Line-sum mismatch analyzer', 'line-sum-mismatch-analyzer', {});
 
-    // Step 5: UNIFIED SETTLEMENT — replaces fragmented mlb-rbi-settler + fanduel-accuracy-feedback
-    // Settles ALL signal types through the single settlement-orchestrator
-    // with trigger_learning=false (learning happens at 4 AM wave)
-    await invokeStep('Settlement orchestrator (morning wave)', 'settlement-orchestrator', {
-      trigger_learning: false,
-    });
+    // Step 5: UNIFIED SETTLEMENT — replaces fragmented settlers
+    // Also settle stolen bases via dedicated settler
+    await Promise.all([
+      invokeStep('Settlement orchestrator (morning wave)', 'settlement-orchestrator', {
+        trigger_learning: false,
+      }),
+      invokeStep('MLB SB settler', 'mlb-sb-settler', {}),
+    ]);
 
     // Step 6: Generate RBI parlays from highest-accuracy signals
     await invokeStep('RBI parlay generator', 'generate-rbi-parlays', {});
