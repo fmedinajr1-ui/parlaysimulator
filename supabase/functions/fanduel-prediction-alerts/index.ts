@@ -1279,6 +1279,12 @@ Deno.serve(async (req) => {
       dedupedRecords = allRecordsForDb.filter(r => {
         const key = `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`;
         if (recentKeys.has(key)) { log(`⏭ Dedup: ${r.player_name} ${r.prop_type}`); return false; }
+        // Block UNDER stolen bases — HRB only offers Over side
+        if ((r.prop_type === 'batter_stolen_bases' || r.prop_type === 'stolen_bases') && 
+            r.prediction?.toUpperCase().startsWith('UNDER')) {
+          log(`🚫 Blocked UNDER SB: ${r.player_name}`);
+          return false;
+        }
         return true;
       });
       log(`Dedup: ${allRecordsForDb.length} → ${dedupedRecords.length}`);
@@ -1302,6 +1308,13 @@ Deno.serve(async (req) => {
     // Owner rules filter
     let rulesBlocked = 0;
     const filteredAlerts = telegramAlerts.filter((alertText: string) => {
+      // Block UNDER stolen bases from Telegram — HRB only offers Over
+      const lowerAlert = alertText.toLowerCase();
+      if (lowerAlert.includes('stolen bases') && lowerAlert.includes('under')) {
+        log(`🚫 Blocked UNDER SB Telegram alert`);
+        rulesBlocked++;
+        return false;
+      }
       for (const rule of ownerRules) {
         if (rule.rule_key === "pitcher_k_follow_market") {
           const kTypes = ((rule.rule_logic as any).prop_types || []) as string[];
