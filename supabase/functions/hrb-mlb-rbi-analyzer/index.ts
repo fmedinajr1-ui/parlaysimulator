@@ -440,6 +440,7 @@ Deno.serve(async (req) => {
         alert.metadata.l10_hit_rate = stats.l10HitRate;
         alert.metadata.l10_sample = stats.l10Games;
         alert.metadata.trend = stats.trend;
+        alert.metadata.l10_hrs = stats.l10HRs;
       }
 
       validatedAlerts.push(alert);
