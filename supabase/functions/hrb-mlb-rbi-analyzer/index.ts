@@ -337,6 +337,13 @@ Deno.serve(async (req) => {
           continue; // excluded from confirmed/neutral/contradicted counts
         }
 
+        // HR Power Gate: block players with 2+ HRs in L10 from Under cascade
+        if (stats.l10HRs >= 2) {
+          log(`Cascade HR power block: ${p.player} — ${stats.l10HRs} HRs in L10 (solo HR risk)`);
+          playerBreakdown.push({ player: p.player, change: p.change, status: 'hr_power_blocked', l10Avg: stats.l10Avg, l10HRs: stats.l10HRs });
+          continue;
+        }
+
         const confirmation = getPlayerConfirmation(stats, prediction);
         if (confirmation === 'confirmed') confirmed++;
         else if (confirmation === 'neutral') neutral++;
@@ -416,6 +423,16 @@ Deno.serve(async (req) => {
         if (alert.prediction === 'Under' && (stats.l10Avg < 0.4 || stats.l10Avg > 0.7)) {
           log(`L10 avg block: ${alert.player_name} Under — L10 avg ${stats.l10Avg.toFixed(2)} outside [0.4, 0.7]`);
           continue;
+        }
+        // HR Power Gate: block Under picks for players with 2+ HRs in L10
+        if (alert.prediction === 'Under' && stats.l10HRs >= 2) {
+          log(`HR power block: ${alert.player_name} Under — ${stats.l10HRs} HRs in L10 (solo HR risk)`);
+          continue;
+        }
+        // HR Power Gate: penalty for 1 HR in L10
+        if (alert.prediction === 'Under' && stats.l10HRs === 1) {
+          alert.confidence -= 10;
+          log(`HR power penalty: ${alert.player_name} — 1 HR in L10, confidence -10 → ${alert.confidence}`);
         }
 
         alert.metadata.l10_rbi_avg = stats.l10Avg;
