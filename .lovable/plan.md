@@ -1,55 +1,40 @@
 
 
-# Add "Over RBI" Engine for HR Power Hitters vs Weak Pitchers
+# Nuke All Under Stolen Bases from Every System
 
-## Concept
-You're right — players with 2+ HRs in L10 who face weak pitchers are exactly who you want on **Over** RBI picks. Right now the system blocks them from Unders but wastes the data. Flip it: use the HR Power Gate rejects as Over candidates.
+## Problem
+Under SB picks keep appearing in parlays (see Parlay #3 in your screenshot). Three leak sources:
 
-## Qualifying Criteria (Over 0.5 RBI)
-- **L10 HRs >= 2** (the same players currently blocked from Unders)
-- **Facing a weak pitcher**: ERA >= 4.0 OR K/game < 5 (inverse of the Under pitcher gate)
-- **L10 RBI avg >= 0.5** (producing RBIs, not just hitting HRs in blowouts)
-- **L10 hit rate >= 40%** (hitting Over 0.5 in at least 4 of 10 games)
+1. **`mlb-batter-analyzer`** — generic analyzer treats `batter_stolen_bases` like any other prop and generates UNDER signals into `mispriced_lines`
+2. **`l3-cross-engine-parlay`** — blocks Under SB from **sweet spots** (line 170) but NOT from **mispriced lines** (line 139-163), so mispriced Under SB leaks through
+3. **`fanduel-prediction-alerts`** — has a block at Telegram level but old `sb_under_l10` records already exist in the database and can be picked up by parlay engines
 
-## Changes
+## Fix (3 files)
 
-### 1. `hrb-mlb-rbi-analyzer/index.ts` — Add Over RBI detection
-After the existing Under validation loop, add a second pass that collects **Over** candidates:
-- Players with `l10HRs >= 2` AND `l10Avg >= 0.5` AND `l10HitRate >= 0.4`
-- Tag with `prediction: 'Over'` and `signal_type: 'hr_power_over'`
-- Store opposing pitcher info in metadata for the parlay generator
-- Same dedup, daily cap, and Telegram dispatch as Unders
-
-### 2. `generate-rbi-parlays/index.ts` — Add Over parlay generation
-After the existing Under parlay section, add a separate Over parlay builder:
-- Pull today's `hr_power_over` alerts from `fanduel_prediction_alerts`
-- **Inverse pitcher gate**: require weak pitcher (ERA >= 4.0 OR K/game < 5)
-- Score by: L10 HR count, L10 avg, hit rate, pitcher weakness
-- Build **3-leg Over RBI parlays** (require >= 3 candidates)
-- Also build 2-leg version as backup
-- Separate Telegram message: "🔥 RBI Over Power Parlay"
-
-### 3. Telegram format for Overs
-```
-🔥 RBI Over Power Parlay (3-Leg)
-
-1️⃣ Matt Olson — OVER 0.5 RBI
-   💪 3 HRs in L10 | L10: 0.7 avg (6/10 over)
-   🎯 Facing [weak pitcher] (4.82 ERA, 3.2 K/g)
-
-2️⃣ Ketel Marte — OVER 0.5 RBI
-   💪 3 HRs in L10 | L10: 0.8 avg (7/10 over)
-   🎯 Facing [weak pitcher] (5.10 ERA, 4.1 K/g)
-
-3️⃣ Daulton Varsho — OVER 0.5 RBI
-   💪 2 HRs in L10 | L10: 0.5 avg (5/10 over)
-   🎯 Facing [weak pitcher] (4.50 ERA, 4.8 K/g)
+### 1. `mlb-batter-analyzer/index.ts` — Block at source
+Add a skip for `batter_stolen_bases` UNDER before pushing to results (around line 165):
+```typescript
+// Block UNDER stolen bases — Over-only market
+if ((prop.stat_type === 'batter_stolen_bases' || prop.stat_type === 'stolen_bases') && signal === 'UNDER') {
+  continue;
+}
 ```
 
-### Files
-- `supabase/functions/hrb-mlb-rbi-analyzer/index.ts` — add Over candidate detection
-- `supabase/functions/generate-rbi-parlays/index.ts` — add Over parlay builder + Telegram
+### 2. `l3-cross-engine-parlay/index.ts` — Block in mispriced section
+Add the same Under SB block in the mispriced loop (lines 139-163), not just the sweet spot loop:
+```typescript
+// Inside the mispriced loop, before pickMap.set:
+if ((normalizedProp === 'stolen_bases' || normalizedProp === 'stolen bases') && m.signal.toLowerCase() === 'under') {
+  console.log(`[L3CrossEngine] Blocked UNDER SB (mispriced): ${m.player_name}`);
+  continue;
+}
+```
 
-### No DB changes needed
-Uses existing `fanduel_prediction_alerts` table and `hrb_rbi_line_timeline` — just new signal type `hr_power_over`.
+### 3. `fanduel-prediction-alerts/index.ts` — Already has blocks (no change needed)
+The existing blocks at lines 1282-1284 and 1311-1313 are correct. No change needed here.
+
+### Summary
+- Stop creating Under SB at the source (batter analyzer)
+- Block the mispriced path in L3 engine (was only blocking sweet spot path)
+- No DB changes needed — old records won't be picked up once both paths are blocked
 
