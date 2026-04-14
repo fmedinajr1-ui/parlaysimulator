@@ -57,8 +57,8 @@ Deno.serve(async (req) => {
   try {
     console.log(`[L3CrossEngine] Starting for ${today}`);
 
-    // Fetch all 3 sources in parallel
-    const [mispricedRes, sweetRes, hcRes] = await Promise.all([
+    // Fetch all sources in parallel (including MLB Over SB/HR)
+    const [mispricedRes, sweetRes, hcRes, sbAlertsRes, hrSweetRes] = await Promise.all([
       sb.from('mispriced_lines')
         .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
         .eq('analysis_date', today)
@@ -70,13 +70,27 @@ Deno.serve(async (req) => {
       sb.from('high_conviction_results')
         .select('player_name, prop_type, signal, edge_pct, conviction_score, current_line, player_avg, sport, engines, confidence_tier')
         .eq('analysis_date', today),
+      // Over SB alerts (HIGH/ELITE tier only)
+      sb.from('fanduel_prediction_alerts')
+        .select('player_name, prop_type, prediction, metadata, event_id')
+        .eq('signal_type', 'sb_over_l10')
+        .is('was_correct', null)
+        .gte('created_at', `${today}T00:00:00`),
+      // Over HR sweet spots
+      sb.from('category_sweet_spots')
+        .select('player_name, prop_type, category, recommended_side, actual_line, l3_avg, confidence_score, quality_tier')
+        .eq('analysis_date', today)
+        .eq('is_active', true)
+        .eq('category', 'MLB_HR_OVER'),
     ]);
 
     const mispriced = mispricedRes.data || [];
     const sweets = sweetRes.data || [];
     const hcPlays = hcRes.data || [];
+    const sbAlerts = sbAlertsRes.data || [];
+    const hrSweets = hrSweetRes.data || [];
 
-    console.log(`[L3CrossEngine] Sources — Mispriced: ${mispriced.length}, Sweet: ${sweets.length}, HC: ${hcPlays.length}`);
+    console.log(`[L3CrossEngine] Sources — Mispriced: ${mispriced.length}, Sweet: ${sweets.length}, HC: ${hcPlays.length}, SB Over: ${sbAlerts.length}, HR Over: ${hrSweets.length}`);
 
     // Filter mispriced to L3-confirmed only
     const l3Mispriced = mispriced.filter((m: any) => {
@@ -229,6 +243,51 @@ Deno.serve(async (req) => {
           l3_avg: 0,
           hit_rate: 0,
           odds: -110,
+        });
+      }
+    }
+
+    // Add Over SB alerts (HIGH/ELITE tier for parlay inclusion)
+    for (const sba of sbAlerts) {
+      const tier = sba.metadata?.tier || 'MEDIUM';
+      if (tier === 'MEDIUM') continue; // Only HIGH/ELITE in parlays
+      const key = makeKey(sba.player_name, 'stolen_bases');
+      if (!pickMap.has(key)) {
+        pickMap.set(key, {
+          player_name: sba.player_name,
+          prop_type: 'stolen_bases',
+          display_prop_type: 'batter_stolen_bases',
+          side: 'over',
+          line: sba.metadata?.line || 0.5,
+          edge_pct: (sba.metadata?.l10_over_rate || 0.5) * 20, // convert to edge-like score
+          confidence_tier: tier,
+          sport: 'MLB',
+          sources: ['sb_over'],
+          l3_avg: sba.metadata?.l5_sb_avg || sba.metadata?.blended_avg || 0,
+          hit_rate: sba.metadata?.l10_over_rate || 0,
+          odds: -130,
+        });
+      }
+    }
+
+    // Add Over HR sweet spots
+    for (const hr of hrSweets) {
+      if ((hr.confidence_score || 0) < 0.60) continue; // Quality gate
+      const key = makeKey(hr.player_name, 'home_runs');
+      if (!pickMap.has(key)) {
+        pickMap.set(key, {
+          player_name: hr.player_name,
+          prop_type: 'home_runs',
+          display_prop_type: 'batter_home_runs',
+          side: 'over',
+          line: hr.actual_line || 0.5,
+          edge_pct: 8, // base edge score for HR overs
+          confidence_tier: hr.quality_tier || 'HIGH',
+          sport: 'MLB',
+          sources: ['hr_over'],
+          l3_avg: hr.l3_avg || 0,
+          hit_rate: hr.confidence_score || 0,
+          odds: 200, // typical HR over odds
         });
       }
     }
