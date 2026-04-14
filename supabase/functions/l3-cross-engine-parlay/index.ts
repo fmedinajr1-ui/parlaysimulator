@@ -247,6 +247,51 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Add Over SB alerts (HIGH/ELITE tier for parlay inclusion)
+    for (const sba of sbAlerts) {
+      const tier = sba.metadata?.tier || 'MEDIUM';
+      if (tier === 'MEDIUM') continue; // Only HIGH/ELITE in parlays
+      const key = makeKey(sba.player_name, 'stolen_bases');
+      if (!pickMap.has(key)) {
+        pickMap.set(key, {
+          player_name: sba.player_name,
+          prop_type: 'stolen_bases',
+          display_prop_type: 'batter_stolen_bases',
+          side: 'over',
+          line: sba.metadata?.line || 0.5,
+          edge_pct: (sba.metadata?.l10_over_rate || 0.5) * 20, // convert to edge-like score
+          confidence_tier: tier,
+          sport: 'MLB',
+          sources: ['sb_over'],
+          l3_avg: sba.metadata?.l5_sb_avg || sba.metadata?.blended_avg || 0,
+          hit_rate: sba.metadata?.l10_over_rate || 0,
+          odds: -130,
+        });
+      }
+    }
+
+    // Add Over HR sweet spots
+    for (const hr of hrSweets) {
+      if ((hr.confidence_score || 0) < 0.60) continue; // Quality gate
+      const key = makeKey(hr.player_name, 'home_runs');
+      if (!pickMap.has(key)) {
+        pickMap.set(key, {
+          player_name: hr.player_name,
+          prop_type: 'home_runs',
+          display_prop_type: 'batter_home_runs',
+          side: 'over',
+          line: hr.actual_line || 0.5,
+          edge_pct: 8, // base edge score for HR overs
+          confidence_tier: hr.quality_tier || 'HIGH',
+          sport: 'MLB',
+          sources: ['hr_over'],
+          l3_avg: hr.l3_avg || 0,
+          hit_rate: hr.confidence_score || 0,
+          odds: 200, // typical HR over odds
+        });
+      }
+    }
+
     // Score all picks with quality floor
     const scoredPicks: ScoredPick[] = [];
     for (const [, pick] of pickMap) {
