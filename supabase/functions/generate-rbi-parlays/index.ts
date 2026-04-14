@@ -2,7 +2,7 @@
  * generate-rbi-parlays
  * 
  * Builds 2-3 leg UNDER-only RBI parlays from Hard Rock Bet signals.
- * Every leg must face a quality pitcher (K/g >= 5 OR ERA <= 3.5).
+ * Also builds 3-leg OVER RBI parlays from HR power hitters vs weak pitchers.
  * Sends formatted parlay suggestions to Telegram.
  */
 
@@ -350,85 +350,260 @@ Deno.serve(async (req) => {
     }
 
     if (parlays.length === 0) {
-      return new Response(JSON.stringify({ parlays: [], message: 'Not enough diverse Under candidates' }), {
+      log('No Under parlays built');
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // OVER RBI PARLAY ENGINE — HR Power Hitters vs Weak Pitchers
+    // ══════════════════════════════════════════════════════════════════
+
+    const { data: overAlerts, error: overErr } = await supabase
+      .from('fanduel_prediction_alerts')
+      .select('id, player_name, prediction, signal_type, confidence, metadata, created_at')
+      .eq('prop_type', 'batter_rbis')
+      .eq('signal_type', 'hr_power_over')
+      .is('was_correct', null)
+      .gte('created_at', `${today}T00:00:00`)
+      .ilike('prediction', '%over%')
+      .order('confidence', { ascending: false })
+      .limit(50);
+
+    if (overErr) log(`Over alerts query error: ${overErr.message}`);
+
+    const overCandidates = overAlerts || [];
+    log(`Found ${overCandidates.length} Over RBI (hr_power_over) alerts for today`);
+
+    // Batch resolve batter teams for Over candidates
+    const overPlayersNeedingTeam = overCandidates.filter(a => !a.metadata?.team).map(a => a.player_name);
+    if (overPlayersNeedingTeam.length > 0) {
+      const { data: overTeamLogs } = await supabase
+        .from('mlb_player_game_logs')
+        .select('player_name, team')
+        .in('player_name', overPlayersNeedingTeam)
+        .order('game_date', { ascending: false })
+        .limit(overPlayersNeedingTeam.length);
+      if (overTeamLogs) {
+        for (const row of overTeamLogs) {
+          if (row.team && !playerTeamMap.has(row.player_name)) {
+            playerTeamMap.set(row.player_name, row.team);
+          }
+        }
+      }
+    }
+
+    // Inverse Pitcher Gate: require WEAK pitcher (ERA >= 4.0 OR K/game < 5)
+    const overPitcherGated: { alert: typeof overCandidates[0]; pitcher: PitcherStats }[] = [];
+
+    for (const alert of overCandidates) {
+      const batterTeam = alert.metadata?.team || playerTeamMap.get(alert.player_name) || null;
+      let eventDesc = alert.metadata?.event_description || '';
+
+      if (!eventDesc) {
+        const { data: hrbSnap } = await supabase
+          .from('hrb_rbi_line_timeline')
+          .select('event_description')
+          .eq('player_name', alert.player_name)
+          .gte('snapshot_time', `${today}T00:00:00`)
+          .limit(1);
+        eventDesc = hrbSnap?.[0]?.event_description || '';
+      }
+
+      let pitcher: PitcherStats | null = null;
+      if (batterTeam || eventDesc) {
+        pitcher = findPitcherForPlayer(pitcherMap, batterTeam, eventDesc);
+      }
+
+      if (!pitcher) {
+        log(`Over pitcher gate: SKIP ${alert.player_name} — no pitcher data`);
+        continue;
+      }
+
+      // Inverse gate: we WANT weak pitchers (ERA >= 4.0 OR K/game < 5)
+      if (pitcher.era < 4.0 && pitcher.kPerGame >= 5) {
+        log(`Over pitcher gate: BLOCKED ${alert.player_name} — ${pitcher.name} is too good (ERA ${pitcher.era}, K/g ${pitcher.kPerGame})`);
+        continue;
+      }
+
+      log(`Over pitcher gate: PASS ${alert.player_name} — facing weak ${pitcher.name} (ERA ${pitcher.era}, K/g ${pitcher.kPerGame})`);
+      overPitcherGated.push({ alert, pitcher });
+    }
+
+    log(`Over RBI: ${overPitcherGated.length} candidates after inverse pitcher gate`);
+
+    // Score Over candidates
+    const overScored = overPitcherGated.map(({ alert, pitcher }) => {
+      const l10HRs = alert.metadata?.l10_hrs || 0;
+      const l10Avg = alert.metadata?.l10_rbi_avg || 0;
+      const l10HitRate = alert.metadata?.l10_hit_rate || 0;
+
+      // Higher is better: more HRs, higher avg, higher hit rate, weaker pitcher
+      const hrScore = l10HRs * 10;
+      const avgScore = l10Avg * 15;
+      const hitRateScore = l10HitRate * 20;
+      const pitcherWeakness = Math.max(0, pitcher.era - 3.5) * 5 + Math.max(0, 5 - pitcher.kPerGame) * 3;
+
+      return {
+        ...alert,
+        pitcher,
+        composite_score: hrScore + avgScore + hitRateScore + pitcherWeakness,
+      };
+    }).sort((a, b) => b.composite_score - a.composite_score);
+
+    // Build 3-leg Over parlay (primary), 2-leg as backup
+    const overParlays: { legs: typeof overScored; type: string }[] = [];
+
+    if (overScored.length >= 3) {
+      const usedPlayers = new Set<string>();
+      const threeLeg: typeof overScored = [];
+      for (const pick of overScored) {
+        if (usedPlayers.has(pick.player_name)) continue;
+        threeLeg.push(pick);
+        usedPlayers.add(pick.player_name);
+        if (threeLeg.length >= 3) break;
+      }
+      if (threeLeg.length === 3) {
+        overParlays.push({ legs: threeLeg, type: '3-Leg RBI Over Power Parlay 🔥' });
+      }
+    }
+
+    if (overScored.length >= 2 && overParlays.length === 0) {
+      const usedPlayers = new Set<string>();
+      const twoLeg: typeof overScored = [];
+      for (const pick of overScored) {
+        if (usedPlayers.has(pick.player_name)) continue;
+        twoLeg.push(pick);
+        usedPlayers.add(pick.player_name);
+        if (twoLeg.length >= 2) break;
+      }
+      if (twoLeg.length === 2) {
+        overParlays.push({ legs: twoLeg, type: '2-Leg RBI Over Power Parlay 💪' });
+      }
+    }
+
+    // Send Over parlay Telegram
+    if (overParlays.length > 0) {
+      const overParlayMessages = overParlays.map(parlay => {
+        const legLines = parlay.legs.map((leg, i) => {
+          const line = leg.metadata?.line ?? 0.5;
+          const l10HRs = leg.metadata?.l10_hrs || 0;
+          const l10Avg = leg.metadata?.l10_rbi_avg || 0;
+          const l10HitRate = leg.metadata?.l10_hit_rate || 0;
+          const hitCount = Math.round(l10HitRate * (leg.metadata?.l10_sample || 10));
+          const totalGames = leg.metadata?.l10_sample || 10;
+          const p = leg.pitcher;
+
+          return [
+            `${i === 0 ? '1️⃣' : i === 1 ? '2️⃣' : '3️⃣'} *${leg.player_name}* — OVER ${line} RBI`,
+            `   💪 ${l10HRs} HRs in L10 | L10: ${l10Avg} avg (${hitCount}/${totalGames} over)`,
+            `   🎯 Facing ${p.name} (${p.era.toFixed(2)} ERA, ${p.kPerGame} K/g)`,
+          ].join('\n');
+        });
+
+        return `🔥 *${parlay.type}*\n\n${legLines.join('\n\n')}`;
+      });
+
+      const overTelegramMsg = [
+        `⚾ *RBI Over Power Parlays* (Hard Rock Bet)`,
+        ``,
+        ...overParlayMessages,
+        ``,
+        `━━━━━━━━━━━━━━━`,
+        `💪 All legs: OVER + HR power + weak opposing pitcher`,
+      ].join('\n');
+
+      try {
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { message: overTelegramMsg, parse_mode: 'Markdown', admin_only: true },
+        });
+        log('Over RBI parlay Telegram sent');
+      } catch (_) {
+        log('Over RBI Telegram send failed (non-fatal)');
+      }
+    }
+
+    // Combine all parlays for response
+    const allParlays = [...parlays, ...overParlays];
+
+    if (allParlays.length === 0) {
+      return new Response(JSON.stringify({ parlays: [], message: 'Not enough candidates for any parlays' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Step 8: Format Telegram message
-    const SIGNAL_DISPLAY: Record<string, string> = {
-      velocity_spike: "Sharp Money Spike", cascade: "Sustained Line Move",
-      line_about_to_move: "Early Line Signal", take_it_now: "Snapback Value",
-      price_drift: "Steady Drift", trap_warning: "Trap Alert",
-    };
+    // Step 8: Format Under Telegram message (existing)
+    if (parlays.length > 0) {
+      const SIGNAL_DISPLAY: Record<string, string> = {
+        velocity_spike: "Sharp Money Spike", cascade: "Sustained Line Move",
+        line_about_to_move: "Early Line Signal", take_it_now: "Snapback Value",
+        price_drift: "Steady Drift", trap_warning: "Trap Alert",
+      };
 
-    const parlayMessages: string[] = [];
-    for (const parlay of parlays) {
-      const legLines = parlay.legs.map((leg, i) => {
-        const line = leg.hrb_line ?? leg.metadata?.line ?? 0.5;
-        const l10Rate = leg.metadata?.l10_hit_rate;
-        const l10Games = l10Rate != null ? Math.round(l10Rate * 10) : null;
-        const quietGames = l10Games != null ? 10 - l10Games : null;
-        const signalName = SIGNAL_DISPLAY[leg.signal_type] || leg.signal_type;
-        const p = leg.pitcher;
+      const parlayMessages: string[] = [];
+      for (const parlay of parlays) {
+        const legLines = parlay.legs.map((leg, i) => {
+          const line = leg.hrb_line ?? leg.metadata?.line ?? 0.5;
+          const l10Rate = leg.metadata?.l10_hit_rate;
+          const l10Games = l10Rate != null ? Math.round(l10Rate * 10) : null;
+          const quietGames = l10Games != null ? 10 - l10Games : null;
+          const signalName = SIGNAL_DISPLAY[leg.signal_type] || leg.signal_type;
+          const p = leg.pitcher;
 
-        // Build narrative
-        let narrative = '';
-        if (quietGames != null) {
-          narrative = `${leg.player_name} has been quiet — 0 RBI in ${quietGames} of the last 10.`;
-        } else {
-          narrative = `${signalName} signal detected — ${leg.signal_accuracy}% historical accuracy.`;
-        }
-        narrative += ` Facing ${p.name} (${p.era.toFixed(2)} ERA, ${p.kPerGame} K/g).`;
+          let narrative = '';
+          if (quietGames != null) {
+            narrative = `${leg.player_name} has been quiet — 0 RBI in ${quietGames} of the last 10.`;
+          } else {
+            narrative = `${signalName} signal detected — ${leg.signal_accuracy}% historical accuracy.`;
+          }
+          narrative += ` Facing ${p.name} (${p.era.toFixed(2)} ERA, ${p.kPerGame} K/g).`;
 
-        const l10Line = l10Games != null ? ` | L10: ${l10Games}/10 RBI games` : '';
-        const hrbLine = leg.hrb_under_price ? ` | HRB Under: ${leg.hrb_under_price}` : '';
+          const l10Line = l10Games != null ? ` | L10: ${l10Games}/10 RBI games` : '';
+          const hrbLine = leg.hrb_under_price ? ` | HRB Under: ${leg.hrb_under_price}` : '';
 
-        return [
-          `${i === 0 ? '1️⃣' : i === 1 ? '2️⃣' : '3️⃣'} *${leg.player_name}* — UNDER ${line} RBI`,
-          `   🧊 ${narrative}`,
-          `   📊 ${leg.signal_accuracy}% signal accuracy${l10Line}${hrbLine}`,
-        ].join('\n');
-      });
+          return [
+            `${i === 0 ? '1️⃣' : i === 1 ? '2️⃣' : '3️⃣'} *${leg.player_name}* — UNDER ${line} RBI`,
+            `   🧊 ${narrative}`,
+            `   📊 ${leg.signal_accuracy}% signal accuracy${l10Line}${hrbLine}`,
+          ].join('\n');
+        });
 
-      parlayMessages.push(`⚾ *${parlay.type}*\n\n${legLines.join('\n\n')}`);
-    }
+        parlayMessages.push(`⚾ *${parlay.type}*\n\n${legLines.join('\n\n')}`);
+      }
 
-    const telegramMsg = [
-      `⚾ *RBI Under Parlay Picks* (Hard Rock Bet)`,
-      ``,
-      ...parlayMessages,
-      ``,
-      `━━━━━━━━━━━━━━━`,
-      `🧊 All legs: UNDER + quality pitcher + quiet bat`,
-      `_Based on ${dashboardData?.overall?.total_settled || 0} settled RBI picks_`,
-    ].join('\n');
+      const telegramMsg = [
+        `⚾ *RBI Under Parlay Picks* (Hard Rock Bet)`,
+        ``,
+        ...parlayMessages,
+        ``,
+        `━━━━━━━━━━━━━━━`,
+        `🧊 All legs: UNDER + quality pitcher + quiet bat`,
+        `_Based on ${dashboardData?.overall?.total_settled || 0} settled RBI picks_`,
+      ].join('\n');
 
-    try {
-      await supabase.functions.invoke('bot-send-telegram', {
-        body: { message: telegramMsg, parse_mode: 'Markdown', admin_only: true },
-      });
-      log('Telegram sent');
-    } catch (_) {
-      log('Telegram send failed (non-fatal)');
+      try {
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { message: telegramMsg, parse_mode: 'Markdown', admin_only: true },
+        });
+        log('Under Telegram sent');
+      } catch (_) {
+        log('Under Telegram send failed (non-fatal)');
+      }
     }
 
     return new Response(JSON.stringify({
-      parlays: parlays.map(p => ({
+      parlays: allParlays.map(p => ({
         type: p.type,
         legs: p.legs.map(l => ({
           player: l.player_name,
-          prediction: l.prediction,
+          prediction: l.prediction || (p.type.includes('Over') ? 'Over' : 'Under'),
           signal: l.signal_type,
-          accuracy: l.signal_accuracy,
           score: l.composite_score,
           pitcher: l.pitcher.name,
           pitcher_era: l.pitcher.era,
           pitcher_k: l.pitcher.kPerGame,
-          hrb_line: l.hrb_line,
         }))
       })),
       qualifying_signals: bySignal,
+      over_candidates: overScored.length,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
