@@ -228,7 +228,12 @@ function modelHrProbability(
     const h2hWeight = Math.min(0.35, matchupGames * 0.02);
     rawProb = rawProb * (1 - h2hWeight) + matchupHrRate * h2hWeight;
   }
-  const probability = Math.min(0.22, Math.max(0.02, rawProb));
+  // Power hitter boost: L20 HR rate >= 0.20 (1 HR per 5 games)
+  if (batter.hrRateL20 >= 0.20) rawProb *= 1.15;
+  // Pitcher HR vulnerability boost: HR/9 >= 1.5 AND hittable form
+  if (pitcher && pitcher.hrAllowedPer9 >= 1.5 && pitcher.recentForm === "hittable") rawProb *= 1.10;
+
+  const probability = Math.min(0.35, Math.max(0.02, rawProb));
   const parts = [
     `Season HR/g: ${batter.hrRateSeason.toFixed(3)}`,
     `L20 HR/g: ${batter.hrRateL20.toFixed(3)}`,
@@ -566,8 +571,12 @@ Deno.serve(async (req) => {
       const overEdge  = (probability - marketOverImplied) / marketOverImplied * 100;
       const underEdge = ((1 - probability) - marketUnderImplied) / marketUnderImplied * 100;
 
+      // Lower edge threshold for Over (3%) vs Under (5%) — HR Overs are lower probability but higher value
+      const overEdgeThresh = 3.0;
+      const underEdgeThresh = MIN_EDGE_PCT; // 5%
       const bestEdge = Math.max(overEdge, underEdge);
-      if (bestEdge < MIN_EDGE_PCT) { skippedEdge++; continue; }
+      const effectiveThresh = overEdge >= underEdge ? overEdgeThresh : underEdgeThresh;
+      if (bestEdge < effectiveThresh) { skippedEdge++; continue; }
 
       const recommendedSide: "over" | "under" = overEdge >= underEdge ? "over" : "under";
       const edgePct        = Math.round(bestEdge * 10) / 10;
