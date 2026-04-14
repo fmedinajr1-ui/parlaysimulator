@@ -629,10 +629,10 @@ Deno.serve(async (req) => {
                 game_total_line: gameTotal,
                 game_total_over_odds: gameTotalOverOdds,
                 game_total_under_odds: gameTotalUnderOdds,
-                batter_validation: batterValidation.summary,
-                pitcher_validation: pitcherValidation.summary,
+                ...(isMLB && batterValidation.summary ? { batter_validation: batterValidation.summary } : {}),
+                ...(isMLB && pitcherValidation.summary ? { pitcher_validation: pitcherValidation.summary } : {}),
               });
-              log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection}${gameTotal ? ` ${gameTotal}` : ''} (derived from ${shifts.length} player ${propType} shifts) | Batters: ${batterValidation.summary} | Pitcher: ${pitcherValidation.summary}`);
+              log(`📰 AUTO-TOTALS: ${sampleShift.eventDesc} → ${totalsDirection}${gameTotal ? ` ${gameTotal}` : ''} (derived from ${shifts.length} player ${propType} shifts)${isMLB ? ` | Batters: ${batterValidation.summary} | Pitcher: ${pitcherValidation.summary}` : ''}`);
             }
 
             // MONEYLINE signal
