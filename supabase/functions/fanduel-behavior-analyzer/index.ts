@@ -511,97 +511,102 @@ Deno.serve(async (req) => {
             let totalsDirection = dominant === "dropping" ? "UNDER" : "OVER";
             let totalsConf = Math.min(85, conf - 5);
 
-            // === RUN PRODUCTION VALIDATION GATE ===
+            // === RUN PRODUCTION VALIDATION GATE (MLB ONLY) ===
+            const isMLB = (sampleShift.sport || '').toLowerCase().includes('baseball') 
+                       || (sampleShift.sport || '').toLowerCase().includes('mlb');
+
             let batterValidation = { dropping: 0, rising: 0, total: 0, summary: '' };
             let pitcherValidation = { kLineDirection: 'unknown' as string, summary: '' };
             let validationBlocked = false;
 
-            try {
-              // 1. Check batter hitting props (Hits, HR, RBIs, Total Bases) for this game
-              const runPropTypes = ['batter_hits', 'batter_home_runs', 'batter_rbis', 'batter_total_bases',
-                                    'Hits', 'Home Runs', 'RBIs', 'Total Bases', 'player_hits', 'player_home_runs',
-                                    'player_rbis', 'player_total_bases'];
-              const { data: batterProps } = await supabase
-                .from('unified_props')
-                .select('player_name, prop_type, current_line, previous_line')
-                .eq('event_id', eventId)
-                .in('prop_type', runPropTypes)
-                .not('current_line', 'is', null);
+            if (isMLB) {
+              try {
+                // 1. Check batter hitting props (Hits, HR, RBIs, Total Bases) for this game
+                const runPropTypes = ['batter_hits', 'batter_home_runs', 'batter_rbis', 'batter_total_bases',
+                                      'Hits', 'Home Runs', 'RBIs', 'Total Bases', 'player_hits', 'player_home_runs',
+                                      'player_rbis', 'player_total_bases'];
+                const { data: batterProps } = await supabase
+                  .from('unified_props')
+                  .select('player_name, prop_type, current_line, previous_line')
+                  .eq('event_id', eventId)
+                  .in('prop_type', runPropTypes)
+                  .not('current_line', 'is', null);
 
-              if (batterProps && batterProps.length > 0) {
-                for (const bp of batterProps) {
-                  if (bp.previous_line != null && bp.current_line != null) {
-                    batterValidation.total++;
-                    if (bp.current_line < bp.previous_line) batterValidation.dropping++;
-                    else if (bp.current_line > bp.previous_line) batterValidation.rising++;
+                if (batterProps && batterProps.length > 0) {
+                  for (const bp of batterProps) {
+                    if (bp.previous_line != null && bp.current_line != null) {
+                      batterValidation.total++;
+                      if (bp.current_line < bp.previous_line) batterValidation.dropping++;
+                      else if (bp.current_line > bp.previous_line) batterValidation.rising++;
+                    }
                   }
-                }
-                if (batterValidation.total > 0) {
-                  const dropRate = batterValidation.dropping / batterValidation.total;
-                  const riseRate = batterValidation.rising / batterValidation.total;
-                  if (totalsDirection === 'UNDER') {
-                    if (dropRate >= 0.5) { totalsConf += 10; batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines dropping ✅`; }
-                    else if (riseRate >= 0.5) { totalsConf -= 15; batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines RISING ⚠️`; }
-                    else { batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines dropping (mixed)`; }
+                  if (batterValidation.total > 0) {
+                    const dropRate = batterValidation.dropping / batterValidation.total;
+                    const riseRate = batterValidation.rising / batterValidation.total;
+                    if (totalsDirection === 'UNDER') {
+                      if (dropRate >= 0.5) { totalsConf += 10; batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines dropping ✅`; }
+                      else if (riseRate >= 0.5) { totalsConf -= 15; batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines RISING ⚠️`; }
+                      else { batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines dropping (mixed)`; }
+                    } else {
+                      if (riseRate >= 0.5) { totalsConf += 10; batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines rising ✅`; }
+                      else if (dropRate >= 0.5) { totalsConf -= 15; batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines DROPPING ⚠️`; }
+                      else { batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines rising (mixed)`; }
+                    }
                   } else {
-                    if (riseRate >= 0.5) { totalsConf += 10; batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines rising ✅`; }
-                    else if (dropRate >= 0.5) { totalsConf -= 15; batterValidation.summary = `${batterValidation.dropping}/${batterValidation.total} hitting lines DROPPING ⚠️`; }
-                    else { batterValidation.summary = `${batterValidation.rising}/${batterValidation.total} hitting lines rising (mixed)`; }
+                    batterValidation.summary = 'no hitting line movement data';
                   }
                 } else {
-                  batterValidation.summary = 'no hitting line movement data';
+                  batterValidation.summary = 'no hitting props found';
                 }
-              } else {
-                batterValidation.summary = 'no hitting props found';
-              }
 
-              // 2. Check pitcher strikeout lines
-              const kPropTypes = ['pitcher_strikeouts', 'Pitcher Strikeouts', 'pitcher_ks', 'strikeouts'];
-              const { data: pitcherProps } = await supabase
-                .from('unified_props')
-                .select('player_name, prop_type, current_line, previous_line')
-                .eq('event_id', eventId)
-                .in('prop_type', kPropTypes)
-                .not('current_line', 'is', null);
+                // 2. Check pitcher strikeout lines
+                const kPropTypes = ['pitcher_strikeouts', 'Pitcher Strikeouts', 'pitcher_ks', 'strikeouts'];
+                const { data: pitcherProps } = await supabase
+                  .from('unified_props')
+                  .select('player_name, prop_type, current_line, previous_line')
+                  .eq('event_id', eventId)
+                  .in('prop_type', kPropTypes)
+                  .not('current_line', 'is', null);
 
-              if (pitcherProps && pitcherProps.length > 0) {
-                let kRising = 0, kDropping = 0, kTotal = 0;
-                for (const pp of pitcherProps) {
-                  if (pp.previous_line != null && pp.current_line != null) {
-                    kTotal++;
-                    if (pp.current_line > pp.previous_line) kRising++;
-                    else if (pp.current_line < pp.previous_line) kDropping++;
+                if (pitcherProps && pitcherProps.length > 0) {
+                  let kRising = 0, kDropping = 0, kTotal = 0;
+                  for (const pp of pitcherProps) {
+                    if (pp.previous_line != null && pp.current_line != null) {
+                      kTotal++;
+                      if (pp.current_line > pp.previous_line) kRising++;
+                      else if (pp.current_line < pp.previous_line) kDropping++;
+                    }
                   }
-                }
-                if (kTotal > 0) {
-                  if (kRising > kDropping) {
-                    pitcherValidation.kLineDirection = 'rising';
-                    pitcherValidation.summary = 'K line rising (dominant arm)';
-                    if (totalsDirection === 'UNDER') totalsConf += 5;
-                    else totalsConf -= 5;
-                  } else if (kDropping > kRising) {
-                    pitcherValidation.kLineDirection = 'dropping';
-                    pitcherValidation.summary = 'K line dropping (weaker arm)';
-                    if (totalsDirection === 'UNDER') totalsConf -= 10;
-                    else totalsConf += 5;
+                  if (kTotal > 0) {
+                    if (kRising > kDropping) {
+                      pitcherValidation.kLineDirection = 'rising';
+                      pitcherValidation.summary = 'K line rising (dominant arm)';
+                      if (totalsDirection === 'UNDER') totalsConf += 5;
+                      else totalsConf -= 5;
+                    } else if (kDropping > kRising) {
+                      pitcherValidation.kLineDirection = 'dropping';
+                      pitcherValidation.summary = 'K line dropping (weaker arm)';
+                      if (totalsDirection === 'UNDER') totalsConf -= 10;
+                      else totalsConf += 5;
+                    } else {
+                      pitcherValidation.kLineDirection = 'stable';
+                      pitcherValidation.summary = 'K line stable';
+                    }
                   } else {
-                    pitcherValidation.kLineDirection = 'stable';
-                    pitcherValidation.summary = 'K line stable';
+                    pitcherValidation.summary = 'no K line movement';
                   }
                 } else {
-                  pitcherValidation.summary = 'no K line movement';
+                  pitcherValidation.summary = 'no pitcher K props found';
                 }
-              } else {
-                pitcherValidation.summary = 'no pitcher K props found';
-              }
 
-              // 3. Block if confidence drops below 55
-              if (totalsConf < 55) {
-                validationBlocked = true;
-                log(`🚫 AUTO-TOTALS BLOCKED: ${sampleShift.eventDesc} → ${totalsDirection} blocked (conf ${totalsConf} < 55). Batters: ${batterValidation.summary} | Pitcher: ${pitcherValidation.summary}`);
+                // 3. Block if confidence drops below 55
+                if (totalsConf < 55) {
+                  validationBlocked = true;
+                  log(`🚫 AUTO-TOTALS BLOCKED: ${sampleShift.eventDesc} → ${totalsDirection} blocked (conf ${totalsConf} < 55). Batters: ${batterValidation.summary} | Pitcher: ${pitcherValidation.summary}`);
+                }
+              } catch (valErr) {
+                log(`⚠️ Run production validation error (proceeding anyway): ${valErr}`);
               }
-            } catch (valErr) {
-              log(`⚠️ Run production validation error (proceeding anyway): ${valErr}`);
             }
 
             if (!validationBlocked) {
