@@ -74,7 +74,7 @@ async function batchFetchL10Stats(
   // Batch query - get last 10 games for all players
   const { data: gameLogs } = await supabase
     .from('mlb_player_game_logs')
-    .select('player_name, rbis, game_date')
+    .select('player_name, rbis, game_date, home_runs')
     .in('player_name', unique)
     .order('game_date', { ascending: false })
     .limit(unique.length * 12); // slightly over to ensure coverage
@@ -82,20 +82,22 @@ async function batchFetchL10Stats(
   if (!gameLogs || gameLogs.length === 0) return results;
 
   // Group by player, take first 10 per player
-  const playerGames: Record<string, number[]> = {};
+  const playerGames: Record<string, { rbis: number; hrs: number }[]> = {};
   for (const g of gameLogs) {
     if (!playerGames[g.player_name]) playerGames[g.player_name] = [];
     if (playerGames[g.player_name].length < 10) {
-      playerGames[g.player_name].push(Number(g.rbis) || 0);
+      playerGames[g.player_name].push({ rbis: Number(g.rbis) || 0, hrs: Number(g.home_runs) || 0 });
     }
   }
 
-  for (const [name, rbis] of Object.entries(playerGames)) {
-    if (rbis.length < 3) continue;
+  for (const [name, games] of Object.entries(playerGames)) {
+    if (games.length < 3) continue;
+    const rbis = games.map(g => g.rbis);
     const l10Avg = rbis.reduce((s, r) => s + r, 0) / rbis.length;
     const l3 = rbis.slice(0, 3);
     const l3Avg = l3.reduce((s, r) => s + r, 0) / l3.length;
     const l10HitRate = rbis.filter(r => r >= 1).length / rbis.length;
+    const l10HRs = games.reduce((s, g) => s + g.hrs, 0);
 
     // Trend: compare L3 to L10
     let trend = 'stable';
@@ -107,6 +109,7 @@ async function batchFetchL10Stats(
       l3Avg: Math.round(l3Avg * 100) / 100,
       l10HitRate: Math.round(l10HitRate * 100) / 100,
       l10Games: rbis.length,
+      l10HRs,
       trend,
     };
   }
