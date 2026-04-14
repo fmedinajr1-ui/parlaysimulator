@@ -56,6 +56,7 @@ interface PlayerL10Stats {
   l3Avg: number;
   l10HitRate: number; // % of games with ≥1 RBI (over 0.5)
   l10Games: number;
+  l10HRs: number; // HR count in L10 games
   trend: string; // 'hot' | 'cold' | 'stable'
 }
 
@@ -73,7 +74,7 @@ async function batchFetchL10Stats(
   // Batch query - get last 10 games for all players
   const { data: gameLogs } = await supabase
     .from('mlb_player_game_logs')
-    .select('player_name, rbis, game_date')
+    .select('player_name, rbis, game_date, home_runs')
     .in('player_name', unique)
     .order('game_date', { ascending: false })
     .limit(unique.length * 12); // slightly over to ensure coverage
@@ -81,20 +82,22 @@ async function batchFetchL10Stats(
   if (!gameLogs || gameLogs.length === 0) return results;
 
   // Group by player, take first 10 per player
-  const playerGames: Record<string, number[]> = {};
+  const playerGames: Record<string, { rbis: number; hrs: number }[]> = {};
   for (const g of gameLogs) {
     if (!playerGames[g.player_name]) playerGames[g.player_name] = [];
     if (playerGames[g.player_name].length < 10) {
-      playerGames[g.player_name].push(Number(g.rbis) || 0);
+      playerGames[g.player_name].push({ rbis: Number(g.rbis) || 0, hrs: Number(g.home_runs) || 0 });
     }
   }
 
-  for (const [name, rbis] of Object.entries(playerGames)) {
-    if (rbis.length < 3) continue;
+  for (const [name, games] of Object.entries(playerGames)) {
+    if (games.length < 3) continue;
+    const rbis = games.map(g => g.rbis);
     const l10Avg = rbis.reduce((s, r) => s + r, 0) / rbis.length;
     const l3 = rbis.slice(0, 3);
     const l3Avg = l3.reduce((s, r) => s + r, 0) / l3.length;
     const l10HitRate = rbis.filter(r => r >= 1).length / rbis.length;
+    const l10HRs = games.reduce((s, g) => s + g.hrs, 0);
 
     // Trend: compare L3 to L10
     let trend = 'stable';
@@ -106,6 +109,7 @@ async function batchFetchL10Stats(
       l3Avg: Math.round(l3Avg * 100) / 100,
       l10HitRate: Math.round(l10HitRate * 100) / 100,
       l10Games: rbis.length,
+      l10HRs,
       trend,
     };
   }
@@ -333,6 +337,13 @@ Deno.serve(async (req) => {
           continue; // excluded from confirmed/neutral/contradicted counts
         }
 
+        // HR Power Gate: block players with 2+ HRs in L10 from Under cascade
+        if (stats.l10HRs >= 2) {
+          log(`Cascade HR power block: ${p.player} — ${stats.l10HRs} HRs in L10 (solo HR risk)`);
+          playerBreakdown.push({ player: p.player, change: p.change, status: 'hr_power_blocked', l10Avg: stats.l10Avg, l10HRs: stats.l10HRs });
+          continue;
+        }
+
         const confirmation = getPlayerConfirmation(stats, prediction);
         if (confirmation === 'confirmed') confirmed++;
         else if (confirmation === 'neutral') neutral++;
@@ -413,12 +424,23 @@ Deno.serve(async (req) => {
           log(`L10 avg block: ${alert.player_name} Under — L10 avg ${stats.l10Avg.toFixed(2)} outside [0.4, 0.7]`);
           continue;
         }
+        // HR Power Gate: block Under picks for players with 2+ HRs in L10
+        if (alert.prediction === 'Under' && stats.l10HRs >= 2) {
+          log(`HR power block: ${alert.player_name} Under — ${stats.l10HRs} HRs in L10 (solo HR risk)`);
+          continue;
+        }
+        // HR Power Gate: penalty for 1 HR in L10
+        if (alert.prediction === 'Under' && stats.l10HRs === 1) {
+          alert.confidence -= 10;
+          log(`HR power penalty: ${alert.player_name} — 1 HR in L10, confidence -10 → ${alert.confidence}`);
+        }
 
         alert.metadata.l10_rbi_avg = stats.l10Avg;
         alert.metadata.l3_rbi_avg = stats.l3Avg;
         alert.metadata.l10_hit_rate = stats.l10HitRate;
         alert.metadata.l10_sample = stats.l10Games;
         alert.metadata.trend = stats.trend;
+        alert.metadata.l10_hrs = stats.l10HRs;
       }
 
       validatedAlerts.push(alert);
