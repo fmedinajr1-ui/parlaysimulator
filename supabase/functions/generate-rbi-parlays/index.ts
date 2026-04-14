@@ -80,13 +80,20 @@ async function fetchTodayPitchers(): Promise<Map<string, PitcherStats>> {
 
 function findPitcherForPlayer(
   pitcherMap: Map<string, PitcherStats>,
+  batterTeam: string | null,
   eventDescription: string,
 ): PitcherStats | null {
-  // eventDescription is like "Team A @ Team B"
-  const lower = (eventDescription || '').toLowerCase();
-  for (const [team, stats] of pitcherMap) {
-    if (lower.includes(team)) return stats;
+  // pitcherMap is keyed by facingTeam (= batter's team name, lowercase)
+  // So we look up the batter's own team to find who they face
+  if (batterTeam) {
+    const lower = batterTeam.toLowerCase();
+    for (const [team, stats] of pitcherMap) {
+      if (team.includes(lower) || lower.includes(team)) return stats;
+    }
   }
+
+  // No batter team known — can't reliably match, skip
+  log(`Pitcher lookup: no batter team for event "${eventDescription}"`);
   return null;
 }
 
@@ -164,10 +171,34 @@ Deno.serve(async (req) => {
     // Step 4: Pitcher Quality Gate — fetch today's pitchers, block weak matchups
     const pitcherMap = await fetchTodayPitchers();
 
+    // Batch resolve batter teams from game logs for players missing team metadata
+    const playersNeedingTeam = l10Filtered.filter(a => !a.metadata?.team).map(a => a.player_name);
+    const playerTeamMap = new Map<string, string>();
+
+    if (playersNeedingTeam.length > 0) {
+      const { data: teamLogs } = await supabase
+        .from('mlb_player_game_logs')
+        .select('player_name, team')
+        .in('player_name', playersNeedingTeam)
+        .order('game_date', { ascending: false })
+        .limit(playersNeedingTeam.length);
+
+      if (teamLogs) {
+        for (const row of teamLogs) {
+          if (row.team && !playerTeamMap.has(row.player_name)) {
+            playerTeamMap.set(row.player_name, row.team);
+          }
+        }
+      }
+    }
+
     // We need event descriptions to match pitchers — pull from HRB timeline or metadata
     const pitcherGated: (typeof l10Filtered[0] & { pitcher: PitcherStats })[] = [];
 
     for (const alert of l10Filtered) {
+      // Resolve batter's team
+      const batterTeam = alert.metadata?.team || playerTeamMap.get(alert.player_name) || null;
+
       // Try to find event description from metadata or HRB timeline
       let eventDesc = alert.metadata?.event_description || '';
 
@@ -189,8 +220,8 @@ Deno.serve(async (req) => {
 
       let pitcher: PitcherStats | null = null;
 
-      if (eventDesc) {
-        pitcher = findPitcherForPlayer(pitcherMap, eventDesc);
+      if (batterTeam || eventDesc) {
+        pitcher = findPitcherForPlayer(pitcherMap, batterTeam, eventDesc);
       }
 
       // Fallback to metadata pitcher info if available
@@ -203,7 +234,7 @@ Deno.serve(async (req) => {
       }
 
       if (!pitcher) {
-        log(`Pitcher gate: BLOCKED ${alert.player_name} — no pitcher data found`);
+        log(`Pitcher gate: BLOCKED ${alert.player_name} — no pitcher data found (team: ${batterTeam || 'unknown'})`);
         continue;
       }
 
@@ -213,7 +244,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      log(`Pitcher gate: PASS ${alert.player_name} — facing ${pitcher.name} (ERA ${pitcher.era}, K/g ${pitcher.kPerGame})`);
+      log(`Pitcher gate: PASS ${alert.player_name} (${batterTeam || '?'}) — facing ${pitcher.name} (ERA ${pitcher.era}, K/g ${pitcher.kPerGame})`);
       pitcherGated.push({ ...alert, pitcher });
     }
 
