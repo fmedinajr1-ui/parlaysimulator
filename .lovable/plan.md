@@ -1,42 +1,52 @@
 
 
-# Fix: Stop Baseball Validation from Running on NBA Games
+# Fix: Pitcher Lookup Returns Wrong Pitcher (Batter's Own Team)
 
 ## Problem
-The "Run Production Validation Gate" in `fanduel-behavior-analyzer` checks for batter hitting props and pitcher K props on **every** team news shift — including NBA games. This produces nonsensical output like "Batters: no hitting props found | Pitcher: no pitcher K props found" on NBA alerts (e.g., Portland Trail Blazers @ Phoenix Suns).
+The `findPitcherForPlayer` function in `generate-rbi-parlays` finds a pitcher by searching the event description (e.g. "Toronto Blue Jays @ Cleveland Guardians") for any team name in the pitcher map. Since **both** team names appear in the description, it returns whichever team name it finds first — which could be the batter's **own** team's pitcher instead of the opposing pitcher.
+
+This is why Yoan Moncada shows "Facing Reid Detmers" — Detmers pitches for the same team (Angels/White Sox context), not the opponent.
 
 ## Root Cause
-Lines 514-605 of `fanduel-behavior-analyzer/index.ts` — the baseball-specific validation gate has no sport guard. It runs unconditionally for all `isTeamWide` correlation signals.
+In `fetchTodayPitchers()`, the map is keyed by `facingTeam` (the team whose batters face that pitcher). But `findPitcherForPlayer()` has no idea which team the batter plays for — it just does `lower.includes(team)` on the full event string, matching the first team it finds.
 
 ## Fix
 
-### File: `supabase/functions/fanduel-behavior-analyzer/index.ts`
+### File: `supabase/functions/generate-rbi-parlays/index.ts`
 
-Wrap the Run Production Validation Gate (batter + pitcher checks) in a sport check so it only runs for MLB/baseball games:
+**1. Change the pitcher map to be keyed by the batter's team name** (the team whose batters face that pitcher — which is already what `facingTeam` represents). The map key is correct; the lookup is wrong.
+
+**2. Add batter team resolution** — determine which team the batter plays for, then look up `pitcherMap.get(batterTeam)` directly instead of scanning both teams.
+
+To determine the batter's team:
+- Check `alert.metadata?.team` (already stored by the RBI analyzer)
+- If not available, query `mlb_player_game_logs` for the player's most recent team
+- Use the resolved team name to do an exact lookup in `pitcherMap`
+
+**3. Update `findPitcherForPlayer` signature and logic:**
 
 ```typescript
-// === RUN PRODUCTION VALIDATION GATE (MLB ONLY) ===
-const isMLB = (sampleShift.sport || '').toLowerCase().includes('baseball') 
-           || (sampleShift.sport || '').toLowerCase().includes('mlb');
-
-if (isMLB) {
-  // ... existing batter and pitcher validation code ...
-} else {
-  // Non-baseball sports skip batter/pitcher validation entirely
-  batterValidation.summary = '';
-  pitcherValidation.summary = '';
+function findPitcherForPlayer(
+  pitcherMap: Map<string, PitcherStats>,
+  batterTeam: string | null,
+  eventDescription: string,
+): PitcherStats | null {
+  // Exact match on batter's team (map is keyed by facingTeam = batter's team)
+  if (batterTeam) {
+    const lower = batterTeam.toLowerCase();
+    for (const [team, stats] of pitcherMap) {
+      if (team.includes(lower) || lower.includes(team)) return stats;
+    }
+  }
+  
+  // Fallback: parse event description "Away @ Home" and try both
+  // But we need to know which side the batter is on
+  return null;
 }
 ```
 
-Also update the alert payload to only include `batter_validation` and `pitcher_validation` fields when the sport is MLB — so NBA Telegram messages won't show "Batters: no hitting props found".
+**4. Pass batter team from alert metadata or game logs** in the pitcher gate loop (lines 170-218). Add a batch team lookup from `mlb_player_game_logs` for players missing team metadata.
 
-### Telegram message cleanup
-In the alert object construction (lines 607-631), conditionally include the batter/pitcher summaries:
-
-```typescript
-...(isMLB && batterValidation.summary ? { batter_validation: batterValidation.summary } : {}),
-...(isMLB && pitcherValidation.summary ? { pitcher_validation: pitcherValidation.summary } : {}),
-```
-
-This is a single-file fix with no database changes needed.
+### Impact
+This ensures Bo Bichette (Blue Jays) gets matched to Cleveland's pitcher, and Yoan Moncada gets matched to the opposing pitcher — not their own team's starter.
 
