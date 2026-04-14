@@ -164,6 +164,11 @@ Deno.serve(async (req) => {
         const edgePct = ((l10Avg - prop.pp_line) / prop.pp_line) * 100;
         const signal = edgePct > 0 ? 'OVER' : 'UNDER';
 
+        // Block UNDER stolen bases — Over-only market
+        if ((prop.stat_type === 'batter_stolen_bases' || prop.stat_type === 'stolen_bases') && signal === 'UNDER') {
+          continue;
+        }
+
         const absEdge = Math.abs(edgePct);
         let tier = 'MEDIUM';
         if (absEdge >= 25 && (signal === 'OVER' ? hitRateOver >= 70 : hitRateOver <= 30)) {

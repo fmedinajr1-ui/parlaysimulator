@@ -138,6 +138,13 @@ Deno.serve(async (req) => {
 
     // Add mispriced picks
     for (const m of l3Mispriced) {
+      // Block UNDER stolen bases — Over-only market
+      const normalizedProp = normalizePropType(m.prop_type);
+      if ((normalizedProp === 'stolen_bases' || normalizedProp === 'stolen bases') && m.signal.toLowerCase() === 'under') {
+        console.log(`[L3CrossEngine] Blocked UNDER SB (mispriced): ${m.player_name}`);
+        continue;
+      }
+
       const key = makeKey(m.player_name, m.prop_type);
       const ctx = m.shooting_context || {};
       
