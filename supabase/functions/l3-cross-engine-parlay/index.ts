@@ -57,8 +57,8 @@ Deno.serve(async (req) => {
   try {
     console.log(`[L3CrossEngine] Starting for ${today}`);
 
-    // Fetch all 3 sources in parallel
-    const [mispricedRes, sweetRes, hcRes] = await Promise.all([
+    // Fetch all sources in parallel (including MLB Over SB/HR)
+    const [mispricedRes, sweetRes, hcRes, sbAlertsRes, hrSweetRes] = await Promise.all([
       sb.from('mispriced_lines')
         .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, shooting_context')
         .eq('analysis_date', today)
@@ -70,13 +70,27 @@ Deno.serve(async (req) => {
       sb.from('high_conviction_results')
         .select('player_name, prop_type, signal, edge_pct, conviction_score, current_line, player_avg, sport, engines, confidence_tier')
         .eq('analysis_date', today),
+      // Over SB alerts (HIGH/ELITE tier only)
+      sb.from('fanduel_prediction_alerts')
+        .select('player_name, prop_type, prediction, metadata, event_id')
+        .eq('signal_type', 'sb_over_l10')
+        .is('was_correct', null)
+        .gte('created_at', `${today}T00:00:00`),
+      // Over HR sweet spots
+      sb.from('category_sweet_spots')
+        .select('player_name, prop_type, category, recommended_side, actual_line, l3_avg, confidence_score, quality_tier')
+        .eq('analysis_date', today)
+        .eq('is_active', true)
+        .eq('category', 'MLB_HR_OVER'),
     ]);
 
     const mispriced = mispricedRes.data || [];
     const sweets = sweetRes.data || [];
     const hcPlays = hcRes.data || [];
+    const sbAlerts = sbAlertsRes.data || [];
+    const hrSweets = hrSweetRes.data || [];
 
-    console.log(`[L3CrossEngine] Sources — Mispriced: ${mispriced.length}, Sweet: ${sweets.length}, HC: ${hcPlays.length}`);
+    console.log(`[L3CrossEngine] Sources — Mispriced: ${mispriced.length}, Sweet: ${sweets.length}, HC: ${hcPlays.length}, SB Over: ${sbAlerts.length}, HR Over: ${hrSweets.length}`);
 
     // Filter mispriced to L3-confirmed only
     const l3Mispriced = mispriced.filter((m: any) => {
