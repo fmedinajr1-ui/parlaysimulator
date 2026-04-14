@@ -56,6 +56,7 @@ interface PlayerL10Stats {
   l3Avg: number;
   l10HitRate: number; // % of games with ≥1 RBI (over 0.5)
   l10Games: number;
+  l10HRs: number; // HR count in L10 games
   trend: string; // 'hot' | 'cold' | 'stable'
 }
 
