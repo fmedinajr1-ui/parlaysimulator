@@ -163,8 +163,18 @@ Deno.serve(async (req) => {
     }
 
     // Add sweet spot picks (now with backfilled l3_avg)
+    // Block stolen bases UNDER — HRB only offers Over side for SB
     for (const s of sweets) {
       if (!s.l3_avg) continue; // skip if still no L3 data after backfill
+      
+      // Block UNDER stolen bases picks (Over-only market)
+      const normalizedProp = normalizePropType(s.prop_type);
+      const side = (s.recommended_side || 'over').toLowerCase();
+      if ((normalizedProp === 'stolen_bases' || normalizedProp === 'stolen bases') && side === 'under') {
+        console.log(`[L3CrossEngine] Blocked UNDER SB: ${s.player_name}`);
+        continue;
+      }
+      
       const key = makeKey(s.player_name, s.prop_type);
       if (pickMap.has(key)) {
         const existing = pickMap.get(key);
@@ -176,7 +186,7 @@ Deno.serve(async (req) => {
           player_name: s.player_name,
           prop_type: normalizePropType(s.prop_type),
           display_prop_type: s.prop_type,
-          side: (s.recommended_side || 'over').toLowerCase(),
+          side,
           line: s.actual_line || 0,
           edge_pct: 0,
           confidence_tier: s.quality_tier || 'MEDIUM',

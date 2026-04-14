@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
         legs: legs.map((leg: any) => {
           const rawProp = leg.prop_type || leg.propType || '';
           return {
-            player_name: leg.player_name || leg.playerName || 'Unknown',
+            player_name: leg.player_name || leg.playerName || leg.player || 'Unknown',
             side: leg.side || leg.recommended_side || 'over',
             line: leg.line || leg.recommended_line || 0,
             prop_type: READABLE_PROPS[rawProp] || rawProp.replace(/^(player_|batter_|pitcher_)/, '').replace(/_/g, ' '),
