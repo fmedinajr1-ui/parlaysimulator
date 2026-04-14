@@ -1,52 +1,55 @@
 
 
-# Fix: Pitcher Lookup Returns Wrong Pitcher (Batter's Own Team)
+# Add "Over RBI" Engine for HR Power Hitters vs Weak Pitchers
 
-## Problem
-The `findPitcherForPlayer` function in `generate-rbi-parlays` finds a pitcher by searching the event description (e.g. "Toronto Blue Jays @ Cleveland Guardians") for any team name in the pitcher map. Since **both** team names appear in the description, it returns whichever team name it finds first — which could be the batter's **own** team's pitcher instead of the opposing pitcher.
+## Concept
+You're right — players with 2+ HRs in L10 who face weak pitchers are exactly who you want on **Over** RBI picks. Right now the system blocks them from Unders but wastes the data. Flip it: use the HR Power Gate rejects as Over candidates.
 
-This is why Yoan Moncada shows "Facing Reid Detmers" — Detmers pitches for the same team (Angels/White Sox context), not the opponent.
+## Qualifying Criteria (Over 0.5 RBI)
+- **L10 HRs >= 2** (the same players currently blocked from Unders)
+- **Facing a weak pitcher**: ERA >= 4.0 OR K/game < 5 (inverse of the Under pitcher gate)
+- **L10 RBI avg >= 0.5** (producing RBIs, not just hitting HRs in blowouts)
+- **L10 hit rate >= 40%** (hitting Over 0.5 in at least 4 of 10 games)
 
-## Root Cause
-In `fetchTodayPitchers()`, the map is keyed by `facingTeam` (the team whose batters face that pitcher). But `findPitcherForPlayer()` has no idea which team the batter plays for — it just does `lower.includes(team)` on the full event string, matching the first team it finds.
+## Changes
 
-## Fix
+### 1. `hrb-mlb-rbi-analyzer/index.ts` — Add Over RBI detection
+After the existing Under validation loop, add a second pass that collects **Over** candidates:
+- Players with `l10HRs >= 2` AND `l10Avg >= 0.5` AND `l10HitRate >= 0.4`
+- Tag with `prediction: 'Over'` and `signal_type: 'hr_power_over'`
+- Store opposing pitcher info in metadata for the parlay generator
+- Same dedup, daily cap, and Telegram dispatch as Unders
 
-### File: `supabase/functions/generate-rbi-parlays/index.ts`
+### 2. `generate-rbi-parlays/index.ts` — Add Over parlay generation
+After the existing Under parlay section, add a separate Over parlay builder:
+- Pull today's `hr_power_over` alerts from `fanduel_prediction_alerts`
+- **Inverse pitcher gate**: require weak pitcher (ERA >= 4.0 OR K/game < 5)
+- Score by: L10 HR count, L10 avg, hit rate, pitcher weakness
+- Build **3-leg Over RBI parlays** (require >= 3 candidates)
+- Also build 2-leg version as backup
+- Separate Telegram message: "🔥 RBI Over Power Parlay"
 
-**1. Change the pitcher map to be keyed by the batter's team name** (the team whose batters face that pitcher — which is already what `facingTeam` represents). The map key is correct; the lookup is wrong.
+### 3. Telegram format for Overs
+```
+🔥 RBI Over Power Parlay (3-Leg)
 
-**2. Add batter team resolution** — determine which team the batter plays for, then look up `pitcherMap.get(batterTeam)` directly instead of scanning both teams.
+1️⃣ Matt Olson — OVER 0.5 RBI
+   💪 3 HRs in L10 | L10: 0.7 avg (6/10 over)
+   🎯 Facing [weak pitcher] (4.82 ERA, 3.2 K/g)
 
-To determine the batter's team:
-- Check `alert.metadata?.team` (already stored by the RBI analyzer)
-- If not available, query `mlb_player_game_logs` for the player's most recent team
-- Use the resolved team name to do an exact lookup in `pitcherMap`
+2️⃣ Ketel Marte — OVER 0.5 RBI
+   💪 3 HRs in L10 | L10: 0.8 avg (7/10 over)
+   🎯 Facing [weak pitcher] (5.10 ERA, 4.1 K/g)
 
-**3. Update `findPitcherForPlayer` signature and logic:**
-
-```typescript
-function findPitcherForPlayer(
-  pitcherMap: Map<string, PitcherStats>,
-  batterTeam: string | null,
-  eventDescription: string,
-): PitcherStats | null {
-  // Exact match on batter's team (map is keyed by facingTeam = batter's team)
-  if (batterTeam) {
-    const lower = batterTeam.toLowerCase();
-    for (const [team, stats] of pitcherMap) {
-      if (team.includes(lower) || lower.includes(team)) return stats;
-    }
-  }
-  
-  // Fallback: parse event description "Away @ Home" and try both
-  // But we need to know which side the batter is on
-  return null;
-}
+3️⃣ Daulton Varsho — OVER 0.5 RBI
+   💪 2 HRs in L10 | L10: 0.5 avg (5/10 over)
+   🎯 Facing [weak pitcher] (4.50 ERA, 4.8 K/g)
 ```
 
-**4. Pass batter team from alert metadata or game logs** in the pitcher gate loop (lines 170-218). Add a batch team lookup from `mlb_player_game_logs` for players missing team metadata.
+### Files
+- `supabase/functions/hrb-mlb-rbi-analyzer/index.ts` — add Over candidate detection
+- `supabase/functions/generate-rbi-parlays/index.ts` — add Over parlay builder + Telegram
 
-### Impact
-This ensures Bo Bichette (Blue Jays) gets matched to Cleveland's pitcher, and Yoan Moncada gets matched to the opposing pitcher — not their own team's starter.
+### No DB changes needed
+Uses existing `fanduel_prediction_alerts` table and `hrb_rbi_line_timeline` — just new signal type `hr_power_over`.
 
