@@ -1,40 +1,61 @@
 
 
-# Nuke All Under Stolen Bases from Every System
+# Over SB & Over HR Tracking + Smarter Models
 
-## Problem
-Under SB picks keep appearing in parlays (see Parlay #3 in your screenshot). Three leak sources:
+## Current State
+- **SB**: Basic L10 model (avg >= 0.5, hit rate >= 50%). No Over picks settled yet. Still 274 stale Under SB records in DB.
+- **HR**: 4-factor model exists but caps probability at 22% — making Overs nearly impossible to flag (2 Over picks in 2 weeks vs 192 Unders).
 
-1. **`mlb-batter-analyzer`** — generic analyzer treats `batter_stolen_bases` like any other prop and generates UNDER signals into `mispriced_lines`
-2. **`l3-cross-engine-parlay`** — blocks Under SB from **sweet spots** (line 170) but NOT from **mispriced lines** (line 139-163), so mispriced Under SB leaks through
-3. **`fanduel-prediction-alerts`** — has a block at Telegram level but old `sb_under_l10` records already exist in the database and can be picked up by parlay engines
+## Changes
 
-## Fix (3 files)
+### 1. Clean up stale Under SB records
+Delete the 274 `sb_under_l10` alerts from `fanduel_prediction_alerts` that were created before the block was added. One-time cleanup via migration.
 
-### 1. `mlb-batter-analyzer/index.ts` — Block at source
-Add a skip for `batter_stolen_bases` UNDER before pushing to results (around line 165):
-```typescript
-// Block UNDER stolen bases — Over-only market
-if ((prop.stat_type === 'batter_stolen_bases' || prop.stat_type === 'stolen_bases') && signal === 'UNDER') {
-  continue;
-}
-```
+### 2. Upgrade `mlb-sb-analyzer` — Smarter Over SB Model
+Replace the basic L10-only model with a multi-factor approach:
 
-### 2. `l3-cross-engine-parlay/index.ts` — Block in mispriced section
-Add the same Under SB block in the mispriced loop (lines 139-163), not just the sweet spot loop:
-```typescript
-// Inside the mispriced loop, before pickMap.set:
-if ((normalizedProp === 'stolen_bases' || normalizedProp === 'stolen bases') && m.signal.toLowerCase() === 'under') {
-  console.log(`[L3CrossEngine] Blocked UNDER SB (mispriced): ${m.player_name}`);
-  continue;
-}
-```
+- **Catcher factor**: Look up the opposing catcher's caught-stealing rate from game logs. Weak catchers (low CS%) = higher SB probability.
+- **Pitcher factor**: Pitchers who allow high SB counts (check opposing pitcher's games for SB allowed). Slow delivery pitchers = more steal opportunities.
+- **Batting order position**: Leadoff/2-hole hitters get more opportunities.
+- **L5 trend weighting**: Weight recent 5 games heavier than L10 (60/40 blend) to catch hot streaks.
+- **Game context from line**: If the game total is high (lots of baserunners expected), SB opportunities increase.
+- **Tiered confidence scoring**:
+  - ELITE: L10 avg >= 0.8, Over rate >= 70%, facing weak catcher
+  - HIGH: L10 avg >= 0.6, Over rate >= 60%
+  - MEDIUM: L10 avg >= 0.5, Over rate >= 50% (current threshold)
 
-### 3. `fanduel-prediction-alerts/index.ts` — Already has blocks (no change needed)
-The existing blocks at lines 1282-1284 and 1311-1313 are correct. No change needed here.
+### 3. Upgrade `first-inning-hr-scanner` — Unlock Over HR Picks
+The model is good but Over picks are suppressed by two config issues:
 
-### Summary
-- Stop creating Under SB at the source (batter analyzer)
-- Block the mispriced path in L3 engine (was only blocking sweet spot path)
-- No DB changes needed — old records won't be picked up once both paths are blocked
+- **Raise probability cap** from 0.22 to 0.35 — elite sluggers facing hittable pitchers in HR-friendly parks can legitimately exceed 22% HR probability.
+- **Lower Over-specific edge threshold** to 3% (keep Under at 5%) — HR Overs are inherently lower probability but higher value.
+- **Add "power hitter" boost**: Players with L20 HR rate >= 0.20 (1 HR per 5 games) get a 1.15x multiplier.
+- **Add "pitcher HR vulnerability" boost**: Pitchers with HR/9 >= 1.5 AND "hittable" recent form get a 1.10x multiplier.
+
+### 4. Create `mlb-over-tracker` — Unified Over Performance Dashboard
+New edge function that:
+
+- Queries all Over SB and Over HR picks from `fanduel_prediction_alerts` and `category_sweet_spots`
+- Settles them against `mlb_player_game_logs`
+- Tracks win rate by: player, confidence tier, model factors used
+- Sends daily Telegram report: "📊 Over Tracker: SB 8/12 (67%) | HR 3/10 (30%)"
+- Identifies which factors correlate with wins (e.g., "weak catcher SB picks: 80% hit rate" vs "strong catcher: 45%")
+
+### 5. Generate Over HR + Over SB parlays
+Add Over HR and Over SB as eligible categories in `l3-cross-engine-parlay`:
+
+- Allow MLB_HR_OVER sweet spots as parlay legs
+- Allow `sb_over_l10` alerts as parlay legs
+- Build 2-3 leg "Power + Speed" parlays mixing HR Over and SB Over picks
+- Require minimum confidence tier of HIGH for parlay inclusion
+
+## Files
+- `supabase/functions/mlb-sb-analyzer/index.ts` — multi-factor upgrade
+- `supabase/functions/first-inning-hr-scanner/index.ts` — unlock Over HR picks
+- `supabase/functions/mlb-over-tracker/index.ts` — new tracking + settlement function
+- `supabase/functions/l3-cross-engine-parlay/index.ts` — add Over HR/SB to parlay pool
+- One-time DB cleanup of stale Under SB records
+
+## No new tables needed
+Uses existing `fanduel_prediction_alerts`, `category_sweet_spots`, and `mlb_player_game_logs`.
 
