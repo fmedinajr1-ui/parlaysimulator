@@ -80,13 +80,20 @@ async function fetchTodayPitchers(): Promise<Map<string, PitcherStats>> {
 
 function findPitcherForPlayer(
   pitcherMap: Map<string, PitcherStats>,
+  batterTeam: string | null,
   eventDescription: string,
 ): PitcherStats | null {
-  // eventDescription is like "Team A @ Team B"
-  const lower = (eventDescription || '').toLowerCase();
-  for (const [team, stats] of pitcherMap) {
-    if (lower.includes(team)) return stats;
+  // pitcherMap is keyed by facingTeam (= batter's team name, lowercase)
+  // So we look up the batter's own team to find who they face
+  if (batterTeam) {
+    const lower = batterTeam.toLowerCase();
+    for (const [team, stats] of pitcherMap) {
+      if (team.includes(lower) || lower.includes(team)) return stats;
+    }
   }
+
+  // No batter team known — can't reliably match, skip
+  log(`Pitcher lookup: no batter team for event "${eventDescription}"`);
   return null;
 }
 
