@@ -448,10 +448,65 @@ Deno.serve(async (req) => {
 
     log(`${validatedAlerts.length} alerts after L10 validation`);
 
+    // ── Over RBI Detection: HR Power Hitters vs Weak Pitchers ───────
+    // Players blocked from Unders (2+ HRs in L10) become Over candidates
+    const overCandidates: Alert[] = [];
+    for (const [name, stats] of Object.entries(l10Stats)) {
+      if (stats.l10HRs < 2) continue;       // Need 2+ HRs
+      if (stats.l10Avg < 0.5) continue;      // Need 0.5+ RBI avg
+      if (stats.l10HitRate < 0.4) continue;  // Need 40%+ hit rate
+      if (BLOCKED_PLAYERS.has(name)) continue;
+
+      // Find which event this player is in from the snapshots
+      let playerEventId: string | null = null;
+      let playerEventDesc: string | null = null;
+      let playerCommenceTime: string | null = null;
+      for (const [key, snaps] of Object.entries(groups)) {
+        if (snaps[0]?.player_name === name) {
+          playerEventId = snaps[0].event_id;
+          playerEventDesc = snaps[0].event_description;
+          playerCommenceTime = snaps[0].commence_time;
+          break;
+        }
+      }
+      if (!playerEventId) continue;
+
+      const confidence = Math.min(90, Math.round(
+        50 + (stats.l10HRs * 5) + (stats.l10HitRate * 20) + (stats.l10Avg * 10)
+      ));
+
+      if (confidence < MIN_CONFIDENCE) continue;
+
+      overCandidates.push({
+        player_name: name,
+        event_id: playerEventId,
+        signal_type: 'hr_power_over',
+        prediction: 'Over',
+        confidence,
+        metadata: {
+          line: RBI_LINE,
+          l10_rbi_avg: stats.l10Avg,
+          l3_rbi_avg: stats.l3Avg,
+          l10_hit_rate: stats.l10HitRate,
+          l10_sample: stats.l10Games,
+          l10_hrs: stats.l10HRs,
+          trend: stats.trend,
+        },
+        event_description: playerEventDesc,
+        commence_time: playerCommenceTime,
+      });
+
+      log(`🔥 Over candidate: ${name} — ${stats.l10HRs} HRs, ${stats.l10Avg} avg, ${(stats.l10HitRate * 100).toFixed(0)}% hit rate`);
+    }
+
+    log(`${overCandidates.length} Over RBI candidates detected`);
+
     // Deduplicate: best per player per event
+    const allAlerts = [...validatedAlerts, ...overCandidates];
     const bestAlerts: Record<string, Alert> = {};
-    for (const alert of validatedAlerts) {
-      const dedupeKey = `${alert.event_id}::${alert.player_name}`;
+    for (const alert of allAlerts) {
+      // Over and Under are separate dedup keys
+      const dedupeKey = `${alert.event_id}::${alert.player_name}::${alert.prediction}`;
       if (!bestAlerts[dedupeKey] || alert.confidence > bestAlerts[dedupeKey].confidence) {
         bestAlerts[dedupeKey] = alert;
       }
