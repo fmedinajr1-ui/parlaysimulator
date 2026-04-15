@@ -1,31 +1,33 @@
 
 
-# Fix Straight Bet Slate — Telegram Message Not Sending
+# Fix: Extract Individual Players from Team Cascades
 
 ## Problem
-The 45 bets were created in the database but the Telegram message failed with:
-> `Bad Request: can't parse entities: Can't find end of the entity starting at byte offset 25`
+All 43 cascade signals today are **TEAM CASCADE** entries like:
+`TEAM CASCADE (Kyle Tucker, Luis Robert Jr., Brett Baty, Shohei Ohtani, ...)`
 
-**Root causes:**
-1. **Team cascades leaking in** — entries like "TEAM CASCADE (Justin Crawford, Edmundo Sosa)" are team-level signals, not individual player bets. The function has no filter for these.
-2. **Markdown breaking** — Parentheses `()` inside `*bold*` markers confuse Telegram's Markdown parser. Player names like "Max Muncy (2002)" break formatting.
+The function skips all of these, leaving only 2 price_drift picks. There are **no individual-player cascade records** being created by the upstream engine.
 
 ## Fix
+Update `straight-bet-slate/index.ts` to **parse individual player names out of TEAM CASCADE entries** and create a separate bet for each player.
 
-### 1. Filter out team cascades in `straight-bet-slate/index.ts`
-Skip any alert where `player_name` starts with "TEAM CASCADE" — these are team-level signals, not bettable individual props.
+### Logic
+```text
+"TEAM CASCADE (Kyle Tucker, Luis Robert Jr., Bo Bichette)"
+  → 3 individual bets:
+    - Kyle Tucker Under 0.5 RBI @ 2% stake (cascade tier)
+    - Luis Robert Jr. Under 0.5 RBI @ 2% stake
+    - Bo Bichette Under 0.5 RBI @ 2% stake
+```
 
-### 2. Fix Markdown formatting
-- Escape or strip parentheses from player names before inserting into `*bold*` blocks
-- Switch from `Markdown` to `MarkdownV2` parse mode with proper escaping, OR simply use `HTML` parse mode which handles special chars better
+### Steps
+1. **Parse team cascades** — regex extract names between parentheses, split by comma
+2. **Deduplicate** — same player can appear in multiple team cascade entries; only bet once
+3. **Apply cascade stake tier** (2%) to each extracted player
+4. **Keep existing individual alert logic** unchanged for price_drift / velocity_spike
+5. **Clean up today's 2 existing bets**, re-run to get the full slate
+6. **Re-send to Telegram** with the complete 40+ bet slate
 
-### 3. Clean up today's bad data
-- Delete all `straight_bet_tracker` rows for today
-- Re-invoke the function after deploying fixes
-
-### 4. Re-send to Telegram
-After cleanup + redeploy, invoke the function to generate a clean slate with only individual player bets.
-
-## Files
-- `supabase/functions/straight-bet-slate/index.ts` — add team cascade filter + fix message formatting
+### File
+- `supabase/functions/straight-bet-slate/index.ts`
 
