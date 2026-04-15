@@ -1,41 +1,55 @@
 
 
-# MLB Cascade Parlay Generator
+# MLB Cascade Parlay Settlement & Earnings Tracker
 
 ## What We're Building
-New edge function `mlb-cascade-parlay-generator` that pulls today's cascade Under RBI picks from `straight_bet_tracker`, fetches real odds via `fetch-batch-odds`, and generates 20 parlay tickets with $10 stakes.
+A new edge function `mlb-cascade-parlay-settler` that automatically settles the 20 daily MLB cascade parlay tickets and tracks profit/loss, plus a Telegram earnings summary.
 
-## Key Changes
+## How Settlement Works
 
-### 1. Fix odds in straight_bet_tracker
-The current `-130` is wrong for Under 0.5 RBI. These lines are typically `-350` to `-400`. The new function will fetch real odds from The Odds API via `fetch-batch-odds` before building parlays.
+Each leg is "Player X Under 0.5 RBI". Settlement is straightforward:
+1. Pull all `pending` parlays from `bot_daily_parlays` where `strategy_name = 'mlb_cascade_parlays'`
+2. Extract player names from each leg
+3. Cross-reference against `mlb_player_game_logs` for the matching game date
+4. If player had **0 RBI** → leg **hits**. If **≥1 RBI** → leg **misses**. If no game log found → leg is **void** (DNP)
+5. All legs hit → parlay **won** (profit = `simulated_payout - simulated_stake`). Any leg missed → **lost** (profit = `-simulated_stake`). Contains void → apply void policy (void leg removed, remaining legs re-evaluated)
+6. Update `bot_daily_parlays` with `outcome`, `legs_hit`, `legs_missed`, `legs_voided`, `profit_loss`, `settled_at`
 
-### 2. New function: `supabase/functions/mlb-cascade-parlay-generator/index.ts`
+## Earnings Tracking
 
-**Flow:**
-1. Pull today's cascade picks from `straight_bet_tracker` (73 players)
-2. Call `fetch-batch-odds` with all players for `batter_rbis` market to get real Under 0.5 RBI odds (~-350 to -400)
-3. Shuffle the pool and build **20 unique parlay tickets** with varying leg counts:
-   - **8 tickets × 3 legs** (GRIND tier, ~+100 to +150 combined)
-   - **7 tickets × 5 legs** (STACK tier, ~+300 to +450 combined)
-   - **5 tickets × 8 legs** (LONGSHOT tier, ~+800 to +1200 combined)
-4. Each player used **at most once across all 20 tickets** (73 players covers: 8×3 + 7×5 + 5×8 = 24+35+40 = 99 slots — may need to allow reuse or reduce leg counts slightly)
-5. **$10 stake** per ticket ($200 total daily risk)
-6. Insert into `bot_daily_parlays` with `strategy_name: 'mlb_cascade_parlays'`
-7. Broadcast all 20 tickets to Telegram in HTML format
+After settlement, send a Telegram summary:
+```
+⚾ MLB CASCADE SETTLEMENT
 
-**Dedup & constraints:**
-- Max 2 players from same game per ticket
-- Shuffle for variety across tickets
+📊 Today's Results:
+✅ Won: 12/20 tickets
+❌ Lost: 6/20 tickets
+⏸ Void: 2/20 tickets
 
-### 3. Also update `straight-bet-slate/index.ts`
-Update the default odds from `-130` to `-375` (approximate Under 0.5 RBI market) so future straight bet records reflect realistic odds.
+💰 Staked: $200.00
+💵 Returned: $258.40
+📈 Net Profit: +$58.40
+📊 ROI: +29.2%
 
-## Stake & Risk
-- 20 tickets × $10 = **$200 total daily risk**
-- All Under 0.5 RBI at real market odds
+🏆 Running Totals:
+Total Staked: $200 | Net P/L: +$58.40
+```
 
 ## Files
-- **Create**: `supabase/functions/mlb-cascade-parlay-generator/index.ts`
-- **Edit**: `supabase/functions/straight-bet-slate/index.ts` (fix default odds from -130 to -375)
+
+### Create: `supabase/functions/mlb-cascade-parlay-settler/index.ts`
+- Fetch pending `mlb_cascade_parlays` from `bot_daily_parlays`
+- Extract player names from leg descriptions
+- Look up actual RBIs from `mlb_player_game_logs` (matching by name + game date)
+- Settle each parlay: won/lost/void
+- Update `bot_daily_parlays` with outcome, profit_loss, legs_hit/missed/voided, settled_at
+- Calculate daily P/L and running totals across all dates
+- Send formatted Telegram summary via `bot-send-telegram`
+
+### No DB changes needed
+All columns already exist on `bot_daily_parlays` (`outcome`, `profit_loss`, `legs_hit`, `legs_missed`, `legs_voided`, `settled_at`, `simulated_stake`, `simulated_payout`).
+
+### Integration
+- Can be invoked manually or added to the settlement orchestrator cron alongside `mlb-rbi-settler`
+- Reuses the same `mlb_player_game_logs` data and name-matching logic from the existing RBI settler
 
