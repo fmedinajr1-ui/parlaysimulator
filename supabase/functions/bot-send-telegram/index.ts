@@ -1182,20 +1182,44 @@ Deno.serve(async (req) => {
 
     // Direct message shortcut
     if (directMessage && !type) {
-      const body: Record<string, any> = {
-        chat_id: adminChatId,
-        text: directMessage,
-        parse_mode: parseMode,  // BUG 9 FIX: always include parse_mode
-        disable_web_page_preview: true,
+      // Chunk long messages to stay under Telegram's 4096-char limit
+      const MAX_CHUNK = 4000;
+      const messageIds: number[] = [];
+
+      const sendChunk = async (text: string) => {
+        const resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: adminChatId,
+            text,
+            parse_mode: parseMode,
+            disable_web_page_preview: true,
+          }),
+        });
+        const result = await resp.json();
+        if (result.result?.message_id) messageIds.push(result.result.message_id);
+        return resp.ok;
       };
-      const resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const result = await resp.json();
+
+      if (directMessage.length <= MAX_CHUNK) {
+        await sendChunk(directMessage);
+      } else {
+        // Split on newlines, accumulating chunks under MAX_CHUNK
+        const lines = directMessage.split('\n');
+        let chunk = '';
+        for (const line of lines) {
+          if (chunk.length + line.length + 1 > MAX_CHUNK && chunk.length > 0) {
+            await sendChunk(chunk);
+            chunk = '';
+          }
+          chunk += (chunk ? '\n' : '') + line;
+        }
+        if (chunk) await sendChunk(chunk);
+      }
+
       return new Response(
-        JSON.stringify({ success: resp.ok, messageId: result.result?.message_id }),
+        JSON.stringify({ success: true, messageIds }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
