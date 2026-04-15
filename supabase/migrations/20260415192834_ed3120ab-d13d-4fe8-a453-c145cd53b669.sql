@@ -1,0 +1,1 @@
+DELETE FROM public.bot_daily_parlays WHERE parlay_date = '2026-04-15' AND strategy_name = 'mlb_cascade_parlays';
