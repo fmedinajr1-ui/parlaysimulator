@@ -60,6 +60,78 @@ interface PlayerL10Stats {
   trend: string; // 'hot' | 'cold' | 'stable'
 }
 
+interface PitcherProfile {
+  name: string;
+  team: string;
+  games: number;
+  avgIP: number;
+  avgER: number;
+  avgHitsAllowed: number;
+  era: number; // earned runs per 9 IP
+  quality: 'elite' | 'strong' | 'average' | 'weak' | 'liability';
+}
+
+// Fetch opposing pitcher quality for a set of teams
+async function fetchPitcherProfiles(
+  supabase: any,
+  teams: string[],
+  log: (msg: string) => void
+): Promise<Record<string, PitcherProfile>> {
+  const results: Record<string, PitcherProfile> = {};
+  if (teams.length === 0) return results;
+
+  const unique = [...new Set(teams)];
+
+  // Get recent starts (IP > 4) for each team's pitchers
+  const { data: pitcherLogs } = await supabase
+    .from('mlb_player_game_logs')
+    .select('player_name, team, innings_pitched, earned_runs, pitcher_hits_allowed, game_date')
+    .in('team', unique)
+    .gt('innings_pitched', 4)
+    .order('game_date', { ascending: false })
+    .limit(unique.length * 10);
+
+  if (!pitcherLogs || pitcherLogs.length === 0) return results;
+
+  // Group by team → take the most recent starter (most likely today's probable)
+  const teamStarters: Record<string, { name: string; games: { ip: number; er: number; ha: number }[] }> = {};
+  for (const g of pitcherLogs) {
+    const team = g.team;
+    if (!teamStarters[team]) teamStarters[team] = { name: g.player_name, games: [] };
+    // Only aggregate the most recent pitcher for each team (probable starter)
+    if (teamStarters[team].name === g.player_name && teamStarters[team].games.length < 5) {
+      teamStarters[team].games.push({
+        ip: Number(g.innings_pitched) || 0,
+        er: Number(g.earned_runs) || 0,
+        ha: Number(g.pitcher_hits_allowed) || 0,
+      });
+    }
+  }
+
+  for (const [team, data] of Object.entries(teamStarters)) {
+    if (data.games.length < 2) continue;
+    const totalIP = data.games.reduce((s, g) => s + g.ip, 0);
+    const totalER = data.games.reduce((s, g) => s + g.er, 0);
+    const totalHA = data.games.reduce((s, g) => s + g.ha, 0);
+    const avgIP = totalIP / data.games.length;
+    const avgER = totalER / data.games.length;
+    const avgHA = totalHA / data.games.length;
+    const era = totalIP > 0 ? (totalER / totalIP) * 9 : 99;
+
+    let quality: PitcherProfile['quality'];
+    if (era <= 2.5) quality = 'elite';
+    else if (era <= 3.5) quality = 'strong';
+    else if (era <= 4.5) quality = 'average';
+    else if (era <= 5.5) quality = 'weak';
+    else quality = 'liability';
+
+    results[team] = { name: data.name, team, games: data.games.length, avgIP, avgER, avgHA, era, quality };
+    log(`Pitcher profile: ${team} → ${data.name} (ERA ${era.toFixed(2)}, ${quality}, ${data.games.length} starts)`);
+  }
+
+  return results;
+}
+
 // Batch fetch L10 RBI stats for multiple players at once
 async function batchFetchL10Stats(
   supabase: any,
