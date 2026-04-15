@@ -295,10 +295,32 @@ Deno.serve(async (req) => {
     msg += `🏆 Max Payout: <b>$${totalPayout.toFixed(2)}</b>\n`;
     msg += `\n<i>All legs: Under 0.5 RBI · Cascade signals (96% WR)</i>`;
 
+    // Split into chunks if message exceeds Telegram's 4096-char limit
+    const MAX_TG_CHUNK = 4000;
+    const chunks: string[] = [];
+    if (msg.length <= MAX_TG_CHUNK) {
+      chunks.push(msg);
+    } else {
+      const lines = msg.split('\n');
+      let chunk = '';
+      for (const line of lines) {
+        if (chunk.length + line.length + 1 > MAX_TG_CHUNK && chunk.length > 0) {
+          chunks.push(chunk);
+          chunk = '';
+        }
+        chunk += (chunk ? '\n' : '') + line;
+      }
+      if (chunk) chunks.push(chunk);
+    }
+
+    console.log(`[MLB-Cascade-Parlays] Sending ${chunks.length} Telegram chunk(s) (total ${msg.length} chars)`);
+
     try {
-      await supabase.functions.invoke('bot-send-telegram', {
-        body: { message: msg, parse_mode: 'HTML' },
-      });
+      for (const chunk of chunks) {
+        await supabase.functions.invoke('bot-send-telegram', {
+          body: { message: chunk, parse_mode: 'HTML' },
+        });
+      }
     } catch (tgErr) {
       console.error('[MLB-Cascade-Parlays] Telegram send error:', tgErr);
     }
