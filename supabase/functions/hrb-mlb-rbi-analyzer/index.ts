@@ -520,6 +520,152 @@ Deno.serve(async (req) => {
 
     log(`${validatedAlerts.length} alerts after L10 validation`);
 
+    // ── Pitcher Quality Gate ─────────────────────────────────────────
+    // Cross-reference opposing pitcher ERA/hits to adjust Under confidence
+    // Weak pitcher → penalize Under (more RBIs likely)
+    // Strong pitcher → boost Under (fewer RBIs likely)
+
+    // 1. Collect all unique teams from event descriptions
+    const eventTeams: Record<string, { home: string; away: string }> = {};
+    for (const alert of validatedAlerts) {
+      if (!alert.event_description) continue;
+      const match = alert.event_description.match(/^(.+?)\s+@\s+(.+)$/);
+      if (match) {
+        eventTeams[alert.event_id] = { away: match[1].trim(), home: match[2].trim() };
+      }
+    }
+
+    // 2. Get player → team mapping from game logs
+    const playerTeamMap: Record<string, string> = {};
+    const alertPlayerNames = validatedAlerts
+      .filter(a => !a.player_name.startsWith('TEAM CASCADE'))
+      .map(a => a.player_name);
+    // Also extract names from cascade entries
+    for (const a of validatedAlerts) {
+      if (a.player_name.startsWith('TEAM CASCADE')) {
+        const innerMatch = a.player_name.match(/\(([^)]+)\)/);
+        if (innerMatch) {
+          alertPlayerNames.push(...innerMatch[1].split(',').map((n: string) => n.trim()));
+        }
+      }
+    }
+
+    if (alertPlayerNames.length > 0) {
+      const { data: teamLookup } = await supabase
+        .from('mlb_player_game_logs')
+        .select('player_name, team')
+        .in('player_name', [...new Set(alertPlayerNames)])
+        .order('game_date', { ascending: false })
+        .limit(alertPlayerNames.length * 2);
+
+      if (teamLookup) {
+        for (const row of teamLookup) {
+          if (!playerTeamMap[row.player_name]) playerTeamMap[row.player_name] = row.team;
+        }
+      }
+    }
+
+    // 3. Determine all opposing teams we need pitcher data for
+    const opposingTeams = new Set<string>();
+    for (const alert of validatedAlerts) {
+      const teams = eventTeams[alert.event_id];
+      if (!teams) continue;
+
+      // Get batter's team to find opposing team
+      const getOpposing = (playerName: string): string | null => {
+        const batterTeam = playerTeamMap[playerName];
+        if (!batterTeam) return null;
+        if (batterTeam === teams.home) return teams.away;
+        if (batterTeam === teams.away) return teams.home;
+        // Fuzzy match (team name might be partial)
+        if (teams.home.includes(batterTeam) || batterTeam.includes(teams.home)) return teams.away;
+        if (teams.away.includes(batterTeam) || batterTeam.includes(teams.away)) return teams.home;
+        return null;
+      };
+
+      if (alert.player_name.startsWith('TEAM CASCADE')) {
+        const innerMatch = alert.player_name.match(/\(([^)]+)\)/);
+        if (innerMatch) {
+          for (const name of innerMatch[1].split(',').map((n: string) => n.trim())) {
+            const opp = getOpposing(name);
+            if (opp) opposingTeams.add(opp);
+          }
+        }
+      } else {
+        const opp = getOpposing(alert.player_name);
+        if (opp) opposingTeams.add(opp);
+      }
+    }
+
+    // 4. Fetch pitcher profiles for opposing teams
+    const pitcherProfiles = await fetchPitcherProfiles(supabase, [...opposingTeams], log);
+    log(`Fetched pitcher profiles for ${Object.keys(pitcherProfiles).length} opposing teams`);
+
+    // 5. Apply pitcher quality adjustments
+    for (const alert of validatedAlerts) {
+      if (alert.prediction !== 'Under') continue;
+      const teams = eventTeams[alert.event_id];
+      if (!teams) continue;
+
+      const getOpposingTeam = (playerName: string): string | null => {
+        const batterTeam = playerTeamMap[playerName];
+        if (!batterTeam) return null;
+        if (batterTeam === teams.home) return teams.away;
+        if (batterTeam === teams.away) return teams.home;
+        if (teams.home.includes(batterTeam) || batterTeam.includes(teams.home)) return teams.away;
+        if (teams.away.includes(batterTeam) || batterTeam.includes(teams.away)) return teams.home;
+        return null;
+      };
+
+      // For cascades, use the first player with a known team
+      let opposingTeam: string | null = null;
+      if (alert.player_name.startsWith('TEAM CASCADE')) {
+        const innerMatch = alert.player_name.match(/\(([^)]+)\)/);
+        if (innerMatch) {
+          for (const name of innerMatch[1].split(',').map((n: string) => n.trim())) {
+            opposingTeam = getOpposingTeam(name);
+            if (opposingTeam) break;
+          }
+        }
+      } else {
+        opposingTeam = getOpposingTeam(alert.player_name);
+      }
+
+      if (!opposingTeam || !pitcherProfiles[opposingTeam]) continue;
+      const pitcher = pitcherProfiles[opposingTeam];
+
+      // Apply confidence adjustment based on pitcher quality
+      let pitcherAdj = 0;
+      switch (pitcher.quality) {
+        case 'elite':   pitcherAdj = +10; break; // Elite pitcher → great for Unders
+        case 'strong':  pitcherAdj = +5;  break;
+        case 'average': pitcherAdj = 0;   break;
+        case 'weak':    pitcherAdj = -10; break; // Weak pitcher → bad for Unders
+        case 'liability': pitcherAdj = -20; break; // Liability → strong penalty
+      }
+
+      if (pitcherAdj !== 0) {
+        const oldConf = alert.confidence;
+        alert.confidence = Math.max(0, Math.min(95, alert.confidence + pitcherAdj));
+        log(`⚾ Pitcher gate: ${alert.player_name} vs ${pitcher.name} (${pitcher.quality}, ERA ${pitcher.era.toFixed(2)}) → confidence ${oldConf} → ${alert.confidence} (${pitcherAdj > 0 ? '+' : ''}${pitcherAdj})`);
+      }
+
+      alert.metadata.opposing_pitcher = pitcher.name;
+      alert.metadata.opposing_pitcher_era = Math.round(pitcher.era * 100) / 100;
+      alert.metadata.opposing_pitcher_quality = pitcher.quality;
+      alert.metadata.pitcher_confidence_adj = pitcherAdj;
+    }
+
+    // Remove any alerts that fell below MIN_CONFIDENCE after pitcher gate
+    const pitcherGatedAlerts = validatedAlerts.filter(a => {
+      if (a.confidence < MIN_CONFIDENCE) {
+        log(`Pitcher gate block: ${a.player_name} — confidence ${a.confidence} < ${MIN_CONFIDENCE} after pitcher penalty`);
+        return false;
+      }
+      return true;
+    });
+    log(`${pitcherGatedAlerts.length} alerts after pitcher quality gate (${validatedAlerts.length - pitcherGatedAlerts.length} blocked)`);
+
     // ── Over RBI Detection: HR Power Hitters vs Weak Pitchers ───────
     // Players blocked from Unders (2+ HRs in L10) become Over candidates
     const overCandidates: Alert[] = [];
