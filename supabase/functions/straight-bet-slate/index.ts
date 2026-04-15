@@ -225,11 +225,11 @@ Deno.serve(async (req) => {
     msg += `📊 Expected Value: <b>+$${(cascadeEV + driftEV).toFixed(2)}</b>\n`;
     msg += `\n<i>Half-Kelly sizing · Bankroll-adjusted stakes</i>`;
 
-    // 8. Send to Telegram (HTML parse mode for safe special chars)
+    // 8. Send to Telegram (direct message shortcut, HTML parse mode)
     const { error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
       body: {
-        type: 'custom_message',
-        data: { message: msg, parse_mode: 'HTML' },
+        message: msg,
+        parse_mode: 'HTML',
       },
     });
 
