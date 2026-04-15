@@ -75,10 +75,13 @@ Deno.serve(async (req) => {
 
     // 2. Pull today's high-accuracy signals from fanduel_prediction_alerts
     //    Target: cascade + price_drift for Under RBI (highest proven WR)
+    const todayStart = `${today}T00:00:00`;
+    const todayEnd = `${today}T23:59:59`;
     const { data: alerts, error: alertErr } = await supabase
       .from('fanduel_prediction_alerts')
       .select('*')
-      .eq('alert_date', today)
+      .gte('created_at', todayStart)
+      .lte('created_at', todayEnd)
       .in('signal_type', ['cascade', 'price_drift', 'velocity_spike'])
       .not('player_name', 'is', null);
 
