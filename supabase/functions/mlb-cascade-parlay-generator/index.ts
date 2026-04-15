@@ -166,7 +166,13 @@ Deno.serve(async (req) => {
     const removed = unfilteredPool.length - pool.length;
     console.log(`[MLB-Cascade-Parlays] RBI filter: ${pool.length} passed, ${removed} removed (range ${MIN_AVG_RBI}-${MAX_AVG_RBI})`);
 
-    // 4. Check for existing parlays today to avoid duplicates
+    if (pool.length === 0) {
+      return new Response(JSON.stringify({
+        success: false,
+        message: `All ${unfilteredPool.length} cascade picks filtered out by RBI avg threshold (${MIN_AVG_RBI}-${MAX_AVG_RBI})`,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
       .select('id')
