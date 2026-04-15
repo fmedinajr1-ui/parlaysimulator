@@ -100,8 +100,8 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        active: parlays.length, 
-        totalStake,
+        active: cleanParlays.length, 
+        filtered: parlays.length - cleanParlays.length,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
