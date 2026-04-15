@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
         }
         const names = match[1].split(',').map((n: string) => n.trim()).filter(Boolean);
         const tier = STAKE_TIERS.cascade;
-        const odds = alert.odds || -130;
+      const odds = alert.odds || -375;
 
         for (const name of names) {
           if (seenPlayers.has(name)) continue;
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
 
       const tier = STAKE_TIERS[alert.signal_type] || STAKE_TIERS.velocity_spike;
       const stake = Math.max(1, Math.round(bankroll * tier.pct * 100) / 100);
-      const odds = alert.odds || -130;
+      const odds = alert.odds || -375;
 
       slate.push({
         signal_type: alert.signal_type,
