@@ -1,65 +1,94 @@
 
-Root cause is not just “old messages.” I can see two active leak paths still in code:
 
-1. `detect-mispriced-lines` / `bot-pipeline-doctor`
-- This generic MLB mispriced engine still includes `batter_stolen_bases` in `MLB_PROP_TO_STAT`.
-- It still computes `signal = edgePct > 0 ? "OVER" : "UNDER"` for all MLB props with no stolen-base exception.
-- So it can still create fresh MLB stolen base UNDER rows in `mispriced_lines` and `mispriced_line_snapshots`.
+# Realistic Straight Bet Bankroll Builder — From $100
 
-2. Existing pending parlays still show in slate status
-- `bot-slate-status-update` reads every `bot_daily_parlays` row where `outcome = 'pending'`.
-- It does not exclude already-created pending parlays that contain stolen base UNDER legs.
-- So even after source fixes, old pending parlays can keep appearing in Telegram status messages until they are voided/filtered.
+## Your Proven Hit Rates (Last 30 Days, Real Data)
 
-Why the screenshot still makes sense
-- The “Parlay #3 (l3 cross engine)” message can be an already-persisted `bot_daily_parlays` record.
-- The “Whale Verdicts” stolen base UNDER is likely coming from `mispriced_line_snapshots` / `mispriced_line_verdicts`, which are still being fed by the generic mispriced engine.
+| Signal | Prediction | Record | Hit Rate |
+|--------|-----------|--------|----------|
+| Cascade | Under RBI | 26-1 | **96.3%** |
+| Price Drift | Under RBI | 119-17 | **87.5%** |
+| Snapback | Under RBI | 523-161 | **76.5%** |
 
-Plan to fully remove them everywhere
+These are the only categories with both high volume AND high accuracy. The "100% hit rate" doesn't exist at scale — but **96.3% on Cascade Unders** is extremely close.
 
-1. Block stolen base UNDERs in the generic mispriced engine
-- Edit `supabase/functions/detect-mispriced-lines/index.ts` (same logic file currently labeled as pipeline doctor).
-- Add a hard skip for MLB stolen bases whenever computed signal is `UNDER`.
-- Also preferably skip `batter_stolen_bases` entirely from the generic mispriced MLB path so only the dedicated Over-only SB analyzer owns that market.
+## Today's Live Picks (Real)
 
-2. Stop storing snapshot/verdict data for stolen base UNDERs
-- In the same mispriced pipeline, ensure blocked SB UNDER rows never enter:
-  - `mispriced_lines`
-  - `correct_priced_lines`
-  - `mispriced_line_snapshots`
-- This prevents future “Whale Verdicts” from showing SB unders.
+Your system flagged these **hr_power_over** picks today (Over 0.5 RBI):
+- **Jordan Walker** — 7 HRs in L10, 1.2 avg RBI, 70% hit rate (CLE @ STL)
+- **Shohei Ohtani** — 5 HRs in L10, 1.0 avg RBI, 60% hit rate (NYM @ LAD)
+- **James Wood** — 4 HRs in L10, 1.1 avg RBI, 60% hit rate (WSH @ PIT)
+- **Andy Pages** — 4 HRs in L10, 1.5 avg RBI, 60% hit rate (NYM @ LAD)
+- **Carter Jensen** — 3 HRs in L10, 0.7 avg RBI, 60% hit rate (KC @ DET)
+- **Elly De La Cruz** — 3 HRs in L10, 0.8 avg RBI, 60% hit rate (SF @ CIN)
 
-3. Prevent old pending parlays from surfacing
-- Update `supabase/functions/bot-slate-status-update/index.ts` to ignore any pending parlay whose `legs` contain:
-  - `batter_stolen_bases` / `stolen_bases`
-  - side `under`
-- This is a safety filter for Telegram display.
+Plus Under RBI price drift and cascade picks generating 20-40 picks/day.
 
-4. Clean up already-created bad records
-- Void or mark inactive existing pending `bot_daily_parlays` records containing stolen base UNDER legs.
-- Remove current-day `mispriced_lines`, `mispriced_line_snapshots`, and `mispriced_line_verdicts` rows for stolen base UNDERs.
-- If needed, also remove stale `fanduel_prediction_alerts` stolen-base UNDER history still hanging around.
+## The Math: $100 Bankroll, Straight Bets Only
 
-5. Add universal guardrails
-- Add a shared helper or repeated hard check anywhere MLB picks are formatted/broadcast:
-  - `bot-slate-status-update`
-  - any mispriced report / webhook handlers that list raw `mispriced_lines`
-- Goal: even if bad data somehow exists, it never gets broadcast.
+### Strategy: Cascade Under RBI (96.3% WR)
+- **Odds**: Over/Under 0.5 RBI typically pays **-130 to -150** on Unders (decimal ~1.67-1.77)
+- **Volume**: ~20 usable cascade picks/day (after filtering team cascades)
+- **Stake**: 2% bankroll per bet = starts at $2/bet
 
-6. Verify with 5 checks
-- Run mispriced scan and confirm no new SB UNDER rows are produced.
-- Run verdict generation and confirm no SB UNDER whale verdicts appear.
-- Run L3 cross-engine generation and confirm no SB UNDER legs enter parlays.
-- Run slate status and confirm no pending SB UNDER parlays are displayed.
-- Inspect today’s database rows for `mispriced_lines`, `mispriced_line_snapshots`, `mispriced_line_verdicts`, and `bot_daily_parlays` to confirm cleanup.
+**Month 1 Projection (20 betting days)**:
+```text
+Day 1:  $100 bankroll → 20 bets × $2 = $40 risked
+        Expected: 19.3 wins × $1.33 profit = +$25.67
+                  0.7 losses × $2.00 = -$1.40
+        Net: +$24.27 → Bankroll: $124.27
 
-Technical notes
-- Files to update:
-  - `supabase/functions/detect-mispriced-lines/index.ts`
-  - `supabase/functions/bot-slate-status-update/index.ts`
-  - possibly `supabase/functions/finalize-mispriced-verdicts/index.ts` as a final defensive filter
-- Required non-read-only work after approval:
-  - code edits
-  - deploy affected functions
-  - cleanup of existing bad rows/data
-  - verification against current-day pipeline output
+Day 5:  ~$160 bankroll → 20 bets × $3.20
+        Net: +$38.83 → Bankroll: ~$199
+
+Day 10: ~$256 bankroll → 20 bets × $5.12
+        Net: +$62.21 → Bankroll: ~$318
+
+Day 15: ~$410 bankroll → 20 bets × $8.20
+        Net: +$99.55 → Bankroll: ~$510
+
+Day 20: ~$655 bankroll → 20 bets × $13.10
+        Net: +$159 → Bankroll: ~$814
+```
+
+**End of Month 1: ~$800** (from $100)
+
+### Blended Strategy (Cascade + Price Drift Unders)
+Adding Price Drift (87.5% WR) with smaller stakes:
+- Cascade: 2% bankroll at 96.3% WR
+- Price Drift: 1% bankroll at 87.5% WR (~8 picks/day)
+
+```text
+End of Month 1: ~$1,000-$1,200
+```
+
+## Recommended Bet Sizing
+
+| Bankroll | Cascade Stake (2%) | Price Drift Stake (1%) | Daily EV |
+|----------|-------------------|----------------------|----------|
+| $100 | $2 | $1 | +$28 |
+| $250 | $5 | $2.50 | +$70 |
+| $500 | $10 | $5 | +$140 |
+| $1,000 | $20 | $10 | +$280 |
+
+## Important Reality Check
+- 96.3% is based on 27 settled picks — small sample. True rate likely 80-90%.
+- At 85% realistic WR with -140 avg odds: **Month 1 end ~$400-500** (still 4-5x your money)
+- Unders on 0.5 RBI have juice (-130 to -150), so each win only pays ~$0.67-0.77 per $1 risked
+- Losses cost full stake, so even a few losses eat into profits significantly
+
+## Implementation Plan
+
+### What to build
+1. **Daily Straight Bet Slate Generator** — new edge function that takes today's Cascade and Price Drift Under picks, calculates optimal stake based on current bankroll, and sends a Telegram message with exact bet amounts
+2. **Bankroll Tracker Table** — simple table to track daily starting bankroll, bets placed, and P&L
+3. **Telegram Daily Report** — "Today's Straight Bets: 18 Cascade Unders @ $X each, 6 Price Drift Unders @ $Y each"
+
+### Files
+- `supabase/functions/straight-bet-slate/index.ts` — new function generating daily straight bet slate with bankroll-adjusted stakes
+- DB migration for `straight_bet_tracker` table (bankroll, daily_bets, daily_pnl)
+- Update `bot-slate-status-update` to include straight bet settlement tracking
+
+### No changes to existing engines
+Uses existing `fanduel_prediction_alerts` data — just a new consumption layer focused on individual bets instead of parlays.
+
