@@ -1,55 +1,25 @@
 
 
-# MLB Cascade Parlay Settlement & Earnings Tracker
+# Add RBI Average Filter to MLB Cascade Parlay Generator
 
-## What We're Building
-A new edge function `mlb-cascade-parlay-settler` that automatically settles the 20 daily MLB cascade parlay tickets and tracks profit/loss, plus a Telegram earnings summary.
+## Problem
+The generator currently uses ALL cascade picks without checking each player's actual RBI production rate. Some players may average 0 RBI (pitchers/relievers) or 1+ RBI (power hitters) — neither is ideal for Under 0.5 RBI parlays.
 
-## How Settlement Works
+## Solution
+Add a quality gate that cross-references each cascade pick against `mlb_player_game_logs` to compute their L10 RBI average, then only includes players averaging **0.3–0.7 RBI** (sweet spot for Under 0.5 lines). This ensures every leg is a meaningful position player with a realistic but beatable RBI rate.
 
-Each leg is "Player X Under 0.5 RBI". Settlement is straightforward:
-1. Pull all `pending` parlays from `bot_daily_parlays` where `strategy_name = 'mlb_cascade_parlays'`
-2. Extract player names from each leg
-3. Cross-reference against `mlb_player_game_logs` for the matching game date
-4. If player had **0 RBI** → leg **hits**. If **≥1 RBI** → leg **misses**. If no game log found → leg is **void** (DNP)
-5. All legs hit → parlay **won** (profit = `simulated_payout - simulated_stake`). Any leg missed → **lost** (profit = `-simulated_stake`). Contains void → apply void policy (void leg removed, remaining legs re-evaluated)
-6. Update `bot_daily_parlays` with `outcome`, `legs_hit`, `legs_missed`, `legs_voided`, `profit_loss`, `settled_at`
+## Changes
 
-## Earnings Tracking
+### Edit: `supabase/functions/mlb-cascade-parlay-generator/index.ts`
 
-After settlement, send a Telegram summary:
-```
-⚾ MLB CASCADE SETTLEMENT
+After pulling cascade picks (step 1) and before building the pool (step 3), add:
 
-📊 Today's Results:
-✅ Won: 12/20 tickets
-❌ Lost: 6/20 tickets
-⏸ Void: 2/20 tickets
+1. **Query L10 RBI averages** — fetch from `mlb_player_game_logs` grouped by player name for recent games
+2. **Filter pool** — only keep players with avg RBI between **0.3 and 0.7** (configurable constants `MIN_AVG_RBI = 0.3`, `MAX_AVG_RBI = 0.7`, minimum 3 games logged)
+3. **Log filtered count** — show how many players passed vs were removed
+4. **Include avg RBI in Telegram output** — show each leg's L10 avg next to the pick for transparency
 
-💰 Staked: $200.00
-💵 Returned: $258.40
-📈 Net Profit: +$58.40
-📊 ROI: +29.2%
-
-🏆 Running Totals:
-Total Staked: $200 | Net P/L: +$58.40
-```
-
-## Files
-
-### Create: `supabase/functions/mlb-cascade-parlay-settler/index.ts`
-- Fetch pending `mlb_cascade_parlays` from `bot_daily_parlays`
-- Extract player names from leg descriptions
-- Look up actual RBIs from `mlb_player_game_logs` (matching by name + game date)
-- Settle each parlay: won/lost/void
-- Update `bot_daily_parlays` with outcome, profit_loss, legs_hit/missed/voided, settled_at
-- Calculate daily P/L and running totals across all dates
-- Send formatted Telegram summary via `bot-send-telegram`
+Players averaging 0.0 (pitchers, bench players) get dropped — they don't have Under 0.5 RBI lines on FanDuel. Players averaging 0.8+ get dropped — too risky for Under.
 
 ### No DB changes needed
-All columns already exist on `bot_daily_parlays` (`outcome`, `profit_loss`, `legs_hit`, `legs_missed`, `legs_voided`, `settled_at`, `simulated_stake`, `simulated_payout`).
-
-### Integration
-- Can be invoked manually or added to the settlement orchestrator cron alongside `mlb-rbi-settler`
-- Reuses the same `mlb_player_game_logs` data and name-matching logic from the existing RBI settler
 
