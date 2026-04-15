@@ -51,7 +51,8 @@ interface CascadePick {
   side: string;
   line: number;
   odds_american: number;
-  game_key?: string; // home_team vs away_team for same-game checks
+  avg_rbi?: number;
+  game_key?: string;
 }
 
 Deno.serve(async (req) => {
@@ -117,8 +118,34 @@ Deno.serve(async (req) => {
       console.warn(`[MLB-Cascade-Parlays] fetch-batch-odds failed, using default -375:`, oddsErr);
     }
 
-    // 3. Build the pool with real or fallback odds
-    const pool: CascadePick[] = cascadePicks.map(p => {
+    // 2b. Fetch L10 RBI averages for quality filtering
+    const playerNames = cascadePicks.map(p => p.player_name);
+    const { data: gameLogs } = await supabase
+      .from('mlb_player_game_logs')
+      .select('player_name, rbis')
+      .in('player_name', playerNames)
+      .not('rbis', 'is', null)
+      .order('game_date', { ascending: false })
+      .limit(5000);
+
+    const rbiAvgMap = new Map<string, number>();
+    if (gameLogs && gameLogs.length > 0) {
+      const playerGames = new Map<string, number[]>();
+      for (const gl of gameLogs) {
+        if (!playerGames.has(gl.player_name)) playerGames.set(gl.player_name, []);
+        const games = playerGames.get(gl.player_name)!;
+        if (games.length < 10) games.push(gl.rbis);
+      }
+      for (const [name, rbis] of playerGames.entries()) {
+        if (rbis.length >= MIN_GAMES) {
+          rbiAvgMap.set(name, rbis.reduce((s, v) => s + v, 0) / rbis.length);
+        }
+      }
+    }
+    console.log(`[MLB-Cascade-Parlays] Computed L10 RBI avg for ${rbiAvgMap.size} players`);
+
+    // 3. Build the pool with real or fallback odds + RBI avg filter
+    const unfilteredPool: CascadePick[] = cascadePicks.map(p => {
       const realOdds = oddsMap.get(p.player_name);
       return {
         player_name: p.player_name,
@@ -126,8 +153,18 @@ Deno.serve(async (req) => {
         side: p.side || 'under',
         line: realOdds?.line ?? p.line ?? 0.5,
         odds_american: realOdds?.under_price ?? -375,
+        avg_rbi: rbiAvgMap.get(p.player_name),
       };
     });
+
+    const pool: CascadePick[] = unfilteredPool.filter(p => {
+      const avg = p.avg_rbi;
+      if (avg === undefined) return false; // no data = skip
+      return avg >= MIN_AVG_RBI && avg <= MAX_AVG_RBI;
+    });
+
+    const removed = unfilteredPool.length - pool.length;
+    console.log(`[MLB-Cascade-Parlays] RBI filter: ${pool.length} passed, ${removed} removed (range ${MIN_AVG_RBI}-${MAX_AVG_RBI})`);
 
     // 4. Check for existing parlays today to avoid duplicates
     const { data: existingParlays } = await supabase
@@ -239,7 +276,8 @@ Deno.serve(async (req) => {
         for (const leg of ticket.legs) {
           const prop = readableProp(leg.prop_type);
           const legOdds = leg.odds_american > 0 ? `+${leg.odds_american}` : `${leg.odds_american}`;
-          msg += `   └ ${esc(leg.player_name)} U${leg.line} ${prop} (${legOdds})\n`;
+          const avgStr = leg.avg_rbi !== undefined ? ` · L10 avg ${leg.avg_rbi.toFixed(2)}` : '';
+          msg += `   └ ${esc(leg.player_name)} U${leg.line} ${prop} (${legOdds})${avgStr}\n`;
         }
         msg += `\n`;
       }
