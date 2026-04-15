@@ -88,14 +88,14 @@ Deno.serve(async (req) => {
         type: 'slate_status_update',
         data: {
           activeParlays: formattedActive,
-          totalStake,
+          totalStake: cleanParlays.reduce((sum, p) => sum + (p.simulated_stake || 0), 0),
         },
       },
     });
 
     if (sendError) throw sendError;
 
-    console.log(`[SlateStatus] Sent update: ${parlays.length} active, total risk $${totalStake}`);
+    console.log(`[SlateStatus] Sent update: ${cleanParlays.length} active (filtered from ${parlays.length})`);
 
     return new Response(
       JSON.stringify({ 
