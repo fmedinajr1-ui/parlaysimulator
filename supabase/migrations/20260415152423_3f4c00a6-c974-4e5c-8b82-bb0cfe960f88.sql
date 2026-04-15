@@ -1,0 +1,1 @@
+DELETE FROM straight_bet_tracker WHERE bet_date = CURRENT_DATE;
