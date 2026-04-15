@@ -116,20 +116,54 @@ Deno.serve(async (req) => {
       bankroll_before: number;
     }> = [];
 
+    // Track seen players to deduplicate across multiple TEAM CASCADE entries
+    const seenPlayers = new Set<string>();
+
     for (const alert of alerts) {
-      // Skip team-level cascade signals — not individual bettable props
-      if (!alert.player_name || alert.player_name.startsWith('TEAM CASCADE')) {
-        console.log(`[StraightBetSlate] Skipping team cascade: ${alert.player_name}`);
+      if (!alert.player_name) continue;
+
+      // Extract individual players from TEAM CASCADE entries
+      if (alert.player_name.startsWith('TEAM CASCADE')) {
+        const match = alert.player_name.match(/\(([^)]+)\)/);
+        if (!match) {
+          console.log(`[StraightBetSlate] Skipping unparseable team cascade: ${alert.player_name}`);
+          continue;
+        }
+        const names = match[1].split(',').map((n: string) => n.trim()).filter(Boolean);
+        const tier = STAKE_TIERS.cascade;
+        const odds = alert.odds || -130;
+
+        for (const name of names) {
+          if (seenPlayers.has(name)) continue;
+          seenPlayers.add(name);
+
+          const key = `${name}|${alert.prop_type || 'batter_rbis'}|${alert.prediction || 'under'}`;
+          if (existingKeys.has(key)) continue;
+
+          const stake = Math.max(1, Math.round(bankroll * tier.pct * 100) / 100);
+          slate.push({
+            signal_type: 'cascade',
+            player_name: name,
+            prop_type: alert.prop_type || 'batter_rbis',
+            side: alert.prediction || 'under',
+            line: alert.line || 0.5,
+            stake,
+            odds_american: odds,
+            bankroll_before: bankroll,
+          });
+        }
         continue;
       }
+
+      // Individual player alerts (price_drift, velocity_spike, etc.)
+      if (seenPlayers.has(alert.player_name)) continue;
+      seenPlayers.add(alert.player_name);
 
       const key = `${alert.player_name}|${alert.prop_type}|${alert.prediction}`;
       if (existingKeys.has(key)) continue;
 
       const tier = STAKE_TIERS[alert.signal_type] || STAKE_TIERS.velocity_spike;
       const stake = Math.max(1, Math.round(bankroll * tier.pct * 100) / 100);
-
-      // Default odds for Under 0.5 RBI type props
       const odds = alert.odds || -130;
 
       slate.push({
