@@ -1,61 +1,65 @@
 
+Root cause is not just “old messages.” I can see two active leak paths still in code:
 
-# Over SB & Over HR Tracking + Smarter Models
+1. `detect-mispriced-lines` / `bot-pipeline-doctor`
+- This generic MLB mispriced engine still includes `batter_stolen_bases` in `MLB_PROP_TO_STAT`.
+- It still computes `signal = edgePct > 0 ? "OVER" : "UNDER"` for all MLB props with no stolen-base exception.
+- So it can still create fresh MLB stolen base UNDER rows in `mispriced_lines` and `mispriced_line_snapshots`.
 
-## Current State
-- **SB**: Basic L10 model (avg >= 0.5, hit rate >= 50%). No Over picks settled yet. Still 274 stale Under SB records in DB.
-- **HR**: 4-factor model exists but caps probability at 22% — making Overs nearly impossible to flag (2 Over picks in 2 weeks vs 192 Unders).
+2. Existing pending parlays still show in slate status
+- `bot-slate-status-update` reads every `bot_daily_parlays` row where `outcome = 'pending'`.
+- It does not exclude already-created pending parlays that contain stolen base UNDER legs.
+- So even after source fixes, old pending parlays can keep appearing in Telegram status messages until they are voided/filtered.
 
-## Changes
+Why the screenshot still makes sense
+- The “Parlay #3 (l3 cross engine)” message can be an already-persisted `bot_daily_parlays` record.
+- The “Whale Verdicts” stolen base UNDER is likely coming from `mispriced_line_snapshots` / `mispriced_line_verdicts`, which are still being fed by the generic mispriced engine.
 
-### 1. Clean up stale Under SB records
-Delete the 274 `sb_under_l10` alerts from `fanduel_prediction_alerts` that were created before the block was added. One-time cleanup via migration.
+Plan to fully remove them everywhere
 
-### 2. Upgrade `mlb-sb-analyzer` — Smarter Over SB Model
-Replace the basic L10-only model with a multi-factor approach:
+1. Block stolen base UNDERs in the generic mispriced engine
+- Edit `supabase/functions/detect-mispriced-lines/index.ts` (same logic file currently labeled as pipeline doctor).
+- Add a hard skip for MLB stolen bases whenever computed signal is `UNDER`.
+- Also preferably skip `batter_stolen_bases` entirely from the generic mispriced MLB path so only the dedicated Over-only SB analyzer owns that market.
 
-- **Catcher factor**: Look up the opposing catcher's caught-stealing rate from game logs. Weak catchers (low CS%) = higher SB probability.
-- **Pitcher factor**: Pitchers who allow high SB counts (check opposing pitcher's games for SB allowed). Slow delivery pitchers = more steal opportunities.
-- **Batting order position**: Leadoff/2-hole hitters get more opportunities.
-- **L5 trend weighting**: Weight recent 5 games heavier than L10 (60/40 blend) to catch hot streaks.
-- **Game context from line**: If the game total is high (lots of baserunners expected), SB opportunities increase.
-- **Tiered confidence scoring**:
-  - ELITE: L10 avg >= 0.8, Over rate >= 70%, facing weak catcher
-  - HIGH: L10 avg >= 0.6, Over rate >= 60%
-  - MEDIUM: L10 avg >= 0.5, Over rate >= 50% (current threshold)
+2. Stop storing snapshot/verdict data for stolen base UNDERs
+- In the same mispriced pipeline, ensure blocked SB UNDER rows never enter:
+  - `mispriced_lines`
+  - `correct_priced_lines`
+  - `mispriced_line_snapshots`
+- This prevents future “Whale Verdicts” from showing SB unders.
 
-### 3. Upgrade `first-inning-hr-scanner` — Unlock Over HR Picks
-The model is good but Over picks are suppressed by two config issues:
+3. Prevent old pending parlays from surfacing
+- Update `supabase/functions/bot-slate-status-update/index.ts` to ignore any pending parlay whose `legs` contain:
+  - `batter_stolen_bases` / `stolen_bases`
+  - side `under`
+- This is a safety filter for Telegram display.
 
-- **Raise probability cap** from 0.22 to 0.35 — elite sluggers facing hittable pitchers in HR-friendly parks can legitimately exceed 22% HR probability.
-- **Lower Over-specific edge threshold** to 3% (keep Under at 5%) — HR Overs are inherently lower probability but higher value.
-- **Add "power hitter" boost**: Players with L20 HR rate >= 0.20 (1 HR per 5 games) get a 1.15x multiplier.
-- **Add "pitcher HR vulnerability" boost**: Pitchers with HR/9 >= 1.5 AND "hittable" recent form get a 1.10x multiplier.
+4. Clean up already-created bad records
+- Void or mark inactive existing pending `bot_daily_parlays` records containing stolen base UNDER legs.
+- Remove current-day `mispriced_lines`, `mispriced_line_snapshots`, and `mispriced_line_verdicts` rows for stolen base UNDERs.
+- If needed, also remove stale `fanduel_prediction_alerts` stolen-base UNDER history still hanging around.
 
-### 4. Create `mlb-over-tracker` — Unified Over Performance Dashboard
-New edge function that:
+5. Add universal guardrails
+- Add a shared helper or repeated hard check anywhere MLB picks are formatted/broadcast:
+  - `bot-slate-status-update`
+  - any mispriced report / webhook handlers that list raw `mispriced_lines`
+- Goal: even if bad data somehow exists, it never gets broadcast.
 
-- Queries all Over SB and Over HR picks from `fanduel_prediction_alerts` and `category_sweet_spots`
-- Settles them against `mlb_player_game_logs`
-- Tracks win rate by: player, confidence tier, model factors used
-- Sends daily Telegram report: "📊 Over Tracker: SB 8/12 (67%) | HR 3/10 (30%)"
-- Identifies which factors correlate with wins (e.g., "weak catcher SB picks: 80% hit rate" vs "strong catcher: 45%")
+6. Verify with 5 checks
+- Run mispriced scan and confirm no new SB UNDER rows are produced.
+- Run verdict generation and confirm no SB UNDER whale verdicts appear.
+- Run L3 cross-engine generation and confirm no SB UNDER legs enter parlays.
+- Run slate status and confirm no pending SB UNDER parlays are displayed.
+- Inspect today’s database rows for `mispriced_lines`, `mispriced_line_snapshots`, `mispriced_line_verdicts`, and `bot_daily_parlays` to confirm cleanup.
 
-### 5. Generate Over HR + Over SB parlays
-Add Over HR and Over SB as eligible categories in `l3-cross-engine-parlay`:
-
-- Allow MLB_HR_OVER sweet spots as parlay legs
-- Allow `sb_over_l10` alerts as parlay legs
-- Build 2-3 leg "Power + Speed" parlays mixing HR Over and SB Over picks
-- Require minimum confidence tier of HIGH for parlay inclusion
-
-## Files
-- `supabase/functions/mlb-sb-analyzer/index.ts` — multi-factor upgrade
-- `supabase/functions/first-inning-hr-scanner/index.ts` — unlock Over HR picks
-- `supabase/functions/mlb-over-tracker/index.ts` — new tracking + settlement function
-- `supabase/functions/l3-cross-engine-parlay/index.ts` — add Over HR/SB to parlay pool
-- One-time DB cleanup of stale Under SB records
-
-## No new tables needed
-Uses existing `fanduel_prediction_alerts`, `category_sweet_spots`, and `mlb_player_game_logs`.
-
+Technical notes
+- Files to update:
+  - `supabase/functions/detect-mispriced-lines/index.ts`
+  - `supabase/functions/bot-slate-status-update/index.ts`
+  - possibly `supabase/functions/finalize-mispriced-verdicts/index.ts` as a final defensive filter
+- Required non-read-only work after approval:
+  - code edits
+  - deploy affected functions
+  - cleanup of existing bad rows/data
+  - verification against current-day pipeline output
