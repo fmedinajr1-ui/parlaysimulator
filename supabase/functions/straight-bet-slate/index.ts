@@ -117,6 +117,12 @@ Deno.serve(async (req) => {
     }> = [];
 
     for (const alert of alerts) {
+      // Skip team-level cascade signals — not individual bettable props
+      if (!alert.player_name || alert.player_name.startsWith('TEAM CASCADE')) {
+        console.log(`[StraightBetSlate] Skipping team cascade: ${alert.player_name}`);
+        continue;
+      }
+
       const key = `${alert.player_name}|${alert.prop_type}|${alert.prediction}`;
       if (existingKeys.has(key)) continue;
 
@@ -180,18 +186,21 @@ Deno.serve(async (req) => {
     const driftBets = slate.filter(s => s.signal_type === 'price_drift');
     const otherBets = slate.filter(s => !['cascade', 'price_drift'].includes(s.signal_type));
 
-    let msg = `💰 *STRAIGHT BET SLATE — ${today}*\n`;
+    // Use HTML parse mode to avoid Markdown escaping issues
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    let msg = `💰 <b>STRAIGHT BET SLATE — ${today}</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `💵 Bankroll: *$${bankroll.toFixed(2)}*\n\n`;
+    msg += `💵 Bankroll: <b>$${bankroll.toFixed(2)}</b>\n\n`;
 
     const formatGroup = (label: string, emoji: string, bets: typeof slate) => {
       if (bets.length === 0) return '';
       const totalRisk = bets.reduce((s, b) => s + b.stake, 0);
-      let section = `${emoji} *${label}* (${bets.length} bets · $${totalRisk.toFixed(2)} risked)\n`;
+      let section = `${emoji} <b>${esc(label)}</b> (${bets.length} bets · $${totalRisk.toFixed(2)} risked)\n`;
       for (const b of bets) {
         const prop = readableProp(b.prop_type);
         const sideLabel = b.side.toUpperCase();
-        section += `  • ${b.player_name} ${sideLabel} ${b.line} ${prop} — *$${b.stake.toFixed(2)}*\n`;
+        section += `  • ${esc(b.player_name)} ${sideLabel} ${b.line} ${prop} — <b>$${b.stake.toFixed(2)}</b>\n`;
       }
       return section + '\n';
     };
@@ -201,7 +210,7 @@ Deno.serve(async (req) => {
     msg += formatGroup('Other Signals', '⚡', otherBets);
 
     msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `📈 Total Risked: *$${totalStaked.toFixed(2)}* across ${slate.length} bets\n`;
+    msg += `📈 Total Risked: <b>$${totalStaked.toFixed(2)}</b> across ${slate.length} bets\n`;
 
     // Calculate expected value
     const cascadeEV = cascadeBets.reduce((s, b) => {
@@ -213,14 +222,14 @@ Deno.serve(async (req) => {
       return s + (0.875 * winPayout - 0.125 * b.stake);
     }, 0);
 
-    msg += `📊 Expected Value: *+$${(cascadeEV + driftEV).toFixed(2)}*\n`;
-    msg += `\n_Half-Kelly sizing · Bankroll-adjusted stakes_`;
+    msg += `📊 Expected Value: <b>+$${(cascadeEV + driftEV).toFixed(2)}</b>\n`;
+    msg += `\n<i>Half-Kelly sizing · Bankroll-adjusted stakes</i>`;
 
-    // 8. Send to Telegram
+    // 8. Send to Telegram (direct message shortcut, HTML parse mode)
     const { error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
       body: {
-        type: 'custom_message',
-        data: { message: msg, parse_mode: 'Markdown' },
+        message: msg,
+        parse_mode: 'HTML',
       },
     });
 
