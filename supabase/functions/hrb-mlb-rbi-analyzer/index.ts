@@ -720,7 +720,7 @@ Deno.serve(async (req) => {
     log(`${overCandidates.length} Over RBI candidates detected`);
 
     // Deduplicate: best per player per event
-    const allAlerts = [...validatedAlerts, ...overCandidates];
+    const allAlerts = [...pitcherGatedAlerts, ...overCandidates];
     const bestAlerts: Record<string, Alert> = {};
     for (const alert of allAlerts) {
       // Over and Under are separate dedup keys
