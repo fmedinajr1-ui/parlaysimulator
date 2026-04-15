@@ -12350,6 +12350,96 @@ export type Database = {
         }
         Relationships: []
       }
+      straight_bet_bankroll: {
+        Row: {
+          bankroll_date: string
+          current_bankroll: number
+          daily_pnl: number | null
+          id: string
+          starting_bankroll: number
+          total_bets: number | null
+          total_losses: number | null
+          total_wins: number | null
+          updated_at: string
+        }
+        Insert: {
+          bankroll_date?: string
+          current_bankroll?: number
+          daily_pnl?: number | null
+          id?: string
+          starting_bankroll?: number
+          total_bets?: number | null
+          total_losses?: number | null
+          total_wins?: number | null
+          updated_at?: string
+        }
+        Update: {
+          bankroll_date?: string
+          current_bankroll?: number
+          daily_pnl?: number | null
+          id?: string
+          starting_bankroll?: number
+          total_bets?: number | null
+          total_losses?: number | null
+          total_wins?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      straight_bet_tracker: {
+        Row: {
+          bankroll_after: number | null
+          bankroll_before: number | null
+          bet_date: string
+          created_at: string
+          id: string
+          line: number
+          odds_american: number | null
+          outcome: string | null
+          player_name: string
+          profit_loss: number | null
+          prop_type: string
+          settled_at: string | null
+          side: string
+          signal_type: string
+          stake: number
+        }
+        Insert: {
+          bankroll_after?: number | null
+          bankroll_before?: number | null
+          bet_date?: string
+          created_at?: string
+          id?: string
+          line: number
+          odds_american?: number | null
+          outcome?: string | null
+          player_name: string
+          profit_loss?: number | null
+          prop_type: string
+          settled_at?: string | null
+          side: string
+          signal_type: string
+          stake?: number
+        }
+        Update: {
+          bankroll_after?: number | null
+          bankroll_before?: number | null
+          bet_date?: string
+          created_at?: string
+          id?: string
+          line?: number
+          odds_american?: number | null
+          outcome?: string | null
+          player_name?: string
+          profit_loss?: number | null
+          prop_type?: string
+          settled_at?: string | null
+          side?: string
+          signal_type?: string
+          stake?: number
+        }
+        Relationships: []
+      }
       strategy_performance: {
         Row: {
           avg_odds: number
