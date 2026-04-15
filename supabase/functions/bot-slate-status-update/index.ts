@@ -82,6 +82,25 @@ Deno.serve(async (req) => {
       };
     });
 
+    // ── Straight bet summary ──
+    const { data: straightBets } = await supabase
+      .from('straight_bet_tracker')
+      .select('*')
+      .eq('bet_date', today)
+      .eq('outcome', 'pending');
+
+    const { data: bankrollRow } = await supabase
+      .from('straight_bet_bankroll')
+      .select('*')
+      .eq('bankroll_date', today)
+      .single();
+
+    const straightBetSummary = straightBets && straightBets.length > 0 ? {
+      count: straightBets.length,
+      totalRisked: straightBets.reduce((s, b) => s + (b.stake || 0), 0),
+      bankroll: bankrollRow?.current_bankroll || 0,
+    } : null;
+
     // Send to bot-send-telegram
     const { error: sendError } = await supabase.functions.invoke('bot-send-telegram', {
       body: {
@@ -89,19 +108,21 @@ Deno.serve(async (req) => {
         data: {
           activeParlays: formattedActive,
           totalStake: cleanParlays.reduce((sum, p) => sum + (p.simulated_stake || 0), 0),
+          straightBets: straightBetSummary,
         },
       },
     });
 
     if (sendError) throw sendError;
 
-    console.log(`[SlateStatus] Sent update: ${cleanParlays.length} active (filtered from ${parlays.length})`);
+    console.log(`[SlateStatus] Sent update: ${cleanParlays.length} parlays, ${straightBets?.length || 0} straight bets`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         active: cleanParlays.length, 
         filtered: parlays.length - cleanParlays.length,
+        straightBets: straightBetSummary,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
