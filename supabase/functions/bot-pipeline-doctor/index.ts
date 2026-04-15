@@ -49,7 +49,7 @@ const MLB_PROP_TO_STAT: Record<string, string> = {
   batter_runs_scored: "runs",
   batter_total_bases: "total_bases",
   batter_home_runs: "home_runs",
-  batter_stolen_bases: "stolen_bases",
+  // batter_stolen_bases REMOVED — dedicated mlb-sb-analyzer owns this market (Over-only)
   pitcher_strikeouts: "pitcher_strikeouts",
   pitcher_outs: "pitcher_outs",
 };

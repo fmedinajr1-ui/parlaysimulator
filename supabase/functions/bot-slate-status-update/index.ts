@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     }
 
     // Calculate total stake exposure
-    const totalStake = parlays.reduce((sum, p) => sum + (p.simulated_stake || 0), 0);
+    const totalStakeRaw = parlays.reduce((sum, p) => sum + (p.simulated_stake || 0), 0);
 
     // Format active parlays with leg details
     // Readable prop label map
@@ -46,7 +46,26 @@ Deno.serve(async (req) => {
       player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PT',
     };
 
-    const formattedActive = parlays.map(p => {
+    // Filter out parlays containing stolen base UNDER legs
+    const isSBUnderLeg = (leg: any) => {
+      const prop = (leg.prop_type || leg.propType || '').toLowerCase();
+      const side = (leg.side || leg.recommended_side || '').toLowerCase();
+      return (prop === 'batter_stolen_bases' || prop === 'stolen_bases') && side === 'under';
+    };
+
+    const cleanParlays = parlays.filter(p => {
+      const legs = Array.isArray(p.legs) ? p.legs : [];
+      return !legs.some(isSBUnderLeg);
+    });
+
+    if (cleanParlays.length === 0) {
+      return new Response(
+        JSON.stringify({ success: false, message: 'No active parlays after filtering' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const formattedActive = cleanParlays.map(p => {
       const legs = Array.isArray(p.legs) ? p.legs : [];
       return {
         strategy_name: p.strategy_name,
