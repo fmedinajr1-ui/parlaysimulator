@@ -54,6 +54,9 @@ Deno.serve(async (req) => {
     let trapCount = 0;
 
     for (const [key, snaps] of grouped) {
+      // Hard block: skip stolen bases entirely (dedicated analyzer owns this market)
+      if (key.includes('|batter_stolen_bases|') || key.includes('|stolen_bases|')) continue;
+
       // Need at least 2 snapshots to detect movement
       if (snaps.length < 2) continue;
 
