@@ -12,6 +12,9 @@ const TIERS = [
 ];
 
 const STAKE = 10;
+const MIN_AVG_RBI = 0.3;
+const MAX_AVG_RBI = 0.7;
+const MIN_GAMES = 3;
 const MAX_SAME_GAME = 2;
 
 const READABLE_PROPS: Record<string, string> = {
