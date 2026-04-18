@@ -115,7 +115,7 @@ export default function AdminBlog() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-yellow-500">
+            <div className="text-2xl font-bold text-destructive">
               {posts.filter((p) => p.status === "flagged").length}
             </div>
             <p className="text-xs text-muted-foreground">Flagged</p>
@@ -187,7 +187,7 @@ export default function AdminBlog() {
                       {format(new Date(p.created_at), "MMM d, yyyy h:mm a")} · /{p.slug}
                     </p>
                     {p.flag_reason && (
-                      <div className="flex items-center gap-1 text-xs text-yellow-500 mt-1">
+                      <div className="flex items-center gap-1 text-xs text-destructive mt-1">
                         <AlertTriangle className="w-3 h-3" /> {p.flag_reason}
                       </div>
                     )}

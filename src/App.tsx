@@ -37,6 +37,10 @@ const ProfitPlan = React.lazy(() => import("./pages/ProfitPlan"));
 const Scout = React.lazy(() => import("./pages/Scout"));
 const BotSuccess = React.lazy(() => import("./pages/BotSuccess"));
 const BotPipeline = React.lazy(() => import("./pages/BotPipeline"));
+const BlogIndex = React.lazy(() => import("./pages/BlogIndex"));
+const BlogPost = React.lazy(() => import("./pages/BlogPost"));
+const BlogCategory = React.lazy(() => import("./pages/BlogCategory"));
+const AdminBlog = React.lazy(() => import("./pages/admin/AdminBlog"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -91,6 +95,10 @@ function AnimatedRoutes() {
               <Route path="/scout" element={<Scout />} />
               <Route path="/bot-success" element={<BotSuccess />} />
               <Route path="/bot-pipeline" element={<BotPipeline />} />
+              <Route path="/blog" element={<BlogIndex />} />
+              <Route path="/blog/category/:cat" element={<BlogCategory />} />
+              <Route path="/blog/:slug" element={<BlogPost />} />
+              <Route path="/admin/blog" element={<AdminBlog />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
