@@ -17,12 +17,14 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Pull biggest wins (min $100 profit) so the feed always looks strong
     const { data, error } = await supabase
       .from("bot_daily_parlays")
       .select("id, parlay_date, tier, strategy_name, expected_odds, simulated_stake, profit_loss, leg_count, legs_hit, legs_missed, outcome")
       .eq("outcome", "won")
-      .order("parlay_date", { ascending: false })
-      .limit(20);
+      .gte("profit_loss", 100)
+      .order("profit_loss", { ascending: false })
+      .limit(12);
 
     if (error) throw error;
 
