@@ -9,6 +9,7 @@ import {
   Users,
   Target,
   Eye,
+  BookOpen,
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ import { useViewport } from "@/hooks/useViewport";
 const menuItems = [
   { icon: Target, label: "Team Bets", path: "/team-bets", description: "NCAAB spreads, totals & ML" },
   { icon: Eye, label: "Scout", path: "/scout", description: "AI video analysis for halftime edges" },
+  { icon: BookOpen, label: "Blog", path: "/blog", description: "Strategy guides & AI betting insights" },
 ];
 
 const adminItems = [
