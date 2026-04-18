@@ -95,8 +95,16 @@ Deno.serve(async (req) => {
       invokeStep('MLB SB settler', 'mlb-sb-settler', {}),
     ]);
 
-    // Step 6: Generate RBI parlays from highest-accuracy signals
-    await invokeStep('RBI parlay generator', 'generate-rbi-parlays', {});
+    // Step 6: Generate parlays — v2 stack (no DNA, no integrity gates)
+    await Promise.all([
+      invokeStep('RBI Under parlays v2', 'generate-rbi-parlays-v2', {}),
+      invokeStep('SB Over parlays', 'generate-sb-over-parlays', {}),
+      invokeStep('Cross-sport parlays v2', 'generate-cross-sport-parlays-v2', {}),
+      invokeStep('NBA bench under v2', 'nba-bench-under-generator-v2', {}),
+    ]);
+
+    // Step 7: One-shot audit report (admin Telegram)
+    await invokeStep('Telegram audit report', 'telegram-audit-report', {});
 
     const totalDuration = Date.now() - startTime;
     const allOk = Object.values(results).every((r) => r.status === 'ok');
