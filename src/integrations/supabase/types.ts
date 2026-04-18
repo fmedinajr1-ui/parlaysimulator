@@ -939,6 +939,99 @@ export type Database = {
         }
         Relationships: []
       }
+      blog_posts: {
+        Row: {
+          body_md: string
+          category: string
+          created_at: string
+          faq: Json | null
+          flag_reason: string | null
+          hero_image_url: string | null
+          id: string
+          internal_links_count: number | null
+          meta_description: string
+          published_at: string | null
+          quality_score: number | null
+          slug: string
+          status: string
+          tags: string[] | null
+          target_keyword: string | null
+          title: string
+          updated_at: string
+          word_count: number
+        }
+        Insert: {
+          body_md: string
+          category: string
+          created_at?: string
+          faq?: Json | null
+          flag_reason?: string | null
+          hero_image_url?: string | null
+          id?: string
+          internal_links_count?: number | null
+          meta_description: string
+          published_at?: string | null
+          quality_score?: number | null
+          slug: string
+          status?: string
+          tags?: string[] | null
+          target_keyword?: string | null
+          title: string
+          updated_at?: string
+          word_count?: number
+        }
+        Update: {
+          body_md?: string
+          category?: string
+          created_at?: string
+          faq?: Json | null
+          flag_reason?: string | null
+          hero_image_url?: string | null
+          id?: string
+          internal_links_count?: number | null
+          meta_description?: string
+          published_at?: string | null
+          quality_score?: number | null
+          slug?: string
+          status?: string
+          tags?: string[] | null
+          target_keyword?: string | null
+          title?: string
+          updated_at?: string
+          word_count?: number
+        }
+        Relationships: []
+      }
+      blog_topics_queue: {
+        Row: {
+          category: string
+          created_at: string
+          id: string
+          priority: number | null
+          target_keyword: string | null
+          title_seed: string
+          used_at: string | null
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          id?: string
+          priority?: number | null
+          target_keyword?: string | null
+          title_seed: string
+          used_at?: string | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          id?: string
+          priority?: number | null
+          target_keyword?: string | null
+          title_seed?: string
+          used_at?: string | null
+        }
+        Relationships: []
+      }
       book_snapshot: {
         Row: {
           captured_at: string
