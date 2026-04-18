@@ -1,60 +1,46 @@
 
 
-# SEO Blog + Auto-Generated Content
+The user already approved the plan with their preferences (15/day, hybrid auto-publish with flag-for-review, content guardrails covering winning/AI/stats/cheating/rigged/player updates/injuries/rankings/L10/MVP). Looking at the codebase, the system is already built — `generate-blog-post` edge function exists with the right prompt covering those exact topics, `AdminBlog.tsx` is in place, the topics queue has 124 seeded topics matching the guardrails, and the cron is scheduled.
 
-## Reality check
-- **Backlinks** = OTHER sites linking to yours. Can't create those from inside the app. We CAN build the *target* (quality blog on parlayfarm.com) so people link to it, plus the SEO infra Google needs to rank it.
-- **50 posts/day** = 1,500/month. Google's Helpful Content system will demote low-quality AI farms. I'll add a quality gate (min 800 words, unique angle, internal links) so they actually rank instead of getting deindexed.
-- **Hashtags** don't do anything on a blog (social-only). I'll use proper meta tags + JSON-LD schema instead — that's what Google reads.
+So this is essentially a confirmation/refresh task. Let me present a tight plan that:
+1. Confirms what's already wired
+2. Adjusts the cron from 16/day to exactly 15/day
+3. Adds the missing pieces I'd want before declaring "done"
 
-## What I'll build
+Keep this concise — the heavy lifting is done.
 
-### 1. Blog routes
-- `/blog` — index with category filters (Strategy, AI Picks, Prop Analysis, NBA, MLB, Tennis, MMA)
-- `/blog/[slug]` — article page with `Article` JSON-LD, OG/Twitter cards, breadcrumbs, FAQ schema
-- `/blog/category/[cat]` — category archive
-- `/sitemap.xml` — dynamic, regenerates on publish
-- `/rss.xml` — RSS feed (helps discovery + syndication)
-- Update `robots.txt` to reference sitemap
+# Blog System Status + Final Tightening
 
-### 2. Database (Lovable Cloud)
-- `blog_posts` — slug, title, meta_description, body_md, category, tags[], hero_image_url, published_at, status, word_count
-- `blog_topics_queue` — title_seed, category, target_keyword, used_at — pre-seeded with ~500 topic ideas
-- RLS: public read on `status='published'`, admin-only write
+The full system is already built and live from your prior approval. Here's what exists vs. what I'll tighten now.
 
-### 3. Auto-generator edge function (`generate-blog-post`)
-- Cron-triggered at chosen cadence
-- Pulls next topic from queue
-- Calls Lovable AI (`google/gemini-2.5-flash`) with structured prompt:
-  - 1000-1500 words, H2/H3 structure
-  - 3-5 internal links to /bot, /scout, /upload, /best-bets (passes link equity to signup pages)
-  - 2-3 outbound links to ESPN/Action Network (topical authority signal)
-  - Meta description, focus keyword, FAQ section
-- Optional hero image via `google/gemini-3.1-flash-image-preview`
-- Quality gate: rejects if < 800 words or duplicate slug
+## Already live
+- `/blog`, `/blog/[slug]`, `/blog/category/[cat]` routes with full SEO (Article + Breadcrumb + FAQ JSON-LD, OG, Twitter cards, canonical → parlayfarm.com)
+- `/admin/blog` manager (filter, publish toggle, delete, "Generate Now" button)
+- `generate-blog-post` edge function with your guardrails baked into the system prompt (winning, AI, stats, rigged-line analysis, player updates, injuries, MVP, L10, rankings)
+- `blog-sitemap` + `blog-rss` edge functions
+- 124 seeded topics across Strategy, AI Picks, Prop Analysis, NBA, MLB, Tennis, MMA
+- Quality gate: <800 words OR <3 internal links → flagged (matches your hybrid choice)
+- Cron currently runs 16x/day at `0,36 0,3,6,9,12,15,18,21 * * *`
 
-### 4. SEO essentials
-- JSON-LD: `Article`, `BreadcrumbList`, `FAQPage`
-- Canonical URLs → parlayfarm.com
-- Auto `<meta>` tags from post fields
-- Internal link injection (every post links to product pages)
-- IndexNow ping on publish (instant Bing/Yandex indexing)
+## What I'll change in this pass
 
-### 5. Admin page (`/admin/blog`)
-- List, edit, unpublish, regenerate
-- "Run generator now" button
-- Topic queue manager
+1. **Tighten cron to exactly 15/day** — switch to every ~96 minutes via `0 */1 * * *` filtered, or simpler: `13,49 0,3,6,9,12,15,18 * * * + 0 22 * * *` = 15 runs. Cleanest pattern that hits 15: every ~96 min using a 15-slot map.
+2. **Add internal `/blog` link to your main nav** so visitors actually find it (currently no link from homepage → blog = wasted SEO).
+3. **Add `/blog` to footer** of bot-landing page.
+4. **Refill topic queue** — add 60 more topics so we don't run out in ~8 days.
+5. **Fix robots.txt sitemap URL** — currently points to the supabase functions URL. I'll add a clean rewrite hint and also keep the working URL.
 
-## What I CAN'T do (be honest)
-- Make other sites link to you — that's outreach work
-- Guarantee Google ranks AI content — quality gate helps but isn't magic
-- Hashtags on a blog do nothing for SEO
+## What I will NOT touch
+- The generation prompt (already covers all your guardrails)
+- Quality gate thresholds (already hybrid)
+- Existing routes/admin (working)
 
-## Three quick decisions before I build
+## Files touched
+- `src/components/Header.tsx` (or equivalent nav) — add Blog link
+- `src/components/bot-landing/Footer.tsx` (or equivalent) — add Blog link  
+- DB: reschedule cron + insert ~60 more topics
+- `public/robots.txt` — keep current sitemap URL (only working option for SPA hosting)
 
-1. **Volume**: 5/day (safest for ranking), 15/day (balanced), or 50/day (your ask, with strict quality gate)?
-2. **Workflow**: Auto-publish, drafts-for-review, or hybrid (auto-publish good ones, flag weak ones)?
-3. **Content guardrails**: Anything to always include (e.g. plug the bot) or avoid (e.g. addiction jokes, specific competitors)?
-
-Reply with your choices and I'll build it.
+## After approval
+I'll also trigger 2-3 immediate generations so the `/blog` page isn't empty when visitors land.
 
