@@ -44,7 +44,7 @@ function countInternalLinks(md: string): number {
   return matches ? matches.length : 0;
 }
 
-async function callAI(systemPrompt: string, userPrompt: string) {
+async function callAIText(systemPrompt: string, userPrompt: string, maxTokens = 16000) {
   const apiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!apiKey) throw new Error("LOVABLE_API_KEY missing");
 
@@ -56,58 +56,56 @@ async function callAI(systemPrompt: string, userPrompt: string) {
     },
     body: JSON.stringify({
       model: "google/gemini-2.5-pro",
-      max_tokens: 16000,
+      max_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "publish_blog_post",
-            description: "Return a structured SEO blog post",
-            parameters: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-                meta_description: { type: "string" },
-                body_md: { type: "string" },
-                tags: { type: "array", items: { type: "string" } },
-                faq: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      question: { type: "string" },
-                      answer: { type: "string" },
-                    },
-                    required: ["question", "answer"],
-                  },
-                },
-              },
-              required: ["title", "meta_description", "body_md", "tags", "faq"],
-            },
-          },
-        },
-      ],
-      tool_choice: { type: "function", function: { name: "publish_blog_post" } },
     }),
   });
 
-  if (res.status === 429)
-    throw new Error("RATE_LIMITED: Lovable AI rate limit hit");
-  if (res.status === 402)
-    throw new Error("PAYMENT_REQUIRED: Add credits to Lovable AI workspace");
+  if (res.status === 429) throw new Error("RATE_LIMITED: Lovable AI rate limit hit");
+  if (res.status === 402) throw new Error("PAYMENT_REQUIRED: Add credits to Lovable AI workspace");
   if (!res.ok) throw new Error(`AI gateway error ${res.status}: ${await res.text()}`);
 
   const data = await res.json();
   const choice = data.choices?.[0];
-  const finishReason = choice?.finish_reason;
-  const toolCall = choice?.message?.tool_calls?.[0];
-  if (!toolCall) throw new Error(`AI did not return tool call (finish_reason=${finishReason})`);
-  console.log(`AI generation finish_reason=${finishReason}, tokens=${JSON.stringify(data.usage || {})}`);
+  console.log(`AI text gen finish=${choice?.finish_reason}, usage=${JSON.stringify(data.usage || {})}`);
+  const content = choice?.message?.content;
+  if (!content) throw new Error(`No content (finish=${choice?.finish_reason})`);
+  return content;
+}
+
+async function callAITool(systemPrompt: string, userPrompt: string, toolName: string, toolSchema: any) {
+  const apiKey = Deno.env.get("LOVABLE_API_KEY");
+  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      max_tokens: 4000,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      tools: [{ type: "function", function: { name: toolName, description: "Return structured metadata", parameters: toolSchema } }],
+      tool_choice: { type: "function", function: { name: toolName } },
+    }),
+  });
+  if (!res.ok) throw new Error(`AI tool gateway error ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) throw new Error("No tool call returned");
   return JSON.parse(toolCall.function.arguments);
+}
+
+function extractTitle(md: string): string {
+  const m = md.match(/^#\s+(.+)$/m);
+  return m ? m[1].trim() : "Untitled";
+}
+
+function stripFirstH1(md: string): string {
+  return md.replace(/^#\s+.+\n+/m, "");
 }
 
 Deno.serve(async (req) => {
