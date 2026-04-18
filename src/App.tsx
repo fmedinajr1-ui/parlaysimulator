@@ -8,7 +8,7 @@ import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-route
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ParlayBuilderProvider } from "@/contexts/ParlayBuilderContext";
 import { PilotUserProvider } from "@/contexts/PilotUserContext";
-import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
+
 import { MobileFloatingMenu } from "@/components/layout/MobileFloatingMenu";
 import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuilder";
 import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
@@ -145,7 +145,6 @@ function AppContent() {
         <AnimatedRoutes />
         <UniversalParlayBuilder />
         {isMobile && location.pathname !== '/' && <MobileFloatingMenu />}
-        <PWAInstallPrompt />
       </PilotRouteGuard>
     </EmailVerificationGuard>
   );
