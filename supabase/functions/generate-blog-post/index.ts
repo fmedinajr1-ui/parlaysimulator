@@ -55,8 +55,8 @@ async function callAI(systemPrompt: string, userPrompt: string) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      max_tokens: 8000,
+      model: "google/gemini-2.5-pro",
+      max_tokens: 16000,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -102,8 +102,11 @@ async function callAI(systemPrompt: string, userPrompt: string) {
   if (!res.ok) throw new Error(`AI gateway error ${res.status}: ${await res.text()}`);
 
   const data = await res.json();
-  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!toolCall) throw new Error("AI did not return tool call");
+  const choice = data.choices?.[0];
+  const finishReason = choice?.finish_reason;
+  const toolCall = choice?.message?.tool_calls?.[0];
+  if (!toolCall) throw new Error(`AI did not return tool call (finish_reason=${finishReason})`);
+  console.log(`AI generation finish_reason=${finishReason}, tokens=${JSON.stringify(data.usage || {})}`);
   return JSON.parse(toolCall.function.arguments);
 }
 
