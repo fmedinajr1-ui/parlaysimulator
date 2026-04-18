@@ -173,15 +173,46 @@ ${outboundBlock}
 - Tone: confident, data-driven, slightly edgy. No fluff. No "in conclusion".
 - Avoid: addiction jokes, naming specific competitor sportsbooks negatively, fabricated stats. Use approximate / illustrative numbers.
 
-Return via the publish_blog_post tool.`;
+Output ONLY the article in Markdown. Start with a single # H1 title that includes the target keyword. Do NOT include any preamble, JSON, or commentary — just the article markdown ready to publish.`;
 
     const userPrompt = `Topic: "${topic.title_seed}"
 Category: ${topic.category}
 Target keyword: ${topic.target_keyword || topic.title_seed}
 
-Write the full article now. Make sure the title is compelling and includes the target keyword. Make sure body_md contains all internal/outbound links inline as markdown.`;
+Write the full 1000-1500 word article now. Start with "# <title>". Include all internal/outbound links inline. End with a "## FAQ" section with 3-5 Q&A pairs in this exact format:
+**Q: question text?**
+A: answer text.`;
 
-    const generated = await callAI(systemPrompt, userPrompt);
+    // Step 1: Generate full article markdown (no tool, full token budget)
+    const bodyMdRaw = await callAIText(systemPrompt, userPrompt, 16000);
+    const title = extractTitle(bodyMdRaw);
+    const body_md = stripFirstH1(bodyMdRaw).trim();
+
+    // Step 2: Extract metadata (meta description, tags, structured FAQ) from the article
+    const metaSchema = {
+      type: "object",
+      properties: {
+        meta_description: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        faq: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { question: { type: "string" }, answer: { type: "string" } },
+            required: ["question", "answer"],
+          },
+        },
+      },
+      required: ["meta_description", "tags", "faq"],
+    };
+    const generated = await callAITool(
+      "Extract SEO metadata from the provided article. Meta description: max 155 chars, includes target keyword. Tags: 4-6 relevant terms. FAQ: parse Q/A pairs from the article's FAQ section.",
+      `Target keyword: ${topic.target_keyword || topic.title_seed}\n\nArticle:\n${bodyMdRaw.slice(0, 12000)}`,
+      "extract_metadata",
+      metaSchema,
+    );
+    generated.title = title;
+    generated.body_md = body_md;
 
     const wordCount = countWords(generated.body_md);
     const internalLinks = countInternalLinks(generated.body_md);
