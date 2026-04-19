@@ -267,62 +267,95 @@ async function runSlateLock(sb: any): Promise<void> {
 }
 
 // ─── PHASE 3: Pick Drops ──────────────────────────────────────────────────
-// Staggered individual pick cards, released every ~3 minutes after slate lock.
-// Each customer sees their own stake figure based on their bankroll.
+// Curator runs first → produces approved + passed lists. Then a single
+// playcard message goes out (instead of dumping every pick individually),
+// followed by an optional "passed on" transparency note. Individual deep-dive
+// cards for top execution-tier picks still drop staggered for the diehards.
 
 async function runPickDrops(sb: any): Promise<void> {
   const today = etDateKey();
   const state = await loadDayState(sb);
 
-  const { data: pickRows } = await sb
+  // First-tick of the phase: run curator + emit playcard
+  if (state.picks_released === 0) {
+    const result = await curate(sb, { pickDate: today });
+    await persistCuration(sb, result);
+
+    if (result.approved.length === 0 && result.passed.length === 0) {
+      await markPhaseComplete(sb, 'pick_drops');
+      return;
+    }
+
+    // Build & send the playcard
+    const playcard = renderPlaycard({
+      approved: result.approved,
+      bankrollState: result.state,
+      form: result.formContext.form,
+      totalExposure: result.totalExposure,
+    });
+
+    await send({
+      message: playcard,
+      phase: 'pick_drops',
+      referenceKey: 'playcard',
+      fanout: 'all_active',
+    });
+
+    // Optional passed-on transparency note
+    if (result.passed.length >= 3) {
+      const passedMsg = renderPassedSummary(result.passed);
+      if (passedMsg) {
+        await send({
+          message: passedMsg,
+          phase: 'pick_drops',
+          referenceKey: 'passed_summary',
+          fanout: 'all_active',
+        });
+      }
+    }
+
+    await noteDayFact(sb, 'approved_count', result.approved.length);
+    await noteDayFact(sb, 'total_exposure', result.totalExposure);
+    await noteDayFact(sb, 'bot_form', result.formContext.form);
+
+    state.picks_released = 1;
+    await saveDayState(sb, state);
+    return;
+  }
+
+  // Subsequent ticks: drop one execution-tier deep-dive card per tick
+  const { data: approvedExec } = await sb
     .from('bot_daily_picks')
     .select('*')
     .eq('pick_date', today)
-    .eq('status', 'locked')
+    .eq('status', 'approved')
+    .eq('stake_tier', 'execution')
     .order('confidence', { ascending: false });
 
-  const picks = (pickRows || []) as Pick[];
-  if (picks.length === 0) return;
+  const execPicks = (approvedExec || []) as Pick[];
+  const deepDiveIdx = state.picks_released - 1;
 
-  // Release the next pick in the queue (one per tick, staggered)
-  const nextIdx = state.picks_released;
-  if (nextIdx >= picks.length) {
+  if (deepDiveIdx >= execPicks.length) {
     await markPhaseComplete(sb, 'pick_drops');
     return;
   }
 
-  const pick = picks[nextIdx];
-
-  // Render — note: the per-customer personalization happens in the dispatcher
-  // via personalize_stake_pct, which reads each customer's bankroll.
-  const stakePct = pick.suggested_stake_pct ?? estimateStakePct(pick);
-  const rendered = renderPickCard(pick /* no bankroll for admin version */);
+  const pick = execPicks[deepDiveIdx];
+  const rendered = renderPickCard(pick);
 
   await send({
     message: rendered,
     phase: 'pick_drops',
     referenceKey: `pick_${pick.id}`,
     fanout: 'all_active',
-    personalizeStakePct: stakePct,
   });
 
-  // Update state
   state.picks_released += 1;
   await saveDayState(sb, state);
 
-  // Mark phase complete when all released
-  if (state.picks_released >= picks.length) {
+  if (deepDiveIdx + 1 >= execPicks.length) {
     await markPhaseComplete(sb, 'pick_drops');
   }
-}
-
-function estimateStakePct(pick: Pick): number {
-  // Default stake sizing by tier if the generator didn't specify
-  const c = pick.confidence || 60;
-  if (c >= 80) return 0.02;
-  if (c >= 70) return 0.015;
-  if (c >= 60) return 0.01;
-  return 0.005;
 }
 
 // ─── PHASE 4: Pre-Game Pulse ──────────────────────────────────────────────
