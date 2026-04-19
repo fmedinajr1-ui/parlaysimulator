@@ -129,6 +129,16 @@ async function runDawnBrief(sb: any): Promise<void> {
   m.raw(`🌅 ${greeting()}`);
   m.blank();
 
+  // Bankroll-aware opener
+  try {
+    const state = await loadBankrollState(sb);
+    m.line(formOpener(state.current_form, today));
+    m.line(bankrollLine(state));
+    m.blank();
+  } catch (e) {
+    console.warn('[dawn_brief] bankroll state unavailable, falling back', e);
+  }
+
   // Slate summary
   const totalGames = games?.length || 0;
   if (totalGames === 0) {
