@@ -168,8 +168,19 @@ const Index = () => {
         </div>
 
         {/* Free Parlay Analyzer */}
-        <div className="mb-4">
+        <div className="mb-2">
           <HomepageAnalyzer />
+        </div>
+
+        {/* Free Slip Grader CTA */}
+        <div className="mb-4 text-center">
+          <Link
+            to="/grade"
+            className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-primary/80 underline underline-offset-4 active:scale-95 transition-transform"
+            onClick={lightTap}
+          >
+            🎓 Grade my slip free — get 7 days of picks →
+          </Link>
         </div>
 
         {/* Slate Control - Unified Refresh All Engines */}
