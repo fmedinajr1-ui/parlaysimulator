@@ -20,6 +20,13 @@ import {
   escapeMd,
   pickPhrase,
   confidenceSentence,
+  convictionLine,
+  stakeDescription,
+  passReasonPhrase,
+  bankrollLine,
+  formOpener,
+  signoff,
+  type BotForm,
 } from './voice.ts';
 
 // ─── Side formatting ──────────────────────────────────────────────────────
