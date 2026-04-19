@@ -310,6 +310,11 @@ async function handleCommand(chatId: string, text: string, username?: string): P
     case '/settings':
       await showPreferences(supabase, TELEGRAM_BOT_TOKEN, chatId);
       return null;
+    case '/reonboard':
+    case '/restart':
+      // Re-trigger the wizard from scratch.
+      await startOnboarding(supabase, TELEGRAM_BOT_TOKEN, chatId);
+      return null;
     case '/help':        return handleStart(chatId, '', username);
     default:
       return `I didn't recognize ${bold(cmd)}. Try /start for the list.`;
