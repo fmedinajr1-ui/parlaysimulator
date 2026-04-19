@@ -33,11 +33,16 @@ import {
   phasePrefix,
   settlementVerdict,
   callbackPhrase,
+  bankrollLine,
+  formOpener,
+  signoff,
 } from '../_shared/voice.ts';
 import {
   renderPickCard,
   renderPickSummaryList,
   renderSettledLeg,
+  renderPlaycard,
+  renderPassedSummary,
 } from '../_shared/pick-formatter.ts';
 import { getSportEmoji } from '../_shared/constants.ts';
 import {
@@ -48,6 +53,7 @@ import {
   readDayFact,
   saveDayState,
 } from '../_shared/narrative-state.ts';
+import { curate, persistCuration, loadBankrollState } from '../_shared/bankroll-curator.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
