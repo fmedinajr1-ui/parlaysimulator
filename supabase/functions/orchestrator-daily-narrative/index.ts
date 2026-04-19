@@ -604,6 +604,7 @@ Deno.serve(async (req) => {
         case 'slate_lock': await runSlateLock(sb); break;
         case 'pick_drops': await runPickDrops(sb); break;
         case 'pre_game_pulse': await runPreGamePulse(sb); break;
+        case 'accuracy_pulse': await runAccuracyPulse(sb); break;
         case 'settlement_story': await runSettlementStory(sb); break;
         case 'tomorrow_tease': await runTomorrowTease(sb); break;
       }
@@ -623,6 +624,10 @@ Deno.serve(async (req) => {
       // Pre-game pulse is game-relative, runs every tick
       await runPreGamePulse(sb);
       fired.push('pre_game_pulse');
+
+      if (minutesOfDay >= PHASE_TIMES.accuracy_pulse! && !(await phaseAlreadyFired(sb, 'accuracy_pulse'))) {
+        await runAccuracyPulse(sb); fired.push('accuracy_pulse');
+      }
 
       if (minutesOfDay >= PHASE_TIMES.tomorrow_tease! && !(await phaseAlreadyFired(sb, 'tomorrow_tease'))) {
         await runTomorrowTease(sb); fired.push('tomorrow_tease');
