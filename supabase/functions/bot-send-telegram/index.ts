@@ -96,6 +96,26 @@ Deno.serve(async (req) => {
 
     const { sb, botToken, adminChatId } = initClient();
 
+    // ── Enrichment: wrap legacy alerts with stake + accuracy + humor ──
+    // v2 callers (orchestrator, playcards) skip this — they already have full context.
+    if (shouldEnrich(body)) {
+      try {
+        const enriched = await enrichLegacyAlert(sb, {
+          alertType: body.type!,
+          rawText: body.message,
+        });
+        body.message = enriched.message;
+        body.parse_mode = body.parse_mode || 'Markdown';
+        // Skip-recommendations short-circuit the send
+        if (enriched.stake.tier === 'skip' && body.fanout && body.fanout !== 'none') {
+          console.log(`[bot-send-telegram] Enricher recommends SKIP for type='${body.type}' — admin-only.`);
+          body.admin_only = true;
+        }
+      } catch (e) {
+        console.warn('[bot-send-telegram] Enrichment failed, sending raw:', e);
+      }
+    }
+
     // ── Admin chat resolution ──
     let chatId = adminChatId;
     let settings: Record<string, any> = {};
