@@ -1,14 +1,16 @@
 /**
- * generate-rbi-parlays-v2
+ * generate-rbi-parlays-v2  (Phase 3 v2 migration)
  *
- * UNDER-only RBI parlays. No DNA gating, no 60% accuracy gate.
- * Pulls directly from mlb_rbi_under_analyzer outputs (engine_live_tracker)
- * and straight_bet_tracker cascade signals.
+ * UNDER-only RBI parlays. Now writes structured Pick rows to bot_daily_picks
+ * and lets the orchestrator decide when/how to broadcast. No self-rendered
+ * Telegram messages.
  *
  * Builds: 2-leg ($25), 3-leg ($15), 4-leg ($10).
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { Pick } from '../_shared/constants.ts';
+import { etDateKey } from '../_shared/date-et.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,10 +23,9 @@ interface CandidateLeg {
   line: number;
   side: 'under';
   odds: number;
-  game_id?: string;
   team?: string;
   opp_team?: string;
-  confidence?: number;
+  confidence: number;
   source: string;
 }
 
@@ -34,36 +35,45 @@ const TIER_CONFIG = [
   { tier: 'RBI_QUAD', leg_count: 4, stake: 10, count: 2 },
 ];
 
-function americanToDecimal(odds: number): number {
-  if (!odds) return 1.91;
-  return odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
-}
-function decimalToAmerican(d: number): number {
-  if (d <= 1) return -10000;
-  return d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1));
-}
-function chunkMessage(text: string, max = 3800): string[] {
-  if (text.length <= max) return [text];
-  const out: string[] = [];
-  let buf = '';
-  for (const line of text.split('\n')) {
-    if ((buf + line + '\n').length > max) {
-      if (buf) out.push(buf.trimEnd());
-      buf = line + '\n';
-    } else buf += line + '\n';
-  }
-  if (buf) out.push(buf.trimEnd());
-  return out;
+const americanToDecimal = (o: number) => !o ? 1.91 : (o > 0 ? 1 + o / 100 : 1 + 100 / Math.abs(o));
+const decimalToAmerican = (d: number) => d <= 1 ? -10000 : d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1));
+
+function candidateToPick(c: CandidateLeg, today: string): Pick {
+  const slug = c.player_name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const conf100 = Math.round(Math.max(0.4, Math.min(0.95, c.confidence)) * 100);
+  return {
+    id: `rbi_${slug}_${c.prop_type}_${today}`,
+    sport: 'baseball_mlb',
+    player_name: c.player_name,
+    team: c.team,
+    opponent: c.opp_team,
+    prop_type: c.prop_type,
+    line: c.line,
+    side: 'under',
+    american_odds: c.odds,
+    confidence: conf100,
+    tier: conf100 >= 75 ? 'high' : conf100 >= 65 ? 'medium' : 'exploration',
+    reasoning: {
+      headline: `${c.player_name} stays under ${c.line} RBIs — pitcher matchup and recent form both point that way.`,
+      drivers: [
+        `RBI Under analyzer flagged this leg (${c.source})`,
+        `Posted at ${c.odds > 0 ? '+' : ''}${c.odds}`,
+      ],
+      risk_note: 'Single swing can flip RBI props — late-inning leverage is the live risk.',
+      sources: [c.source],
+    },
+    generated_at: new Date().toISOString(),
+    generator: 'rbi_unders_v2',
+  };
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const today = etDateKey();
 
   try {
-    // Pull from engine_live_tracker (mlb_rbi_under_analyzer outputs) + straight_bet_tracker
     const candidates = new Map<string, CandidateLeg>();
 
     const { data: trackerSignals } = await supabase
@@ -91,7 +101,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Cascade reinforcement from straight_bet_tracker
     const { data: cascadeBets } = await supabase
       .from('straight_bet_tracker')
       .select('*')
@@ -126,6 +135,33 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── Save canonical Pick rows to bot_daily_picks (status='locked')
+    const pickMap = new Map<string, Pick>();
+    for (const c of pool) {
+      const p = candidateToPick(c, today);
+      pickMap.set(`${c.player_name.toLowerCase()}|${c.prop_type}`, p);
+    }
+    const pickRows = [...pickMap.values()].map(p => ({
+      id: p.id,
+      pick_date: today,
+      player_name: p.player_name,
+      team: p.team,
+      opponent: p.opponent,
+      sport: p.sport,
+      prop_type: p.prop_type,
+      line: p.line,
+      side: p.side,
+      american_odds: p.american_odds,
+      confidence: p.confidence,
+      tier: p.tier,
+      reasoning: p.reasoning,
+      generator: p.generator,
+      status: 'locked',
+      generated_at: p.generated_at,
+    }));
+    await supabase.from('bot_daily_picks').upsert(pickRows, { onConflict: 'id' });
+
+    // ── Build parlays (legs reference pick ids for traceability)
     const inserted: any[] = [];
     let cursor = 0;
 
@@ -147,19 +183,23 @@ Deno.serve(async (req) => {
 
         const decOdds = legs.reduce((acc, l) => acc * americanToDecimal(l.odds), 1);
         const americanOdds = decimalToAmerican(decOdds);
-        const combinedProb = legs.reduce((acc, l) => acc * Math.max(0.4, Math.min(0.95, l.confidence || 0.6)), 1);
+        const combinedProb = legs.reduce((acc, l) => acc * Math.max(0.4, Math.min(0.95, l.confidence)), 1);
         const payout = cfg.stake * decOdds;
 
-        const legsJson = legs.map(l => ({
-          player_name: l.player_name,
-          prop_type: l.prop_type,
-          line: l.line,
-          side: l.side,
-          odds: l.odds,
-          source: l.source,
-          confidence: l.confidence,
-          recommended_side: 'under',
-        }));
+        const legsJson = legs.map(l => {
+          const p = pickMap.get(`${l.player_name.toLowerCase()}|${l.prop_type}`);
+          return {
+            pick_id: p?.id,
+            player_name: l.player_name,
+            prop_type: l.prop_type,
+            line: l.line,
+            side: l.side,
+            odds: l.odds,
+            source: l.source,
+            confidence: l.confidence,
+            recommended_side: 'under',
+          };
+        });
 
         const { data, error } = await supabase.from('bot_daily_parlays').insert({
           parlay_date: today,
@@ -176,28 +216,19 @@ Deno.serve(async (req) => {
           selection_rationale: `v2 RBI Under | tier ${cfg.tier} | sources: ${[...new Set(legs.map(l => l.source))].join(',')}`,
         }).select('id').single();
 
-        if (!error && data) inserted.push({ id: data.id, tier: cfg.tier, legs: legsJson, odds: americanOdds, stake: cfg.stake });
+        if (!error && data) inserted.push({ id: data.id, tier: cfg.tier, legs: legsJson });
       }
     }
 
-    // Telegram broadcast (chunked)
-    if (inserted.length) {
-      const lines = [`⚾ *RBI UNDER PARLAYS v2 — ${today}*`, `📊 ${inserted.length} tickets generated`, ``];
-      for (const p of inserted) {
-        lines.push(`\n*${p.tier}* — ${p.legs.length}-leg | $${p.stake} | ${p.odds > 0 ? '+' : ''}${p.odds}`);
-        for (const l of p.legs) lines.push(`  • ${l.player_name} U${l.line} ${l.prop_type}`);
-      }
-      const msg = lines.join('\n');
-      for (const chunk of chunkMessage(msg)) {
-        await supabase.functions.invoke('bot-send-telegram', {
-          body: { message: chunk, parse_mode: 'Markdown', admin_only: true },
-        });
-      }
-    }
+    // NOTE: No Telegram broadcast here. Orchestrator's pick_drops phase reads
+    // bot_daily_picks (status='locked') and renders via voice/pick-formatter.
 
-    return new Response(JSON.stringify({ success: true, generated: inserted.length, pool_size: pool.length }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({
+      success: true,
+      picks_saved: pickRows.length,
+      parlays_generated: inserted.length,
+      pool_size: pool.length,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err) {
     console.error('[rbi-v2] Error:', err);
     return new Response(JSON.stringify({ success: false, error: (err as Error).message }), {

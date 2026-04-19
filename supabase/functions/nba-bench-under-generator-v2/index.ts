@@ -1,12 +1,13 @@
 /**
- * nba-bench-under-generator-v2
+ * nba-bench-under-generator-v2  (Phase 3 v2 migration)
  *
- * Replaces nba-matchup-daily-broadcast's parlay-insert section.
- * Fixed $10 stake. Removes bidirectional kill-flag (no longer drops legs
- * when defense rank disagrees). No bot_stake_config lookup.
+ * Writes Pick rows to bot_daily_picks; orchestrator handles broadcast.
+ * Fixed $10 stake. No bidirectional kill-flag.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { Pick } from '../_shared/constants.ts';
+import { etDateKey } from '../_shared/date-et.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,25 +16,50 @@ const corsHeaders = {
 
 const americanToDecimal = (o: number) => !o ? 1.91 : (o > 0 ? 1 + o / 100 : 1 + 100 / Math.abs(o));
 const decimalToAmerican = (d: number) => d <= 1 ? -10000 : d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1));
-function chunkMessage(text: string, max = 3800): string[] {
-  if (text.length <= max) return [text];
-  const out: string[] = []; let buf = '';
-  for (const line of text.split('\n')) {
-    if ((buf + line + '\n').length > max) { if (buf) out.push(buf.trimEnd()); buf = line + '\n'; }
-    else buf += line + '\n';
-  }
-  if (buf) out.push(buf.trimEnd());
-  return out;
+
+interface NbaCandidate {
+  player_name: string;
+  prop_type: string;
+  line: number;
+  side: 'under';
+  odds: number;
+  confidence: number;
+}
+
+function candidateToPick(c: NbaCandidate, today: string): Pick {
+  const slug = c.player_name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const conf100 = Math.round(Math.max(0.4, Math.min(0.8, c.confidence)) * 100);
+  return {
+    id: `nbabench_${slug}_${c.prop_type}_${today}`,
+    sport: 'basketball_nba',
+    player_name: c.player_name,
+    prop_type: c.prop_type,
+    line: c.line,
+    side: 'under',
+    american_odds: c.odds,
+    confidence: conf100,
+    tier: conf100 >= 75 ? 'high' : conf100 >= 65 ? 'medium' : 'exploration',
+    reasoning: {
+      headline: `${c.player_name} stays under ${c.line} ${c.prop_type.replace('_', ' ')} — bench/role volatility model flagged the under.`,
+      drivers: [
+        `Engine confidence ${conf100}%`,
+        `Posted at ${c.odds > 0 ? '+' : ''}${c.odds}`,
+      ],
+      risk_note: 'Garbage time or rotation surprise can blow the line — bench-leaning unders die fast on blowout scripts.',
+      sources: ['nba_bench_engine'],
+    },
+    generated_at: new Date().toISOString(),
+    generator: 'nba_bench_under_v2',
+  };
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const today = etDateKey();
   const STAKE = 10;
 
   try {
-    // Pull NBA Under candidates (no bidirectional kill-gate)
     const { data: signals } = await supabase
       .from('engine_live_tracker')
       .select('*')
@@ -44,7 +70,7 @@ Deno.serve(async (req) => {
       .limit(60);
 
     const seen = new Set<string>();
-    const pool = (signals || [])
+    const pool: NbaCandidate[] = (signals || [])
       .filter((s: any) => s.player_name)
       .map((s: any) => ({
         player_name: s.player_name,
@@ -67,6 +93,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── Save Pick rows
+    const pickMap = new Map<string, Pick>();
+    for (const c of pool) {
+      const p = candidateToPick(c, today);
+      pickMap.set(`${c.player_name.toLowerCase()}|${c.prop_type}`, p);
+    }
+    const pickRows = [...pickMap.values()].map(p => ({
+      id: p.id, pick_date: today,
+      player_name: p.player_name, sport: p.sport, prop_type: p.prop_type,
+      line: p.line, side: p.side, american_odds: p.american_odds,
+      confidence: p.confidence, tier: p.tier, reasoning: p.reasoning,
+      generator: p.generator, status: 'locked', generated_at: p.generated_at,
+    }));
+    await supabase.from('bot_daily_picks').upsert(pickRows, { onConflict: 'id' });
+
     const inserted: any[] = [];
     const tiers = [
       { tier: 'NBA_BENCH_DUO', leg_count: 2, count: 4 },
@@ -77,7 +118,7 @@ Deno.serve(async (req) => {
     for (const cfg of tiers) {
       for (let i = 0; i < cfg.count; i++) {
         if (pool.length < cfg.leg_count) break;
-        const legs: any[] = [];
+        const legs: NbaCandidate[] = [];
         const used = new Set<string>();
         let scan = cursor;
         while (legs.length < cfg.leg_count && scan < pool.length * 2) {
@@ -95,11 +136,15 @@ Deno.serve(async (req) => {
         const odds = decimalToAmerican(dec);
         const prob = legs.reduce((a, l) => a * Math.max(0.4, Math.min(0.8, l.confidence)), 1);
 
-        const legsJson = legs.map(l => ({
-          player_name: l.player_name, prop_type: l.prop_type, line: l.line,
-          side: 'under', odds: l.odds, confidence: l.confidence, recommended_side: 'under',
-          source: 'nba_bench_v2', sport: 'NBA',
-        }));
+        const legsJson = legs.map(l => {
+          const p = pickMap.get(`${l.player_name.toLowerCase()}|${l.prop_type}`);
+          return {
+            pick_id: p?.id,
+            player_name: l.player_name, prop_type: l.prop_type, line: l.line,
+            side: 'under', odds: l.odds, confidence: l.confidence, recommended_side: 'under',
+            source: 'nba_bench_v2', sport: 'NBA',
+          };
+        });
 
         const { data, error } = await supabase.from('bot_daily_parlays').insert({
           parlay_date: today,
@@ -116,26 +161,16 @@ Deno.serve(async (req) => {
           selection_rationale: `NBA bench under v2 | flat $${STAKE} | no bidirectional kill`,
         }).select('id').single();
 
-        if (!error && data) inserted.push({ id: data.id, tier: cfg.tier, legs: legsJson, odds });
+        if (!error && data) inserted.push({ id: data.id, tier: cfg.tier });
       }
     }
 
-    if (inserted.length) {
-      const lines = [`🏀 *NBA BENCH UNDER PARLAYS v2 — ${today}*`, `📊 ${inserted.length} tickets | $${STAKE}/each`, ``];
-      for (const p of inserted) {
-        lines.push(`\n*${p.tier}* | ${p.odds > 0 ? '+' : ''}${p.odds}`);
-        for (const l of p.legs) lines.push(`  • ${l.player_name} U${l.line} ${l.prop_type}`);
-      }
-      for (const chunk of chunkMessage(lines.join('\n'))) {
-        await supabase.functions.invoke('bot-send-telegram', {
-          body: { message: chunk, parse_mode: 'Markdown', admin_only: true },
-        });
-      }
-    }
-
-    return new Response(JSON.stringify({ success: true, generated: inserted.length, pool_size: pool.length }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({
+      success: true,
+      picks_saved: pickRows.length,
+      parlays_generated: inserted.length,
+      pool_size: pool.length,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err) {
     console.error('[nba-bench-v2] Error:', err);
     return new Response(JSON.stringify({ success: false, error: (err as Error).message }), {
