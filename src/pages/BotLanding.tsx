@@ -14,6 +14,7 @@ import { FreeTrialBanner } from "@/components/bot-landing/FreeTrialBanner";
 import { Link } from "react-router-dom";
 import { RecentWinsFeed } from "@/components/bot-landing/RecentWinsFeed";
 import { StickySubscribeCTA } from "@/components/bot-landing/StickySubscribeCTA";
+import { InlineSlipGraderPromo } from "@/components/grade/InlineSlipGraderPromo";
 
 interface PublicStats {
   days: Array<{
@@ -157,30 +158,9 @@ export default function BotLanding() {
         <PerformanceCalendar days={stats?.days || []} hasBotAccess={hasBotAccess || isAdmin} />
       </div>
 
-      {/* 6. Free Slip Grader CTA */}
+      {/* 6. Free Slip Grader — inline promo */}
       <div className="px-4 my-6">
-        <Link to="/grade" className="block group">
-          <div className="relative overflow-hidden rounded-2xl border-2 border-primary/40 bg-gradient-to-br from-primary/15 via-primary/5 to-background p-6 sm:p-8 active:scale-[0.99] transition-all hover:border-primary/60 hover:shadow-[0_0_40px_-10px_hsl(var(--primary)/0.4)]">
-            <div className="absolute top-3 right-3 text-xs font-bold uppercase tracking-wider bg-primary text-primary-foreground px-2 py-1 rounded-full">
-              Free
-            </div>
-            <div className="flex items-start gap-4">
-              <div className="text-4xl sm:text-5xl shrink-0">🎓</div>
-              <div className="flex-1 min-w-0">
-                <h2 className="font-display text-xl sm:text-2xl font-bold tracking-tight text-foreground mb-1">
-                  Free Slip Grader
-                </h2>
-                <p className="text-sm sm:text-base text-muted-foreground mb-3">
-                  Paste your slip. We'll tell you why it'll lose — and send you 7 days of free picks.
-                </p>
-                <div className="inline-flex items-center gap-2 text-sm font-semibold text-primary group-hover:gap-3 transition-all">
-                  Grade my slip now
-                  <span className="group-hover:translate-x-1 transition-transform">→</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Link>
+        <InlineSlipGraderPromo />
       </div>
 
       {/* 7. Pricing */}
