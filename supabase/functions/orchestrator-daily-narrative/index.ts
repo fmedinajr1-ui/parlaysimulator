@@ -666,6 +666,9 @@ Deno.serve(async (req) => {
 
       if (minutesOfDay >= PHASE_TIMES.tomorrow_tease! && !(await phaseAlreadyFired(sb, 'tomorrow_tease'))) {
         await runTomorrowTease(sb); fired.push('tomorrow_tease');
+        // Piggy-back the once-per-day onboarding nudge on the same nightly tick
+        try { await runOnboardingNudge(sb); fired.push('onboarding_nudge' as any); }
+        catch (e) { console.warn('[orchestrator] nudge failed:', e); }
       }
     }
 
