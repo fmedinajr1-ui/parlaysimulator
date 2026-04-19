@@ -26,8 +26,12 @@ import {
   bankrollLine,
   formOpener,
   signoff,
+  accuracyPhrase,
+  pulseVerdict,
+  humorOpener,
   type BotForm,
 } from './voice.ts';
+import type { AlertAccuracy } from './accuracy-lookup.ts';
 
 // ─── Side formatting ──────────────────────────────────────────────────────
 

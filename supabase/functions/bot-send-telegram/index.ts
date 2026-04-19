@@ -34,6 +34,7 @@
 import { initClient, sendToChat, fanoutToCustomers } from '../_shared/telegram-client.ts';
 import { etHour } from '../_shared/date-et.ts';
 import type { DayPhase } from '../_shared/constants.ts';
+import { enrichLegacyAlert, shouldEnrich } from '../_shared/alert-enricher.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
