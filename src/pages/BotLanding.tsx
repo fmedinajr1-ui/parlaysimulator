@@ -130,7 +130,13 @@ export default function BotLanding() {
 
       {/* 1. Hero — profit machine */}
       <div ref={heroRef}>
-        <HeroStats totalProfit={totals.totalProfit} totalWins={totals.totalWins} />
+        <HeroStats
+          totalProfit={totals.totalProfit}
+          totalWins={totals.totalWins}
+          daysActive={totals.daysActive}
+          currentStreak={totals.currentStreak}
+          streakType={totals.streakType}
+        />
       </div>
 
       {/* 2. Recent wins feed — social proof */}
