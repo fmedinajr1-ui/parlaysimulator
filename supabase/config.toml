@@ -526,3 +526,9 @@ verify_jwt = false
 
 [functions.handle-email-suppression]
 verify_jwt = false
+
+[functions.grade-slip]
+verify_jwt = false
+
+[functions.send-daily-pick-drip]
+verify_jwt = false
