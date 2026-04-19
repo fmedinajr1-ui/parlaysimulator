@@ -373,3 +373,154 @@ export function pickPhrase(bucket: keyof typeof PHRASES, seed: string): string {
   for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
   return options[Math.abs(h) % options.length];
 }
+
+// ─── Humor layer ──────────────────────────────────────────────────────────
+// Wraps every alert with personality. Deterministic per seed so retries match.
+
+const HUMOR_OPENERS: string[] = [
+  "Bookies hate this one trick.",
+  "Found another mispricing while you were sleeping.",
+  "The line moved. I noticed. You're welcome.",
+  "Saw this from a mile away.",
+  "Here's one the market hasn't caught up to yet.",
+  "Buckle in.",
+  "Pen's out, ink's wet.",
+  "The model just lit up.",
+  "Numbers don't lie. Sometimes. Mostly.",
+  "Caught one cooking.",
+  "This one's been brewing all morning.",
+  "Sometimes the bookmakers blink. This is one of those times.",
+  "Tape doesn't lie.",
+  "Edge spotted. Filing the paperwork.",
+  "Hot off the algorithm.",
+  "If I'm wrong, I'll buy the next round.",
+  "Betting against the public again. Sue me.",
+  "The sharp side just showed itself.",
+  "Stop me if you've heard this one before — actually, don't.",
+  "Math says yes. Vibes say yes. We're good.",
+  "Quick one before the line moves.",
+  "Keeping it short. Action's about to start.",
+  "This is the kind of spot I live for.",
+  "Trust the process. Or don't. Either way, here it is.",
+  "I'd write a longer note but the line is moving.",
+  "Every dog has its day. This dog has today.",
+  "The fade is on the public. As usual.",
+  "Lining up the sharps with the data.",
+  "Three coffees in. Seeing things clearly.",
+  "Numbers cleaned up. Picks loaded.",
+];
+
+const HUMOR_CLOSERS: string[] = [
+  "Cash it.",
+  "This one's free. The next one costs.",
+  "Don't tell your accountant.",
+  "I'll be here all night.",
+  "Tell your friends. Or don't — keep the edge.",
+  "Onto the next.",
+  "Ride it out.",
+  "Lock and load.",
+  "Nothing to see here. Move along to the betting slip.",
+  "Tip your bot.",
+  "Confidence: high. Sleep: optional.",
+  "Worst case: I was wrong. Best case: tacos.",
+  "If this hits, we're going to dinner.",
+  "Saved you the homework. Place the bet.",
+  "Variance is real. So is this edge.",
+  "Books are fading. Press the advantage.",
+  "Cashier's open.",
+  "Run it.",
+  "Bet small enough that you can keep playing tomorrow.",
+  "Process over results. But also: results.",
+  "I do my best work between coffees.",
+  "Books closing soon. Move.",
+  "Don't bet what you can't afford. Then bet a little more.",
+  "Sleep is for people who don't have edges.",
+  "Tomorrow's recap will be fun either way.",
+  "The model has spoken.",
+  "Let the slate cook.",
+  "Make it count.",
+  "Stay sharp out there.",
+  "GLHF.",
+];
+
+const HUMOR_COLD: string[] = [
+  "Last 3 days: rough. Doubling the homework, halving the stakes.",
+  "Even the algorithm has bad nights. Sizing down.",
+  "Rough patch. Trusting the process, shrinking the bets.",
+  "Bleeding a bit. Tiny tickets only.",
+  "Cold streak. The math still works — variance just doesn't care this week.",
+  "Down week. Cutting size, not corners.",
+  "Tightening the screws after a tough run.",
+  "Survival mode. Small bets, sharp picks.",
+  "Bad week, smaller week. That's the discipline.",
+  "Fading my own enthusiasm until the wins come back.",
+  "Variance is undefeated this week. Respecting it.",
+  "Three losing days. Staying patient, staying small.",
+  "Don't chase. The model knows. The variance is temporary.",
+  "Rough stretch. Treating every dollar like the last one.",
+  "Discipline beats panic. Small stakes until the run breaks.",
+];
+
+const HUMOR_HOT: string[] = [
+  "5 of 6 yesterday. Pressing the advantage.",
+  "Riding it until the wheels fall off.",
+  "Hot week. Not getting cute though.",
+  "Numbers popping. Stakes following.",
+  "Best week in a while. Compounding while it lasts.",
+  "Up big. Sticking to the process — no ego adds.",
+  "On a heater. Sized up but not stupid.",
+  "Streak's alive. Riding it.",
+  "Books are paying. I'm cashing.",
+  "Three winning days running. Press, but smart.",
+  "Every leg cashing. I won't ask why, just keep playing.",
+  "Hot hand. Not jinxing it.",
+  "Edge widened. Stake widened.",
+  "Money's coming in. Calling it, sizing up.",
+  "Tape's been kind. Pressing the bet.",
+];
+
+/** Deterministic humor opener — same seed → same line. */
+export function humorOpener(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+  return HUMOR_OPENERS[Math.abs(h) % HUMOR_OPENERS.length];
+}
+
+/** Deterministic humor closer, with form-aware tilt. */
+export function humorCloser(seed: string, form: BotForm = 'neutral'): string {
+  if (form === 'cold' || form === 'ice_cold') {
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+    return HUMOR_COLD[Math.abs(h) % HUMOR_COLD.length];
+  }
+  if (form === 'hot') {
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+    return HUMOR_HOT[Math.abs(h) % HUMOR_HOT.length];
+  }
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+  return HUMOR_CLOSERS[Math.abs(h) % HUMOR_CLOSERS.length];
+}
+
+/** One-line accuracy badge for a hit rate. Used in pick cards + alert headers. */
+export function accuracyPhrase(hitRate: number, sampleSize: number = 0): string {
+  const pct = Math.round(hitRate * 100);
+  const ss = sampleSize > 0 ? ` (${sampleSize})` : '';
+  if (hitRate >= 0.70) return `🔥 hitting ${pct}% L7${ss} — sizing up territory`;
+  if (hitRate >= 0.60) return `📈 ${pct}% L7${ss} — solid signal type`;
+  if (hitRate >= 0.50) return `📊 ${pct}% L7${ss} — middle of the road`;
+  if (hitRate >= 0.42) return `⚠️ ${pct}% L7${ss} — fade-only territory`;
+  return `🚫 ${pct}% L7${ss} — bleeding signal, sit out`;
+}
+
+/** Form-aware verdict for the daily accuracy pulse message. */
+export function pulseVerdict(hotCount: number, coldCount: number, totalTracked: number): string {
+  if (totalTracked === 0) return "Not enough data to call it. Playing the slate as it comes.";
+  if (hotCount >= 3 && coldCount === 0) return "Green light across the board. Press the advantage.";
+  if (hotCount >= 2) return "Mostly green. Lean into the hot signal types, fade the rest.";
+  if (coldCount >= 3) return "Tap the brakes today. Most signals are cooling off.";
+  if (hotCount > coldCount) return "More hot than cold. Standard size, slight lean to the hot ones.";
+  if (coldCount > hotCount) return "More cold than hot. Sizing down across the board.";
+  return "Mixed bag. Standard size, sharp picks only.";
+}

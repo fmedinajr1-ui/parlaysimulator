@@ -548,6 +548,42 @@ export type Database = {
         }
         Relationships: []
       }
+      alert_type_accuracy_cache: {
+        Row: {
+          alert_type: string
+          l30_hit_rate: number | null
+          l7_hit_rate: number | null
+          last_updated: string
+          recommendation: string | null
+          sample_size_l30: number | null
+          sample_size_l7: number | null
+          stake_multiplier: number | null
+          trend: string | null
+        }
+        Insert: {
+          alert_type: string
+          l30_hit_rate?: number | null
+          l7_hit_rate?: number | null
+          last_updated?: string
+          recommendation?: string | null
+          sample_size_l30?: number | null
+          sample_size_l7?: number | null
+          stake_multiplier?: number | null
+          trend?: string | null
+        }
+        Update: {
+          alert_type?: string
+          l30_hit_rate?: number | null
+          l7_hit_rate?: number | null
+          last_updated?: string
+          recommendation?: string | null
+          sample_size_l30?: number | null
+          sample_size_l7?: number | null
+          stake_multiplier?: number | null
+          trend?: string | null
+        }
+        Relationships: []
+      }
       analytics_events: {
         Row: {
           created_at: string

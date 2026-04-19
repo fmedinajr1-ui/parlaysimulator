@@ -43,6 +43,7 @@ import {
   renderSettledLeg,
   renderPlaycard,
   renderPassedSummary,
+  renderAccuracyPulse,
 } from '../_shared/pick-formatter.ts';
 import { getSportEmoji } from '../_shared/constants.ts';
 import {
@@ -54,6 +55,7 @@ import {
   saveDayState,
 } from '../_shared/narrative-state.ts';
 import { curate, persistCuration, loadBankrollState } from '../_shared/bankroll-curator.ts';
+import { listTopAlertTypes } from '../_shared/accuracy-lookup.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -66,6 +68,7 @@ const PHASE_TIMES: Record<DayPhase, number | null> = {
   slate_lock: 11 * 60,            // 11:00
   pick_drops: 11 * 60 + 15,       // 11:15+ (staggered)
   pre_game_pulse: null,           // game-relative, computed per-game
+  accuracy_pulse: 15 * 60,        // 15:00 — mid-day signal-type accuracy summary
   live_tracker: null,             // event-driven
   settlement_story: null,         // triggered post-last-game by separate caller
   tomorrow_tease: 23 * 60 + 30,   // 23:30
@@ -439,6 +442,32 @@ async function runPreGamePulse(sb: any): Promise<void> {
   }
 }
 
+// ─── PHASE 4.5: Accuracy Pulse ────────────────────────────────────────────
+// Mid-day broadcast (3p ET) summarizing how each alert type is performing this week.
+// Tells customers whether to size up or tap the brakes on each signal type.
+
+async function runAccuracyPulse(sb: any): Promise<void> {
+  const alertTypes = await listTopAlertTypes(sb, 8);
+  const bankrollState = await loadBankrollState(sb).catch(() => null);
+
+  const message = renderAccuracyPulse({
+    alertTypes,
+    bankrollState: bankrollState ? {
+      current_bankroll: bankrollState.current_bankroll,
+      current_form: bankrollState.current_form,
+    } : undefined,
+  });
+
+  await send({
+    message,
+    phase: 'accuracy_pulse',
+    referenceKey: 'accuracy_pulse',
+    fanout: 'all_active',
+  });
+
+  await markPhaseComplete(sb, 'accuracy_pulse');
+}
+
 // ─── PHASE 5: Settlement Story ────────────────────────────────────────────
 // Triggered when last game ends. Honest recap.
 
@@ -575,6 +604,7 @@ Deno.serve(async (req) => {
         case 'slate_lock': await runSlateLock(sb); break;
         case 'pick_drops': await runPickDrops(sb); break;
         case 'pre_game_pulse': await runPreGamePulse(sb); break;
+        case 'accuracy_pulse': await runAccuracyPulse(sb); break;
         case 'settlement_story': await runSettlementStory(sb); break;
         case 'tomorrow_tease': await runTomorrowTease(sb); break;
       }
@@ -594,6 +624,10 @@ Deno.serve(async (req) => {
       // Pre-game pulse is game-relative, runs every tick
       await runPreGamePulse(sb);
       fired.push('pre_game_pulse');
+
+      if (minutesOfDay >= PHASE_TIMES.accuracy_pulse! && !(await phaseAlreadyFired(sb, 'accuracy_pulse'))) {
+        await runAccuracyPulse(sb); fired.push('accuracy_pulse');
+      }
 
       if (minutesOfDay >= PHASE_TIMES.tomorrow_tease! && !(await phaseAlreadyFired(sb, 'tomorrow_tease'))) {
         await runTomorrowTease(sb); fired.push('tomorrow_tease');
