@@ -1278,6 +1278,51 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_bankroll_state: {
+        Row: {
+          created_at: string
+          current_bankroll: number
+          current_form: string
+          daily_max_exposure_pct: number
+          form_streak: number
+          id: number
+          last_7d_pnl: number
+          last_7d_win_rate: number
+          last_updated: string
+          notes: string | null
+          peak_bankroll: number
+          starting_bankroll: number
+        }
+        Insert: {
+          created_at?: string
+          current_bankroll?: number
+          current_form?: string
+          daily_max_exposure_pct?: number
+          form_streak?: number
+          id: number
+          last_7d_pnl?: number
+          last_7d_win_rate?: number
+          last_updated?: string
+          notes?: string | null
+          peak_bankroll?: number
+          starting_bankroll?: number
+        }
+        Update: {
+          created_at?: string
+          current_bankroll?: number
+          current_form?: string
+          daily_max_exposure_pct?: number
+          form_streak?: number
+          id?: number
+          last_7d_pnl?: number
+          last_7d_win_rate?: number
+          last_updated?: string
+          notes?: string | null
+          peak_bankroll?: number
+          starting_bankroll?: number
+        }
+        Relationships: []
+      }
       bot_category_weights: {
         Row: {
           bayesian_hit_rate: number | null
@@ -1534,7 +1579,9 @@ export type Database = {
         Row: {
           actual_value: number | null
           american_odds: number | null
+          bankroll_reason: string | null
           confidence: number
+          curated_at: string | null
           edge_pct: number | null
           game_id: string | null
           game_start_utc: string | null
@@ -1542,9 +1589,11 @@ export type Database = {
           generator: string
           id: string
           line: number
+          line_at_generation: number | null
           opponent: string | null
           outcome: string | null
           parlay_id: string | null
+          pass_reason: string | null
           pick_date: string
           player_name: string
           prop_type: string
@@ -1552,6 +1601,8 @@ export type Database = {
           recency: Json | null
           side: string
           sport: string
+          stake_amount: number | null
+          stake_tier: string | null
           status: string
           team: string | null
           tier: string | null
@@ -1560,7 +1611,9 @@ export type Database = {
         Insert: {
           actual_value?: number | null
           american_odds?: number | null
+          bankroll_reason?: string | null
           confidence: number
+          curated_at?: string | null
           edge_pct?: number | null
           game_id?: string | null
           game_start_utc?: string | null
@@ -1568,9 +1621,11 @@ export type Database = {
           generator: string
           id: string
           line: number
+          line_at_generation?: number | null
           opponent?: string | null
           outcome?: string | null
           parlay_id?: string | null
+          pass_reason?: string | null
           pick_date: string
           player_name: string
           prop_type: string
@@ -1578,6 +1633,8 @@ export type Database = {
           recency?: Json | null
           side: string
           sport: string
+          stake_amount?: number | null
+          stake_tier?: string | null
           status?: string
           team?: string | null
           tier?: string | null
@@ -1586,7 +1643,9 @@ export type Database = {
         Update: {
           actual_value?: number | null
           american_odds?: number | null
+          bankroll_reason?: string | null
           confidence?: number
+          curated_at?: string | null
           edge_pct?: number | null
           game_id?: string | null
           game_start_utc?: string | null
@@ -1594,9 +1653,11 @@ export type Database = {
           generator?: string
           id?: string
           line?: number
+          line_at_generation?: number | null
           opponent?: string | null
           outcome?: string | null
           parlay_id?: string | null
+          pass_reason?: string | null
           pick_date?: string
           player_name?: string
           prop_type?: string
@@ -1604,6 +1665,8 @@ export type Database = {
           recency?: Json | null
           side?: string
           sport?: string
+          stake_amount?: number | null
+          stake_tier?: string | null
           status?: string
           team?: string | null
           tier?: string | null
