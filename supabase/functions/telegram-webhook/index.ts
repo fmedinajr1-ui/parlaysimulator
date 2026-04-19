@@ -228,9 +228,48 @@ async function handleRecord(): Promise<string> {
   return m.build();
 }
 
-// ─── Command: /start ──────────────────────────────────────────────────────
+// ─── Command: /start [password] ──────────────────────────────────────────
+// /start with no args → returns the welcome (existing behavior)
+// /start <password> → activates an unauthorized user, then kicks off onboarding
 
-function handleStart(): string {
+async function handleStart(chatId: string, args: string, username: string | undefined): Promise<string | null> {
+  const pwd = args.trim();
+
+  if (pwd) {
+    // Password activation flow
+    const { data: pwdRow } = await supabase
+      .from('bot_access_passwords')
+      .select('*')
+      .eq('password', pwd)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!pwdRow) {
+      return `🔒 That password isn't valid. Contact the admin.`;
+    }
+    if (pwdRow.max_uses && pwdRow.times_used >= pwdRow.max_uses) {
+      return `🔒 That password has been used up. Contact the admin for a new one.`;
+    }
+
+    // Activate the user (idempotent)
+    await supabase.from('bot_authorized_users').upsert({
+      chat_id: chatId,
+      username: username ?? null,
+      is_active: true,
+    }, { onConflict: 'chat_id' });
+
+    // Mark password used
+    await supabase.from('bot_access_passwords').update({
+      times_used: (pwdRow.times_used ?? 0) + 1,
+      retrieved: true,
+    }).eq('id', pwdRow.id);
+
+    // Kick off onboarding wizard (sends step 1)
+    await startOnboarding(supabase, TELEGRAM_BOT_TOKEN, chatId);
+    return null; // onboarding sends its own messages
+  }
+
+  // No password → standard welcome
   const m = new MessageBuilder();
   m.header(`Welcome`, '🌾');
   m.line(`I'm ParlayIQ. I watch the board, run the numbers, and send over plays I actually like with reasoning attached.`);
@@ -248,25 +287,30 @@ function handleStart(): string {
   m.line(`/edge — biggest edges right now`);
   m.line(`/pulse — live status`);
   m.line(`/record — last 7 days`);
+  m.line(`/preferences — view or change your settings`);
   return m.build();
 }
 
 // ─── Command dispatch ─────────────────────────────────────────────────────
 
-async function handleCommand(chatId: string, text: string): Promise<string> {
+async function handleCommand(chatId: string, text: string, username?: string): Promise<string | null> {
   const trimmed = text.trim();
   const [cmd, ...rest] = trimmed.split(/\s+/);
   const args = rest.join(' ');
   const c = cmd.toLowerCase().replace(/@.*$/, ''); // strip bot username suffix
 
   switch (c) {
-    case '/start':   return handleStart();
-    case '/today':   return handleToday(chatId);
-    case '/why':     return handleWhy(chatId, args);
-    case '/edge':    return handleEdge(chatId);
-    case '/pulse':   return handlePulse();
-    case '/record':  return handleRecord();
-    case '/help':    return handleStart();
+    case '/start':       return handleStart(chatId, args, username);
+    case '/today':       return handleToday(chatId);
+    case '/why':         return handleWhy(chatId, args);
+    case '/edge':        return handleEdge(chatId);
+    case '/pulse':       return handlePulse();
+    case '/record':      return handleRecord();
+    case '/preferences':
+    case '/settings':
+      await showPreferences(supabase, TELEGRAM_BOT_TOKEN, chatId);
+      return null;
+    case '/help':        return handleStart(chatId, '', username);
     default:
       return `I didn't recognize ${bold(cmd)}. Try /start for the list.`;
   }
