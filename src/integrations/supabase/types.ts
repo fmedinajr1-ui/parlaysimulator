@@ -3609,33 +3609,54 @@ export type Database = {
       }
       email_subscribers: {
         Row: {
+          converted_at: string | null
+          converted_to_paid: boolean
+          drip_day: number
+          drip_paused: boolean
           email: string
           id: string
           is_subscribed: boolean | null
+          last_drip_sent_at: string | null
+          metadata: Json
           source: string | null
           subscribed_at: string | null
           telegram_chat_id: string | null
           telegram_username: string | null
+          unsubscribed_at: string | null
           user_id: string | null
         }
         Insert: {
+          converted_at?: string | null
+          converted_to_paid?: boolean
+          drip_day?: number
+          drip_paused?: boolean
           email: string
           id?: string
           is_subscribed?: boolean | null
+          last_drip_sent_at?: string | null
+          metadata?: Json
           source?: string | null
           subscribed_at?: string | null
           telegram_chat_id?: string | null
           telegram_username?: string | null
+          unsubscribed_at?: string | null
           user_id?: string | null
         }
         Update: {
+          converted_at?: string | null
+          converted_to_paid?: boolean
+          drip_day?: number
+          drip_paused?: boolean
           email?: string
           id?: string
           is_subscribed?: boolean | null
+          last_drip_sent_at?: string | null
+          metadata?: Json
           source?: string | null
           subscribed_at?: string | null
           telegram_chat_id?: string | null
           telegram_username?: string | null
+          unsubscribed_at?: string | null
           user_id?: string | null
         }
         Relationships: []
@@ -5272,6 +5293,42 @@ export type Database = {
           updated_at?: string | null
           weight_key?: string
           weight_value?: number
+        }
+        Relationships: []
+      }
+      grade_events: {
+        Row: {
+          composite_score: number | null
+          created_at: string
+          email_captured: boolean
+          id: string
+          leg_count: number
+          letter_grade: string
+          metadata: Json
+          share_card_id: string | null
+          share_card_opens: number
+        }
+        Insert: {
+          composite_score?: number | null
+          created_at?: string
+          email_captured?: boolean
+          id?: string
+          leg_count?: number
+          letter_grade: string
+          metadata?: Json
+          share_card_id?: string | null
+          share_card_opens?: number
+        }
+        Update: {
+          composite_score?: number | null
+          created_at?: string
+          email_captured?: boolean
+          id?: string
+          leg_count?: number
+          letter_grade?: string
+          metadata?: Json
+          share_card_id?: string | null
+          share_card_opens?: number
         }
         Relationships: []
       }
