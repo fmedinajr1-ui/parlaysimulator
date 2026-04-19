@@ -1,41 +1,30 @@
 
-User wants the Free Slip Grader to be an inline promo on the homepage (not a link to /grade), positioned near the subscription/pricing area. The grading experience should happen right on the landing page.
 
-Looking at Index.tsx, the current `/grade` link card sits high up. The PricingSection is at the bottom (only shown to non-subscribed users). I need to:
+## What's actually happening
 
-1. Remove the link-style CTA card on Index.tsx
-2. Build an inline grader widget that runs the full flow (paste → grade → email gate) directly on the homepage, placed right next to/above the PricingSection
-3. Reuse the existing `grade-slip` edge function and the existing `GradeReveal` + `EmailGate` components from `src/components/grade/`
+The user's screenshot is from `/` which renders `BotLanding.tsx`, NOT `Index.tsx`. My previous inline grader change went into `Index.tsx` (a different route the user wasn't on). On `BotLanding.tsx` the Free Slip Grader is still the click-through link card from an earlier edit.
 
-Plan:
+## Fix
 
-## Changes
+Replace the link-style card on `BotLanding.tsx` with the inline `InlineSlipGraderPromo` component (already built and working on Index.tsx) so the grader runs right there on the landing page next to the pricing/CTA, no navigation required.
 
-### 1. New component: `src/components/grade/InlineSlipGraderPromo.tsx`
-- Self-contained widget that runs the whole grader flow inline
-- Compact textarea ("Paste your slip…") + "Grade it free" button
-- On submit → calls `grade-slip` edge function → shows `GradeReveal` (letter grade + headline) inline
-- After grade reveal → shows `EmailGate` to capture email + send welcome email with full breakdown
-- Side-by-side promo framing on desktop, stacked on mobile
-- Visual treatment matches the pricing area (border, gradient, "FREE" badge) so it reads as a companion offer to the paid plan
+### Single change
+**File**: `src/pages/BotLanding.tsx` (lines ~160-184)
+- Remove the `<Link to="/grade">` card block
+- Mount `<InlineSlipGraderPromo />` in its place
+- Add the import
 
-### 2. `src/pages/Index.tsx`
-- Remove the standalone `/grade` link CTA block (the big gradient card linking to `/grade`)
-- Mount `<InlineSlipGraderPromo />` directly above the `PricingSection` so the free option sits next to the paid subscription
-- Keep `/grade` route alive (existing dedicated page still works for direct links / shares)
+Pricing (`PricingSection`) on the bot landing page sits in a separate band below — the inline grader will read as a free companion offer right above it, matching the "promo next to subscription" intent.
 
-## Out of scope
-- Screenshot upload + manual entry modes (keep paste-only on homepage for simplicity; full multi-mode UX stays on `/grade`)
-- Share card (skip on the inline promo to keep it tight; still available on `/grade`)
-- Any backend changes — `grade-slip`, `email_subscribers`, drip cron all stay as-is
+### Out of scope
+- Index.tsx already has the correct inline promo — leave it
+- `/grade` standalone page stays for direct links/shares
+- No backend, no new components, no styling system changes
 
-## Files
-**Create**: `src/components/grade/InlineSlipGraderPromo.tsx`
-**Modify**: `src/pages/Index.tsx` (remove link card, add inline promo above pricing)
+### Testing
+1. Load `/` on mobile (393px) → see inline grader card with textarea, not a link
+2. Paste a slip → grade renders inline on the same page
+3. Submit email → subscriber row + welcome email queued
+4. Verify pricing CTA still sits below and renders correctly
+5. `/grade` standalone page still works for direct visitors
 
-## Testing
-1. Paste slip on homepage → grade letter + headline appears inline (no navigation)
-2. Submit email after grade → subscriber row created, welcome email queued
-3. Promo renders side-by-side with pricing on desktop, stacked on mobile (393px viewport)
-4. Subscribed/admin users still don't see pricing — promo also hides for them (free funnel is for non-subs)
-5. `/grade` standalone page still works
