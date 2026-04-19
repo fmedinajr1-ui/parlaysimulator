@@ -2,7 +2,7 @@ import React from "react";
 import { HeroBanner } from "@/components/HeroBanner";
 import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
-import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
+
 import { SlateRefreshControls } from "@/components/market/SlateRefreshControls";
 import { DailyParlayHub } from "@/components/parlays/DailyParlayHub";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
@@ -167,19 +167,29 @@ const Index = () => {
           <SampleParlayButton />
         </div>
 
-        {/* Free Parlay Analyzer */}
-        <div className="mb-2">
-          <HomepageAnalyzer />
-        </div>
-
-        {/* Free Slip Grader CTA */}
-        <div className="mb-4 text-center">
-          <Link
-            to="/grade"
-            className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-primary/80 underline underline-offset-4 active:scale-95 transition-transform"
-            onClick={lightTap}
-          >
-            🎓 Grade my slip free — get 7 days of picks →
+        {/* Free Slip Grader - Primary Lead Magnet */}
+        <div className="mb-4">
+          <Link to="/grade" onClick={lightTap} className="block group">
+            <div className="relative overflow-hidden rounded-2xl border-2 border-primary/40 bg-gradient-to-br from-primary/15 via-primary/5 to-background p-6 sm:p-8 active:scale-[0.99] transition-all hover:border-primary/60 hover:shadow-[0_0_40px_-10px_hsl(var(--primary)/0.4)]">
+              <div className="absolute top-3 right-3 text-xs font-bold uppercase tracking-wider bg-primary text-primary-foreground px-2 py-1 rounded-full">
+                Free
+              </div>
+              <div className="flex items-start gap-4">
+                <div className="text-4xl sm:text-5xl shrink-0">🎓</div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-display text-xl sm:text-2xl font-bold tracking-tight text-foreground mb-1">
+                    Free Slip Grader
+                  </h2>
+                  <p className="text-sm sm:text-base text-muted-foreground mb-3">
+                    Paste your slip. We'll tell you why it'll lose — and send you 7 days of free picks.
+                  </p>
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-primary group-hover:gap-3 transition-all">
+                    Grade my slip now
+                    <span className="group-hover:translate-x-1 transition-transform">→</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </Link>
         </div>
 
