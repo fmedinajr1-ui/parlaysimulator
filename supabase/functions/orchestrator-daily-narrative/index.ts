@@ -442,6 +442,32 @@ async function runPreGamePulse(sb: any): Promise<void> {
   }
 }
 
+// ─── PHASE 4.5: Accuracy Pulse ────────────────────────────────────────────
+// Mid-day broadcast (3p ET) summarizing how each alert type is performing this week.
+// Tells customers whether to size up or tap the brakes on each signal type.
+
+async function runAccuracyPulse(sb: any): Promise<void> {
+  const alertTypes = await listTopAlertTypes(sb, 8);
+  const bankrollState = await loadBankrollState(sb).catch(() => null);
+
+  const message = renderAccuracyPulse({
+    alertTypes,
+    bankrollState: bankrollState ? {
+      current_bankroll: bankrollState.current_bankroll,
+      current_form: bankrollState.current_form,
+    } : undefined,
+  });
+
+  await send({
+    message,
+    phase: 'accuracy_pulse',
+    referenceKey: 'accuracy_pulse',
+    fanout: 'all_active',
+  });
+
+  await markPhaseComplete(sb, 'accuracy_pulse');
+}
+
 // ─── PHASE 5: Settlement Story ────────────────────────────────────────────
 // Triggered when last game ends. Honest recap.
 
