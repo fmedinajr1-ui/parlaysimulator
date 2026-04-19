@@ -1,140 +1,97 @@
 
 
-User picked the Free Slip Grader 2.0 funnel. Let me check what already exists so I scope this right.
+## Free Slip Grader 2.0 — Build Plan (final scope)
 
-What I know from the codebase scan:
-- `HomepageAnalyzer` exists on Index.tsx — already grades slips
-- `/upload` page is the deeper analyzer flow with `QuickCheckResults` (safe/caution/danger + sharp signals)
-- `SmartAnalyzeButton` with role-aware engines
-- Bot landing page with `PricingSection` ($99/mo Telegram bot)
-- Lovable Cloud is enabled — auth, DB, edge functions, AI gateway available
-- Voice/humor system already built in edge functions (voice.ts) — can reuse the personality for grader copy
+What's already done from the earlier phase:
+- `email_subscribers` + `grade_events` tables exist with drip columns
+- Email infra deployed on `notify.parlayfarm.com`
+- 3 templates created: `grade-welcome`, `daily-pick-drop`, `day-7-upgrade`
+- `extract-parlay` edge function exists (reuse for slip parsing)
+- `bot_daily_picks` schema confirmed — has confidence, edge_pct, reasoning, status
 
-What's missing that I need to build:
-1. A dedicated `/grade` landing page (separate from `/upload`) with the right hook framing
-2. A grading rubric that returns A/B/C/F + brutal one-liner (not just safe/caution/danger)
-3. Shareable image card generation (canvas → PNG)
-4. Email capture wall before showing the grade detail (or after preview)
-5. `email_subscribers` table
-6. Daily pick drip — edge function that sends 1 free pick/day for 7 days to email subs
-7. Email sending infra (need to set up email domain + Lovable Emails)
+What's left to ship the funnel end-to-end:
 
-Email setup is the gating dependency. They have custom domains (parlaysimulator.com, parlayfarm.com) but no email domain configured yet. I'll need to trigger the setup dialog.
+### 1. `/grade` landing page (`src/pages/GradeSlip.tsx`)
+- Hero: **"Paste your slip. We'll tell you why it'll lose."**
+- Three input modes (reuse HomepageAnalyzer patterns): paste text, upload screenshot, manual entry
+- Calls `extract-parlay` for screenshots, then `grade-slip` for the verdict
+- Shows letter grade + 1-line headline immediately (preview)
+- Email gate appears between preview and full breakdown
+- After email submit → full per-leg breakdown + share card download
+- Components broken out: `GradeReveal.tsx`, `EmailGate.tsx`, `ShareCard.tsx`
 
-# Free Slip Grader 2.0 — Build Plan
+### 2. `grade-slip` edge function
+- Input: parsed legs array
+- Returns `{ letter_grade, headline, composite_score, breakdown[], share_card_id }`
+- Rubric: weighted blend of avg implied probability, leg count penalty, correlation flags, bot voice
+- A: composite ≥ 75 · B: 60–74 · C: 45–59 · D: 30–44 · F: <30
+- Headlines pulled from a tiered pool ("This is a coin flip wearing a tuxedo." etc.)
+- Logs anonymous row to `grade_events`
+- `verify_jwt = false` (public endpoint)
 
-## The funnel
+### 3. Share card via in-browser canvas (no extra edge function)
+- Reuse `ShareableImageCard` styling, render off-screen with `html2canvas` (or build SVG → PNG)
+- "Copy image" / "Download PNG" / "Tweet this" / "Share to IG" buttons
+- Card includes the grade letter, parlay summary, headline, parlayfarm.com URL
+- Each card carries the `share_card_id` so we can attribute returning traffic later
 
-```
-Twitter/SEO traffic → /grade landing page
-  → "Paste your slip. We'll tell you why it'll lose."
-  → Grade preview (letter + headline) shown immediately
-  → Email gate: "Want the full breakdown + 7 days of free picks?"
-  → Email captured → full grade revealed + share card generated
-  → 7-day daily pick email drip
-  → Day 7: upgrade CTA → $99/mo Telegram bot
-```
+### 4. Email capture
+- Inline form on `/grade` after grade preview
+- Insert into `email_subscribers` with `source='grade'`, `drip_day=0`
+- Immediately invoke `send-transactional-email` with `grade-welcome` template (full breakdown in the email)
+- Idempotency key: `grade-welcome-${subscriber_id}`
 
-## What I'll build
+### 5. `send-daily-pick-drip` edge function + cron
+- Runs daily at 11 AM ET
+- For every subscriber where `drip_day < 7 AND drip_paused = false AND unsubscribed_at IS NULL`:
+  - Pull top free pick from `bot_daily_picks` (highest confidence singles for today)
+  - Send `daily-pick-drop` template with pick + bot voice reasoning
+  - On day 7, send `day-7-upgrade` instead
+  - Increment `drip_day`, set `last_drip_sent_at`
+- pg_cron job with the project anon key (use insert tool — contains user-specific URL)
+- Daily send cap: 100/day for first week (warm-up flag in env)
 
-### 1. New page: `/grade` (Free Slip Grader)
-- Hero: **"Paste your slip. We'll tell you why it'll lose."** (brutal-honest brand voice)
-- Reuses the existing slip parser from `HomepageAnalyzer` / `/upload`
-- Inputs: paste text OR upload screenshot OR enter legs manually
-- Shows partial grade immediately (letter + 1-line verdict, no detail)
-- Email gate appears for full breakdown
+### 6. Homepage hook
+- Add small "Grade my slip free →" CTA near `HomepageAnalyzer` on Index.tsx
+- Add `/grade` route to `App.tsx` (lazy-loaded)
 
-### 2. New edge function: `grade-slip`
-- Takes parsed legs → returns:
-  - `letter_grade`: A / B / C / D / F
-  - `headline`: bot-personality one-liner ("This is a coin flip wearing a tuxedo.")
-  - `breakdown`: per-leg analysis (locked behind email)
-  - `share_card_data`: the data needed to render the PNG
-- Uses existing analyzer engines + voice.ts humor lines for grading copy
-- Grading rubric: composite of confidence, edge%, sharp signals, correlation, leg count
+### 7. Admin tile (small)
+- One new tile on the existing admin dashboard: grades today, emails captured, drip sends, paid conversions attributed to grade funnel
+- Pure read query against `grade_events` + `email_subscribers`
 
-### 3. Share card generator
-- New edge function `generate-share-card` using HTML → PNG (or canvas in-browser)
-- Output: 1200×630 PNG with grade letter, parlay summary, ParlayFarm branding
-- Auto-downloads + provides "Tweet this" / "Share to IG" buttons
-- Each share card has a unique ID and tracks opens/clicks (free distribution)
-
-### 4. Email capture + database
-- New table: `email_subscribers`
-  - `email`, `source` ('grade'|'leaderboard'|'organic'), `signed_up_at`
-  - `drip_day` (0–7, tracks where they are in sequence), `drip_paused`
-  - `converted_to_paid` boolean, `unsubscribed_at`
-- RLS: service-role writes; public reads disabled
-- Modal/inline form on `/grade` after partial grade preview
-
-### 5. Email infrastructure setup
-- Set up email domain (`notify.parlayfarm.com` or similar)
-- Configure Lovable Emails infrastructure for app emails
-- Create transactional templates:
-  - **Welcome + first grade breakdown** — sent immediately after email capture
-  - **Daily pick drop** — Day 1–7 picks with reasoning + bot voice
-  - **Day 7 upgrade CTA** — "Here's what you've been missing on Telegram"
-
-### 6. Daily pick drip cron
-- New edge function `send-daily-pick-drip`
-- Runs daily at 11 AM ET via pg_cron
-- For each subscriber where `drip_day < 7`:
-  - Pull today's top free pick from `bot_daily_picks` (highest confidence single)
-  - Render with bot voice/humor + accuracy phrase
-  - Send via `send-transactional-email`
-  - Increment `drip_day`
-- Day 7 send includes upgrade CTA + 7-day P&L recap
-
-### 7. Tracking + admin view
-- New table: `grade_events` — every slip graded (no PII), tracks share card opens
-- Add a tile on existing admin dashboard showing: grades today, emails captured, drip conversions, paid upgrades attributed to grade funnel
-
-## Files touched
+## Files
 
 **Create:**
-- `src/pages/GradeSlip.tsx` (new `/grade` route)
-- `src/components/grade/GradeReveal.tsx` (animated A/B/C/F card)
-- `src/components/grade/EmailGate.tsx` (capture form)
-- `src/components/grade/ShareCard.tsx` (preview + download)
-- `supabase/functions/grade-slip/index.ts`
-- `supabase/functions/generate-share-card/index.ts`
-- `supabase/functions/send-daily-pick-drip/index.ts`
-- 3 new email templates in `_shared/transactional-email-templates/`
+- `src/pages/GradeSlip.tsx`
+- `src/components/grade/GradeReveal.tsx`
+- `src/components/grade/EmailGate.tsx`
+- `src/components/grade/ShareCard.tsx`
+- `supabase/functions/grade-slip/index.ts` (+ `deno.json`)
+- `supabase/functions/send-daily-pick-drip/index.ts` (+ `deno.json`)
 
 **Modify:**
-- `src/App.tsx` — add `/grade` route
-- `src/pages/Index.tsx` — add a small "Grade my slip free →" link near the analyzer
+- `src/App.tsx` (route + lazy import)
+- `src/pages/Index.tsx` (CTA link)
+- `src/components/admin/*` (one tile)
 
-**DB:**
-- New tables `email_subscribers`, `grade_events` (RLS, service-role writes)
-- pg_cron job for daily drip (11 AM ET)
+**DB ops (insert tool, not migration — user-specific data):**
+- pg_cron schedule for `send-daily-pick-drip` at 11 AM ET
 
-**Email:**
-- Email domain setup (need user to confirm subdomain — `notify.parlayfarm.com`)
-- Lovable Emails infrastructure
-- 3 transactional templates
-
-## Out of scope (future loops)
-- A/B testing different grade copy
-- Multi-day automated nurture beyond day 7
-- Refer-a-friend on the share card
-- SMS drip (email only this round)
+## Out of scope (future)
+- A/B test grade copy
+- Refer-a-friend on share card
+- SMS drip
+- Multi-day nurture beyond day 7
 
 ## Risk + rollback
-- **Risk**: emails getting marked spam early → reputation damage. Mitigation: warm up slowly (cap drip sends at 100/day for first week), proper domain setup with SPF/DKIM (handled by Lovable Emails).
-- **Risk**: grading copy too harsh → drives people away. Mitigation: brutal headline + constructive breakdown ("Here's how to fix it: ___").
-- **Rollback**: feature-flag the `/grade` route + cron job. Disable both → funnel goes dark, no other system affected.
+- **Risk**: spam reputation. Mitigation: 100/day cap warm-up, suppression already wired, Lovable Emails handles SPF/DKIM
+- **Risk**: harsh copy churns users. Mitigation: brutal headline + constructive per-leg fix in breakdown
+- **Rollback**: remove `/grade` route + disable cron job → funnel goes dark, zero impact on bot pipeline
 
-## Testing (project policy: 5 verifications)
-1. Paste a junk slip → verify F grade + funny one-liner
-2. Paste a strong slip → verify A/B grade
-3. Submit email → verify subscriber row created + welcome email sent
-4. Force daily drip cron → verify 1 pick email sent per active subscriber, drip_day increments
-5. Day 7 subscriber → verify upgrade CTA email fires
-6. Click unsubscribe → verify suppression + no further sends
-
-## What does NOT change
-- Bot pipeline (generators, orchestrator, Telegram fanout) — zero touch
-- Existing `/upload` flow stays as the deeper paid-feature analyzer
-- Pricing, auth, blog, hedge tracker — zero touch
+## Testing (5 verifications)
+1. Paste a junk 5-leg slip → F grade + funny headline shown
+2. Submit email after grade preview → subscriber row created + welcome email queued
+3. Force `send-daily-pick-drip` → one pick email sent per active sub, drip_day increments
+4. Subscriber at drip_day=6 → day 7 upgrade CTA email fires
+5. Click unsubscribe link → suppression works, no further sends
 
