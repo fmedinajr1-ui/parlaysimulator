@@ -1,142 +1,176 @@
 
 
-User wants: 
-1. Every generator/alert in pipeline gets stake advice (not just the 4 v2 generators)
-2. Bot personality with humor across ALL alerts
-3. Real-time accuracy reporting per alert type so customers know if today is a "bet bigger" day or "tighten up" day
-4. Bot becomes the unified voice across the whole pipeline — not just orchestrator phases
+User wants: when a new user joins via Telegram, the bot starts a personalized onboarding conversation (bet type preference, sports, bankroll), then uses those answers to filter which generator outputs and stake sizes get sent to that specific customer.
 
-Current state:
-- Phase 4 done: bankroll-curator + voice 2.0 working for 4 v2 generators going through orchestrator
-- ~99 legacy generators still send `{type, data}` through compat shim → no stake advice, no personality, generic legacy text
-- 13 direct-API bypasses skip the dispatcher entirely
-- No per-alert-type accuracy lookup → bot can't say "RBI unders are 8/10 this week, size up"
+Current state I need to verify:
+- Telegram webhook exists (`telegram-webhook` from Phase 2) — handles incoming messages
+- `bot_authorized_users` table exists with chat_id, username, bankroll
+- Customer fanout in dispatcher already supports per-customer personalization (saw `personalize` callback in bot-send-telegram)
+- No preference table currently — need one
+- No conversation state machine for multi-step onboarding — need one
+- Currently `/start <password>` activates user but skips straight to picks
 
-Let me check what exists for accuracy tracking and what the legacy alert types look like to scope this properly.
-- `signal_accuracy` table exists per memory (mem://logic/betting/accuracy-segmentation)
-- `bot_message_log` from Phase 1 logs every send with reference_key
-- voice.ts has form-aware openers but no humor layer or per-alert-type accuracy injection
+Let me check what onboarding flow exists today and what fanout filtering looks like.
+- `bot_authorized_users` already tracks active subs but has no preference fields
+- Telegram webhook already routes commands but no onboarding wizard
+- Fanout currently sends ALL alerts to ALL active users — no filtering
 
-# Bot Comes Alive — Stake Advice + Humor + Accuracy on Every Alert
+# Personalized Onboarding + Customer-Specific Pick Routing
 
 ## What I'll build
 
-### 1. New shared lib: `_shared/alert-enricher.ts`
-The single function every legacy `{type, data}` payload now passes through inside the dispatcher. It takes raw legacy text and:
-- Looks up that alert type's 7-day accuracy from `signal_accuracy` (e.g., RBI under = 73%, FanDuel cascade = 61%)
-- Pulls current `bot_bankroll_state` (form, bankroll, daily exposure used)
-- Computes a **stake recommendation** for THIS alert based on its tier + today's accuracy + current form:
-  - High accuracy alert type (>70% L7) on hot streak → "Size up: $300 unit"
-  - Mid accuracy (55-70%) on neutral form → "Standard: $150"
-  - Low accuracy (<55%) or cold streak → "Light: $50, tracking only"
-  - Below 45% L7 → "Skip — this signal type is bleeding"
-- Injects a **humor/personality wrapper** around the original message (header + footer)
-- Returns enriched markdown ready to send
+### 1. New table: `bot_user_preferences`
+One row per Telegram user, captured during onboarding:
+- `chat_id` (FK to `bot_authorized_users.chat_id`, PK)
+- `bet_type` enum: `'parlays_only'` | `'singles_only'` | `'both'`
+- `sports` text[] — `['NBA', 'MLB', 'NFL', 'NHL', 'tennis', 'soccer']`
+- `bankroll_size` numeric — their personal bankroll (used for stake math)
+- `risk_profile` enum: `'conservative'` | `'balanced'` | `'aggressive'` (derived + override)
+- `min_confidence` numeric — auto-set from risk profile (75 / 65 / 55)
+- `max_legs` int — parlay leg cap based on profile (2 / 3 / 5)
+- `preferred_alert_types` text[] — generator names they opted in to (auto-populated from sport + bet_type, editable)
+- `onboarding_step` text — state machine cursor: `'awaiting_bet_type'` | `'awaiting_sports'` | `'awaiting_bankroll'` | `'awaiting_risk'` | `'complete'`
+- `onboarding_completed_at` timestamp
+- `last_modified_at`
 
-### 2. Add humor layer to `_shared/voice.ts`
-Extend (don't replace) with:
-- `humorLines.openers` (~30 rotating): "Bookies hate this one trick.", "Found another mispricing while you were sleeping.", "The line moved. I noticed. You're welcome."
-- `humorLines.closers` (~30): "Cash it.", "This one's free. The next one costs.", "Don't tell your accountant.", "I'll be here all night."
-- `humorLines.cold_streak` (~15): "Last 3 days: rough. Doubling the homework, halving the stakes.", "Even the algorithm has bad nights. Sizing down."
-- `humorLines.hot_streak` (~15): "5 of 6 yesterday. Pressing the advantage.", "Riding it until the wheels fall off."
-- `pickHumor(seed)` — deterministic per pick so same alert doesn't get re-rolled on retries
-- `accuracyPhrase(pct)` — "🔥 hitting 78% this week" / "📊 60% — middle of the road" / "⚠️ 41% — fade-only territory"
+### 2. New shared lib: `_shared/onboarding-state-machine.ts`
+Pure state machine for the 4-step conversation:
 
-### 3. New shared lib: `_shared/accuracy-lookup.ts`
-- `getAlertTypeAccuracy(alertType, days=7)` — reads `signal_accuracy` table by signal_type, returns `{l7_hit_rate, l30_hit_rate, sample_size, trend}`
-- `getStakeRecommendation(accuracy, form, exposureUsedPct)` — pure function returning `{stake: number, tier: string, reasoning: string}`
-- Cached in-memory per dispatcher invocation (avoid hammering DB on burst sends)
-- Falls back to "neutral" stake if signal type unknown
-
-### 4. Update `bot-send-telegram/index.ts` (the dispatcher)
-This is the keystone — every alert in the pipeline already routes here. We add the enrichment step in compat path:
-
-```ts
-if (compatMode && body.type) {
-  const enriched = await enrichLegacyAlert(body); // adds stake + accuracy + humor
-  body.message = enriched.message;
-  body.parse_mode = 'Markdown';
-  // log enrichment metadata for tracking
-  body._enrichment = { stake: enriched.stake, accuracy: enriched.accuracy };
-}
+```
+START → awaiting_bet_type → awaiting_sports → awaiting_bankroll → awaiting_risk → complete
 ```
 
-This means **all 99 legacy generators get the upgrade automatically** — no need to touch each one.
+Each step:
+- Sends a question with inline keyboard buttons (no free text where avoidable)
+- Validates answer
+- Persists to `bot_user_preferences`
+- Advances cursor + sends next question
+- After `complete`: sends a personalized welcome summary + first-day expectations
 
-### 5. New table: `alert_type_accuracy_cache`
-- `alert_type` text PK
-- `l7_hit_rate`, `l30_hit_rate`, `sample_size_l7`, `trend` ('hot'|'neutral'|'cold')
-- `stake_multiplier` numeric (computed: 1.5x for hot+high-acc, 0.5x for cold/low-acc)
-- `last_updated`
-- Refreshed every 30 min by a new edge function `refresh-alert-accuracy`
-
-Why a cache table: `signal_accuracy` is hit hard already; the dispatcher fires hundreds of times/day and needs sub-50ms lookups.
-
-### 6. New edge function: `refresh-alert-accuracy`
-- Aggregates `signal_accuracy` and `engine_live_tracker` settled outcomes
-- Groups by alert type / signal type
-- Writes to `alert_type_accuracy_cache`
-- Cron: every 30 min during active hours (10a-11p ET)
-
-### 7. New orchestrator phase: `accuracy_pulse`
-A new mid-day broadcast (3p ET) that uses the cache to summarize the day's signal health:
-> "📊 Mid-day pulse:
-> 🔥 RBI Unders — 8/10 last 7 days. Sizing up.
-> 🔥 SB Overs — 73% L7. Loading up.
-> 📊 FanDuel Cascade — 58%. Standard size.
-> ⚠️ NBA Bench Unders — 41% L7. Sitting out today.
+The bot's voice during onboarding uses `voice.ts` humor lines, e.g.:
+> "Welcome aboard 👋 Before I send you a single pick, I need to know how you bet. No point flooding you with parlays if you're a singles person."
 > 
-> Today's read: green light on baseball, tap the brakes on NBA props."
+> [🎯 Singles only] [🎰 Parlays only] [🔥 Both]
 
-### 8. Update `_shared/pick-formatter.ts`
-- All cards (legacy or new) now show: `💵 Stake: $300 (hot streak + 73% L7 on this signal type)`
-- Add accuracy badge per card: `🔥 78% L7` or `⚠️ 42% L7` next to confidence
-- Add `renderAccuracyPulse(signalAccuracies)` for the new orchestrator phase
+### 3. New shared lib: `_shared/customer-pick-router.ts`
+The filter that decides which alerts each customer sees. Called inside `fanoutToCustomers` (already exists in `telegram-client.ts`).
+
+For each `(customer, alert)` pair:
+- **Sport filter**: if alert.sport not in `customer.sports` → skip
+- **Bet type filter**: if alert is parlay and `bet_type='singles_only'` → skip
+- **Confidence filter**: if pick confidence < `customer.min_confidence` → skip
+- **Generator filter**: if alert source not in `preferred_alert_types` → skip
+- **Personalized stake**: replace bot's stake recommendation with customer's % of THEIR bankroll
+  - Execution tier → 5% of their bankroll
+  - Validation tier → 2.5%
+  - Exploration tier → 1%
+- **Risk gate**: aggressive customers see exploration picks; conservative only see execution tier
+
+Returns `{ shouldSend: boolean, personalizedMessage?: string, skipReason?: string }`.
+
+### 4. Update `telegram-webhook/index.ts`
+Add three new flow branches:
+- **`/start <password>`** (existing, modified): create authorized user → set `onboarding_step='awaiting_bet_type'` → fire onboarding step 1
+- **Callback queries during onboarding**: route to `onboarding-state-machine.handleCallback()` — state machine advances itself
+- **`/preferences`** (new): re-show current settings with edit buttons, lets user change anything later
+- **Free-text bankroll input**: if `onboarding_step='awaiting_bankroll'` and message is a number → save as bankroll
+
+### 5. Update `_shared/telegram-client.ts → fanoutToCustomers`
+Currently sends the same message to every active customer. Change to:
+- Pull `bot_user_preferences` joined with `bot_authorized_users`
+- For each customer, call `customerPickRouter.shouldDeliver(customer, alertContext)`
+- If yes, render personalized message (with their stake based on their bankroll)
+- If no, log skip reason to `bot_message_log` (so we can audit "why didn't customer X get alert Y?")
+
+This requires the dispatcher to receive richer alert context — add optional `alert_context` field to dispatcher payload:
+```ts
+alert_context?: {
+  sport?: string;
+  generator?: string;
+  confidence?: number;
+  is_parlay?: boolean;
+  pick_id?: string;
+}
+```
+Backwards-compatible: when missing, fall back to current "send to everyone" behavior.
+
+### 6. Update existing generators (lightweight)
+The 4 v2 generators already write rich `Pick` objects. When they call dispatcher, they now also pass `alert_context`. Legacy generators going through compat shim get a best-effort context inferred from `body.type`.
+
+### 7. New onboarding welcome message
+After step 4 completes, send a personalized recap:
+> "Locked in. Here's your profile:
+> 🎯 Bet type: Both singles and parlays
+> 🏀⚾ Sports: NBA, MLB
+> 💰 Bankroll: $2,000 (you'll see stake amounts based on this)
+> ⚖️ Risk: Balanced — I'll send picks I'm 65%+ confident on
+> 
+> First picks roll in around 2 PM ET. Reply /preferences anytime to adjust. Let's eat. 🍽️"
 
 ## Files touched
 
 **Create:**
-- `supabase/functions/_shared/alert-enricher.ts`
-- `supabase/functions/_shared/accuracy-lookup.ts`
-- `supabase/functions/refresh-alert-accuracy/index.ts`
+- `supabase/functions/_shared/onboarding-state-machine.ts`
+- `supabase/functions/_shared/customer-pick-router.ts`
 
 **Modify:**
-- `supabase/functions/_shared/voice.ts` (add humor banks + accuracy phrasing)
-- `supabase/functions/_shared/pick-formatter.ts` (stake + accuracy badges, new pulse renderer)
-- `supabase/functions/bot-send-telegram/index.ts` (call enricher in compat path)
-- `supabase/functions/orchestrator-daily-narrative/index.ts` (add `accuracy_pulse` phase at 3p ET)
+- `supabase/functions/telegram-webhook/index.ts` (route onboarding callbacks + `/preferences` command)
+- `supabase/functions/_shared/telegram-client.ts` (fanout filters by preference + personalizes stake)
+- `supabase/functions/bot-send-telegram/index.ts` (accept `alert_context`, pass to fanout)
+- The 4 v2 generators (add `alert_context` to their dispatch calls)
 
 **DB migration:**
-- New table `alert_type_accuracy_cache` (RLS service-role only)
-- Cron entries: `refresh-alert-accuracy` every 30 min, orchestrator already runs every 5 min
+- Create `bot_user_preferences` table with RLS (service-role only writes; users can read their own row)
+- Default seed for any existing active users: `onboarding_step='legacy_skip'`, conservative defaults so they keep getting current alerts until they re-onboard
 
-**No changes to:** any of the 99 legacy generators, the 13 direct-API callers (those bypass us — separate cleanup loop), frontend.
+## Onboarding conversation example
 
-## How "bet bigger today?" gets answered
-Three signals combine into the stake recommendation shown on every alert:
-1. **This signal type's L7 accuracy** (cached, refreshed 30 min)
-2. **Bot's current form** from `bot_bankroll_state` (last 3-day P&L)
-3. **Daily exposure remaining** (don't recommend $300 if we've already used 18% of 20% cap)
+```
+Bot: Welcome to ParlayIQ 👋 Quick 4 questions so I send you 
+     picks you'll actually use, not 50 alerts a day you'll mute.
+     
+     How do you bet?
+     [🎯 Singles] [🎰 Parlays] [🔥 Both]
 
-Every alert footer reads like:
-> 💵 **Stake: $250** — RBI Unders 8/11 L7 + bot riding hot streak. Could press to $300 but exposure at 14% — staying disciplined.
+User: *taps "Both"*
+
+Bot: 👍 Which sports?
+     [🏀 NBA] [⚾ MLB] [🏈 NFL] [🏒 NHL] [🎾 Tennis] [✅ Done]
+     (tap as many as you want)
+
+User: *taps NBA, MLB, then Done*
+
+Bot: 💰 What's your betting bankroll? Just type a number.
+     (this is just for stake sizing — I'll never see your real account)
+
+User: 2000
+
+Bot: ⚖️ Last one — risk profile?
+     [🛡️ Conservative — only my best plays] 
+     [⚖️ Balanced — mix of safe + value]
+     [🚀 Aggressive — show me everything]
+
+User: *taps "Balanced"*
+
+Bot: Locked in. [recap message above] Let's eat. 🍽️
+```
 
 ## Risk + rollback
-- **Risk**: enrichment adds DB lookup latency on every dispatcher call. Mitigation: in-memory cache per invocation + the dedicated cache table.
-- **Risk**: humor lines could feel forced if same one shows up twice. Mitigation: deterministic seed per alert + 30+ variants per category.
-- **Rollback**: set `DISABLE_ENRICHMENT=true` env var → dispatcher skips enricher and uses raw legacy text exactly like today.
+- **Risk**: existing users without preferences get filtered into oblivion. Mitigation: default seed marks them `legacy_skip` → router treats them as opt-in to everything (current behavior) until they run `/preferences`.
+- **Risk**: state machine gets stuck if user ignores a question. Mitigation: any free-text message during onboarding re-sends the current step's prompt; `/start` resets state.
+- **Rollback**: env flag `DISABLE_PERSONALIZATION=true` makes router pass-through everyone (Phase 5 behavior).
 
 ## Testing (project policy: 5 verifications)
-1. Send legacy `{type:'rbi_alert', data:{...}}` → verify enriched output has stake + accuracy + humor
-2. Send same alert twice → verify deterministic humor (same line both times)
-3. Mock cold streak in `bot_bankroll_state` → verify stakes auto-halve in next alert
-4. Mock signal type with 40% L7 → verify "fade-only" or skip recommendation
-5. Force `accuracy_pulse` orchestrator phase → verify mid-day summary message
-6. Set `DISABLE_ENRICHMENT=true` → verify bypass works (rollback safety)
+1. New `/start <password>` → verify all 4 onboarding steps fire in order
+2. Complete onboarding → verify `bot_user_preferences` row written correctly
+3. Customer with `sports=['NBA']` → verify MLB alerts get filtered out
+4. Customer with `bankroll=2000`, Execution tier alert → verify stake renders as $100 (5%)
+5. `/preferences` command → verify current settings displayed with edit buttons
+6. `DISABLE_PERSONALIZATION=true` → verify rollback works (everyone gets everything)
 
 ## What does NOT change
-- All 99 legacy generators stay untouched (compat shim handles them)
-- Phase 3 v2 generators (RBI v2, SB, NBA bench, cross-sport) keep their richer playcard format — enrichment skips them since they already have stake info
-- `bot_daily_picks`, `bot_bankroll_state` schemas unchanged
-- Frontend, blog, settlement engine, hedge tracker — zero touch
+- Existing 99 generators stay untouched
+- Dispatcher contract is backwards-compatible (alert_context is optional)
+- Phase 4 bankroll-curator and Phase 5 enrichment still run for the BOT's bankroll/voice — customer personalization is a layer on top
+- Frontend, blog, settlement, hedge — zero touch
 
