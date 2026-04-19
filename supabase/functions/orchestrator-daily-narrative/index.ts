@@ -43,6 +43,7 @@ import {
   renderSettledLeg,
   renderPlaycard,
   renderPassedSummary,
+  renderAccuracyPulse,
 } from '../_shared/pick-formatter.ts';
 import { getSportEmoji } from '../_shared/constants.ts';
 import {
@@ -54,6 +55,7 @@ import {
   saveDayState,
 } from '../_shared/narrative-state.ts';
 import { curate, persistCuration, loadBankrollState } from '../_shared/bankroll-curator.ts';
+import { listTopAlertTypes } from '../_shared/accuracy-lookup.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -66,6 +68,7 @@ const PHASE_TIMES: Record<DayPhase, number | null> = {
   slate_lock: 11 * 60,            // 11:00
   pick_drops: 11 * 60 + 15,       // 11:15+ (staggered)
   pre_game_pulse: null,           // game-relative, computed per-game
+  accuracy_pulse: 15 * 60,        // 15:00 — mid-day signal-type accuracy summary
   live_tracker: null,             // event-driven
   settlement_story: null,         // triggered post-last-game by separate caller
   tomorrow_tease: 23 * 60 + 30,   // 23:30
