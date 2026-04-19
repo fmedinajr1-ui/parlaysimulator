@@ -208,7 +208,13 @@ export async function sendToChat(
   return { success: errors.length === 0, messageIds, errors };
 }
 
-// ─── Customer fanout with throttling ──────────────────────────────────────
+// ─── Customer fanout with throttling + per-customer routing ──────────────
+
+import {
+  decideForCustomer,
+  loadAllCustomerPrefs,
+  type AlertContext,
+} from './customer-pick-router.ts';
 
 export async function fanoutToCustomers(
   sb: SupabaseClient,
@@ -222,6 +228,8 @@ export async function fanoutToCustomers(
     personalize?: (customer: { chat_id: string; username?: string; bankroll?: number }) => string | null;
     /** Skip this chat_id (usually the admin, who already got the message). */
     excludeChatId?: string;
+    /** Alert context used by the customer pick router for filtering + personalized stake. */
+    alertContext?: AlertContext;
   }
 ): Promise<{ sent: number; failed: number; skipped: number }> {
   const { data: customers } = await sb
@@ -229,13 +237,49 @@ export async function fanoutToCustomers(
     .select('chat_id, username, bankroll, is_active')
     .eq('is_active', true);
 
+  const list = customers || [];
+  const chatIds = list
+    .filter(c => !(params.excludeChatId && c.chat_id === params.excludeChatId))
+    .map(c => c.chat_id);
+  const prefsMap = await loadAllCustomerPrefs(sb, chatIds);
+
   let sent = 0, failed = 0, skipped = 0;
-  for (const c of customers || []) {
+  for (const c of list) {
     if (params.excludeChatId && c.chat_id === params.excludeChatId) {
       skipped++; continue;
     }
-    const customerText = params.personalize ? params.personalize(c) : params.text;
+
+    // Customer pick router — filters + personalizes stake based on prefs
+    const prefs = prefsMap.get(c.chat_id) || null;
+    const decision = decideForCustomer(prefs, params.alertContext);
+    if (!decision.shouldSend) {
+      skipped++;
+      // Audit log so we can answer "why didn't customer X get alert Y?"
+      try {
+        await sb.from('bot_message_log').insert({
+          chat_id: c.chat_id,
+          text_preview: `[skipped] ${decision.skipReason ?? 'unknown'}`,
+          narrative_phase: params.phase ?? null,
+          reference_key: params.referenceKey ?? null,
+          success: false,
+          error: `routed_skip:${decision.skipReason ?? 'unknown'}`,
+          sent_at: new Date().toISOString(),
+        });
+      } catch (_) { /* never break sending on log failure */ }
+      continue;
+    }
+
+    // Build per-customer text:
+    //   1. If caller supplied personalize() → use that (back-compat)
+    //   2. Else if router added personalizedFooter → append it
+    //   3. Else use raw text
+    let customerText: string | null = params.personalize
+      ? params.personalize(c)
+      : params.text;
     if (!customerText) { skipped++; continue; }
+    if (!params.personalize && decision.personalizedFooter) {
+      customerText = customerText + decision.personalizedFooter;
+    }
 
     const r = await sendToChat(sb, {
       botToken: params.botToken,
