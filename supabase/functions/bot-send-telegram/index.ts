@@ -191,6 +191,7 @@ Deno.serve(async (req) => {
         phase: body.narrative_phase ?? null,
         referenceKey: body.reference_key,
         excludeChatId: chatId,
+        alertContext: body.alert_context,
         personalize: body.personalize_stake_pct
           ? (c) => {
               const pct = body.personalize_stake_pct!;
