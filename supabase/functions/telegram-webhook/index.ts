@@ -20,6 +20,12 @@ import { etDateKey, etDateKeyDaysAgo } from '../_shared/date-et.ts';
 import { renderPickCard, renderPickLine, renderPickSummaryList } from '../_shared/pick-formatter.ts';
 import { MessageBuilder, bold, italic } from '../_shared/voice.ts';
 import { sendToChat } from '../_shared/telegram-client.ts';
+import {
+  startOnboarding,
+  showPreferences,
+  handleCallback as handleOnboardingCallback,
+  handleFreeText as handleOnboardingFreeText,
+} from '../_shared/onboarding-state-machine.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
