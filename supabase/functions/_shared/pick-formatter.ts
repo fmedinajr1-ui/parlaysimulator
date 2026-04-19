@@ -332,3 +332,69 @@ export function renderSettledLeg(leg: Pick & { outcome?: 'hit' | 'miss' | 'push'
   const actual = leg.actual_value != null ? ` → ${leg.actual_value}` : '';
   return `${icon} ${emoji} ${bold(leg.player_name)} ${side}${leg.line} ${prop}${actual}`;
 }
+
+// ─── Accuracy pulse ───────────────────────────────────────────────────────
+// Mid-day broadcast (3p ET) summarizing how each alert type is performing.
+// Lets customers know whether to size up or tap the brakes today.
+
+const HOT_TREND_LABEL: Record<string, string> = {
+  hot: '🔥',
+  neutral: '📊',
+  cold: '⚠️',
+  ice_cold: '🚫',
+};
+
+const REC_LABEL: Record<string, string> = {
+  size_up: 'Sizing up.',
+  standard: 'Standard size.',
+  light: 'Light only.',
+  skip: 'Sitting out.',
+};
+
+export function renderAccuracyPulse(params: {
+  alertTypes: AlertAccuracy[];
+  date?: Date;
+  bankrollState?: { current_bankroll: number; current_form: BotForm };
+}): string {
+  const m = new MessageBuilder();
+  const at = params.date ?? new Date();
+  m.header(`Mid-day Pulse`, '📊');
+  m.line(italic(humorOpener(`pulse_${at.toISOString().slice(0, 10)}`)));
+  m.blank();
+
+  if (params.alertTypes.length === 0) {
+    m.line(italic('Not enough settled signals yet today. Standing by.'));
+    return m.build();
+  }
+
+  // Sort by trend priority: hot → neutral → cold → ice_cold
+  const trendOrder: Record<string, number> = { hot: 0, neutral: 1, cold: 2, ice_cold: 3 };
+  const sorted = [...params.alertTypes].sort((a, b) =>
+    (trendOrder[a.trend] ?? 4) - (trendOrder[b.trend] ?? 4)
+  );
+
+  let hotCount = 0;
+  let coldCount = 0;
+  for (const a of sorted) {
+    if (a.trend === 'hot') hotCount += 1;
+    else if (a.trend === 'cold' || a.trend === 'ice_cold') coldCount += 1;
+
+    const icon = HOT_TREND_LABEL[a.trend] || '📊';
+    const pct = a.l7_hit_rate != null ? `${Math.round(a.l7_hit_rate * 100)}%` : '—';
+    const sample = a.sample_size_l7 > 0 ? ` (${a.sample_size_l7})` : '';
+    const label = a.alert_type
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+    m.line(`${icon} ${bold(label)} — ${pct} L7${sample} · ${italic(REC_LABEL[a.recommendation] || 'Standard.')}`);
+  }
+
+  m.blank();
+  m.line(`${bold(`Today's read:`)} ${pulseVerdict(hotCount, coldCount, sorted.length)}`);
+
+  if (params.bankrollState) {
+    m.blank();
+    m.aside(`Bankroll: $${Math.round(params.bankrollState.current_bankroll).toLocaleString()} · Form: ${params.bankrollState.current_form}`);
+  }
+
+  return m.build();
+}
