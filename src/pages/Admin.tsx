@@ -56,6 +56,7 @@ import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
 import { FeatureAccessManager } from '@/components/admin/FeatureAccessManager';
 import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
 import { SiteAnalyticsDashboard } from '@/components/admin/SiteAnalyticsDashboard';
+import { GradeFunnelTile } from '@/components/admin/GradeFunnelTile';
 import { AdminWarRoomView } from '@/components/admin/AdminWarRoomView';
 
 interface ParlayData {
@@ -769,7 +770,12 @@ export default function Admin() {
 
 
       case 'site-analytics':
-        return <SiteAnalyticsDashboard />;
+        return (
+          <div className="space-y-4">
+            <GradeFunnelTile />
+            <SiteAnalyticsDashboard />
+          </div>
+        );
 
       case 'scout-warroom':
         return <AdminWarRoomView />;
