@@ -61,20 +61,29 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
 
     // ── Legacy compatibility shim ──
-    // Old callers pass { type: 'some_event', data: {...} } expecting us to format.
-    // We no longer format here. Reject with a helpful migration hint.
+    // Default DISPATCHER_VERSION=compat: route legacy { type, data } payloads
+    // through with a deprecation warning so the 99 existing generators keep
+    // working. Set DISPATCHER_VERSION=strict to enforce v2 contract (HTTP 410).
+    const compatMode = (Deno.env.get('DISPATCHER_VERSION') ?? 'compat') !== 'strict';
     if (body.type && !body.message) {
-      console.warn(`[bot-send-telegram] DEPRECATED typed call for type='${body.type}'. ` +
-                   `Generators must now render messages via _shared/pick-formatter.ts before calling.`);
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'deprecated_typed_call',
-        hint: `Render the message via _shared/pick-formatter.ts or _shared/voice.ts and pass it as 'message'. See MIGRATION.md.`,
-        offending_type: body.type,
-      }), {
-        status: 410, // Gone
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      if (!compatMode) {
+        console.warn(`[bot-send-telegram] STRICT: rejected typed call type='${body.type}'`);
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'deprecated_typed_call',
+          hint: `Render the message via _shared/pick-formatter.ts or _shared/voice.ts and pass it as 'message'. See MIGRATION.md.`,
+          offending_type: body.type,
+        }), {
+          status: 410,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const legacyMsg = body.data?.message
+        || body.data?.text
+        || (typeof body.data === 'string' ? body.data : null)
+        || `[${body.type}] (legacy payload — please migrate to v2 'message' field)`;
+      body.message = String(legacyMsg);
+      console.warn(`[bot-send-telegram] COMPAT: type='${body.type}' — migrate caller to v2 message field`);
     }
 
     if (!body.message || typeof body.message !== 'string') {
