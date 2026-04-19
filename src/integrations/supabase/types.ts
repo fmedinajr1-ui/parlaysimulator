@@ -2421,6 +2421,54 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_user_preferences: {
+        Row: {
+          bankroll_size: number
+          bet_type: string
+          chat_id: string
+          created_at: string
+          last_modified_at: string
+          max_legs: number
+          min_confidence: number
+          onboarding_completed_at: string | null
+          onboarding_step: string
+          pending_sports: string[]
+          preferred_alert_types: string[]
+          risk_profile: string
+          sports: string[]
+        }
+        Insert: {
+          bankroll_size?: number
+          bet_type?: string
+          chat_id: string
+          created_at?: string
+          last_modified_at?: string
+          max_legs?: number
+          min_confidence?: number
+          onboarding_completed_at?: string | null
+          onboarding_step?: string
+          pending_sports?: string[]
+          preferred_alert_types?: string[]
+          risk_profile?: string
+          sports?: string[]
+        }
+        Update: {
+          bankroll_size?: number
+          bet_type?: string
+          chat_id?: string
+          created_at?: string
+          last_modified_at?: string
+          max_legs?: number
+          min_confidence?: number
+          onboarding_completed_at?: string | null
+          onboarding_step?: string
+          pending_sports?: string[]
+          preferred_alert_types?: string[]
+          risk_profile?: string
+          sports?: string[]
+        }
+        Relationships: []
+      }
       bot_weak_leg_tracker: {
         Row: {
           context: Json | null

@@ -50,6 +50,15 @@ interface RequestBody {
   narrative_phase?: DayPhase;
   reference_key?: string;
   personalize_stake_pct?: number;
+  /** Optional context used by the customer pick router to filter + personalize. */
+  alert_context?: {
+    sport?: string;
+    generator?: string;
+    confidence?: number;
+    is_parlay?: boolean;
+    pick_id?: string;
+    tier?: 'execution' | 'validation' | 'exploration' | string;
+  };
   // Legacy — deprecated
   type?: string;
   data?: Record<string, any>;
@@ -182,6 +191,7 @@ Deno.serve(async (req) => {
         phase: body.narrative_phase ?? null,
         referenceKey: body.reference_key,
         excludeChatId: chatId,
+        alertContext: body.alert_context,
         personalize: body.personalize_stake_pct
           ? (c) => {
               const pct = body.personalize_stake_pct!;

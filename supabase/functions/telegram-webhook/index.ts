@@ -20,6 +20,12 @@ import { etDateKey, etDateKeyDaysAgo } from '../_shared/date-et.ts';
 import { renderPickCard, renderPickLine, renderPickSummaryList } from '../_shared/pick-formatter.ts';
 import { MessageBuilder, bold, italic } from '../_shared/voice.ts';
 import { sendToChat } from '../_shared/telegram-client.ts';
+import {
+  startOnboarding,
+  showPreferences,
+  handleCallback as handleOnboardingCallback,
+  handleFreeText as handleOnboardingFreeText,
+} from '../_shared/onboarding-state-machine.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -222,9 +228,48 @@ async function handleRecord(): Promise<string> {
   return m.build();
 }
 
-// ─── Command: /start ──────────────────────────────────────────────────────
+// ─── Command: /start [password] ──────────────────────────────────────────
+// /start with no args → returns the welcome (existing behavior)
+// /start <password> → activates an unauthorized user, then kicks off onboarding
 
-function handleStart(): string {
+async function handleStart(chatId: string, args: string, username: string | undefined): Promise<string | null> {
+  const pwd = args.trim();
+
+  if (pwd) {
+    // Password activation flow
+    const { data: pwdRow } = await supabase
+      .from('bot_access_passwords')
+      .select('*')
+      .eq('password', pwd)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!pwdRow) {
+      return `🔒 That password isn't valid. Contact the admin.`;
+    }
+    if (pwdRow.max_uses && pwdRow.times_used >= pwdRow.max_uses) {
+      return `🔒 That password has been used up. Contact the admin for a new one.`;
+    }
+
+    // Activate the user (idempotent)
+    await supabase.from('bot_authorized_users').upsert({
+      chat_id: chatId,
+      username: username ?? null,
+      is_active: true,
+    }, { onConflict: 'chat_id' });
+
+    // Mark password used
+    await supabase.from('bot_access_passwords').update({
+      times_used: (pwdRow.times_used ?? 0) + 1,
+      retrieved: true,
+    }).eq('id', pwdRow.id);
+
+    // Kick off onboarding wizard (sends step 1)
+    await startOnboarding(supabase, TELEGRAM_BOT_TOKEN, chatId);
+    return null; // onboarding sends its own messages
+  }
+
+  // No password → standard welcome
   const m = new MessageBuilder();
   m.header(`Welcome`, '🌾');
   m.line(`I'm ParlayIQ. I watch the board, run the numbers, and send over plays I actually like with reasoning attached.`);
@@ -242,25 +287,30 @@ function handleStart(): string {
   m.line(`/edge — biggest edges right now`);
   m.line(`/pulse — live status`);
   m.line(`/record — last 7 days`);
+  m.line(`/preferences — view or change your settings`);
   return m.build();
 }
 
 // ─── Command dispatch ─────────────────────────────────────────────────────
 
-async function handleCommand(chatId: string, text: string): Promise<string> {
+async function handleCommand(chatId: string, text: string, username?: string): Promise<string | null> {
   const trimmed = text.trim();
   const [cmd, ...rest] = trimmed.split(/\s+/);
   const args = rest.join(' ');
   const c = cmd.toLowerCase().replace(/@.*$/, ''); // strip bot username suffix
 
   switch (c) {
-    case '/start':   return handleStart();
-    case '/today':   return handleToday(chatId);
-    case '/why':     return handleWhy(chatId, args);
-    case '/edge':    return handleEdge(chatId);
-    case '/pulse':   return handlePulse();
-    case '/record':  return handleRecord();
-    case '/help':    return handleStart();
+    case '/start':       return handleStart(chatId, args, username);
+    case '/today':       return handleToday(chatId);
+    case '/why':         return handleWhy(chatId, args);
+    case '/edge':        return handleEdge(chatId);
+    case '/pulse':       return handlePulse();
+    case '/record':      return handleRecord();
+    case '/preferences':
+    case '/settings':
+      await showPreferences(supabase, TELEGRAM_BOT_TOKEN, chatId);
+      return null;
+    case '/help':        return handleStart(chatId, '', username);
     default:
       return `I didn't recognize ${bold(cmd)}. Try /start for the list.`;
   }
@@ -287,40 +337,71 @@ Deno.serve(async (req) => {
   try {
     const update = await req.json();
 
-    // Only handle text messages for this simplified surface
+    // ── 1. Callback queries (inline keyboard taps) — onboarding & preferences
+    const cbq = update.callback_query;
+    if (cbq) {
+      const chatId = String(cbq.message?.chat?.id ?? cbq.from?.id);
+      const data = cbq.data || '';
+      // Acknowledge the tap so Telegram stops the spinner
+      try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: cbq.id }),
+        });
+      } catch (_) { /* non-fatal */ }
+
+      // Auth check (skip for admin)
+      if (!isAdmin(chatId)) {
+        const authd = await isAuthorized(chatId);
+        if (!authd) return new Response('OK', { status: 200 });
+      }
+
+      await handleOnboardingCallback(supabase, TELEGRAM_BOT_TOKEN, chatId, data);
+      return new Response('OK', { status: 200 });
+    }
+
+    // ── 2. Text messages
     const message = update.message;
     if (!message || !message.text) return new Response('OK', { status: 200 });
 
     const chatId = String(message.chat.id);
     const text = message.text;
+    const username = message.from?.username;
 
-    // Non-command text: let it fall through (could be a password attempt, or
-    // just chat — your original webhook had lots of this logic. Preserved
-    // externally; this file only covers the command surface.)
-    if (!text.startsWith('/')) {
-      return new Response('OK', { status: 200 });
-    }
+    // /start <password> is special — it activates an unauthorized user.
+    // Allow it through the auth gate.
+    const isStartCommand = text.trim().toLowerCase().startsWith('/start');
 
-    // Auth: admin bypasses everything; everyone else needs to be authorized.
-    if (!isAdmin(chatId)) {
+    if (!isAdmin(chatId) && !isStartCommand) {
       const authd = await isAuthorized(chatId);
       if (!authd) {
         await sendToChat(supabase, {
           botToken: TELEGRAM_BOT_TOKEN,
           chatId,
-          text: `🔒 You need to be authorized first. Contact the admin for access.`,
+          text: `🔒 You need to be authorized first. Send /start <password> with the access code from the admin.`,
         });
         return new Response('OK', { status: 200 });
       }
     }
 
-    const reply = await handleCommand(chatId, text);
-    await sendToChat(supabase, {
-      botToken: TELEGRAM_BOT_TOKEN,
-      chatId,
-      text: reply,
-      parseMode: 'Markdown',
-    });
+    // ── 3. Free-text during onboarding (e.g. typing a bankroll number)
+    if (!text.startsWith('/')) {
+      const consumed = await handleOnboardingFreeText(supabase, TELEGRAM_BOT_TOKEN, chatId, text);
+      // If onboarding didn't consume it, ignore (or fall through to LLM in future)
+      return new Response('OK', { status: 200 });
+    }
+
+    // ── 4. Slash commands
+    const reply = await handleCommand(chatId, text, username);
+    if (reply) {
+      await sendToChat(supabase, {
+        botToken: TELEGRAM_BOT_TOKEN,
+        chatId,
+        text: reply,
+        parseMode: 'Markdown',
+      });
+    }
 
     return new Response('OK', { status: 200 });
   } catch (e: any) {
