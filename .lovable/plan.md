@@ -1,21 +1,34 @@
 
-The user wants me to test the live blog. This is browser automation work — read-only verification, no code changes needed. I'll just present the plan and on approval switch to default mode to run the browser.
+Simple data-insert task. Let me check the existing topics structure briefly to match the schema, then plan the refill.
 
-# Verify Blog Renders End-to-End
+Schema from earlier context: `blog_topics_queue` has `title_seed`, `category`, `target_keyword`, `priority`, `used_at`. Categories in use: Strategy, AI Picks, Prop Analysis, NBA, MLB, Tennis, MMA.
+
+Plan is straightforward — no decisions needed.
+
+# Refill Blog Topics Queue (+100 Fresh Angles)
 
 ## What I'll do
-1. Open `/blog` at desktop viewport (1366×768) — confirm index loads, posts list, category filters work
-2. Click into 2 posts — confirm article body, FAQ, internal links, CTA card render
-3. Switch to mobile viewport (390×844) — re-check `/blog` index and 1 post for layout issues
-4. Check console for errors during the run
+Insert 100 new rows into `blog_topics_queue` covering the guardrail topics (winning, AI, stats, rigged/cheating, player updates, injuries, team rankings, L10, MVP) across all active categories.
 
-## What I'll report back
-- Screenshot of blog index (desktop + mobile)
-- Screenshot of 1 article (desktop + mobile)
-- Any layout bugs, broken images, console errors, or missing content
-- If everything's clean: confirmation + suggested next steps (hero images, homepage feature strip, etc.)
+## Distribution
+- **Strategy** (20): bankroll, line shopping, parlay math, hedging, CLV, fade-the-public, etc.
+- **AI Picks** (20): how the bot reads markets, AI vs sharps, model edges, signal types, transparency
+- **Prop Analysis** (15): L10 deep dives, prop correlation, SGP traps, alt lines, juice analysis
+- **NBA** (15): MVP race angles, injury impact, pace/usage shifts, team rankings, playoff prep
+- **MLB** (10): pitcher matchups, RBI/HR models, weather, bullpen fatigue, totals
+- **Tennis** (8): WTA vs ATP edges, surface splits, grand slam angles
+- **MMA** (7): UFC card breakdowns, fight IQ, prop spots
+- **Rigged/Cheating angle** (5): line manipulation, sportsbook limits, what AI exposes — woven across categories with priority boost
 
-## What I won't do
-- Won't edit code unless I find an actual bug
-- Won't test admin `/admin/blog` (separate flow)
-- Won't click every post — 2-3 is enough to validate the template
+## Priority logic
+- Rigged/cheating + MVP race + AI explainer topics get `priority=10` (run first)
+- Evergreen strategy = priority 5
+- Sport-specific = priority 3
+
+## Files touched
+- DB only — single insert via insert tool into `blog_topics_queue`
+- No code changes, no edge function changes
+
+## Result
+- Queue grows from 157 → 257 unused topics
+- At 15/day generation = **17+ days of fresh runway** added on top of what's there (~27 days total)
