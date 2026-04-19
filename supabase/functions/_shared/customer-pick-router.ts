@@ -62,14 +62,16 @@ export function decideForCustomer(
     return { shouldSend: true };
   }
 
-  // No prefs row OR legacy_skip → keep current behavior (send everything)
-  if (!prefs || prefs.onboarding_step === 'legacy_skip') {
-    return { shouldSend: true };
+  // No prefs row at all → safest default is to skip (they'll get the
+  // re-onboard nudge from bot-reonboard-existing on the next cycle).
+  if (!prefs) {
+    return { shouldSend: false, skipReason: 'no_prefs_row' };
   }
 
-  // Mid-onboarding users only get onboarding messages, no broadcast picks
+  // Mid-onboarding (or legacy_skip leftover) → no broadcast picks until
+  // they finish the wizard. The nightly nudge phase re-prompts them.
   if (prefs.onboarding_step !== 'complete') {
-    return { shouldSend: false, skipReason: 'onboarding_incomplete' };
+    return { shouldSend: false, skipReason: `onboarding_${prefs.onboarding_step}` };
   }
 
   // No alert context → can't filter, so send (e.g. orchestrator phase messages)
