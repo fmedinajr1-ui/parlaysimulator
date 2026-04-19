@@ -95,6 +95,10 @@ export function renderPickCard(pick: Pick, bankroll?: number): string {
   m.line(`${tierEmoji(tier)} ${tierLabel(tier)} · ${confidenceSentence(pick.confidence)}`);
   m.blank();
 
+  // Conviction sentence — voice-driven opinion
+  m.line(italic(convictionLine(pick.confidence, pick.id)));
+  m.blank();
+
   // Reasoning headline
   if (pick.reasoning?.headline) {
     m.line(pick.reasoning.headline);
@@ -141,8 +145,14 @@ export function renderPickCard(pick: Pick, bankroll?: number): string {
   const riskLead = pickPhrase('risk_present', pick.id);
   m.line(`${riskLead} ${pick.reasoning?.risk_note || 'standard variance applies'}`);
 
-  // Stake suggestion
-  if (bankroll && pick.american_odds && pick.confidence != null) {
+  // Stake — prefer curator-assigned amount over heuristic
+  const curatedStake = (pick as any).stake_amount as number | undefined;
+  const curatedTier = (pick as any).stake_tier as 'execution' | 'validation' | 'exploration' | undefined;
+
+  if (curatedStake && curatedTier) {
+    m.blank();
+    m.line(`💵 ${stakeDescription(curatedStake, curatedTier)}`);
+  } else if (bankroll && pick.american_odds && pick.confidence != null) {
     const stake = suggestedStake(pick.confidence, pick.american_odds, bankroll);
     if (stake > 0) {
       const pctOfBankroll = (stake / bankroll) * 100;
@@ -153,6 +163,91 @@ export function renderPickCard(pick: Pick, bankroll?: number): string {
     }
   }
 
+  return m.build();
+}
+
+// ─── Playcard ─────────────────────────────────────────────────────────────
+// THE marquee message of the day. One single message that lists every
+// curator-approved play with stake, total exposure, and bankroll context.
+//
+// This is what replaces "dump every pick individually" in the pick_drops phase.
+
+export function renderPlaycard(params: {
+  approved: Array<Pick & { stake_amount?: number; stake_tier?: string; bankroll_reason?: string }>;
+  bankrollState: { current_bankroll: number; starting_bankroll: number; last_7d_pnl: number };
+  form: BotForm;
+  totalExposure: number;
+  date?: Date;
+}): string {
+  const m = new MessageBuilder();
+  const at = params.date ?? new Date();
+  m.header(`Today's Playcard`, '🎯');
+  m.line(formOpener(params.form, at.toISOString().slice(0, 10)));
+  m.line(bankrollLine(params.bankrollState));
+  m.blank();
+
+  if (params.approved.length === 0) {
+    m.line(italic('Nothing cleared the bar today. Sitting it out.'));
+    m.blank();
+    m.line(signoff(at));
+    return m.build();
+  }
+
+  // Group by tier
+  const byTier: Record<string, typeof params.approved> = {
+    execution: [], validation: [], exploration: [],
+  };
+  for (const p of params.approved) {
+    const t = (p.stake_tier as string) || 'exploration';
+    (byTier[t] ||= []).push(p);
+  }
+
+  const TIER_HEADERS: Record<string, string> = {
+    execution: '🏆 EXECUTION — Real money',
+    validation: '🔥 VALIDATION — Sized confident',
+    exploration: '🎲 EXPLORATION — Small darts',
+  };
+
+  for (const tier of ['execution', 'validation', 'exploration']) {
+    const list = byTier[tier];
+    if (!list?.length) continue;
+    m.blank();
+    m.line(bold(TIER_HEADERS[tier]));
+    for (const p of list) {
+      const stakeStr = p.stake_amount ? ` · $${p.stake_amount}` : '';
+      m.line(`${renderPickLine(p, { showOdds: true, showConfidence: true })}${stakeStr}`);
+    }
+  }
+
+  m.blank();
+  m.line(`💼 Total exposure: ${bold(`$${params.totalExposure.toLocaleString()}`)} across ${params.approved.length} plays (${((params.totalExposure / params.bankrollState.current_bankroll) * 100).toFixed(1)}% of bankroll).`);
+  m.blank();
+  m.line(signoff(at));
+
+  return m.build();
+}
+
+// ─── Passed summary ───────────────────────────────────────────────────────
+// Optional transparency message: "here's what I skipped and why."
+
+export function renderPassedSummary(passed: Array<Pick & { pass_reason?: string }>, limit: number = 8): string {
+  if (!passed.length) return '';
+  const m = new MessageBuilder();
+  m.header(`Passed on ${passed.length}`, '⏭️');
+  m.line(italic('Transparency note — what cleared generation but did not clear the curator:'));
+  m.blank();
+
+  // Group by reason category for compact display
+  const sliced = passed.slice(0, limit);
+  for (const p of sliced) {
+    const emoji = getSportEmoji(p);
+    m.line(`${emoji} ${bold(p.player_name)} ${p.side === 'over' ? 'O' : 'U'}${p.line}`);
+    m.line(`   ${italic(passReasonPhrase(p.pass_reason || 'Skipped'))}`);
+  }
+  if (passed.length > limit) {
+    m.blank();
+    m.aside(`... and ${passed.length - limit} more`);
+  }
   return m.build();
 }
 
