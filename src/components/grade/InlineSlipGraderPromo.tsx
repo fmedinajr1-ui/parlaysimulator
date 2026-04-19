@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, Type, Upload } from "lucide-react";
 import { GradeReveal } from "./GradeReveal";
 import { EmailGate } from "./EmailGate";
 
@@ -16,11 +16,23 @@ interface GradeResult {
   share_card_id: string;
 }
 
+type Mode = "paste" | "upload";
+
 export function InlineSlipGraderPromo() {
+  const [mode, setMode] = useState<Mode>("paste");
   const [slipText, setSlipText] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GradeResult | null>(null);
   const [unlocked, setUnlocked] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const gradeLegs = async (legs: Array<{ description?: string; odds?: string; player?: string; propType?: string; line?: number; side?: string }>) => {
+    const { data, error } = await supabase.functions.invoke("grade-slip", {
+      body: { legs },
+    });
+    if (error) throw error;
+    setResult(data as GradeResult);
+  };
 
   const handleGrade = async () => {
     if (slipText.trim().length < 10) {
@@ -29,7 +41,6 @@ export function InlineSlipGraderPromo() {
     }
     setLoading(true);
     try {
-      // Naive parse: split lines, treat each line as a leg description
       const legs = slipText
         .split("\n")
         .map((l) => l.trim())
@@ -48,11 +59,7 @@ export function InlineSlipGraderPromo() {
         return;
       }
 
-      const { data, error } = await supabase.functions.invoke("grade-slip", {
-        body: { legs },
-      });
-      if (error) throw error;
-      setResult(data as GradeResult);
+      await gradeLegs(legs);
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || "Grader broke. Try again.");
@@ -61,10 +68,51 @@ export function InlineSlipGraderPromo() {
     }
   };
 
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const base64 = (reader.result as string).split(",")[1];
+          const { data, error } = await supabase.functions.invoke("extract-parlay", {
+            body: { image: base64 },
+          });
+          if (error) throw error;
+          const extractedLegs = data?.legs || [];
+          if (!extractedLegs.length) {
+            toast.error("Couldn't read any legs from that image. Try pasting instead.");
+            setLoading(false);
+            return;
+          }
+          await gradeLegs(extractedLegs);
+        } catch (err: any) {
+          console.error(err);
+          toast.error(err.message || "Upload failed");
+        } finally {
+          setLoading(false);
+        }
+      };
+      reader.onerror = () => {
+        toast.error("Couldn't read that file");
+        setLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Upload failed");
+      setLoading(false);
+    }
+  };
+
   const handleReset = () => {
     setSlipText("");
     setResult(null);
     setUnlocked(false);
+    setMode("paste");
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   return (
@@ -82,37 +130,94 @@ export function InlineSlipGraderPromo() {
                 Free Slip Grader
               </h2>
               <p className="text-sm text-muted-foreground">
-                Paste your slip. We'll tell you why it'll lose — and send you 7 days of free picks.
+                Paste your slip or drop a screenshot. We'll tell you why it'll lose — and send you 7 days of free picks.
               </p>
             </div>
           </div>
 
-          <Textarea
-            value={slipText}
-            onChange={(e) => setSlipText(e.target.value)}
-            placeholder={`Paste your slip here, one leg per line. e.g.\nLuka Doncic Over 28.5 Pts -115\nJayson Tatum Over 5.5 Ast +100`}
-            className="min-h-[120px] mb-3 font-mono text-sm bg-background/50"
-          />
+          {/* Mode tabs */}
+          <div className="flex gap-1 p-1 bg-muted/50 rounded-xl mb-3">
+            {[
+              { id: "paste", icon: Type, label: "Paste" },
+              { id: "upload", icon: Upload, label: "Screenshot" },
+            ].map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setMode(m.id as Mode)}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition ${
+                  mode === m.id
+                    ? "bg-background text-foreground shadow"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <m.icon className="w-4 h-4" /> {m.label}
+              </button>
+            ))}
+          </div>
 
-          <Button
-            onClick={handleGrade}
-            disabled={loading}
-            variant="neon"
-            size="lg"
-            className="w-full gap-2"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Grading...
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                Grade my slip free
-              </>
-            )}
-          </Button>
+          {mode === "paste" && (
+            <>
+              <Textarea
+                value={slipText}
+                onChange={(e) => setSlipText(e.target.value)}
+                placeholder={`Paste your slip here, one leg per line. e.g.\nLuka Doncic Over 28.5 Pts -115\nJayson Tatum Over 5.5 Ast +100`}
+                className="min-h-[120px] mb-3 font-mono text-sm bg-background/50"
+              />
+              <Button
+                onClick={handleGrade}
+                disabled={loading}
+                variant="neon"
+                size="lg"
+                className="w-full gap-2"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Grading...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    Grade my slip free
+                  </>
+                )}
+              </Button>
+            </>
+          )}
+
+          {mode === "upload" && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleScreenshotUpload}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="w-full border-2 border-dashed border-border rounded-xl p-8 text-center hover:border-primary hover:bg-background/30 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                    <div className="font-semibold text-sm">Reading your slip...</div>
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                    <div className="font-semibold text-sm mb-1">Tap to upload a screenshot</div>
+                    <div className="text-xs text-muted-foreground">
+                      DraftKings, FanDuel, BetMGM, PrizePicks — anything
+                    </div>
+                  </>
+                )}
+              </button>
+            </>
+          )}
         </>
       )}
 
