@@ -41,6 +41,7 @@ const BlogIndex = React.lazy(() => import("./pages/BlogIndex"));
 const BlogPost = React.lazy(() => import("./pages/BlogPost"));
 const BlogCategory = React.lazy(() => import("./pages/BlogCategory"));
 const AdminBlog = React.lazy(() => import("./pages/admin/AdminBlog"));
+const Unsubscribe = React.lazy(() => import("./pages/Unsubscribe"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -99,6 +100,7 @@ function AnimatedRoutes() {
               <Route path="/blog/category/:cat" element={<BlogCategory />} />
               <Route path="/blog/:slug" element={<BlogPost />} />
               <Route path="/admin/blog" element={<AdminBlog />} />
+              <Route path="/unsubscribe" element={<Unsubscribe />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
