@@ -580,6 +580,41 @@ async function runTomorrowTease(sb: any): Promise<void> {
   await markPhaseComplete(sb, 'tomorrow_tease');
 }
 
+// ─── Nightly nudge: re-prompt anyone stalled in onboarding for >3 days ────
+
+async function runOnboardingNudge(sb: any) {
+  const threeDaysAgoIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: stalled } = await sb
+    .from('bot_user_preferences')
+    .select('chat_id, onboarding_step, last_modified_at')
+    .neq('onboarding_step', 'complete')
+    .lt('last_modified_at', threeDaysAgoIso);
+
+  if (!stalled || stalled.length === 0) return;
+
+  const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+  if (!botToken) return;
+
+  const { startOnboarding } = await import('../_shared/onboarding-state-machine.ts');
+  const { sendToChat } = await import('../_shared/telegram-client.ts');
+
+  for (const u of stalled as any[]) {
+    try {
+      await sendToChat(sb, {
+        botToken,
+        chatId: u.chat_id,
+        text: `👋 Quick nudge — you never finished setting up your picks. ` +
+              `30 seconds and I can start sending stuff tailored to you. Tap below.`,
+        referenceKey: 'onboarding_nudge',
+      });
+      await startOnboarding(sb, botToken, u.chat_id);
+      await new Promise(r => setTimeout(r, 100));
+    } catch (e) {
+      console.warn(`[nudge] Failed for ${u.chat_id}:`, e);
+    }
+  }
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
