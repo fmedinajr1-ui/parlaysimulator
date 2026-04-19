@@ -10,6 +10,7 @@ import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory"
 import { Elite3PTFixedParlay } from "@/components/market/Elite3PTFixedParlay";
 import { WhenWeWinBig } from "@/components/WhenWeWinBig";
 import { PricingSection } from "@/components/bot-landing/PricingSection";
+import { InlineSlipGraderPromo } from "@/components/grade/InlineSlipGraderPromo";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -167,32 +168,6 @@ const Index = () => {
           <SampleParlayButton />
         </div>
 
-        {/* Free Slip Grader - Primary Lead Magnet */}
-        <div className="mb-4">
-          <Link to="/grade" onClick={lightTap} className="block group">
-            <div className="relative overflow-hidden rounded-2xl border-2 border-primary/40 bg-gradient-to-br from-primary/15 via-primary/5 to-background p-6 sm:p-8 active:scale-[0.99] transition-all hover:border-primary/60 hover:shadow-[0_0_40px_-10px_hsl(var(--primary)/0.4)]">
-              <div className="absolute top-3 right-3 text-xs font-bold uppercase tracking-wider bg-primary text-primary-foreground px-2 py-1 rounded-full">
-                Free
-              </div>
-              <div className="flex items-start gap-4">
-                <div className="text-4xl sm:text-5xl shrink-0">🎓</div>
-                <div className="flex-1 min-w-0">
-                  <h2 className="font-display text-xl sm:text-2xl font-bold tracking-tight text-foreground mb-1">
-                    Free Slip Grader
-                  </h2>
-                  <p className="text-sm sm:text-base text-muted-foreground mb-3">
-                    Paste your slip. We'll tell you why it'll lose — and send you 7 days of free picks.
-                  </p>
-                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-primary group-hover:gap-3 transition-all">
-                    Grade my slip now
-                    <span className="group-hover:translate-x-1 transition-transform">→</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Link>
-        </div>
-
         {/* Slate Control - Unified Refresh All Engines */}
         <div className="mb-4">
           <SlateRefreshControls />
@@ -224,13 +199,16 @@ const Index = () => {
           <WeeklyParlayHistory />
         </div>
 
-        {/* Pricing Section - hide for admins and existing subscribers */}
+        {/* Pricing + Free Slip Grader Promo - side by side on desktop */}
         {!isAdmin && !isSubscribed && (
-          <PricingSection
-            onSubscribe={handleCheckout}
-            isLoading={checkoutLoading}
-            loadingPriceId={checkoutPriceId}
-          />
+          <div className="grid gap-4 lg:grid-cols-2 mb-4">
+            <InlineSlipGraderPromo />
+            <PricingSection
+              onSubscribe={handleCheckout}
+              isLoading={checkoutLoading}
+              loadingPriceId={checkoutPriceId}
+            />
+          </div>
         )}
 
         <HowItWorks />
