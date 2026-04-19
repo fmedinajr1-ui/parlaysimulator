@@ -1,113 +1,142 @@
 
 
-The user wants the bot to feel smarter and more human-like, AND act like a portfolio manager — looking at the day's available picks and deciding which ones to actually bet (and at what stake size) to protect bankroll. Right now after Phase 3 we have:
+User wants: 
+1. Every generator/alert in pipeline gets stake advice (not just the 4 v2 generators)
+2. Bot personality with humor across ALL alerts
+3. Real-time accuracy reporting per alert type so customers know if today is a "bet bigger" day or "tighten up" day
+4. Bot becomes the unified voice across the whole pipeline — not just orchestrator phases
 
-- `bot_daily_picks` populated by 4 generators with confidence scores, edge%, tier
-- A `voice.ts` module with greetings, verdicts, callbacks, phrase rotation
-- An orchestrator that just dispatches phase messages — it doesn't curate or stake
+Current state:
+- Phase 4 done: bankroll-curator + voice 2.0 working for 4 v2 generators going through orchestrator
+- ~99 legacy generators still send `{type, data}` through compat shim → no stake advice, no personality, generic legacy text
+- 13 direct-API bypasses skip the dispatcher entirely
+- No per-alert-type accuracy lookup → bot can't say "RBI unders are 8/10 this week, size up"
 
-What's missing:
-1. **A bankroll selector** — something that reads all locked picks for today, ranks them, applies risk-of-ruin logic, and chooses which to "approve for play" with specific stake amounts
-2. **Voice depth** — current voice module is decent but generic; needs more personality variants, situational awareness (hot streak vs cold streak), opinion strength scaling, and self-reference
-3. **Stake-aware messaging** — the pick formatter shows confidence but doesn't say "I'm putting $300 on this" vs "$50 dart throw"
+Let me check what exists for accuracy tracking and what the legacy alert types look like to scope this properly.
+- `signal_accuracy` table exists per memory (mem://logic/betting/accuracy-segmentation)
+- `bot_message_log` from Phase 1 logs every send with reference_key
+- voice.ts has form-aware openers but no humor layer or per-alert-type accuracy injection
 
-Let me check what's currently in the picks table, the daily profit projector logic (already has stake tiers), and what bankroll state we track.
-
-# Smarter Bot: Bankroll Curator + Personality Upgrade
+# Bot Comes Alive — Stake Advice + Humor + Accuracy on Every Alert
 
 ## What I'll build
 
-### 1. New shared lib: `_shared/bankroll-curator.ts`
-The brain that turns raw picks into a staked playcard.
+### 1. New shared lib: `_shared/alert-enricher.ts`
+The single function every legacy `{type, data}` payload now passes through inside the dispatcher. It takes raw legacy text and:
+- Looks up that alert type's 7-day accuracy from `signal_accuracy` (e.g., RBI under = 73%, FanDuel cascade = 61%)
+- Pulls current `bot_bankroll_state` (form, bankroll, daily exposure used)
+- Computes a **stake recommendation** for THIS alert based on its tier + today's accuracy + current form:
+  - High accuracy alert type (>70% L7) on hot streak → "Size up: $300 unit"
+  - Mid accuracy (55-70%) on neutral form → "Standard: $150"
+  - Low accuracy (<55%) or cold streak → "Light: $50, tracking only"
+  - Below 45% L7 → "Skip — this signal type is bleeding"
+- Injects a **humor/personality wrapper** around the original message (header + footer)
+- Returns enriched markdown ready to send
 
-**Logic:**
-- Pull all `bot_daily_picks` with `status='locked'` for today
-- Pull last 7 days of settled results to detect current form (hot/cold/neutral)
-- Tier each pick into one of three buckets matching the existing Profit Projector:
-  - **Execution** (`tier='elite'`, conf ≥80, edge ≥6%) → $300 stake, max 5/day
-  - **Validation** (`tier='high'`, conf 70-79, edge ≥4%) → $150 stake, max 8/day
-  - **Exploration** (`tier='medium'`, conf 60-69) → $50 stake, max 10/day
-- Apply **bankroll guards**:
-  - If last 3 days lost >15% → drop all stakes 50% ("cooling off")
-  - If 2+ picks correlate (same game, same team) → keep only the highest-confidence one
-  - Cap total daily exposure at 20% of bankroll (read from new `bot_bankroll_state` table, default $5000)
-  - Skip any pick where line moved against us >10% since generation
-- Mark approved picks with `status='approved'` and write `stake_amount`, `bankroll_reason`
-- Mark skipped picks with `status='passed'` and write a `pass_reason` ("correlated with X", "cold streak — sitting this out", "edge eroded")
+### 2. Add humor layer to `_shared/voice.ts`
+Extend (don't replace) with:
+- `humorLines.openers` (~30 rotating): "Bookies hate this one trick.", "Found another mispricing while you were sleeping.", "The line moved. I noticed. You're welcome."
+- `humorLines.closers` (~30): "Cash it.", "This one's free. The next one costs.", "Don't tell your accountant.", "I'll be here all night."
+- `humorLines.cold_streak` (~15): "Last 3 days: rough. Doubling the homework, halving the stakes.", "Even the algorithm has bad nights. Sizing down."
+- `humorLines.hot_streak` (~15): "5 of 6 yesterday. Pressing the advantage.", "Riding it until the wheels fall off."
+- `pickHumor(seed)` — deterministic per pick so same alert doesn't get re-rolled on retries
+- `accuracyPhrase(pct)` — "🔥 hitting 78% this week" / "📊 60% — middle of the road" / "⚠️ 41% — fade-only territory"
 
-### 2. New table: `bot_bankroll_state`
-- `current_bankroll` (default 5000)
-- `starting_bankroll`, `peak_bankroll`
-- `daily_max_exposure_pct` (default 20)
-- `current_form` enum: hot/neutral/cold/ice_cold (auto-updated nightly)
+### 3. New shared lib: `_shared/accuracy-lookup.ts`
+- `getAlertTypeAccuracy(alertType, days=7)` — reads `signal_accuracy` table by signal_type, returns `{l7_hit_rate, l30_hit_rate, sample_size, trend}`
+- `getStakeRecommendation(accuracy, form, exposureUsedPct)` — pure function returning `{stake: number, tier: string, reasoning: string}`
+- Cached in-memory per dispatcher invocation (avoid hammering DB on burst sends)
+- Falls back to "neutral" stake if signal type unknown
+
+### 4. Update `bot-send-telegram/index.ts` (the dispatcher)
+This is the keystone — every alert in the pipeline already routes here. We add the enrichment step in compat path:
+
+```ts
+if (compatMode && body.type) {
+  const enriched = await enrichLegacyAlert(body); // adds stake + accuracy + humor
+  body.message = enriched.message;
+  body.parse_mode = 'Markdown';
+  // log enrichment metadata for tracking
+  body._enrichment = { stake: enriched.stake, accuracy: enriched.accuracy };
+}
+```
+
+This means **all 99 legacy generators get the upgrade automatically** — no need to touch each one.
+
+### 5. New table: `alert_type_accuracy_cache`
+- `alert_type` text PK
+- `l7_hit_rate`, `l30_hit_rate`, `sample_size_l7`, `trend` ('hot'|'neutral'|'cold')
+- `stake_multiplier` numeric (computed: 1.5x for hot+high-acc, 0.5x for cold/low-acc)
 - `last_updated`
+- Refreshed every 30 min by a new edge function `refresh-alert-accuracy`
 
-### 3. Add columns to `bot_daily_picks`
-- `stake_amount` numeric
-- `stake_tier` text ('execution' | 'validation' | 'exploration')
-- `bankroll_reason` text (why we played it)
-- `pass_reason` text (why we skipped it)
-- Update `status` enum to add `'approved'` and `'passed'`
+Why a cache table: `signal_accuracy` is hit hard already; the dispatcher fires hundreds of times/day and needs sub-50ms lookups.
 
-### 4. Upgrade `_shared/voice.ts` with personality depth
-Extend existing module — keep current API, add:
-- **Form-aware openings**: hot streak → "Riding hot. 7 of last 10 cashed.", cold → "Tightening up after a rough patch."
-- **Stake-language**: "I'm putting real money behind this — $300" / "Toe in the water at $50, just enough to track"
-- **Self-reference**: "Said this morning that ATL's defense was the play. Doubling down."
-- **Conviction scaling** (replace current flat `confidenceWord`): 
-  - 90+: "This is the highest conviction play I've had in a week"
-  - 80-89: "I'm all over this"
-  - 70-79: "Strong lean, sized accordingly"
-  - 60-69: "Worth a small stake to see"
-- **Skip explanations** (new): "Passed on Curry under — correlated with the Warriors team total I already played"
-- **Rotating signature signoffs** by time of day (morning: "Let's eat.", evening: "Lights out.")
+### 6. New edge function: `refresh-alert-accuracy`
+- Aggregates `signal_accuracy` and `engine_live_tracker` settled outcomes
+- Groups by alert type / signal type
+- Writes to `alert_type_accuracy_cache`
+- Cron: every 30 min during active hours (10a-11p ET)
 
-### 5. New edge function: `bankroll-curator`
-- Runs after generators (add to orchestrator or its own cron at :05 past each generator hour)
-- Calls bankroll-curator lib
-- Writes approved/passed status back to picks
-- Returns summary: "Approved 7 picks, $1,650 total exposure, passed 12 (3 cold-streak cuts, 5 correlated, 4 edge erosion)"
+### 7. New orchestrator phase: `accuracy_pulse`
+A new mid-day broadcast (3p ET) that uses the cache to summarize the day's signal health:
+> "📊 Mid-day pulse:
+> 🔥 RBI Unders — 8/10 last 7 days. Sizing up.
+> 🔥 SB Overs — 73% L7. Loading up.
+> 📊 FanDuel Cascade — 58%. Standard size.
+> ⚠️ NBA Bench Unders — 41% L7. Sitting out today.
+> 
+> Today's read: green light on baseball, tap the brakes on NBA props."
 
-### 6. Update `_shared/pick-formatter.ts`
-- `renderPickCard` shows stake amount prominently: `💵 Stake: $300 (Execution tier)`
-- Add `renderPlaycard(approvedPicks)` — a single message that lists today's chosen plays with stakes, total exposure, and bankroll reasoning at top
-- Add `renderPassedSummary(passedPicks)` — short list of what we skipped and why (transparency builds trust)
-
-### 7. Update orchestrator phases
-- **dawn_brief**: now references bankroll state ("Starting today at $5,247, +$247 on the week. Looking to add to it.")
-- **pick_drops**: calls `renderPlaycard` instead of dumping all picks — only shows approved picks with stakes
-- **settlement_story**: updates `bot_bankroll_state.current_bankroll` with day's P&L, recalculates form streak
+### 8. Update `_shared/pick-formatter.ts`
+- All cards (legacy or new) now show: `💵 Stake: $300 (hot streak + 73% L7 on this signal type)`
+- Add accuracy badge per card: `🔥 78% L7` or `⚠️ 42% L7` next to confidence
+- Add `renderAccuracyPulse(signalAccuracies)` for the new orchestrator phase
 
 ## Files touched
 
 **Create:**
-- `supabase/functions/_shared/bankroll-curator.ts`
-- `supabase/functions/bankroll-curator/index.ts`
+- `supabase/functions/_shared/alert-enricher.ts`
+- `supabase/functions/_shared/accuracy-lookup.ts`
+- `supabase/functions/refresh-alert-accuracy/index.ts`
 
 **Modify:**
-- `supabase/functions/_shared/voice.ts` (extend, don't replace)
-- `supabase/functions/_shared/pick-formatter.ts` (add 2 functions, update card)
-- `supabase/functions/orchestrator-daily-narrative/index.ts` (use playcard + bankroll context)
+- `supabase/functions/_shared/voice.ts` (add humor banks + accuracy phrasing)
+- `supabase/functions/_shared/pick-formatter.ts` (stake + accuracy badges, new pulse renderer)
+- `supabase/functions/bot-send-telegram/index.ts` (call enricher in compat path)
+- `supabase/functions/orchestrator-daily-narrative/index.ts` (add `accuracy_pulse` phase at 3p ET)
 
 **DB migration:**
-- New table `bot_bankroll_state` (1 row, RLS service-role only) + seed row at $5000
-- Add 4 columns to `bot_daily_picks`
-- Add cron: `bankroll-curator` runs every 30 min during pick generation hours (10a-7p ET)
+- New table `alert_type_accuracy_cache` (RLS service-role only)
+- Cron entries: `refresh-alert-accuracy` every 30 min, orchestrator already runs every 5 min
+
+**No changes to:** any of the 99 legacy generators, the 13 direct-API callers (those bypass us — separate cleanup loop), frontend.
+
+## How "bet bigger today?" gets answered
+Three signals combine into the stake recommendation shown on every alert:
+1. **This signal type's L7 accuracy** (cached, refreshed 30 min)
+2. **Bot's current form** from `bot_bankroll_state` (last 3-day P&L)
+3. **Daily exposure remaining** (don't recommend $300 if we've already used 18% of 20% cap)
+
+Every alert footer reads like:
+> 💵 **Stake: $250** — RBI Unders 8/11 L7 + bot riding hot streak. Could press to $300 but exposure at 14% — staying disciplined.
 
 ## Risk + rollback
-- **Risk**: bankroll-curator could be too aggressive and skip everything. Mitigation: hard floor of 1 approved pick per day if any locked picks exist, plus a `force_approve_all` flag for the first day to A/B compare.
-- **Rollback**: orchestrator falls back to old behavior if `bot_bankroll_state` is missing; new columns are nullable.
+- **Risk**: enrichment adds DB lookup latency on every dispatcher call. Mitigation: in-memory cache per invocation + the dedicated cache table.
+- **Risk**: humor lines could feel forced if same one shows up twice. Mitigation: deterministic seed per alert + 30+ variants per category.
+- **Rollback**: set `DISABLE_ENRICHMENT=true` env var → dispatcher skips enricher and uses raw legacy text exactly like today.
 
 ## Testing (project policy: 5 verifications)
-1. Seed 10 fake picks across all 3 tiers, run curator → verify correct stake assignment
-2. Simulate cold streak (insert 5 losses) → verify stakes drop 50%
-3. Insert correlated picks (same player, both sides) → verify only one survives
-4. Force `force_approve_all` → verify all picks get default stakes
-5. Run dawn_brief → verify bankroll opening line renders with real numbers
-6. Run pick_drops → verify playcard shows stakes + reasoning, not raw pick list
+1. Send legacy `{type:'rbi_alert', data:{...}}` → verify enriched output has stake + accuracy + humor
+2. Send same alert twice → verify deterministic humor (same line both times)
+3. Mock cold streak in `bot_bankroll_state` → verify stakes auto-halve in next alert
+4. Mock signal type with 40% L7 → verify "fade-only" or skip recommendation
+5. Force `accuracy_pulse` orchestrator phase → verify mid-day summary message
+6. Set `DISABLE_ENRICHMENT=true` → verify bypass works (rollback safety)
 
 ## What does NOT change
-- Generators stay as-is (they still write `locked` picks)
-- Compat shim still active for legacy `{type, data}` callers
-- Frontend, blog, settlement engine, hedge tracker — zero touch this loop
+- All 99 legacy generators stay untouched (compat shim handles them)
+- Phase 3 v2 generators (RBI v2, SB, NBA bench, cross-sport) keep their richer playcard format — enrichment skips them since they already have stake info
+- `bot_daily_picks`, `bot_bankroll_state` schemas unchanged
+- Frontend, blog, settlement engine, hedge tracker — zero touch
 
