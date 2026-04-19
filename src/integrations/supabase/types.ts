@@ -1530,6 +1530,87 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_daily_picks: {
+        Row: {
+          actual_value: number | null
+          american_odds: number | null
+          confidence: number
+          edge_pct: number | null
+          game_id: string | null
+          game_start_utc: string | null
+          generated_at: string
+          generator: string
+          id: string
+          line: number
+          opponent: string | null
+          outcome: string | null
+          parlay_id: string | null
+          pick_date: string
+          player_name: string
+          prop_type: string
+          reasoning: Json
+          recency: Json | null
+          side: string
+          sport: string
+          status: string
+          team: string | null
+          tier: string | null
+          updated_at: string
+        }
+        Insert: {
+          actual_value?: number | null
+          american_odds?: number | null
+          confidence: number
+          edge_pct?: number | null
+          game_id?: string | null
+          game_start_utc?: string | null
+          generated_at?: string
+          generator: string
+          id: string
+          line: number
+          opponent?: string | null
+          outcome?: string | null
+          parlay_id?: string | null
+          pick_date: string
+          player_name: string
+          prop_type: string
+          reasoning: Json
+          recency?: Json | null
+          side: string
+          sport: string
+          status?: string
+          team?: string | null
+          tier?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actual_value?: number | null
+          american_odds?: number | null
+          confidence?: number
+          edge_pct?: number | null
+          game_id?: string | null
+          game_start_utc?: string | null
+          generated_at?: string
+          generator?: string
+          id?: string
+          line?: number
+          opponent?: string | null
+          outcome?: string | null
+          parlay_id?: string | null
+          pick_date?: string
+          player_name?: string
+          prop_type?: string
+          reasoning?: Json
+          recency?: Json | null
+          side?: string
+          sport?: string
+          status?: string
+          team?: string | null
+          tier?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       bot_daily_schedule: {
         Row: {
           actions: string[]
@@ -1560,6 +1641,36 @@ export type Database = {
           window_end_et?: string
           window_name?: string
           window_start_et?: string
+        }
+        Relationships: []
+      }
+      bot_day_state: {
+        Row: {
+          date: string
+          day_notes: Json
+          day_started_at: string | null
+          phases_completed: string[]
+          picks_released: number
+          slate_size: number | null
+          updated_at: string
+        }
+        Insert: {
+          date: string
+          day_notes?: Json
+          day_started_at?: string | null
+          phases_completed?: string[]
+          picks_released?: number
+          slate_size?: number | null
+          updated_at?: string
+        }
+        Update: {
+          date?: string
+          day_notes?: Json
+          day_started_at?: string | null
+          phases_completed?: string[]
+          picks_released?: number
+          slate_size?: number | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1728,6 +1839,42 @@ export type Database = {
           total_tickets?: number
           total_won?: number
           win_rate?: number
+        }
+        Relationships: []
+      }
+      bot_message_log: {
+        Row: {
+          chat_id: string
+          error: string | null
+          id: number
+          narrative_phase: string | null
+          reference_key: string | null
+          sent_at: string
+          success: boolean
+          telegram_message_id: number | null
+          text_preview: string
+        }
+        Insert: {
+          chat_id: string
+          error?: string | null
+          id?: number
+          narrative_phase?: string | null
+          reference_key?: string | null
+          sent_at?: string
+          success: boolean
+          telegram_message_id?: number | null
+          text_preview: string
+        }
+        Update: {
+          chat_id?: string
+          error?: string | null
+          id?: number
+          narrative_phase?: string | null
+          reference_key?: string | null
+          sent_at?: string
+          success?: boolean
+          telegram_message_id?: number | null
+          text_preview?: string
         }
         Relationships: []
       }
@@ -14479,6 +14626,16 @@ export type Database = {
           home_games: number | null
           last_game_date: string | null
           player_name: string | null
+        }
+        Relationships: []
+      }
+      v_recent_messages_by_key: {
+        Row: {
+          chat_id: string | null
+          narrative_phase: string | null
+          reference_key: string | null
+          sent_at: string | null
+          text_preview: string | null
         }
         Relationships: []
       }
