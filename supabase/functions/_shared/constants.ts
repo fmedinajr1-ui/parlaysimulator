@@ -200,6 +200,7 @@ export type DayPhase =
   | 'slate_lock'         // 11:00 AM ET  — plays locked, full breakdown
   | 'pick_drops'         // staggered after lock — individual picks with reasoning
   | 'pre_game_pulse'     // 30min before each game — line movement, scratches
+  | 'accuracy_pulse'     // 3:00 PM ET   — mid-day signal-type accuracy summary
   | 'live_tracker'       // during games — meaningful updates only
   | 'settlement_story'   // after last game — honest recap
   | 'tomorrow_tease';    // 11:30 PM ET  — what's coming
@@ -209,6 +210,7 @@ export const PHASE_LABEL: Record<DayPhase, string> = {
   slate_lock: 'Slate Lock',
   pick_drops: 'Pick Drops',
   pre_game_pulse: 'Pre-Game Pulse',
+  accuracy_pulse: 'Mid-day Pulse',
   live_tracker: 'Live Tracker',
   settlement_story: 'Settlement',
   tomorrow_tease: 'Tomorrow Tease',
