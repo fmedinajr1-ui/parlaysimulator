@@ -374,6 +374,14 @@ export function pickPhrase(bucket: keyof typeof PHRASES, seed: string): string {
   return options[Math.abs(h) % options.length];
 }
 
+/** Deterministic random pick from a generic array — same seed → same item. */
+export function pickRandom<T>(options: T[], seed: string = ''): T {
+  if (options.length === 0) throw new Error('pickRandom: empty options');
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+  return options[Math.abs(h) % options.length];
+}
+
 // ─── Humor layer ──────────────────────────────────────────────────────────
 // Wraps every alert with personality. Deterministic per seed so retries match.
 
