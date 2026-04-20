@@ -14145,6 +14145,7 @@ export type Database = {
           avatar_provider_job_id: string | null
           avatar_video_url: string | null
           broll_urls: Json | null
+          completed_at: string | null
           cost_breakdown: Json | null
           cost_cents: number
           created_at: string
@@ -14171,6 +14172,7 @@ export type Database = {
           avatar_provider_job_id?: string | null
           avatar_video_url?: string | null
           broll_urls?: Json | null
+          completed_at?: string | null
           cost_breakdown?: Json | null
           cost_cents?: number
           created_at?: string
@@ -14197,6 +14199,7 @@ export type Database = {
           avatar_provider_job_id?: string | null
           avatar_video_url?: string | null
           broll_urls?: Json | null
+          completed_at?: string | null
           cost_breakdown?: Json | null
           cost_cents?: number
           created_at?: string
@@ -14240,6 +14243,8 @@ export type Database = {
           lint_transforms: Json
           lint_warnings: Json
           rejection_reason: string | null
+          render_started_at: string | null
+          rendered_at: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           source: Json
@@ -14265,6 +14270,8 @@ export type Database = {
           lint_transforms?: Json
           lint_warnings?: Json
           rejection_reason?: string | null
+          render_started_at?: string | null
+          rendered_at?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           source?: Json
@@ -14290,6 +14297,8 @@ export type Database = {
           lint_transforms?: Json
           lint_warnings?: Json
           rejection_reason?: string | null
+          render_started_at?: string | null
+          rendered_at?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           source?: Json
