@@ -209,6 +209,23 @@ export default function AdminTikTok() {
 
         {/* RENDERS TAB — Preview audio + avatar + b-roll for QA */}
         <TabsContent value="renders" className="space-y-3">
+          {(() => {
+            const awaitingCount = renders.filter((r) => r.step === "awaiting_worker").length;
+            return awaitingCount > 0 ? (
+              <Card className="border-dashed">
+                <CardContent className="py-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm">
+                    <span className="font-medium">{awaitingCount}</span> render{awaitingCount === 1 ? "" : "s"} waiting on the Remotion worker.
+                    <span className="text-muted-foreground"> Once <code className="text-xs">REMOTION_WORKER_URL</code> is set, click re-dispatch to finish them.</span>
+                  </div>
+                  <Button size="sm" onClick={redispatchAwaiting} disabled={redispatching}>
+                    {redispatching ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                    Re-dispatch awaiting renders
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null;
+          })()}
           {renders.length === 0 && <Card><CardContent className="py-8 text-center text-muted-foreground">No renders yet. Approve a script and click "Render" to start.</CardContent></Card>}
           {renders.map(r => (
             <Card key={r.id}>
