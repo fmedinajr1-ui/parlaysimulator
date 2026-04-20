@@ -287,27 +287,7 @@ export default function AdminTikTok() {
 
         {/* HOOKS TAB */}
         <TabsContent value="hooks">
-          <Card><CardContent className="p-0">
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>Hook</TableHead><TableHead>Style</TableHead><TableHead>Template</TableHead>
-                <TableHead className="text-right">Imp</TableHead><TableHead className="text-right">Compl%</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {hooks.map(h => (
-                  <TableRow key={h.id} className="cursor-pointer" onClick={() => toggleHook(h.id, h.active)}>
-                    <TableCell className="text-sm">{h.text}</TableCell>
-                    <TableCell><Badge variant="outline">{h.style}</Badge></TableCell>
-                    <TableCell><Badge variant="outline">{h.template}</Badge></TableCell>
-                    <TableCell className="text-right">{h.impressions}</TableCell>
-                    <TableCell className="text-right">{Math.round(Number(h.avg_completion_rate || 0) * 100)}%</TableCell>
-                    <TableCell><Badge variant={h.active ? "default" : "secondary"}>{h.active ? "Active" : "Paused"}</Badge></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent></Card>
+          <HookLabTab hooks={hooks} posts={posts} accounts={accounts} onReload={loadAll} />
         </TabsContent>
 
         {/* HEALTH TAB */}
