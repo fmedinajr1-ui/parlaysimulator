@@ -13966,6 +13966,9 @@ export type Database = {
           created_at: string
           id: string
           impressions: number
+          is_winning_hook: boolean
+          last_demoted_at: string | null
+          last_promoted_at: string | null
           notes: string | null
           origin: string
           style: string
@@ -13973,6 +13976,7 @@ export type Database = {
           text: string
           total_completion_samples: number
           updated_at: string
+          uses_count: number
         }
         Insert: {
           active?: boolean
@@ -13981,6 +13985,9 @@ export type Database = {
           created_at?: string
           id?: string
           impressions?: number
+          is_winning_hook?: boolean
+          last_demoted_at?: string | null
+          last_promoted_at?: string | null
           notes?: string | null
           origin?: string
           style: string
@@ -13988,6 +13995,7 @@ export type Database = {
           text: string
           total_completion_samples?: number
           updated_at?: string
+          uses_count?: number
         }
         Update: {
           active?: boolean
@@ -13996,6 +14004,9 @@ export type Database = {
           created_at?: string
           id?: string
           impressions?: number
+          is_winning_hook?: boolean
+          last_demoted_at?: string | null
+          last_promoted_at?: string | null
           notes?: string | null
           origin?: string
           style?: string
@@ -14003,6 +14014,7 @@ export type Database = {
           text?: string
           total_completion_samples?: number
           updated_at?: string
+          uses_count?: number
         }
         Relationships: []
       }
@@ -14041,6 +14053,59 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      tiktok_post_metrics: {
+        Row: {
+          avg_watch_time_sec: number | null
+          comments: number
+          completion_rate: number | null
+          created_at: string
+          id: string
+          likes: number
+          notes: string | null
+          post_id: string
+          recorded_at: string
+          shares: number
+          source: string
+          views: number
+        }
+        Insert: {
+          avg_watch_time_sec?: number | null
+          comments?: number
+          completion_rate?: number | null
+          created_at?: string
+          id?: string
+          likes?: number
+          notes?: string | null
+          post_id: string
+          recorded_at?: string
+          shares?: number
+          source?: string
+          views?: number
+        }
+        Update: {
+          avg_watch_time_sec?: number | null
+          comments?: number
+          completion_rate?: number | null
+          created_at?: string
+          id?: string
+          likes?: number
+          notes?: string | null
+          post_id?: string
+          recorded_at?: string
+          shares?: number
+          source?: string
+          views?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tiktok_post_metrics_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_posts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tiktok_post_schedule: {
         Row: {
@@ -14093,6 +14158,7 @@ export type Database = {
           created_at: string
           error: string | null
           hashtags: string[]
+          hook_id: string | null
           id: string
           last_checked_at: string | null
           last_metrics_check_at: string | null
@@ -14113,6 +14179,7 @@ export type Database = {
           updated_at: string
           view_count_snapshot: number | null
           view_snapshots: Json
+          viral_score: number
         }
         Insert: {
           account_id: string
@@ -14120,6 +14187,7 @@ export type Database = {
           created_at?: string
           error?: string | null
           hashtags?: string[]
+          hook_id?: string | null
           id?: string
           last_checked_at?: string | null
           last_metrics_check_at?: string | null
@@ -14140,6 +14208,7 @@ export type Database = {
           updated_at?: string
           view_count_snapshot?: number | null
           view_snapshots?: Json
+          viral_score?: number
         }
         Update: {
           account_id?: string
@@ -14147,6 +14216,7 @@ export type Database = {
           created_at?: string
           error?: string | null
           hashtags?: string[]
+          hook_id?: string | null
           id?: string
           last_checked_at?: string | null
           last_metrics_check_at?: string | null
@@ -14167,6 +14237,7 @@ export type Database = {
           updated_at?: string
           view_count_snapshot?: number | null
           view_snapshots?: Json
+          viral_score?: number
         }
         Relationships: [
           {
@@ -14174,6 +14245,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "tiktok_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tiktok_posts_hook_id_fkey"
+            columns: ["hook_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_hook_performance"
             referencedColumns: ["id"]
           },
           {

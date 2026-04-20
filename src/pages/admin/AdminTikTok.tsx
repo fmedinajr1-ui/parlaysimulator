@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import { Loader2, Sparkles, Check, X, RefreshCw, Film } from "lucide-react";
 import PublishTab from "@/components/admin/tiktok/PublishTab";
+import HookLabTab from "@/components/admin/tiktok/HookLabTab";
 
 export default function AdminTikTok() {
   const { isAdmin, isLoading } = useAdminRole();
@@ -22,6 +23,7 @@ export default function AdminTikTok() {
   const [hooks, setHooks] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [renders, setRenders] = useState<any[]>([]);
+  const [posts, setPosts] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
   const [editing, setEditing] = useState<Record<string, any>>({});
 
@@ -32,18 +34,20 @@ export default function AdminTikTok() {
   useEffect(() => { if (isAdmin) loadAll(); }, [isAdmin]);
 
   async function loadAll() {
-    const [s, a, h, l, r] = await Promise.all([
+    const [s, a, h, l, r, p] = await Promise.all([
       supabase.from("tiktok_video_scripts").select("*").order("created_at", { ascending: false }).limit(50),
       supabase.from("tiktok_accounts").select("*").order("persona_key"),
       supabase.from("tiktok_hook_performance").select("*").order("avg_completion_rate", { ascending: false }),
       supabase.from("tiktok_pipeline_logs").select("*").order("created_at", { ascending: false }).limit(20),
       supabase.from("tiktok_video_renders").select("*").order("created_at", { ascending: false }).limit(30),
+      supabase.from("tiktok_posts").select("*").order("created_at", { ascending: false }).limit(100),
     ]);
     setScripts(s.data || []);
     setAccounts(a.data || []);
     setHooks(h.data || []);
     setLogs(l.data || []);
     setRenders(r.data || []);
+    setPosts(p.data || []);
   }
 
   async function runGenerator() {
@@ -283,27 +287,7 @@ export default function AdminTikTok() {
 
         {/* HOOKS TAB */}
         <TabsContent value="hooks">
-          <Card><CardContent className="p-0">
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>Hook</TableHead><TableHead>Style</TableHead><TableHead>Template</TableHead>
-                <TableHead className="text-right">Imp</TableHead><TableHead className="text-right">Compl%</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {hooks.map(h => (
-                  <TableRow key={h.id} className="cursor-pointer" onClick={() => toggleHook(h.id, h.active)}>
-                    <TableCell className="text-sm">{h.text}</TableCell>
-                    <TableCell><Badge variant="outline">{h.style}</Badge></TableCell>
-                    <TableCell><Badge variant="outline">{h.template}</Badge></TableCell>
-                    <TableCell className="text-right">{h.impressions}</TableCell>
-                    <TableCell className="text-right">{Math.round(Number(h.avg_completion_rate || 0) * 100)}%</TableCell>
-                    <TableCell><Badge variant={h.active ? "default" : "secondary"}>{h.active ? "Active" : "Paused"}</Badge></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent></Card>
+          <HookLabTab hooks={hooks} posts={posts} accounts={accounts} onReload={loadAll} />
         </TabsContent>
 
         {/* HEALTH TAB */}
