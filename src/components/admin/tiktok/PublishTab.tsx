@@ -204,6 +204,17 @@ export default function PublishTab({
       const caption = script.final_caption || script.caption_seed || "";
       const hashtags = (script.final_hashtags?.length ? script.final_hashtags : script.hashtag_seed) || [];
 
+      // Try to attribute this post to a hook in the library so the learning loop can score it.
+      let hookId: string | null = (script.hook?.hook_source_id as string | undefined) || null;
+      if (!hookId && script.hook?.vo_text) {
+        const { data: matches } = await supabase
+          .from("tiktok_hook_performance")
+          .select("id")
+          .eq("text", script.hook.vo_text)
+          .limit(1);
+        hookId = matches?.[0]?.id || null;
+      }
+
       // Insert post row
       const { error: pErr } = await supabase.from("tiktok_posts").insert({
         script_id: script.id,
@@ -216,6 +227,7 @@ export default function PublishTab({
         posted_manually_at: now,
         manual_post_url: url,
         tiktok_url: url,
+        hook_id: hookId,
       });
       if (pErr) throw pErr;
 
