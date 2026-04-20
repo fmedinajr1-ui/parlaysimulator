@@ -13901,6 +13901,374 @@ export type Database = {
         }
         Relationships: []
       }
+      tiktok_accounts: {
+        Row: {
+          baseline_hashtags: string[]
+          caption_template: string
+          created_at: string
+          display_name: string
+          elevenlabs_voice_id: string | null
+          heygen_avatar_id: string | null
+          hook_style: string
+          id: string
+          notes: string | null
+          persona_key: string
+          posting_active: boolean
+          status: string
+          tiktok_handle: string | null
+          tone_description: string
+          updated_at: string
+          warmup_stage: number
+        }
+        Insert: {
+          baseline_hashtags?: string[]
+          caption_template: string
+          created_at?: string
+          display_name: string
+          elevenlabs_voice_id?: string | null
+          heygen_avatar_id?: string | null
+          hook_style: string
+          id?: string
+          notes?: string | null
+          persona_key: string
+          posting_active?: boolean
+          status?: string
+          tiktok_handle?: string | null
+          tone_description: string
+          updated_at?: string
+          warmup_stage?: number
+        }
+        Update: {
+          baseline_hashtags?: string[]
+          caption_template?: string
+          created_at?: string
+          display_name?: string
+          elevenlabs_voice_id?: string | null
+          heygen_avatar_id?: string | null
+          hook_style?: string
+          id?: string
+          notes?: string | null
+          persona_key?: string
+          posting_active?: boolean
+          status?: string
+          tiktok_handle?: string | null
+          tone_description?: string
+          updated_at?: string
+          warmup_stage?: number
+        }
+        Relationships: []
+      }
+      tiktok_hook_performance: {
+        Row: {
+          active: boolean
+          avg_completion_rate: number
+          avg_views: number
+          created_at: string
+          id: string
+          impressions: number
+          notes: string | null
+          origin: string
+          style: string
+          template: string
+          text: string
+          total_completion_samples: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          avg_completion_rate?: number
+          avg_views?: number
+          created_at?: string
+          id?: string
+          impressions?: number
+          notes?: string | null
+          origin?: string
+          style: string
+          template: string
+          text: string
+          total_completion_samples?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          avg_completion_rate?: number
+          avg_views?: number
+          created_at?: string
+          id?: string
+          impressions?: number
+          notes?: string | null
+          origin?: string
+          style?: string
+          template?: string
+          text?: string
+          total_completion_samples?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tiktok_pipeline_logs: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          id: string
+          message: string | null
+          metadata: Json
+          run_type: string
+          scripts_generated: number
+          scripts_rejected: number
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          message?: string | null
+          metadata?: Json
+          run_type: string
+          scripts_generated?: number
+          scripts_rejected?: number
+          status: string
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          message?: string | null
+          metadata?: Json
+          run_type?: string
+          scripts_generated?: number
+          scripts_rejected?: number
+          status?: string
+        }
+        Relationships: []
+      }
+      tiktok_posts: {
+        Row: {
+          account_id: string
+          caption: string | null
+          created_at: string
+          error: string | null
+          hashtags: string[]
+          id: string
+          last_checked_at: string | null
+          latest_comments: number
+          latest_completion_rate: number | null
+          latest_likes: number
+          latest_shares: number
+          latest_views: number
+          posted_at: string | null
+          render_id: string | null
+          scheduled_for: string | null
+          script_id: string | null
+          status: string
+          tiktok_post_id: string | null
+          tiktok_url: string | null
+          updated_at: string
+          view_snapshots: Json
+        }
+        Insert: {
+          account_id: string
+          caption?: string | null
+          created_at?: string
+          error?: string | null
+          hashtags?: string[]
+          id?: string
+          last_checked_at?: string | null
+          latest_comments?: number
+          latest_completion_rate?: number | null
+          latest_likes?: number
+          latest_shares?: number
+          latest_views?: number
+          posted_at?: string | null
+          render_id?: string | null
+          scheduled_for?: string | null
+          script_id?: string | null
+          status?: string
+          tiktok_post_id?: string | null
+          tiktok_url?: string | null
+          updated_at?: string
+          view_snapshots?: Json
+        }
+        Update: {
+          account_id?: string
+          caption?: string | null
+          created_at?: string
+          error?: string | null
+          hashtags?: string[]
+          id?: string
+          last_checked_at?: string | null
+          latest_comments?: number
+          latest_completion_rate?: number | null
+          latest_likes?: number
+          latest_shares?: number
+          latest_views?: number
+          posted_at?: string | null
+          render_id?: string | null
+          scheduled_for?: string | null
+          script_id?: string | null
+          status?: string
+          tiktok_post_id?: string | null
+          tiktok_url?: string | null
+          updated_at?: string
+          view_snapshots?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tiktok_posts_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tiktok_posts_render_id_fkey"
+            columns: ["render_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_video_renders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tiktok_posts_script_id_fkey"
+            columns: ["script_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_video_scripts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tiktok_video_renders: {
+        Row: {
+          artifacts: Json
+          cost_cents: number
+          created_at: string
+          error: string | null
+          finished_at: string | null
+          id: string
+          script_id: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          artifacts?: Json
+          cost_cents?: number
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          script_id: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          artifacts?: Json
+          cost_cents?: number
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          script_id?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tiktok_video_renders_script_id_fkey"
+            columns: ["script_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_video_scripts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tiktok_video_scripts: {
+        Row: {
+          account_id: string | null
+          beats: Json
+          caption_seed: string | null
+          compliance_score: number
+          created_at: string
+          cta: Json
+          generation_round: number
+          hashtag_seed: string[]
+          hook: Json
+          id: string
+          lint_transforms: Json
+          lint_warnings: Json
+          rejection_reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source: Json
+          source_data: Json | null
+          status: string
+          target_duration_sec: number | null
+          target_persona_key: string
+          telegram_message_id: number | null
+          template: string
+          updated_at: string
+        }
+        Insert: {
+          account_id?: string | null
+          beats?: Json
+          caption_seed?: string | null
+          compliance_score?: number
+          created_at?: string
+          cta?: Json
+          generation_round?: number
+          hashtag_seed?: string[]
+          hook?: Json
+          id?: string
+          lint_transforms?: Json
+          lint_warnings?: Json
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source?: Json
+          source_data?: Json | null
+          status?: string
+          target_duration_sec?: number | null
+          target_persona_key: string
+          telegram_message_id?: number | null
+          template: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string | null
+          beats?: Json
+          caption_seed?: string | null
+          compliance_score?: number
+          created_at?: string
+          cta?: Json
+          generation_round?: number
+          hashtag_seed?: string[]
+          hook?: Json
+          id?: string
+          lint_transforms?: Json
+          lint_warnings?: Json
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source?: Json
+          source_data?: Json | null
+          status?: string
+          target_duration_sec?: number | null
+          target_persona_key?: string
+          telegram_message_id?: number | null
+          template?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tiktok_video_scripts_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tracked_parlays: {
         Row: {
           chat_id: string
