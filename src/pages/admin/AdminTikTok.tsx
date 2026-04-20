@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Loader2, Sparkles, Check, X, RefreshCw } from "lucide-react";
+import { Loader2, Sparkles, Check, X, RefreshCw, Film } from "lucide-react";
 
 export default function AdminTikTok() {
   const { isAdmin, isLoading } = useAdminRole();
@@ -75,6 +75,13 @@ export default function AdminTikTok() {
   async function reLint(id: string) {
     const { data, error } = await supabase.functions.invoke("tiktok-safety-gate", { body: { script_id: id } });
     if (error) toast.error(error.message); else { toast.success(`Re-linted: score ${data?.result?.score}`); loadAll(); }
+  }
+  async function renderScript(id: string) {
+    toast.loading("Dispatching render...", { id: `render-${id}` });
+    const { data, error } = await supabase.functions.invoke("tiktok-render-orchestrator", { body: { script_id: id } });
+    toast.dismiss(`render-${id}`);
+    if (error) toast.error(error.message);
+    else { toast.success(`Render started — step: ${data?.step || "queued"}`); loadAll(); }
   }
 
   if (isLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-6 h-6 animate-spin" /></div>;
@@ -161,7 +168,9 @@ export default function AdminTikTok() {
               {approved.map(s => (
                 <Card key={s.id} className="mb-2"><CardContent className="py-3 flex items-center justify-between text-sm">
                   <div><Badge variant="secondary" className="mr-2">{s.target_persona_key}</Badge>{s.hook?.vo_text}</div>
-                  <Badge>Ready for render (Phase 2)</Badge>
+                  <Button size="sm" onClick={() => renderScript(s.id)}>
+                    <Film className="w-3 h-3 mr-1" />Render
+                  </Button>
                 </CardContent></Card>
               ))}
             </div>
