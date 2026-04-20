@@ -107,8 +107,9 @@ export default function AdminTikTok() {
       </div>
 
       <Tabs defaultValue="queue" className="w-full">
-        <TabsList className="grid grid-cols-4 w-full">
+        <TabsList className="grid grid-cols-5 w-full">
           <TabsTrigger value="queue">Queue ({drafts.length})</TabsTrigger>
+          <TabsTrigger value="renders">Renders ({renders.length})</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="hooks">Hook Lab</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
