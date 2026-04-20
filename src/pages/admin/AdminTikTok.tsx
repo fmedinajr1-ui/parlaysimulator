@@ -20,6 +20,7 @@ export default function AdminTikTok() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [hooks, setHooks] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [renders, setRenders] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
   const [editing, setEditing] = useState<Record<string, any>>({});
 
@@ -30,16 +31,18 @@ export default function AdminTikTok() {
   useEffect(() => { if (isAdmin) loadAll(); }, [isAdmin]);
 
   async function loadAll() {
-    const [s, a, h, l] = await Promise.all([
+    const [s, a, h, l, r] = await Promise.all([
       supabase.from("tiktok_video_scripts").select("*").order("created_at", { ascending: false }).limit(50),
       supabase.from("tiktok_accounts").select("*").order("persona_key"),
       supabase.from("tiktok_hook_performance").select("*").order("avg_completion_rate", { ascending: false }),
       supabase.from("tiktok_pipeline_logs").select("*").order("created_at", { ascending: false }).limit(20),
+      supabase.from("tiktok_video_renders").select("*").order("created_at", { ascending: false }).limit(30),
     ]);
     setScripts(s.data || []);
     setAccounts(a.data || []);
     setHooks(h.data || []);
     setLogs(l.data || []);
+    setRenders(r.data || []);
   }
 
   async function runGenerator() {
@@ -104,8 +107,9 @@ export default function AdminTikTok() {
       </div>
 
       <Tabs defaultValue="queue" className="w-full">
-        <TabsList className="grid grid-cols-4 w-full">
+        <TabsList className="grid grid-cols-5 w-full">
           <TabsTrigger value="queue">Queue ({drafts.length})</TabsTrigger>
+          <TabsTrigger value="renders">Renders ({renders.length})</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="hooks">Hook Lab</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
@@ -175,6 +179,70 @@ export default function AdminTikTok() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* RENDERS TAB — Preview audio + avatar + b-roll for QA */}
+        <TabsContent value="renders" className="space-y-3">
+          {renders.length === 0 && <Card><CardContent className="py-8 text-center text-muted-foreground">No renders yet. Approve a script and click "Render" to start.</CardContent></Card>}
+          {renders.map(r => (
+            <Card key={r.id}>
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{r.id.slice(0, 8)}</Badge>
+                    <Badge variant={
+                      r.status === "completed" ? "default" :
+                      r.status === "failed" ? "destructive" :
+                      "secondary"
+                    }>{r.status}</Badge>
+                    <Badge variant="outline">step: {r.step}</Badge>
+                    {r.audio_duration_sec && <span className="text-xs text-muted-foreground">{Number(r.audio_duration_sec).toFixed(1)}s</span>}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {r.step === "awaiting_worker" && (
+                  <div className="text-xs bg-secondary/50 p-2 rounded border">
+                    ⏳ Worker not deployed yet — assets ready for QA. Final MP4 will render once <code>REMOTION_WORKER_URL</code> is configured.
+                  </div>
+                )}
+                {r.error_message && r.status === "failed" && (
+                  <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">{r.error_message}</div>
+                )}
+                {r.audio_url && (
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground uppercase mb-1">Narration</div>
+                    <audio controls src={r.audio_url} className="w-full h-10" />
+                  </div>
+                )}
+                {r.avatar_video_url && (
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground uppercase mb-1">Avatar</div>
+                    <video controls src={r.avatar_video_url} className="w-full max-w-xs rounded" />
+                  </div>
+                )}
+                {Array.isArray(r.broll_urls) && r.broll_urls.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground uppercase mb-1">B-roll ({r.broll_urls.length})</div>
+                    <div className="flex flex-wrap gap-2">
+                      {r.broll_urls.map((b: any, i: number) => (
+                        <a key={i} href={b.url} target="_blank" rel="noopener noreferrer" className="text-xs underline">
+                          beat #{b.beat_index}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {r.final_video_url && (
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground uppercase mb-1">Final MP4</div>
+                    <video controls src={r.final_video_url} className="w-full max-w-xs rounded" />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
         </TabsContent>
 
         {/* ACCOUNTS TAB */}

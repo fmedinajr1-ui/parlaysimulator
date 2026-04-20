@@ -156,6 +156,20 @@ Deno.serve(async (req) => {
         error_message: 'REMOTION_WORKER_URL not configured. Audio + avatar are ready; configure worker to finish compositing.',
       }).eq('id', renderId);
       await logRun(sb, 'render', 'partial', startedAt, scriptId, 'Audio + avatar ready, worker not configured');
+      // Telegram ping (best-effort) so admin knows assets are ready for QA
+      try {
+        await fetch(`${SUPABASE_URL}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_ROLE}` },
+          body: JSON.stringify({
+            message: `🎬 *TikTok assets ready for QA*\n\nRender \`${renderId.slice(0, 8)}\` — audio + avatar + b-roll generated.\nWorker not deployed yet → no MP4.\n\nReview in /admin/tiktok → Renders tab.`,
+            parse_mode: 'Markdown',
+            admin_only: true,
+            format_version: 'v3',
+            reference_key: `tiktok_assets_ready_${renderId}`,
+          }),
+        });
+      } catch (_) { /* never fail orchestrator on alert error */ }
       return jsonResp({ success: true, render_id: renderId, step: 'awaiting_worker', audio_url: audioUrl, avatar_video_url: avatarVideoUrl });
     }
 
