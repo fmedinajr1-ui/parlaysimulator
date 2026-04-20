@@ -43,6 +43,7 @@ const BlogCategory = React.lazy(() => import("./pages/BlogCategory"));
 const AdminBlog = React.lazy(() => import("./pages/admin/AdminBlog"));
 const Unsubscribe = React.lazy(() => import("./pages/Unsubscribe"));
 const GradeSlip = React.lazy(() => import("./pages/GradeSlip"));
+const AdminTikTok = React.lazy(() => import("./pages/admin/AdminTikTok"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -101,6 +102,7 @@ function AnimatedRoutes() {
               <Route path="/blog/category/:cat" element={<BlogCategory />} />
               <Route path="/blog/:slug" element={<BlogPost />} />
               <Route path="/admin/blog" element={<AdminBlog />} />
+              <Route path="/admin/tiktok" element={<AdminTikTok />} />
               <Route path="/unsubscribe" element={<Unsubscribe />} />
               <Route path="/grade" element={<GradeSlip />} />
               <Route path="*" element={<NotFound />} />

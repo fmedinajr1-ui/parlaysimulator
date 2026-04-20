@@ -11,6 +11,7 @@ import {
   Eye,
   BookOpen,
   ChevronRight,
+  Video,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,6 +32,7 @@ const adminItems = [
   { icon: Calculator, label: "PVS Calculator", path: "/pvs-calculator", description: "Prop value scoring" },
   { icon: Shield, label: "Admin Panel", path: "/admin", description: "System management" },
   { icon: Users, label: "Collaborators", path: "/collaborate", description: "Team access" },
+  { icon: Video, label: "TikTok Pipeline", path: "/admin/tiktok", description: "Script queue & persona manager" },
 ];
 
 export function MenuDrawer() {
