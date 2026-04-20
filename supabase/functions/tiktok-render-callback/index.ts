@@ -95,6 +95,17 @@ Deno.serve(async (req) => {
       await sb.from('tiktok_video_scripts').update({
         status: 'rendered', rendered_at: new Date().toISOString(),
       }).eq('id', render.script_id);
+
+      // Phase 3: auto-generate the publish-ready caption + hashtags
+      try {
+        await fetch(`${SUPABASE_URL}/functions/v1/tiktok-caption-generator`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_ROLE}` },
+          body: JSON.stringify({ script_id: render.script_id }),
+        });
+      } catch (e) {
+        console.warn('[render-callback] caption generation failed (non-fatal):', e);
+      }
     }
 
     // Pipeline log
