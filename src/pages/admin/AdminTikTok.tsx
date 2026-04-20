@@ -247,6 +247,16 @@ export default function AdminTikTok() {
           ))}
         </TabsContent>
 
+        {/* PUBLISH TAB — Phase 3 manual delivery */}
+        <TabsContent value="publish">
+          <PublishTab
+            renders={renders}
+            scripts={scripts}
+            accounts={accounts}
+            onReload={loadAll}
+          />
+        </TabsContent>
+
         {/* ACCOUNTS TAB */}
         <TabsContent value="accounts" className="space-y-3">
           {accounts.map(a => (
