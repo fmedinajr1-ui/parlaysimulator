@@ -14042,6 +14042,50 @@ export type Database = {
         }
         Relationships: []
       }
+      tiktok_post_schedule: {
+        Row: {
+          account_id: string
+          created_at: string
+          day_of_week: number
+          hour_et: number
+          id: string
+          is_active: boolean
+          minute_et: number
+          slot_label: string | null
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          day_of_week: number
+          hour_et: number
+          id?: string
+          is_active?: boolean
+          minute_et?: number
+          slot_label?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          day_of_week?: number
+          hour_et?: number
+          id?: string
+          is_active?: boolean
+          minute_et?: number
+          slot_label?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tiktok_post_schedule_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "tiktok_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tiktok_posts: {
         Row: {
           account_id: string
@@ -14051,12 +14095,15 @@ export type Database = {
           hashtags: string[]
           id: string
           last_checked_at: string | null
+          last_metrics_check_at: string | null
           latest_comments: number
           latest_completion_rate: number | null
           latest_likes: number
           latest_shares: number
           latest_views: number
+          manual_post_url: string | null
           posted_at: string | null
+          posted_manually_at: string | null
           render_id: string | null
           scheduled_for: string | null
           script_id: string | null
@@ -14064,6 +14111,7 @@ export type Database = {
           tiktok_post_id: string | null
           tiktok_url: string | null
           updated_at: string
+          view_count_snapshot: number | null
           view_snapshots: Json
         }
         Insert: {
@@ -14074,12 +14122,15 @@ export type Database = {
           hashtags?: string[]
           id?: string
           last_checked_at?: string | null
+          last_metrics_check_at?: string | null
           latest_comments?: number
           latest_completion_rate?: number | null
           latest_likes?: number
           latest_shares?: number
           latest_views?: number
+          manual_post_url?: string | null
           posted_at?: string | null
+          posted_manually_at?: string | null
           render_id?: string | null
           scheduled_for?: string | null
           script_id?: string | null
@@ -14087,6 +14138,7 @@ export type Database = {
           tiktok_post_id?: string | null
           tiktok_url?: string | null
           updated_at?: string
+          view_count_snapshot?: number | null
           view_snapshots?: Json
         }
         Update: {
@@ -14097,12 +14149,15 @@ export type Database = {
           hashtags?: string[]
           id?: string
           last_checked_at?: string | null
+          last_metrics_check_at?: string | null
           latest_comments?: number
           latest_completion_rate?: number | null
           latest_likes?: number
           latest_shares?: number
           latest_views?: number
+          manual_post_url?: string | null
           posted_at?: string | null
+          posted_manually_at?: string | null
           render_id?: string | null
           scheduled_for?: string | null
           script_id?: string | null
@@ -14110,6 +14165,7 @@ export type Database = {
           tiktok_post_id?: string | null
           tiktok_url?: string | null
           updated_at?: string
+          view_count_snapshot?: number | null
           view_snapshots?: Json
         }
         Relationships: [
@@ -14232,10 +14288,13 @@ export type Database = {
         Row: {
           account_id: string | null
           beats: Json
+          caption_generated_at: string | null
           caption_seed: string | null
           compliance_score: number
           created_at: string
           cta: Json
+          final_caption: string | null
+          final_hashtags: string[]
           generation_round: number
           hashtag_seed: string[]
           hook: Json
@@ -14259,10 +14318,13 @@ export type Database = {
         Insert: {
           account_id?: string | null
           beats?: Json
+          caption_generated_at?: string | null
           caption_seed?: string | null
           compliance_score?: number
           created_at?: string
           cta?: Json
+          final_caption?: string | null
+          final_hashtags?: string[]
           generation_round?: number
           hashtag_seed?: string[]
           hook?: Json
@@ -14286,10 +14348,13 @@ export type Database = {
         Update: {
           account_id?: string | null
           beats?: Json
+          caption_generated_at?: string | null
           caption_seed?: string | null
           compliance_score?: number
           created_at?: string
           cta?: Json
+          final_caption?: string | null
+          final_hashtags?: string[]
           generation_round?: number
           hashtag_seed?: string[]
           hook?: Json
