@@ -1,0 +1,32 @@
+{
+  "render_id": "00000000-0000-0000-0000-00000000beef",
+  "script_id": "00000000-0000-0000-0000-0000000005c1",
+  "composition": "PickReveal",
+  "callback_url": "https://pajakaqphlxoqjtrxzmi.supabase.co/functions/v1/tiktok-render-callback",
+  "callback_secret": "REPLACE_WITH_REMOTION_WORKER_SECRET",
+  "props": {
+    "script": {
+      "id": "test-script",
+      "target_persona": { "display_name": "The Analyst", "key": "the_analyst" },
+      "target_duration_sec": 26,
+      "hook": { "vo_text": "The numbers on Jokic tonight are strange.", "visual_style": "calm_authority" },
+      "beats": [
+        { "index": 1, "vo_text": "Last three games against Minnesota: 22, 19, 24 points.", "duration_est_sec": 6, "visual": "stat_card",
+          "stat_card_data": { "title": "JOKIC vs MIN — L3", "rows": [
+            { "label": "Game 1", "value": "22 PTS", "highlight": true },
+            { "label": "Game 2", "value": "19 PTS" },
+            { "label": "Game 3", "value": "24 PTS" }
+          ], "footer": "Line tonight: 27.5" } },
+        { "index": 2, "vo_text": "Tonight the line is twenty-seven and a half.", "duration_est_sec": 5, "visual": "avatar_with_lower_third", "on_screen_text": "27.5 LINE" },
+        { "index": 3, "vo_text": "He hasn't cleared that against this team in two years.", "duration_est_sec": 6, "visual": "avatar" },
+        { "index": 4, "vo_text": "I'm not telling you what to do — but I know what I'm doing.", "duration_est_sec": 5, "visual": "broll" }
+      ],
+      "cta": { "vo_text": "Full breakdown in the bio.", "on_screen_text": "→ LINK IN BIO" }
+    },
+    "audioUrl": "https://example.com/sample-audio.mp3",
+    "audioTimings": [],
+    "audioDurationSec": 26,
+    "avatarVideoUrl": null,
+    "brollUrls": []
+  }
+}
