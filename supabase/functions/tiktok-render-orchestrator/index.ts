@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
     // ── 3. ElevenLabs narration ──────────────────────────────────────────
     await markStep(sb, renderId, 'tts');
     const fullVoText = buildVoiceoverText(script);
-    const voiceId = (account?.tts_voice_id as string)
+    const voiceId = (account?.elevenlabs_voice_id as string)
       || DEFAULT_VOICE_BY_HOOK_STYLE[account?.hook_style as string]
       || DEFAULT_VOICE_BY_HOOK_STYLE.confident_calm;
 
