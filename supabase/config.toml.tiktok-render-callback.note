@@ -1,0 +1,4 @@
+# Note: tiktok-render-callback is invoked by the external worker, not by users.
+# It uses a shared-secret (REMOTION_WORKER_SECRET) for auth instead of JWT.
+# Lovable Cloud already deploys edge functions with verify_jwt = false by default,
+# so no config block is needed. This file is documentation only.
