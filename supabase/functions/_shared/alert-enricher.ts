@@ -8,13 +8,21 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getAlertTypeAccuracy, getStakeRecommendation, getExposureUsedPct, type StakeAdvice, type AlertAccuracy } from './accuracy-lookup.ts';
-import { humorOpener, humorCloser, accuracyPhrase, formOpener, type BotForm } from './voice.ts';
+import { type BotForm } from './voice.ts';
 import { loadBankrollState } from './bankroll-curator.ts';
+import { renderAlertCardV3, extractHeadline, extractSport, deriveTier } from './alert-format-v3.ts';
+import { getLineContext, getGameContext } from './alert-context.ts';
 
 export interface EnrichInput {
   alertType: string;
   rawText: string;
   seed?: string;
+  /** Optional event id — unlocks line + tip context if known. */
+  eventId?: string | null;
+  /** Optional sport hint — overrides regex extraction. */
+  sport?: string | null;
+  /** Optional confidence hint (0-100) — overrides tier derivation. */
+  confidence?: number | null;
 }
 
 export interface EnrichOutput {
@@ -44,10 +52,12 @@ export async function enrichLegacyAlert(
 
   const seed = input.seed || `${input.alertType}|${input.rawText.slice(0, 40)}`;
 
-  // Parallel-fetch the three context pieces
-  const [accuracy, bankroll] = await Promise.all([
+  // Parallel-fetch every context piece we can get our hands on
+  const [accuracy, bankroll, lineCtx, gameCtx] = await Promise.all([
     getAlertTypeAccuracy(sb, input.alertType),
     loadBankrollState(sb).catch(() => null),
+    input.eventId ? getLineContext(sb, input.eventId).catch(() => null) : Promise.resolve(null),
+    input.eventId ? getGameContext(sb, input.eventId).catch(() => null) : Promise.resolve(null),
   ]);
 
   let exposurePct = 0;
@@ -61,30 +71,25 @@ export async function enrichLegacyAlert(
 
   const stake = getStakeRecommendation(accuracy, form, bankrollAmount, exposurePct);
 
-  // Build header (humor opener + accuracy badge if known)
-  const headerParts: string[] = [];
-  headerParts.push(`_${humorOpener(seed)}_`);
-  if (accuracy.l7_hit_rate != null && accuracy.sample_size_l7 >= 3) {
-    headerParts.push(accuracyPhrase(accuracy.l7_hit_rate, accuracy.sample_size_l7));
-  }
+  // v3 4-zone render — try to extract a glance headline + sport from raw text
+  const headline = extractHeadline(input.rawText);
+  const sport = input.sport ?? extractSport(input.rawText);
+  const tier = deriveTier({ stakeTier: stake.tier, confidence: input.confidence ?? undefined });
 
-  // Build footer (stake recommendation + closer)
-  const footerParts: string[] = [];
-  if (stake.tier === 'skip') {
-    footerParts.push(`⏭️ *Bot's call:* skip this one — ${stake.reasoning}`);
-  } else {
-    footerParts.push(`💵 *Stake: $${stake.stake}* — ${stake.reasoning}`);
-  }
-  footerParts.push(`_${humorCloser(seed, form)}_`);
-
-  const message = [
-    headerParts.join('\n'),
-    '',
-    input.rawText,
-    '',
-    '━━━━━━━━━━━━━━━━━━━',
-    footerParts.join('\n'),
-  ].join('\n');
+  const message = renderAlertCardV3({
+    body: input.rawText,
+    sport,
+    headline,
+    confidence: input.confidence ?? null,
+    tier,
+    accuracy,
+    stake,
+    bankroll: bankrollAmount,
+    line: lineCtx,
+    game: gameCtx,
+    form,
+    seed,
+  });
 
   return { message, stake, accuracy, enriched: true };
 }
