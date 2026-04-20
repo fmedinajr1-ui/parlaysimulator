@@ -35,6 +35,7 @@ import { initClient, sendToChat, fanoutToCustomers } from '../_shared/telegram-c
 import { etHour } from '../_shared/date-et.ts';
 import type { DayPhase } from '../_shared/constants.ts';
 import { enrichLegacyAlert, shouldEnrich } from '../_shared/alert-enricher.ts';
+import { etTime } from '../_shared/date-et.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,6 +51,14 @@ interface RequestBody {
   narrative_phase?: DayPhase;
   reference_key?: string;
   personalize_stake_pct?: number;
+  /**
+   * 'v2' (default) → message may be enriched by the v3 renderer if it's a
+   *                  legacy typed call. v2 native cards (already formatted
+   *                  upstream) bypass enrichment via shouldEnrich().
+   * 'v3'           → caller has already produced a v3-formatted message and
+   *                  the dispatcher must NOT touch it.
+   */
+  format_version?: 'v2' | 'v3';
   /** Optional context used by the customer pick router to filter + personalize. */
   alert_context?: {
     sport?: string;
@@ -105,13 +114,17 @@ Deno.serve(async (req) => {
 
     const { sb, botToken, adminChatId } = initClient();
 
-    // ── Enrichment: wrap legacy alerts with stake + accuracy + humor ──
-    // v2 callers (orchestrator, playcards) skip this — they already have full context.
-    if (shouldEnrich(body)) {
+    // ── Enrichment: render legacy alerts in the v3 4-zone format ──
+    // v2 callers (orchestrator, playcards) and v3 callers (already formatted)
+    // skip this — they already have full context.
+    if (body.format_version !== 'v3' && shouldEnrich(body)) {
       try {
         const enriched = await enrichLegacyAlert(sb, {
           alertType: body.type!,
           rawText: body.message,
+          eventId: (body.alert_context as any)?.event_id ?? (body.alert_context as any)?.pick_id ?? null,
+          sport: body.alert_context?.sport ?? null,
+          confidence: body.alert_context?.confidence ?? null,
         });
         body.message = enriched.message;
         body.parse_mode = body.parse_mode || 'Markdown';
@@ -123,6 +136,28 @@ Deno.serve(async (req) => {
       } catch (e) {
         console.warn('[bot-send-telegram] Enrichment failed, sending raw:', e);
       }
+    }
+
+    // ── Settlement callback ──
+    // If reference_key matches an earlier alert, prepend a "called this at X" line
+    // so settlements explicitly reference the original pick instead of arriving
+    // out of context. Best-effort — never breaks the send.
+    if (body.reference_key && (body.narrative_phase === 'settlement_story' || /settle|settled|outcome|won|lost/i.test(body.reference_key))) {
+      try {
+        const { data: prior } = await sb
+          .from('bot_message_log')
+          .select('sent_at')
+          .eq('reference_key', body.reference_key)
+          .eq('success', true)
+          .lt('sent_at', new Date().toISOString())
+          .order('sent_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (prior?.sent_at) {
+          const calledAt = etTime(new Date(prior.sent_at));
+          body.message = `🎯 _Called this at ${calledAt}._\n\n${body.message}`;
+        }
+      } catch (_) { /* never break sending on lookup failure */ }
     }
 
     // ── Admin chat resolution ──
@@ -197,7 +232,9 @@ Deno.serve(async (req) => {
               const pct = body.personalize_stake_pct!;
               if (!c.bankroll || c.bankroll <= 0) return body.message;
               const stake = Math.round(c.bankroll * pct);
-              return `${body.message}\n\n💰 *Your stake:* $${stake} (${(pct * 100).toFixed(1)}% of your $${c.bankroll.toLocaleString()} bankroll)`;
+              const voiceLine = customerVoiceLine(c);
+              const stakeLine = `💰 *Your stake:* $${stake} (${(pct * 100).toFixed(1)}% of your $${c.bankroll.toLocaleString()} bankroll)`;
+              return `${body.message}\n\n${stakeLine}${voiceLine ? `\n${voiceLine}` : ''}`;
             }
           : undefined,
       });
@@ -219,3 +256,20 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+/**
+ * Lightweight per-customer voice line based on bankroll posture.
+ * The fanout callback only has chat_id/username/bankroll — no recent W/L.
+ * We use bankroll movement vs the customer's confirmed starting bankroll
+ * via a quick lookup pattern: skip the DB call here (keep fanout fast) and
+ * derive a neutral encouragement line. Real recent-W/L personalization can
+ * be plugged in later by enriching the customer object upstream.
+ */
+function customerVoiceLine(c: { bankroll?: number; username?: string }): string | null {
+  if (!c.bankroll || c.bankroll <= 0) return null;
+  // Tier the customer by bankroll size — cheap, deterministic, no DB
+  if (c.bankroll >= 10000) return `_Pro-roll size — full conviction._`;
+  if (c.bankroll >= 2500) return `_Solid roll — play it straight._`;
+  if (c.bankroll >= 500) return `_Build mode — discipline over size._`;
+  return `_Small bag — stick to the plan._`;
+}
