@@ -181,11 +181,6 @@ export default function AdminTikTok() {
           )}
         </TabsContent>
 
-        {/* ACCOUNTS TAB */}
-        <TabsContent value="accounts" className="space-y-3">
-          {/* moved below */}
-        </TabsContent>
-
         {/* RENDERS TAB — Preview audio + avatar + b-roll for QA */}
         <TabsContent value="renders" className="space-y-3">
           {renders.length === 0 && <Card><CardContent className="py-8 text-center text-muted-foreground">No renders yet. Approve a script and click "Render" to start.</CardContent></Card>}
@@ -250,8 +245,8 @@ export default function AdminTikTok() {
           ))}
         </TabsContent>
 
-        {/* ACCOUNTS TAB (real content) */}
-        <TabsContent value="accounts-real" className="hidden">
+        {/* ACCOUNTS TAB */}
+        <TabsContent value="accounts" className="space-y-3">
           {accounts.map(a => (
             <Card key={a.id}>
               <CardContent className="py-4 space-y-2">
