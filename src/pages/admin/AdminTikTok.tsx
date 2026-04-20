@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Loader2, Sparkles, Check, X, RefreshCw, Film } from "lucide-react";
+import PublishTab from "@/components/admin/tiktok/PublishTab";
 
 export default function AdminTikTok() {
   const { isAdmin, isLoading } = useAdminRole();
@@ -107,9 +108,10 @@ export default function AdminTikTok() {
       </div>
 
       <Tabs defaultValue="queue" className="w-full">
-        <TabsList className="grid grid-cols-5 w-full">
+        <TabsList className="grid grid-cols-6 w-full">
           <TabsTrigger value="queue">Queue ({drafts.length})</TabsTrigger>
           <TabsTrigger value="renders">Renders ({renders.length})</TabsTrigger>
+          <TabsTrigger value="publish">Publish</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="hooks">Hook Lab</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
