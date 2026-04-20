@@ -1,103 +1,42 @@
 
 
-## TikTok Pipeline Integration — Phase 1 Build Plan
+## Phase 2 Secrets — Plan
 
-### What's in the zip (per README file map)
+You have 3 keys ready (ElevenLabs, HeyGen, Pexels). Remotion worker isn't deployed yet, so we hold those 2 secrets until later.
 
-~20 TypeScript files across 5 modules (`script-gen`, `render`, `safety`, `posting`, `learning`), a Remotion React video project, SQL schema, and seed/test scripts. Mix of Node + Python.
+### What I'll add now
+- `ELEVENLABS_API_KEY` — narration TTS
+- `HEYGEN_API_KEY` — avatar lip-sync video
+- `PEXELS_API_KEY` — b-roll stock footage
 
-### What we build now (Phase 1 — script gen + safety + admin UI)
+### What we hold for later
+- `REMOTION_WORKER_URL` — added once you deploy the `worker/` folder to Render/Railway
+- `REMOTION_WORKER_SECRET` — generated when worker is deployed (shared secret between Lovable Cloud + worker)
 
-No rendering, no posting, no external API keys needed yet. Output = daily script previews in Telegram + admin review UI.
+### What works after this step
+The orchestrator runs the first 3 stages of the pipeline:
+1. Pulls approved script from queue
+2. ElevenLabs → generates narration MP3 + word timings, uploads to `tiktok-renders` bucket
+3. HeyGen → submits avatar job, polls until video ready, stores URL
+4. Pexels → fetches b-roll clips per script beat, stores URLs
+5. **Stops at compositing step** — logs "worker not configured, render paused"
+6. Render row stays in `pending_compositing` status — admin UI shows assets ready, just no final MP4 yet
 
----
+This means you can test/QA the audio + avatar + b-roll outputs in the admin UI before spending time on worker deploy. If the avatar voice or b-roll selection is off, we tune it without burning Remotion render minutes.
 
-### Step 1: Extract zip and inventory
+### Code change needed alongside the secrets
+Update `tiktok-render-orchestrator/index.ts` to gracefully skip the worker dispatch when `REMOTION_WORKER_URL` is missing:
+- Set render row to `status: 'assets_ready'`, `step: 'awaiting_worker'`
+- Send Telegram alert: "Render assets ready for review, worker not deployed yet"
+- Admin UI Queue tab gets a new "Preview assets" button that shows the audio player + avatar video + b-roll list
 
-- Copy `files_3.zip` to `/tmp`, extract, list every file with a one-line tag
-- Confirm mapping before writing any project code
-- Tag each file: `edge function` / `external worker` / `frontend` / `shared lib` / `defer to Phase 2+`
+### Worker deploy (when you're ready, separate step)
+1. Push `worker/` folder to a new GitHub repo
+2. Connect to Render → New Web Service → Docker
+3. Set worker env vars (`WORKER_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE`, `STORAGE_BUCKET=tiktok-renders`)
+4. Copy the Render URL → tell me, I add `REMOTION_WORKER_URL` + `REMOTION_WORKER_SECRET` to Lovable Cloud
+5. Existing `assets_ready` renders auto-resume on next orchestrator run
 
-### Step 2: Database migration (6 tables, all admin-RLS)
-
-```text
-tiktok_accounts        — 2 rows seeded (your accounts), persona, status, warmup stage
-tiktok_video_scripts   — generated scripts, hook variants, status (draft → approved → rendered → posted)
-tiktok_video_renders   — render job state, asset URLs, cost log (empty until Phase 2)
-tiktok_posts           — post log + view snapshots (empty until Phase 2)
-tiktok_hook_performance — winning hooks fed into generator few-shot library
-tiktok_pipeline_logs   — run history, errors, cost tracking
-```
-
-All tables get RLS policies gated by `has_role(auth.uid(), 'admin')`. No public access.
-
-### Step 3: Shared types + config
-
-Create `supabase/functions/_shared/tiktok-types.ts`:
-- Port `src/shared/types.ts` (VideoScript, AvatarJob, AccountPersona, etc.)
-- Port `src/shared/config.ts` (account personas, soft-angle rules, template definitions)
-- Adapt DB client references to use existing Supabase client pattern
-
-### Step 4: Edge function — `tiktok-script-generator`
-
-Port `src/script-gen/` into a single edge function:
-- `templates.ts` logic (reveal / recap / educational) inlined
-- `hook-library.ts` reads from `tiktok_hook_performance` table
-- `soft-angle-linter.ts` strips banned phrases, auto-rewrites
-- Uses **Lovable AI Gateway** (no API key needed) instead of direct Claude calls — swap `llm-client.ts` for AI gateway call
-- Pulls today's picks from `bot_daily_picks`
-- Generates 3 scripts (one per template type), writes to `tiktok_video_scripts` as `draft`
-- Sends preview to admin via existing `bot-send-telegram` dispatcher
-
-### Step 5: Edge function — `tiktok-safety-gate`
-
-Port `src/safety/` into edge function:
-- `phrase-filter.ts` — banned phrase scan + auto-rewrite suggestions
-- `similarity-check.ts` — content hash comparison across accounts
-- `rules.ts` — the soft-angle ruleset (banned words, reframing map)
-- Skip `visual-compliance.ts` for now (needs rendered video — Phase 2)
-- Called by script generator before saving to DB; blocks or passes each script
-
-### Step 6: Admin UI — `/admin/tiktok`
-
-New page gated by `useAdminRole`, 4 tabs:
-
-- **Queue** — today's draft scripts, approve/edit/reject inline, preview the generated text
-- **Accounts** — your 2 personas, status toggles (active/warming/paused), warmup stage indicator
-- **Hook Lab** — top-performing hooks table, manual hook editor, seed new hooks
-- **Pipeline Health** — last run timestamp, error log, script generation stats
-
-Reuses existing UI components (Card, Tabs, Button, Badge, Sheet). No new design system.
-
-### Step 7: Telegram integration
-
-- Script preview alert → admin (uses v3 format we just built)
-- Safety gate block → admin alert with blocked phrase + suggested rewrite
-- Reuses existing `bot-send-telegram` dispatcher with `admin_only: true`
-
-### Step 8: Route + navigation
-
-- Add `/admin/tiktok` route in `App.tsx` (lazy loaded)
-- Add nav link in existing admin sidebar/menu
-
----
-
-### What is deferred to Phase 2+
-
-| Module | Why deferred |
-|---|---|
-| `src/render/` (HeyGen, ElevenLabs, Remotion) | Needs external API keys + AWS Lambda. No value until scripts are validated. |
-| `src/posting/` (Blotato client, jitter) | You don't have a posting service yet. Manual download first. |
-| `src/learning/view-monitor.ts` | Needs posted videos to monitor. |
-| `remotion/` project | Needs separate deploy (Lambda or render server). Lives in `worker/` folder for later. |
-| Python components | External worker deploy — Phase 2. |
-
-### What I need from you
-
-1. Approve this plan
-2. Once in default mode, I'll extract the zip, inventory every file, and confirm the mapping before writing code
-
-### Rollback
-
-- Drop 6 tables + remove `/admin/tiktok` route. Zero impact on existing site, pipelines, or Telegram alerts.
+### Next action
+Approve this plan and I'll request the 3 secrets + add the graceful-skip code in the same step.
 
