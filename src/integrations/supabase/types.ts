@@ -14139,39 +14139,81 @@ export type Database = {
       tiktok_video_renders: {
         Row: {
           artifacts: Json
+          audio_duration_sec: number | null
+          audio_timings: Json | null
+          audio_url: string | null
+          avatar_provider_job_id: string | null
+          avatar_video_url: string | null
+          broll_urls: Json | null
+          cost_breakdown: Json | null
           cost_cents: number
           created_at: string
           error: string | null
+          error_message: string | null
+          final_video_url: string | null
           finished_at: string | null
           id: string
+          render_provider: string | null
           script_id: string
           started_at: string | null
           status: string
+          step: string | null
+          step_started_at: string | null
+          thumbnail_url: string | null
           updated_at: string
+          worker_job_id: string | null
         }
         Insert: {
           artifacts?: Json
+          audio_duration_sec?: number | null
+          audio_timings?: Json | null
+          audio_url?: string | null
+          avatar_provider_job_id?: string | null
+          avatar_video_url?: string | null
+          broll_urls?: Json | null
+          cost_breakdown?: Json | null
           cost_cents?: number
           created_at?: string
           error?: string | null
+          error_message?: string | null
+          final_video_url?: string | null
           finished_at?: string | null
           id?: string
+          render_provider?: string | null
           script_id: string
           started_at?: string | null
           status?: string
+          step?: string | null
+          step_started_at?: string | null
+          thumbnail_url?: string | null
           updated_at?: string
+          worker_job_id?: string | null
         }
         Update: {
           artifacts?: Json
+          audio_duration_sec?: number | null
+          audio_timings?: Json | null
+          audio_url?: string | null
+          avatar_provider_job_id?: string | null
+          avatar_video_url?: string | null
+          broll_urls?: Json | null
+          cost_breakdown?: Json | null
           cost_cents?: number
           created_at?: string
           error?: string | null
+          error_message?: string | null
+          final_video_url?: string | null
           finished_at?: string | null
           id?: string
+          render_provider?: string | null
           script_id?: string
           started_at?: string | null
           status?: string
+          step?: string | null
+          step_started_at?: string | null
+          thumbnail_url?: string | null
           updated_at?: string
+          worker_job_id?: string | null
         }
         Relationships: [
           {
