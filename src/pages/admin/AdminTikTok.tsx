@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Loader2, Sparkles, Check, X, RefreshCw, Film } from "lucide-react";
+import { Loader2, Sparkles, Check, X, RefreshCw, Film, Zap } from "lucide-react";
 import PublishTab from "@/components/admin/tiktok/PublishTab";
 import HookLabTab from "@/components/admin/tiktok/HookLabTab";
 
@@ -25,6 +25,7 @@ export default function AdminTikTok() {
   const [renders, setRenders] = useState<any[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [redispatching, setRedispatching] = useState(false);
   const [editing, setEditing] = useState<Record<string, any>>({});
 
   useEffect(() => {
@@ -90,6 +91,25 @@ export default function AdminTikTok() {
     toast.dismiss(`render-${id}`);
     if (error) toast.error(error.message);
     else { toast.success(`Render started — step: ${data?.step || "queued"}`); loadAll(); }
+  }
+  async function redispatchAwaiting() {
+    setRedispatching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tiktok-redispatch-renders", { body: { limit: 20 } });
+      if (error) throw error;
+      if (data?.dispatched > 0) {
+        toast.success(`Re-dispatched ${data.dispatched} render${data.dispatched === 1 ? "" : "s"}. Will complete in 1-3 min each.`);
+      } else {
+        toast.info(data?.message || "No renders waiting on the worker.");
+      }
+      setTimeout(loadAll, 2000);
+    } catch (e: any) {
+      toast.error(e.message?.includes("REMOTION_WORKER_URL")
+        ? "Worker not configured yet. See worker/DEPLOY.md."
+        : `Re-dispatch failed: ${e.message}`);
+    } finally {
+      setRedispatching(false);
+    }
   }
 
   if (isLoading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-6 h-6 animate-spin" /></div>;
@@ -189,6 +209,23 @@ export default function AdminTikTok() {
 
         {/* RENDERS TAB — Preview audio + avatar + b-roll for QA */}
         <TabsContent value="renders" className="space-y-3">
+          {(() => {
+            const awaitingCount = renders.filter((r) => r.step === "awaiting_worker").length;
+            return awaitingCount > 0 ? (
+              <Card className="border-dashed">
+                <CardContent className="py-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm">
+                    <span className="font-medium">{awaitingCount}</span> render{awaitingCount === 1 ? "" : "s"} waiting on the Remotion worker.
+                    <span className="text-muted-foreground"> Once <code className="text-xs">REMOTION_WORKER_URL</code> is set, click re-dispatch to finish them.</span>
+                  </div>
+                  <Button size="sm" onClick={redispatchAwaiting} disabled={redispatching}>
+                    {redispatching ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                    Re-dispatch awaiting renders
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null;
+          })()}
           {renders.length === 0 && <Card><CardContent className="py-8 text-center text-muted-foreground">No renders yet. Approve a script and click "Render" to start.</CardContent></Card>}
           {renders.map(r => (
             <Card key={r.id}>
