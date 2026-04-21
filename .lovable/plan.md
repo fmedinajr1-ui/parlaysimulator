@@ -1,53 +1,91 @@
 
 
-## Wipe the entire bot + telegram + pipeline edge function layer (keep all data)
+## Phase A: Port Parlay Engine v2 to a TypeScript edge function (no scheduling, no Telegram)
 
-Clean teardown so we can rebuild the Telegram bot and pipeline from a blank slate. **All database tables, historical parlays, learning data, and accuracy stats stay intact.** Only edge functions and cron jobs are deleted.
+This is the **pure generator core**, ported 1:1 from your Python spec. It reads a candidate-leg pool from Supabase, runs the v2 strategies/filters/exposure caps, and writes parlays to `bot_daily_parlays`. Nothing else: no cron, no Telegram, no settlement, no auto-trigger. You'll be able to run it on demand via `supabase.functions.invoke('parlay-engine-v2', { body: { dry_run: true } })` and inspect the output before we wire any of it into the daily flow.
 
-### What gets deleted
+### What gets built
 
-**~165 edge functions** across these groups:
+**1. Shared engine library** (`supabase/functions/_shared/parlay-engine-v2/`)
 
-- **Telegram surface** (5): `telegram-webhook`, `telegram-webhook-v1-backup`, `telegram-batch-flusher`, `telegram-audit-report`, `bot-send-telegram`
-- **Bot orchestration** (~30): `bot-curated-pipeline`, `bot-intraday-orchestrator`, `bot-slate-status-update`, `bot-daily-diagnostics`, `bot-daily-bankroll-checkin`, `bot-daily-winners`, `bot-evolve-strategies`, `bot-pipeline-doctor`, `bot-pipeline-preflight`, `bot-self-audit`, `bot-review-and-optimize`, `bot-settle-and-learn`, `bot-adaptive-intelligence`, `bot-announce-strategy-update`, `bot-quality-regen-loop`, `bot-parlay-auto-apply`, `bot-parlay-integrity-check`, `bot-parlay-smart-check`, `bot-update-engine-hit-rates`, `bot-daily-diversity-rebalance`, `bot-force-fresh-parlays`, `bot-recent-wins`, `bot-public-stats`, `bot-game-context-analyzer`, `bot-matchup-defense-scanner`, `bot-check-live-props`, `bot-close-miss-analyzer`, `bot-generate-daily-parlays`, `bot-generate-straight-bets`, `bot-insert-longshot-parlay`, `bot-reonboard-existing`
-- **Pipeline orchestrators** (5): `morning-prep-pipeline`, `morning-data-refresh`, `data-pipeline-orchestrator`, `engine-cascade-runner`, `orchestrator-daily-narrative`
-- **Parlay generators** (~15): `generate-rbi-parlays`, `generate-rbi-parlays-v2`, `generate-cross-sport-parlays-v2`, `generate-sb-over-parlays`, `generate-accuracy-flip-parlays`, `generate-prediction-parlays`, `generate-dd-td-picks`, `generate-lottery-cards`, `generate-matchup-scanner-picks`, `generate-extra-plays-report`, `generate-roasts`, `nba-bench-under-generator-v2`, `mlb-cascade-parlay-generator`, `gold-signal-parlay-engine`, `final-verdict-engine`, `l3-cross-engine-parlay`, `sharp-parlay-builder`, `hedge-parlay-builder`
-- **Settlement / verification** (~25): `settlement-orchestrator`, `auto-settle-parlays`, `auto-settle-ai-parlays`, `mlb-rbi-settler`, `mlb-sb-settler`, `mlb-cascade-parlay-settler`, `verify-ai-parlay-settlements`, `verify-all-engine-outcomes`, `verify-best-bets-outcomes`, `verify-elite-parlay-outcomes`, `verify-fatigue-outcomes`, `verify-juiced-outcomes`, `verify-risk-engine-outcomes`, `verify-scout-outcomes`, `verify-sharp-outcomes`, `verify-sweet-spot-outcomes`, `verify-whale-outcomes`, `settle-dd-td`, `settle-hedge-snapshots`, `settle-hedge-tracker`, `recalibrate-accuracy`, `recalibrate-sharp-signals`, `settlement-weight-updater`
-- **Analyzers / scanners** (~30): `category-props-analyzer`, `mlb-rbi-under-analyzer`, `mlb-sb-analyzer`, `mlb-batter-analyzer`, `mlb-pitcher-k-analyzer`, `mma-rounds-analyzer`, `tennis-games-analyzer`, `line-sum-mismatch-analyzer`, `line-projection-engine`, `high-conviction-analyzer`, `matchup-intelligence-analyzer`, `hrb-mlb-rbi-analyzer`, `hrb-mlb-rbi-scanner`, `hrb-nrfi-scanner`, `nba-mega-parlay-scanner`, `nhl-prop-sweet-spots-scanner`, `first-inning-hr-scanner`, `perfect-line-scanner`, `double-confirmed-scanner`, `whale-signal-detector`, `whale-odds-scraper`, `fanduel-line-scanner`, `fanduel-prediction-alerts`, `fanduel-accuracy-feedback`, `fanduel-behavior-analyzer`, `signal-classifier`, `pregame-scanlines-alert`, `scanlines-game-markets`, `engine-tracker-sync`, `prop-engine-v2`, `dd-td-pattern-analyzer`, `analyze-pick-dna`, `score-parlays-dna`, `pre-game-leg-verifier`, `detect-mispriced-lines`, `finalize-mispriced-verdicts`, `finalize-line-determination`, `recurring-winners-detector`, `post-alert-line-monitor`, `track-juiced-prop-movement`, `track-odds-movement`
-- **Broadcasters / alerts** (~10): `send-parlay-alert`, `send-slate-advisory`, `send-juiced-picks-email`, `send-daily-pick-drip`, `send-hedge-push-notification`, `daily-winners-broadcast`, `broadcast-new-strategies`, `broadcast-sweet-spots`, `nba-matchup-daily-broadcast`, `manual-parlay-broadcast`, `nhl-floor-lock-daily`, `straight-bet-slate`, `daily-fatigue-calculator`, `hedge-live-telegram-tracker`, `parlay-tracker-monitor`, `parlay-tracker-input`
-- **`_shared` files used only by the above** (8): `alert-enricher.ts`, `accuracy-lookup.ts`, `alert-context.ts`, `bankroll-curator.ts` (function), `narrative-state.ts`, `onboarding-state-machine.ts`, `parlayfarm-format.ts`, `pick-formatter.ts`, `voice.ts`, `customer-pick-router.ts`, `telegram-client.ts`
+Direct port of your 8 Python files into typed Deno TypeScript modules:
 
-### What stays
+| File | Source |
+|---|---|
+| `config.ts` | `config.py` — every threshold, allocation, whitelist, blacklist, tier set as `const` exports. ALL values preserved exactly (LEG_COUNT_ALLOCATION, ODDS_BANDS, ACTIVE_STRATEGIES, KILLED_STRATEGIES, SIGNAL_TIER_S/A/B, SIGNAL_WATCHLIST, SIGNAL_BLACKLIST, PROP_WHITELIST, PROP_BLACKLIST, MIN_LEG_CONFIDENCE 0.65, MAX_DAILY_DUPLICATION_RATIO 0.05, MAX_SAME_PLAYER_EXPOSURE 4, MAX_SAME_GAME_EXPOSURE 8, VOID_GUARDS, STAKE_BY_TIER, SPORT_ALLOCATION). |
+| `models.ts` | `models.py` — `CandidateLeg`, `Parlay`, `GenerationReport` interfaces + helper functions for `decimalOdds`, `impliedProb`, `fingerprint`, `comboHash`, `combinedDecimalOdds`, `combinedAmericanOdds`, `combinedProbability`, `expectedValueUnits`, `avgLegConfidence`. |
+| `scoring.ts` | `scoring.py` — `legQualityScore`, `rankLegs`, `parlayEvScore`, `parlayRankingScore` (with the FAT_PITCH 1.15x bonus and S/A signal-concentration bonus). |
+| `filters.ts` | `filters.py` — `legIsBettable`, `legPassesSignalGate`, `legPassesPropGate`, `validateLeg`, `parlayWithinOddsBand`, `parlayEdgeSufficient`, `parlayNoConflictingLegs`, `parlayLegCountValid`, `parlaySameGameConcentration`, `validateParlay`. |
+| `dedup.ts` | `dedup.py` — `ExposureTracker` class with `canAccept`, `accept`, `rejectDuplicate`, `duplicationRatio`, `summary`. |
+| `strategies.ts` | `strategies.py` — all 8 strategies (`mispricedEdge`, `grindStack`, `crossSport`, `doubleConfirmed`, `optimalCombo`, `shootoutStack`, `roleStackedLongshot`, `megaLotteryScanner`) + `_bestComboToBand`, `_uniquePlayers`, `_build`, `STRATEGY_REGISTRY`. Seeded RNG ported via mulberry32 for deterministic combo search. |
+| `allocator.ts` | `allocator.py` — `slotTargetCount`, `computeDailyPlan`, `tierBankrollShare`, `estimateDailyExposureUnits`. |
+| `generator.ts` | `generator.py` — `ParlayEngine` class with `generateSlate(candidates, now)` returning `SlateResult { parlays, report }`. Same loop structure: leg filter → daily plan → per-strategy build with bounded retries → narrow-pool by exposure → `validateParlay` → `exposure.canAccept` → trim/sort by `parlayRankingScore`. |
 
-- **All data** — `bot_daily_parlays` (2,566 rows), `bot_*` tables, `telegram_*` tables, `engine_*` tables, learning state, accuracy history
-- **Site-critical functions** — Stripe (`create-bot-checkout`, `create-free-signup`, `create-checkout`, `create-analysis-checkout`, `customer-portal`, `stripe-webhook`, `verify-analysis-payment`, `purchase-scans`, `credit-scan-purchase`, `decrement-pilot-scan`, `increment-scan`, `check-subscription`, `check-device`)
-- **Auth / email** — `send-email-verification`, `verify-email-code`, `send-phone-verification`, `verify-phone-code`, `cleanup-phone-verification`, `send-bot-access-email`, `retrieve-bot-password`, `send-transactional-email`, `process-email-queue`, `preview-transactional-email`, `handle-email-suppression`, `handle-email-unsubscribe`, `send-release-notification`, `send-push-notification`
-- **Blog / marketing** — `generate-blog-post`, `blog-rss`, `blog-sitemap`, `parlayfarm-sticky-header`
-- **Frontend-facing tools** — `extract-parlay`, `grade-slip`, `pick-full-scan`, `find-swap-alternatives`, `fetch-parlay-comparison`, `ai-research-agent`, `analyze-game-footage`, `analyze-live-frame`, `extract-youtube-frames`, `pp-props-scraper`, `firecrawl-lineup-scraper`, `sportsbook-props-scraper`
-- **TikTok stack** (entire group, in active use) — all `tiktok-*` functions
-- **Data ingestion** kept for now (no harm, can wipe later if you want) — `mlb-data-ingestion`, `mlb-props-sync`, `mma-props-sync`, `tennis-props-sync`, `nba-stats-fetcher`, `nfl-stats-fetcher`, `nhl-stats-fetcher`, `ncaab-*`, `ncaa-baseball-*`, etc.
-- **Hedge / scout / pool** kept — `record-hedge-snapshot`, `scout-agent-loop`, `scout-data-projection`, `pool-manager`
-- **Telegram secrets** — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, admin chat IDs all preserved
+No external deps. Pure functions + one class. Tree-shakeable.
 
-### Cron cleanup
+**2. Edge function** `supabase/functions/parlay-engine-v2/index.ts`
 
-Drop every `cron.job` row whose command invokes a deleted function. From the live job list that's ~50 jobs including: `bot-daily-diagnostics`, `bot-intraday-orchestrator`, `bot-evolve-strategy-weekly`, `bot-settle-and-learn-3x`, `bot-daily-bankroll-checkin`, `bot-review-and-optimize-4h`, `morning-prep-pipeline-daily`, `morning-data-refresh-daily`, `engine-cascade-*` (4 jobs), `daily-data-pipeline-8am-est`, `fanduel-line-scanner-5min`, `fanduel-prediction-alerts-5min`, `fanduel-behavior-analyzer-15min`, `fanduel-accuracy-feedback-2hr`, `hrb-mlb-rbi-analyzer-5min`, `hrb-mlb-rbi-scanner-5min`, `check-live-props`, `parlayfarm-batch-flusher`, `parlay-tracker-monitor-15min`, `daily-winners-broadcast`, `nba-matchup-daily-broadcast`, `daily-straight-bet-slate`, `daily-ladder-challenge`, `daily-ai-research-agent`, `mispriced-lines-*` (2), `finalize-mispriced-verdicts`, `finalize-line-determination-job`, `generate-accuracy-flip-parlays`, `hedge-live-telegram-tracker`, `l3-cross-engine-parlay-daily`, `auto-settle-ai-parlays-daily`, `morning-settle-ai-parlays`, `evening-verify-outcomes-11pm-est`, `midnight-settle-parlays-est`, `nhl-floor-lock-daily`, `daily-defense-ratings-refresh`, `daily-nba-fatigue-calculator`, `daily-verify-fatigue-outcomes`, `recurring-winners-detector` (any), `bankroll-curator-30min`, `orchestrator-daily-narrative-tick`, `accuracy-report-tuesday`.
+Single endpoint that:
 
-Done as a single migration: `DELETE FROM cron.job WHERE jobname IN (...)`.
+```text
+POST /parlay-engine-v2
+body: { dry_run?: boolean, date?: "YYYY-MM-DD" }
+```
 
-### Frontend impact
+Flow:
+1. Load candidate legs from `bot_daily_pick_pool` for today (ET via existing `_shared/date-et.ts`) joined with `unified_props` for `american_odds`, `commence_time`, `sport`, `team`/`opponent` (parsed from `game_description`).
+2. Map each row into a `CandidateLeg`:
+   - `confidence` ← `confidence_score / 100` (or `composite_score / 100`)
+   - `american_odds` ← `over_price` / `under_price` based on `recommended_side`
+   - `signal_source` ← `category` from pick_pool, normalized via a small mapping table (e.g. `"three_point_shooter"` → `"THREE_POINT_SHOOTER"`)
+   - `projected` ← `projected_value`, `edge` ← `projected - line`
+   - `line_confirmed_on_book` ← `unified_props.is_active && over_price IS NOT NULL`
+   - `player_active` ← assumed true (we don't have an injury feed wired here yet — flagged in report)
+   - `projection_updated_at` ← `bot_daily_pick_pool.created_at`
+   - `defensive_context_updated_at` ← null (skip that gate for now, noted in report)
+3. Call `engine.generateSlate(candidates, new Date())`.
+4. If `dry_run` → return `{ slate_result, mapped_candidates_sample, report }` as JSON, write nothing.
+5. If not `dry_run` → insert each parlay into `bot_daily_parlays` with:
+   - `strategy_name` = `parlay.strategy`
+   - `tier` = `parlay.tier` (CORE/EDGE/LOTTERY)
+   - `legs` = jsonb array of legs (player_name, prop_type, line, side, american_odds, sport, confidence, signal_source)
+   - `leg_count`, `combined_probability`, `expected_odds` = combined American
+   - `simulated_stake` = `parlay.stake_units`, `simulated_edge`, `selection_rationale` = `parlay.rationale`
+   - `outcome` = `'pending'`, `is_simulated` = true
+   - `parlay_date` = today ET
+6. Return `{ inserted, report }`.
 
-The homepage rebuild is unaffected — it doesn't call any of the deleted functions. Some admin/internal pages will break (e.g. `usePipelinePreflight`, `useBotPipeline` UI components in `/dashboard`). Hooks stay; they'll just return empty/stale data until the new pipeline writes to `bot_daily_parlays` again. We can hide the broken admin tiles in a follow-up.
+**3. Tests** — `supabase/functions/parlay-engine-v2/__tests__/engine.test.ts`
 
-### Execution
+5 deterministic unit tests (per your testing-policy rule):
+1. `legQualityScore` ranks an S-tier whitelist leg above a B-tier non-whitelist leg with same confidence.
+2. `validateLeg` rejects a leg with stale projection (>120 min) and accepts one fresh.
+3. `ExposureTracker` blocks a 5th parlay containing the same player.
+4. `mispricedEdge` returns null when no NBA whitelist legs meet 0.70 confidence; returns a 3-leg parlay when they exist.
+5. `generateSlate` on a synthetic 200-leg pool produces parlays whose strategy/tier mix matches `LEG_COUNT_ALLOCATION` within ±1, and `combo_hash` uniqueness ≥95%.
 
-1. **Migration** — `DELETE FROM cron.job WHERE jobname IN (...)` for the ~50 affected jobs
-2. **Bulk file delete** — remove ~165 `supabase/functions/<name>/` directories + 11 `_shared/*.ts` files
-3. **`supabase--delete_edge_functions`** — undeploy the same ~165 function names so they 404 immediately
-4. **Verify** — confirm preserved functions (`create-bot-checkout`, `tiktok-*`, blog, auth) still build cleanly
-5. **Telegram webhook** — the existing webhook URL will start returning 404 once `telegram-webhook` is undeployed. After rebuild we'll re-register via `setWebhook`. Same `TELEGRAM_BOT_TOKEN` reused.
+### What this step does NOT do
+
+- No cron job, no scheduling
+- No Telegram message, no broadcast
+- No settlement / outcome verification
+- No auto-trigger from any other function
+- No changes to existing `bot_daily_pick_pool` writers
+- No Lovable AI calls
+- No frontend UI changes (existing `useBotPipeline` hook keeps working — it just reads whatever this writes when you trigger it)
+
+### Open mapping decisions (shipping with these defaults; trivial to change later)
+
+- **Signal source mapping**: `bot_daily_pick_pool.category` strings will be uppercased and normalized (e.g. `"three_point_shooter"` → `"THREE_POINT_SHOOTER"`). Anything that doesn't match `SIGNAL_TIER_S/A/B/WATCHLIST` lands in the "unknown" bucket and gets the 0.90x penalty per `scoring.py`.
+- **Defensive-context gate**: skipped on first run (we don't have a single canonical `defense_updated_at` column). Will return to add this gate once we pick a source table.
+- **Player active gate**: currently always true. Easy to wire to an injuries table later if you have one.
+- **Stake → dollars**: kept as units only in DB (`simulated_stake`). Conversion to $ happens outside the engine.
 
 ### After this lands
 
-You'll have a clean `supabase/functions/` directory with only Stripe, auth, blog, TikTok, scout/pool, ingestion, and frontend-facing tools left. Next message you can describe the new bot + pipeline architecture and we'll build it from scratch against the existing data tables.
+You'll be able to:
+1. Hit the function manually from the Supabase dashboard or via `invoke()` to dry-run today's slate
+2. Inspect the `GenerationReport` (rejection reasons, strategy breakdown, tier breakdown, duplication ratio)
+3. Promote the run to a real insert when satisfied
+4. In a later phase we wire it to a daily cron + Telegram broadcast + settlement loop (separate plans)
 
