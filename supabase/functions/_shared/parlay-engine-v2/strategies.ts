@@ -74,22 +74,41 @@ export function bestComboToBand(
   leg_count: number,
   band_key: string,
   max_tries = 200,
+  min_distinct_games = 2,
 ): CandidateLeg[] | null {
   if (legs.length < leg_count) return null;
 
+  const gameKey = (l: CandidateLeg) =>
+    l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
+  const distinctGames = (combo: CandidateLeg[]) =>
+    new Set(combo.map(gameKey)).size;
+  // Hard requirement — no softening. If the filtered subset can't span
+  // enough games, return null so the caller skips this strategy rather
+  // than building a single-game parlay that the parlay-level gate will
+  // reject anyway.
+  const totalGames = new Set(legs.map(gameKey)).size;
+  const requiredGames = Math.min(min_distinct_games, leg_count);
+  if (totalGames < requiredGames) return null;
+
   const ranked = rankLegs(legs);
   const top_n = ranked.slice(0, leg_count);
-  if (combineMeetsBand(top_n, band_key)) return top_n;
+  if (combineMeetsBand(top_n, band_key) && distinctGames(top_n) >= requiredGames) {
+    return top_n;
+  }
 
   const pool = ranked.slice(0, Math.max(leg_count * 4, 12));
   let best_in_band: CandidateLeg[] | null = null;
   let best_in_band_score = -Infinity;
-  let best_overall = top_n;
-  let best_overall_score = top_n.reduce((s, l) => s + legQualityScore(l), 0);
+  let best_overall: CandidateLeg[] | null =
+    distinctGames(top_n) >= requiredGames ? top_n : null;
+  let best_overall_score = best_overall
+    ? top_n.reduce((s, l) => s + legQualityScore(l), 0)
+    : -Infinity;
 
   const rand = mulberry32(seedFromLegs(pool));
   for (let i = 0; i < max_tries; i++) {
     const combo = sampleK(pool, leg_count, rand);
+    if (distinctGames(combo) < requiredGames) continue;
     const score = combo.reduce((s, l) => s + legQualityScore(l), 0);
     if (combineMeetsBand(combo, band_key)) {
       if (score > best_in_band_score) {
