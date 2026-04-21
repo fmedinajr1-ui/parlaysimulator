@@ -273,6 +273,254 @@ export function renderRLM(r: RLMInput): RenderedMessage {
   return withKeyboard(body, kb);
 }
 
+// ─── #4b Cascade ────────────────────────────────────────────────────────────
+
+export interface CascadeInput {
+  id: string;
+  player: string;
+  league: string;
+  state?: string;
+  movedProps: string[];      // already-moved markets
+  pendingProps: string[];    // markets expected to follow
+  confidence: number;
+  reasoning: string;
+  playerId?: string;
+}
+
+export function renderCascade(c: CascadeInput): RenderedMessage {
+  const moved = c.movedProps.length ? c.movedProps.map(mdv2Escape).join(', ') : '—';
+  const pending = c.pendingProps.length ? c.pendingProps.map(mdv2Escape).join(', ') : '—';
+  const body = [
+    headerLine({ emoji: '🌊', type: 'CASCADE', sport: c.league, state: c.state ?? '🔴 LIVE' }),
+    divider(),
+    `*${mdv2Escape(c.player)}*`,
+    '',
+    '`Moved       ' + moved + '`',
+    '`Pending     ' + pending + '`',
+    '`Confidence  ' + mdv2Escape(c.confidence) + '%   ' + confBar(c.confidence) + '`',
+    '`Play        `*`Grab pending props NOW`*',
+    '',
+    `🐾 _${mdv2Escape(c.reasoning)}_`,
+  ].join('\n');
+  const kb: InlineKeyboard = [
+    [Buttons.tail(c.id), Buttons.fade(c.id)],
+    [Buttons.fullScan(c.id), c.playerId ? Buttons.mutePlayer(c.playerId) : Buttons.muteMarket(c.id)],
+  ];
+  return withKeyboard(body, kb);
+}
+
+// ─── #4c Correlated movement / team news shift ─────────────────────────────
+
+export interface CorrelatedMoveInput {
+  id: string;
+  matchup: string;        // "Lakers @ Celtics — POINTS"
+  league: string;
+  state?: string;
+  isNews?: boolean;       // true → 📰 TEAM NEWS SHIFT, false → 🔗 CORRELATED
+  itemsMoving: number;
+  itemsLabel: string;     // "players" | "games"
+  direction: 'dropping' | 'rising';
+  correlationPct: number;
+  topMoves: string[];     // 3-4 lines, plain text — escaped here
+  confidence: number;
+  play: string;           // e.g. "UNDER 8.5"
+  reasoning: string;
+}
+
+export function renderCorrelatedMove(c: CorrelatedMoveInput): RenderedMessage {
+  const emoji = c.isNews ? '📰' : '🔗';
+  const label = c.isNews ? 'TEAM NEWS SHIFT' : 'CORRELATED MOVEMENT';
+  const dirArrow = c.direction === 'dropping' ? '↓' : '↑';
+  const lines = [
+    headerLine({ emoji, type: label, sport: c.league, state: c.state ?? null }),
+    divider(),
+    `*${mdv2Escape(c.matchup)}*`,
+    '',
+    '`' + mdv2Escape(c.itemsMoving) + ' ' + mdv2Escape(c.itemsLabel) + ' moving ' + dirArrow + '   ' + mdv2Escape(c.correlationPct) + '% aligned`',
+    '`Confidence  ' + mdv2Escape(c.confidence) + '%   ' + confBar(c.confidence) + '`',
+    '`Play        `*`' + mdv2Escape(c.play) + '`*',
+    '',
+  ];
+  for (const m of c.topMoves.slice(0, 4)) lines.push(`▸ ${mdv2Escape(m)}`);
+  lines.push('', `🐾 _${mdv2Escape(c.reasoning)}_`);
+  const kb: InlineKeyboard = [
+    [Buttons.tail(c.id), Buttons.fade(c.id)],
+    [Buttons.fullScan(c.id), Buttons.muteMarket(c.id)],
+  ];
+  return withKeyboard(lines.join('\n'), kb);
+}
+
+// ─── Behavior alert router ────────────────────────────────────────────────
+//
+// Given a raw `behavior_alerts` row (the in-memory shape produced by
+// fanduel-behavior-analyzer / fanduel-prediction-alerts), pick the right
+// ParlayFarm template and return a fully-rendered MarkdownV2 message + kb.
+
+export interface BehaviorAlertLike {
+  id?: string;
+  type: string;
+  sport?: string | null;
+  player_name?: string | null;
+  event_description?: string | null;
+  event_id?: string | null;
+  prop_type?: string | null;
+  line_from?: number | string | null;
+  line_to?: number | string | null;
+  opening_line?: number | string | null;
+  current_line?: number | string | null;
+  direction?: 'dropping' | 'rising' | string | null;
+  velocity?: number | string | null;
+  time_span_min?: number | null;
+  consistencyRate?: number | null;
+  confidence?: number | null;
+  is_live?: boolean | null;
+  moved_props?: string[];
+  pending_props?: string[];
+  players_moving?: Array<{ name: string; direction?: string; magnitude?: string }>;
+  dominant_direction?: 'dropping' | 'rising' | string | null;
+  correlation_rate?: number | null;
+  derived_from?: string | null;
+}
+
+function prettyProp(p?: string | null): string {
+  if (!p) return '';
+  return String(p).replace(/^player[_\s]/i, '').replace(/_/g, ' ').toUpperCase();
+}
+
+export function renderBehaviorAlert(a: BehaviorAlertLike, idOverride?: string): RenderedMessage {
+  const id = idOverride ?? a.id ?? `${a.event_id ?? 'evt'}_${a.player_name ?? 'p'}_${a.prop_type ?? 'pt'}`.replace(/\s+/g, '_');
+  const league = a.sport ?? null;
+  const state = a.is_live ? '🔴 LIVE' : 'PREGAME';
+  const conf = Math.round(Number(a.confidence ?? 50));
+  const player = a.player_name ?? a.event_description ?? 'Unknown';
+  const market = prettyProp(a.prop_type);
+  const direction = (a.direction === 'dropping' || a.direction === 'rising') ? a.direction : 'dropping';
+  const arrow: '↑' | '↓' | '→' = direction === 'dropping' ? '↓' : direction === 'rising' ? '↑' : '→';
+  const isTeamMarket = ['h2h', 'moneyline', 'spreads', 'totals'].includes(String(a.prop_type ?? '').toLowerCase());
+
+  // Action / play computation matches the legacy analyzer logic
+  const computePlay = (): string => {
+    if (isTeamMarket && (a.prop_type === 'h2h' || a.prop_type === 'moneyline')) {
+      return direction === 'dropping' ? `BACK ${player}` : `FADE ${player}`;
+    }
+    if (isTeamMarket && a.prop_type === 'spreads') {
+      return direction === 'dropping' ? `TAKE ${player} SPREAD` : `FADE ${player} SPREAD`;
+    }
+    if (isTeamMarket && a.prop_type === 'totals') {
+      return direction === 'dropping' ? `UNDER ${a.line_to ?? a.current_line ?? ''}`.trim() : `OVER ${a.line_to ?? a.current_line ?? ''}`.trim();
+    }
+    const lineNow = a.line_to ?? a.current_line ?? '';
+    return direction === 'dropping' ? `UNDER ${lineNow}`.trim() : `OVER ${lineNow}`.trim();
+  };
+
+  switch (a.type) {
+    case 'cascade':
+    case 'live_cascade':
+      return renderCascade({
+        id,
+        player,
+        league: league ?? '',
+        state,
+        movedProps: (a.moved_props ?? []).map(prettyProp),
+        pendingProps: (a.pending_props ?? []).map(prettyProp),
+        confidence: conf,
+        reasoning: 'Related props follow within 5–15 min. Grab the pending side now.',
+      });
+
+    case 'correlated_movement':
+    case 'team_news_shift': {
+      const isNews = a.type === 'team_news_shift';
+      const moves = (a.players_moving ?? []).slice(0, 4).map((p: any) => `${p.name}: ${p.direction ?? ''} ${p.magnitude ?? ''}`.trim());
+      const dir = (a.dominant_direction === 'rising' ? 'rising' : 'dropping') as 'dropping' | 'rising';
+      const itemsLabel = isTeamMarket || a.derived_from === 'team_market_cross_game' ? 'games' : 'players';
+      const play = dir === 'dropping' ? (isNews ? 'UNDER (follow news)' : 'OVER (fade trap)') : (isNews ? 'OVER (follow news)' : 'UNDER (fade trap)');
+      const reasoning = isNews
+        ? `${a.players_moving?.length ?? 0} ${itemsLabel} shifting ${dir} = likely real news. Following the move.`
+        : `Coordinated ${dir} move below news threshold — fade as potential public trap.`;
+      return renderCorrelatedMove({
+        id,
+        matchup: `${a.event_description ?? player} — ${prettyProp(a.prop_type)}`,
+        league: league ?? '',
+        state,
+        isNews,
+        itemsMoving: a.players_moving?.length ?? 0,
+        itemsLabel,
+        direction: dir,
+        correlationPct: Number(a.correlation_rate ?? 0),
+        topMoves: moves,
+        confidence: conf,
+        play,
+        reasoning,
+      });
+    }
+
+    case 'trap_warning':
+      return renderTrapFlag({
+        id,
+        player,
+        market,
+        book: 'FanDuel',
+        league: league ?? '',
+        state,
+        publicPct: Math.round(Number((a as any).public_pct ?? 70)),
+        sharpPct: Math.round(Number((a as any).sharp_pct ?? 25)),
+        cashRatePct: Math.round(Number((a as any).cash_rate_pct ?? 0)),
+        cashRateLabel: 'at this price, 30-day',
+        reasoning: 'Public-heavy with low historical cash rate — trap risk.',
+      });
+
+    case 'reverse_line_movement':
+      return renderRLM({
+        id,
+        matchup: `${a.event_description ?? player} · ${prettyProp(a.prop_type)}`,
+        league: league ?? '',
+        state: a.is_live ? '🔴 LIVE' : undefined,
+        lineOpen: a.line_from ?? a.opening_line ?? '—',
+        lineNow: a.line_to ?? a.current_line ?? '—',
+        direction: arrow === '→' ? '↓' : (arrow as '↑' | '↓'),
+        publicPct: Math.round(Number((a as any).public_pct ?? 70)),
+        publicSide: direction === 'dropping' ? 'OVER' : 'UNDER',
+        actionLine: 'Book moved against the public.',
+        reasoning: 'Reverse line movement — sharps overriding public flow.',
+        tailLabel: computePlay(),
+      });
+
+    // Sharp steam family — velocity / line-about-to-move / take-it-now / snapback
+    default: {
+      const speed = a.velocity ?? null;
+      const win = a.time_span_min ?? null;
+      let reasoning = '';
+      if (a.type === 'velocity_spike' || a.type === 'live_velocity_spike') {
+        reasoning = direction === 'dropping' ? 'Line dropping fast. Sharps are on the under.' : 'Line rising fast. Sharps are on the over.';
+      } else if (a.type === 'line_about_to_move' || a.type === 'live_line_about_to_move') {
+        reasoning = direction === 'dropping' ? 'Steady drift down — sharps building UNDER.' : 'Steady drift up — sharps building OVER.';
+      } else if (a.type === 'take_it_now') {
+        reasoning = 'Drift exceeds typical range — grab this price before correction.';
+      } else if (a.type === 'snapback') {
+        reasoning = 'Line moved too far — expect reversion.';
+      } else {
+        reasoning = `Sharp signal: ${a.type}.`;
+      }
+      return renderSharpSteam({
+        id,
+        player,
+        market,
+        book: 'FanDuel',
+        league: league ?? '',
+        state,
+        lineOpen: a.line_from ?? a.opening_line ?? '—',
+        lineNow: a.line_to ?? a.current_line ?? '—',
+        direction: arrow,
+        speed: speed ?? undefined,
+        windowMin: win ?? undefined,
+        confidence: conf,
+        play: computePlay(),
+        reasoning,
+      });
+    }
+  }
+}
+
 // ─── #5 Slip verdict ───────────────────────────────────────────────────────
 
 export type LegStatus = 'green' | 'yellow' | 'red';
