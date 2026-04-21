@@ -7,3 +7,5 @@ export * from "./dedup.ts";
 export * from "./allocator.ts";
 export * from "./strategies.ts";
 export * from "./generator.ts";
+export * from "./backtest.ts";
+export * from "./calibration.ts";
