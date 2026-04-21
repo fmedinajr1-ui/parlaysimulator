@@ -1334,32 +1334,76 @@ Deno.serve(async (req) => {
     });
     if (rulesBlocked > 0) log(`Rules blocked ${rulesBlocked} alert(s)`);
 
-    // Paginated Telegram send
-    if (filteredAlerts.length > 0) {
-      const MAX_CHARS = 3800;
-      const pages: string[][] = [];
-      let currentPage: string[] = [];
-      let currentLen = 0;
-      for (const alert of filteredAlerts) {
-        const alertLen = alert.length + 2;
-        if (currentPage.length > 0 && currentLen + alertLen > MAX_CHARS) {
-          pages.push(currentPage); currentPage = []; currentLen = 0;
-        }
-        currentPage.push(alert); currentLen += alertLen;
-      }
-      if (currentPage.length > 0) pages.push(currentPage);
+    // === ParlayFarm v2: per-alert MarkdownV2 sends, auto Run/Fade/Scan/Mute keyboard.
+    // Bursts >3/60s collapse into a Batch Digest via telegram-batch-flusher.
+    if (predictionRecords.length > 0) {
+      const { renderBehaviorAlert } = await import("../_shared/parlayfarm-format.ts");
+      // Build a fast lookup: which alert texts survived the rules filter?
+      // We re-derive eligibility off the record's player_name to mirror the
+      // string-based filter above and keep RBI/SB caps applied.
+      let pfSent = 0;
+      for (const r of predictionRecords) {
+        // Apply same filters as the legacy text filter
+        const lowerProp = String(r.prop_type ?? "").toLowerCase();
+        const lowerPred = String(r.prediction ?? "").toLowerCase();
+        if (lowerProp.includes("stolen_bases") && lowerPred.startsWith("under")) continue;
+        if (BLOCKED_PLAYERS.has(r.player_name) && r.prop_type === "batter_rbis") continue;
+        if (rbiCapped.has(r.player_name) && r.prop_type === "batter_rbis") continue;
 
-      for (let i = 0; i < pages.length; i++) {
-        const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
-        const header = i === 0
-          ? [`🎯 *FanDuel Predictions*${pageLabel}`, `${filteredAlerts.length} signal(s) — sorted by accuracy`, ""]
-          : [`🎯 *Predictions${pageLabel}*`, ""];
+        const predSide = String(r.prediction ?? "").split(" ")[0]?.toUpperCase();
+        const direction = predSide === "UNDER" ? "dropping" : "rising";
+        const lineNow = Number(String(r.prediction ?? "").split(" ")[1]) || (r as any).signal_factors?.line_to || (r as any).signal_factors?.current_line;
+        const lineOpen = (r as any).signal_factors?.line_from ?? (r as any).signal_factors?.opening_line ?? lineNow;
+
+        // Map signal_type to behavior alert type
+        const sigType = String(r.signal_type ?? "").toLowerCase();
+        let alertType = sigType;
+        if (sigType.startsWith("flipped_")) alertType = sigType.replace("flipped_", "");
+
+        // callback_data must be <= 64 bytes including "scan:" prefix.
+        const rawKey = `${r.event_id ?? "e"}|${r.player_name ?? "p"}|${r.prop_type ?? "t"}|${alertType}`;
+        let h = 0; for (let i = 0; i < rawKey.length; i++) { h = ((h << 5) - h + rawKey.charCodeAt(i)) | 0; }
+        const pickId = `fp_${Math.abs(h).toString(36)}`.slice(0, 50);
+        const rendered = renderBehaviorAlert({
+          id: pickId,
+          type: alertType,
+          sport: r.sport,
+          player_name: r.player_name,
+          event_id: r.event_id,
+          prop_type: r.prop_type,
+          line_from: lineOpen,
+          line_to: lineNow,
+          opening_line: lineOpen,
+          current_line: lineNow,
+          direction,
+          velocity: (r as any).velocity_at_signal,
+          confidence: (r as any).confidence_at_signal,
+          is_live: false,
+        } as any, pickId);
+
         try {
           await supabase.functions.invoke("bot-send-telegram", {
-            body: { message: [...header, ...pages[i]].join("\n\n"), parse_mode: "Markdown", admin_only: true },
+            body: {
+              message: rendered.message,
+              parse_mode: rendered.parse_mode,
+              reply_markup: rendered.reply_markup,
+              admin_only: true,
+              bufferable: true,
+              pick_id: pickId,
+              alert_context: {
+                sport: r.sport,
+                generator: "fanduel-prediction-alerts",
+                confidence: (r as any).confidence_at_signal,
+                pick_id: pickId,
+              },
+            },
           });
-        } catch (tgErr: any) { log(`Telegram error p${i + 1}: ${tgErr.message}`); }
+          pfSent++;
+        } catch (tgErr: any) {
+          log(`ParlayFarm send error for ${r.player_name}: ${tgErr.message}`);
+        }
       }
+      log(`📡 ParlayFarm: sent ${pfSent}/${predictionRecords.length} prediction alerts (excess auto-buffered)`);
     }
 
     log(`=== COMPLETE: ${telegramAlerts.length} alerts, ${predictionRecords.length} predictions ===`);
