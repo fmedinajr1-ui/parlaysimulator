@@ -28,6 +28,51 @@ import {
 } from '../_shared/onboarding-state-machine.ts';
 import { renderWelcome, renderSettings } from '../_shared/parlayfarm-format.ts';
 
+// ─── Pick action handler (Run / Fade / Scan / Mute) ──────────────────────
+
+async function handlePickAction(
+  chatId: string,
+  action: 'run' | 'fade' | 'scan' | 'mute_30m',
+  pickId: string
+): Promise<string> {
+  // Look up the pick to capture player_name (used for mute matching)
+  const { data: pick } = await supabase
+    .from('bot_daily_picks')
+    .select('id, player_name, prop_type, side, line, sport, parlay_id')
+    .eq('id', pickId)
+    .maybeSingle();
+
+  // Record the action — works even if the pick row was purged.
+  await supabase.from('bot_pick_actions').insert({
+    chat_id: Number(chatId),
+    pick_id: pickId,
+    parlay_id: pick?.parlay_id ?? null,
+    player_name: pick?.player_name ?? null,
+    action,
+  });
+
+  switch (action) {
+    case 'run':
+      return `✅ *Locked in.* Tracking this for your record.`;
+    case 'fade':
+      return `❌ *Faded.* We'll grade the opposite outcome for you.`;
+    case 'mute_30m':
+      return `🔕 *Muted ${pick?.player_name ?? 'this pick'} for 30 minutes.* You'll still see other action.`;
+    case 'scan': {
+      // Fire-and-forget invoke — pick-full-scan replies on its own.
+      try {
+        await supabase.functions.invoke('pick-full-scan', {
+          body: { chat_id: chatId, pick_id: pickId },
+        });
+      } catch (e) {
+        console.warn('[webhook] pick-full-scan invoke failed:', e);
+        return `⚠️ Scan engine is busy — try again in a sec.`;
+      }
+      return `📊 _Running the full scan… one moment._`;
+    }
+  }
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-telegram-bot-api-secret-token',
@@ -374,6 +419,23 @@ Deno.serve(async (req) => {
       if (!isAdmin(chatId)) {
         const authd = await isAuthorized(chatId);
         if (!authd) return new Response('OK', { status: 200 });
+      }
+
+      // Route Run / Fade / Scan / Mute taps to the pick-action handler.
+      // Everything else falls through to the onboarding state machine.
+      const pickActionMatch = data.match(/^(run|fade|scan|mute):(?:30m:)?(.+)$/);
+      if (pickActionMatch) {
+        const verb = pickActionMatch[1] as 'run' | 'fade' | 'scan' | 'mute';
+        const id = pickActionMatch[2];
+        const action = verb === 'mute' ? 'mute_30m' : verb;
+        const reply = await handlePickAction(chatId, action, id);
+        await sendToChat(supabase, {
+          botToken: TELEGRAM_BOT_TOKEN,
+          chatId,
+          text: reply,
+          parseMode: 'Markdown',
+        });
+        return new Response('OK', { status: 200 });
       }
 
       await handleOnboardingCallback(supabase, TELEGRAM_BOT_TOKEN, chatId, data);

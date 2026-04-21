@@ -243,9 +243,45 @@ export async function fanoutToCustomers(
     .map(c => c.chat_id);
   const prefsMap = await loadAllCustomerPrefs(sb, chatIds);
 
+  // ── Mute-30m enforcement ──
+  // Build a set of (chat_id, player_name) pairs that are currently muted.
+  // Any pick whose player_name matches a mute row from the last 30 min is skipped.
+  const muteWindowIso = new Date(Date.now() - 30 * 60_000).toISOString();
+  const muteSet = new Set<string>();
+  let alertPlayerName: string | null = null;
+  try {
+    if (params.alertContext && (params.alertContext as any).pick_id) {
+      const { data: pickRow } = await sb
+        .from('bot_daily_picks')
+        .select('player_name')
+        .eq('id', (params.alertContext as any).pick_id)
+        .maybeSingle();
+      alertPlayerName = pickRow?.player_name ?? null;
+    }
+    if (alertPlayerName && chatIds.length > 0) {
+      const { data: muteRows } = await sb
+        .from('bot_pick_actions')
+        .select('chat_id, player_name')
+        .eq('action', 'mute_30m')
+        .gte('created_at', muteWindowIso)
+        .eq('player_name', alertPlayerName)
+        .in('chat_id', chatIds.map(Number));
+      for (const r of muteRows || []) {
+        muteSet.add(`${r.chat_id}|${r.player_name}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[tg] mute lookup failed (sending anyway):', e);
+  }
+
   let sent = 0, failed = 0, skipped = 0;
   for (const c of list) {
     if (params.excludeChatId && c.chat_id === params.excludeChatId) {
+      skipped++; continue;
+    }
+
+    // Skip if this customer muted this player in the last 30 min
+    if (alertPlayerName && muteSet.has(`${Number(c.chat_id)}|${alertPlayerName}`)) {
       skipped++; continue;
     }
 

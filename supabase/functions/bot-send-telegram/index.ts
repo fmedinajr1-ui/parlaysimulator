@@ -53,6 +53,12 @@ interface RequestBody {
   personalize_stake_pct?: number;
   /** When true, dispatcher buffers high-velocity bursts (>3/60s/chat) into a digest. */
   bufferable?: boolean;
+  /** Disable the auto-attached Run/Fade/Scan/Mute keyboard. */
+  no_actions?: boolean;
+  /** Pick id used for action callbacks. */
+  pick_id?: string;
+  parlay_id?: string;
+  signal_id?: string;
   /**
    * 'v2' (default) → message may be enriched by the v3 renderer if it's a
    *                  legacy typed call. v2 native cards (already formatted
@@ -73,6 +79,26 @@ interface RequestBody {
   // Legacy — deprecated
   type?: string;
   data?: Record<string, any>;
+}
+
+/**
+ * Build the default action keyboard for any pick that has an identifier.
+ * Customers tap one of these to record a Run / Fade, request a Full Scan,
+ * or mute the player for 30 minutes.
+ */
+function buildPickActionKeyboard(id: string): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🐕 Run it', callback_data: `run:${id}` },
+        { text: '❌ Fade', callback_data: `fade:${id}` },
+      ],
+      [
+        { text: '📊 Full scan', callback_data: `scan:${id}` },
+        { text: '🔕 Mute 30m', callback_data: `mute:30m:${id}` },
+      ],
+    ],
+  };
 }
 
 Deno.serve(async (req) => {
@@ -115,6 +141,27 @@ Deno.serve(async (req) => {
     }
 
     const { sb, botToken, adminChatId } = initClient();
+
+    // ── Auto-attach Run/Fade/Scan/Mute keyboard ──
+    // Every pick that carries an identifier gets the interactive action keyboard
+    // unless the caller opted out (`no_actions`) or supplied its own `reply_markup`.
+    // System / admin-only messages (settlements, pipeline failures, daily digests)
+    // skip this automatically because they don't include a pick_id.
+    const pickActionId =
+      body.pick_id
+      || body.parlay_id
+      || body.signal_id
+      || (body.alert_context && (body.alert_context.pick_id as string | undefined))
+      || (body.data && (body.data.pick_id || body.data.parlay_id || body.data.signal_id));
+    if (
+      !body.no_actions
+      && !body.reply_markup
+      && pickActionId
+      && body.narrative_phase !== 'settlement_story'
+      && body.narrative_phase !== 'pipeline_failure' as any
+    ) {
+      body.reply_markup = buildPickActionKeyboard(String(pickActionId));
+    }
 
     // ── ParlayFarm batch buffer ──
     // High-velocity alerts (velocity_spike, cascade, line_about_to_move, trap)
