@@ -13913,6 +13913,7 @@ export type Database = {
           heygen_avatar_id: string | null
           hook_style: string
           id: string
+          losses: number
           notes: string | null
           persona_key: string
           posting_active: boolean
@@ -13921,6 +13922,7 @@ export type Database = {
           tone_description: string
           updated_at: string
           warmup_stage: number
+          wins: number
         }
         Insert: {
           auto_post_enabled?: boolean
@@ -13933,6 +13935,7 @@ export type Database = {
           heygen_avatar_id?: string | null
           hook_style: string
           id?: string
+          losses?: number
           notes?: string | null
           persona_key: string
           posting_active?: boolean
@@ -13941,6 +13944,7 @@ export type Database = {
           tone_description: string
           updated_at?: string
           warmup_stage?: number
+          wins?: number
         }
         Update: {
           auto_post_enabled?: boolean
@@ -13953,6 +13957,7 @@ export type Database = {
           heygen_avatar_id?: string | null
           hook_style?: string
           id?: string
+          losses?: number
           notes?: string | null
           persona_key?: string
           posting_active?: boolean
@@ -13961,6 +13966,7 @@ export type Database = {
           tone_description?: string
           updated_at?: string
           warmup_stage?: number
+          wins?: number
         }
         Relationships: []
       }
@@ -14115,6 +14121,7 @@ export type Database = {
       }
       tiktok_post_queue: {
         Row: {
+          ab_group_id: string | null
           account_id: string
           attempts: number
           blotato_post_id: string | null
@@ -14134,6 +14141,7 @@ export type Database = {
           video_url: string | null
         }
         Insert: {
+          ab_group_id?: string | null
           account_id: string
           attempts?: number
           blotato_post_id?: string | null
@@ -14153,6 +14161,7 @@ export type Database = {
           video_url?: string | null
         }
         Update: {
+          ab_group_id?: string | null
           account_id?: string
           attempts?: number
           blotato_post_id?: string | null
@@ -14219,8 +14228,10 @@ export type Database = {
       }
       tiktok_posts: {
         Row: {
+          ab_group_id: string | null
           account_id: string
           caption: string | null
+          completion_rate: number | null
           created_at: string
           error: string | null
           hashtags: string[]
@@ -14234,6 +14245,7 @@ export type Database = {
           latest_shares: number
           latest_views: number
           manual_post_url: string | null
+          metrics_synced_at: string | null
           posted_at: string | null
           posted_manually_at: string | null
           render_id: string | null
@@ -14248,8 +14260,10 @@ export type Database = {
           viral_score: number
         }
         Insert: {
+          ab_group_id?: string | null
           account_id: string
           caption?: string | null
+          completion_rate?: number | null
           created_at?: string
           error?: string | null
           hashtags?: string[]
@@ -14263,6 +14277,7 @@ export type Database = {
           latest_shares?: number
           latest_views?: number
           manual_post_url?: string | null
+          metrics_synced_at?: string | null
           posted_at?: string | null
           posted_manually_at?: string | null
           render_id?: string | null
@@ -14277,8 +14292,10 @@ export type Database = {
           viral_score?: number
         }
         Update: {
+          ab_group_id?: string | null
           account_id?: string
           caption?: string | null
+          completion_rate?: number | null
           created_at?: string
           error?: string | null
           hashtags?: string[]
@@ -14292,6 +14309,7 @@ export type Database = {
           latest_shares?: number
           latest_views?: number
           manual_post_url?: string | null
+          metrics_synced_at?: string | null
           posted_at?: string | null
           posted_manually_at?: string | null
           render_id?: string | null

@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { render_id, scheduled_for } = await req.json();
+    const { render_id, scheduled_for, ab_group_id } = await req.json();
     if (!render_id) throw new Error('render_id required');
 
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE);
@@ -114,6 +114,7 @@ Deno.serve(async (req) => {
         hashtags,
         video_url: render.final_video_url,
         status: 'pending',
+        ab_group_id: ab_group_id || null,
       })
       .select()
       .single();

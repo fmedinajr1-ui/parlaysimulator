@@ -15,6 +15,7 @@ import { Loader2, Sparkles, Check, X, RefreshCw, Film, Zap } from "lucide-react"
 import PublishTab from "@/components/admin/tiktok/PublishTab";
 import HookLabTab from "@/components/admin/tiktok/HookLabTab";
 import AccountBlotatoConfig from "@/components/admin/tiktok/AccountBlotatoConfig";
+import AnalyticsTab from "@/components/admin/tiktok/AnalyticsTab";
 
 export default function AdminTikTok() {
   const { isAdmin, isLoading } = useAdminRole();
@@ -133,10 +134,11 @@ export default function AdminTikTok() {
       </div>
 
       <Tabs defaultValue="queue" className="w-full">
-        <TabsList className="grid grid-cols-6 w-full">
+        <TabsList className="grid grid-cols-7 w-full">
           <TabsTrigger value="queue">Queue ({drafts.length})</TabsTrigger>
           <TabsTrigger value="renders">Renders ({renders.length})</TabsTrigger>
           <TabsTrigger value="publish">Publish</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="hooks">Hook Lab</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
@@ -297,6 +299,11 @@ export default function AdminTikTok() {
             accounts={accounts}
             onReload={loadAll}
           />
+        </TabsContent>
+
+        {/* ANALYTICS TAB — Phase 7 */}
+        <TabsContent value="analytics">
+          <AnalyticsTab accounts={accounts} />
         </TabsContent>
 
         {/* ACCOUNTS TAB */}
