@@ -1,97 +1,85 @@
 
 
-## ParlayFarm Telegram rebrand — implementation plan
+## Make every pick interactive — Run / Scan / Fade buttons
 
-Replace the current alert formatting with the **ParlayFarm spec** ("Track Sharps. Tail Winners. 🐕"). All 11 templates from `parlayfarm-telegram-messages.md` get implemented. Old `alert-format-v3.ts` rendering is **deleted** in favor of the new system (with a thin compatibility shim so the 99 existing generators keep working without edits).
+The ParlayFarm renderer already defines `🐕 Tail`, `❌ Fade`, `📊 Full scan` buttons (`parlayfarm-format.ts` lines 76–98), but two pieces are missing:
 
-### Part A — Delete the old format
+1. **Outbound picks aren't carrying those buttons** — most generators (`bot-generate-daily-parlays`, `bot-curated-pipeline`, etc.) build their own message text and send via `bot-send-telegram` without `reply_markup`. Result: customers see the pick but no buttons.
+2. **The webhook ignores button taps** — `tail:<id>`, `fade:<id>`, `scan:<id>` callbacks land in `telegram-webhook` but are routed only to onboarding. Nothing handles them.
 
-- Remove `supabase/functions/_shared/alert-format-v3.ts` and any direct `renderAlertCardV3` imports.
-- Replace those imports with the new `parlayfarm-format.ts` entry point. Generators that built `AlertCardV3Input` keep their call sites — the shim accepts that shape and routes by `signal_type`.
+Plan fixes both.
 
-### Part B — New shared renderer
+---
 
-**File:** `supabase/functions/_shared/parlayfarm-format.ts`
+### Part 1 — Always attach action buttons to outbound picks
 
-Exports one function per template (MarkdownV2 output):
+**`supabase/functions/bot-send-telegram/index.ts`** — when the request body contains a `pick_id` (or `parlay_id`, or `signal_id`), auto-build a default `reply_markup`:
 
-| Template | Function | Trigger |
-|---|---|---|
-| #1 Welcome | `renderWelcome()` | `/start` |
-| #2 Sharp steam | `renderSharpSteam()` | `velocity_spike`, `live_velocity_spike`, `cascade`, `live_cascade`, `line_about_to_move` |
-| #3 Trap flag | `renderTrapFlag()` | `trap_warning=true` or sharp/public split ≥ 50pp |
-| #4 RLM | `renderRLM()` | `reverse_line_movement=true` |
-| #5 Slip verdict | `renderSlipVerdict()` | `grade-slip` output |
-| #6 Daily digest | `renderDailyDigest()` | morning recap cron |
-| #7 Batch digest | `renderBatchDigest()` | >3 alerts/60s for one chat |
-| #8 Sticky header | `renderStickyHeader()` | pinned, refreshed every 15min |
-| #9 Error / no read | `renderErrorNoRead()` | engine bailouts |
-| #10 CTA footer | `renderCTAFooter()` | appended to public-channel sends |
-| #11 Settings | `renderSettings()` | `/settings` command |
-
-Helpers: `mdv2Escape()`, `confBar(pct)` (10-char `█/▒`), `divider()` (`━`×23), `headerLine(type, sport, state)`, button taxonomy from spec ("Tail it", "Fade it", "Mute 30m", "View slip", "Open chart").
-
-### Part C — Dispatcher + batching
-
-- `bot-send-telegram/index.ts` — accept `parse_mode: 'MarkdownV2'` and `reply_markup`. Before sending, check buffer rule: if >3 messages queued for same `chat_id` in the last 60s → insert into buffer instead of sending.
-- New table `telegram_alert_batch_buffer (id, chat_id, signal_type, payload jsonb, created_at)`.
-- New cron edge function `telegram-batch-flusher` (every 30s) — drains buffer per chat into `renderBatchDigest()`.
-
-### Part D — Sticky header worker
-
-- New edge function `parlayfarm-sticky-header` — cron every 15min. Calls `editMessageText` on the pinned message id stored in `telegram_bot_state.pinned_header_message_id`. Pulls 60-min counters from `engine_live_tracker`. If no pinned id exists, sends + pins a new one.
-- Schema add: `telegram_bot_state.pinned_header_message_id bigint`, `pinned_header_chat_id bigint`.
-
-### Part E — Wire commands + slip verdict
-
-- `telegram-webhook/index.ts` — handle `/start` (welcome), `/today` (daily digest), `/slip` (parse + grade), `/tail`, `/settings`.
-- `grade-slip/index.ts` — final response uses `renderSlipVerdict()`.
-
-### DB migration
-
-```sql
-create table telegram_alert_batch_buffer (
-  id uuid primary key default gen_random_uuid(),
-  chat_id bigint not null,
-  signal_type text not null,
-  payload jsonb not null,
-  created_at timestamptz not null default now()
-);
-create index on telegram_alert_batch_buffer (chat_id, created_at);
-
-alter table telegram_bot_state
-  add column pinned_header_message_id bigint,
-  add column pinned_header_chat_id bigint;
+```
+[ 🐕 Run it ]  [ ❌ Fade ]
+[ 📊 Full scan ]  [ 🔕 Mute 30m ]
 ```
 
-Plus cron schedules for `telegram-batch-flusher` (30s) and `parlayfarm-sticky-header` (15min) — inserted via the insert tool, not migration (project-specific URL/key).
+Callbacks: `run:<pick_id>`, `fade:<pick_id>`, `scan:<pick_id>`, `mute:30m:<pick_id>`.
+Skip auto-attach when caller passes its own `reply_markup` or sets `no_actions: true` (admin/system messages).
+
+This means every existing generator immediately gets buttons without code changes — they already pass `pick_id` in the payload.
+
+### Part 2 — Handle the four button taps
+
+**`supabase/functions/telegram-webhook/index.ts`** — add a `handlePickAction()` branch in the callback router. Parses `<action>:<pick_id>`:
+
+| Tap | What happens |
+|---|---|
+| `run:<id>` | Insert into new `bot_pick_actions` table with `action='run'`, reply with `✅ Locked in. Tracking this for your record.` |
+| `fade:<id>` | Insert with `action='fade'`, reply with `❌ Faded. We'll grade the opposite outcome.` |
+| `scan:<id>` | Invoke a new edge function `pick-full-scan` that pulls the pick row + matchup + sharp money + last-10 + line history and replies with the long-form breakdown. |
+| `mute:30m:<id>` | Insert with `action='mute_30m'`, suppress that pick's player from this chat for 30 min. |
+
+### Part 3 — New `pick-full-scan` edge function
+
+Loads `bot_daily_picks` row by id → fetches matchup context (`bot_research_findings`), line history (`unified_props`), L10 (`mlb_player_game_logs` / nba equivalents), and the enrichment block from `alert-enricher`. Returns a deep-dive Telegram message (uses `renderSharpSteam` from ParlayFarm format) with the full reasoning + a `🐕 Run it / ❌ Fade` button row.
+
+### Part 4 — Persist actions for tracking
+
+New table:
+
+```sql
+create table bot_pick_actions (
+  id uuid primary key default gen_random_uuid(),
+  chat_id bigint not null,
+  pick_id uuid,
+  parlay_id uuid,
+  action text not null check (action in ('run','fade','scan','mute_30m')),
+  created_at timestamptz not null default now()
+);
+create index on bot_pick_actions (chat_id, pick_id);
+create index on bot_pick_actions (pick_id, action);
+alter table bot_pick_actions enable row level security;
+create policy "service role full access" on bot_pick_actions
+  for all using (auth.role() = 'service_role');
+```
+
+This unlocks future per-customer P/L: a customer's record = sum of `run` outcomes minus `fade` outcomes inverted, gated by their own taps — finally a real personalized scoreboard.
+
+### Part 5 — Mute enforcement
+
+`telegram-client.ts` `fanoutToCustomers` already loads prefs per customer. Add a check: before sending, query `bot_pick_actions` for `action='mute_30m'` rows where `chat_id` matches and `created_at > now() - 30min` and the new pick's `player_id` matches the muted pick's player. Skip those.
 
 ### Files
 
 **New**
-- `supabase/functions/_shared/parlayfarm-format.ts`
-- `supabase/functions/telegram-batch-flusher/index.ts`
-- `supabase/functions/parlayfarm-sticky-header/index.ts`
-- New schema migration
+- `supabase/functions/pick-full-scan/index.ts`
+- New migration for `bot_pick_actions`
 
 **Edited**
-- `supabase/functions/bot-send-telegram/index.ts` — MarkdownV2 + buffering
-- `supabase/functions/telegram-webhook/index.ts` — command routing
-- `supabase/functions/grade-slip/index.ts` — slip verdict template
-- All generators currently importing `alert-format-v3` — swap to `parlayfarm-format` shim (single-line import change)
+- `supabase/functions/bot-send-telegram/index.ts` — auto-attach default action keyboard when `pick_id`/`parlay_id` present
+- `supabase/functions/telegram-webhook/index.ts` — route `run:`, `fade:`, `scan:`, `mute:` callbacks to new handlers
+- `supabase/functions/_shared/telegram-client.ts` — mute check in fanout
 
-**Deleted**
-- `supabase/functions/_shared/alert-format-v3.ts`
+### Out of scope (future)
 
-### Safety
-
-- Compat shim accepts the old `AlertCardV3Input` shape so no generator logic changes.
-- Buffering is opt-in by signal volume — single alerts go through immediately, no latency added.
-- Sticky header is one pinned message per chat — non-destructive to history.
-
-### Out of scope (Phase 2 follow-up)
-
-- Inline button callback handling beyond logging clicks (Tail/Fade/Mute writes).
-- Settings persistence writes from template #11.
-- Rebranding non-Telegram surfaces (web, email, push).
+- "Run it" auto-placing the bet via sportsbook API (Hard Rock / FanDuel) — currently just records the tap.
+- A dashboard page showing customer's run/fade record. The data is captured; UI comes after we have a few weeks of taps.
+- Inline editing of pick stake from the button (e.g. quarter Kelly slider).
 
