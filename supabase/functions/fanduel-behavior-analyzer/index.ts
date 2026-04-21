@@ -2045,73 +2045,37 @@ Deno.serve(async (req) => {
       });
       if (rulesBlocked > 0) log(`Owner rules blocked ${rulesBlocked} alert(s)`);
 
-      const takeItNowAlerts = filteredAlerts.filter((a: any) => a.type === "take_it_now");
-      const lineAboutToMoveAlerts = filteredAlerts.filter((a: any) => a.type === "line_about_to_move");
-      const velocityAlerts = filteredAlerts.filter((a: any) => a.type === "velocity_spike");
-      const cascadeAlerts = filteredAlerts.filter((a: any) => a.type === "cascade");
-      const snapbackAlerts = filteredAlerts.filter((a: any) => a.type === "snapback");
-      const correlationAlerts = filteredAlerts.filter((a: any) => a.type === "correlated_movement" || a.type === "team_news_shift");
-
-      const allFormatted: string[] = [];
-      // Highest priority first
-      if (takeItNowAlerts.length > 0) {
-        allFormatted.push(`\n— *🔥 TAKE IT NOW (${takeItNowAlerts.length})* —`);
-        allFormatted.push(...takeItNowAlerts.map(formatAlert));
-      }
-      if (lineAboutToMoveAlerts.length > 0) {
-        allFormatted.push(`\n— *🎯 LINE ABOUT TO MOVE (${lineAboutToMoveAlerts.length})* —`);
-        allFormatted.push(...lineAboutToMoveAlerts.map(formatAlert));
-      }
-      if (velocityAlerts.length > 0) {
-        allFormatted.push(`\n— *VELOCITY SPIKES (${velocityAlerts.length})* —`);
-        allFormatted.push(...velocityAlerts.map(formatAlert));
-      }
-      if (cascadeAlerts.length > 0) {
-        allFormatted.push(`\n— *CASCADE OPPORTUNITIES (${cascadeAlerts.length})* —`);
-        allFormatted.push(...cascadeAlerts.map(formatAlert));
-      }
-      if (snapbackAlerts.length > 0) {
-        allFormatted.push(`\n— *SNAPBACK CANDIDATES (${snapbackAlerts.length})* —`);
-        allFormatted.push(...snapbackAlerts.map(formatAlert));
-      }
-      if (correlationAlerts.length > 0) {
-        allFormatted.push(`\n— *🔗 CORRELATED SHIFTS (${correlationAlerts.length})* —`);
-        allFormatted.push(...correlationAlerts.map(formatAlert));
-      }
-
-      const MAX_CHARS = 3800;
-      const pages: string[][] = [];
-      let currentPage: string[] = [];
-      let currentLen = 0;
-
-      for (const line of allFormatted) {
-        const lineLen = line.length + 1;
-        if (currentPage.length > 0 && !line.startsWith("\n—") && currentLen + lineLen > MAX_CHARS) {
-          pages.push(currentPage);
-          currentPage = [];
-          currentLen = 0;
-        }
-        currentPage.push(line);
-        currentLen += lineLen;
-      }
-      if (currentPage.length > 0) pages.push(currentPage);
-
-      for (let i = 0; i < pages.length; i++) {
-        const pageLabel = pages.length > 1 ? ` (${i + 1}/${pages.length})` : "";
-        const header = i === 0
-          ? [`🧠 *FanDuel Behavior*${pageLabel}`, `${highConfAlerts.length} signals — 🔥${takeItNowAlerts.length} 🎯${lineAboutToMoveAlerts.length} ⚡${velocityAlerts.length} 🌊${cascadeAlerts.length} 🔄${snapbackAlerts.length} 🔗${correlationAlerts.length}`, ""]
-          : [`🧠 *Behavior${pageLabel}*`, ""];
-
-        const msg = [...header, ...pages[i]].join("\n");
-
+      // === ParlayFarm v2: per-alert MarkdownV2 sends with auto Run/Fade/Scan/Mute keyboard.
+      // Each alert is buffered when >3 fire in 60s — collapsed by telegram-batch-flusher
+      // into a single Batch Digest (template #7). Single alerts go through immediately.
+      const { renderBehaviorAlert } = await import("../_shared/parlayfarm-format.ts");
+      let pfSent = 0;
+      for (const a of filteredAlerts) {
         try {
+          const pickId = `fbeh_${a.event_id ?? 'evt'}_${(a.player_name ?? 'p').replace(/\s+/g, '_')}_${a.prop_type ?? 'pt'}_${a.type}`.slice(0, 80);
+          const rendered = renderBehaviorAlert(a as any, pickId);
           await supabase.functions.invoke("bot-send-telegram", {
-            body: { message: msg, parse_mode: "Markdown", admin_only: true },
+            body: {
+              message: rendered.message,
+              parse_mode: rendered.parse_mode,
+              reply_markup: rendered.reply_markup,
+              admin_only: true,
+              bufferable: true,
+              pick_id: pickId,
+              alert_context: {
+                sport: a.sport,
+                generator: 'fanduel-behavior-analyzer',
+                confidence: a.confidence,
+                pick_id: pickId,
+              },
+            },
           });
+          pfSent++;
         } catch (tgErr: any) {
-          log(`Telegram error page ${i + 1}: ${tgErr.message}`);
+          log(`ParlayFarm send error for ${a.player_name ?? a.event_description}: ${tgErr.message}`);
         }
       }
+      log(`📡 ParlayFarm: sent ${pfSent}/${filteredAlerts.length} alerts (excess auto-buffered into digest)`);
     }
 
     log(`=== ANALYSIS COMPLETE: ${patterns.length} patterns, ${alerts.length} alerts (deduped), ${highConfAlerts.length} high-conf ===`);

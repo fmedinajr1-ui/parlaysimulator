@@ -286,7 +286,7 @@ Deno.serve(async (req) => {
       botToken,
       chatId,
       text: body.message,
-      parseMode: body.parse_mode || 'Markdown',
+      parseMode: body.parse_mode || 'MarkdownV2',
       replyMarkup: body.reply_markup,
       phase: body.narrative_phase ?? null,
       referenceKey: body.reference_key,
@@ -306,7 +306,7 @@ Deno.serve(async (req) => {
       fanoutStats = await fanoutToCustomers(sb, {
         botToken,
         text: body.message,
-        parseMode: body.parse_mode || 'Markdown',
+        parseMode: body.parse_mode || 'MarkdownV2',
         phase: body.narrative_phase ?? null,
         referenceKey: body.reference_key,
         excludeChatId: chatId,
