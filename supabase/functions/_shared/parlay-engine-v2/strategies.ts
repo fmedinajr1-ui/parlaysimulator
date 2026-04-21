@@ -82,8 +82,13 @@ export function bestComboToBand(
     l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
   const distinctGames = (combo: CandidateLeg[]) =>
     new Set(combo.map(gameKey)).size;
+  // Hard requirement — no softening. If the filtered subset can't span
+  // enough games, return null so the caller skips this strategy rather
+  // than building a single-game parlay that the parlay-level gate will
+  // reject anyway.
   const totalGames = new Set(legs.map(gameKey)).size;
-  const requiredGames = Math.min(min_distinct_games, totalGames, leg_count);
+  const requiredGames = Math.min(min_distinct_games, leg_count);
+  if (totalGames < requiredGames) return null;
 
   const ranked = rankLegs(legs);
   const top_n = ranked.slice(0, leg_count);
