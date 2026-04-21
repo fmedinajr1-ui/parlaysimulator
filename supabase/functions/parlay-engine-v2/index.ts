@@ -15,6 +15,11 @@ import {
   combinedProbability,
   expectedValueUnits,
 } from "../_shared/parlay-engine-v2/index.ts";
+import {
+  BOOKMAKER_PRIORITY,
+  MAX_BOOK_LINE_AGE_MIN,
+  MAX_LINE_DRIFT,
+} from "../_shared/parlay-engine-v2/config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,39 +76,81 @@ interface PropRow {
   game_description: string | null;
   commence_time: string | null;
   updated_at: string | null;
+  bookmaker?: string | null;
+  odds_updated_at?: string | null;
+}
+
+/** Pick the first row whose bookmaker matches the priority list, in order. */
+export function pickPreferredBook(
+  rows: PropRow[],
+  priority: string[] = BOOKMAKER_PRIORITY,
+): PropRow | null {
+  if (!rows || rows.length === 0) return null;
+  for (const book of priority) {
+    const match = rows.find(r => (r.bookmaker ?? "").toLowerCase() === book);
+    if (match) return match;
+  }
+  // No preferred book matched — fall back to first active row
+  return rows.find(r => r.is_active) ?? rows[0];
 }
 
 function buildCandidates(
   pool: PoolRow[],
   props: PropRow[],
   now: Date,
-): { candidates: CandidateLeg[]; mappingNotes: string[] } {
-  const propIndex = new Map<string, PropRow>();
+): { candidates: CandidateLeg[]; mappingNotes: string[]; rejections: Record<string, number> } {
+  const propsByKey = new Map<string, PropRow[]>();
   for (const p of props) {
     if (!p.player_name || !p.prop_type) continue;
-    propIndex.set(`${p.player_name.toLowerCase()}|${p.prop_type.toLowerCase()}`, p);
+    const k = `${p.player_name.toLowerCase()}|${p.prop_type.toLowerCase()}`;
+    const arr = propsByKey.get(k) ?? [];
+    arr.push(p);
+    propsByKey.set(k, arr);
   }
 
   const notes: string[] = [];
   const candidates: CandidateLeg[] = [];
+  const rejections: Record<string, number> = {};
+  const bump = (k: string) => { rejections[k] = (rejections[k] ?? 0) + 1; };
 
   for (const row of pool) {
     if (!row.prop_type || !row.recommended_side || row.recommended_line == null) continue;
     const side = row.recommended_side.toUpperCase();
-    const matchedProp = propIndex.get(`${row.player_name.toLowerCase()}|${row.prop_type.toLowerCase()}`);
+    const propRows = propsByKey.get(`${row.player_name.toLowerCase()}|${row.prop_type.toLowerCase()}`) ?? [];
+    const matchedProp = pickPreferredBook(propRows);
+
+    if (!matchedProp) { bump("leg:no_book_line"); continue; }
+
+    // (d) is_active gate — explicit, before anything else
+    if (matchedProp.is_active === false) { bump("leg:book_line_inactive"); continue; }
+
+    // (b) freshness gate
+    const oddsTs = matchedProp.odds_updated_at ?? matchedProp.updated_at;
+    if (oddsTs) {
+      const ageMin = (now.getTime() - new Date(oddsTs).getTime()) / 60_000;
+      if (ageMin > MAX_BOOK_LINE_AGE_MIN) { bump("leg:stale_book_line"); continue; }
+    } else {
+      bump("leg:stale_book_line"); continue;
+    }
+
+    // (c) line drift gate
+    if (matchedProp.current_line != null
+        && Math.abs(Number(matchedProp.current_line) - Number(row.recommended_line)) > MAX_LINE_DRIFT) {
+      bump("leg:line_moved"); continue;
+    }
 
     const american =
-      side === "OVER"  ? matchedProp?.over_price :
-      side === "UNDER" ? matchedProp?.under_price :
+      side === "OVER"  ? matchedProp.over_price :
+      side === "UNDER" ? matchedProp.under_price :
       null;
-    if (american == null) continue; // require live odds
+    if (american == null) { bump("leg:no_price_for_side"); continue; }
 
-    const sport = (matchedProp?.sport ?? inferSport(row.prop_type)).toUpperCase();
-    const { team, opponent } = parseTeams(matchedProp?.game_description ?? null);
-    const tipoff = matchedProp?.commence_time
+    const sport = (matchedProp.sport ?? inferSport(row.prop_type)).toUpperCase();
+    const { team, opponent } = parseTeams(matchedProp.game_description ?? null);
+    const tipoff = matchedProp.commence_time
       ? new Date(matchedProp.commence_time)
       : new Date(now.getTime() + 6 * 60 * 60 * 1000);
-    const projectionUpdated = matchedProp?.updated_at
+    const projectionUpdated = matchedProp.updated_at
       ? new Date(matchedProp.updated_at)
       : new Date(row.created_at);
 
@@ -111,6 +158,7 @@ function buildCandidates(
     const confidence = Math.max(0, Math.min(1, confidenceRaw / 100));
     const projected = row.projected_value ?? row.recommended_line;
     const edge = projected - row.recommended_line;
+    const selectedBook = (matchedProp.bookmaker ?? "").toLowerCase() || null;
 
     candidates.push({
       sport: sport === "BASKETBALL_NBA" ? "NBA" : sport,
@@ -127,16 +175,18 @@ function buildCandidates(
       signal_source: normalizeSignalSource(row.category),
       tipoff,
       projection_updated_at: projectionUpdated,
-      line_confirmed_on_book: !!(matchedProp?.is_active && american != null),
+      line_confirmed_on_book: !!(matchedProp.is_active && american != null),
       player_active: true, // no injury feed yet
       defensive_context_updated_at: null, // gate skipped this phase
+      selected_book: selectedBook,
     });
   }
 
   notes.push("player_active: assumed true (no injury feed wired in Phase A)");
   notes.push("defensive_context gate: skipped (no canonical defense_updated_at)");
+  notes.push(`book priority: ${BOOKMAKER_PRIORITY.join(" > ")}; max_age=${MAX_BOOK_LINE_AGE_MIN}m; max_drift=${MAX_LINE_DRIFT}`);
 
-  return { candidates, mappingNotes: notes };
+  return { candidates, mappingNotes: notes, rejections };
 }
 
 Deno.serve(async (req) => {
