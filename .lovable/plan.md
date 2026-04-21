@@ -1,41 +1,40 @@
 
 
-## Don't remove the gate — fix what's actually starving it
+## Rebalance tonight's pick pool so the engine has more games to draw from
 
-### What's really going on tonight
+### What you're asking for
 
-20 NBA games have fresh FanDuel/DraftKings lines, but `bot_daily_pick_pool` (today's date) only has player-name matches in **2 games**:
+Don't wait until tomorrow's 10 AM ET morning pipeline — rebuild `bot_daily_pick_pool` for `pick_date = today` right now so all 20 games with fresh FanDuel/DraftKings lines have player-prop coverage. Then re-run the broadcast and ship parlays that span multiple games tonight.
 
-| Game | Matched legs |
-|---|---|
-| Philadelphia 76ers @ Boston Celtics | 954 |
-| Houston Rockets @ Los Angeles Lakers | 159 |
+### Plan
 
-That's why every generated parlay ends up `same_game_share = 1.00` — the engine literally cannot draw legs from a third game. Removing the same-game gate would just paper over a thinner pick pool, and you'd start shipping 3-leg tickets where all 3 legs ride on whether the Celtics' starting lineup shows up tonight. That's a correlation bomb, not an edge.
+**1. Identify the pool builder**
 
-### Recommendation: keep the gate, lower it to 0.75 for tonight only, and refill the pool tomorrow
+The morning pipeline (`mem://infrastructure/pipeline/morning-prep-pipeline-unified`) populates `bot_daily_pick_pool`. I'll locate the exact edge function (likely `morning-prep-pipeline`, `build-daily-pick-pool`, or a step inside the unified runner) by searching `supabase/functions/` for writes to `bot_daily_pick_pool`. I'll invoke just that step — not the full 10 AM pipeline — so we don't re-trigger PVS enrichment or other heavy upstream jobs unnecessarily.
 
-**Three changes.**
+**2. Invoke a one-off rebuild for today**
 
-**1. Loosen `parlaySameGameConcentration` from 0.6 → 0.75 (temporary)**
+```ts
+supabase.functions.invoke('<pool-builder-fn>', {
+  body: { pick_date: 'today_ET', force_rebuild: true }
+});
+```
 
-In `supabase/functions/_shared/parlay-engine-v2/filters.ts`, change the default `max_share` from `0.6` to `0.75`. This lets a 4-leg parlay have 3 legs from one game (75%) but still rejects 4/4 same-game stacks. With 2 fresh games available, this unblocks tonight without going full SGP-roulette. Marked TEMP with a date comment so we revert when the pool is back to normal coverage.
+If the function doesn't accept a `force_rebuild` flag, I'll first DELETE today's rows from `bot_daily_pick_pool` (via insert tool / migration) then invoke. The builder uses `unified_props` as its source, which is already fresh from earlier tonight.
 
-**2. Add a "minimum distinct games" guard so we never silently ship a 100% same-game parlay**
+**3. Verify coverage expanded**
 
-New gate `parlayMinDistinctGames(p, min=2)` rejects any parlay whose legs all share one `(team|opponent)` key. Even at the looser 0.75 threshold, this is a hard floor: every parlay must touch at least 2 games. Counts as `parlay:single_game_only` in the rejection report.
+```sql
+SELECT game_description, COUNT(*) AS legs
+FROM bot_daily_pick_pool
+WHERE pick_date = (now() AT TIME ZONE 'America/New_York')::date
+GROUP BY game_description
+ORDER BY legs DESC;
+```
 
-**3. Don't touch the pool issue tonight — let tomorrow's morning pipeline rebuild it**
+Pass = 8+ games represented (was 2: 76ers@Celtics, Rockets@Lakers).
 
-The root cause is that `bot_daily_pick_pool` for `pick_date = CURRENT_DATE` was built before tonight's full slate had names locked in. The morning prep pipeline (10 AM ET, per `mem://infrastructure/pipeline/morning-prep-pipeline-unified`) will repopulate it with all 20 games. Tonight we ship what we can off the 2 games we do have coverage for.
-
-### Tests (3, all in `_shared/parlay-engine-v2/__tests__/`)
-
-1. 4-leg parlay with 3 legs from `LAL/GSW` + 1 leg from `BOS/MIA` → **passes** at new 0.75 threshold (was rejected at 0.6).
-2. 4-leg parlay with 4 legs from `LAL/GSW` → still **rejected** as `same_game_share_1.00`.
-3. 3-leg parlay with all 3 legs from `LAL/GSW` → **rejected** by new `parlayMinDistinctGames` gate as `single_game_only` (would have passed the share check at 1.00 ≤ 0.75 is false anyway, but this gate makes the intent explicit and survives future threshold changes).
-
-### Then re-broadcast
+**4. Re-broadcast**
 
 ```ts
 supabase.functions.invoke('parlay-engine-v2-broadcast', {
@@ -43,16 +42,20 @@ supabase.functions.invoke('parlay-engine-v2-broadcast', {
 });
 ```
 
-Expected: parlays ship with mixed Celtics/76ers + Rockets/Lakers legs, FD tags, no `single_game_only` rejections dominating the report. Flip `dry_run: false` to send.
+Expected: parlays now span 3–5 distinct games, `single_game_only` and `same_game_share_*` rejections drop to near-zero, FD/DK book tags on every leg. Flip `dry_run: false` to ship.
 
-### Memory updates after ship
+**5. If rebuild can't find player names for all 20 games**
 
-- New memory `mem://logic/parlay/same-game-concentration`: documents the 0.75 cap + min-2-games hard floor, with TEMP note pointing to the 0.6 revert target once pool coverage is restored.
+That means the upstream data (projections, defensive context, player matchups) is also stale and the builder is correctly skipping games with missing inputs. In that case I'll report exactly which games are missing which inputs and we decide whether to manually trigger the upstream refreshers (`refresh-l10-and-rebuild`, projection sync, etc.) or accept the partial coverage.
 
 ### What this does NOT do
 
-- Does not remove the same-game gate (correlation protection stays).
-- Does not patch the pick-pool refresh — tomorrow's pipeline handles it.
-- Does not change scoring, sizing, freshness, or drift gates.
+- Does not re-tighten the temporary 0.75 same-game gate (we leave that until pool coverage is reliably restored across multiple days).
+- Does not modify the pool builder's logic — only invokes it for today.
+- Does not change the 11 AM / 3 PM / 7 PM auto-broadcast cron schedule.
 - No schema changes.
+
+### Tests
+
+This is an operational re-run, not new code. Verification is the SQL coverage check + dry-run rejection report — both already required as gates before flipping to live broadcast.
 
