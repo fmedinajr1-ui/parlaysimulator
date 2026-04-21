@@ -206,7 +206,7 @@ function buildCandidates(
     });
   }
 
-  notes.push("player_active: assumed true (no injury feed wired in Phase A) [v2.7-min2games]");
+  notes.push("player_active: assumed true (no injury feed wired in Phase A)");
   notes.push("defensive_context gate: skipped (no canonical defense_updated_at)");
   notes.push(`book priority: ${BOOKMAKER_PRIORITY.join(" > ")}; max_age=${MAX_BOOK_LINE_AGE_MIN}m; max_drift=${MAX_LINE_DRIFT}`);
 
