@@ -473,6 +473,15 @@ export default function PublishTab({
                         <Calendar className="w-3 h-3 mr-1" />
                         Schedule next slot
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isBusy || !script}
+                        onClick={() => script && account && runAbTest(r, script, account)}
+                        title="Clone script under a second persona and post both — winner picked after 48h"
+                      >
+                        ⚖️ Run A/B test
+                      </Button>
                     </>
                   )}
                   {r.final_video_url && (
