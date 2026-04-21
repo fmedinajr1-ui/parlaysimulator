@@ -172,7 +172,9 @@ export const MAX_SAME_COMBO_HASH_REPEATS = 1;
 // ---------------------------------------------------------------------------
 
 export const VOID_GUARDS = {
-  require_fresh_projection_age_minutes: 120,
+  // TEMP (2026-04-21): widened from 120 → 360 alongside MAX_BOOK_LINE_AGE_MIN
+  // so tonight's slate can ship while the refresher is being patched.
+  require_fresh_projection_age_minutes: 360,
   require_line_confirmed_on_book: true,
   require_player_active_today: true,
   require_defensive_context_minutes: 60,
