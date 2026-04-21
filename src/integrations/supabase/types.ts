@@ -6470,6 +6470,33 @@ export type Database = {
         }
         Relationships: []
       }
+      leads: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          metadata: Json | null
+          slip_text: string | null
+          source: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: string
+          metadata?: Json | null
+          slip_text?: string | null
+          source?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          metadata?: Json | null
+          slip_text?: string | null
+          source?: string
+        }
+        Relationships: []
+      }
       line_movements: {
         Row: {
           authenticity_confidence: number | null
@@ -12502,6 +12529,51 @@ export type Database = {
           id?: string
           last_accuracy?: number | null
           sample_size?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sharp_signals: {
+        Row: {
+          created_at: string
+          display_order: number
+          hit_rate: string | null
+          id: string
+          is_active: boolean
+          line_movement: string | null
+          matchup: string
+          pick: string
+          public_pct: number
+          sharp_pct: number
+          sport: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_order?: number
+          hit_rate?: string | null
+          id?: string
+          is_active?: boolean
+          line_movement?: string | null
+          matchup: string
+          pick: string
+          public_pct: number
+          sharp_pct: number
+          sport: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_order?: number
+          hit_rate?: string | null
+          id?: string
+          is_active?: boolean
+          line_movement?: string | null
+          matchup?: string
+          pick?: string
+          public_pct?: number
+          sharp_pct?: number
+          sport?: string
           updated_at?: string
         }
         Relationships: []
