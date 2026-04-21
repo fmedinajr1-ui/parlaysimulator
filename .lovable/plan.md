@@ -1,98 +1,54 @@
 
 
-## Test result + plan to actually flip alerts to ParlayFarm format
+## Export — All wins since day one
 
-### Test verdict — they are NOT in the new format
+I'll generate a single Excel workbook with every winning pick across both sports and all engines, plus full context for each.
 
-I checked `bot_message_log` for the last 8 sent messages. Every single one is still the **old format**:
+### Output file
 
-```
-🧠 *FanDuel Behavior*
-12 signals — 🔥0 🎯0 ⚡12 ...
-— *VELOCITY SPIKES (12)* —
-⚡ *VELOCITY* [🔴 LIVE] — NBA
-James Harden POINTS
-Line dropping: 27.5 → 25.5 ...
-```
+`/mnt/documents/parlayfarm-all-wins-since-launch.xlsx`
 
-The spec calls for:
+### Workbook structure (5 sheets)
 
-```
-🐕 *SHARP STEAM* · NBA · 🔴 LIVE
-━━━━━━━━━━━━━━━━━━━━━━━
-*James Harden* · POINTS
-_FanDuel_
+**Sheet 1 — `Summary`**
+- Total wins, date range, breakdown by source / sport / engine / month
+- Total simulated profit, average odds, biggest single win
 
-`Line        27.5  →  `*`25.5`*` ↓`
-`Speed       12/hr · 10 min`
-`Confidence  95%   ██████████`
-`Play        `*`UNDER 25.5`*
+**Sheet 2 — `Winning Parlays` (361 rows, since 2026-02-09)**
+From `bot_daily_parlays WHERE outcome='won'`. One row per parlay:
+- `parlay_date`, `tier`, `strategy_name`, `dna_grade`, `leg_count`, `legs_hit`, `legs_missed`, `legs_voided`, `expected_odds`, `combined_probability`, `simulated_win_rate`, `simulated_edge`, `simulated_stake`, `simulated_payout`, `profit_loss`, `selection_rationale`, `lesson_learned`, `approval_status`, `settled_at`, `created_at`, `id`
 
-🐾 _Line dropped hard. Sharps are on the under._
-```
+**Sheet 3 — `Parlay Legs` (one row per leg of every winning parlay)**
+Flattened from the `legs` JSONB column of Sheet 2 — joined back to parent parlay by `parlay_id`. Columns: `parlay_id`, `parlay_date`, `tier`, `leg_index`, `player_name`, `team`, `opponent`, `sport`, `prop_type`, `line`, `side`, `odds`, `confidence`, `edge`, `signal_label`, `reason`, `actual_value`, `outcome`.
 
-### Root cause
+**Sheet 4 — `Winning Straight Props` (230 rows, since 2026-01-09)**
+From `prop_results_archive WHERE outcome='hit'`:
+- `game_date`, `sport`, `engine`, `player_name`, `team_name`, `opponent`, `prop_type`, `side`, `line`, `actual_value`, `confidence_score`, `edge`, `signal_label`, `archetype`, `reason`, `settled_at`, `archived_at`, `id`
 
-`fanduel-behavior-analyzer` (the loudest generator — fires every 30 min and produces these digests) hand-builds its own `⚡ VELOCITY` blocks at lines 1804–1864, bundles them under `🧠 *FanDuel Behavior*` at line 2102, and sends with `parse_mode: "Markdown"` + `admin_only: true`.
+**Sheet 5 — `By Sport / Engine`**
+Pivot-style breakdown: hit count, hit rate context, avg confidence, avg edge per sport per engine per month.
 
-It **bypasses** the new ParlayFarm pipeline because:
-1. It passes `message:` directly → compat shim skipped.
-2. It sets `admin_only: true` → batching/buffering skipped.
-3. It uses `parse_mode: "Markdown"` (not v2) → renderers never invoked.
-4. `enrichLegacyAlert()` requires `body.type` set (it isn't here).
+### Formatting
 
-Same pattern: `fanduel-prediction-alerts`, `accuracy-report`, every `🎯 *PERFECT LINE DETECTED*` digest. The new `parlayfarm-format.ts` is wired up but *nothing actually calls it*.
+- Currency columns ($) for stake/payout/profit, formatted with thousand separators and red parentheses for negatives
+- Percentage columns (probability, edge, confidence) formatted as `0.0%`
+- Dates as `YYYY-MM-DD`
+- Frozen header row, autofiltered, column widths sized to content
+- Numbers (not formulas) — this is a static export, not a model
 
-### Fix plan
+### Process
 
-**Part 1 — Migrate `fanduel-behavior-analyzer` to ParlayFarm renderers**
+1. Pull all 361 winning parlays + flatten the `legs` jsonb into a separate sheet
+2. Pull all 230 winning props with full context
+3. Compute summary aggregates in Python
+4. Write workbook with openpyxl, apply formatting
+5. Drop final file at `/mnt/documents/parlayfarm-all-wins-since-launch.xlsx`
+6. Spot-check totals against the DB before delivering
 
-Replace the inline string-building block (lines 1800–2020) with calls to `renderSharpSteam()` / `renderTrapFlag()` / `renderRLM()` / `renderCascade()` from `parlayfarm-format.ts`. Map alert types:
+### Notes / scope
 
-| In-memory `a.type` | ParlayFarm renderer |
-|---|---|
-| `velocity_spike`, `live_velocity_spike` | `renderSharpSteam` |
-| `line_about_to_move`, `live_line_about_to_move` | `renderSharpSteam` (state=PREGAME) |
-| `cascade`, `live_cascade` | new `renderCascade` (add to format file) |
-| `snapback` (take_it_now) | `renderSharpSteam` with snapback flag |
-| `correlated_movement`, `team_news_shift` | new `renderCorrelatedMove` (add) |
-| trap_warning flag set | `renderTrapFlag` |
-| RLM detected | `renderRLM` |
-
-Each alert is sent as **its own MarkdownV2 message** with the `pick_id` field set so `bot-send-telegram` auto-attaches the Run/Fade/Scan/Mute keyboard. The "more than 3 in 60s" rule then triggers `renderBatchDigest()` automatically — exactly like the spec wants.
-
-Drop the `🧠 *FanDuel Behavior*` digest header entirely. Replaced by the sticky channel header (#8) which already shows the rolling 60-min count.
-
-**Part 2 — Force MarkdownV2 in dispatcher**
-
-`bot-send-telegram` defaults to `parse_mode: "Markdown"` (line 289, 309). Change default to `"MarkdownV2"` since every ParlayFarm renderer outputs v2. Existing v1-Markdown callers (settlement narratives, dawn brief) keep working because they pass `parse_mode` explicitly.
-
-**Part 3 — Migrate the other big chatters**
-
-- `fanduel-prediction-alerts` — same treatment: per-alert `renderSharpSteam` instead of `🎯 *PERFECT LINE DETECTED*` blocks.
-- `pp-pick-broadcaster` and `bot-curated-pipeline` (whichever produces the `🔵 *STRONG EDGE*` and `🎯 *Perfect Line Alerts*` digests).
-
-**Part 4 — Add missing renderers**
-
-`renderCascade()` and `renderCorrelatedMove()` aren't in `parlayfarm-format.ts` yet. Add them following the same pattern (header + divider + monospace aligned block + reasoning footer + buttons via `Buttons.tail/fade/fullScan/mutePlayer`).
-
-**Part 5 — Verify**
-
-After deploy:
-1. Manually invoke `fanduel-behavior-analyzer` (`supabase--curl_edge_functions`).
-2. Re-query `bot_message_log` and confirm new rows match the spec exactly (`🐕 *SHARP STEAM*` header, monospace block, ParlayFarm footer).
-3. Trigger >3 alerts in 60s and confirm the buffer + `telegram-batch-flusher` produce a digest.
-
-### Files to edit
-
-- `supabase/functions/fanduel-behavior-analyzer/index.ts` — gut the formatter (lines 1800–2105), call ParlayFarm renderers, send one message per alert with `pick_id`
-- `supabase/functions/fanduel-prediction-alerts/index.ts` — same migration
-- `supabase/functions/pp-pick-broadcaster/index.ts` (and any other digest producers) — same
-- `supabase/functions/bot-send-telegram/index.ts` — flip default `parse_mode` to `MarkdownV2`
-- `supabase/functions/_shared/parlayfarm-format.ts` — add `renderCascade()` and `renderCorrelatedMove()`
-
-### Out of scope
-
-- Settlement narratives and dawn briefs (they have their own intentional v1-Markdown formatting per spec — non-alert messages).
-- The actual signal-detection logic stays untouched; only the rendering changes.
+- "Wins" = settled `outcome='won'` (parlays) and `outcome='hit'` (straight props). Pushes and pending excluded.
+- Data starts 2026-01-09 (first archived hit). Earlier picks predate the results archive table and aren't recoverable from a settled-outcome view.
+- Tables with zero recorded wins (`bot_daily_picks`, `final_verdict_picks`, `scout_prop_outcomes`, `user_parlay_outcomes`) are skipped — no data to export.
+- Signal context (matchup notes, line history, sharp money) lives in different tables and is not joined here unless you want a deeper enrichment pass — the columns above already include `reason`, `signal_label`, `selection_rationale`, and `lesson_learned` which carry the per-pick narrative.
 
