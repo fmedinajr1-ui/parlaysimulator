@@ -103,26 +103,41 @@ Deno.test("fitCorrelationModel: 60 same-game Rebounds OVER × Rebounds OVER pair
 
 // 5. ParlayEngine drops parlays flagged with negative correlation
 Deno.test("ParlayEngine({ reject_negative_correlation: true }) drops negatively correlated parlays", () => {
-  // Build a tiny synthetic correlation model that flags Rebounds OVER × Rebounds OVER as 0.50 lift
+  // Synthetic correlation model: flag Points OVER × Points OVER (same game) as negatively correlated.
+  // Use a diverse pool so parlays survive other filters (mispriced_edge requires whitelist props,
+  // 3-leg combos must pass leg_quality + same-game-share gates).
   const model = {
-    lift: new Map([["Rebounds|OVER||Rebounds|OVER", 0.5]]),
+    lift: new Map([["Points|OVER||Points|OVER", 0.5]]),
     pair_counts: new Map(),
     min_pair_count: 0,
   };
-  // Enough strong NBA whitelist legs; two of them are same-game Rebounds OVER
   const pool: CandidateLeg[] = [];
-  for (let i = 0; i < 12; i++) {
+  // 4 same-game Points OVER (LAL vs GSW) — strong whitelist signal
+  for (let i = 0; i < 4; i++) {
     pool.push(makeLeg({
-      player_name: `Star ${i}`, prop_type: "Rebounds", side: "OVER",
+      player_name: `LALStar ${i}`, prop_type: "Points", side: "OVER",
       team: "LAL", opponent: "GSW",
-      confidence: 0.74, american_odds: -135, signal_source: "BIG_REBOUNDER",
+      confidence: 0.78, american_odds: -135, signal_source: "VOLUME_SCORER",
+    }));
+  }
+  // Many other diverse props in different games so non-same-game parlays still build
+  const otherProps: Array<[string, string]> = [
+    ["Assists", "OVER"], ["Rebounds", "OVER"], ["Steals", "OVER"], ["3PM", "UNDER"],
+    ["Blocks", "UNDER"], ["R+A", "OVER"],
+  ];
+  for (let i = 0; i < 30; i++) {
+    const [pt, side] = otherProps[i % otherProps.length];
+    pool.push(makeLeg({
+      player_name: `Diverse ${i}`,
+      team: `T${i % 12}`, opponent: `O${(i + 1) % 12}`,
+      prop_type: pt, side, line: 5 + (i % 10),
+      confidence: 0.74, american_odds: -120, signal_source: "VOLUME_SCORER",
     }));
   }
   const engine = new ParlayEngine({
     correlation_model: model, reject_negative_correlation: true,
   });
   const res = engine.generateSlate(pool, NOW);
-  // We may still get parlays from non-rebounds strategies; but the rejection counter must register.
   const drops = res.report.rejection_reasons["parlay:negative_correlation"] ?? 0;
   assert(drops >= 1, `expected at least 1 negative_correlation drop, report=${JSON.stringify(res.report.rejection_reasons)}`);
 });
