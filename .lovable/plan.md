@@ -1,85 +1,98 @@
 
 
-## Make every pick interactive — Run / Scan / Fade buttons
+## Test result + plan to actually flip alerts to ParlayFarm format
 
-The ParlayFarm renderer already defines `🐕 Tail`, `❌ Fade`, `📊 Full scan` buttons (`parlayfarm-format.ts` lines 76–98), but two pieces are missing:
+### Test verdict — they are NOT in the new format
 
-1. **Outbound picks aren't carrying those buttons** — most generators (`bot-generate-daily-parlays`, `bot-curated-pipeline`, etc.) build their own message text and send via `bot-send-telegram` without `reply_markup`. Result: customers see the pick but no buttons.
-2. **The webhook ignores button taps** — `tail:<id>`, `fade:<id>`, `scan:<id>` callbacks land in `telegram-webhook` but are routed only to onboarding. Nothing handles them.
-
-Plan fixes both.
-
----
-
-### Part 1 — Always attach action buttons to outbound picks
-
-**`supabase/functions/bot-send-telegram/index.ts`** — when the request body contains a `pick_id` (or `parlay_id`, or `signal_id`), auto-build a default `reply_markup`:
+I checked `bot_message_log` for the last 8 sent messages. Every single one is still the **old format**:
 
 ```
-[ 🐕 Run it ]  [ ❌ Fade ]
-[ 📊 Full scan ]  [ 🔕 Mute 30m ]
+🧠 *FanDuel Behavior*
+12 signals — 🔥0 🎯0 ⚡12 ...
+— *VELOCITY SPIKES (12)* —
+⚡ *VELOCITY* [🔴 LIVE] — NBA
+James Harden POINTS
+Line dropping: 27.5 → 25.5 ...
 ```
 
-Callbacks: `run:<pick_id>`, `fade:<pick_id>`, `scan:<pick_id>`, `mute:30m:<pick_id>`.
-Skip auto-attach when caller passes its own `reply_markup` or sets `no_actions: true` (admin/system messages).
+The spec calls for:
 
-This means every existing generator immediately gets buttons without code changes — they already pass `pick_id` in the payload.
+```
+🐕 *SHARP STEAM* · NBA · 🔴 LIVE
+━━━━━━━━━━━━━━━━━━━━━━━
+*James Harden* · POINTS
+_FanDuel_
 
-### Part 2 — Handle the four button taps
+`Line        27.5  →  `*`25.5`*` ↓`
+`Speed       12/hr · 10 min`
+`Confidence  95%   ██████████`
+`Play        `*`UNDER 25.5`*
 
-**`supabase/functions/telegram-webhook/index.ts`** — add a `handlePickAction()` branch in the callback router. Parses `<action>:<pick_id>`:
+🐾 _Line dropped hard. Sharps are on the under._
+```
 
-| Tap | What happens |
+### Root cause
+
+`fanduel-behavior-analyzer` (the loudest generator — fires every 30 min and produces these digests) hand-builds its own `⚡ VELOCITY` blocks at lines 1804–1864, bundles them under `🧠 *FanDuel Behavior*` at line 2102, and sends with `parse_mode: "Markdown"` + `admin_only: true`.
+
+It **bypasses** the new ParlayFarm pipeline because:
+1. It passes `message:` directly → compat shim skipped.
+2. It sets `admin_only: true` → batching/buffering skipped.
+3. It uses `parse_mode: "Markdown"` (not v2) → renderers never invoked.
+4. `enrichLegacyAlert()` requires `body.type` set (it isn't here).
+
+Same pattern: `fanduel-prediction-alerts`, `accuracy-report`, every `🎯 *PERFECT LINE DETECTED*` digest. The new `parlayfarm-format.ts` is wired up but *nothing actually calls it*.
+
+### Fix plan
+
+**Part 1 — Migrate `fanduel-behavior-analyzer` to ParlayFarm renderers**
+
+Replace the inline string-building block (lines 1800–2020) with calls to `renderSharpSteam()` / `renderTrapFlag()` / `renderRLM()` / `renderCascade()` from `parlayfarm-format.ts`. Map alert types:
+
+| In-memory `a.type` | ParlayFarm renderer |
 |---|---|
-| `run:<id>` | Insert into new `bot_pick_actions` table with `action='run'`, reply with `✅ Locked in. Tracking this for your record.` |
-| `fade:<id>` | Insert with `action='fade'`, reply with `❌ Faded. We'll grade the opposite outcome.` |
-| `scan:<id>` | Invoke a new edge function `pick-full-scan` that pulls the pick row + matchup + sharp money + last-10 + line history and replies with the long-form breakdown. |
-| `mute:30m:<id>` | Insert with `action='mute_30m'`, suppress that pick's player from this chat for 30 min. |
+| `velocity_spike`, `live_velocity_spike` | `renderSharpSteam` |
+| `line_about_to_move`, `live_line_about_to_move` | `renderSharpSteam` (state=PREGAME) |
+| `cascade`, `live_cascade` | new `renderCascade` (add to format file) |
+| `snapback` (take_it_now) | `renderSharpSteam` with snapback flag |
+| `correlated_movement`, `team_news_shift` | new `renderCorrelatedMove` (add) |
+| trap_warning flag set | `renderTrapFlag` |
+| RLM detected | `renderRLM` |
 
-### Part 3 — New `pick-full-scan` edge function
+Each alert is sent as **its own MarkdownV2 message** with the `pick_id` field set so `bot-send-telegram` auto-attaches the Run/Fade/Scan/Mute keyboard. The "more than 3 in 60s" rule then triggers `renderBatchDigest()` automatically — exactly like the spec wants.
 
-Loads `bot_daily_picks` row by id → fetches matchup context (`bot_research_findings`), line history (`unified_props`), L10 (`mlb_player_game_logs` / nba equivalents), and the enrichment block from `alert-enricher`. Returns a deep-dive Telegram message (uses `renderSharpSteam` from ParlayFarm format) with the full reasoning + a `🐕 Run it / ❌ Fade` button row.
+Drop the `🧠 *FanDuel Behavior*` digest header entirely. Replaced by the sticky channel header (#8) which already shows the rolling 60-min count.
 
-### Part 4 — Persist actions for tracking
+**Part 2 — Force MarkdownV2 in dispatcher**
 
-New table:
+`bot-send-telegram` defaults to `parse_mode: "Markdown"` (line 289, 309). Change default to `"MarkdownV2"` since every ParlayFarm renderer outputs v2. Existing v1-Markdown callers (settlement narratives, dawn brief) keep working because they pass `parse_mode` explicitly.
 
-```sql
-create table bot_pick_actions (
-  id uuid primary key default gen_random_uuid(),
-  chat_id bigint not null,
-  pick_id uuid,
-  parlay_id uuid,
-  action text not null check (action in ('run','fade','scan','mute_30m')),
-  created_at timestamptz not null default now()
-);
-create index on bot_pick_actions (chat_id, pick_id);
-create index on bot_pick_actions (pick_id, action);
-alter table bot_pick_actions enable row level security;
-create policy "service role full access" on bot_pick_actions
-  for all using (auth.role() = 'service_role');
-```
+**Part 3 — Migrate the other big chatters**
 
-This unlocks future per-customer P/L: a customer's record = sum of `run` outcomes minus `fade` outcomes inverted, gated by their own taps — finally a real personalized scoreboard.
+- `fanduel-prediction-alerts` — same treatment: per-alert `renderSharpSteam` instead of `🎯 *PERFECT LINE DETECTED*` blocks.
+- `pp-pick-broadcaster` and `bot-curated-pipeline` (whichever produces the `🔵 *STRONG EDGE*` and `🎯 *Perfect Line Alerts*` digests).
 
-### Part 5 — Mute enforcement
+**Part 4 — Add missing renderers**
 
-`telegram-client.ts` `fanoutToCustomers` already loads prefs per customer. Add a check: before sending, query `bot_pick_actions` for `action='mute_30m'` rows where `chat_id` matches and `created_at > now() - 30min` and the new pick's `player_id` matches the muted pick's player. Skip those.
+`renderCascade()` and `renderCorrelatedMove()` aren't in `parlayfarm-format.ts` yet. Add them following the same pattern (header + divider + monospace aligned block + reasoning footer + buttons via `Buttons.tail/fade/fullScan/mutePlayer`).
 
-### Files
+**Part 5 — Verify**
 
-**New**
-- `supabase/functions/pick-full-scan/index.ts`
-- New migration for `bot_pick_actions`
+After deploy:
+1. Manually invoke `fanduel-behavior-analyzer` (`supabase--curl_edge_functions`).
+2. Re-query `bot_message_log` and confirm new rows match the spec exactly (`🐕 *SHARP STEAM*` header, monospace block, ParlayFarm footer).
+3. Trigger >3 alerts in 60s and confirm the buffer + `telegram-batch-flusher` produce a digest.
 
-**Edited**
-- `supabase/functions/bot-send-telegram/index.ts` — auto-attach default action keyboard when `pick_id`/`parlay_id` present
-- `supabase/functions/telegram-webhook/index.ts` — route `run:`, `fade:`, `scan:`, `mute:` callbacks to new handlers
-- `supabase/functions/_shared/telegram-client.ts` — mute check in fanout
+### Files to edit
 
-### Out of scope (future)
+- `supabase/functions/fanduel-behavior-analyzer/index.ts` — gut the formatter (lines 1800–2105), call ParlayFarm renderers, send one message per alert with `pick_id`
+- `supabase/functions/fanduel-prediction-alerts/index.ts` — same migration
+- `supabase/functions/pp-pick-broadcaster/index.ts` (and any other digest producers) — same
+- `supabase/functions/bot-send-telegram/index.ts` — flip default `parse_mode` to `MarkdownV2`
+- `supabase/functions/_shared/parlayfarm-format.ts` — add `renderCascade()` and `renderCorrelatedMove()`
 
-- "Run it" auto-placing the bet via sportsbook API (Hard Rock / FanDuel) — currently just records the tap.
-- A dashboard page showing customer's run/fade record. The data is captured; UI comes after we have a few weeks of taps.
-- Inline editing of pick stake from the button (e.g. quarter Kelly slider).
+### Out of scope
+
+- Settlement narratives and dawn briefs (they have their own intentional v1-Markdown formatting per spec — non-alert messages).
+- The actual signal-detection logic stays untouched; only the rendering changes.
 
