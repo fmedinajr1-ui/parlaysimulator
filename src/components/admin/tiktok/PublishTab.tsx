@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Download, ExternalLink, Loader2, RefreshCw, Send, Calendar } from "lucide-react";
+import { Zap } from "lucide-react";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -65,8 +66,9 @@ export default function PublishTab({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [postModal, setPostModal] = useState<{ render: RenderRow; script: ScriptRow; account: AccountRow } | null>(null);
   const [postUrl, setPostUrl] = useState("");
+  const [queue, setQueue] = useState<any[]>([]);
 
-  useEffect(() => { loadSlots(); }, []);
+  useEffect(() => { loadSlots(); loadQueue(); }, []);
 
   async function loadSlots() {
     const { data } = await supabase
@@ -74,6 +76,36 @@ export default function PublishTab({
       .select("*")
       .eq("is_active", true);
     setSlots(data || []);
+  }
+
+  async function loadQueue() {
+    const { data } = await supabase
+      .from("tiktok_post_queue")
+      .select("*")
+      .in("status", ["pending", "posting", "failed"])
+      .order("scheduled_for", { ascending: true });
+    setQueue(data || []);
+  }
+
+  async function autoPost(render: RenderRow, mode: "now" | "schedule") {
+    setBusyId(render.id);
+    try {
+      const body: any = { render_id: render.id };
+      if (mode === "now") body.scheduled_for = new Date(Date.now() + 30_000).toISOString();
+      const { data, error } = await supabase.functions.invoke("tiktok-blotato-enqueue", { body });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      toast.success(
+        mode === "now"
+          ? "Queued — posting in <1 min"
+          : `Scheduled for ${new Date(data.scheduled_for).toLocaleString()}`,
+      );
+      await Promise.all([onReload(), loadQueue()]);
+    } catch (e: any) {
+      toast.error(`Auto-post failed: ${e.message}`);
+    } finally {
+      setBusyId(null);
+    }
   }
 
   // Renders ready to publish
@@ -357,6 +389,28 @@ export default function PublishTab({
                     <Send className="w-3 h-3 mr-1" />
                     Mark as posted
                   </Button>
+                  {account?.auto_post_enabled && account?.blotato_account_id && r.final_video_url && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        disabled={isBusy}
+                        onClick={() => autoPost(r, "now")}
+                      >
+                        {isBusy ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                        Post now (Blotato)
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={isBusy}
+                        onClick={() => autoPost(r, "schedule")}
+                      >
+                        <Calendar className="w-3 h-3 mr-1" />
+                        Schedule next slot
+                      </Button>
+                    </>
+                  )}
                   {r.final_video_url && (
                     <a href={r.final_video_url} target="_blank" rel="noopener noreferrer">
                       <Button size="sm" variant="ghost">
