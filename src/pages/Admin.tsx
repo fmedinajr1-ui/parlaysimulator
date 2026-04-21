@@ -464,6 +464,21 @@ export default function Admin() {
               Admin Sections
             </h2>
             <div className="grid gap-3">
+              <Card
+                className="cursor-pointer hover:bg-muted/30 transition-colors active:scale-[0.99] border-primary/30"
+                onClick={() => navigate('/admin/tiktok')}
+              >
+                <CardContent className="p-4 flex items-center gap-4">
+                  <div className="p-3 rounded-xl bg-muted/50 text-pink-500">
+                    <Music2 className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-medium text-foreground">TikTok Pipeline</h3>
+                    <p className="text-sm text-muted-foreground">Scripts, renders, A/B testing &amp; analytics</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
               {sectionConfig.map((section) => (
                 <Card 
                   key={section.id}
