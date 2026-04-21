@@ -216,17 +216,22 @@ Deno.serve(async (req) => {
     if (playerNames.length > 0) {
       const { data: propData, error: propErr } = await sb
         .from("unified_props")
-        .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at")
+        .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at")
         .in("player_name", playerNames);
       if (propErr) throw propErr;
       props = propData ?? [];
     }
 
     const now = new Date();
-    const { candidates, mappingNotes } = buildCandidates(pool ?? [], props, now);
+    const { candidates, mappingNotes, rejections } = buildCandidates(pool ?? [], props, now);
 
     const engine = new ParlayEngine();
     const slate = engine.generateSlate(candidates, now);
+
+    // Merge book-line rejections into the engine's rejection_reasons report
+    for (const [k, v] of Object.entries(rejections)) {
+      slate.report.rejection_reasons[k] = (slate.report.rejection_reasons[k] ?? 0) + v;
+    }
 
     if (dryRun) {
       return new Response(JSON.stringify({
