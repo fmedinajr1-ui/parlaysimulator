@@ -13903,7 +13903,9 @@ export type Database = {
       }
       tiktok_accounts: {
         Row: {
+          auto_post_enabled: boolean
           baseline_hashtags: string[]
+          blotato_account_id: string | null
           caption_template: string
           created_at: string
           display_name: string
@@ -13921,7 +13923,9 @@ export type Database = {
           warmup_stage: number
         }
         Insert: {
+          auto_post_enabled?: boolean
           baseline_hashtags?: string[]
+          blotato_account_id?: string | null
           caption_template: string
           created_at?: string
           display_name: string
@@ -13939,7 +13943,9 @@ export type Database = {
           warmup_stage?: number
         }
         Update: {
+          auto_post_enabled?: boolean
           baseline_hashtags?: string[]
+          blotato_account_id?: string | null
           caption_template?: string
           created_at?: string
           display_name?: string
@@ -14106,6 +14112,66 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      tiktok_post_queue: {
+        Row: {
+          account_id: string
+          attempts: number
+          blotato_post_id: string | null
+          blotato_response: Json | null
+          caption: string | null
+          created_at: string
+          hashtags: string[] | null
+          id: string
+          last_error: string | null
+          posted_at: string | null
+          render_id: string | null
+          scheduled_for: string
+          script_id: string
+          status: string
+          tiktok_url: string | null
+          updated_at: string
+          video_url: string | null
+        }
+        Insert: {
+          account_id: string
+          attempts?: number
+          blotato_post_id?: string | null
+          blotato_response?: Json | null
+          caption?: string | null
+          created_at?: string
+          hashtags?: string[] | null
+          id?: string
+          last_error?: string | null
+          posted_at?: string | null
+          render_id?: string | null
+          scheduled_for: string
+          script_id: string
+          status?: string
+          tiktok_url?: string | null
+          updated_at?: string
+          video_url?: string | null
+        }
+        Update: {
+          account_id?: string
+          attempts?: number
+          blotato_post_id?: string | null
+          blotato_response?: Json | null
+          caption?: string | null
+          created_at?: string
+          hashtags?: string[] | null
+          id?: string
+          last_error?: string | null
+          posted_at?: string | null
+          render_id?: string | null
+          scheduled_for?: string
+          script_id?: string
+          status?: string
+          tiktok_url?: string | null
+          updated_at?: string
+          video_url?: string | null
+        }
+        Relationships: []
       }
       tiktok_post_schedule: {
         Row: {
