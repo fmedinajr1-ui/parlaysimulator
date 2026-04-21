@@ -76,9 +76,9 @@ Deno.test("ExposureTracker blocks 5th parlay containing same player", () => {
     const p = {
       strategy: "test", tier: "CORE" as const,
       legs: [
-        makeLeg({ player_name: "Star Player", prop_type: "Points",   line: 20 + i }),
-        makeLeg({ player_name: `Other ${i}A`, prop_type: "Assists",  side: "OVER", signal_source: "ASSISTS" }),
-        makeLeg({ player_name: `Other ${i}B`, prop_type: "Rebounds", side: "OVER" }),
+        makeLeg({ player_name: "Star Player", prop_type: "Points",   line: 20 + i, team: `T${i}A`, opponent: `T${i}B` }),
+        makeLeg({ player_name: `Other ${i}A`, prop_type: "Assists",  side: "OVER", signal_source: "ASSISTS", team: `T${i}C`, opponent: `T${i}D` }),
+        makeLeg({ player_name: `Other ${i}B`, prop_type: "Rebounds", side: "OVER", team: `T${i}E`, opponent: `T${i}F` }),
       ],
       stake_units: 1, rationale: "t", generated_at: NOW,
     };
@@ -89,9 +89,9 @@ Deno.test("ExposureTracker blocks 5th parlay containing same player", () => {
   const fifth = {
     strategy: "test", tier: "CORE" as const,
     legs: [
-      makeLeg({ player_name: "Star Player", prop_type: "Steals", line: 1.5 }),
-      makeLeg({ player_name: "Other 5A", prop_type: "Assists", side: "OVER", signal_source: "ASSISTS" }),
-      makeLeg({ player_name: "Other 5B", prop_type: "Rebounds", side: "OVER" }),
+      makeLeg({ player_name: "Star Player", prop_type: "Steals", line: 1.5, team: "T5A", opponent: "T5B" }),
+      makeLeg({ player_name: "Other 5A", prop_type: "Assists", side: "OVER", signal_source: "ASSISTS", team: "T5C", opponent: "T5D" }),
+      makeLeg({ player_name: "Other 5B", prop_type: "Rebounds", side: "OVER", team: "T5E", opponent: "T5F" }),
     ],
     stake_units: 1, rationale: "t", generated_at: NOW,
   };
