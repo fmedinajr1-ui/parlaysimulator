@@ -1,28 +1,41 @@
 
 
-## Refresh odds, then broadcast tonight's slate
+## Don't remove the gate — fix what's actually starving it
 
-Quick 2-step recovery so we can ship tonight's parlays.
+### What's really going on tonight
 
-### Step 1 — Refresh `unified_props`
+20 NBA games have fresh FanDuel/DraftKings lines, but `bot_daily_pick_pool` (today's date) only has player-name matches in **2 games**:
 
-Invoke the existing odds-sync job that populates `unified_props` for tonight's NBA games. Based on the codebase, the canonical refreshers are:
+| Game | Matched legs |
+|---|---|
+| Philadelphia 76ers @ Boston Celtics | 954 |
+| Houston Rockets @ Los Angeles Lakers | 159 |
 
-- `fetch-current-odds` (per-event, used for hedge/scout)
-- The high-frequency feed referenced in `mem://infrastructure/market-data/fanduel-integration` that writes to `unified_props.odds_updated_at`
+That's why every generated parlay ends up `same_game_share = 1.00` — the engine literally cannot draw legs from a third game. Removing the same-game gate would just paper over a thinner pick pool, and you'd start shipping 3-leg tickets where all 3 legs ride on whether the Celtics' starting lineup shows up tonight. That's a correlation bomb, not an edge.
 
-I'll invoke whichever one is wired to bulk-refresh `unified_props` for today's slate. After it completes, verify with:
+### Recommendation: keep the gate, lower it to 0.75 for tonight only, and refill the pool tomorrow
 
-```sql
-SELECT bookmaker, COUNT(*), MAX(odds_updated_at)
-FROM unified_props
-WHERE event_id IN (today's NBA events)
-GROUP BY bookmaker;
-```
+**Three changes.**
 
-Pass = at least FanDuel rows with `odds_updated_at` within the last 5 minutes.
+**1. Loosen `parlaySameGameConcentration` from 0.6 → 0.75 (temporary)**
 
-### Step 2 — Re-invoke the broadcast
+In `supabase/functions/_shared/parlay-engine-v2/filters.ts`, change the default `max_share` from `0.6` to `0.75`. This lets a 4-leg parlay have 3 legs from one game (75%) but still rejects 4/4 same-game stacks. With 2 fresh games available, this unblocks tonight without going full SGP-roulette. Marked TEMP with a date comment so we revert when the pool is back to normal coverage.
+
+**2. Add a "minimum distinct games" guard so we never silently ship a 100% same-game parlay**
+
+New gate `parlayMinDistinctGames(p, min=2)` rejects any parlay whose legs all share one `(team|opponent)` key. Even at the looser 0.75 threshold, this is a hard floor: every parlay must touch at least 2 games. Counts as `parlay:single_game_only` in the rejection report.
+
+**3. Don't touch the pool issue tonight — let tomorrow's morning pipeline rebuild it**
+
+The root cause is that `bot_daily_pick_pool` for `pick_date = CURRENT_DATE` was built before tonight's full slate had names locked in. The morning prep pipeline (10 AM ET, per `mem://infrastructure/pipeline/morning-prep-pipeline-unified`) will repopulate it with all 20 games. Tonight we ship what we can off the 2 games we do have coverage for.
+
+### Tests (3, all in `_shared/parlay-engine-v2/__tests__/`)
+
+1. 4-leg parlay with 3 legs from `LAL/GSW` + 1 leg from `BOS/MIA` → **passes** at new 0.75 threshold (was rejected at 0.6).
+2. 4-leg parlay with 4 legs from `LAL/GSW` → still **rejected** as `same_game_share_1.00`.
+3. 3-leg parlay with all 3 legs from `LAL/GSW` → **rejected** by new `parlayMinDistinctGames` gate as `single_game_only` (would have passed the share check at 1.00 ≤ 0.75 is false anyway, but this gate makes the intent explicit and survives future threshold changes).
+
+### Then re-broadcast
 
 ```ts
 supabase.functions.invoke('parlay-engine-v2-broadcast', {
@@ -30,18 +43,16 @@ supabase.functions.invoke('parlay-engine-v2-broadcast', {
 });
 ```
 
-Dry run first to confirm:
-- Rejection reasons no longer dominated by `leg:stale_book_line`
-- New parlays are populated with `[FD]` book tags
-- Leg count > 0
+Expected: parlays ship with mixed Celtics/76ers + Rockets/Lakers legs, FD tags, no `single_game_only` rejections dominating the report. Flip `dry_run: false` to send.
 
-Then flip `dry_run: false` and ship to `@parlayiqbot`. Existing dedup table prevents the 2 already-sent parlays from re-posting.
+### Memory updates after ship
 
-### Fallback if Step 1 returns no fresh data
+- New memory `mem://logic/parlay/same-game-concentration`: documents the 0.75 cap + min-2-games hard floor, with TEMP note pointing to the 0.6 revert target once pool coverage is restored.
 
-If the odds source has no tonight's NBA games (late slate, source down), I'll report back and we decide between:
-- Widening freshness gate to 6h for tonight only (one-line config bump, revert tomorrow)
-- Skipping tonight's auto-broadcast and waiting for tomorrow's morning cron
+### What this does NOT do
 
-No code/schema changes needed for the happy path — just two function invocations and a verification query.
+- Does not remove the same-game gate (correlation protection stays).
+- Does not patch the pick-pool refresh — tomorrow's pipeline handles it.
+- Does not change scoring, sizing, freshness, or drift gates.
+- No schema changes.
 
