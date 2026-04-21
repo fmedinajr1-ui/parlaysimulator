@@ -7,6 +7,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { etDateKey } from "../_shared/date-et.ts";
+import { BOOK_TAG } from "../_shared/parlay-engine-v2/config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,6 +33,7 @@ interface Leg {
   confidence?: number | null;
   signal_source?: string | null;
   projected?: number | null;
+  selected_book?: string | null;
 }
 
 interface ParlayRow {
@@ -109,6 +111,12 @@ function pickLegLine(l: Leg): number | null {
 function pickLegOdds(l: Leg): number | null {
   return legNum(l.american_odds ?? l.price ?? l.odds);
 }
+function pickLegBookTag(l: Leg): string {
+  const b = (l.selected_book ?? "").toString().toLowerCase();
+  if (!b) return "";
+  const tag = BOOK_TAG[b];
+  return tag ? ` [${tag}]` : "";
+}
 
 // ----- Message builder ------------------------------------------------------
 
@@ -139,12 +147,13 @@ export function buildMessage(p: ParlayRow): string {
     const side = (l.side ?? "").toString().toUpperCase();
     const line = pickLegLine(l);
     const odds = pickLegOdds(l);
+    const bookTag = pickLegBookTag(l);
     const conf = l.confidence != null ? ` · conf ${Number(l.confidence).toFixed(2)}` : "";
     const sig = l.signal_source
       ? ` · ${escapeHtml(l.signal_source.toLowerCase().replace(/_/g, " "))}`
       : "";
     const proj = l.projected != null ? ` · proj ${Number(l.projected).toFixed(1)}` : "";
-    return `${i + 1}. ${player} — ${prop} ${side} ${line ?? "?"} (${fmtAmerican(odds)})\n   <i>${sig.replace(/^ · /, "")}${conf}${proj}</i>`;
+    return `${i + 1}. ${player} — ${prop} ${side} ${line ?? "?"} (${fmtAmerican(odds)})${bookTag}\n   <i>${sig.replace(/^ · /, "")}${conf}${proj}</i>`;
   }).join("\n\n");
 
   let footer = "";
@@ -223,6 +232,23 @@ Deno.serve(async (req) => {
     const chatId = body.chat_id ?? defaultChatId ?? "";
     const errors: string[] = [];
     let generated = 0;
+
+    // Phase D: kill switch via bot_owner_rules
+    const { data: killRow } = await sb
+      .from("bot_owner_rules")
+      .select("rule_logic, is_active")
+      .eq("rule_key", "parlay_iq_autobroadcast_enabled")
+      .maybeSingle();
+    if (killRow) {
+      const enabled = killRow.is_active !== false
+        && (killRow.rule_logic as any)?.enabled !== false;
+      if (!enabled) {
+        return new Response(JSON.stringify({
+          success: true, paused: true, generated: 0, sent: 0,
+          skipped_duplicates: 0, errors: [],
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
 
     if (!dryRun && !botToken) {
       return new Response(JSON.stringify({

@@ -218,6 +218,26 @@ export const STAKE_SIZING_MODE: StakeSizingMode = "kelly_lite";
 export const KELLY_FRACTION = 0.25;
 
 // ---------------------------------------------------------------------------
+// REAL BOOK LINE GATES (v2.6 / Phase D)
+// ---------------------------------------------------------------------------
+
+/** Bookmaker priority — first match wins when multiple books quote the same prop. */
+export const BOOKMAKER_PRIORITY: string[] = ["fanduel", "draftkings", "betmgm"];
+
+/** Reject candidate legs whose unified_props.odds_updated_at is older than this. */
+export const MAX_BOOK_LINE_AGE_MIN = 20;
+
+/** Reject candidate legs whose pool line drifts from the book's current_line by more than this. */
+export const MAX_LINE_DRIFT = 0.5;
+
+/** Short tag rendered in Telegram messages, e.g. "[FD]". */
+export const BOOK_TAG: Record<string, string> = {
+  fanduel: "FD",
+  draftkings: "DK",
+  betmgm: "MGM",
+};
+
+// ---------------------------------------------------------------------------
 // SWEEP PRESETS (v2.5)
 // ---------------------------------------------------------------------------
 

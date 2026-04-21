@@ -86,3 +86,31 @@ Deno.test("buildMessage escapes HTML-special characters", () => {
   assert(text.includes("edge &amp; lock"), `expected escaped &: ${text}`);
   assert(text.includes("&lt;bad&gt;"), `expected escaped angle brackets: ${text}`);
 });
+
+// 6. Phase D — book tag rendered for fanduel
+Deno.test("buildMessage appends [FD] tag for fanduel-sourced legs", () => {
+  const text = buildMessage(makeRow({
+    legs: [{
+      player_name: "Luka Doncic", prop_type: "Points", side: "OVER",
+      line: 28.5, american_odds: -115, selected_book: "fanduel",
+    } as any],
+    leg_count: 1,
+  }));
+  assert(text.includes("[FD]"), `expected [FD] tag: ${text}`);
+});
+
+// 7. Phase D — book tag rendered for draftkings, omitted when missing
+Deno.test("buildMessage appends [DK] for draftkings, omits tag when no book", () => {
+  const dk = buildMessage(makeRow({
+    legs: [{ player_name: "X", prop_type: "Points", side: "OVER", line: 20, american_odds: -110, selected_book: "draftkings" } as any],
+    leg_count: 1,
+  }));
+  assert(dk.includes("[DK]"), `expected [DK]: ${dk}`);
+
+  const noBook = buildMessage(makeRow({
+    legs: [{ player_name: "X", prop_type: "Points", side: "OVER", line: 20, american_odds: -110 } as any],
+    leg_count: 1,
+  }));
+  assert(!noBook.includes("[FD]") && !noBook.includes("[DK]") && !noBook.includes("[MGM]"),
+    `expected no book tag: ${noBook}`);
+});
