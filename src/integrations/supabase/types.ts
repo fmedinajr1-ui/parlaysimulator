@@ -2061,6 +2061,36 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_pick_actions: {
+        Row: {
+          action: string
+          chat_id: number
+          created_at: string
+          id: string
+          parlay_id: string | null
+          pick_id: string | null
+          player_name: string | null
+        }
+        Insert: {
+          action: string
+          chat_id: number
+          created_at?: string
+          id?: string
+          parlay_id?: string | null
+          pick_id?: string | null
+          player_name?: string | null
+        }
+        Update: {
+          action?: string
+          chat_id?: number
+          created_at?: string
+          id?: string
+          parlay_id?: string | null
+          pick_id?: string | null
+          player_name?: string | null
+        }
+        Relationships: []
+      }
       bot_player_performance: {
         Row: {
           avg_edge: number | null
