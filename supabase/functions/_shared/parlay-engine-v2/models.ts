@@ -23,6 +23,8 @@ export interface CandidateLeg {
   line_confirmed_on_book?: boolean;
   player_active?: boolean;
   defensive_context_updated_at?: Date | null;
+  /** v2.6: which bookmaker the line + price came from (e.g. "fanduel"). */
+  selected_book?: string | null;
 }
 
 // ---------- Leg helpers ----------
