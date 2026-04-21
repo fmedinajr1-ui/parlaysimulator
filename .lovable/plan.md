@@ -1,48 +1,38 @@
 
 
-## Rebuild wins file with full leg detail
+## Make the wins file easier to browse
 
-The current `Parlay Legs` sheet is missing the columns you need to actually read each leg. I'll regenerate the workbook so every leg row is fully self-describing.
+The Excel sheet tabs aren't clickable because Lovable's file preview only renders the first sheet — it's a viewer limitation, not a bug in the file itself. All 5 sheets are in the workbook and work fine when opened in Excel / Google Sheets / Numbers.
 
-### What changes
+To unblock you immediately, I'll re-deliver the data in a format you can actually click through in the preview.
 
-**Sheet 3 — `Parlay Legs`** rebuilt with these columns (one row per leg of every winning parlay):
+### What I'll do
 
-| Column | Source |
-|---|---|
-| Parlay Date | parent parlay |
-| Tier | parent parlay |
-| Strategy | parent parlay |
-| Leg # | index within parlay |
-| Sport | leg.sport (NBA / MLB / NFL / etc.) |
-| Player / Team | leg.player_name (or team name for team bets) |
-| Prop / Bet Type | leg.prop_type cleaned (Points, Rebounds, Spread, Total, Moneyline…) |
-| Side | OVER / UNDER / HOME / AWAY |
-| Line | leg.line / selected_line |
-| Odds | leg.american_odds formatted (+150 / -110) |
-| Projected | leg.projected_value (model projection) |
-| Actual | leg.actual_value (final stat) |
-| Result | HIT / MISS / PUSH / VOID color-coded |
-| Hit Rate | leg.hit_rate (historical) |
-| Confidence | leg.composite_score |
-| Source | leg.line_source (mispriced_edge, sharp_steam, etc.) |
+Generate **two additional artifacts** alongside the existing Excel file:
 
-The OVER/UNDER and HIT/MISS cells get colored fills (green / red / yellow / gray) so you can scan a parlay top-to-bottom and instantly see what each leg was and whether it cashed.
+**1. Five separate CSV files** (one per sheet) — `/mnt/documents/wins/`
+- `01-summary.csv`
+- `02-winning-parlays.csv`
+- `03-parlay-legs.csv` ← the one you actually want to read
+- `04-winning-straight-props.csv`
+- `05-by-sport-engine.csv`
 
-**Sheet 4 — `Winning Straight Props`** stays the same (already has full leg context).
+CSVs preview cleanly in Lovable's file viewer — you click each one in the sidebar instead of fighting with sheet tabs.
 
-**Other sheets** (Summary, Winning Parlays, By Sport · Engine) unchanged.
+**2. A single HTML file** — `/mnt/documents/parlayfarm-all-wins.html`
 
-### Output
+Self-contained page with all 5 datasets as sortable, filterable tables stacked in sections with a sticky nav at the top (jump to Summary / Parlays / Legs / Straights / Breakdown). Color-coded HIT/MISS/PUSH cells, monospace odds, formatted dates and currency. Opens in any browser, including Lovable's preview.
 
-Replaces `/mnt/documents/parlayfarm-all-wins-since-launch.xlsx` (same path so you don't have to re-find it).
+The original `.xlsx` stays where it is for download.
 
 ### Process
 
-1. Re-pull all 361 winning parlays
-2. Flatten the `legs` JSONB with the expanded column set above
-3. Apply prop_type cleanup map (`player_points` → "Points", `batter_hits` → "Hits", `spread` → "Spread", etc. — using the existing label conventions in the codebase)
-4. Format odds, color-code results, freeze headers, autofilter
-5. Recalculate and verify zero formula errors
-6. Spot-check a known parlay end-to-end before delivering
+1. Reload the same data already pulled (361 parlays + 1,096 legs + 230 straights)
+2. Write the 5 CSVs with the same columns as the existing workbook sheets
+3. Render the HTML file with embedded CSS (no external assets) and small vanilla-JS sort/filter on each table
+4. Verify each file opens and renders, spot-check totals match the xlsx
+
+### Out of scope
+
+- Building this as an actual page inside the ParlayFarm app (different ask — let me know if you want that instead, e.g. a `/wins` route with the same data live from the DB)
 
