@@ -113,7 +113,10 @@ export function parlayLegCountValid(p: Parlay): GateResult {
   return [true, "ok"];
 }
 
-export function parlaySameGameConcentration(p: Parlay, max_share = 0.6): GateResult {
+// TEMP 2026-04-21: loosened from 0.6 → 0.75 while bot_daily_pick_pool coverage
+// is thin (only 2 games matched tonight). Revert to 0.6 once morning prep
+// pipeline restores full slate coverage. See mem://logic/parlay/same-game-concentration.
+export function parlaySameGameConcentration(p: Parlay, max_share = 0.75): GateResult {
   const counts = new Map<string, number>();
   for (const l of p.legs) {
     const k = l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
@@ -125,11 +128,25 @@ export function parlaySameGameConcentration(p: Parlay, max_share = 0.6): GateRes
   return [true, "ok"];
 }
 
+// Hard floor: every parlay must touch at least `min` distinct games.
+// Survives future threshold tweaks to parlaySameGameConcentration — even if
+// max_share drifts up, this gate guarantees no 100% same-game tickets ship.
+export function parlayMinDistinctGames(p: Parlay, min = 2): GateResult {
+  const games = new Set<string>();
+  for (const l of p.legs) {
+    const k = l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
+    games.add(k);
+  }
+  if (games.size < min) return [false, `single_game_only`];
+  return [true, "ok"];
+}
+
 export function validateParlay(p: Parlay): GateResult {
   const gates: Array<(p: Parlay) => GateResult> = [
     parlayLegCountValid,
     parlayWithinOddsBand,
     parlayNoConflictingLegs,
+    parlayMinDistinctGames,
     parlaySameGameConcentration,
     parlayEdgeSufficient,
   ];
