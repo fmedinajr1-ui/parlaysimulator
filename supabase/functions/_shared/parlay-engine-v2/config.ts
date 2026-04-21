@@ -119,7 +119,6 @@ export const SIGNAL_WATCHLIST: Set<string> = new Set([
 
 export const SIGNAL_BLACKLIST: Set<string> = new Set([
   "THREES",
-  "BIG_ASSIST_OVER",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -209,3 +208,59 @@ export const SPORT_ALLOCATION: Record<string, number> = {
   NCAAB:       0.06,
   CROSS_SPORT: 0.05,
 };
+
+// ---------------------------------------------------------------------------
+// STAKE SIZING MODE (v2.5)
+// ---------------------------------------------------------------------------
+
+export type StakeSizingMode = "flat" | "kelly_lite" | "fractional_kelly";
+export const STAKE_SIZING_MODE: StakeSizingMode = "kelly_lite";
+export const KELLY_FRACTION = 0.25;
+
+// ---------------------------------------------------------------------------
+// SWEEP PRESETS (v2.5)
+// ---------------------------------------------------------------------------
+
+export interface ConfigOverride {
+  MIN_LEG_CONFIDENCE?: number;
+  PREFERRED_LEG_CONFIDENCE?: number;
+  MIN_PARLAY_ODDS?: number;
+  MAX_PARLAY_ODDS?: number;
+  MIN_PARLAY_EDGE?: number;
+  STAKE_SIZING_MODE?: StakeSizingMode;
+  KELLY_FRACTION?: number;
+  TARGET_PARLAYS_PER_DAY?: number;
+}
+
+export const PRESETS: Record<string, ConfigOverride> = {
+  "v2.2": {
+    MIN_LEG_CONFIDENCE: 0.65,
+    MIN_PARLAY_ODDS: 300,
+    STAKE_SIZING_MODE: "kelly_lite",
+  },
+  "v2.3-balanced": {
+    MIN_LEG_CONFIDENCE: 0.65,
+    MIN_PARLAY_ODDS: 500,
+    STAKE_SIZING_MODE: "fractional_kelly",
+  },
+  "v2.3-max-ROI": {
+    MIN_LEG_CONFIDENCE: 0.75,
+    MIN_PARLAY_ODDS: 500,
+    STAKE_SIZING_MODE: "fractional_kelly",
+  },
+  "live": {},
+};
+
+/** Apply an override on top of base config values, returning a resolved view. */
+export function resolveConfig(override?: ConfigOverride) {
+  return {
+    MIN_LEG_CONFIDENCE: override?.MIN_LEG_CONFIDENCE ?? MIN_LEG_CONFIDENCE,
+    PREFERRED_LEG_CONFIDENCE: override?.PREFERRED_LEG_CONFIDENCE ?? PREFERRED_LEG_CONFIDENCE,
+    MIN_PARLAY_ODDS: override?.MIN_PARLAY_ODDS ?? MIN_PARLAY_ODDS,
+    MAX_PARLAY_ODDS: override?.MAX_PARLAY_ODDS ?? MAX_PARLAY_ODDS,
+    MIN_PARLAY_EDGE: override?.MIN_PARLAY_EDGE ?? MIN_PARLAY_EDGE,
+    STAKE_SIZING_MODE: override?.STAKE_SIZING_MODE ?? STAKE_SIZING_MODE,
+    KELLY_FRACTION: override?.KELLY_FRACTION ?? KELLY_FRACTION,
+    TARGET_PARLAYS_PER_DAY: override?.TARGET_PARLAYS_PER_DAY ?? TARGET_PARLAYS_PER_DAY,
+  };
+}
