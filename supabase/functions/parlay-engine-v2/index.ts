@@ -33,6 +33,30 @@ function normalizeSignalSource(category: string | null | undefined): string {
   return category.trim().toUpperCase().replace(/\s+/g, "_");
 }
 
+// Map raw prop_type strings (Odds API + pool) to the canonical labels used in
+// PROP_WHITELIST / PROP_BLACKLIST (e.g. "player_points" → "Points").
+const PROP_TYPE_CANONICAL: Record<string, string> = {
+  player_points: "Points",
+  player_rebounds: "Rebounds",
+  player_assists: "Assists",
+  player_threes: "3PM",
+  player_steals: "Steals",
+  player_blocks: "Blocks",
+  player_rebounds_assists: "R+A",
+  player_points_rebounds_assists: "PRA",
+  player_points_rebounds: "P+R",
+  player_points_assists: "P+A",
+  player_turnovers: "TO",
+  // Lower-case bare names used in some legacy refresh paths
+  points: "Points", rebounds: "Rebounds", assists: "Assists", threes: "3PM",
+  steals: "Steals", blocks: "Blocks",
+};
+function canonicalPropType(raw: string | null | undefined): string {
+  if (!raw) return "Unknown";
+  const k = raw.trim().toLowerCase();
+  return PROP_TYPE_CANONICAL[k] ?? raw;
+}
+
 // Parse "Lakers @ Warriors" / "Lakers vs Warriors" into [team, opponent].
 // Player's team is unknown from pick_pool alone; we use the home/away teams
 // joined from unified_props.game_description as a best-effort.
@@ -165,7 +189,7 @@ function buildCandidates(
       player_name: row.player_name,
       team,
       opponent,
-      prop_type: row.prop_type,
+      prop_type: canonicalPropType(row.prop_type),
       side,
       line: row.recommended_line,
       american_odds: Math.round(american),
@@ -233,6 +257,24 @@ Deno.serve(async (req) => {
       slate.report.rejection_reasons[k] = (slate.report.rejection_reasons[k] ?? 0) + v;
     }
 
+    // Lightweight per-strategy eligibility diagnostic so empty days are debuggable.
+    const eligibility: Record<string, number> = {};
+    {
+      // Re-run the leg-level whitelist filter the strategies use, post-validation.
+      const SIG_S_OR_A = new Set([
+        ...Array.from((await import("../_shared/parlay-engine-v2/config.ts")).SIGNAL_TIER_S),
+        ...Array.from((await import("../_shared/parlay-engine-v2/config.ts")).SIGNAL_TIER_A),
+      ]);
+      const PROP_WL = (await import("../_shared/parlay-engine-v2/config.ts")).PROP_WHITELIST;
+      const propKey = (l: any) => `${l.prop_type}|${l.side}`;
+      eligibility.mispriced_edge = candidates.filter(l =>
+        l.sport === "NBA" && l.confidence >= 0.70 && (propKey(l) in PROP_WL)).length;
+      eligibility.grind_stack = candidates.filter(l =>
+        l.sport === "NBA" && SIG_S_OR_A.has(l.signal_source) && l.confidence >= 0.68).length;
+      eligibility.cross_sport_distinct_sports = new Set(
+        candidates.filter(l => l.confidence >= 0.68).map(l => l.sport)).size;
+    }
+
     if (dryRun) {
       return new Response(JSON.stringify({
         success: true,
@@ -240,6 +282,7 @@ Deno.serve(async (req) => {
         target_date: targetDate,
         candidates_in: candidates.length,
         mapping_notes: mappingNotes,
+        eligibility,
         report: slate.report,
         parlays_preview: slate.parlays.slice(0, 5).map(p => ({
           strategy: p.strategy,
