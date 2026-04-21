@@ -257,6 +257,24 @@ Deno.serve(async (req) => {
       slate.report.rejection_reasons[k] = (slate.report.rejection_reasons[k] ?? 0) + v;
     }
 
+    // Lightweight per-strategy eligibility diagnostic so empty days are debuggable.
+    const eligibility: Record<string, number> = {};
+    {
+      // Re-run the leg-level whitelist filter the strategies use, post-validation.
+      const SIG_S_OR_A = new Set([
+        ...Array.from((await import("../_shared/parlay-engine-v2/config.ts")).SIGNAL_TIER_S),
+        ...Array.from((await import("../_shared/parlay-engine-v2/config.ts")).SIGNAL_TIER_A),
+      ]);
+      const PROP_WL = (await import("../_shared/parlay-engine-v2/config.ts")).PROP_WHITELIST;
+      const propKey = (l: any) => `${l.prop_type}|${l.side}`;
+      eligibility.mispriced_edge = candidates.filter(l =>
+        l.sport === "NBA" && l.confidence >= 0.70 && (propKey(l) in PROP_WL)).length;
+      eligibility.grind_stack = candidates.filter(l =>
+        l.sport === "NBA" && SIG_S_OR_A.has(l.signal_source) && l.confidence >= 0.68).length;
+      eligibility.cross_sport_distinct_sports = new Set(
+        candidates.filter(l => l.confidence >= 0.68).map(l => l.sport)).size;
+    }
+
     if (dryRun) {
       return new Response(JSON.stringify({
         success: true,
@@ -264,6 +282,7 @@ Deno.serve(async (req) => {
         target_date: targetDate,
         candidates_in: candidates.length,
         mapping_notes: mappingNotes,
+        eligibility,
         report: slate.report,
         parlays_preview: slate.parlays.slice(0, 5).map(p => ({
           strategy: p.strategy,
