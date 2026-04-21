@@ -15,6 +15,7 @@ import { Loader2, Sparkles, Check, X, RefreshCw, Film, Zap } from "lucide-react"
 import PublishTab from "@/components/admin/tiktok/PublishTab";
 import HookLabTab from "@/components/admin/tiktok/HookLabTab";
 import AccountBlotatoConfig from "@/components/admin/tiktok/AccountBlotatoConfig";
+import AnalyticsTab from "@/components/admin/tiktok/AnalyticsTab";
 
 export default function AdminTikTok() {
   const { isAdmin, isLoading } = useAdminRole();
