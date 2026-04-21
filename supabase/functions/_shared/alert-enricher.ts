@@ -10,7 +10,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getAlertTypeAccuracy, getStakeRecommendation, getExposureUsedPct, type StakeAdvice, type AlertAccuracy } from './accuracy-lookup.ts';
 import { type BotForm } from './voice.ts';
 import { loadBankrollState } from './bankroll-curator.ts';
-import { renderAlertCardV3, extractHeadline, extractSport, deriveTier } from './alert-format-v3.ts';
+import { renderAlertCardV3, extractHeadline, extractSport, deriveTier } from './parlayfarm-format.ts';
 import { getLineContext, getGameContext } from './alert-context.ts';
 
 export interface EnrichInput {
@@ -82,6 +82,7 @@ export async function enrichLegacyAlert(
     headline,
     confidence: input.confidence ?? null,
     tier,
+    signal_type: input.alertType,
     accuracy,
     stake,
     bankroll: bankrollAmount,

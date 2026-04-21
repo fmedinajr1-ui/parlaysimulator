@@ -26,6 +26,7 @@ import {
   handleCallback as handleOnboardingCallback,
   handleFreeText as handleOnboardingFreeText,
 } from '../_shared/onboarding-state-machine.ts';
+import { renderWelcome, renderSettings } from '../_shared/parlayfarm-format.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -270,25 +271,16 @@ async function handleStart(chatId: string, args: string, username: string | unde
   }
 
   // No password → standard welcome
-  const m = new MessageBuilder();
-  m.header(`Welcome`, '🌾');
-  m.line(`I'm ParlayIQ. I watch the board, run the numbers, and send over plays I actually like with reasoning attached.`);
-  m.blank();
-  m.line(bold(`What I send you:`));
-  m.line(`🌅 Dawn brief at 8am ET — the read for the day`);
-  m.line(`🎯 Slate lock at 11am — plays are set`);
-  m.line(`📇 Individual pick cards with full reasoning`);
-  m.line(`⏰ Pre-game updates (line moves, scratches)`);
-  m.line(`📊 Honest settlement recap each night`);
-  m.blank();
-  m.line(bold(`Commands:`));
-  m.line(`/today — current plays`);
-  m.line(`/why <#> — explain a pick`);
-  m.line(`/edge — biggest edges right now`);
-  m.line(`/pulse — live status`);
-  m.line(`/record — last 7 days`);
-  m.line(`/preferences — view or change your settings`);
-  return m.build();
+  // ParlayFarm-branded welcome (MarkdownV2)
+  const welcome = renderWelcome();
+  await sendToChat(supabase, {
+    botToken: TELEGRAM_BOT_TOKEN,
+    chatId,
+    text: welcome.message,
+    parseMode: 'MarkdownV2',
+    replyMarkup: welcome.reply_markup,
+  });
+  return null;
 }
 
 // ─── Command dispatch ─────────────────────────────────────────────────────
@@ -308,7 +300,29 @@ async function handleCommand(chatId: string, text: string, username?: string): P
     case '/record':      return handleRecord();
     case '/preferences':
     case '/settings':
-      await showPreferences(supabase, TELEGRAM_BOT_TOKEN, chatId);
+      // ParlayFarm-branded settings card. Falls back to the legacy
+      // preferences flow only if the user hasn't onboarded yet.
+      try {
+        const settings = renderSettings({
+          sports: ['NBA', 'NFL', 'MLB', 'NHL'],
+          books: ['FanDuel', 'DraftKings', 'MGM', 'Caesars'],
+          minSharpPct: 60,
+          minConfPct: 70,
+          quietHours: '2:00a – 8:00a ET',
+          digestTime: '9:00a ET',
+          digestOn: true,
+          batchRule: '>3 signals / 60s → digest',
+        });
+        await sendToChat(supabase, {
+          botToken: TELEGRAM_BOT_TOKEN,
+          chatId,
+          text: settings.message,
+          parseMode: 'MarkdownV2',
+          replyMarkup: settings.reply_markup,
+        });
+      } catch {
+        await showPreferences(supabase, TELEGRAM_BOT_TOKEN, chatId);
+      }
       return null;
     case '/reonboard':
     case '/restart':
