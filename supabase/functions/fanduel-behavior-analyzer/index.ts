@@ -2052,7 +2052,11 @@ Deno.serve(async (req) => {
       let pfSent = 0;
       for (const a of filteredAlerts) {
         try {
-          const pickId = `fbeh_${a.event_id ?? 'evt'}_${(a.player_name ?? 'p').replace(/\s+/g, '_')}_${a.prop_type ?? 'pt'}_${a.type}`.slice(0, 80);
+          // callback_data must be <= 64 bytes including the "scan:" prefix (5).
+          // Use a short hash so the keyboard buttons stay valid.
+          const rawKey = `${a.event_id ?? 'e'}|${a.player_name ?? 'p'}|${a.prop_type ?? 't'}|${a.type}`;
+          let h = 0; for (let i = 0; i < rawKey.length; i++) { h = ((h << 5) - h + rawKey.charCodeAt(i)) | 0; }
+          const pickId = `fb_${Math.abs(h).toString(36)}`.slice(0, 50);
           const rendered = renderBehaviorAlert(a as any, pickId);
           await supabase.functions.invoke("bot-send-telegram", {
             body: {

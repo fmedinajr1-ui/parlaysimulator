@@ -1360,7 +1360,10 @@ Deno.serve(async (req) => {
         let alertType = sigType;
         if (sigType.startsWith("flipped_")) alertType = sigType.replace("flipped_", "");
 
-        const pickId = `fpred_${r.event_id ?? "evt"}_${String(r.player_name ?? "p").replace(/\s+/g, "_")}_${r.prop_type ?? "pt"}_${alertType}`.slice(0, 80);
+        // callback_data must be <= 64 bytes including "scan:" prefix.
+        const rawKey = `${r.event_id ?? "e"}|${r.player_name ?? "p"}|${r.prop_type ?? "t"}|${alertType}`;
+        let h = 0; for (let i = 0; i < rawKey.length; i++) { h = ((h << 5) - h + rawKey.charCodeAt(i)) | 0; }
+        const pickId = `fp_${Math.abs(h).toString(36)}`.slice(0, 50);
         const rendered = renderBehaviorAlert({
           id: pickId,
           type: alertType,
