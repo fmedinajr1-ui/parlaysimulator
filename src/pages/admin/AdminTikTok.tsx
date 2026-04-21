@@ -301,6 +301,11 @@ export default function AdminTikTok() {
           />
         </TabsContent>
 
+        {/* ANALYTICS TAB — Phase 7 */}
+        <TabsContent value="analytics">
+          <AnalyticsTab accounts={accounts} />
+        </TabsContent>
+
         {/* ACCOUNTS TAB */}
         <TabsContent value="accounts" className="space-y-3">
           {accounts.map(a => (
