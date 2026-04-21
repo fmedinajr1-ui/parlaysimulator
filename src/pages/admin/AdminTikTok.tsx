@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Loader2, Sparkles, Check, X, RefreshCw, Film, Zap } from "lucide-react";
 import PublishTab from "@/components/admin/tiktok/PublishTab";
 import HookLabTab from "@/components/admin/tiktok/HookLabTab";
+import AccountBlotatoConfig from "@/components/admin/tiktok/AccountBlotatoConfig";
 
 export default function AdminTikTok() {
   const { isAdmin, isLoading } = useAdminRole();
@@ -317,6 +318,7 @@ export default function AdminTikTok() {
                 <p className="text-sm text-muted-foreground">{a.tone_description}</p>
                 <div className="text-xs text-muted-foreground">Hashtags: {(a.baseline_hashtags || []).join(" ")}</div>
                 <div className="text-xs">Handle: {a.tiktok_handle || <span className="text-muted-foreground italic">not set</span>}</div>
+                <AccountBlotatoConfig account={a} onSaved={loadAll} />
               </CardContent>
             </Card>
           ))}
