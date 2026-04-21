@@ -1,63 +1,97 @@
 
 
-## Fix admin access + Phase 7 plan
+## ParlayFarm Telegram rebrand — implementation plan
 
-### Part A — Make `/admin/tiktok` reachable
+Replace the current alert formatting with the **ParlayFarm spec** ("Track Sharps. Tail Winners. 🐕"). All 11 templates from `parlayfarm-telegram-messages.md` get implemented. Old `alert-format-v3.ts` rendering is **deleted** in favor of the new system (with a thin compatibility shim so the 99 existing generators keep working without edits).
 
-Two small fixes so you stop getting lost:
+### Part A — Delete the old format
 
-1. **Add a "TikTok Pipeline" tile on `/admin`** — alongside the other admin section cards in `src/pages/Admin.tsx`. Click → navigates to `/admin/tiktok`. Only shown to admins (already gated by the page itself).
-2. **Sign-in reminder**: you're currently on `/admin-login`. After you sign in with the admin account, the route will load. (No code change — just confirming.)
+- Remove `supabase/functions/_shared/alert-format-v3.ts` and any direct `renderAlertCardV3` imports.
+- Replace those imports with the new `parlayfarm-format.ts` entry point. Generators that built `AlertCardV3Input` keep their call sites — the shim accepts that shape and routes by `signal_type`.
 
-### Part B — Phase 7: Analytics + Auto-Winner A/B Testing
+### Part B — New shared renderer
 
-Closes the loop: posts go out via Blotato (Phase 6) → metrics roll in → winners feed back into the script generator's hook scoring (Phase 4 already has `tiktok_hook_performance`, we extend it).
+**File:** `supabase/functions/_shared/parlayfarm-format.ts`
 
-**1. Metrics ingestion** — `tiktok-metrics-sync` edge function (cron every 6h)
-- For each row in `tiktok_posts` with a Blotato post id and `posted_at` within last 14 days, GET `/v2/posts/{id}/analytics` from Blotato.
-- Upsert `views, likes, comments, shares, completion_rate, viral_score` into `tiktok_posts`.
-- Recompute `tiktok_hook_performance` rollups (avg completion, avg viral score, sample size per hook template).
+Exports one function per template (MarkdownV2 output):
 
-**2. A/B persona testing** — new flow on the Publish tab
-- New button "Run A/B test" on any approved script: clones the script, regenerates assets under a second persona, queues both to post in adjacent slots tagged with a shared `ab_group_id` (new column on `tiktok_post_queue`).
-- New edge function `tiktok-ab-resolver` (cron daily): for each `ab_group_id` ≥ 48h old, compares `viral_score`, marks winner, increments `wins`/`losses` on `tiktok_personas`, and writes the winning hook back to `tiktok_hook_performance` with a +5% confidence boost.
+| Template | Function | Trigger |
+|---|---|---|
+| #1 Welcome | `renderWelcome()` | `/start` |
+| #2 Sharp steam | `renderSharpSteam()` | `velocity_spike`, `live_velocity_spike`, `cascade`, `live_cascade`, `line_about_to_move` |
+| #3 Trap flag | `renderTrapFlag()` | `trap_warning=true` or sharp/public split ≥ 50pp |
+| #4 RLM | `renderRLM()` | `reverse_line_movement=true` |
+| #5 Slip verdict | `renderSlipVerdict()` | `grade-slip` output |
+| #6 Daily digest | `renderDailyDigest()` | morning recap cron |
+| #7 Batch digest | `renderBatchDigest()` | >3 alerts/60s for one chat |
+| #8 Sticky header | `renderStickyHeader()` | pinned, refreshed every 15min |
+| #9 Error / no read | `renderErrorNoRead()` | engine bailouts |
+| #10 CTA footer | `renderCTAFooter()` | appended to public-channel sends |
+| #11 Settings | `renderSettings()` | `/settings` command |
 
-**3. Analytics dashboard** — new "Analytics" tab on `/admin/tiktok`
-- KPI cards: 7d/30d total views, avg completion, top persona, top hook.
-- Charts (recharts, already in project): views per day stacked by persona, completion rate trend, hook leaderboard table with sample size.
-- A/B results table: group id, both personas, both viral scores, winner badge, hook used.
+Helpers: `mdv2Escape()`, `confBar(pct)` (10-char `█/▒`), `divider()` (`━`×23), `headerLine(type, sport, state)`, button taxonomy from spec ("Tail it", "Fade it", "Mute 30m", "View slip", "Open chart").
 
-**4. Feedback into script generator**
-- `tiktok-script-generator` already reads `tiktok_hook_performance`; we just bias its hook selection by `avg_completion_rate * log(sample_size+1)` so winners get used more, with a 10% epsilon-greedy exploration rate so new hooks still get tried.
+### Part C — Dispatcher + batching
 
-### Schema changes
+- `bot-send-telegram/index.ts` — accept `parse_mode: 'MarkdownV2'` and `reply_markup`. Before sending, check buffer rule: if >3 messages queued for same `chat_id` in the last 60s → insert into buffer instead of sending.
+- New table `telegram_alert_batch_buffer (id, chat_id, signal_type, payload jsonb, created_at)`.
+- New cron edge function `telegram-batch-flusher` (every 30s) — drains buffer per chat into `renderBatchDigest()`.
+
+### Part D — Sticky header worker
+
+- New edge function `parlayfarm-sticky-header` — cron every 15min. Calls `editMessageText` on the pinned message id stored in `telegram_bot_state.pinned_header_message_id`. Pulls 60-min counters from `engine_live_tracker`. If no pinned id exists, sends + pins a new one.
+- Schema add: `telegram_bot_state.pinned_header_message_id bigint`, `pinned_header_chat_id bigint`.
+
+### Part E — Wire commands + slip verdict
+
+- `telegram-webhook/index.ts` — handle `/start` (welcome), `/today` (daily digest), `/slip` (parse + grade), `/tail`, `/settings`.
+- `grade-slip/index.ts` — final response uses `renderSlipVerdict()`.
+
+### DB migration
 
 ```sql
-alter table tiktok_post_queue add column ab_group_id uuid;
-alter table tiktok_posts add column ab_group_id uuid,
-  add column completion_rate numeric, add column viral_score numeric,
-  add column metrics_synced_at timestamptz;
-alter table tiktok_personas add column wins int default 0,
-  add column losses int default 0;
-create index on tiktok_posts (ab_group_id) where ab_group_id is not null;
+create table telegram_alert_batch_buffer (
+  id uuid primary key default gen_random_uuid(),
+  chat_id bigint not null,
+  signal_type text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index on telegram_alert_batch_buffer (chat_id, created_at);
+
+alter table telegram_bot_state
+  add column pinned_header_message_id bigint,
+  add column pinned_header_chat_id bigint;
 ```
+
+Plus cron schedules for `telegram-batch-flusher` (30s) and `parlayfarm-sticky-header` (15min) — inserted via the insert tool, not migration (project-specific URL/key).
 
 ### Files
 
-- `src/pages/Admin.tsx` — add TikTok tile
-- `src/pages/admin/AdminTikTok.tsx` — add Analytics tab, A/B button wiring
-- `src/components/admin/tiktok/AnalyticsTab.tsx` (new) — KPI cards + charts + leaderboard + A/B table
-- `src/components/admin/tiktok/PublishTab.tsx` — "Run A/B test" button on approved scripts
-- `supabase/functions/tiktok-metrics-sync/index.ts` (new) — Blotato analytics → DB
-- `supabase/functions/tiktok-ab-resolver/index.ts` (new) — pick winners, update personas
-- `supabase/functions/tiktok-script-generator/index.ts` — bias hook selection, add epsilon-greedy
-- New migration for the columns above + cron schedules for the two new functions
+**New**
+- `supabase/functions/_shared/parlayfarm-format.ts`
+- `supabase/functions/telegram-batch-flusher/index.ts`
+- `supabase/functions/parlayfarm-sticky-header/index.ts`
+- New schema migration
 
-### Out of scope (saved for Phase 8)
+**Edited**
+- `supabase/functions/bot-send-telegram/index.ts` — MarkdownV2 + buffering
+- `supabase/functions/telegram-webhook/index.ts` — command routing
+- `supabase/functions/grade-slip/index.ts` — slip verdict template
+- All generators currently importing `alert-format-v3` — swap to `parlayfarm-format` shim (single-line import change)
 
-Comment/reply automation, TikTok DM auto-responder, multi-platform fan-out (IG Reels/Shorts).
+**Deleted**
+- `supabase/functions/_shared/alert-format-v3.ts`
 
-### Approve to start
+### Safety
 
-I'll do Part A (admin tile) and Part B (Phase 7) in one implementation pass.
+- Compat shim accepts the old `AlertCardV3Input` shape so no generator logic changes.
+- Buffering is opt-in by signal volume — single alerts go through immediately, no latency added.
+- Sticky header is one pinned message per chat — non-destructive to history.
+
+### Out of scope (Phase 2 follow-up)
+
+- Inline button callback handling beyond logging clicks (Tail/Fade/Mute writes).
+- Settings persistence writes from template #11.
+- Rebranding non-Telegram surfaces (web, email, push).
 
