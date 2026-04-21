@@ -1,57 +1,59 @@
 
 
-## Engine-level deep-dive export — Feb & March
+## Rebuild homepage to ParlayFarm spec — Option C, free tier with $0 SetupIntent card verification
 
-I'll generate a research-grade dataset that breaks down every parlay from Feb and March by the **engine / strategy / signal source** that built it, so you can isolate which engines actually drove accuracy vs. which were noise.
+Building the new homepage to the master prompt, creating fresh Stripe products at the spec prices, retiring Scout from the homepage, and verifying a card at signup for **all three tiers**.
 
-### Output
+### Pricing & Stripe products (newly created)
 
-`/mnt/documents/research/feb-march-engine-deep-dive.xlsx` + matching CSVs at `/mnt/documents/research/csv/` (so you can browse without the sheet-tab issue).
+| Tier | Price | Trial | Card verification |
+|---|---|---|---|
+| 🐶 The Pup | **Free** | n/a | Stripe Checkout in `mode: setup` ($0 SetupIntent — card saved, not charged) |
+| 🐕 Top Dog ⭐ | **$29.99/mo** | 7-day free trial | Stripe Checkout subscription + $50 auth hold |
+| 🏆 Kennel Club | **$99/mo** | 3-day free trial | Stripe Checkout subscription + $50 auth hold |
 
-### Workbook structure (7 sheets)
+Three new Stripe products created at $0 / $29.99 / $99. Legacy $99 Parlay Bot and $750 Scout products stay live in Stripe for existing subscribers but are removed from the homepage.
 
-**Sheet 1 — `Engine Scorecard`** *(the main answer)*
-One row per `strategy_name` per month. Columns:
-- Month, Strategy, Total Parlays, Unique Parlays (deduped by leg combo), Wins, Losses, Voids, **Win Rate (raw)**, **Win Rate (deduped)**, Avg Legs, Avg Expected Odds, Total Stake, Total Payout, Net Profit, ROI%, Avg DNA Grade, Sample Confidence (high/med/low)
+### Homepage sections (in order)
 
-**Sheet 2 — `Engine × Sport`**
-Same metrics broken down by strategy AND sport (NBA/MLB/NCAAB/NHL). Reveals which engines work for which sports.
+1. **Sticky Nav** — dog-mark logo + "ParlayFarm 🐕", links (Sharp Tracker / The Farm / Pricing), green "Join the Farm" CTA
+2. **Hero** — drifting orbs, crop-row grid, H1 "The farm where *underdogs become top dogs* 🐕", 3 CTAs, 4-stat strip, infinite ticker
+3. **How the Farm Runs** — 3 cards (Drop slip / AI sniffs / Verdict)
+4. **Sharp Tracker** — 4 seeded rows, animated split bars, "Tail" → "✓ Tailed"
+5. **Live AI Demo** — `<SlipCard>` + `<VerdictCard>` with the spec's 5 legs / 3 signals, auto-runs on scroll
+6. **Why the Farm Works** — 6-card grid
+7. **Top Dog Reel** — full-bleed infinite horizontal scroll
+8. **Free Slip Upload** — dropzone + email, writes to `leads` table
+9. **Pricing** — Pup / Top Dog ⭐ / Kennel Club, all three collect a card
+10. **Final CTA** + **Footer** with 21+ / 1-800-GAMBLER
+11. **Sticky mobile bar** — Free Slip / Join the Farm
 
-**Sheet 3 — `Engine × Leg Count`**
-Strategy × leg count (2/3/4/5/7/8). Shows whether an engine's accuracy collapses at higher leg counts.
+### Subscription wiring
 
-**Sheet 4 — `All Parlays` (Feb + March, every parlay)**
-Full row per parlay: date, month, strategy, tier, legs count, sport mix, dna_grade, expected_odds, combined_probability, simulated_edge, outcome, profit_loss, **leg_combo_hash** (md5 of legs for dedup analysis), **is_duplicate** (true if same hash exists earlier same day), selection_rationale, lesson_learned.
+- **Top Dog & Kennel Club** → existing `create-bot-checkout` updated to accept the new price IDs, keeps $50 auth hold + trial behavior already shipping today
+- **Pup (Free)** → new edge function `create-free-signup` runs Stripe Checkout in `mode: setup` (card saved, $0 charged), then writes the user record with `plan = 'pup'`
+- All three CTAs share one inline email-capture modal → Stripe Checkout in a new tab → success → `/bot-success`
 
-**Sheet 5 — `All Legs` (every leg of every Feb/March parlay)**
-Flattened legs with parent strategy attached: parlay_date, strategy, leg_index, sport, player/team, prop_type (cleaned), side, line, odds, projected, actual, outcome, hit_rate, confidence, signal_source. Lets you ask "which signal_source has the best per-leg hit rate within strategy X?"
+### What stays vs. moves
 
-**Sheet 6 — `Signal Source Performance`**
-Aggregated from leg-level data: signal_source × month × outcome. Surfaces which underlying signals (mispriced_edge, sharp_steam, cascade, snapback, velocity_spike, etc.) actually hit at the leg level — independent of which strategy bundled them.
+- Current homepage tools (DailyParlayHub, SweetSpotPicks, WeeklyHistory, Elite3PT, etc.) → moved intact to **`/dashboard`**, linked from the nav as "The Farm". Nothing deleted.
+- Existing `customer-portal` keeps managing both legacy and new subscriptions
 
-**Sheet 7 — `Duplication Audit`**
-Per day: total parlays, unique leg combos, duplication ratio, top duplicated combos. Confirms / quantifies the Feb 26 inflation issue and exposes any similar days in March.
+### Out of scope (separate tickets)
 
-### What this enables
+- Live `sharp_signals` data + pg_cron refresh — table seeded with the 4 hardcoded spec rows
+- Real Claude prompt for `analyze-slip` — upload writes to `leads`, shows success state
+- `/b` route + `ab_views` analytics
+- Resend domain verification, OG cards, favicon swap, Lighthouse pass
 
-- "Strategy X has 28% raw win rate but 18% deduped — kill it"
-- "mispriced_edge legs hit 71%, but role_stacked_8leg using them only wins 4% — the engine bundling is the problem, not the signal"
-- "force_mispriced_conviction works on NBA 3-leg only — gate it"
-- "Feb's edge was X engine; reproduce it in April"
+### Technical execution
 
-### Process
-
-1. Pull all Feb + March parlays from `bot_daily_parlays` (~2,445 rows)
-2. Compute `leg_combo_hash` and dedup flags
-3. Flatten legs jsonb (~7K leg rows)
-4. Aggregate the 3 scorecard sheets in pandas
-5. Apply prop/sport label cleanup (same maps as previous export)
-6. Write workbook with formatting (color-coded outcomes, % formats, frozen headers, autofilter) + parallel CSVs
-7. Recalculate formulas, verify zero errors, spot-check totals against DB
-
-### Out of scope
-
-- Cross-referencing into `engine_live_tracker` or `signal_accuracy` tables for the original signal scores at generation time (deeper enrichment pass — let me know if you want it as a follow-up; it's another ~30 min of analysis)
-- April data (only 19 days, too small to compare)
-- Recommendations/remediation — this export is the raw research material; we'll act on findings in a separate pass
+- **Stripe**: 3 new products via `stripe--create_stripe_product_and_price` (Pup $0, Top Dog $29.99, Kennel Club $99, all monthly recurring)
+- **New edge function**: `create-free-signup` (Stripe Checkout `mode: setup`, $0 SetupIntent, customer + user row)
+- **Updated edge function**: `create-bot-checkout` accepts new Top Dog / Kennel Club price IDs alongside legacy IDs (no breaking change)
+- **DB migrations**: `leads` table (anon insert RLS), `sharp_signals` table (anon read RLS, seeded with 4 spec rows), add `plan` column on users (`pup` | `top_dog` | `kennel_club`)
+- **New components** under `src/components/farm/`: `FarmNav`, `FarmHero`, `Steps`, `SharpTracker`, `SlipDemo`, `VerdictCard`, `FeatureGrid`, `TopDogReel`, `UploadForm`, `FarmPricing`, `FinalCTA`, `FarmFooter`, `StickyMobileBar`, `EmailCaptureModal`
+- **Tailwind/CSS**: extend `index.css` with `--farm-bg #060806`, `--farm-panel #0b0f0b`, `--sharp-green #22ff9a`, `--trap-red #ef233c`, `--barn-amber #ffb020`; add Space Grotesk + Inter via Google Fonts
+- **Routing**: `src/pages/Index.tsx` becomes thin section composition; legacy content moves to `src/pages/Dashboard.tsx` (route `/dashboard`)
+- **Accessibility**: `prefers-reduced-motion` disables ticker, scan beam, orb drift, reel
 
