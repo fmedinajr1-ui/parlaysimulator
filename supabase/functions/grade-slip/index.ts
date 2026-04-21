@@ -1,6 +1,7 @@
 // Free Slip Grader edge function — public endpoint
 // Returns letter grade + brutal headline + per-leg breakdown
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { renderSlipVerdict, type SlipLeg, type LegStatus } from '../_shared/parlayfarm-format.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -163,6 +164,27 @@ Deno.serve(async (req) => {
       breakdown,
       fix_suggestion: fixSuggestion,
       share_card_id: shareCardId,
+      telegram: (() => {
+        const verdict = grade === 'A' || grade === 'B' ? 'TOP DOG' : grade === 'F' ? 'TRAP' : 'MIXED';
+        const tagline = grade === 'A' || grade === 'B' ? 'tail it' : grade === 'F' ? 'fade it' : 'keep with swaps';
+        const tgLegs: SlipLeg[] = legs.map((leg, i) => {
+          const score = legResults[i].score;
+          const status: LegStatus = score >= 65 ? 'green' : score >= 45 ? 'yellow' : 'red';
+          return { status, text: breakdown[i].leg, note: legResults[i].fix ?? legResults[i].verdict.split('.')[0] };
+        });
+        return renderSlipVerdict({
+          slipId: shareCardId,
+          legCount: legs.length,
+          book: 'Slip',
+          stake: '—',
+          payout: '—',
+          verdict,
+          verdictTagline: tagline,
+          score: composite,
+          legs: tgLegs,
+          sharperPlayLines: [fixSuggestion, headline],
+        });
+      })(),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
