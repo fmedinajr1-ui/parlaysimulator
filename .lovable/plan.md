@@ -1,102 +1,63 @@
 
 
-## TikTok Pipeline — Phases 3, 4 & 5 Plan
+## Fix admin access + Phase 7 plan
 
-Phases 1 & 2 are live (script gen, safety, ElevenLabs + HeyGen + Pexels orchestration, asset preview UI). The Remotion worker is scaffolded but not deployed yet. We're ready to build out the rest.
+### Part A — Make `/admin/tiktok` reachable
 
----
+Two small fixes so you stop getting lost:
 
-### Phase 3 — Posting & Manual Download (no posting service needed)
+1. **Add a "TikTok Pipeline" tile on `/admin`** — alongside the other admin section cards in `src/pages/Admin.tsx`. Click → navigates to `/admin/tiktok`. Only shown to admins (already gated by the page itself).
+2. **Sign-in reminder**: you're currently on `/admin-login`. After you sign in with the admin account, the route will load. (No code change — just confirming.)
 
-You said you don't have a posting service. So Phase 3 is **manual-first**: the admin UI becomes a content delivery dashboard. Once a render is finished (or you composite externally), you download the MP4, caption, and hashtags as one bundle, then post manually.
+### Part B — Phase 7: Analytics + Auto-Winner A/B Testing
 
-**What I'll build:**
+Closes the loop: posts go out via Blotato (Phase 6) → metrics roll in → winners feed back into the script generator's hook scoring (Phase 4 already has `tiktok_hook_performance`, we extend it).
 
-1. **Caption + hashtag generator** — new edge function `tiktok-caption-generator`
-   - Input: completed script row
-   - Uses Lovable AI Gateway (no key needed)
-   - Persona-aware, uses `caption_template` + `baseline_hashtags` from `tiktok_accounts`
-   - Stores output on the script row (`final_caption`, `final_hashtags`)
-   - Auto-runs when render completes (called from `tiktok-render-callback`)
+**1. Metrics ingestion** — `tiktok-metrics-sync` edge function (cron every 6h)
+- For each row in `tiktok_posts` with a Blotato post id and `posted_at` within last 14 days, GET `/v2/posts/{id}/analytics` from Blotato.
+- Upsert `views, likes, comments, shares, completion_rate, viral_score` into `tiktok_posts`.
+- Recompute `tiktok_hook_performance` rollups (avg completion, avg viral score, sample size per hook template).
 
-2. **DB additions**
-   - `tiktok_posts` table already exists (Phase 1) — add columns: `posted_manually_at`, `manual_post_url`, `view_count_snapshot`, `last_metrics_check_at`
-   - New table `tiktok_post_schedule` — slots per account (day-of-week + hour-of-day) so the admin sees "next slot for The Analyst: Tue 7pm"
+**2. A/B persona testing** — new flow on the Publish tab
+- New button "Run A/B test" on any approved script: clones the script, regenerates assets under a second persona, queues both to post in adjacent slots tagged with a shared `ab_group_id` (new column on `tiktok_post_queue`).
+- New edge function `tiktok-ab-resolver` (cron daily): for each `ab_group_id` ≥ 48h old, compares `viral_score`, marks winner, increments `wins`/`losses` on `tiktok_personas`, and writes the winning hook back to `tiktok_hook_performance` with a +5% confidence boost.
 
-3. **Admin UI — new "Publish" tab**
-   - Lists `assets_ready` + `completed` renders
-   - One-click **Download bundle**: zips MP4 + caption.txt + hashtags.txt + thumbnail.jpg
-   - **Mark as posted** button → opens modal for TikTok URL paste, marks `tiktok_posts` row, sets `posted_manually_at`
-   - Shows next recommended posting slot per account
+**3. Analytics dashboard** — new "Analytics" tab on `/admin/tiktok`
+- KPI cards: 7d/30d total views, avg completion, top persona, top hook.
+- Charts (recharts, already in project): views per day stacked by persona, completion rate trend, hook leaderboard table with sample size.
+- A/B results table: group id, both personas, both viral scores, winner badge, hook used.
 
-4. **Telegram alert flow**
-   - "Render complete — download bundle" with deep link to `/admin/tiktok?tab=publish`
-   - "Slot reminder" — 30 min before scheduled slot, ping admin if there's an unposted render
+**4. Feedback into script generator**
+- `tiktok-script-generator` already reads `tiktok_hook_performance`; we just bias its hook selection by `avg_completion_rate * log(sample_size+1)` so winners get used more, with a 10% epsilon-greedy exploration rate so new hooks still get tried.
 
-**No external posting API needed** — when you sign up for Blotato/Postiz/Buffer later, we add a "Push to scheduler" button alongside "Mark as posted".
+### Schema changes
 
----
+```sql
+alter table tiktok_post_queue add column ab_group_id uuid;
+alter table tiktok_posts add column ab_group_id uuid,
+  add column completion_rate numeric, add column viral_score numeric,
+  add column metrics_synced_at timestamptz;
+alter table tiktok_personas add column wins int default 0,
+  add column losses int default 0;
+create index on tiktok_posts (ab_group_id) where ab_group_id is not null;
+```
 
-### Phase 4 — Learning Loop (closes the feedback cycle)
+### Files
 
-This is what makes the bot smarter over time. You manually paste TikTok metrics (views, watch time, likes) into the admin UI, and the system learns which hooks/templates work for each persona.
+- `src/pages/Admin.tsx` — add TikTok tile
+- `src/pages/admin/AdminTikTok.tsx` — add Analytics tab, A/B button wiring
+- `src/components/admin/tiktok/AnalyticsTab.tsx` (new) — KPI cards + charts + leaderboard + A/B table
+- `src/components/admin/tiktok/PublishTab.tsx` — "Run A/B test" button on approved scripts
+- `supabase/functions/tiktok-metrics-sync/index.ts` (new) — Blotato analytics → DB
+- `supabase/functions/tiktok-ab-resolver/index.ts` (new) — pick winners, update personas
+- `supabase/functions/tiktok-script-generator/index.ts` — bias hook selection, add epsilon-greedy
+- New migration for the columns above + cron schedules for the two new functions
 
-**What I'll build:**
+### Out of scope (saved for Phase 8)
 
-1. **DB additions**
-   - `tiktok_post_metrics` — time-series snapshots: `post_id`, `recorded_at`, `views`, `likes`, `comments`, `shares`, `avg_watch_time_sec`, `completion_rate`
-   - Compute `viral_score` = views per hour since posting
+Comment/reply automation, TikTok DM auto-responder, multi-platform fan-out (IG Reels/Shorts).
 
-2. **Edge function `tiktok-metrics-processor`** (manual + cron)
-   - Recomputes `tiktok_hook_performance.avg_completion_rate` + `avg_views` from posted videos
-   - Promotes hooks with >55% completion → `is_winning_hook = true` (used more in generator)
-   - Demotes hooks with <30% completion + 5+ uses → `active = false`
-   - Writes daily summary to `tiktok_pipeline_logs`
+### Approve to start
 
-3. **Admin UI — enhanced "Hook Lab" tab**
-   - Quick-paste form: "Post URL → Views → Watch time → Likes" → 4 inputs, autopopulates rest
-   - Performance heatmap: which hook style × template combo wins per persona
-   - "Generate variants" button — takes a top-performing hook, asks AI to write 3 variations, drops them into hook library as `origin: 'learned'`
-
-4. **Weekly digest Telegram alert**
-   - Sunday 8pm ET: "Top hook this week: 'The numbers on Jokic are strange.' (62% completion, 14k avg views). Worst: ... Suggest retiring 3 hooks?"
-
----
-
-### Phase 5 — Worker Deploy (when you're ready)
-
-This is the **only step that requires you to do work outside Lovable**. I'll prep everything so deployment is copy/paste.
-
-**What I'll do (in Lovable):**
-1. Add a `worker/DEPLOY.md` with exact step-by-step Render.com instructions, screenshots-described
-2. Create a `worker/test-job.json` with a real script payload so you can curl-test the worker before connecting it
-3. Add an admin UI button "Re-dispatch awaiting_worker renders" that re-runs orchestrator on the queue once `REMOTION_WORKER_URL` is set
-
-**What you do:**
-1. Push `worker/` to a new GitHub repo (one command, I'll provide it)
-2. Render.com → New Web Service → Docker → point to repo
-3. Set 4 env vars (I'll give exact values)
-4. Copy URL back to me
-5. I add `REMOTION_WORKER_URL` + `REMOTION_WORKER_SECRET` to Lovable Cloud
-6. Click "Re-dispatch" → existing assets-ready renders all complete
-
-Total time: ~15 min for you, free tier on Render.
-
----
-
-### Suggested execution order
-
-| Step | Phase | Why first |
-|---|---|---|
-| 1 | Phase 3 | Lets you actually use the system end-to-end (download → post → mark posted) without worker. Highest immediate ROI. |
-| 2 | Phase 4 | Once you have a few posts logged, the learning loop has data to work with. |
-| 3 | Phase 5 | Deploy worker only after you've validated 5-10 scripts get good engagement. No point compositing if the scripts aren't landing. |
-
-This ordering means **you can start posting tomorrow** with manually composited videos (or even just the avatar + audio + b-roll links from the Renders tab) while the worker waits.
-
----
-
-### Approve and I'll start with Phase 3
-
-I'll build all of Phase 3 in one step: caption generator function, DB migration, Publish tab UI, ZIP bundle download, manual-post modal, scheduling slots.
+I'll do Part A (admin tile) and Part B (Phase 7) in one implementation pass.
 
