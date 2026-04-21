@@ -224,8 +224,11 @@ export const KELLY_FRACTION = 0.25;
 /** Bookmaker priority — first match wins when multiple books quote the same prop. */
 export const BOOKMAKER_PRIORITY: string[] = ["fanduel", "draftkings", "betmgm"];
 
-/** Reject candidate legs whose unified_props.odds_updated_at is older than this. */
-export const MAX_BOOK_LINE_AGE_MIN = 20;
+/** Reject candidate legs whose unified_props.odds_updated_at is older than this.
+ * TEMP (2026-04-21): widened from 20 → 360 so tonight's slate can ship while the
+ * refresher is being patched. Revert to 20 once refresh-todays-props writes
+ * player_*-prefixed prop_types and the morning cron repopulates fresh lines. */
+export const MAX_BOOK_LINE_AGE_MIN = 360;
 
 /** Reject candidate legs whose pool line drifts from the book's current_line by more than this. */
 export const MAX_LINE_DRIFT = 0.5;

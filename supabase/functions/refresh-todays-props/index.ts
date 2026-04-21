@@ -409,7 +409,19 @@ serve(async (req) => {
       }
 
       // Step 3: Fetch player props for each event from The Odds API
-      const markets = ['player_points', 'player_rebounds', 'player_assists', 'player_threes'];
+      // Full catalog matched to bot_daily_pick_pool prop_type names (player_* prefix).
+      const markets = [
+        'player_points',
+        'player_rebounds',
+        'player_assists',
+        'player_threes',
+        'player_steals',
+        'player_blocks',
+        'player_points_rebounds',
+        'player_points_assists',
+        'player_rebounds_assists',
+        'player_points_rebounds_assists',
+      ];
       const allProps: any[] = [];
 
       for (const event of todaysEvents) {
@@ -439,7 +451,8 @@ serve(async (req) => {
                     commence_time: event.commence_time,
                     bookmaker: bookmaker.key,
                     player_name: outcome.description,
-                    prop_type: market.replace('player_', ''),
+                    // Keep the full Odds API market key so it matches bot_daily_pick_pool.
+                    prop_type: market,
                     current_line: outcome.point,
                     over_price: outcome.name === 'Over' ? outcome.price : null,
                     under_price: outcome.name === 'Under' ? outcome.price : null,
@@ -467,7 +480,7 @@ serve(async (req) => {
       const consolidatedProps: Map<string, any> = new Map();
       
       for (const prop of allProps) {
-        const key = `${prop.event_id}-${prop.player_name}-${prop.prop_type}-${prop.bookmaker}-${prop.line}`;
+        const key = `${prop.event_id}-${prop.player_name}-${prop.prop_type}-${prop.bookmaker}-${prop.current_line}`;
         
         if (consolidatedProps.has(key)) {
           const existing = consolidatedProps.get(key);
