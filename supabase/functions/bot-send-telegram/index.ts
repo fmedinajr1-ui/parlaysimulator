@@ -44,13 +44,15 @@ const corsHeaders = {
 
 interface RequestBody {
   message: string;
-  parse_mode?: 'Markdown' | 'HTML';
+  parse_mode?: 'Markdown' | 'MarkdownV2' | 'HTML';
   reply_markup?: object;
   admin_only?: boolean;
   fanout?: 'none' | 'all_active' | 'broadcast_tier_1';
   narrative_phase?: DayPhase;
   reference_key?: string;
   personalize_stake_pct?: number;
+  /** When true, dispatcher buffers high-velocity bursts (>3/60s/chat) into a digest. */
+  bufferable?: boolean;
   /**
    * 'v2' (default) → message may be enriched by the v3 renderer if it's a
    *                  legacy typed call. v2 native cards (already formatted
@@ -113,6 +115,41 @@ Deno.serve(async (req) => {
     }
 
     const { sb, botToken, adminChatId } = initClient();
+
+    // ── ParlayFarm batch buffer ──
+    // High-velocity alerts (velocity_spike, cascade, line_about_to_move, trap)
+    // can be marked `bufferable: true`. If >3 already buffered or sent for this
+    // chat in the last 60s, hold this one in `telegram_alert_batch_buffer` and
+    // let the cron `telegram-batch-flusher` collapse them into one digest.
+    if (body.bufferable && !body.admin_only) {
+      try {
+        const sinceIso = new Date(Date.now() - 60_000).toISOString();
+        const targetChat = adminChatId; // single-channel buffer key for now
+        const [{ count: bufCount }, { count: sentCount }] = await Promise.all([
+          sb.from('telegram_alert_batch_buffer').select('id', { count: 'exact', head: true })
+            .eq('chat_id', Number(targetChat)).gte('created_at', sinceIso),
+          sb.from('bot_message_log').select('id', { count: 'exact', head: true })
+            .eq('chat_id', String(targetChat)).eq('success', true).gte('sent_at', sinceIso),
+        ]);
+        const burst = (bufCount ?? 0) + (sentCount ?? 0);
+        if (burst >= 3) {
+          await sb.from('telegram_alert_batch_buffer').insert({
+            chat_id: Number(targetChat),
+            signal_type: body.alert_context?.generator || body.type || 'unknown',
+            payload: {
+              message: body.message,
+              parse_mode: body.parse_mode ?? 'MarkdownV2',
+              alert_context: body.alert_context ?? null,
+            },
+          });
+          return new Response(JSON.stringify({ success: true, buffered: true, burst }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      } catch (e) {
+        console.warn('[bot-send-telegram] buffer check failed, sending immediately:', e);
+      }
+    }
 
     // ── Enrichment: render legacy alerts in the v3 4-zone format ──
     // v2 callers (orchestrator, playcards) and v3 callers (already formatted)

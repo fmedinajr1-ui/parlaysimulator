@@ -13772,6 +13772,54 @@ export type Database = {
         }
         Relationships: []
       }
+      telegram_alert_batch_buffer: {
+        Row: {
+          chat_id: number
+          created_at: string
+          id: string
+          payload: Json
+          signal_type: string
+        }
+        Insert: {
+          chat_id: number
+          created_at?: string
+          id?: string
+          payload: Json
+          signal_type: string
+        }
+        Update: {
+          chat_id?: number
+          created_at?: string
+          id?: string
+          payload?: Json
+          signal_type?: string
+        }
+        Relationships: []
+      }
+      telegram_bot_state: {
+        Row: {
+          id: number
+          pinned_header_chat_id: number | null
+          pinned_header_message_id: number | null
+          update_offset: number
+          updated_at: string
+        }
+        Insert: {
+          id: number
+          pinned_header_chat_id?: number | null
+          pinned_header_message_id?: number | null
+          update_offset?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          pinned_header_chat_id?: number | null
+          pinned_header_message_id?: number | null
+          update_offset?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tennis_match_model: {
         Row: {
           actual_total_games: number | null
