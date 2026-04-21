@@ -10,6 +10,12 @@ import { ExposureTracker } from "./dedup.ts";
 import { parlayRankingScore } from "./scoring.ts";
 import { getStrategy } from "./strategies.ts";
 import { computeDailyPlan } from "./allocator.ts";
+import { getSizer } from "./kelly.ts";
+import {
+  CorrelationModel,
+  adjustedCombinedProbability,
+  warningsFor,
+} from "./correlation.ts";
 
 export interface SlateResult {
   parlays: Parlay[];
@@ -24,17 +30,34 @@ export class ParlayEngine {
   target_total: number;
   max_total: number;
   min_total: number;
+  correlation_model: CorrelationModel | null;
+  reject_negative_correlation: boolean;
+  config_override?: config.ConfigOverride;
 
-  constructor(opts: { target_total?: number; max_total?: number; min_total?: number } = {}) {
-    this.target_total = opts.target_total ?? config.TARGET_PARLAYS_PER_DAY;
+  constructor(opts: {
+    target_total?: number;
+    max_total?: number;
+    min_total?: number;
+    correlation_model?: CorrelationModel | null;
+    reject_negative_correlation?: boolean;
+    config_override?: config.ConfigOverride;
+  } = {}) {
+    const resolved = config.resolveConfig(opts.config_override);
+    this.target_total = opts.target_total ?? resolved.TARGET_PARLAYS_PER_DAY;
     this.max_total = opts.max_total ?? config.MAX_PARLAYS_PER_DAY;
     this.min_total = opts.min_total ?? config.MIN_PARLAYS_PER_DAY;
+    this.correlation_model = opts.correlation_model ?? null;
+    this.reject_negative_correlation = opts.reject_negative_correlation ?? false;
+    this.config_override = opts.config_override;
   }
 
   generateSlate(candidates: CandidateLeg[], now: Date): SlateResult {
     const rejection_reasons: Record<string, number> = {};
     const strategy_breakdown: Record<string, number> = {};
     const tier_breakdown: Record<string, number> = {};
+    const sizer = getSizer(
+      config.resolveConfig(this.config_override).STAKE_SIZING_MODE,
+    );
 
     // 1. Leg-level filter
     const kept: CandidateLeg[] = [];
@@ -88,6 +111,26 @@ export class ParlayEngine {
           exposure.rejectDuplicate();
           bump(rejection_reasons, `exposure:${reasonA}`);
           continue;
+        }
+
+        // Apply v2.5 sizer (overrides strategy-set stake).
+        const sized = sizer(parlay);
+        if (sized > 0) parlay.stake_units = sized;
+
+        // Correlation: annotate adjusted prob + warnings; optionally reject.
+        if (this.correlation_model) {
+          parlay.adjusted_combined_probability = adjustedCombinedProbability(
+            parlay, this.correlation_model,
+          );
+          parlay.correlation_warnings = warningsFor(parlay, this.correlation_model);
+          if (this.reject_negative_correlation
+              && parlay.correlation_warnings.length > 0) {
+            bump(rejection_reasons, "parlay:negative_correlation");
+            continue;
+          }
+        } else {
+          parlay.adjusted_combined_probability = null;
+          parlay.correlation_warnings = [];
         }
 
         exposure.accept(parlay);

@@ -60,6 +60,10 @@ export interface Parlay {
   stake_units: number;
   rationale: string;
   generated_at: Date;
+  /** v2.5: filled when a CorrelationModel is supplied to the engine. */
+  adjusted_combined_probability?: number | null;
+  /** v2.5: same-game pairs whose lift fell below the negative threshold. */
+  correlation_warnings?: Array<{ pair: string; lift: number; same_game: boolean }>;
 }
 
 export function legCount(p: Parlay): number {

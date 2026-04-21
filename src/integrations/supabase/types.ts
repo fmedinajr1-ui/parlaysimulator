@@ -2061,6 +2061,38 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_parlay_broadcasts: {
+        Row: {
+          chat_id: string
+          id: string
+          parlay_id: string
+          sent_at: string
+          telegram_message_id: number | null
+        }
+        Insert: {
+          chat_id: string
+          id?: string
+          parlay_id: string
+          sent_at?: string
+          telegram_message_id?: number | null
+        }
+        Update: {
+          chat_id?: string
+          id?: string
+          parlay_id?: string
+          sent_at?: string
+          telegram_message_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_parlay_broadcasts_parlay_id_fkey"
+            columns: ["parlay_id"]
+            isOneToOne: false
+            referencedRelation: "bot_daily_parlays"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_pick_actions: {
         Row: {
           action: string
