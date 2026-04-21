@@ -9,3 +9,5 @@ export * from "./strategies.ts";
 export * from "./generator.ts";
 export * from "./backtest.ts";
 export * from "./calibration.ts";
+export * from "./kelly.ts";
+export * from "./correlation.ts";
