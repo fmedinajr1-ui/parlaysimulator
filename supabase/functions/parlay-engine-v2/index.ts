@@ -33,6 +33,30 @@ function normalizeSignalSource(category: string | null | undefined): string {
   return category.trim().toUpperCase().replace(/\s+/g, "_");
 }
 
+// Map raw prop_type strings (Odds API + pool) to the canonical labels used in
+// PROP_WHITELIST / PROP_BLACKLIST (e.g. "player_points" → "Points").
+const PROP_TYPE_CANONICAL: Record<string, string> = {
+  player_points: "Points",
+  player_rebounds: "Rebounds",
+  player_assists: "Assists",
+  player_threes: "3PM",
+  player_steals: "Steals",
+  player_blocks: "Blocks",
+  player_rebounds_assists: "R+A",
+  player_points_rebounds_assists: "PRA",
+  player_points_rebounds: "P+R",
+  player_points_assists: "P+A",
+  player_turnovers: "TO",
+  // Lower-case bare names used in some legacy refresh paths
+  points: "Points", rebounds: "Rebounds", assists: "Assists", threes: "3PM",
+  steals: "Steals", blocks: "Blocks",
+};
+function canonicalPropType(raw: string | null | undefined): string {
+  if (!raw) return "Unknown";
+  const k = raw.trim().toLowerCase();
+  return PROP_TYPE_CANONICAL[k] ?? raw;
+}
+
 // Parse "Lakers @ Warriors" / "Lakers vs Warriors" into [team, opponent].
 // Player's team is unknown from pick_pool alone; we use the home/away teams
 // joined from unified_props.game_description as a best-effort.
@@ -165,7 +189,7 @@ function buildCandidates(
       player_name: row.player_name,
       team,
       opponent,
-      prop_type: row.prop_type,
+      prop_type: canonicalPropType(row.prop_type),
       side,
       line: row.recommended_line,
       american_odds: Math.round(american),
