@@ -112,12 +112,12 @@ Deno.test("ParlayEngine({ reject_negative_correlation: true }) drops negatively 
     min_pair_count: 0,
   };
   const pool: CandidateLeg[] = [];
-  // 4 same-game Points OVER (LAL vs GSW) — strong whitelist signal
-  for (let i = 0; i < 4; i++) {
+  // Only 2 same-game Points OVER (LAL vs GSW) so a 4-leg parlay = 50% same-game (passes 0.6 cap)
+  for (let i = 0; i < 2; i++) {
     pool.push(makeLeg({
       player_name: `LALStar ${i}`, prop_type: "Points", side: "OVER",
       team: "LAL", opponent: "GSW",
-      confidence: 0.78, american_odds: -135, signal_source: "VOLUME_SCORER",
+      confidence: 0.82, american_odds: 180, signal_source: "VOLUME_SCORER",
     }));
   }
   // Many other diverse props in different games so non-same-game parlays still build
@@ -125,13 +125,13 @@ Deno.test("ParlayEngine({ reject_negative_correlation: true }) drops negatively 
     ["Assists", "OVER"], ["Rebounds", "OVER"], ["Steals", "OVER"], ["3PM", "UNDER"],
     ["Blocks", "UNDER"], ["R+A", "OVER"],
   ];
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 40; i++) {
     const [pt, side] = otherProps[i % otherProps.length];
     pool.push(makeLeg({
       player_name: `Diverse ${i}`,
       team: `T${i % 12}`, opponent: `O${(i + 1) % 12}`,
       prop_type: pt, side, line: 5 + (i % 10),
-      confidence: 0.74, american_odds: -120, signal_source: "VOLUME_SCORER",
+      confidence: 0.74, american_odds: 150, signal_source: "VOLUME_SCORER",
     }));
   }
   const engine = new ParlayEngine({
