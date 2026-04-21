@@ -31,7 +31,8 @@ import {
   Search,
   Target,
   Sparkles,
-  Mail
+  Mail,
+  Music2
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
