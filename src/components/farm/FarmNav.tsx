@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 
 interface Props {
   onCtaClick: () => void;
@@ -19,9 +20,8 @@ export function FarmNav({ onCtaClick }: Props) {
       }`}
     >
       <div className="max-w-7xl mx-auto flex items-center justify-between px-5 py-3">
-        <a href="#top" className="flex items-center gap-2 farm-display font-bold text-lg">
-          <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-[hsl(var(--sharp-green))] text-[hsl(var(--farm-bg))] text-base">🐕</span>
-          ParlayFarm
+        <a href="#top" className="flex items-center">
+          <ParlayFarmLogo size="sm" />
         </a>
         <div className="hidden md:flex items-center gap-7 text-sm">
           <a href="#sharp-tracker" className="text-[hsl(var(--farm-muted))] hover:text-[hsl(var(--farm-text))]">Sharp Tracker</a>
