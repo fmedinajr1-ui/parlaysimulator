@@ -427,6 +427,44 @@ export default function PublishTab({
 
       {/* RIGHT — Schedule sidebar */}
       <div className="space-y-3">
+        {queue.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Zap className="w-4 h-4" /> Auto-post queue ({queue.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs">
+              {queue.map((q) => {
+                const acc = accounts.find((a) => a.id === q.account_id);
+                return (
+                  <div key={q.id} className="border rounded p-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge variant="outline" className="text-[10px]">{acc?.persona_key || "?"}</Badge>
+                      <Badge
+                        variant={
+                          q.status === "failed" ? "destructive" :
+                          q.status === "posting" ? "secondary" : "outline"
+                        }
+                        className="text-[10px]"
+                      >{q.status}</Badge>
+                    </div>
+                    <div className="text-muted-foreground">
+                      {new Date(q.scheduled_for).toLocaleString(undefined, {
+                        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                      })}
+                    </div>
+                    {q.last_error && (
+                      <div className="text-destructive text-[10px] truncate" title={q.last_error}>
+                        ⚠ {q.last_error}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
