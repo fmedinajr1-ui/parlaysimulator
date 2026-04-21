@@ -108,6 +108,70 @@ export default function PublishTab({
     }
   }
 
+  // ── Phase 7 — Run A/B test: clone script under a second persona, queue both
+  async function runAbTest(render: RenderRow, script: ScriptRow, primaryAccount: AccountRow) {
+    setBusyId(render.id);
+    try {
+      // Pick a different active account to compare against
+      const candidates = accounts.filter(
+        (a) => a.id !== primaryAccount.id && a.status !== "paused" && a.auto_post_enabled && a.blotato_account_id,
+      );
+      if (candidates.length === 0) {
+        toast.error("Need at least one other auto-post-enabled account to A/B test");
+        return;
+      }
+      const secondary = candidates[Math.floor(Math.random() * candidates.length)];
+      const abGroupId = (crypto as any).randomUUID();
+
+      // 1) Enqueue primary render
+      const { data: q1, error: e1 } = await supabase.functions.invoke("tiktok-blotato-enqueue", {
+        body: { render_id: render.id, ab_group_id: abGroupId, scheduled_for: new Date(Date.now() + 60_000).toISOString() },
+      });
+      if (e1) throw e1;
+      if (q1?.error) throw new Error(q1.error);
+
+      // 2) Generate a sibling script under the secondary persona using the same source data
+      const { data: gen, error: e2 } = await supabase.functions.invoke("tiktok-script-generator", {
+        body: {
+          template: script.template,
+          persona_key: secondary.persona_key,
+          payload: script.source_data || {},
+        },
+      });
+      if (e2) throw e2;
+      if (!gen?.success || !gen?.script_id) {
+        toast.warning("A/B leg #1 queued, but sibling script generation failed — review queue");
+        await Promise.all([onReload(), loadQueue()]);
+        return;
+      }
+      // Auto-approve sibling script (admin trust) so it can render
+      await supabase
+        .from("tiktok_video_scripts")
+        .update({ status: "approved", reviewed_at: new Date().toISOString() })
+        .eq("id", gen.script_id);
+
+      // 3) Kick off render for sibling; the operator will queue it once assets are ready.
+      await supabase.functions.invoke("tiktok-render-orchestrator", { body: { script_id: gen.script_id } });
+
+      // 4) Tag the sibling script with the same ab_group_id via a marker on the render queue —
+      //    when the operator queues that render, they should pass the same ab_group_id.
+      //    For now, store group on the script's source_data for traceability.
+      await supabase
+        .from("tiktok_video_scripts")
+        .update({ source_data: { ...(script.source_data || {}), ab_group_id: abGroupId, ab_paired_with_render: render.id } })
+        .eq("id", gen.script_id);
+
+      toast.success(
+        `A/B leg #1 queued (${primaryAccount.persona_key}). Sibling rendering for ${secondary.persona_key} — queue it from Renders tab to complete the test.`,
+      );
+      await Promise.all([onReload(), loadQueue()]);
+    } catch (e: any) {
+      toast.error(`A/B test failed: ${e.message}`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   // Renders ready to publish
   const publishable = useMemo(() => {
     return renders.filter((r) =>
