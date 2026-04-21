@@ -31,10 +31,17 @@ async function selectHook(style: string, template: VideoTemplate, fillVars: Reco
   // Epsilon-greedy weighted by completion rate
   const pool = data as HookEntry[];
   let chosen: HookEntry;
-  if (Math.random() < 0.25) {
+  // Phase 7: 10% pure exploration, otherwise weight by completion_rate * log(n+1)
+  if (Math.random() < 0.10) {
     chosen = pool[Math.floor(Math.random() * pool.length)];
   } else {
-    const weighted = pool.map(h => ({ hook: h, weight: (Number(h.avg_completion_rate) || 0.45) + (h.impressions < 5 ? 0.15 : 0) }));
+    const weighted = pool.map(h => {
+      const comp = Number(h.avg_completion_rate) || 0.45;
+      const n = Number(h.impressions) || 0;
+      // Winners (high completion + sample size) get boosted; cold-start gets a small floor
+      const weight = comp * Math.log(n + 1) + (n < 3 ? 0.25 : 0) + 0.05;
+      return { hook: h, weight };
+    });
     const total = weighted.reduce((s, x) => s + x.weight, 0);
     let r = Math.random() * total;
     chosen = weighted[0].hook;
