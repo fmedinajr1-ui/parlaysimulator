@@ -1,167 +1,107 @@
 
 
-## Phase C: Upgrade engine to v2.5 + ship parlays to @parlayiqbot
+## Phase D: Auto-trigger + real book line enforcement
 
-Two coordinated pieces, in one rollout:
+Two pieces:
 
-1. **Engine upgrade** — bring `parlay-engine-v2` from v2.1 to v2.5 (sweep presets, correlation model, pluggable Kelly sizing).
-2. **Telegram broadcast** — when a slate is generated, post each parlay to your `@parlayiqbot` chat via a new `parlay-engine-v2-broadcast` function.
+1. **Real book lines**: harden the v2 engine so every leg's `american_odds` and `line` come straight from `unified_props` (FanDuel → DraftKings → BetMGM priority) and reject any candidate without a fresh, active book line.
+2. **Auto-trigger**: pg_cron schedule that runs `parlay-engine-v2-broadcast` 3× per day so slates ship to `@parlayiqbot` without manual invokes.
 
-No cron yet. You invoke it. Cron + settlement come later.
-
----
-
-### 1. Engine upgrade (v2.1 → v2.5)
-
-All edits stay inside `supabase/functions/_shared/parlay-engine-v2/` so every consumer (generator, backtest) gets the upgrade for free.
-
-**`config.ts` additions**
-- `V2_3_BALANCED` preset: `{ MIN_LEG_CONFIDENCE: 0.65, MIN_PARLAY_ODDS: 500 }` — 174% backtest ROI, ~7 parlays/day.
-- `V2_3_MAX_ROI` preset: `{ MIN_LEG_CONFIDENCE: 0.75, MIN_PARLAY_ODDS: 500 }` — 206% backtest ROI, ~5 parlays/day.
-- `STAKE_SIZING_MODE: "flat" | "kelly_lite" | "fractional_kelly"` (default `"kelly_lite"` — preserves current behavior).
-- `KELLY_FRACTION = 0.25`.
-- Remove `BIG_ASSIST_OVER` from `SIGNAL_BLACKLIST` (per SPEC §2 — was reverted in v2.1, our port still has it). Per `mem://constraints/testing-policy` and `STRATEGY.md §8`, this is the only signal that's wrong today; THREES stays.
-
-**New file `kelly.ts`** — three sizers behind one `getSizer(mode)` interface. Engine calls the active sizer per parlay; strategies stay untouched.
-
-**New file `correlation.ts`** — port of `correlation.py`:
-- `CorrelationModel` (pair-lift map keyed by `(prop_type, side) × (prop_type, side)`, same-game scope).
-- `fitCorrelationModel(legs, minPairCount=30)` — builds from historical legs (driven from `bot_daily_parlays.legs` jsonb).
-- `adjustedCombinedProbability(parlay, model)` and `warningsFor(parlay, model, negThreshold=0.90)`.
-
-**`generator.ts` changes**
-- Constructor accepts optional `{ correlation_model, reject_negative_correlation, config_override }`.
-- Each accepted parlay gets `adjusted_combined_probability` and `correlation_warnings` populated when a model is passed.
-- When `reject_negative_correlation = true`, parlays with any warning are dropped and counted in `report.rejection_reasons['parlay:negative_correlation']`.
-- Stake calculation routed through the new sizer.
-
-**`models.ts`** — add the two new optional fields to `Parlay`. Default `null` / `[]` so older callers behave identically.
-
-**Backward compatibility:** every new field is optional, every new config knob has a default that matches today. The existing `parlay-engine-v2` and `parlay-engine-v2-backtest` functions keep working without code changes.
-
-**Tests** (per the 5-test rule):
-1. `getSizer("flat")` returns 1.0 unit regardless of confidence.
-2. `getSizer("fractional_kelly")` on a +EV parlay (p=0.30, decimal=5.0) returns positive stake capped at `2 × tier_base`.
-3. Default mode `"kelly_lite"` produces identical stakes to today (regression).
-4. `fitCorrelationModel` on a synthetic set with 60 `Rebounds OVER × Rebounds OVER` pairs produces lift < 0.90.
-5. `ParlayEngine({ reject_negative_correlation: true })` drops a parlay containing two same-game `Rebounds OVER` legs and logs `"parlay:negative_correlation"`.
+No new Telegram bot, no settlement work, no UI.
 
 ---
 
-### 2. Telegram broadcast — `parlay-engine-v2-broadcast`
+### 1. Real book lines (engine hardening)
 
-A new edge function. **Generation and broadcast are still decoupled** (per `generator-template/index.ts` rule: "A generator's job is to PRODUCE PICKS, not send messages"). The broadcast function reads from `bot_daily_parlays` and posts to Telegram.
+Current behavior in `parlay-engine-v2/index.ts`:
+- Joins `bot_daily_pick_pool` to `unified_props` on `(player_name, prop_type)`.
+- Uses `over_price` / `under_price` whichever side matches.
+- Drops candidates with no price.
 
-**Why a separate function**: the existing `parlay-engine-v2` writes to `bot_daily_parlays` and returns the slate. The broadcast is a follow-up step you can invoke independently. This matches every other Telegram sender in the codebase (`fetch-hardrock-longshots`, `ai-research-agent`).
+Gaps to close:
 
-**Endpoint**
-```
-POST /parlay-engine-v2-broadcast
-body: {
-  date?: "YYYY-MM-DD",                // default = today (ET)
-  parlay_ids?: string[],              // optional: only these
-  preset?: "v2.2" | "v2.3-balanced" | "v2.3-max-ROI" | "live",
-  generate_first?: boolean,           // if true, calls parlay-engine-v2 inline first
-  dry_run?: boolean,                  // build the messages but don't send
-  chat_id?: string,                   // default = TELEGRAM_CHAT_ID env
-}
-```
+**a. Bookmaker priority (FanDuel → DraftKings → BetMGM)**  
+Today the join takes whichever `unified_props` row Postgres returns first — could be BetMGM even when FanDuel has a sharper line. New behavior:
+- Pull all matching `unified_props` rows for the player+prop (not just one).
+- Pick the row in order: `fanduel` → `draftkings` → `betmgm`.
+- Record the chosen book as `signal_source` suffix and surface it in the Telegram message: `"Luka Doncic — Points OVER 28.5 (-115) [FD]"`.
 
-**Flow**
-1. If `generate_first = true` → invoke `parlay-engine-v2` (with the chosen preset wired through as `config_override`) to populate `bot_daily_parlays` for today.
-2. Pull parlays for `date` from `bot_daily_parlays` (filter by `parlay_ids` if given). Skip ones already broadcast (see step 5).
-3. For each parlay, build a Telegram message respecting `mem://telegram/communication-style` (narrative, no abbreviations) and `mem://telegram/ui-standardization` (full prop names — "Points" not "PTS"):
+**b. Freshness gate**  
+Reject any candidate whose `unified_props.odds_updated_at` is older than **20 minutes** at engine run time. Counted in `report.rejection_reasons['leg:stale_book_line']`. Tunable via `config.MAX_BOOK_LINE_AGE_MIN` (default 20).
 
-```
-🎯 ParlayIQ — mispriced_edge (CORE)
-3 legs · +687 · 1.33u · EV +2.78u
+**c. Line equality check**  
+Reject candidates where `recommended_line` differs from `unified_props.current_line` by more than 0.5 (means the book moved off our pick). Counted as `leg:line_moved`. Tunable via `config.MAX_LINE_DRIFT` (default 0.5).
 
-1. Luka Doncic — Points OVER 28.5 (-115)
-   Volume scorer · conf 0.78 · proj 31.2
+**d. `is_active = true` required**  
+Already enforced via `line_confirmed_on_book`, but add an explicit early reject so the rejection log is clearer (`leg:book_line_inactive`).
 
-2. ...
+**Engine changes** (all in `supabase/functions/parlay-engine-v2/index.ts`):
+- Replace the single `propIndex` map with `propsByKey: Map<key, PropRow[]>` and a `pickPreferredBook(rows, order)` helper.
+- Add freshness + drift checks inside `buildCandidates`.
+- Stamp `selected_book` onto each `CandidateLeg` (new optional field on `models.ts`).
 
-Why this hits: NBA whitelist alignment, fat-pitch odds band, 0.76 avg confidence.
-⚠️ Correlation note: Rebounds OVER × Rebounds OVER same-game (lift 0.80x) — heads up.
-```
-
-The correlation note line only appears when `correlation_warnings` is non-empty.
-
-4. Post to Telegram via the existing pattern (matches `stripe-webhook` / `fetch-hardrock-longshots`):
-   ```ts
-   await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-     method: 'POST',
-     headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify({ chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true })
-   });
-   ```
-   Using existing `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` env vars (already set, used by 3 other functions). No new secrets.
-
-5. **Dedup**: insert one row per (parlay_id, chat_id) into a small new table `bot_parlay_broadcasts` so re-running on the same day doesn't double-post:
-   ```sql
-   CREATE TABLE bot_parlay_broadcasts (
-     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-     parlay_id uuid NOT NULL REFERENCES bot_daily_parlays(id) ON DELETE CASCADE,
-     chat_id text NOT NULL,
-     sent_at timestamptz NOT NULL DEFAULT now(),
-     telegram_message_id bigint,
-     UNIQUE (parlay_id, chat_id)
-   );
-   ALTER TABLE bot_parlay_broadcasts ENABLE ROW LEVEL SECURITY;
-   CREATE POLICY "service role manages broadcasts" ON bot_parlay_broadcasts
-     FOR ALL USING (true) WITH CHECK (true);
-   ```
-
-6. Return `{ generated, sent, skipped_duplicates, errors[] }`.
-
-**Telegram safety**
-- Sequential sends with a 1.2s sleep between messages to avoid the 30 msg/sec global rate limit.
-- HTML `parse_mode`; if a message fails parsing, retry once as plain text (matches `ai-research-agent` pattern).
-- Per `mem://telegram/authorized-accounts`, default broadcast goes to the configured `TELEGRAM_CHAT_ID` (admin Destiny_0711); `chat_id` override lets you target other chats later.
+**No change to scoring or sizing.** This is purely about *trusting only fresh, real book lines*.
 
 **Tests** (5):
-1. Message builder produces a string with full prop name, line, odds, stake.
-2. Correlation warning appears only when `correlation_warnings.length > 0`.
-3. Dedup: second invocation for same `(parlay_id, chat_id)` returns `skipped_duplicates += 1` and does not POST.
-4. `dry_run = true` builds messages but never calls Telegram (mocked fetch counted = 0).
-5. Missing `TELEGRAM_BOT_TOKEN` returns a clean 200 with `errors: ["telegram_not_configured"]` rather than throwing (so a slate generation followed by a broadcast attempt doesn't crash on a fresh environment).
+1. Given props rows for [betmgm, fanduel, draftkings], picker returns the FanDuel row.
+2. Stale prop (`odds_updated_at` 30 min old) is rejected with `leg:stale_book_line`.
+3. Line drift (pool line 28.5 vs book 30.5) rejected with `leg:line_moved`.
+4. `is_active=false` prop rejected with `leg:book_line_inactive`.
+5. Telegram message rendered for a FanDuel-sourced leg includes `[FD]` suffix.
 
 ---
 
-### How you'd use it
+### 2. Auto-trigger via pg_cron
 
-```ts
-// One-shot: generate today's slate using v2.3-balanced and broadcast immediately
-supabase.functions.invoke('parlay-engine-v2-broadcast', {
-  body: {
-    generate_first: true,
-    preset: 'v2.3-balanced',
-    dry_run: false,
-  },
-});
+Three scheduled runs per day, all calling `parlay-engine-v2-broadcast` with `generate_first: true`:
+
+| Slot | ET time | UTC cron | Why |
+|---|---|---|---|
+| Morning slate | 11:00 AM ET | `0 15 * * *` | After morning prep pipeline finishes; lines fresh |
+| Midday refresh | 2:30 PM ET | `30 18 * * *` | Catches afternoon line moves before NBA tip |
+| Pre-game lock | 6:00 PM ET | `0 22 * * *` | Final slate before NBA primetime |
+
+Dedup is already handled by `bot_parlay_broadcasts (parlay_id, chat_id) UNIQUE`, so cron re-runs never double-post the same parlay. New parlays generated in later slots ship; previously-broadcast ones are skipped.
+
+**Migration** (single SQL, has to use the insert tool because it embeds the project URL + service-role JWT — no shared remix risk):
+
+```sql
+SELECT cron.schedule(
+  'parlay-iq-broadcast-morning',
+  '0 15 * * *',
+  $$SELECT net.http_post(
+    url := 'https://<ref>.supabase.co/functions/v1/parlay-engine-v2-broadcast',
+    headers := '{"Content-Type":"application/json","Authorization":"Bearer <service_role>"}'::jsonb,
+    body := '{"generate_first":true,"preset":"v2.3-balanced","dry_run":false}'::jsonb
+  );$$
+);
+-- + same for 18:30 and 22:00 UTC
 ```
 
-```ts
-// Just rebroadcast 3 specific parlays from today
-supabase.functions.invoke('parlay-engine-v2-broadcast', {
-  body: { parlay_ids: ['…','…','…'], dry_run: false },
-});
-```
+Each job is independently `cron.unschedule`-able by name so you can pause one slot without killing the others.
+
+**Kill switch**: a row in `bot_owner_rules` named `parlay_iq_autobroadcast_enabled` (default `true`). The broadcast function checks it at the top and returns `{paused: true}` immediately when `false`. Lets you stop posting without dropping the cron jobs.
+
+**Tests** (3, all on the broadcast function):
+1. With `parlay_iq_autobroadcast_enabled=false`, the function returns `{paused:true}` and never calls Telegram.
+2. With it `true`, normal flow proceeds.
+3. Two back-to-back invocations of the same slot only post once (existing dedup test, restated for cron context).
 
 ---
 
 ### What this does NOT do
 
-- No cron (manual invoke only — Phase D)
-- No settlement / outcome tracking (Phase E)
-- No replies / inbound Telegram (`/parlays` command stays as-is in existing bot)
-- No frontend UI to trigger it (you can wire a button in a later micro-step)
-- No new Telegram bot — uses your existing `@parlayiqbot` token
+- No settlement / outcome grading (still pending — separate phase).
+- No new Telegram bot or inbound commands.
+- No UI changes.
+- Does not change the engine's strategy logic, sizing, or correlation model.
+- Does not bring odds from `fetch-current-odds` directly — `unified_props` is already the canonical store and is refreshed every few minutes by your existing pipeline. Pulling from the API at engine time would burn quota.
 
 ### Sequence
 
-1. Migration: create `bot_parlay_broadcasts`.
-2. Engine upgrade in `_shared/parlay-engine-v2/` (config, kelly, correlation, generator, models) + 5 tests.
-3. Build `parlay-engine-v2-broadcast` edge function + 5 tests.
-4. Deploy. You invoke it with `dry_run: true` first to inspect formatted messages, then flip to `dry_run: false`.
+1. Engine hardening in `parlay-engine-v2/index.ts` + `_shared/parlay-engine-v2/config.ts` + `models.ts` + 5 tests.
+2. Add kill-switch read in `parlay-engine-v2-broadcast/index.ts` + 1 test.
+3. Telegram message: append `[FD]` / `[DK]` / `[MGM]` book tag per leg.
+4. Insert pg_cron schedule (3 jobs) — uses Supabase insert tool, not migration tool.
+5. Manual verification: invoke once with `dry_run:true`, confirm fresh FanDuel lines and rejection reasons; flip to `dry_run:false`; wait for first cron tick.
 
