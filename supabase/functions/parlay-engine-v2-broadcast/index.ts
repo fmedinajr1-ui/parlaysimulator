@@ -118,6 +118,105 @@ function pickLegBookTag(l: Leg): string {
   return tag ? ` [${tag}]` : "";
 }
 
+function humanizeSignalSource(raw: string | null | undefined): string {
+  if (!raw) return "Model pick";
+
+  const normalized = raw.trim().toUpperCase();
+  const labelMap: Record<string, string> = {
+    UNKNOWN: "Model pick",
+    UNCATEGORIZED: "Model pick",
+    VOLUME_SCORER: "Volume scorer",
+    BIG_REBOUNDER: "Big rebounder",
+    HIGH_ASSIST: "Playmaking edge",
+    ASSISTS: "Assist edge",
+    STEALS: "Steals edge",
+    BLOCKS: "Blocks edge",
+    STAR_FLOOR_OVER: "Star floor over",
+    THREE_POINT_SHOOTER: "3-point shooter",
+    THREES: "3-point angle",
+    MID_SCORER_UNDER: "Mid-scorer under",
+    ROLE_PLAYER_REB: "Role rebound edge",
+    SWEET_SPOT: "Sweet Spot",
+    SWEET_SPOTS: "Sweet Spot",
+    MANUAL_CURATED: "Manual curate",
+    LADDER_CHALLENGE: "Ladder challenge",
+  };
+
+  if (labelMap[normalized]) return labelMap[normalized];
+
+  return normalized
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+const TELEGRAM_LIMIT = 4096;
+const TELEGRAM_SOFT_LIMIT = 3800;
+
+function stripHtml(text: string): string {
+  return text.replace(/<[^>]+>/g, "");
+}
+
+function splitTelegramMessage(text: string, limit: number = TELEGRAM_SOFT_LIMIT): string[] {
+  if (text.length <= limit) return [text];
+
+  const sections = text.split(/\n\n+/);
+  const chunks: string[] = [];
+  let current = "";
+
+  const pushCurrent = () => {
+    if (current.trim()) chunks.push(current.trim());
+    current = "";
+  };
+
+  for (const section of sections) {
+    const candidate = current ? `${current}\n\n${section}` : section;
+    if (candidate.length <= limit) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) pushCurrent();
+
+    if (section.length <= limit) {
+      current = section;
+      continue;
+    }
+
+    const lines = section.split("\n");
+    let partial = "";
+    for (const line of lines) {
+      const next = partial ? `${partial}\n${line}` : line;
+      if (next.length <= limit) {
+        partial = next;
+        continue;
+      }
+
+      if (partial) chunks.push(partial.trim());
+
+      if (line.length <= limit) {
+        partial = line;
+        continue;
+      }
+
+      let remaining = line;
+      while (remaining.length > limit) {
+        let splitAt = remaining.lastIndexOf(" ", limit);
+        if (splitAt < Math.floor(limit * 0.6)) splitAt = limit;
+        chunks.push(remaining.slice(0, splitAt).trim());
+        remaining = remaining.slice(splitAt).trim();
+      }
+      partial = remaining;
+    }
+    current = partial;
+  }
+
+  pushCurrent();
+  return chunks;
+}
+
 // ----- Message builder ------------------------------------------------------
 
 export function buildMessage(p: ParlayRow): string {
@@ -149,11 +248,9 @@ export function buildMessage(p: ParlayRow): string {
     const odds = pickLegOdds(l);
     const bookTag = pickLegBookTag(l);
     const conf = l.confidence != null ? ` · conf ${Number(l.confidence).toFixed(2)}` : "";
-    const sig = l.signal_source
-      ? ` · ${escapeHtml(l.signal_source.toLowerCase().replace(/_/g, " "))}`
-      : "";
+    const sig = escapeHtml(humanizeSignalSource(l.signal_source));
     const proj = l.projected != null ? ` · proj ${Number(l.projected).toFixed(1)}` : "";
-    return `${i + 1}. ${player} — ${prop} ${side} ${line ?? "?"} (${fmtAmerican(odds)})${bookTag}\n   <i>${sig.replace(/^ · /, "")}${conf}${proj}</i>`;
+    return `${i + 1}. ${player} — ${prop} ${side} ${line ?? "?"} (${fmtAmerican(odds)})${bookTag}\n   <i>${sig}${conf}${proj}</i>`;
   }).join("\n\n");
 
   let footer = "";
@@ -177,29 +274,44 @@ async function sendTelegram(
   text: string,
 ): Promise<{ ok: boolean; message_id?: number; error?: string }> {
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-  let r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
-    }),
-  });
-  let body = await r.json().catch(() => ({}));
-  if (!r.ok || body?.ok === false) {
-    // Fallback: retry as plain text
-    r = await fetch(url, {
+  const rawChunks = splitTelegramMessage(text, TELEGRAM_SOFT_LIMIT);
+  const numberedChunks = rawChunks.length > 1
+    ? rawChunks.map((chunk, index) => `<b>(${index + 1}/${rawChunks.length})</b>\n${chunk}`)
+    : rawChunks;
+
+  let firstMessageId: number | undefined;
+
+  for (const chunk of numberedChunks) {
+    if (chunk.length > TELEGRAM_LIMIT) {
+      return { ok: false, error: "chunk_exceeds_telegram_limit" };
+    }
+
+    let r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: chatId, text: text.replace(/<[^>]+>/g, ""), disable_web_page_preview: true,
+        chat_id: chatId, text: chunk, parse_mode: "HTML", disable_web_page_preview: true,
       }),
     });
-    body = await r.json().catch(() => ({}));
+    let body = await r.json().catch(() => ({}));
     if (!r.ok || body?.ok === false) {
-      return { ok: false, error: body?.description ?? `http_${r.status}` };
+      r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId, text: stripHtml(chunk), disable_web_page_preview: true,
+        }),
+      });
+      body = await r.json().catch(() => ({}));
+      if (!r.ok || body?.ok === false) {
+        return { ok: false, error: body?.description ?? `http_${r.status}` };
+      }
     }
+
+    if (firstMessageId == null) firstMessageId = body?.result?.message_id;
   }
-  return { ok: true, message_id: body?.result?.message_id };
+
+  return { ok: true, message_id: firstMessageId };
 }
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
