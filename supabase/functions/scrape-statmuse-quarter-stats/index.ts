@@ -15,6 +15,10 @@ function cleanCell(cell: string): string {
   return c.replace(/\s+/g, ' ').trim();
 }
 
+async function delay(ms: number) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /** Parse the summary stats row from StatMuse per-quarter page.
  * Returns { ppg, rpg, apg, spg, bpg, threes } or null */
 function parseSummaryRow(markdown: string): { ppg: number; rpg: number; apg: number; spg: number; bpg: number; threes: number } | null {
@@ -111,6 +115,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const log = (msg: string) => console.log(`[statmuse-quarter] ${msg}`);
     const results: Record<string, string> = {};
+    const playerDetails: Record<string, { status: string; quarters_found: number; quarters_attempted: number; missing_quarters?: number[]; props_saved?: number; error?: string }> = {};
     let upsertCount = 0;
 
     const quarters = ['first', 'second', 'third', 'fourth'];
@@ -131,7 +136,12 @@ Deno.serve(async (req) => {
             body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true, waitFor: 2000 }),
           });
 
-          const scrapeData = await scrapeRes.json();
+          if (!scrapeRes.ok) {
+            log(`⚠ Firecrawl HTTP ${scrapeRes.status} for ${playerName} Q${qi + 1}`);
+            continue;
+          }
+
+          const scrapeData = await scrapeRes.json().catch(() => null);
           const markdown = scrapeData?.data?.markdown || scrapeData?.markdown || '';
 
           if (!markdown) {
@@ -147,11 +157,20 @@ Deno.serve(async (req) => {
             log(`⚠ Could not parse Q${qi + 1} summary for ${playerName}`);
           }
 
-          await new Promise(r => setTimeout(r, 1000));
+          await delay(250);
         }
 
-        if (Object.keys(quarterData).length < 2) {
-          results[playerName] = `insufficient_quarters (${Object.keys(quarterData).length}/4)`;
+        const foundQuarterIds = Object.keys(quarterData).map(Number);
+        const missingQuarterIds = [1, 2, 3, 4].filter(q => !foundQuarterIds.includes(q));
+
+        if (foundQuarterIds.length < 2) {
+          results[playerName] = `insufficient_quarters (${foundQuarterIds.length}/4)`;
+          playerDetails[playerName] = {
+            status: 'insufficient_quarters',
+            quarters_found: foundQuarterIds.length,
+            quarters_attempted: 4,
+            missing_quarters: missingQuarterIds,
+          };
           continue;
         }
 
@@ -193,21 +212,42 @@ Deno.serve(async (req) => {
         if (error) {
           log(`❌ Upsert error: ${JSON.stringify(error)}`);
           results[playerName] = `upsert_error: ${error.message}`;
+          playerDetails[playerName] = {
+            status: 'upsert_error',
+            quarters_found: foundQuarterIds.length,
+            quarters_attempted: 4,
+            missing_quarters: missingQuarterIds,
+            error: error.message,
+          };
         } else {
           upsertCount += upsertRows.length;
           results[playerName] = `ok (${upsertRows.length} props, ${Object.keys(quarterData).length}/4 Q)`;
+          playerDetails[playerName] = {
+            status: foundQuarterIds.length === 4 ? 'ok' : 'partial_ok',
+            quarters_found: foundQuarterIds.length,
+            quarters_attempted: 4,
+            missing_quarters: missingQuarterIds,
+            props_saved: upsertRows.length,
+          };
           log(`✅ ${playerName}: ${upsertRows.length} baselines saved`);
         }
 
-        await new Promise(r => setTimeout(r, 500));
+        await delay(150);
       } catch (e) {
-        log(`❌ ${playerName}: ${e.message}`);
-        results[playerName] = `exception: ${e.message}`;
+        const message = e instanceof Error ? e.message : 'Unknown error';
+        log(`❌ ${playerName}: ${message}`);
+        results[playerName] = `exception: ${message}`;
+        playerDetails[playerName] = {
+          status: 'exception',
+          quarters_found: 0,
+          quarters_attempted: 4,
+          error: message,
+        };
       }
     }
 
     log(`Done. Upserted ${upsertCount} for ${playerNames.length} players.`);
-    return new Response(JSON.stringify({ success: true, processed: playerNames.length, upserted: upsertCount, results }), {
+    return new Response(JSON.stringify({ success: true, processed: playerNames.length, upserted: upsertCount, results, player_details: playerDetails }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
