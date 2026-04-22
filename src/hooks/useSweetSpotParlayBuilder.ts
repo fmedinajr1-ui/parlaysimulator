@@ -874,27 +874,27 @@ export interface BuilderOutput {
  * Takes all dependencies as input, returns deterministic output
  * No React hooks, no side effects (except console logging for diagnostics)
  */
-export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
-  // Set preset if provided (for deterministic testing)
+export function buildSweetSpotParlayCore(
+  input: BuilderInput & { funnelMode?: BuilderFunnelMode },
+): BuilderOutput {
   if (input.presetKey) {
     setScorePreset(input.presetKey);
   }
 
+  const funnelMode: BuilderFunnelMode = input.funnelMode ?? "aggressive";
   const traces: DecisionTraceRow[] = [];
   const diagnostics = {
     totalCandidates: input.picks.length,
-    archetypeFiltered: 0,
-    h2hBlocked: [] as string[],
-    patternBlocked: [] as string[],
+    structurallyBlocked: 0,
+    conflictSkipped: [] as string[],
+    downgradedSignals: [] as string[],
     selectedCount: 0,
   };
 
-  // Convert input maps to Map objects for consistent lookup
   const h2hMap = new Map(Object.entries(input.h2hMap || {}));
   const gameContextMap = new Map(Object.entries(input.gameContextMap || {}));
   const defenseMap = new Map(Object.entries(input.defenseMap || {}));
 
-  // Helper: Get team abbreviation
   const getTeamAbbrev = (teamName: string | undefined): string => {
     if (!teamName) return "";
     const abbrevMap: Record<string, string> = {
@@ -971,7 +971,6 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
     return teamName.slice(0, 3).toUpperCase();
   };
 
-  // Helper: Get H2H data for a pick
   const getH2HForPick = (pick: SweetSpotPick): H2HData | undefined => {
     const playerKey = pick.player_name?.toLowerCase() || "";
     const propKey = pick.prop_type?.toLowerCase() || "";
@@ -991,13 +990,11 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
     return undefined;
   };
 
-  // Helper: Get game context for a pick
   const getGameContextForPick = (pick: SweetSpotPick): ParlayEnvContext | undefined => {
     const teamAbbrev = getTeamAbbrev(pick.team_name);
     return gameContextMap.get(teamAbbrev.toLowerCase());
   };
 
-  // Helper: Get opponent defense rank
   const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
     const ctx = getGameContextForPick(pick);
     if (!ctx?.opponent) return undefined;
@@ -1013,13 +1010,10 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
 
     const oppRaw = (ctx.opponent || "").trim();
     const oppLower = oppRaw.toLowerCase();
-
-    // Try as-is abbrev
     const key1 = `${oppLower}_${statType}`;
     const r1 = defenseMap.get(key1);
     if (r1 != null) return r1;
 
-    // Try normalized abbrev
     const oppAbbrev = teamNameToAbbrev(oppRaw).toLowerCase();
     if (oppAbbrev && oppAbbrev !== oppLower) {
       const key2 = `${oppAbbrev}_${statType}`;
@@ -1030,230 +1024,117 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
     return undefined;
   };
 
-  // Step 1: Archetype alignment filter
-  const alignedPicks = input.picks.filter((pick) => {
-    const aligned = isPickArchetypeAligned(pick);
-    if (!aligned) diagnostics.archetypeFiltered++;
-    return aligned;
-  });
+  const qualityBoost = (tier?: QualityTier | null) => {
+    switch (tier) {
+      case "ELITE":
+        return 1.35;
+      case "PREMIUM":
+        return 1.0;
+      case "STRONG":
+        return 0.6;
+      case "STANDARD":
+        return 0.25;
+      default:
+        return -0.8;
+    }
+  };
 
-  // Step 2: H2H validation
-  const h2hValidatedPicks = alignedPicks.filter((pick) => {
-    const h2h = getH2HForPick(pick);
-    if (!h2h || h2h.gamesPlayed < 2) return true;
+  const marketBoost = (pick: SweetSpotPick) => {
+    if (pick.marketStatus === "active") return 1.1;
+    if (pick.marketStatus === "scanning") return 0.25;
+    if (pick.marketStatus === "stale") return -0.1;
+    return -10;
+  };
 
-    const isOver = pick.side?.toLowerCase() === "over";
+  const freshnessBoost = (pick: SweetSpotPick) => {
+    if (pick.lineFreshness === "fresh") return 0.55;
+    if (pick.lineFreshness === "stale") return -0.15;
+    if (pick.lineFreshness === "expired") return -10;
+    return 0;
+  };
 
-    if (h2h.hitRate < 0.4 && h2h.gamesPlayed >= 3) {
-      diagnostics.h2hBlocked.push(
-        `${pick.player_name} - ${(h2h.hitRate * 100).toFixed(0)}% ${pick.side} vs ${h2h.opponent}`,
-      );
+  const buildReasonTokens = (pick: SweetSpotPick, safetyScore: number): string[] => {
+    const reasons: string[] = [];
+    if (pick.marketStatus === "active") reasons.push("active market");
+    else if (pick.marketStatus === "scanning") reasons.push("scanner fallback");
+    else if (pick.marketStatus === "stale") reasons.push("stale but live");
+
+    if (pick.lineFreshness === "fresh") reasons.push("fresh odds");
+    if ((pick.l10HitRate || 0) >= 0.8) reasons.push(`L10 ${((pick.l10HitRate || 0) * 100).toFixed(0)}%`);
+    if ((pick.sweetSpotScore || 0) >= 85) reasons.push("top score");
+    if (Math.abs(pick.lineDrift || 0) <= 0.25) reasons.push("low drift");
+    if (pick.selectedBook) reasons.push(pick.selectedBook.toUpperCase());
+    if (safetyScore >= 8.5) reasons.push("safe stack");
+    return reasons;
+  };
+
+  const structurallyValidPicks = input.picks.filter((pick) => {
+    const player = (pick.player_name || "").trim();
+    const prop = (pick.prop_type || "").trim();
+    const line = Number(pick.line || 0);
+    if (!player || !prop || !line || pick.marketStatus === "off_market" || pick.lineFreshness === "expired") {
+      diagnostics.structurallyBlocked++;
       return false;
     }
 
-    if (isOver && h2h.avgStat < pick.line * 0.75 && h2h.gamesPlayed >= 3) {
-      diagnostics.h2hBlocked.push(`${pick.player_name} OVER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
-      return false;
+    if (funnelMode === "core") {
+      return pick.marketStatus === "active" && (pick.qualityTier === "ELITE" || pick.qualityTier === "PREMIUM");
     }
 
-    if (!isOver && h2h.avgStat > pick.line * 1.25 && h2h.gamesPlayed >= 3) {
-      diagnostics.h2hBlocked.push(`${pick.player_name} UNDER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
-      return false;
-    }
-
-    return true;
+    return pick.marketStatus !== "off_market" && pick.qualityTier !== "AVOID";
   });
 
-  // Step 3: Pattern validation
-  const patternValidatedPicks = h2hValidatedPicks.filter((pick) => {
-    const gameContext = getGameContextForPick(pick);
-    const opponentDefenseRank = getOpponentDefenseRank(pick);
-    const patternCheck = matchesWinningPattern(pick, gameContext, opponentDefenseRank);
-
-    if (!patternCheck.passes) {
-      diagnostics.patternBlocked.push(`${pick.player_name} ${pick.category}: ${patternCheck.reason}`);
-      return false;
-    }
-
-    return true;
-  });
-
-  // Step 3.5 (v5.0): Minimum edge threshold filter
-  const edgeValidatedPicks = patternValidatedPicks.filter((pick) => {
-    return passesMinEdgeThreshold(pick);
-  });
-
-  // Step 4: Category selection loop with v6.0 SYNERGY SCORING
-  const selectedLegs: DreamTeamLeg[] = [];
-  const usedTeams = new Set<string>();
-  const usedPlayers = new Set<string>();
-
-  for (const formula of PROVEN_FORMULA) {
-    const categoryPicks = edgeValidatedPicks
-      .filter(
-        (p) =>
-          p.category === formula.category &&
-          p.side.toLowerCase() === formula.side &&
-          !usedPlayers.has(p.player_name.toLowerCase()) &&
-          !usedTeams.has((p.team_name || "").toLowerCase()),
-      )
-      .map((p) => {
-        const gameContext = getGameContextForPick(p);
-        const opponentDefenseRank = getOpponentDefenseRank(p);
-        const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
-        return {
-          ...p,
-          _patternScore: patternCheck.score,
-          _gameContext: gameContext,
-          _opponentDefenseRank: opponentDefenseRank,
-        };
-      });
-
-    // v6.0: Score each candidate with synergy bonus
-    const scoredCandidates = categoryPicks
-      .map((pick) => {
-        // Calculate synergy with already-selected legs
-        let totalSynergy = 0;
-        for (const selected of selectedLegs) {
-          const synergyScore = calculateLegSynergy(pick, selected.pick, gameContextMap);
-          totalSynergy += synergyScore;
-
-          // Skip if hard conflict detected
-          if (synergyScore <= -2) {
-            console.log(`[Synergy] Hard conflict with ${selected.pick.player_name}, skipping ${pick.player_name}`);
-            return { pick, combinedScore: -Infinity, synergy: synergyScore };
-          }
-        }
-
-        // Combined score: individual pick score + synergy bonus (weighted 2x)
-        const individualScore = scorePick({
-          _patternScore: pick._patternScore,
-          l10HitRate: pick.l10HitRate,
-          confidence_score: pick.confidence_score,
-        });
-        const combinedScore = individualScore + totalSynergy * 2.0;
-
-        return { pick, combinedScore, synergy: totalSynergy };
-      })
-      .filter((x) => x.combinedScore > -Infinity)
-      // CRITICAL FIX: Added stable tie-breakers to ensure deterministic ordering
-      .sort((a, b) => {
-        if (b.combinedScore !== a.combinedScore) return b.combinedScore - a.combinedScore;
-        // Stable tie-breaker: player name (alphabetical)
-        const nameCompare = (a.pick.player_name || "").localeCompare(b.pick.player_name || "");
-        if (nameCompare !== 0) return nameCompare;
-        // Final tie-breaker: prop_type for complete determinism
-        return (a.pick.prop_type || "").localeCompare(b.pick.prop_type || "");
-      });
-
-    let added = 0;
-    for (const { pick, combinedScore, synergy } of scoredCandidates) {
-      if (added >= formula.count) continue;
-      if (selectedLegs.length >= TARGET_LEG_COUNT) break;
-
-      const team = (pick.team_name || "Unknown").toLowerCase();
+  const rankedCandidates = structurallyValidPicks
+    .map((pick) => {
       const h2h = getH2HForPick(pick);
-      const gameContext = pick._gameContext;
-      const opponentDefenseRank = pick._opponentDefenseRank;
-      const finalScore = combinedScore;
-
-      // Create trace row
-      const hasL10 = pick.l10HitRate != null;
-      const l10Val = hasL10 ? pick.l10HitRate! : SCORE_WEIGHTS.l10Default;
-      const confVal = pick.confidence_score ?? SCORE_WEIGHTS.confDefault;
-
-      traces.push({
-        player: pick.player_name,
-        team: pick.team_name,
-        category: pick.category,
-        prop: pick.prop_type,
-        side: pick.side,
-        archetypeAligned: true,
-        patternScore: pick._patternScore ?? 0,
-        patternReason: `Passed validation (synergy: ${synergy >= 0 ? "+" : ""}${synergy.toFixed(1)})`,
-        defenseRank: opponentDefenseRank,
-        l10: pick.l10HitRate,
-        conf: pick.confidence_score,
-        scoreTotal: finalScore,
-        scorePattern: (pick._patternScore ?? 0) * SCORE_WEIGHTS.pattern,
-        scoreL10: l10Val * SCORE_WEIGHTS.l10,
-        scoreConf: confVal * SCORE_WEIGHTS.confidence,
-        scorePenalty: hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty,
-        selected: true,
+      const gameContext = getGameContextForPick(pick);
+      const opponentDefenseRank = getOpponentDefenseRank(pick);
+      const patternCheck = matchesWinningPattern(pick, gameContext, opponentDefenseRank);
+      const baseScore = scorePick({
+        _patternScore: patternCheck.score,
+        l10HitRate: pick.l10HitRate,
+        confidence_score: pick.confidence_score,
       });
+      const h2hPenalty = h2h && h2h.gamesPlayed >= 3 ? (h2h.hitRate - 0.5) * 2 : 0;
+      const driftPenalty = Math.min(Math.abs(pick.lineDrift || 0), 1.5) * 0.75;
+      const edgePenalty = pick.projectedValue == null || pick.actualLine == null ? 0.35 : 0;
+      const recommendationReason = buildReasonTokens(pick, baseScore).join(" · ");
+      const safetyScore =
+        baseScore +
+        qualityBoost(pick.qualityTier) +
+        marketBoost(pick) +
+        freshnessBoost(pick) +
+        ((pick.sweetSpotScore || 0) / 100) * 2.2 +
+        ((pick.confidence_score || 0) * 1.8) +
+        (((pick.l10HitRate ?? SCORE_WEIGHTS.l10Default) - 0.5) * 4) +
+        h2hPenalty -
+        driftPenalty -
+        edgePenalty +
+        ((pick.reliabilityModifier || 0) / 100);
 
-      console.log(
-        `[Synergy] Selected ${pick.player_name} ${pick.prop_type} ${pick.side} (score: ${finalScore.toFixed(2)}, synergy: ${synergy.toFixed(1)})`,
-      );
+      if (!patternCheck.passes) {
+        diagnostics.downgradedSignals.push(`${pick.player_name}: ${patternCheck.reason}`);
+      }
+      if (h2h && h2h.gamesPlayed >= 3 && h2h.hitRate < 0.5) {
+        diagnostics.downgradedSignals.push(`${pick.player_name}: soft H2H downgrade`);
+      }
+      if (pick.projectedValue == null || pick.actualLine == null) {
+        diagnostics.downgradedSignals.push(`${pick.player_name}: missing projection fallback`);
+      }
 
-      selectedLegs.push({
-        pick,
+      const leg: DreamTeamLeg = {
+        pick: {
+          ...pick,
+          safetyScore,
+          recommendationReason,
+        },
         team: pick.team_name || "Unknown",
-        score: finalScore,
+        score: safetyScore,
         h2h,
         gameContext,
         opponentDefenseRank,
-        patternScore: pick._patternScore,
-      });
-      usedTeams.add(team);
-      usedPlayers.add(pick.player_name.toLowerCase());
-      added++;
-    }
-  }
-
-  // Step 5: Fill remaining slots from pattern-validated picks if needed (with synergy)
-  if (selectedLegs.length < TARGET_LEG_COUNT) {
-    const remainingPicks = patternValidatedPicks
-      .filter((p) => !usedPlayers.has(p.player_name.toLowerCase()) && !usedTeams.has((p.team_name || "").toLowerCase()))
-      .map((p) => {
-        const gameContext = getGameContextForPick(p);
-        const opponentDefenseRank = getOpponentDefenseRank(p);
-        const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
-        return {
-          ...p,
-          _patternScore: patternCheck.score,
-          _gameContext: gameContext,
-          _opponentDefenseRank: opponentDefenseRank,
-        };
-      });
-
-    // v6.0: Score with synergy for fallback picks too
-    const scoredFallbacks = remainingPicks
-      .map((pick) => {
-        let totalSynergy = 0;
-        for (const selected of selectedLegs) {
-          const synergyScore = calculateLegSynergy(pick, selected.pick, gameContextMap);
-          totalSynergy += synergyScore;
-          if (synergyScore <= -2) {
-            return { pick, combinedScore: -Infinity, synergy: synergyScore };
-          }
-        }
-        const individualScore = scorePick({
-          _patternScore: pick._patternScore,
-          l10HitRate: pick.l10HitRate,
-          confidence_score: pick.confidence_score,
-        });
-        return { pick, combinedScore: individualScore + totalSynergy * 2.0, synergy: totalSynergy };
-      })
-      .filter((x) => x.combinedScore > -Infinity)
-      // CRITICAL FIX: Added stable tie-breakers to ensure deterministic ordering
-      .sort((a, b) => {
-        if (b.combinedScore !== a.combinedScore) return b.combinedScore - a.combinedScore;
-        // Stable tie-breaker: player name (alphabetical)
-        const nameCompare = (a.pick.player_name || "").localeCompare(b.pick.player_name || "");
-        if (nameCompare !== 0) return nameCompare;
-        // Final tie-breaker: prop_type for complete determinism
-        return (a.pick.prop_type || "").localeCompare(b.pick.prop_type || "");
-      });
-
-    for (const { pick, combinedScore, synergy } of scoredFallbacks) {
-      if (selectedLegs.length >= TARGET_LEG_COUNT) break;
-
-      const team = (pick.team_name || "Unknown").toLowerCase();
-      const h2h = getH2HForPick(pick);
-      const gameContext = pick._gameContext;
-      const opponentDefenseRank = pick._opponentDefenseRank;
-      const finalScore = combinedScore;
+        patternScore: patternCheck.score,
+      };
 
       const hasL10 = pick.l10HitRate != null;
       const l10Val = hasL10 ? pick.l10HitRate! : SCORE_WEIGHTS.l10Default;
@@ -1266,92 +1147,147 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         prop: pick.prop_type,
         side: pick.side,
         archetypeAligned: true,
-        patternScore: pick._patternScore ?? 0,
-        patternReason: `Fallback selection (synergy: ${synergy >= 0 ? "+" : ""}${synergy.toFixed(1)})`,
+        patternScore: patternCheck.score,
+        patternReason: recommendationReason || patternCheck.reason || "ranked",
         defenseRank: opponentDefenseRank,
         l10: pick.l10HitRate,
         conf: pick.confidence_score,
-        scoreTotal: finalScore,
-        scorePattern: (pick._patternScore ?? 0) * SCORE_WEIGHTS.pattern,
+        scoreTotal: safetyScore,
+        scorePattern: patternCheck.score * SCORE_WEIGHTS.pattern,
         scoreL10: l10Val * SCORE_WEIGHTS.l10,
         scoreConf: confVal * SCORE_WEIGHTS.confidence,
-        scorePenalty: hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty,
-        selected: true,
+        scorePenalty: -driftPenalty - edgePenalty,
+        selected: false,
       });
 
-      console.log(
-        `[Synergy] Fallback selected ${pick.player_name} ${pick.prop_type} ${pick.side} (score: ${finalScore.toFixed(2)}, synergy: ${synergy.toFixed(1)})`,
-      );
+      return leg;
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aActive = a.pick.marketStatus === "active" ? 1 : 0;
+      const bActive = b.pick.marketStatus === "active" ? 1 : 0;
+      if (bActive !== aActive) return bActive - aActive;
+      return (a.pick.player_name || "").localeCompare(b.pick.player_name || "") ||
+        (a.pick.prop_type || "").localeCompare(b.pick.prop_type || "");
+    });
 
-      selectedLegs.push({
-        pick,
-        team: pick.team_name || "Unknown",
-        score: finalScore,
-        h2h,
-        gameContext,
-        opponentDefenseRank,
-        patternScore: pick._patternScore,
-      });
-      usedTeams.add(team);
-      usedPlayers.add(pick.player_name.toLowerCase());
+  const canPair = (candidate: DreamTeamLeg, current: DreamTeamLeg[]) => {
+    for (const existing of current) {
+      const samePlayer = existing.pick.player_name?.toLowerCase() === candidate.pick.player_name?.toLowerCase();
+      const sameProp = normalizeProp(existing.pick.prop_type) === normalizeProp(candidate.pick.prop_type);
+      const oppositeSide = existing.pick.side?.toLowerCase() !== candidate.pick.side?.toLowerCase();
+      if (samePlayer && sameProp && oppositeSide) {
+        diagnostics.conflictSkipped.push(`${candidate.pick.player_name}: opposite-side conflict`);
+        return false;
+      }
+      if (samePlayer && sameProp && existing.pick.side?.toLowerCase() === candidate.pick.side?.toLowerCase()) {
+        diagnostics.conflictSkipped.push(`${candidate.pick.player_name}: duplicate leg`);
+        return false;
+      }
     }
-  }
+    return true;
+  };
 
-  // v6.0: Final hard conflict check on entire parlay
-  if (selectedLegs.length > 0 && hasHardConflict(selectedLegs.map((l) => l.pick))) {
-    console.warn("[Synergy] WARNING: Final parlay has unresolved hard conflicts");
-  }
+  const comboBonus = (candidate: DreamTeamLeg, current: DreamTeamLeg[]) => {
+    if (current.length === 0) return 0;
+    let bonus = 0;
+    const teamConflict = current.some(
+      (leg) => leg.team.toLowerCase() === candidate.team.toLowerCase(),
+    );
+    if (!teamConflict) bonus += 0.45;
 
-  diagnostics.selectedCount = selectedLegs.length;
+    for (const existing of current) {
+      const synergy = calculateLegSynergy(candidate.pick, existing.pick, gameContextMap);
+      if (synergy <= -2) return -999;
+      bonus += synergy * 0.45;
+    }
+
+    if (candidate.pick.marketStatus === "active") bonus += 0.2;
+    if ((candidate.pick.lineDrift || 0) === 0) bonus += 0.1;
+    return bonus;
+  };
+
+  const buildRecommendation = (legCount: RecommendationSize): RecommendedParlay | null => {
+    const selected: DreamTeamLeg[] = [];
+    for (const candidate of rankedCandidates) {
+      if (selected.length >= legCount) break;
+      if (!canPair(candidate, selected)) continue;
+      const bonus = comboBonus(candidate, selected);
+      if (bonus <= -999) {
+        diagnostics.conflictSkipped.push(`${candidate.pick.player_name}: hard synergy conflict`);
+        continue;
+      }
+      selected.push({ ...candidate, score: candidate.score + bonus });
+    }
+
+    if (selected.length < legCount) return null;
+
+    selected.forEach((leg) => {
+      const trace = traces.find(
+        (t) => t.player === leg.pick.player_name && t.prop === leg.pick.prop_type && t.side === leg.pick.side,
+      );
+      if (trace) trace.selected = true;
+    });
+
+    const avgConfidence = selected.reduce((sum, leg) => sum + (leg.pick.confidence_score || 0), 0) / selected.length;
+    const avgL10HitRate = selected.reduce((sum, leg) => sum + (leg.pick.l10HitRate || 0), 0) / selected.length;
+    const avgSafetyScore = selected.reduce((sum, leg) => sum + (leg.pick.safetyScore || leg.score), 0) / selected.length;
+    const reasonTokens = new Set<string>();
+    selected.forEach((leg) => {
+      (leg.pick.recommendationReason || "")
+        .split(" · ")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+        .forEach((item) => reasonTokens.add(item));
+    });
+
+    return {
+      key: `legs-${legCount}` as const,
+      label: `Safest ${legCount}-Leg`,
+      legCount,
+      legs: selected,
+      avgConfidence,
+      avgL10HitRate,
+      avgSafetyScore,
+      uniqueTeams: new Set(selected.map((leg) => leg.team.toLowerCase())).size,
+      books: [...new Set(selected.map((leg) => leg.pick.selectedBook).filter(Boolean) as string[])],
+      reasons: Array.from(reasonTokens).slice(0, 5),
+    };
+  };
+
+  const recommendations: RecommendationSet = {
+    twoLeg: buildRecommendation(2),
+    threeLeg: buildRecommendation(3),
+    fourLeg: buildRecommendation(4),
+  };
+
+  diagnostics.selectedCount = [recommendations.twoLeg, recommendations.threeLeg, recommendations.fourLeg]
+    .filter(Boolean)
+    .reduce((sum, item) => sum + (item?.legs.length || 0), 0);
+
+  const poolStats: RecommendationPoolStats = {
+    candidateCount: rankedCandidates.length,
+    activeCount: rankedCandidates.filter((leg) => leg.pick.marketStatus === "active").length,
+    scanningCount: rankedCandidates.filter((leg) => leg.pick.marketStatus === "scanning").length,
+    staleCount: rankedCandidates.filter((leg) => leg.pick.marketStatus === "stale").length,
+    averageSafetyScore:
+      rankedCandidates.length > 0
+        ? rankedCandidates.reduce((sum, leg) => sum + (leg.pick.safetyScore || leg.score), 0) / rankedCandidates.length
+        : 0,
+  };
 
   return {
-    selectedLegs,
+    rankedCandidates,
+    recommendations,
     traces,
     diagnostics,
+    poolStats,
     activePreset: SCORE_WEIGHTS.presetKey,
     displayedDate: input.displayedDate,
+    funnelMode,
   };
 }
-
-/**
- * Decision trace row for debugging pick selection (v3.3)
- * Captures full score breakdown for each candidate
- */
-export interface DecisionTraceRow {
-  player: string;
-  team?: string;
-  category?: string;
-  prop?: string;
-  side?: string;
-
-  // Archetype validation
-  archetypeAligned: boolean;
-  archetypeReason?: string;
-
-  // Pattern scoring
-  patternScore: number;
-  patternReason: string;
-
-  // Context
-  defenseRank?: number;
-  l10?: number | null;
-  conf?: number;
-
-  // Score breakdown
-  scoreTotal: number;
-  scorePattern: number;
-  scoreL10: number;
-  scoreConf: number;
-  scorePenalty: number;
-
-  // Outcome
-  selected: boolean;
-  blockedReason?: string;
-}
-
-// Dream Team constraints
-const MAX_PLAYERS_PER_TEAM = 1;
-const TARGET_LEG_COUNT = 6;
 
 interface SlateStatus {
   currentDate: string;
