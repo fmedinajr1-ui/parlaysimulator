@@ -1376,10 +1376,10 @@ export function useSweetSpotParlayBuilder() {
       console.group("🎯 [Optimal Parlay Diagnostics]");
       console.log(`📅 Query started at: ${diagnostics.timestamp}`);
 
-      // First get active props (future games only) to filter out stale picks
+      // First get active props (future games only) to filter out stale picks and mirror scanner book selection
       const { data: activeProps } = await supabase
         .from("unified_props")
-        .select("player_name, commence_time")
+        .select("player_name, prop_type, current_line, over_price, under_price, bookmaker, is_active, updated_at, odds_updated_at, commence_time")
         .gte("commence_time", now);
 
       // Check if today has any remaining active games
@@ -1422,6 +1422,14 @@ export function useSweetSpotParlayBuilder() {
       diagnostics.targetDate = targetDate;
       console.log(`📆 Target date: ${targetDate}`);
       console.log(`👥 Active players in slate: ${targetPlayers.size}`);
+
+      const marketRowsByKey = new Map<string, any[]>();
+      (activeProps || []).forEach((prop) => {
+        const key = `${prop.player_name?.toLowerCase()}_${prop.prop_type?.toLowerCase()}`;
+        const rows = marketRowsByKey.get(key) ?? [];
+        rows.push(prop);
+        marketRowsByKey.set(key, rows);
+      });
 
       // Fetch injury reports for target date
       const { data: injuryReports } = await supabase
@@ -1872,8 +1880,30 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
+      const picksWithScannerMeta = allPicks
+        .map((pick) => {
+          const rows = marketRowsByKey.get(`${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}`) ?? [];
+          const selected = pickPreferredMarketLine(rows, {
+            requireSidePrice: pick.side?.toLowerCase() === 'under' ? 'under' : 'over',
+          });
+
+          if (!selected) return { ...pick, marketStatus: 'off_market' as const };
+
+          return {
+            ...pick,
+            selectedBook: selected.bookmaker ?? null,
+            availableBooks: getAvailableBooks(rows),
+            lineFreshness: getLineFreshness(selected),
+            lineAgeMinutes: getLineAgeMinutes(selected),
+            lineDrift: computeLineDrift(selected, rows),
+            marketStatus: deriveMarketStatus(selected, rows),
+            tierReason: `scanner ${deriveMarketStatus(selected, rows)} · ${getLineFreshness(selected)}`,
+          };
+        })
+        .filter((pick) => pick.marketStatus !== 'off_market');
+
       // v3.1: Apply Game Environment Validation filter
-      const validatedPicks = allPicks.filter((pick) => {
+      const validatedPicks = picksWithScannerMeta.filter((pick) => {
         const key = `${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}_${pick.side?.toLowerCase()}`;
         const validation = validationMap.get(key);
 
