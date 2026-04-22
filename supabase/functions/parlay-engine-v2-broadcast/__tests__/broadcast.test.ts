@@ -114,3 +114,29 @@ Deno.test("buildMessage appends [DK] for draftkings, omits tag when no book", ()
   assert(!noBook.includes("[FD]") && !noBook.includes("[DK]") && !noBook.includes("[MGM]"),
     `expected no book tag: ${noBook}`);
 });
+
+// 8. Raw placeholder sources should not render as "uncategorized"
+Deno.test('buildMessage humanizes weak/raw signal source labels', () => {
+  const text = buildMessage(makeRow({
+    legs: [{
+      player_name: 'Scoot Henderson',
+      prop_type: 'R+A',
+      side: 'OVER',
+      line: 5.5,
+      american_odds: 105,
+      signal_source: 'uncategorized',
+    } as any],
+    leg_count: 1,
+  }));
+
+  assert(!text.toLowerCase().includes('uncategorized'), `should not show raw uncategorized label: ${text}`);
+  assert(text.includes('Model pick'), `should fall back to readable label: ${text}`);
+});
+
+// 9. Long rationales should remain present in built output for chunking upstream
+Deno.test('buildMessage preserves long content for downstream chunking', () => {
+  const longRationale = 'A'.repeat(5000);
+  const text = buildMessage(makeRow({ selection_rationale: longRationale }));
+  assert(text.includes('Why this hits'), 'expected rationale header');
+  assert(text.length > 4000, 'expected long message to be preserved for chunk splitting');
+});
