@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle2, XCircle, Filter, ArrowUpDown, Activity } from "lucide-react";
-import { DecisionTraceRow, SCORE_WEIGHTS } from "@/hooks/useSweetSpotParlayBuilder";
+import { SCORE_WEIGHTS } from "@/hooks/useSweetSpotParlayBuilder";
+import type { DecisionTraceRow } from "@/hooks/useSweetSpotParlayBuilder";
 
 interface Props {
   traces: DecisionTraceRow[];
