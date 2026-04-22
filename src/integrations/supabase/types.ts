@@ -13477,6 +13477,30 @@ export type Database = {
         }
         Relationships: []
       }
+      sweet_spot_preferences: {
+        Row: {
+          created_at: string
+          funnel_mode: string
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          funnel_mode?: string
+          id?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          funnel_mode?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       sweet_spot_tracking: {
         Row: {
           actual_value: number | null
