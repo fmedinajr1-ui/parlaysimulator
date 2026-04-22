@@ -466,6 +466,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.bot-daily-diversity-rebalance]
+verify_jwt = false
+
+[functions.sweet-spot-telegram-sync]
+verify_jwt = false
 
 [functions.refresh-l10-and-rebuild]
 verify_jwt = false
