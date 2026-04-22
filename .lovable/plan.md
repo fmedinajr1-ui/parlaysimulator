@@ -1,123 +1,182 @@
 
-Implement an automatic “missing pool” recovery path so parlay generation can rebuild `bot_daily_pick_pool` from `nba_risk_engine_picks` on demand instead of failing with status-only output.
+Fix the backend end-to-end so today’s run can either generate real parlays and straight picks or fail with exact reasons, then add automatic retest/recovery loops for the known breakpoints.
 
-## What will be changed
+## What’s actually broken right now
 
-### 1. Keep `build-daily-pick-pool` as the single source of truth
-The project already has a dedicated builder in `supabase/functions/build-daily-pick-pool/index.ts`. That function should remain the canonical converter from:
-- `nba_risk_engine_picks`
-- optional fallback `category_sweet_spots`
+- Today (`2026-04-22`) has only 1 approved row in `nba_risk_engine_picks`.
+- `bot_daily_pick_pool` has only 1 row for today, so parlay generation is correctly degrading as `thin_pick_pool`.
+- There is currently no deployed straight-pick generator at all. In `refresh-l10-and-rebuild`, phase `3i` explicitly marks `bot-generate-straight-bets` as unavailable instead of generating anything.
+- So this is not one bug; it is a broken daily pipeline chain:
+  1. risk-engine output is too thin
+  2. pick-pool recovery can only build from what exists
+  3. parlay engine has too few candidates
+  4. straight-pick generation is missing entirely
 
-into:
-- `bot_daily_pick_pool`
+## Implementation plan
 
-No second pool-building implementation should be introduced elsewhere.
+### 1. Restore straight-pick generation in the backend
+Create and deploy a real backend function for straight picks so the orchestrator stops pretending that step exists.
 
-### 2. Add automatic self-healing inside `parlay-engine-v2`
-Update `supabase/functions/parlay-engine-v2/index.ts` so it does this before declaring `empty_pick_pool`:
-
-1. Load `bot_daily_pick_pool` for the target date
-2. If the pool is missing or below a configurable minimum threshold:
-   - invoke `build-daily-pick-pool`
-   - reload the pool
-3. Only return `empty_pick_pool` / `thin_pool` if the pool is still insufficient after the rebuild attempt
-
-This makes the engine resilient when:
-- the orchestrator was skipped
-- the pool was cleared manually
-- a scheduled run partially failed
-- someone invokes generation directly through another function
-
-### 3. Make the rebuild attempt safe and idempotent
-The auto-build path should:
-- only run once per request
-- target the same ET date the engine is generating for
-- preserve the builder’s existing dedupe logic
-- avoid infinite retry loops
-- surface whether the pool was:
-  - already present
-  - auto-rebuilt successfully
-  - still too thin after rebuild
-
-### 4. Return explicit diagnostics about the auto-build
-Extend `parlay-engine-v2` responses to include structured fields such as:
-- `pool_auto_build_attempted`
-- `pool_auto_build_success`
-- `pool_before_count`
-- `pool_after_count`
-- `pool_build_diagnostics`
-
-That way, a zero-output day becomes debuggable immediately instead of looking like a silent engine failure.
-
-### 5. Tighten the degraded reason contract
-Refine the engine’s failure states so they distinguish:
-- `empty_pick_pool` — no pool even after rebuild
-- `thin_pick_pool` — pool exists but below minimum threshold
-- `no_book_matched_candidates` — pool exists but no live lines matched
-- `no_valid_parlays_built` — candidates exist but strategy constraints rejected all builds
-
-This will make alerts and downstream debugging much clearer.
-
-### 6. Keep the orchestrator, but make it complementary rather than the only path
-`refresh-l10-and-rebuild` already invokes `build-daily-pick-pool`. That should stay in place for scheduled runs.
-
-Small refinement:
-- keep the proactive pool-build phase in `supabase/functions/refresh-l10-and-rebuild/index.ts`
-- update its status messaging so it reflects whether the pool was built fresh, reused, or remained thin
-- rely on `parlay-engine-v2` as the final safety net if a later run finds the pool missing anyway
-
-### 7. Ensure broadcast flows inherit the fix automatically
-`parlay-engine-v2-broadcast` already calls `parlay-engine-v2` when `generate_first` is enabled. Once `parlay-engine-v2` can auto-build a missing pool, that broadcast path will inherit the same recovery behavior without needing duplicate logic.
-
-## Files to update
-
-- `supabase/functions/parlay-engine-v2/index.ts`
+Files:
+- `supabase/functions/bot-generate-straight-bets/index.ts` (new)
 - `supabase/functions/refresh-l10-and-rebuild/index.ts`
 
-Likely no new file is required, because:
-- `supabase/functions/build-daily-pick-pool/index.ts` already exists and should be reused
+Behavior:
+- Read today’s `bot_daily_pick_pool`
+- Join to fresh `unified_props` book lines, prioritizing FanDuel
+- Build two bet classes:
+  - `standard_straight`
+  - `ceiling_straight`
+- Insert rows into `bot_straight_bets`
+- Return diagnostics:
+  - `pool_rows_loaded`
+  - `book_matched_rows`
+  - `standard_inserted`
+  - `ceiling_inserted`
+  - `degraded_reason`
 
-## Behavior after the change
+This will match the existing UI/data contract already expecting `bot_straight_bets`, `bet_type`, `ceiling_line`, `ceiling_reason`, and related fields.
 
-If `bot_daily_pick_pool` is missing for today:
+### 2. Replace the “unavailable” straight-bet phase with a real invoke
+Update phase `3i` in `refresh-l10-and-rebuild` to:
+- call `bot-generate-straight-bets`
+- capture success/error/degraded state
+- send zero-output alerts only when the generator actually ran and still produced nothing
+- include straight-bet diagnostics in the final pipeline result
 
-```text
-parlay-engine-v2
-→ checks pool
-→ detects empty/thin pool
-→ invokes build-daily-pick-pool
-→ reloads pool
-→ continues generation if pool recovered
-→ otherwise returns a precise degraded reason
-```
+This turns phase `3i` from a placeholder into a functioning generation step.
+
+### 3. Harden the risk-engine output so today can produce enough picks
+The real upstream blocker is that today’s risk engine only produced one approved pick. Fix the backend selection gates so a thin slate does not collapse the entire day.
+
+Files to inspect/update:
+- `supabase/functions/nba-player-prop-risk-engine/index.ts`
+- possibly any helper logic it depends on
+
+Changes:
+- add structured diagnostics for why candidates are rejected today
+- distinguish “no raw props available” from “over-filtered to zero/one approved pick”
+- add a conservative degraded fallback when approved rows are below target:
+  - relax only the least dangerous gates
+  - preserve duplicate/player caps and hard invalid-data checks
+- return counts like:
+  - raw props scanned
+  - valid props after normalization
+  - rejected by each gate
+  - approved count
+  - fallback mode activated or not
+
+Goal:
+- get the engine to produce enough approved picks for same-day downstream generation without blindly lowering quality.
+
+### 4. Add automatic self-healing between risk picks, pool, parlays, and straights
+Make the orchestrator resilient instead of single-pass.
+
+In `refresh-l10-and-rebuild`:
+- after the risk-engine step, verify approved risk-pick count
+- if below threshold, run one controlled fallback pass
+- rebuild the pick pool
+- verify pool count
+- run parlay generation
+- run straight-pick generation
+- if either output is zero while prerequisites were present, trigger one bounded retry with diagnostics
+
+This creates a request-scoped “repair loop” instead of leaving the system half-alive.
+
+### 5. Keep parlay auto-build, but extend diagnostics further
+`parlay-engine-v2` already auto-builds a missing pool. Extend it so it reports:
+- whether the pool was missing vs thin
+- how many candidates failed book matching
+- how many were rejected by line freshness/drift
+- whether zero-output came from:
+  - not enough picks
+  - no fresh FanDuel lines
+  - strategy constraints
+  - same-game diversity filters
+
+This makes the next failure obvious immediately.
+
+### 6. Make straight-pick generation use the same source-of-truth as parlays
+Do not create a second independent pick-selection universe.
+
+Straight picks should be built from:
+- `bot_daily_pick_pool` as the canonical candidate source
+- `unified_props` as the live line source
+
+That keeps rankings, scores, and daily selection logic aligned with the parlay system.
+
+### 7. Add idempotency so retries do not duplicate today’s output
+Before inserting same-day outputs:
+- either clear pending same-day generated rows for that date/source
+- or upsert using a deterministic dedupe key
+
+Apply to:
+- `bot_daily_parlays`
+- `bot_straight_bets`
+
+This is necessary because the user specifically wants automatic re-test and retry behavior.
+
+### 8. Add targeted tests for the repaired backend chain
+Add Deno tests for:
+- pool auto-build when today’s pool is empty
+- parlay degraded reasons
+- straight-bet generation from a small viable pool
+- ceiling-straight generation rules
+- retry path not duplicating inserts
+- thin-risk-pick fallback behavior
+
+Priority functions:
+- `parlay-engine-v2`
+- `bot-generate-straight-bets`
+- any extracted helper logic from the risk engine
+
+### 9. Validate with live backend retests after implementation
+After code changes:
+1. deploy updated backend functions
+2. invoke the risk-engine path for today
+3. invoke pool rebuild
+4. invoke parlay generation
+5. invoke straight-bet generation
+6. run the full orchestrator
+7. verify database counts for today:
+   - approved risk picks
+   - pool rows
+   - parlays
+   - straight bets
+8. if any stage returns degraded output, inspect logs and apply one more fix pass immediately
+
+## Expected result
+
+After this fix:
+- today’s run will stop ending in “messages only”
+- missing/thin pick pools will be rebuilt automatically when possible
+- straight picks will actually be generated because the backend step will exist
+- the pipeline will retry once when a recoverable stage fails
+- when output is still impossible, the backend will say exactly why
 
 ## Technical details
 
-- Use the existing ET date helper behavior so the pool date and parlay date stay aligned.
-- Keep score integrity intact: continue using the composite score written by `build-daily-pick-pool` as the ranking confidence.
-- Do not move pool-building logic into frontend code.
-- Do not introduce raw SQL or duplicate conversion code.
-- The auto-build should use validated defaults such as:
-  - `minimum_risk_rows: 8`
-  - `minimum_pool_rows: 12`
-  - `fallback_limit: 40`
-- The rebuild attempt should be request-scoped only, not stored in globals.
+- Use ET date helpers consistently across all generation steps.
+- Keep `build-daily-pick-pool` as the only pool-builder.
+- Build `bot-generate-straight-bets` as a backend function, not frontend logic.
+- Straight-pick selection should reuse `composite_score`, `l10_hit_rate`, `l10_avg`, `l3_avg`, and matched live prices from `unified_props`.
+- Preserve hard safety filters:
+  - stale book lines
+  - missing prices
+  - excessive line drift
+  - duplicate player/prop spam
+- Add bounded retries only once per run to avoid infinite loops.
+- Use precise degraded reasons such as:
+  - `insufficient_risk_picks`
+  - `thin_pick_pool`
+  - `no_book_matched_candidates`
+  - `no_valid_parlays_built`
+  - `no_valid_straight_bets_built`
 
-## Validation after implementation
+## Immediate priority order
 
-1. Invoke `parlay-engine-v2` for a date with an empty pool
-2. Confirm it automatically calls the pool builder
-3. Confirm `bot_daily_pick_pool` is populated
-4. Confirm the engine either:
-   - generates parlays, or
-   - returns a precise degraded reason with pool diagnostics
-5. Confirm orchestrator logs and alerts reflect the recovered-vs-failed state clearly
-
-## Expected outcome
-
-After this change:
-- missing pools will no longer cause confusing “messages only” runs
-- the system will auto-convert `nba_risk_engine_picks` into `bot_daily_pick_pool` when needed
-- scheduled rebuilds remain proactive
-- direct generation paths become self-healing
-- failures become explicit and diagnosable instead of silent
+1. Implement `bot-generate-straight-bets`
+2. Wire phase `3i` to invoke it
+3. Harden `nba-player-prop-risk-engine` for thin-day fallback
+4. Add orchestrator self-healing/retry checks
+5. Retest the full backend chain live for today
