@@ -1,160 +1,167 @@
 
-Implement a shared persisted Sweet Spots funnel preference so Core vs Aggressive becomes one source of truth across the page, the builder, refreshes, return visits, and Telegram-facing outputs.
+Fix the broken pipeline first, then optimize the shared input data layer so every backend function receives cleaner, fresher, and more consistent data.
 
-### What will change
+## Phase 1 — Restore the pipeline so it actually runs end-to-end
 
-#### 1. Create one persisted funnel preference instead of separate page-local state
-Right now the Sweet Spots page and the Sweet Spot builder each manage their own `funnelMode` in component state. I’ll replace that with a shared preference layer so both surfaces read/write the same value:
-- Sweet Spots main page toggle
-- Sweet Spot builder packs toggle
-- any downstream consumer that needs to know whether the user is in Core or Aggressive mode
+### 1. Replace broken function calls with real, current backend steps
+The current rebuild orchestrator is invoking several function names that are missing and returning 404s. I’ll audit every referenced step in `refresh-l10-and-rebuild` and classify them as:
 
-That means switching the mode once updates the full Sweet Spots experience immediately.
+- required generation steps
+- optional alert/reporting steps
+- renamed/legacy steps that should be repointed
+- dead steps that should be removed
 
-#### 2. Persist the last selected mode across refreshes and return visits
-I’ll store the user’s last funnel choice so it survives:
-- hard refresh
-- closing and reopening the app
-- navigating away and coming back to `/sweet-spots`
+Goal:
+- stop the orchestrator from calling functions that do not exist
+- make required generation paths point to real deployed functions
+- keep optional steps from breaking the run
 
-Persistence behavior:
-- signed-in users: save to backend per user
-- signed-out users: fallback to browser storage so refresh still works locally
+### 2. Restore generation coverage for the outputs you care about
+I’ll make sure the working pipeline produces:
 
-This avoids losing the setting and keeps the experience sticky.
+- today’s parlays
+- today’s straight bets
+- sharp/heat/lottery outputs only if those generators still exist and are valid
+- DNA/grade metadata only if the grading function is actually part of the current system
 
-#### 3. Add a small shared hook/provider for Sweet Spots preferences
-I’ll introduce a dedicated preference abstraction for Sweet Spots UI state, likely something like:
-- `useSweetSpotPreferences()`
-- or a small shared context/hook for `funnelMode`
+If a missing function was replaced by a newer one, I’ll wire the orchestrator to the newer function instead of restoring old dead code.
 
-Responsibilities:
-- load persisted value on mount
-- expose `funnelMode`
-- expose `setFunnelMode`
-- handle optimistic updates
-- keep page and builder in sync
-- fallback cleanly if backend is unavailable
+### 3. Make the orchestrator honest about success vs failure
+Right now the UI can show a generic pipeline error even when the top-level trigger started correctly.
 
-#### 4. Back the preference with proper persistent storage
-To make this durable for authenticated users, I’ll add a backend table for user-level UI preferences or extend an existing preference store if that fits cleanly.
+I’ll update the backend response so it distinguishes:
+- started
+- completed
+- completed with warnings
+- failed on required generation
+- produced zero outputs
 
-The stored data will include at minimum:
-- `user_id`
-- `sweet_spots_funnel_mode`
-- timestamps
+That way the frontend only shows success when the backend confirms real outputs were produced.
 
-I’ll also add RLS so users can only read/write their own preference row.
+### 4. Fix the refresh UI messaging
+In `SlateRefreshControls` I’ll update the client flow so it says:
 
-#### 5. Wire the Sweet Spots page to the shared preference
-`src/pages/SweetSpots.tsx` currently owns a local `useState<'core' | 'aggressive'>`. I’ll refactor it to:
-- read the mode from the shared persistence hook
-- use loading-safe defaults while the preference resolves
-- keep the existing filtering behavior, but based on the shared stored mode
+- “Pipeline started” for long-running accepted jobs
+- “Pipeline completed with warnings” when only optional steps fail
+- “Pipeline failed to generate parlays/straight bets” when required steps fail
+- “Pipeline complete” only when the backend confirms output rows exist
 
-This will make the Sweet Spots card list restore the last-used funnel automatically.
+This removes the false “working”/“not working” ambiguity.
 
-#### 6. Wire the parlay builder toggle to the same shared preference
-`src/components/market/SweetSpotDreamTeamParlay.tsx` also has its own local funnel state. I’ll remove that duplication and point it to the same source of truth so:
-- the builder opens in the same mode the page was last using
-- switching mode in the builder updates the main Sweet Spots view
-- switching mode on the page updates the builder recommendation packs
+## Phase 2 — Optimize the data that feeds all functions
 
-#### 7. Push the new funnel truth into Telegram outputs
-Since you want this directed to Telegram too, I’ll make the Telegram layer reflect the same Core/Aggressive truth instead of using disconnected defaults.
+Once the pipeline is stable, I’ll optimize the shared data layer so the functions operate on better inputs instead of each function defending itself against bad or stale data.
 
-That includes two paths:
+### 5. Inventory the upstream data sources used by the pipeline
+I’ll map what data each major function depends on, especially:
 
-**Admin alerts**
-- add funnel mode context to Sweet Spot/admin notifications where relevant
-- include whether output was generated under `Core` or `Aggressive`
-- ensure any new Sweet Spots-related backend function that publishes updates can call the Telegram sender
+- `unified_props`
+- game logs / L10 data
+- injury / lineup freshness
+- bookmaker-specific prop availability
+- category/risk/scoring inputs
+- any precomputed research or matchup tables
 
-**Bot command / user-facing Telegram output**
-- update the Sweet Spots-related Telegram response flow so it reports the funnel mode being used
-- ensure the bot’s Sweet Spots output uses the same funnel logic as the app, not a separate hidden default
-- if a user-specific preference can be resolved, use that
-- otherwise fall back to a clear default and state it in the response
+For each source, I’ll identify:
+- freshness window
+- required fields
+- duplicate patterns
+- null/invalid values
+- naming inconsistencies
+- bookmaker mismatches
+- sport/date/timezone issues
 
-#### 8. Make new Sweet Spots-related backend functions Telegram-aware
-For any new backend function needed for this feature, I’ll wire Telegram notification support intentionally rather than leaving it disconnected:
-- emit admin Telegram summaries where a mode change or Sweet Spots refresh matters
-- reuse the existing Telegram sender pattern
-- avoid noisy spam by limiting alerts to meaningful state changes / refresh results
+### 6. Create a shared input contract for downstream functions
+Instead of each function making assumptions differently, I’ll standardize the minimum required input rules for pipeline consumers.
 
-#### 9. Preserve clean UX around loading and failures
-I’ll make sure the toggle behavior is resilient:
-- instant UI update on switch
-- background persistence save
-- rollback or toast if save fails
-- fallback to local storage if the user is not signed in
-- no blank/empty state while the preference is loading
+Examples:
+- canonical player name
+- canonical market/prop type
+- canonical side/direction
+- consistent line number typing
+- standardized bookmaker preference fields
+- freshness timestamps in ET-aware logic
+- required matchup/game identifiers
 
-### Files likely involved
+This makes the feeding layer consistent across all generation and scoring functions.
 
-- `src/pages/SweetSpots.tsx`
-  - replace local funnel state with shared persisted preference
-- `src/components/market/SweetSpotDreamTeamParlay.tsx`
-  - remove duplicate local toggle state and consume shared mode
-- new shared hook/context, likely something like:
-  - `src/hooks/useSweetSpotPreferences.ts`
-  - or a small context/provider if needed
-- backend migration:
-  - new preferences table or extension of an existing preferences table
-- Telegram-related backend function(s)
-  - update Sweet Spots/admin notification flow to include funnel mode
-  - update bot-facing Sweet Spots output to use the shared mode truth
+### 7. Add centralized data-quality gates before generation
+Before parlay and straight-bet generation runs, I’ll add a compact validation pass that checks for:
 
-### Technical details
+- stale bookmaker data
+- insufficient FanDuel coverage
+- missing line values
+- missing player/game linkage
+- duplicate props
+- malformed prop types
+- obviously unusable rows
 
-#### Proposed persistence model
-Preferred approach:
+Instead of letting every function fail later, bad data gets filtered or flagged once upstream.
+
+### 8. Reduce redundant reads and inconsistent filtering
+Many pipelines degrade because each function re-queries the same large datasets with slightly different filters.
+
+I’ll optimize this by:
+- consolidating repeated filters where practical
+- standardizing “today” and ET date handling
+- aligning freshness thresholds across related functions
+- narrowing reads to the columns/rows actually needed
+- making sure downstream functions consume the same valid candidate pool when appropriate
+
+This improves both reliability and performance.
+
+### 9. Add visibility into data health
+So this doesn’t become a hidden issue again, I’ll add clearer diagnostics around the inputs feeding generation:
+
+- counts of fresh props by bookmaker
+- candidate pool size before generation
+- rows filtered for missing/invalid fields
+- final usable records passed into key generators
+- zero-output reasons returned explicitly instead of only logged
+
+That makes it much easier to see whether failures are code issues or data-quality issues.
+
+## Phase 3 — Validate the repaired and optimized flow
+
+### 10. Re-run and verify the full daily flow
+After implementation, I’ll verify that:
+
+- the full pipeline can be invoked successfully
+- today’s `bot_daily_parlays` rows are created
+- today’s `bot_straight_bets` rows are created
+- missing-function 404s are gone
+- the UI reports the correct state
+- the candidate data flowing into major functions is fresher and cleaner than before
+
+## Files likely involved
+- `supabase/functions/refresh-l10-and-rebuild/index.ts`
+- `src/components/market/SlateRefreshControls.tsx`
+- any currently active generator functions that replace missing legacy ones
+- shared upstream data readers/filters used by those functions
+- possibly selected database reads/validation helpers if the data contract needs to be centralized
+
+## Technical details
 ```text
-Authenticated user
-→ load Sweet Spots preference from backend
-→ sync changes back to backend
+Current state
+UI trigger -> refresh-l10-and-rebuild
+           -> calls missing legacy functions
+           -> 404s on required steps
+           -> zero outputs
+           -> generic pipeline error
 
-Guest user
-→ load Sweet Spots preference from localStorage
-→ persist locally on change
+Target state
+UI trigger -> refresh-l10-and-rebuild
+           -> calls only real current functions
+           -> validates upstream input quality
+           -> runs required generators on clean candidate data
+           -> returns structured status
+           -> UI reports real outcome accurately
 ```
 
-#### Proposed stored value
-```text
-sweet_spots_funnel_mode = 'core' | 'aggressive'
-```
+## Expected outcome
+After this work:
 
-#### Hard requirement for shared truth
-Both of these should read the same value:
-```text
-SweetSpots page filter funnel
-SweetSpotDreamTeamParlay builder funnel
-Telegram Sweet Spots mode labeling/output
-```
-
-#### Security
-If a backend table is added:
-- RLS enabled
-- users can only read/write their own row
-- no roles on profiles/users
-- user identity resolved through authenticated session
-
-### Verification
-
-1. Switch to Aggressive on Sweet Spots page, refresh, and it stays Aggressive.
-2. Navigate away and back to Sweet Spots, the same mode is restored.
-3. Switch mode in the builder, and the main Sweet Spots page reflects the same mode.
-4. Switch mode on the page, and builder packs update to the same mode.
-5. Signed-in users keep their preference across sessions/devices via backend storage.
-6. Signed-out users still keep it across refreshes locally.
-7. Sweet Spots-related Telegram outputs show whether they are Core or Aggressive.
-8. Any new backend function added for this flow is wired into the Telegram bot notification path where appropriate.
-9. No empty-gate regression: stored mode restores cleanly without flashing wrong results.
-
-### Expected outcome
-
-After this change:
-- your last Core/Aggressive selection will stick when you refresh or come back
-- Sweet Spots page and builder will stop drifting apart
-- Telegram outputs will reflect the same funnel mode truth
-- new Sweet Spots-related backend behavior will be Telegram-aware instead of silently living only in the UI
+- the pipeline will actually generate today’s slate again
+- the UI will stop showing misleading generic errors
+- the data feeding all functions will be cleaner, more consistent, and easier to debug
+- later function-level tuning will be much easier because the shared input layer will be trustworthy
