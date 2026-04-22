@@ -37,6 +37,7 @@ import { AILearnedPatterns } from './AILearnedPatterns';
 import { AILearningInsights } from './AILearningInsights';
 import { ManualStatsEntry } from './ManualStatsEntry';
 import { Json } from '@/integrations/supabase/types';
+import { useManualTrainingGames } from '@/hooks/useManualTrainingGames';
 
 interface AIGeneratedParlay {
   id: string;
@@ -207,6 +208,19 @@ export function AIGenerativeProgressDashboard() {
   const [refreshProgress, setRefreshProgress] = useState<string>('');
   const [isAnalyzingPending, setIsAnalyzingPending] = useState(false);
   const [pendingAnalysisResults, setPendingAnalysisResults] = useState<VerificationSummary | null>(null);
+  const {
+    date: trainingDate,
+    games: trainingGames,
+    selectedGame,
+    selectedEventId,
+    setSelectedEventId,
+    sportFilter,
+    setSportFilter,
+    sportOptions,
+    isLoading: isTrainingGamesLoading,
+    isRefetching: isTrainingGamesRefetching,
+    refetch: refetchTrainingGames,
+  } = useManualTrainingGames();
 
   useEffect(() => {
     fetchData();
@@ -740,6 +754,22 @@ export function AIGenerativeProgressDashboard() {
   const lastSettlement = settlementJobs[0];
   const lastSettlementResult = lastSettlement?.result as any;
 
+  const formatTrainingSport = (sport: string) =>
+    sport
+      .split('_')
+      .filter(Boolean)
+      .map((part) => part.toUpperCase())
+      .join(' ');
+
+  const formatTrainingTime = (commenceTime: string) =>
+    new Date(commenceTime).toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -888,6 +918,149 @@ export function AIGenerativeProgressDashboard() {
               </div>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-lg">Manual Training</CardTitle>
+              <p className="text-sm text-muted-foreground">Step 1 — choose today’s game and confirm the live slate before training the bot.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{trainingDate}</Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetchTrainingGames()}
+                disabled={isTrainingGamesLoading || isTrainingGamesRefetching}
+              >
+                {isTrainingGamesLoading || isTrainingGamesRefetching ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
+                Refresh games
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {sportOptions.map((sport) => (
+              <Button
+                key={sport}
+                size="sm"
+                variant={sportFilter === sport ? 'default' : 'outline'}
+                onClick={() => setSportFilter(sport)}
+              >
+                {sport === 'all' ? 'All sports' : formatTrainingSport(sport)}
+              </Button>
+            ))}
+          </div>
+
+          {selectedGame && (
+            <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 md:grid-cols-4">
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Selected game</p>
+                <p className="font-semibold">{selectedGame.gameDescription}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Tipoff</p>
+                <p className="font-semibold">{formatTrainingTime(selectedGame.commenceTime)}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Books / props</p>
+                <p className="font-semibold">{selectedGame.bookmakerCount} books • {selectedGame.propRows} rows</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Scan health</p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Badge variant={selectedGame.freshRowCount > 0 ? 'secondary' : 'outline'}>
+                    {selectedGame.freshRowCount} fresh
+                  </Badge>
+                  <Badge variant="outline">{selectedGame.staleRowCount} stale</Badge>
+                  {selectedGame.hasFanDuel && <Badge variant="outline">FanDuel</Badge>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isTrainingGamesLoading ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                  <div className="h-4 w-2/3 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="h-10 rounded bg-muted" />
+                    <div className="h-10 rounded bg-muted" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : trainingGames.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-muted/10 p-8 text-center">
+              <p className="font-medium">No games found for the selected slate.</p>
+              <p className="text-sm text-muted-foreground">Refresh after the live props feed updates, then continue to the next training step.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {trainingGames.map((game) => {
+                const isSelected = selectedEventId === game.eventId;
+
+                return (
+                  <button
+                    key={game.eventId}
+                    type="button"
+                    onClick={() => setSelectedEventId(game.eventId)}
+                    className={`rounded-lg border p-4 text-left transition-colors ${
+                      isSelected
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border bg-card hover:bg-muted/20'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold leading-tight">{game.gameDescription}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{formatTrainingTime(game.commenceTime)}</p>
+                      </div>
+                      <Badge variant={isSelected ? 'default' : 'outline'}>
+                        {formatTrainingSport(game.sport)}
+                      </Badge>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-md bg-muted/30 p-2">
+                        <p className="text-xs uppercase text-muted-foreground">Books</p>
+                        <p className="font-semibold">{game.bookmakerCount}</p>
+                      </div>
+                      <div className="rounded-md bg-muted/30 p-2">
+                        <p className="text-xs uppercase text-muted-foreground">Prop rows</p>
+                        <p className="font-semibold">{game.propRows}</p>
+                      </div>
+                      <div className="rounded-md bg-muted/30 p-2">
+                        <p className="text-xs uppercase text-muted-foreground">Fresh</p>
+                        <p className="font-semibold">{game.freshRowCount}</p>
+                      </div>
+                      <div className="rounded-md bg-muted/30 p-2">
+                        <p className="text-xs uppercase text-muted-foreground">Active</p>
+                        <p className="font-semibold">{game.activePropRows}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      {game.bookmakers.map((book) => (
+                        <Badge key={book} variant="outline">{book}</Badge>
+                      ))}
+                      {game.latestUpdateAt && <span>Latest {formatTrainingTime(game.latestUpdateAt)}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
