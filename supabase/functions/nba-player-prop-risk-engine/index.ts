@@ -54,6 +54,13 @@ const MIN_CONFIDENCE_BY_TYPE: Record<string, number> = {
   'default': 6.5
 };
 
+const THIN_DAY_MIN_APPROVED_PICKS = 8;
+
+function bumpReason(map: Record<string, number>, reason: string | null | undefined) {
+  const key = (reason || 'unknown').slice(0, 120);
+  map[key] = (map[key] ?? 0) + 1;
+}
+
 // Points line tiers based on historical performance
 const POINTS_LINE_TIERS = {
   LOW: { min: 0, max: 14.5, hitRate: 57.9, edgeRequired: 1.0 },
