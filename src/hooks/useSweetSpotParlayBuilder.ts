@@ -38,6 +38,13 @@ export interface SweetSpotPick {
   reliabilityTier?: string | null;
   reliabilityHitRate?: number | null;
   reliabilityModifier?: number | null;
+  selectedBook?: string | null;
+  availableBooks?: string[];
+  lineFreshness?: 'fresh' | 'stale' | 'expired';
+  lineAgeMinutes?: number | null;
+  lineDrift?: number;
+  marketStatus?: 'active' | 'scanning' | 'stale' | 'off_market';
+  tierReason?: string | null;
 }
 
 // v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION

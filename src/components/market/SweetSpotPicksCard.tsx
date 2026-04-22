@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { AltLineComparisonCard } from "./AltLineComparisonCard";
 import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
+import { humanizeBookmaker } from "@/lib/bookScannerMarket";
 
 // Get today's date in Eastern Time for consistent filtering
 function getEasternDate(): string {
@@ -34,6 +35,7 @@ interface CategorySweetSpot {
   matchup_adjustment: number | null;
   pace_adjustment: number | null;
   projection_source: string | null;
+  selected_book?: string | null;
 }
 
 // Category display config
