@@ -94,7 +94,7 @@ function normalizeKey(playerName: string, propType: string): string {
 }
 
 async function loadPoolRows(
-  sb: ReturnType<typeof createClient>,
+  sb: any,
   targetDate: string,
 ): Promise<PoolRow[]> {
   const { data, error } = await sb
@@ -107,7 +107,7 @@ async function loadPoolRows(
 }
 
 async function ensurePoolRows(
-  sb: ReturnType<typeof createClient>,
+  sb: any,
   targetDate: string,
 ) {
   const initialPool = await loadPoolRows(sb, targetDate);
