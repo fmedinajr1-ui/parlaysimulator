@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEasternDate } from "@/lib/dateUtils";
+import {
+  computeLineDrift,
+  deriveMarketStatus,
+  getAvailableBooks,
+  getLineAgeMinutes,
+  getLineFreshness,
+  pickPreferredMarketLine,
+} from "@/lib/bookScannerMarket";
 import type { 
   DeepSweetSpot, 
   PropType, 
@@ -27,6 +35,10 @@ interface UnifiedProp {
   under_price: number | null;
   game_description: string | null;
   commence_time: string | null;
+  bookmaker: string | null;
+  is_active: boolean | null;
+  updated_at: string | null;
+  odds_updated_at: string | null;
 }
 
 interface GameLog {
