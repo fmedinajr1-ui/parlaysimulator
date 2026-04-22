@@ -1319,6 +1319,16 @@ interface QueryResult {
   slateStatus: SlateStatus;
 }
 
+interface BuilderSummary {
+  avgConfidence: number;
+  avgEdge: number;
+  avgL10HitRate: number;
+  uniqueTeams: number;
+  propTypes: string[];
+  legCount: number;
+  categories: string[];
+}
+
 export function useSweetSpotParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
 
