@@ -86,6 +86,9 @@ interface PoolRow {
   composite_score: number | null;
   projected_value: number | null;
   category: string | null;
+  l10_hit_rate?: number | null;
+  l10_avg?: number | null;
+  l3_avg?: number | null;
   created_at: string;
 }
 
@@ -230,7 +233,7 @@ Deno.serve(async (req) => {
     // Load candidate pool
     const { data: pool, error: poolErr } = await sb
       .from("bot_daily_pick_pool")
-      .select("id, pick_date, player_name, prop_type, recommended_side, recommended_line, confidence_score, composite_score, projected_value, category, created_at")
+      .select("id, pick_date, player_name, prop_type, recommended_side, recommended_line, confidence_score, composite_score, projected_value, category, l10_hit_rate, l10_avg, l3_avg, created_at")
       .eq("pick_date", targetDate);
     if (poolErr) throw poolErr;
 
@@ -275,11 +278,24 @@ Deno.serve(async (req) => {
         candidates.filter(l => l.confidence >= 0.68).map(l => l.sport)).size;
     }
 
+    const zeroPool = (pool ?? []).length === 0;
+    const zeroCandidates = candidates.length === 0;
+    const degradedReason = zeroPool
+      ? "empty_pick_pool"
+      : zeroCandidates
+        ? "no_book_matched_candidates"
+        : slate.parlays.length === 0
+          ? "no_valid_parlays_built"
+          : null;
+
     if (dryRun) {
       return new Response(JSON.stringify({
-        success: true,
+        success: !degradedReason,
+        degraded: !!degradedReason,
+        degraded_reason: degradedReason,
         dry_run: true,
         target_date: targetDate,
+        pool_rows_loaded: (pool ?? []).length,
         candidates_in: candidates.length,
         mapping_notes: mappingNotes,
         eligibility,
@@ -303,6 +319,24 @@ Deno.serve(async (req) => {
           })),
         })),
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (degradedReason) {
+      const status = zeroPool ? 409 : 422;
+      return new Response(JSON.stringify({
+        success: false,
+        degraded: true,
+        degraded_reason: degradedReason,
+        target_date: targetDate,
+        pool_rows_loaded: (pool ?? []).length,
+        candidates_in: candidates.length,
+        eligibility,
+        mapping_notes: mappingNotes,
+        report: slate.report,
+      }), {
+        status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // Live insert into bot_daily_parlays
@@ -344,8 +378,11 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
+      degraded: false,
       dry_run: false,
       target_date: targetDate,
+      pool_rows_loaded: (pool ?? []).length,
+      candidates_in: candidates.length,
       inserted,
       report: slate.report,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

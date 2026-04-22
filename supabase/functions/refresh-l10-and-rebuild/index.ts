@@ -142,6 +142,10 @@ Deno.serve(async (req) => {
         lottery_parlays: parlays.filter((row: any) => row.tier === "lottery").length,
         straight_bets_total: todayStraightsRes.count ?? 0,
       },
+      pipeline_health: {
+        pick_pool_ready: (pickPoolRes.count ?? 0) >= 12,
+        parlay_output_ready: (todayParlaysRes.count ?? 0) > 0,
+      },
     };
   };
 
@@ -467,6 +471,59 @@ Deno.serve(async (req) => {
       },
     },
     {
+      id: "phase3b_pool",
+      label: "Build daily pick pool",
+      run: async () => {
+        if (oddsGateBlocked) {
+          log("⏭ Skipping pool build — odds gate blocked");
+          return;
+        }
+
+        const targetDate = todayET();
+        log("=== PHASE 3B.5: Building daily pick pool ===");
+        const { data, error } = await supabase.functions.invoke("build-daily-pick-pool", {
+          body: { date: targetDate, minimum_risk_rows: 8, minimum_pool_rows: 12, fallback_limit: 40 },
+        });
+
+        if (error) {
+          const errMsg = error.message || JSON.stringify(error);
+          results["build-daily-pick-pool"] = `error: ${errMsg}`;
+          warnings.push(`Daily pick pool build failed: ${errMsg}`);
+          await sendPipelineAlert(`🚨 *Pick Pool Build Failed*
+
+*Date:* ${targetDate}
+*Error:* ${errMsg}
+*Run:* \`${currentRunId.slice(0,8)}\``);
+          return;
+        }
+
+        const diagnostics = (data && typeof data === "object" && data.diagnostics && typeof data.diagnostics === "object")
+          ? data.diagnostics as Record<string, unknown>
+          : {};
+        const poolRowsBuilt = Number(diagnostics.pool_rows_built ?? diagnostics.pool_rows_inserted ?? 0);
+        const riskRowsAccepted = Number(diagnostics.risk_rows_accepted ?? 0);
+        const fallbackRowsAccepted = Number(diagnostics.fallback_rows_accepted ?? 0);
+        const poolStatus = String(diagnostics.pool_status ?? "unknown");
+
+        results["build-daily-pick-pool"] = poolStatus === "ready"
+          ? `ok:${poolRowsBuilt}_rows`
+          : `warning:${poolStatus}:${poolRowsBuilt}_rows`;
+
+        if (poolRowsBuilt < 12) {
+          await sendPipelineAlert(
+            `⚠️ *Pick Pool Too Thin*
+
+*Date:* ${targetDate}
+*Risk picks accepted:* ${riskRowsAccepted}
+*Fallback picks accepted:* ${fallbackRowsAccepted}
+*Pool rows built:* ${poolRowsBuilt}
+*Status:* ${poolStatus}
+*Run:* \`${currentRunId.slice(0,8)}\``
+          );
+        }
+      },
+    },
+    {
       id: "phase3c",
       label: "Generate parlays with live engine",
       run: async () => {
@@ -476,7 +533,42 @@ Deno.serve(async (req) => {
           return;
         }
 
-        await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: todayET() });
+        const targetDate = todayET();
+        const { count: poolCount } = await supabase
+          .from("bot_daily_pick_pool")
+          .select("*", { count: "exact", head: true })
+          .eq("pick_date", targetDate);
+
+        if ((poolCount || 0) < 12) {
+          const { count: riskCount } = await supabase
+            .from("nba_risk_engine_picks")
+            .select("*", { count: "exact", head: true })
+            .eq("game_date", targetDate)
+            .eq("mode", "full_slate")
+            .is("rejection_reason", null);
+          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+          const { count: freshFdProps } = await supabase
+            .from("unified_props")
+            .select("*", { count: "exact", head: true })
+            .eq("bookmaker", "fanduel")
+            .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
+
+          results["parlay-engine-v2"] = `blocked:thin_pool:${poolCount || 0}`;
+          warnings.push(`Parlay generation blocked: thin pool (${poolCount || 0} rows)`);
+          await sendPipelineAlert(
+            `⚠️ *Parlay Generation Blocked*
+
+*Date:* ${targetDate}
+*Fresh props:* ${freshFdProps || 0}
+*Risk picks:* ${riskCount || 0}
+*Pick pool:* ${poolCount || 0}
+*Cause:* pick pool below minimum threshold
+*Run:* \`${currentRunId.slice(0,8)}\``
+          );
+          return;
+        }
+
+        await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: targetDate });
 
         // BUG 1 FIX: ET date — parlays are stored with ET parlay_date
         const todayP = todayET();
