@@ -119,7 +119,7 @@ interface PoolBuildDiagnostics {
 const AUTO_POOL_MINIMUM_ROWS = 12;
 
 async function loadPoolRows(
-  sb: ReturnType<typeof createClient>,
+  sb: any,
   targetDate: string,
 ): Promise<PoolRow[]> {
   const { data, error } = await sb
@@ -131,7 +131,7 @@ async function loadPoolRows(
 }
 
 async function ensurePoolRows(
-  sb: ReturnType<typeof createClient>,
+  sb: any,
   targetDate: string,
 ): Promise<{
   pool: PoolRow[];
