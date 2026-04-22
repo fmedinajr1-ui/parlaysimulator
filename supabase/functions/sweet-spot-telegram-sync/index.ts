@@ -12,6 +12,25 @@ const modeSummary: Record<FunnelMode, string> = {
   aggressive: "Aggressive funnel active — wider ranked slate with scanner downgrades included",
 };
 
+function normalizeRequestedMode(value: unknown): FunnelMode | null {
+  return value === "aggressive" ? "aggressive" : value === "core" ? "core" : null;
+}
+
+function buildFunnelLabel(funnelMode: FunnelMode) {
+  return [`🎯 *Sweet Spots*`, `Funnel: *${funnelMode.toUpperCase()}*`, modeSummary[funnelMode]].join("\n");
+}
+
+function prependFunnelLabel(message: string, funnelMode: FunnelMode) {
+  const trimmedMessage = message.trim();
+  if (!trimmedMessage) return buildFunnelLabel(funnelMode);
+
+  if (/Funnel:\s*\*/i.test(trimmedMessage) || /Mode:\s*\*/i.test(trimmedMessage)) {
+    return trimmedMessage;
+  }
+
+  return `${buildFunnelLabel(funnelMode)}\n\n${trimmedMessage}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -42,9 +61,12 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const requestedMode = body?.funnelMode === "aggressive" ? "aggressive" : body?.funnelMode === "core" ? "core" : null;
+    const requestedMode = normalizeRequestedMode(body?.funnelMode);
     const source = typeof body?.source === "string" ? body.source : "sweet-spots";
     const notifyAdmin = body?.notifyAdmin !== false;
+    const rawMessage = typeof body?.message === "string" ? body.message : "";
+    const parseMode = typeof body?.parse_mode === "string" ? body.parse_mode : "Markdown";
+    const adminOnly = body?.admin_only !== false;
 
     let funnelMode: FunnelMode = requestedMode ?? "core";
 
@@ -70,12 +92,14 @@ Deno.serve(async (req) => {
       userId ? `User: \`${userId}\`` : `User: guest`,
     ];
 
+    const labeledMessage = prependFunnelLabel(rawMessage, funnelMode);
+
     if (notifyAdmin) {
       await adminClient.functions.invoke("bot-send-telegram", {
         body: {
-          message: lines.join("\n"),
-          parse_mode: "Markdown",
-          admin_only: true,
+          message: rawMessage ? labeledMessage : lines.join("\n"),
+          parse_mode: parseMode,
+          admin_only: adminOnly,
         },
       });
     }
@@ -84,6 +108,7 @@ Deno.serve(async (req) => {
       success: true,
       funnelMode,
       summary: modeSummary[funnelMode],
+      labeledMessage,
       userId,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
