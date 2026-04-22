@@ -37,6 +37,10 @@ export interface SweetSpotPick {
   game_date?: string;
   injuryStatus?: string | null;
   l10HitRate?: number | null;
+  qualityTier?: QualityTier | null;
+  sweetSpotScore?: number | null;
+  safetyScore?: number | null;
+  recommendationReason?: string | null;
   // v4.0: Projection fields
   projectedValue?: number | null;
   actualLine?: number | null;
@@ -53,6 +57,36 @@ export interface SweetSpotPick {
   lineDrift?: number;
   marketStatus?: 'active' | 'scanning' | 'stale' | 'off_market';
   tierReason?: string | null;
+}
+
+export type BuilderFunnelMode = 'core' | 'aggressive';
+export type RecommendationSize = 2 | 3 | 4;
+
+export interface RecommendedParlay {
+  key: `legs-${RecommendationSize}`;
+  label: string;
+  legCount: RecommendationSize;
+  legs: DreamTeamLeg[];
+  avgConfidence: number;
+  avgL10HitRate: number;
+  avgSafetyScore: number;
+  uniqueTeams: number;
+  books: string[];
+  reasons: string[];
+}
+
+export interface RecommendationSet {
+  twoLeg: RecommendedParlay | null;
+  threeLeg: RecommendedParlay | null;
+  fourLeg: RecommendedParlay | null;
+}
+
+export interface RecommendationPoolStats {
+  candidateCount: number;
+  activeCount: number;
+  scanningCount: number;
+  staleCount: number;
+  averageSafetyScore: number;
 }
 
 // v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
