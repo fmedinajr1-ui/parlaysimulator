@@ -358,7 +358,7 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase3c",
-      label: "Wide generate + rank + curated + force fresh",
+      label: "Generate parlays with live engine",
       run: async () => {
         // BUG 2 FIX: reads closure-scoped variable, not globalThis
         if (oddsGateBlocked) {
@@ -366,14 +366,10 @@ Deno.serve(async (req) => {
           return;
         }
 
-        // BUG 3 FIX: removed stale final_cap:25 — regen-loop v7 only uses it
-        // for a log entry; actual cap is hardcoded to FINAL_PARLAY_CAP = 50
-        await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", {});
-        await invokeStep("Running curated pipeline", "bot-curated-pipeline", {});
-        await invokeStep("Force fresh mispriced parlays", "bot-force-fresh-parlays", {});
+        await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: todayET() });
 
         // BUG 1 FIX: ET date — parlays are stored with ET parlay_date
-        const todayP = getEasternDate();
+        const todayP = todayET();
         const { count: parlayCount } = await supabase
           .from("bot_daily_parlays")
           .select("*", { count: "exact", head: true })
@@ -390,10 +386,8 @@ Deno.serve(async (req) => {
       id: "phase3d",
       label: "Sharp + heat scan",
       run: async () => {
-        await invokeParallel([
-          ["Building sharp parlays", "sharp-parlay-builder", { action: "build" }],
-          ["Scanning heat tracker", "heat-prop-engine", { action: "scan" }],
-        ]);
+        markUnavailable("sharp-parlay-builder", "legacy sharp parlay function is not deployed");
+        await invokeStep("Scanning heat tracker", "heat-prop-engine", { action: "scan" });
       },
     },
     {
@@ -407,10 +401,8 @@ Deno.serve(async (req) => {
       id: "phase3f",
       label: "Ladder + diversity",
       run: async () => {
-        await invokeParallel([
-          ["Ladder challenge", "nba-ladder-challenge", {}],
-          ["Diversity rebalance", "bot-daily-diversity-rebalance", {}],
-        ]);
+        await invokeStep("Ladder challenge", "nba-ladder-challenge", {});
+        markUnavailable("bot-daily-diversity-rebalance", "legacy diversity rebalance function is not deployed");
       },
     },
     {
@@ -442,24 +434,24 @@ Deno.serve(async (req) => {
       id: "phase3_gold",
       label: "Gold Signal Parlay Engine (FanDuel predictions)",
       run: async () => {
-        await invokeStep("Gold signal parlay engine", "gold-signal-parlay-engine", {});
+        markUnavailable("gold-signal-parlay-engine", "legacy gold signal generator is not deployed");
       },
     },
     {
       id: "phase3_verdict",
       label: "Final Verdict cross-engine consensus",
       run: async () => {
-        await invokeStep("Final Verdict engine", "final-verdict-engine", {});
+        markUnavailable("final-verdict-engine", "legacy verdict engine is not deployed");
       },
     },
     {
       id: "phase3g",
       label: "DNA audit (mandatory post-generation)",
       run: async () => {
-        await invokeStep("DNA parlay audit", "score-parlays-dna", {});
+        markUnavailable("score-parlays-dna", "legacy DNA audit function is not deployed");
 
         // BUG 1 FIX: ET date for post-DNA graded-parlay check
-        const todayStr = getEasternDate();
+        const todayStr = todayET();
         const { data: gradedParlays } = await supabase
           .from("bot_daily_parlays")
           .select("id")
@@ -493,10 +485,10 @@ Deno.serve(async (req) => {
       id: "phase3i",
       label: "Generate straight bets",
       run: async () => {
-        await invokeStep("Generating straight bets", "bot-generate-straight-bets", {});
+        markUnavailable("bot-generate-straight-bets", "straight bet generator is not deployed in the current backend");
 
         // BUG 1 FIX: ET date
-        const todayS = getEasternDate();
+        const todayS = todayET();
         const { count: straightCount } = await supabase
           .from("bot_straight_bets")
           .select("*", { count: "exact", head: true })
@@ -512,21 +504,21 @@ Deno.serve(async (req) => {
       id: "phase3h",
       label: "Slate status",
       run: async () => {
-        await invokeStep("Sending slate status", "bot-slate-status-update", {});
+        markUnavailable("bot-slate-status-update", "customer slate status broadcaster is not deployed");
       },
     },
     {
       id: "phase3j",
       label: "Broadcast sweet spot picks",
       run: async () => {
-        await invokeStep("Broadcasting sweet spot picks", "broadcast-sweet-spots", {});
+        markUnavailable("broadcast-sweet-spots", "sweet spot broadcaster is not deployed");
       },
     },
     {
       id: "phase3k",
       label: "Sync all engines to tracker",
       run: async () => {
-        await invokeStep("Engine tracker sync", "engine-tracker-sync", {});
+        markUnavailable("engine-tracker-sync", "engine tracker sync is not deployed");
       },
     },
   ];
