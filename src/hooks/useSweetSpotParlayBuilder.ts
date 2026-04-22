@@ -11,6 +11,7 @@ import {
   getLineFreshness,
   pickPreferredMarketLine,
 } from "@/lib/bookScannerMarket";
+import type { QualityTier } from "@/types/sweetSpot";
 
 // Get today's date in Eastern Time for consistent filtering
 function getEasternDate(): string {
