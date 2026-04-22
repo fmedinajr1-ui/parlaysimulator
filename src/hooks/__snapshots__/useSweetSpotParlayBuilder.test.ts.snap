@@ -11,7 +11,7 @@ exports[`SweetSpot Parlay Builder - Ranked Recommendation Packs > produces deter
 [
   "Luguentz Dort",
   "Ja Morant",
-  "Nikola Vucevic",
+  "Dorian Finney-Smith",
 ]
 `;
 
@@ -19,7 +19,7 @@ exports[`SweetSpot Parlay Builder - Ranked Recommendation Packs > produces deter
 [
   "Luguentz Dort",
   "Ja Morant",
-  "Nikola Vucevic",
   "Dorian Finney-Smith",
+  "Unknown Rookie",
 ]
 `;
