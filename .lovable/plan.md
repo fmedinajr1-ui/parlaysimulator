@@ -1,182 +1,171 @@
 
-Fix the backend end-to-end so today’s run can either generate real parlays and straight picks or fail with exact reasons, then add automatic retest/recovery loops for the known breakpoints.
+Implement a bounded, one-time stale-line fallback so today’s marginal slate can still generate outputs without permanently weakening the live-line safety gates.
 
-## What’s actually broken right now
+## What will change
 
-- Today (`2026-04-22`) has only 1 approved row in `nba_risk_engine_picks`.
-- `bot_daily_pick_pool` has only 1 row for today, so parlay generation is correctly degrading as `thin_pick_pool`.
-- There is currently no deployed straight-pick generator at all. In `refresh-l10-and-rebuild`, phase `3i` explicitly marks `bot-generate-straight-bets` as unavailable instead of generating anything.
-- So this is not one bug; it is a broken daily pipeline chain:
-  1. risk-engine output is too thin
-  2. pick-pool recovery can only build from what exists
-  3. parlay engine has too few candidates
-  4. straight-pick generation is missing entirely
-
-## Implementation plan
-
-### 1. Restore straight-pick generation in the backend
-Create and deploy a real backend function for straight picks so the orchestrator stops pretending that step exists.
+### 1. Add a request-scoped freshness override contract
+Introduce a small shared helper/contract used by both generation engines to calculate the effective stale-line threshold per run.
 
 Files:
-- `supabase/functions/bot-generate-straight-bets/index.ts` (new)
+- `supabase/functions/_shared/parlay-engine-v2/config.ts`
+- new shared helper alongside parlay engine config/utilities if needed
+
+Behavior:
+- keep the current global default threshold as the baseline
+- allow a per-invocation override such as:
+  - `stale_line_fallback_enabled`
+  - `stale_line_fallback_once`
+  - `stale_line_fallback_max_age_min`
+  - `stale_line_fallback_scope` (`affected_only`)
+- ensure this override is request-scoped only, never persisted globally
+
+Goal:
+- avoid changing the normal safety posture for all future runs
+- make fallback explicit and auditable in diagnostics
+
+### 2. Make `parlay-engine-v2` support a one-time stale-line retry
+Update the parlay engine so it first runs with the normal freshness threshold, then performs exactly one fallback pass only if the zero-output cause is stale-line rejection on an otherwise viable pool.
+
+File:
+- `supabase/functions/parlay-engine-v2/index.ts`
+
+Behavior:
+- first pass uses the normal freshness threshold
+- capture detailed counts:
+  - `stale_book_line`
+  - `line_moved`
+  - `no_price_for_side`
+  - `book_line_inactive`
+  - candidate count before/after freshness gate
+- trigger fallback only when all of these are true:
+  - pool is not empty/thin
+  - initial output is zero or below viable threshold
+  - stale-line rejections are the dominant blocker
+  - there are affected candidates in the same run
+- second pass relaxes freshness only for the affected game/market candidates from pass one
+- return diagnostics showing:
+  - fallback attempted
+  - fallback activated
+  - original max age
+  - fallback max age
+  - affected player/prop or game-market count
+  - parlays built via fallback
+
+Important:
+- do not relax drift checks
+- do not relax inactive/missing-price checks
+- do not broaden to unrelated games/markets
+- do not run more than once per invocation
+
+### 3. Make `bot-generate-straight-bets` use the same bounded fallback logic
+Mirror the same one-time freshness fallback in straight-bet generation so straights and parlays stay aligned.
+
+File:
+- `supabase/functions/bot-generate-straight-bets/index.ts`
+
+Behavior:
+- first pass applies the standard freshness gate
+- if rows were rejected mostly for staleness and no straights were produced, retry once with a relaxed freshness threshold
+- restrict the retry to the affected matched rows from the first pass only
+- report:
+  - `stale_rejected_initial`
+  - `stale_rejected_recovered`
+  - `fallback_attempted`
+  - `fallback_applied`
+  - `fallback_scope`
+  - `fallback_book_matched_rows`
+  - `fallback_standard_inserted`
+  - `fallback_ceiling_inserted`
+
+This keeps both engines consistent and prevents one from generating while the other still fails for the same stale-line edge case.
+
+### 4. Teach the orchestrator to invoke the fallback deliberately
+Update the orchestrator so today’s run can escalate into the stale-line fallback only when the initial generation result indicates that stale freshness is the real blocker.
+
+File:
 - `supabase/functions/refresh-l10-and-rebuild/index.ts`
 
 Behavior:
-- Read today’s `bot_daily_pick_pool`
-- Join to fresh `unified_props` book lines, prioritizing FanDuel
-- Build two bet classes:
-  - `standard_straight`
-  - `ceiling_straight`
-- Insert rows into `bot_straight_bets`
-- Return diagnostics:
-  - `pool_rows_loaded`
-  - `book_matched_rows`
-  - `standard_inserted`
-  - `ceiling_inserted`
-  - `degraded_reason`
+- keep the existing normal generation pass first
+- inspect the returned diagnostics from:
+  - `parlay-engine-v2`
+  - `bot-generate-straight-bets`
+- if output is zero and the engine reports stale-line-dominant failure, invoke that engine one more time with fallback enabled
+- only do this once per engine per run
+- include clear run results such as:
+  - `ok:fallback_recovered`
+  - `warning:fallback_failed`
+  - `blocked:not_stale_dominant`
+- update Telegram/pipeline alerts so the message distinguishes:
+  - normal zero-output
+  - recovered via stale fallback
+  - unrecoverable even after stale fallback
 
-This will match the existing UI/data contract already expecting `bot_straight_bets`, `bet_type`, `ceiling_line`, `ceiling_reason`, and related fields.
+### 5. Keep the fallback narrowly scoped to the affected game/market
+The user asked for affected game/market only, so the retry must not globally relax freshness for the entire slate.
 
-### 2. Replace the “unavailable” straight-bet phase with a real invoke
-Update phase `3i` in `refresh-l10-and-rebuild` to:
-- call `bot-generate-straight-bets`
-- capture success/error/degraded state
-- send zero-output alerts only when the generator actually ran and still produced nothing
-- include straight-bet diagnostics in the final pipeline result
+Implementation shape:
+- identify affected candidates from first pass by a stable key such as:
+  - `player_name + prop_type + recommended_side + recommended_line`
+  - plus game context when available
+- optionally group to a game/market key if multiple legs from the same stale cluster are involved
+- second pass should only waive freshness for those affected keys
+- all other candidates continue using the default threshold
 
-This turns phase `3i` from a placeholder into a functioning generation step.
+This preserves data integrity while still rescuing today’s marginal slate.
 
-### 3. Harden the risk-engine output so today can produce enough picks
-The real upstream blocker is that today’s risk engine only produced one approved pick. Fix the backend selection gates so a thin slate does not collapse the entire day.
+### 6. Add strong diagnostics so the next failure is obvious
+Expand degraded reasons and metadata rather than hiding fallback decisions.
 
-Files to inspect/update:
-- `supabase/functions/nba-player-prop-risk-engine/index.ts`
-- possibly any helper logic it depends on
+Expected diagnostics additions:
+- `degraded_reason_initial`
+- `degraded_reason_final`
+- `stale_fallback_eligible`
+- `stale_fallback_attempted`
+- `stale_fallback_applied`
+- `stale_fallback_scope`
+- `stale_fallback_max_age_min`
+- `stale_candidates_recovered`
+- `outputs_recovered_from_fallback`
 
-Changes:
-- add structured diagnostics for why candidates are rejected today
-- distinguish “no raw props available” from “over-filtered to zero/one approved pick”
-- add a conservative degraded fallback when approved rows are below target:
-  - relax only the least dangerous gates
-  - preserve duplicate/player caps and hard invalid-data checks
-- return counts like:
-  - raw props scanned
-  - valid props after normalization
-  - rejected by each gate
-  - approved count
-  - fallback mode activated or not
+Expected degraded/final reasons:
+- `no_book_matched_candidates`
+- `stale_book_lines_dominant`
+- `fallback_recovered_partial`
+- `fallback_recovered_success`
+- `no_valid_outputs_even_after_fallback`
 
-Goal:
-- get the engine to produce enough approved picks for same-day downstream generation without blindly lowering quality.
+### 7. Add tests for the new bounded retry behavior
+Add/extend edge-function tests to prove the fallback is safe and one-time only.
 
-### 4. Add automatic self-healing between risk picks, pool, parlays, and straights
-Make the orchestrator resilient instead of single-pass.
+Files:
+- `supabase/functions/bot-generate-straight-bets/index_test.ts`
+- add tests for `parlay-engine-v2` or extracted helpers
 
-In `refresh-l10-and-rebuild`:
-- after the risk-engine step, verify approved risk-pick count
-- if below threshold, run one controlled fallback pass
-- rebuild the pick pool
-- verify pool count
-- run parlay generation
-- run straight-pick generation
-- if either output is zero while prerequisites were present, trigger one bounded retry with diagnostics
-
-This creates a request-scoped “repair loop” instead of leaving the system half-alive.
-
-### 5. Keep parlay auto-build, but extend diagnostics further
-`parlay-engine-v2` already auto-builds a missing pool. Extend it so it reports:
-- whether the pool was missing vs thin
-- how many candidates failed book matching
-- how many were rejected by line freshness/drift
-- whether zero-output came from:
-  - not enough picks
-  - no fresh FanDuel lines
-  - strategy constraints
-  - same-game diversity filters
-
-This makes the next failure obvious immediately.
-
-### 6. Make straight-pick generation use the same source-of-truth as parlays
-Do not create a second independent pick-selection universe.
-
-Straight picks should be built from:
-- `bot_daily_pick_pool` as the canonical candidate source
-- `unified_props` as the live line source
-
-That keeps rankings, scores, and daily selection logic aligned with the parlay system.
-
-### 7. Add idempotency so retries do not duplicate today’s output
-Before inserting same-day outputs:
-- either clear pending same-day generated rows for that date/source
-- or upsert using a deterministic dedupe key
-
-Apply to:
-- `bot_daily_parlays`
-- `bot_straight_bets`
-
-This is necessary because the user specifically wants automatic re-test and retry behavior.
-
-### 8. Add targeted tests for the repaired backend chain
-Add Deno tests for:
-- pool auto-build when today’s pool is empty
-- parlay degraded reasons
-- straight-bet generation from a small viable pool
-- ceiling-straight generation rules
-- retry path not duplicating inserts
-- thin-risk-pick fallback behavior
-
-Priority functions:
-- `parlay-engine-v2`
-- `bot-generate-straight-bets`
-- any extracted helper logic from the risk engine
-
-### 9. Validate with live backend retests after implementation
-After code changes:
-1. deploy updated backend functions
-2. invoke the risk-engine path for today
-3. invoke pool rebuild
-4. invoke parlay generation
-5. invoke straight-bet generation
-6. run the full orchestrator
-7. verify database counts for today:
-   - approved risk picks
-   - pool rows
-   - parlays
-   - straight bets
-8. if any stage returns degraded output, inspect logs and apply one more fix pass immediately
-
-## Expected result
-
-After this fix:
-- today’s run will stop ending in “messages only”
-- missing/thin pick pools will be rebuilt automatically when possible
-- straight picks will actually be generated because the backend step will exist
-- the pipeline will retry once when a recoverable stage fails
-- when output is still impossible, the backend will say exactly why
+Test coverage:
+1. normal fresh lines produce output without fallback
+2. stale-only blocker triggers exactly one fallback retry
+3. fallback applies only to affected game/market keys
+4. drifted lines still remain rejected during fallback
+5. inactive or missing-price rows still remain rejected during fallback
+6. fallback does not run when pool is thin/empty
+7. fallback does not run twice in one invocation
+8. diagnostics clearly report recovered vs unrecovered state
 
 ## Technical details
 
-- Use ET date helpers consistently across all generation steps.
-- Keep `build-daily-pick-pool` as the only pool-builder.
-- Build `bot-generate-straight-bets` as a backend function, not frontend logic.
-- Straight-pick selection should reuse `composite_score`, `l10_hit_rate`, `l10_avg`, `l3_avg`, and matched live prices from `unified_props`.
-- Preserve hard safety filters:
-  - stale book lines
-  - missing prices
-  - excessive line drift
-  - duplicate player/prop spam
-- Add bounded retries only once per run to avoid infinite loops.
-- Use precise degraded reasons such as:
-  - `insufficient_risk_picks`
-  - `thin_pick_pool`
-  - `no_book_matched_candidates`
-  - `no_valid_parlays_built`
-  - `no_valid_straight_bets_built`
+- Keep the default `MAX_BOOK_LINE_AGE_MIN` intact as the standard baseline.
+- Prefer extracting freshness gating into a shared helper so parlay and straight generators use identical logic.
+- The fallback max age should be conservative and explicit, not open-ended.
+- Preserve FanDuel priority and existing bookmaker matching behavior.
+- Preserve `MAX_LINE_DRIFT` exactly as-is.
+- Preserve idempotent same-day insertion behavior.
+- Keep all fallback state in-memory/request-local; do not write permanent override flags to the database.
 
-## Immediate priority order
+## Expected outcome
 
-1. Implement `bot-generate-straight-bets`
-2. Wire phase `3i` to invoke it
-3. Harden `nba-player-prop-risk-engine` for thin-day fallback
-4. Add orchestrator self-healing/retry checks
-5. Retest the full backend chain live for today
+After this change:
+- today’s marginal stale-line scenario can recover automatically once
+- parlays and straight bets can still generate when freshness is the only blocker
+- the fallback will not silently weaken future runs
+- failures will clearly say whether stale-line recovery was attempted, applied, and successful
