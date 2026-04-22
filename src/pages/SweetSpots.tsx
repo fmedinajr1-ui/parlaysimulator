@@ -135,7 +135,7 @@ export default function SweetSpots() {
         case 'score':
         default:
           return (
-            (a.marketStatus === 'active' ? 1 : 0) - (b.marketStatus === 'active' ? 1 : 0) ||
+            (b.marketStatus === 'active' ? 1 : 0) - (a.marketStatus === 'active' ? 1 : 0) ||
             (a.marketStatus === 'scanning' ? 1 : 0) - (b.marketStatus === 'scanning' ? 1 : 0) ||
             b.sweetSpotScore - a.sweetSpotScore
           );
