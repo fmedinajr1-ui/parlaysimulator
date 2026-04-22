@@ -1,128 +1,172 @@
 
-Fix the StatMuse phase so it no longer blocks the pipeline, times out the rebuild, or does expensive one-player-at-a-time scraping during slate generation.
+Fix the actual break in the parlay pipeline: today’s run is producing status messages because the orchestrator completes, but the parlay engine has nothing meaningful to build from.
 
-## What will be changed
+## What the current investigation confirms
 
-### 1. Stop treating StatMuse scraping as a per-player synchronous gate
-In `supabase/functions/refresh-l10-and-rebuild/index.ts`, the current `phase1_5` loops through slate players and invokes `scrape-statmuse-quarter-stats` once per player. That design is the main runtime problem.
+- `bot_daily_pick_pool` is empty for today (`2026-04-22`) but had `317` rows yesterday.
+- `bot_daily_parlays` is empty for today, while yesterday had pending parlays.
+- `nba_risk_engine_picks` has only `1` pick today, and it is the only approved `full_slate` risk-engine output.
+- `parlay-engine-v2` does not build from `nba_risk_engine_picks` directly. It only reads `bot_daily_pick_pool`.
+- There is no active writer in the current codebase that populates `bot_daily_pick_pool` from today’s risk picks.
+- Even if the pool-builder existed, today’s upstream volume is still too thin: one approved pick is not enough to generate valid parlays.
+- Recent backend logs also show the PrizePicks scraper is getting `403`s, which likely reduces upstream prop coverage and contributes to the low-risk-pick count.
 
-I’ll replace that phase with a fast, bounded workflow:
-1. check which slate players are actually missing recent quarter baselines
-2. process only the missing players
-3. send them in small batches instead of one invocation per player
-4. enforce a hard cap on how many players can be scraped in one rebuild run
-5. downgrade the phase to non-fatal so generation continues if StatMuse is slow or partially unavailable
+## Root cause
 
-Result: the rebuild reaches prop refresh, risk engine, and parlay generation instead of dying in quarter-stat enrichment.
+This is a two-layer failure:
 
-### 2. Make StatMuse enrichment incremental instead of re-scraping everyone
-The rebuild currently pulls recent `unified_props` players and tries to scrape all of them. But the database already has fresh `player_quarter_baselines` rows for many players.
+1. Structural break:
+   - `parlay-engine-v2` expects `bot_daily_pick_pool`
+   - the current pipeline never populates that table for today
 
-I’ll change the phase logic to:
-- look up existing `player_quarter_baselines` for today’s slate players
-- skip players whose `data_source='statmuse'` rows were updated recently
-- only scrape missing or stale players
-- log counts like:
-  - total slate players
-  - already covered
-  - missing/stale
-  - actually attempted
-  - completed / failed / skipped for time budget
+2. Upstream starvation:
+   - today’s risk engine only produced 1 usable pick
+   - so downstream generation would still be starved unless we add a fallback or pool-building strategy that can draw from other approved sources
 
-Result: much less duplicate scraping and much shorter runtime.
+## Implementation plan
 
-### 3. Batch the StatMuse function calls
-Instead of:
+### 1. Add a dedicated daily pick-pool builder
+Create a backend function that rebuilds `bot_daily_pick_pool` for a target date from approved sources, in priority order.
+
+Primary source:
+- `nba_risk_engine_picks`
+  - use approved/full-slate rows only
+  - map:
+    - `side` -> `recommended_side`
+    - `line` -> `recommended_line`
+    - `confidence_score` -> both `confidence_score` and normalized `composite_score`
+    - `true_median` / `l10_avg` fallback -> `projected_value`
+    - `l10_hit_rate`, `l10_avg`
+    - signal/category mapping from risk-engine metadata instead of `"uncategorized"` where possible
+
+Fallback sources when risk volume is too low:
+- `category_sweet_spots`
+- optionally other already-approved pick sources used elsewhere in the app/backend
+
+Behavior:
+- clear/rebuild only the target date’s rows
+- dedupe by player + prop + side + line
+- reject rows missing side/line/player
+- write structured diagnostics: source counts, inserted count, skipped count, dedupe count
+
+### 2. Wire the pool builder into the orchestrator before parlay generation
+Update `refresh-l10-and-rebuild/index.ts` so the sequence becomes:
+
 ```text
-1 player -> 1 function call -> 4 remote scrapes -> sleep -> next player
+refresh props
+-> run risk engine
+-> build daily pick pool
+-> verify pool count
+-> run parlay-engine-v2
+-> run downstream scanners
 ```
 
-I’ll move to:
-```text
-N players -> 1 function call -> internal loop with controlled limits
-```
+Add an explicit pre-generation gate:
+- if `bot_daily_pick_pool` count is below a minimum threshold, do not silently continue
+- mark the run as degraded/failed
+- send a clear admin alert with:
+  - risk pick count
+  - pool count
+  - fresh prop count
+  - likely cause
 
-The rebuild will invoke `scrape-statmuse-quarter-stats` with small batches (for example 3-5 players per call), which reduces function invocation overhead and makes progress tracking cleaner.
+This prevents “messages but no parlays” behavior.
 
-Result: lower orchestration overhead and fewer chances of timing out before later phases.
+### 3. Make `parlay-engine-v2` fail loudly and diagnostically on empty input
+Adjust `supabase/functions/parlay-engine-v2/index.ts` so that:
+- empty pool returns a structured response explaining why no parlays were built
+- it reports:
+  - pool rows loaded
+  - candidates after book matching
+  - leg rejections by reason
+- in non-dry-run mode, if zero pool rows are present, it should return a clear failure/degraded status instead of appearing successful
 
-### 4. Add a strict time budget inside the StatMuse phase
-The orchestrator already has a global timeout guard, but the StatMuse phase still consumes too much of the total runtime budget.
+This will make future breakages obvious.
 
-I’ll add a phase-level budget so StatMuse stops early once it has consumed its allowed window, records a warning, and lets the rebuild continue.
+### 4. Improve pool scoring so the engine can rank candidates properly
+Use the existing project rule from memory:
+- final pool confidence should be driven by a meaningful composite score, not flat/raw hit-rate defaults
 
-Result: StatMuse becomes “best effort enrichment” instead of “pipeline blocker.”
+Implementation details:
+- compute `confidence_score` / `composite_score` from available upstream fields:
+  - model confidence
+  - hit rate
+  - edge
+  - category weighting
+  - optional price sanity
+- avoid writing generic `"uncategorized"` unless no better label exists
+- preserve enough score variance for engine ranking and strategy selection
 
-### 5. Make scrape-statmuse-quarter-stats more resilient
-In `supabase/functions/scrape-statmuse-quarter-stats/index.ts`, I’ll harden the function so one scrape issue does not waste the whole batch:
-- validate HTTP responses before parsing JSON
-- distinguish fetch failure vs parse failure vs insufficient data
-- return structured per-player results
-- reduce unnecessary waits where possible
-- stop logging success when only partial data was recovered
-- preserve partial success if 2+ quarters are valid, but report exactly what was missing
+### 5. Add a resilience fallback when risk-engine volume is too low
+Because today only one risk pick exists, the pipeline needs a controlled fallback path.
 
-Result: clearer diagnostics and fewer silent bad runs.
+Add fallback policy in the pool builder:
+- if risk-engine approved picks < threshold, supplement from `category_sweet_spots`
+- only include rows that have:
+  - active line
+  - actual/recommended line
+  - confidence floor
+  - valid side
+- tag fallback origin in `category` or a source field so diagnostics stay honest
 
-### 6. Use the existing game-log baseline path as fallback coverage
-There is already a working `calculate-quarter-baselines` function that writes to `player_quarter_baselines` using game logs, while `get-player-quarter-profile` prioritizes:
-1. live snapshots
-2. StatMuse baselines
-3. tier fallback
+Goal:
+- allow the engine to generate a slate on thin days without pretending everything came from the risk engine
 
-I’ll use that existing architecture to prevent empty quarter profiles:
-- ensure the rebuild can rely on existing non-StatMuse baselines if StatMuse is incomplete
-- avoid making StatMuse the only route to quarter profile availability
-- keep StatMuse as higher-quality enrichment, not mandatory infrastructure
+### 6. Tighten upstream observability around the low-volume source problem
+The pool issue is the immediate blocker, but upstream coverage is also broken.
 
-Result: quarter profile consumers still have usable data even when StatMuse underperforms.
+Add diagnostics to the orchestrator alert payload:
+- fresh prop count
+- risk-engine approved count
+- pool built count
+- category fallback count
+- parlay insert count
 
-### 7. Improve observability for this exact phase
-I’ll add structured results to `refresh-l10-and-rebuild` for the StatMuse section, such as:
-- `slate_players_total`
-- `statmuse_recent_baseline_players`
-- `statmuse_missing_players`
-- `statmuse_batches_attempted`
-- `statmuse_players_processed`
-- `statmuse_players_failed`
-- `statmuse_phase_status` (`completed`, `partial`, `skipped_timeout`, `no_missing_players`)
+Also investigate and patch the current broken data inputs that are reducing candidate volume:
+- PrizePicks scraper `403` failures
+- any source-specific schema issues causing props not to qualify
+- source mismatches that prevent approved picks from becoming usable pool rows
 
-Result: next time this breaks, the UI/logs will show whether the issue is coverage, scraping, or time budget.
+This part should be done after the pool builder is restored, so we separate “missing bridge” from “low source volume”.
 
-## Files to update
+### 7. Verify with an end-to-end rebuild
+After implementation:
+- trigger the rebuild for today
+- confirm:
+  - `bot_daily_pick_pool` is populated
+  - `parlay-engine-v2` receives candidates
+  - `bot_daily_parlays` gets new pending rows
+  - UI shows actual parlays instead of only status messaging
+
+Validation checks:
+- count rows in `bot_daily_pick_pool` for today
+- inspect a sample of inserted pool rows for correct side/line/category/confidence
+- run `parlay-engine-v2` dry-run and verify `candidates_in > 0`
+- confirm inserted parlays for today
+- verify no silent “ok with zero output” path remains
+
+## Files likely to change
+
 - `supabase/functions/refresh-l10-and-rebuild/index.ts`
-- `supabase/functions/scrape-statmuse-quarter-stats/index.ts`
+- `supabase/functions/parlay-engine-v2/index.ts`
+- new backend function for pool building, likely:
+  - `supabase/functions/build-daily-pick-pool/index.ts`
 
-## Technical details
+Potentially also:
+- source mapping helpers or shared utilities for score normalization
+- tests for the new pool-builder and parlay empty-input diagnostics
 
-### Current problem
-```text
-refresh-l10-and-rebuild
-  -> Phase 1.5 fetches slate players
-  -> invokes scrape-statmuse-quarter-stats once per player
-  -> each player does 4 StatMuse scrapes + waits
-  -> total runtime balloons
-  -> later phases may never run
-```
+## Technical notes
 
-### Target behavior
-```text
-refresh-l10-and-rebuild
-  -> identify only missing/stale quarter-baseline players
-  -> batch those players
-  -> enforce a small StatMuse time budget
-  -> mark phase partial/non-fatal if budget is hit
-  -> continue to props refresh, risk engine, and generation
-```
-
-### Why this is the right fix
-- the database already contains recent `statmuse` baseline rows, so re-scraping everyone is wasteful
-- `get-player-quarter-profile` already supports multiple quarter-data sources, so the pipeline does not need StatMuse to be a hard gate
-- the timeout issue is architectural, not just parser quality
+- No schema change is strictly required because `bot_daily_pick_pool` already exists with the needed columns.
+- This is primarily an orchestration and data-bridging fix.
+- The most important behavioral change is: zero-input generation must become an explicit failure state, not a “successful run with warnings.”
+- The fallback path should be conservative, so it restores output without degrading slate quality too aggressively.
 
 ## Expected outcome
-After this change:
-- the StatMuse phase will stop monopolizing rebuild runtime
-- the rebuild will consistently reach the pool/generation phases
-- quarter baseline coverage will still improve incrementally
-- missing or slow StatMuse data will show up as warnings, not total pipeline failure
+
+After this fix:
+- today’s approved picks will actually be transformed into parlay candidates
+- empty-pool days will be surfaced immediately instead of hidden behind status messages
+- parlay generation will either produce real slates or fail with a precise reason
+- the app will stop appearing “alive” while generating nothing
