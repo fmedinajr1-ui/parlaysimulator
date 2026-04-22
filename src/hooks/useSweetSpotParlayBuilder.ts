@@ -3,6 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { toast } from "sonner";
+import {
+  computeLineDrift,
+  deriveMarketStatus,
+  getAvailableBooks,
+  getLineAgeMinutes,
+  getLineFreshness,
+  pickPreferredMarketLine,
+} from "@/lib/bookScannerMarket";
 
 // Get today's date in Eastern Time for consistent filtering
 function getEasternDate(): string {
@@ -38,6 +46,13 @@ export interface SweetSpotPick {
   reliabilityTier?: string | null;
   reliabilityHitRate?: number | null;
   reliabilityModifier?: number | null;
+  selectedBook?: string | null;
+  availableBooks?: string[];
+  lineFreshness?: 'fresh' | 'stale' | 'expired';
+  lineAgeMinutes?: number | null;
+  lineDrift?: number;
+  marketStatus?: 'active' | 'scanning' | 'stale' | 'off_market';
+  tierReason?: string | null;
 }
 
 // v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
@@ -1361,10 +1376,10 @@ export function useSweetSpotParlayBuilder() {
       console.group("🎯 [Optimal Parlay Diagnostics]");
       console.log(`📅 Query started at: ${diagnostics.timestamp}`);
 
-      // First get active props (future games only) to filter out stale picks
+      // First get active props (future games only) to filter out stale picks and mirror scanner book selection
       const { data: activeProps } = await supabase
         .from("unified_props")
-        .select("player_name, commence_time")
+        .select("player_name, prop_type, current_line, over_price, under_price, bookmaker, is_active, updated_at, odds_updated_at, commence_time")
         .gte("commence_time", now);
 
       // Check if today has any remaining active games
@@ -1407,6 +1422,14 @@ export function useSweetSpotParlayBuilder() {
       diagnostics.targetDate = targetDate;
       console.log(`📆 Target date: ${targetDate}`);
       console.log(`👥 Active players in slate: ${targetPlayers.size}`);
+
+      const marketRowsByKey = new Map<string, any[]>();
+      (activeProps || []).forEach((prop) => {
+        const key = `${prop.player_name?.toLowerCase()}_${prop.prop_type?.toLowerCase()}`;
+        const rows = marketRowsByKey.get(key) ?? [];
+        rows.push(prop);
+        marketRowsByKey.set(key, rows);
+      });
 
       // Fetch injury reports for target date
       const { data: injuryReports } = await supabase
@@ -1857,8 +1880,33 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
+      const picksWithScannerMeta = allPicks
+        .map((pick) => {
+          const rows = marketRowsByKey.get(`${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}`) ?? [];
+          const selected = pickPreferredMarketLine(rows, {
+            requireSidePrice: pick.side?.toLowerCase() === 'under' ? 'under' : 'over',
+          });
+
+          if (!selected) return { ...pick, marketStatus: 'off_market' as const };
+
+          const marketStatus = deriveMarketStatus(selected, rows);
+          const lineFreshness = getLineFreshness(selected);
+
+          return {
+            ...pick,
+            selectedBook: selected.bookmaker ?? null,
+            availableBooks: getAvailableBooks(rows),
+            lineFreshness,
+            lineAgeMinutes: getLineAgeMinutes(selected),
+            lineDrift: computeLineDrift(selected, rows),
+            marketStatus,
+            tierReason: `scanner ${marketStatus} · ${lineFreshness}`,
+          };
+        })
+        .filter((pick) => pick.marketStatus !== 'off_market');
+
       // v3.1: Apply Game Environment Validation filter
-      const validatedPicks = allPicks.filter((pick) => {
+      const validatedPicks = picksWithScannerMeta.filter((pick) => {
         const key = `${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}_${pick.side?.toLowerCase()}`;
         const validation = validationMap.get(key);
 

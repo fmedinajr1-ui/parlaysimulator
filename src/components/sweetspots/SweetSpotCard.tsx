@@ -14,6 +14,7 @@ import { ProductionRateDisplay } from "./ProductionRateDisplay";
 import { LiveDataOverlay } from "./LiveDataOverlay";
 import { HedgeRecommendation } from "./HedgeRecommendation";
 import { ShotChartPreview } from "./ShotChartPreview";
+import { humanizeBookmaker } from "@/lib/bookScannerMarket";
 
 // Helper to get peak quarter from profile data
 function getPeakQuarter(peakQuarters: { q1: number; q2: number; q3: number; q4: number }): string {
@@ -142,6 +143,11 @@ export function SweetSpotCard({ spot, onAddToBuilder }: SweetSpotCardProps) {
           <span className="text-lg font-bold font-mono">
             {spot.line}
           </span>
+          {spot.selectedBook && (
+            <Badge variant="outline" className="text-[10px]">
+              {humanizeBookmaker(spot.selectedBook)} · {spot.marketStatus ?? 'active'}
+            </Badge>
+          )}
           <div className="flex-1" />
           <div className="text-right">
             <div className="text-xs text-muted-foreground">L10 Avg</div>
@@ -180,6 +186,19 @@ export function SweetSpotCard({ spot, onAddToBuilder }: SweetSpotCardProps) {
             />
           </div>
         </div>
+
+        {(spot.tierReason || spot.availableBooks?.length) && (
+          <div className="pt-1 border-t border-border space-y-1">
+            {spot.tierReason && (
+              <p className="text-xs text-muted-foreground leading-relaxed">{spot.tierReason}</p>
+            )}
+            {!!spot.availableBooks?.length && (
+              <p className="text-[11px] text-muted-foreground">
+                Books: {spot.availableBooks.map((book) => humanizeBookmaker(book)).join(' · ')}
+              </p>
+            )}
+          </div>
+        )}
         
         {/* Production & Minutes */}
         <div className="pt-1 border-t border-border">

@@ -134,7 +134,11 @@ export default function SweetSpots() {
           return b.juice.price - a.juice.price;
         case 'score':
         default:
-          return b.sweetSpotScore - a.sweetSpotScore;
+          return (
+            (b.marketStatus === 'active' ? 1 : 0) - (a.marketStatus === 'active' ? 1 : 0) ||
+            (a.marketStatus === 'scanning' ? 1 : 0) - (b.marketStatus === 'scanning' ? 1 : 0) ||
+            b.sweetSpotScore - a.sweetSpotScore
+          );
       }
     });
     

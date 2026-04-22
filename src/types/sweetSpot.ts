@@ -34,6 +34,9 @@ export interface ShotChartAnalysis {
 
 export type QualityTier = 'ELITE' | 'PREMIUM' | 'STRONG' | 'STANDARD' | 'AVOID';
 
+export type LineFreshness = 'fresh' | 'stale' | 'expired';
+export type MarketStatus = 'active' | 'scanning' | 'stale' | 'off_market';
+
 export type MinutesVerdict = 'CAN_MEET' | 'RISKY' | 'UNLIKELY';
 
 export type MomentumTier = 'HOT' | 'NORMAL' | 'COLD';
@@ -266,6 +269,13 @@ export interface DeepSweetSpot {
   
   // Metadata
   analysisTimestamp: string;
+  selectedBook?: string;
+  availableBooks?: string[];
+  lineFreshness?: LineFreshness;
+  lineAgeMinutes?: number | null;
+  lineDrift?: number;
+  marketStatus?: MarketStatus;
+  tierReason?: string;
   
   // Live data (optional - populated when game is in progress)
   liveData?: LivePropData;

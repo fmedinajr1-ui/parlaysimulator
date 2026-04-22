@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEasternDate } from "@/lib/dateUtils";
+import {
+  computeLineDrift,
+  deriveMarketStatus,
+  getAvailableBooks,
+  getLineAgeMinutes,
+  getLineFreshness,
+  pickPreferredMarketLine,
+} from "@/lib/bookScannerMarket";
 import type { 
   DeepSweetSpot, 
   PropType, 
@@ -27,6 +35,10 @@ interface UnifiedProp {
   under_price: number | null;
   game_description: string | null;
   commence_time: string | null;
+  bookmaker: string | null;
+  is_active: boolean | null;
+  updated_at: string | null;
+  odds_updated_at: string | null;
 }
 
 interface GameLog {
@@ -301,14 +313,45 @@ function calculateSweetSpotScore(
   return Math.round(score * 100);
 }
 
+function buildTierReason(params: {
+  marketStatus: DeepSweetSpot['marketStatus'];
+  lineFreshness: DeepSweetSpot['lineFreshness'];
+  lineDrift: number;
+  hitRateL10: number;
+  edge: number;
+  line: number;
+  selectedBook?: string;
+}): string {
+  const reasons: string[] = [];
+
+  if (params.marketStatus === 'scanning') reasons.push('scanner downgrade: line drift');
+  if (params.marketStatus === 'stale') reasons.push('scanner downgrade: stale odds');
+  if (params.marketStatus === 'off_market') reasons.push('scanner downgrade: off market');
+  if (params.lineFreshness === 'fresh' && params.selectedBook) reasons.push(`${params.selectedBook.toUpperCase()} synced`);
+
+  const edgePct = params.line > 0 ? (params.edge / params.line) * 100 : 0;
+  reasons.push(`L10 ${(params.hitRateL10 * 100).toFixed(0)}%`);
+  reasons.push(`edge ${edgePct >= 0 ? '+' : ''}${edgePct.toFixed(0)}%`);
+
+  if (Math.abs(params.lineDrift) >= 0.5) {
+    reasons.push(`drift ${params.lineDrift >= 0 ? '+' : ''}${params.lineDrift.toFixed(1)}`);
+  }
+
+  return reasons.join(' · ');
+}
+
 // Classify quality tier with side-aware edge requirements
 function classifyQualityTier(
   floorProtection: number,
   hitRateL10: number,
   edge: number,
   line: number,
-  side: PickSide
+  side: PickSide,
+  marketStatus: DeepSweetSpot['marketStatus'],
+  lineFreshness: DeepSweetSpot['lineFreshness'],
 ): QualityTier {
+  if (marketStatus === 'off_market' || lineFreshness === 'expired') return 'AVOID';
+
   // Calculate edge as percentage of line for meaningful comparison
   const edgePct = line > 0 ? edge / line : 0;
   
@@ -331,6 +374,7 @@ function classifyQualityTier(
   
   // STANDARD: 70-79% hit rate with floor protection >= 0.7
   if (hitRateL10 >= QUALITY_THRESHOLDS.STANDARD.minHitRate && floorProtection >= 0.7) {
+    if (marketStatus === 'scanning' || lineFreshness === 'stale') return 'STANDARD';
     return 'STANDARD';
   }
   
@@ -435,11 +479,10 @@ export function useDeepSweetSpots() {
       const tomorrowStart = new Date(todayStart);
       tomorrowStart.setDate(tomorrowStart.getDate() + 1);
       
-      // Fetch live lines from unified_props
+      // Fetch live lines from unified_props using the same multi-book truth set scanners use
       const { data: propsData, error: propsError } = await supabase
         .from('unified_props')
-        .select('id, player_name, prop_type, current_line, over_price, under_price, game_description, commence_time, bookmaker')
-        .eq('bookmaker', 'fanduel')
+        .select('id, player_name, prop_type, current_line, over_price, under_price, game_description, commence_time, bookmaker, is_active, updated_at, odds_updated_at')
         .gte('commence_time', todayStart.toISOString())
         .lt('commence_time', tomorrowStart.toISOString())
         .not('current_line', 'is', null);
@@ -450,11 +493,31 @@ export function useDeepSweetSpots() {
       }
       
       const props = (propsData || []) as UnifiedProp[];
+      const propsByKey = new Map<string, UnifiedProp[]>();
+      for (const prop of props) {
+        const mappedType = mapPropType(prop.prop_type);
+        if (!mappedType) continue;
+        const key = `${prop.player_name.toLowerCase()}|${mappedType}`;
+        const rows = propsByKey.get(key) ?? [];
+        rows.push(prop);
+        propsByKey.set(key, rows);
+      }
       
-      // Filter to supported prop types
-      const supportedProps = props
-        .map(p => ({ ...p, mappedType: mapPropType(p.prop_type) }))
-        .filter((p): p is typeof p & { mappedType: PropType } => p.mappedType !== null);
+      // Filter to supported prop types and choose the same preferred market line scanners would use
+      const supportedProps = Array.from(propsByKey.values())
+        .map((rows) => {
+          const first = rows[0];
+          const mappedType = mapPropType(first.prop_type);
+          if (!mappedType) return null;
+          const selected = pickPreferredMarketLine(rows, { now: new Date() });
+          if (!selected) return null;
+          return {
+            ...selected,
+            mappedType,
+            marketRows: rows,
+          };
+        })
+        .filter((p): p is UnifiedProp & { mappedType: PropType; marketRows: UnifiedProp[] } => p !== null);
       
       if (supportedProps.length === 0) {
         return { 
@@ -549,6 +612,14 @@ export function useDeepSweetSpots() {
       for (const prop of supportedProps) {
         const playerLogs = logsByPlayer.get(prop.player_name) || [];
         if (playerLogs.length < 5) continue; // Need minimum data
+
+        const lineFreshness = getLineFreshness(prop);
+        const lineAgeMinutes = getLineAgeMinutes(prop);
+        const lineDrift = computeLineDrift(prop, prop.marketRows);
+        const marketStatus = deriveMarketStatus(prop, prop.marketRows);
+        const availableBooks = getAvailableBooks(prop.marketRows);
+
+        if (marketStatus === 'off_market') continue;
         
         const propConfig = PROP_TYPE_CONFIG[prop.mappedType];
         const field = propConfig.gameLogField;
@@ -715,7 +786,24 @@ export function useDeepSweetSpots() {
         const sweetSpotScore = Math.min(100, baseScore + profileBoost);
         
         // Updated to include line and side parameters
-        const qualityTier = classifyQualityTier(floorProtection, hitRateL10, edge, line, optimalSide);
+        const qualityTier = classifyQualityTier(
+          floorProtection,
+          hitRateL10,
+          edge,
+          line,
+          optimalSide,
+          marketStatus,
+          lineFreshness,
+        );
+        const tierReason = buildTierReason({
+          marketStatus,
+          lineFreshness,
+          lineDrift,
+          hitRateL10,
+          edge,
+          line,
+          selectedBook: prop.bookmaker ?? undefined,
+        });
         
         // Skip AVOID tier with very low hit rates
         if (qualityTier === 'AVOID' && hitRateL10 < 0.5) continue;
@@ -748,6 +836,13 @@ export function useDeepSweetSpots() {
           sweetSpotScore,
           qualityTier,
           analysisTimestamp: new Date().toISOString(),
+          selectedBook: prop.bookmaker ?? undefined,
+          availableBooks,
+          lineFreshness,
+          lineAgeMinutes,
+          lineDrift,
+          marketStatus,
+          tierReason,
           profileData,
         });
       }
