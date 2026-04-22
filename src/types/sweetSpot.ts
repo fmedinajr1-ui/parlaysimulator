@@ -37,6 +37,16 @@ export type QualityTier = 'ELITE' | 'PREMIUM' | 'STRONG' | 'STANDARD' | 'AVOID';
 export type LineFreshness = 'fresh' | 'stale' | 'expired';
 export type MarketStatus = 'active' | 'scanning' | 'stale' | 'off_market';
 
+export interface ScannerMarketMeta {
+  selectedBook?: string | null;
+  availableBooks?: string[];
+  hasActiveBookLine?: boolean;
+  lineFreshness?: LineFreshness;
+  lineAgeMinutes?: number | null;
+  lineDrift?: number;
+  marketStatus?: MarketStatus;
+}
+
 export type MinutesVerdict = 'CAN_MEET' | 'RISKY' | 'UNLIKELY';
 
 export type MomentumTier = 'HOT' | 'NORMAL' | 'COLD';
@@ -124,6 +134,10 @@ export interface LivePropData {
   lineMovement?: number;
   lastLineUpdate?: string;
   bookmaker?: string;
+  selectedBook?: string | null;
+  hasActiveBookLine?: boolean;
+  lineFreshness?: LineFreshness;
+  lineDrift?: number;
   
   // Closest-line matching (v7.4)
   closestLine?: number;
@@ -223,7 +237,7 @@ export interface ProfileData {
   profileFlags: string[];
 }
 
-export interface DeepSweetSpot {
+export interface DeepSweetSpot extends ScannerMarketMeta {
   id: string;
   playerName: string;
   teamName: string;
@@ -269,12 +283,6 @@ export interface DeepSweetSpot {
   
   // Metadata
   analysisTimestamp: string;
-  selectedBook?: string;
-  availableBooks?: string[];
-  lineFreshness?: LineFreshness;
-  lineAgeMinutes?: number | null;
-  lineDrift?: number;
-  marketStatus?: MarketStatus;
   tierReason?: string;
   
   // Live data (optional - populated when game is in progress)

@@ -1,4 +1,4 @@
-import type { PickSide } from "@/types/sweetSpot";
+import type { PickSide, ScannerMarketMeta } from "@/types/sweetSpot";
 
 export type LineFreshness = "fresh" | "stale" | "expired";
 export type MarketStatus = "active" | "scanning" | "stale" | "off_market";
@@ -94,6 +94,36 @@ export function deriveMarketStatus(selected: MarketLineLike | null, rows: Market
   if (drift > SCANNING_DRIFT_THRESHOLD) return "scanning";
 
   return "active";
+}
+
+export function buildScannerMarketMeta(
+  selected: MarketLineLike | null,
+  rows: MarketLineLike[],
+  now = new Date(),
+): ScannerMarketMeta {
+  const hasActiveBookLine = rows.some((row) => row.is_active !== false && row.current_line != null);
+
+  if (!selected) {
+    return {
+      selectedBook: null,
+      availableBooks: getAvailableBooks(rows),
+      hasActiveBookLine,
+      lineFreshness: undefined,
+      lineAgeMinutes: null,
+      lineDrift: 0,
+      marketStatus: hasActiveBookLine ? "scanning" : "off_market",
+    };
+  }
+
+  return {
+    selectedBook: selected.bookmaker ?? null,
+    availableBooks: getAvailableBooks(rows),
+    hasActiveBookLine,
+    lineFreshness: getLineFreshness(selected, now),
+    lineAgeMinutes: getLineAgeMinutes(selected, now),
+    lineDrift: computeLineDrift(selected, rows),
+    marketStatus: deriveMarketStatus(selected, rows, now),
+  };
 }
 
 export function pickPreferredMarketLine<T extends MarketLineLike>(
