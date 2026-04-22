@@ -34,6 +34,10 @@ export interface LiveLineData {
   closestBookmaker?: string;
   closestDelta?: number;
   isScanning?: boolean;
+  hasActiveBookLine?: boolean;
+  selectedBook?: string;
+  lineFreshness?: 'fresh' | 'stale' | 'expired';
+  lineDrift?: number;
 }
 
 interface UseLiveSweetSpotLinesOptions {
@@ -181,6 +185,7 @@ export function useLiveSweetSpotLines(
             liveBookLine,
             lineMovement,
             bookmaker: result.odds.bookmaker || 'unknown',
+            selectedBook: result.odds.bookmaker || 'unknown',
             lastUpdate: new Date().toISOString(),
             overPrice: result.odds.over_price,
             underPrice: result.odds.under_price,
@@ -189,6 +194,9 @@ export function useLiveSweetSpotLines(
             closestBookmaker: closest?.bookmaker,
             closestDelta,
             isScanning,
+            hasActiveBookLine: allBookLines.length > 0,
+            lineFreshness: 'fresh',
+            lineDrift: closestDelta,
           };
           
           // Update cache
