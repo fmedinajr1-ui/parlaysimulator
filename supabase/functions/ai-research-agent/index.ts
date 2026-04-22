@@ -421,6 +421,67 @@ Deno.serve(async (req) => {
 
     let digestMessage = `🔬 <b>AI Research Digest — ${escapeHtml(dateStr)}</b>\n\n`;
 
+    const TELEGRAM_LIMIT = 4096;
+    const TELEGRAM_SOFT_LIMIT = 3800;
+    const stripHtml = (text: string) => text.replace(/<[^>]+>/g, '');
+    const splitTelegramMessage = (text: string, limit: number = TELEGRAM_SOFT_LIMIT): string[] => {
+      if (text.length <= limit) return [text];
+
+      const sections = text.split(/\n\n+/);
+      const chunks: string[] = [];
+      let current = '';
+
+      const flush = () => {
+        if (current.trim()) chunks.push(current.trim());
+        current = '';
+      };
+
+      for (const section of sections) {
+        const next = current ? `${current}\n\n${section}` : section;
+        if (next.length <= limit) {
+          current = next;
+          continue;
+        }
+
+        if (current) flush();
+
+        if (section.length <= limit) {
+          current = section;
+          continue;
+        }
+
+        const lines = section.split('\n');
+        let partial = '';
+        for (const line of lines) {
+          const lineNext = partial ? `${partial}\n${line}` : line;
+          if (lineNext.length <= limit) {
+            partial = lineNext;
+            continue;
+          }
+
+          if (partial) chunks.push(partial.trim());
+
+          if (line.length <= limit) {
+            partial = line;
+            continue;
+          }
+
+          let remaining = line;
+          while (remaining.length > limit) {
+            let splitAt = remaining.lastIndexOf(' ', limit);
+            if (splitAt < Math.floor(limit * 0.6)) splitAt = limit;
+            chunks.push(remaining.slice(0, splitAt).trim());
+            remaining = remaining.slice(splitAt).trim();
+          }
+          partial = remaining;
+        }
+        current = partial;
+      }
+
+      flush();
+      return chunks;
+    };
+
     for (const f of findings) {
       const emoji = emojiMap[f.category] || '📋';
       const score = f.relevance_score >= 0.65 ? '🟢' : f.relevance_score >= 0.40 ? '🟡' : '🔴';
@@ -438,11 +499,6 @@ Deno.serve(async (req) => {
       }
       digestMessage += '\n';
 
-      // Truncate early if approaching limit
-      if (digestMessage.length > 3600) {
-        digestMessage += `⚠️ <i>Truncated — too many categories. View full report in dashboard.</i>\n`;
-        break;
-      }
     }
 
     const actionableCount = findings.filter(f => f.relevance_score >= 0.65).length;
@@ -452,45 +508,59 @@ Deno.serve(async (req) => {
     }
     digestMessage += `🔗 Findings stored for strategy tuning`;
 
-    // Hard cap at 4000 chars (Telegram limit is 4096)
-    if (digestMessage.length > 4000) {
-      digestMessage = digestMessage.slice(0, 3950) + '\n\n⚠️ <i>Message truncated</i>';
-    }
-
     // Send via Telegram (HTML parse mode)
     const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
     const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
 
     if (botToken && chatId) {
-      let tgResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: digestMessage,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        }),
-      });
+      const rawChunks = splitTelegramMessage(digestMessage, TELEGRAM_SOFT_LIMIT);
+      const chunks = rawChunks.length > 1
+        ? rawChunks.map((chunk, index) => `<b>(${index + 1}/${rawChunks.length})</b>\n${chunk}`)
+        : rawChunks;
 
-      let tgResult = await tgResponse.json();
+      let allOk = true;
+      for (const chunk of chunks) {
+        if (chunk.length > TELEGRAM_LIMIT) {
+          allOk = false;
+          console.error('[Research Agent] Chunk exceeds Telegram limit');
+          break;
+        }
 
-      // Fallback to plain text if HTML still fails for some reason
-      if (!tgResponse.ok) {
-        console.warn('[Research Agent] HTML send failed, retrying plain text:', tgResult?.description);
-        tgResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        let tgResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: digestMessage.replace(/<[^>]+>/g, ''),
+            text: chunk,
+            parse_mode: 'HTML',
             disable_web_page_preview: true,
           }),
         });
-        tgResult = await tgResponse.json();
+
+        let tgResult = await tgResponse.json();
+
+        if (!tgResponse.ok) {
+          console.warn('[Research Agent] HTML send failed, retrying plain text:', tgResult?.description);
+          tgResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: stripHtml(chunk),
+              disable_web_page_preview: true,
+            }),
+          });
+          tgResult = await tgResponse.json();
+        }
+
+        if (!tgResponse.ok) {
+          allOk = false;
+          console.error('[Research Agent] Telegram chunk failed:', tgResult?.description);
+          break;
+        }
       }
 
-      console.log('[Research Agent] Telegram digest sent:', tgResponse.ok);
+      console.log('[Research Agent] Telegram digest sent:', allOk);
     }
 
     console.log(`[Research Agent] Complete. ${findings.length} findings stored.`);
