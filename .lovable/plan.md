@@ -1,244 +1,119 @@
 
-Implement an operator-facing diagnostics view so you can see exactly why legs are not producing, starting from the first engine, through the pool, and into live book scanning/matching.
+Implement the first manual-training step inside the admin training flow: show all games playing today so you can choose the slate before applying manual bot guidance.
+
+## What exists now
+
+- The project already has an admin training area through `AIGenerativeProgressDashboard` in the Admin page.
+- There is an existing proven game-selection pattern in `src/components/scout/ScoutGameSelector.tsx` that reads today’s games from `unified_props` using:
+  - `sport = basketball_nba`
+  - `event_id`
+  - `game_description`
+  - `commence_time`
+- The backend already stores persistent operator rules in `bot_owner_rules`, which is the right place for later manual training instructions.
+
+## Current “today” game feed seen in data
+
+Based on the current live props table, today currently includes these games:
+- Dallas Stars @ Minnesota Wild
+- Phoenix Suns @ Oklahoma City Thunder
+- Anaheim Ducks @ Edmonton Oilers
+
+Only one of those is NBA, so the first step should focus on filtering to the target sport and showing only valid game options for the bot you want to train.
 
 ## What will be built
 
-### 1. Add a backend diagnostics function for “why no legs”
-Create a dedicated admin diagnostics endpoint that returns the full chain for a selected date without generating or mutating anything.
+### 1. Add a “Manual Training — Step 1: Today’s Games” panel
+Place a new section in the admin training area that:
+- fetches today’s playable games
+- shows game cards in time order
+- includes:
+  - matchup
+  - start time
+  - sport
+  - available book count
+  - prop row count
+- lets you select one game as the active training target
 
-Files:
-- new `supabase/functions/bot-leg-production-diagnostics/index.ts`
-- optionally small shared helpers if needed
+Likely file:
+- `src/components/admin/AIGenerativeProgressDashboard.tsx`
 
-It will return:
+### 2. Create a dedicated hook for today’s training games
+Add a hook that centralizes the logic for:
+- Eastern-time day bounds
+- target sport filtering
+- unique game extraction from `unified_props`
+- sorting by `commence_time`
+- loading/error states
+- selected game state
 
-#### Stage A — First engine output
-From `nba_risk_engine_picks`:
-- total rows for the day
-- approved rows
-- rejected rows
-- top rejection reasons
-- approved pick list with:
-  - player
-  - prop
-  - side
-  - line
-  - confidence
-  - edge
-  - l10 hit rate
-  - created time
+Likely file:
+- new `src/hooks/useManualTrainingGames.ts`
 
-#### Stage B — Pool builder output
-From `bot_daily_pick_pool`:
-- total pool rows
-- rows sourced from risk engine vs fallback
-- top pool candidates
-- duplicates/invalids inferred from builder diagnostics where possible
-- row-by-row pool details:
-  - player
-  - prop
-  - side
-  - line
-  - category
-  - composite score
-  - l10/l3 values
-  - projected value
+This should follow the same date/game extraction pattern already used in `ScoutGameSelector`, but shaped for the admin training workflow.
 
-#### Stage C — Live book scan status
-From `unified_props`:
-- whether books are being scanned at all
-- bookmaker breakdown
-- fresh vs stale counts
-- FanDuel count
-- latest update timestamps
-- matched rows for pool players
-- unmatched rows
-- row-level book details:
-  - player
-  - prop
-  - bookmaker
-  - current line
-  - over/under price
-  - is_active
-  - odds_updated_at / updated_at
-  - computed age minutes
-  - game description
-  - commence time
+### 3. Filter to the correct sport instead of showing mixed slates
+The current raw data includes NBA and NHL in the same day window. For this first training step:
+- default to `basketball_nba`
+- optionally allow a sport selector later if you want multi-sport manual training
+- only show games relevant to the bot engine being trained
 
-#### Stage D — Generation blockers
-A computed explanation layer that shows:
-- thin risk output
-- thin pool
-- no matching book lines
-- stale lines
-- drifted lines
-- inactive lines
-- missing prices
-- final “why 0 parlays / 0 straights” reason
+This avoids confusing you with unrelated games.
 
-This gives you the exact raw data needed to manually tune rows.
+### 4. Show quick “book scan health” for each game
+Each game card should surface whether the data is usable before you train it:
+- bookmakers present
+- number of active props
+- earliest/latest line update
+- whether FanDuel rows exist
+- whether data looks stale
 
-### 2. Add a dedicated admin page to inspect the full chain
-Build a new admin/debug page that surfaces all of the above in a readable way.
+This keeps Step 1 useful operationally, not just a plain game list.
 
-Likely files:
-- new `src/pages/BotLegDiagnostics.tsx`
-- new hook like `src/hooks/useBotLegDiagnostics.ts`
-- lightweight table/card components if needed
-- route wiring in the app router
+### 5. Store the selected game locally in the admin training flow
+When you click a game:
+- mark it as the active game
+- keep it in component/hook state for now
+- use that selected `event_id` and matchup as the input to the next manual-training step
 
-Page sections:
-1. Engine Summary
-2. Risk Engine Approved Picks
-3. Risk Engine Rejections
-4. Daily Pick Pool
-5. Book Scan Coverage
-6. Book Match Failures
-7. Parlay/straight generation blockers
+No database write is needed yet for Step 1.
 
-### 3. Make the page show “start first engine and what pool is giving”
-The first visible cards on the page will explicitly answer your request:
+### 6. Prepare the contract for Step 2 manual bot training
+Once a game is selected, expose a stable selected-game object that the next step can use for:
+- player list for that game
+- current book lines
+- manual notes/instructions
+- later saving tailored operator rules into `bot_owner_rules`
 
-#### First engine card
-- total risk-engine rows today
-- approved count
-- rejected count
-- latest run time
-- top rejection reasons
+## UI behavior
 
-#### Pool card
-- pool row count
-- status: ready / thin / empty
-- fallback used or not
-- top 20 pool rows
-- rows missing live book matches
+Top of the section:
+- “Manual Training”
+- subtitle: “Step 1 — Choose today’s game”
 
-That lets you immediately see whether the problem starts upstream or at book matching.
-
-### 4. Show whether we are scanning the books
-Add a clear “Book Scan Health” panel sourced from `unified_props`.
-
-It will show:
-- total live props today
-- fresh props in last 2h
-- FanDuel props in last 2h
-- counts by bookmaker
-- latest seen update per bookmaker
-- number of pool candidates with at least one live book row
-- number of pool candidates with zero live book rows
-
-This will make it obvious whether the issue is:
-- no book ingestion
-- stale book ingestion
-- book mismatch by player/prop naming
-- too few active lines
-
-### 5. Show row-level failures so you can manually tailor fixes
-For each pool leg, show a computed status such as:
-- matched_fresh
-- matched_stale
-- matched_line_moved
-- matched_missing_price
-- matched_inactive
-- no_book_match
-
-Columns:
-- player
-- prop
-- side
-- recommended line
-- best matched bookmaker
-- live line
-- line drift
-- age minutes
-- status
-- failure reason
-
-This is the most important manual-fix view because it tells you exactly which legs need intervention.
-
-### 6. Include parlay and straight-bet previews/blockers
-The diagnostics page should also show what each downstream engine would do with the current data.
-
-For parlays:
-- candidate count after matching
-- stale rejected
-- drift rejected
-- no-price rejected
-- degraded reason
-- preview of eligible legs if any
-
-For straight bets:
-- standard candidates
-- ceiling candidates
-- stale rejected
-- drift rejected
-- missing price rejected
-- degraded reason
-
-This keeps the page focused on the production problem instead of just raw tables.
-
-### 7. Reuse existing explorer pages where helpful
-There is already a `BotPipeline` page, but it only reads generated parlays and becomes empty when nothing was produced.
-This new diagnostics page should not depend on parlays existing.
-
-Existing pages/hooks to align with:
-- `src/pages/BotPipeline.tsx`
-- `src/hooks/useBotPipeline.ts`
-- existing admin/bot dashboard patterns
-
-### 8. Add filters so manual debugging is practical
-Controls on the page:
-- date selector
-- bookmaker filter
-- player search
-- prop-type filter
-- “show only failed matches”
-- “show only stale”
-- “show only unmatched”
+Inside the panel:
 - refresh button
+- optional sport filter
+- list/grid of today’s games
+- selected state highlight
+- empty state if no valid games are found
 
-This makes it usable for surgical manual cleanup.
-
-### 9. Keep it read-only and admin-only
-The page should expose data for inspection, not mutate it.
-
-Rules:
-- admin-gated route
-- no database writes
-- no auto-regeneration
-- purely diagnostic and export-friendly
-
-### 10. Optional export for manual intervention
-Add a copy/export option so you can pull the exact affected rows outside the app.
-
-Useful outputs:
-- JSON copy for the whole diagnostic payload
-- CSV export for failed legs/book mismatches only
+Card content example:
+- Phoenix Suns @ Oklahoma City Thunder
+- 9:40 PM ET
+- NBA
+- 3 books
+- 353 prop rows
+- Fresh / Stale status
 
 ## Technical details
 
-- Use a dedicated diagnostics function rather than large client-side fan-out queries so the logic for matching pool rows to `unified_props` stays identical and centralized.
-- Match rows by normalized `player_name + prop_type`, using the same book priority already used in:
-  - `parlay-engine-v2`
-  - `bot-generate-straight-bets`
-- Compute freshness age from `odds_updated_at ?? updated_at`.
-- Surface FanDuel freshness separately because the orchestrator’s odds gate depends on fresh FanDuel counts.
-- Keep diagnostics compatible with current degraded reasons:
-  - `empty_pick_pool`
-  - `thin_pick_pool`
-  - `no_book_matched_candidates`
-  - `no_valid_parlays_built`
-  - `no_valid_straight_bets_built`
-- If helpful, the diagnostics endpoint can accept `date` and `bookmaker` params only.
+- Reuse the `unified_props` source because it already drives live slate/game discovery.
+- Group by `event_id` when available; fall back carefully if needed.
+- Use Eastern-time date bounds consistently.
+- Prefer a hook-based client query for this step rather than a new backend function, since this is lightweight and already follows an existing project pattern.
+- Do not write training rules yet; Step 1 is selection only.
+- Keep later persistence targeted to `bot_owner_rules`, since that is the project’s established operator override store.
 
 ## Expected outcome
 
-After this change, you’ll be able to open one admin page and immediately see:
-- what the first engine produced
-- what the pool builder produced
-- whether books are actually being scanned
-- which legs matched live books
-- which legs failed and why
-- why parlays and straights did or did not generate
-
-That gives you the exact data needed to go in and manually tailor fixes for a few rows when the slate is marginal.
+After this change, you’ll be able to open the admin training area, see all valid games playing today for the target bot, and select one as the starting point for manual training. Once that is in place, the next step can focus on the selected game’s players, lines, and tailored instructions.
