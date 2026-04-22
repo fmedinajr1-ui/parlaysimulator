@@ -563,7 +563,11 @@ Deno.serve(async (req) => {
     const failedSteps = Object.entries(results).filter(
       ([, v]) => v.startsWith("error:") || v.startsWith("exception:") || v.startsWith("forced_error:")
     );
-    const optionalFailures = failedSteps.filter(([fn]) => NON_FATAL_STEPS.has(fn) || (results[fn] ?? "").startsWith("unavailable:"));
+    const unavailableSteps = Object.entries(results).filter(([, v]) => v.startsWith("unavailable:"));
+    const optionalFailures = [
+      ...failedSteps.filter(([fn]) => NON_FATAL_STEPS.has(fn)),
+      ...unavailableSteps,
+    ];
     const requiredFailures = failedSteps.filter(([fn]) => !NON_FATAL_STEPS.has(fn));
     const diagnostics = await collectDataQualityDiagnostics();
 
