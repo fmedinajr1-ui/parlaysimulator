@@ -241,6 +241,11 @@ export function SweetSpotPicksCard() {
                         <span className="text-xs text-muted-foreground">
                           {pick.recommended_side?.toUpperCase()} {line}
                         </span>
+                        {pick.selected_book && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {humanizeBookmaker(pick.selected_book)}
+                          </Badge>
+                        )}
                         {/* v4.0: Show projection and edge */}
                         {pick.projected_value && (
                           <span className="text-xs font-mono">
