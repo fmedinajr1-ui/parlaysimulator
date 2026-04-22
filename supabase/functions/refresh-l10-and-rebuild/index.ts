@@ -74,6 +74,7 @@ Deno.serve(async (req) => {
 
   const results: Record<string, string> = {};
   const skipped: string[] = [];
+  const warnings: string[] = [];
 
   // BUG 2 FIX: closure-scoped flag — not shared between invocations or
   // across concurrent runs, and automatically reset for every fresh request.
@@ -89,6 +90,59 @@ Deno.serve(async (req) => {
 
   const elapsed = () => Date.now() - functionStartTime;
   const hasTime = () => elapsed() < TIMEOUT_MS;
+  const todayET = () => getEasternDate();
+
+  const markUnavailable = (fnName: string, reason: string, isOptional = true) => {
+    results[fnName] = `unavailable: ${reason}`;
+    const message = `${fnName}: ${reason}`;
+    warnings.push(message);
+    log(`ℹ ${message}`);
+    if (!isOptional) {
+      skipped.push(fnName);
+    }
+  };
+
+  const collectDataQualityDiagnostics = async () => {
+    const freshWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const targetDate = todayET();
+
+    const [freshFdPropsRes, pickPoolRes, todayParlaysRes, todayStraightsRes] = await Promise.all([
+      supabase
+        .from("unified_props")
+        .select("id", { count: "exact", head: true })
+        .eq("bookmaker", "fanduel")
+        .gte("scraped_at", freshWindow),
+      supabase
+        .from("bot_daily_pick_pool")
+        .select("id", { count: "exact", head: true })
+        .eq("pick_date", targetDate),
+      supabase
+        .from("bot_daily_parlays")
+        .select("id, tier", { count: "exact" })
+        .eq("parlay_date", targetDate)
+        .eq("outcome", "pending"),
+      supabase
+        .from("bot_straight_bets")
+        .select("id", { count: "exact", head: true })
+        .eq("bet_date", targetDate)
+        .eq("outcome", "pending"),
+    ]);
+
+    const parlays = todayParlaysRes.data ?? [];
+
+    return {
+      target_date: targetDate,
+      input_quality: {
+        fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
+        pick_pool_candidates: pickPoolRes.count ?? 0,
+      },
+      generated_counts: {
+        parlays_total: todayParlaysRes.count ?? 0,
+        lottery_parlays: parlays.filter((row: any) => row.tier === "lottery").length,
+        straight_bets_total: todayStraightsRes.count ?? 0,
+      },
+    };
+  };
 
   // Non-fatal steps: log warning but don't send pipeline failure alert
   const NON_FATAL_STEPS = new Set([
