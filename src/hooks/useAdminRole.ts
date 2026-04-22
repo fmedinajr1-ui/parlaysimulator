@@ -4,11 +4,16 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
 export function useAdminRole() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading) {
+      setIsLoading(true);
+      return;
+    }
+
     if (!user) {
       setIsAdmin(false);
       setIsLoading(false);
@@ -16,7 +21,7 @@ export function useAdminRole() {
     }
 
     checkAdminRole();
-  }, [user]);
+  }, [user, authLoading]);
 
   const checkAdminRole = async () => {
     if (!user) return;
