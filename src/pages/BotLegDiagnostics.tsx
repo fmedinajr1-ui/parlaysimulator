@@ -290,11 +290,12 @@ export default function BotLegDiagnostics() {
                     </div>
                     <Badge variant="outline">{data.pick_pool.status}</Badge>
                   </div>
+                  <div className="text-xs text-muted-foreground">Showing {Math.min(data.pick_pool.rows.length, 120)} of {data.pick_pool.rows.length} pool rows</div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <BreakdownChips items={data.pick_pool.blocker_breakdown} />
                   <DataTable
-                    rows={data.pick_pool.rows}
+                    rows={data.pick_pool.rows.slice(0, 120)}
                     emptyMessage="No pool rows for this date."
                     columns={[
                       { key: "player_name", label: "Player" },
@@ -382,10 +383,11 @@ export default function BotLegDiagnostics() {
                     <CardHeader>
                       <CardTitle>Manual-fix view</CardTitle>
                       <CardDescription>Exactly which pool legs are failing, with live line, drift, age, and reason.</CardDescription>
+                      <div className="text-xs text-muted-foreground">Showing {Math.min(data.pick_pool.rows.length, 200)} of {data.pick_pool.rows.length} rows in this manual-fix table</div>
                     </CardHeader>
                     <CardContent>
                       <DataTable
-                        rows={data.pick_pool.rows}
+                        rows={data.pick_pool.rows.slice(0, 200)}
                         emptyMessage="No pool failures to inspect."
                         columns={[
                           { key: "player_name", label: "Player" },
