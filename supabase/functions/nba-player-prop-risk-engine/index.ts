@@ -2537,15 +2537,17 @@ serve(async (req) => {
           
           // Use prop-type specific minimum threshold
           const minConfidence = MIN_CONFIDENCE_BY_TYPE[normalizedPropType] || MIN_CONFIDENCE_BY_TYPE['default'];
+          const effectiveMinConfidence = shouldUseThinDayFallback ? Math.max(minConfidence - 0.5, 5.0) : minConfidence;
           
-          if (adjustedScore < minConfidence) {
+          if (adjustedScore < effectiveMinConfidence) {
             rejectedProps.push({ 
               ...prop, 
-              rejection_reason: `Confidence ${adjustedScore.toFixed(1)} < ${minConfidence} threshold for ${normalizedPropType}`, 
+              rejection_reason: `Confidence ${adjustedScore.toFixed(1)} < ${effectiveMinConfidence} threshold for ${normalizedPropType}`, 
               player_role: role, 
               archetype,
               confidence_score: adjustedScore
             });
+            bumpReason(rejectionSummary, `confidence_threshold:${normalizedPropType}`);
             continue;
           }
           
@@ -2698,6 +2700,13 @@ serve(async (req) => {
       
       // Sort by confidence
       approvedProps.sort((a, b) => b.confidence_score - a.confidence_score);
+
+      const approvedCount = approvedProps.length;
+      const thinDayTriggered = shouldUseThinDayFallback && approvedCount < Number(minimum_approved_picks || THIN_DAY_MIN_APPROVED_PICKS);
+      const topRejectionReasons = Object.entries(rejectionSummary)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([reason, count]) => ({ reason, count }));
       
       // Store approved picks - explicitly define fields to avoid column mismatch
       if (approvedProps.length > 0) {
@@ -2776,12 +2785,21 @@ serve(async (req) => {
       
       return new Response(JSON.stringify({
         success: true,
-        approvedCount: approvedProps.length,
+        approvedCount,
         rejectedCount: rejectedProps.length,
         approved: approvedProps,
         rejected: rejectedProps.slice(0, 30),
         mode,
         gameDate: today,
+        diagnostics: {
+          rawPropsScanned: props?.length || 0,
+          activePropsScanned: props?.length || 0,
+          approvedCount,
+          minimumApprovedPicks: Number(minimum_approved_picks || THIN_DAY_MIN_APPROVED_PICKS),
+          thinDayFallbackRequested: shouldUseThinDayFallback,
+          thinDayFallbackTriggered: thinDayTriggered,
+          topRejectionReasons,
+        },
         balance: {
           overs: balanceTracker.overCount,
           unders: balanceTracker.underCount,
