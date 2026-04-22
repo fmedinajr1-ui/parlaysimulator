@@ -33,6 +33,7 @@ export interface ShotChartAnalysis {
 }
 
 export type QualityTier = 'ELITE' | 'PREMIUM' | 'STRONG' | 'STANDARD' | 'AVOID';
+export type SweetSpotFunnelMode = 'core' | 'aggressive';
 
 export type LineFreshness = 'fresh' | 'stale' | 'expired';
 export type MarketStatus = 'active' | 'scanning' | 'stale' | 'off_market';
