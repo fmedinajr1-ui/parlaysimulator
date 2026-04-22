@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Helmet } from "react-helmet-async";
+import { Helmet } from "react-helmet";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
