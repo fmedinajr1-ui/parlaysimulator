@@ -313,14 +313,45 @@ function calculateSweetSpotScore(
   return Math.round(score * 100);
 }
 
+function buildTierReason(params: {
+  marketStatus: DeepSweetSpot['marketStatus'];
+  lineFreshness: DeepSweetSpot['lineFreshness'];
+  lineDrift: number;
+  hitRateL10: number;
+  edge: number;
+  line: number;
+  selectedBook?: string;
+}): string {
+  const reasons: string[] = [];
+
+  if (params.marketStatus === 'scanning') reasons.push('scanner downgrade: line drift');
+  if (params.marketStatus === 'stale') reasons.push('scanner downgrade: stale odds');
+  if (params.marketStatus === 'off_market') reasons.push('scanner downgrade: off market');
+  if (params.lineFreshness === 'fresh' && params.selectedBook) reasons.push(`${params.selectedBook.toUpperCase()} synced`);
+
+  const edgePct = params.line > 0 ? (params.edge / params.line) * 100 : 0;
+  reasons.push(`L10 ${(params.hitRateL10 * 100).toFixed(0)}%`);
+  reasons.push(`edge ${edgePct >= 0 ? '+' : ''}${edgePct.toFixed(0)}%`);
+
+  if (Math.abs(params.lineDrift) >= 0.5) {
+    reasons.push(`drift ${params.lineDrift >= 0 ? '+' : ''}${params.lineDrift.toFixed(1)}`);
+  }
+
+  return reasons.join(' · ');
+}
+
 // Classify quality tier with side-aware edge requirements
 function classifyQualityTier(
   floorProtection: number,
   hitRateL10: number,
   edge: number,
   line: number,
-  side: PickSide
+  side: PickSide,
+  marketStatus: DeepSweetSpot['marketStatus'],
+  lineFreshness: DeepSweetSpot['lineFreshness'],
 ): QualityTier {
+  if (marketStatus === 'off_market' || lineFreshness === 'expired') return 'AVOID';
+
   // Calculate edge as percentage of line for meaningful comparison
   const edgePct = line > 0 ? edge / line : 0;
   
@@ -343,6 +374,7 @@ function classifyQualityTier(
   
   // STANDARD: 70-79% hit rate with floor protection >= 0.7
   if (hitRateL10 >= QUALITY_THRESHOLDS.STANDARD.minHitRate && floorProtection >= 0.7) {
+    if (marketStatus === 'scanning' || lineFreshness === 'stale') return 'STANDARD';
     return 'STANDARD';
   }
   
