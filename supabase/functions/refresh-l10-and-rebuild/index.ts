@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
         .from("unified_props")
         .select("id", { count: "exact", head: true })
         .eq("bookmaker", "fanduel")
-        .gte("scraped_at", freshWindow),
+        .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`),
       supabase
         .from("bot_daily_pick_pool")
         .select("id", { count: "exact", head: true })
@@ -245,7 +245,7 @@ Deno.serve(async (req) => {
         const { data: slateProps } = await supabase
           .from("unified_props")
           .select("player_name")
-          .gte("scraped_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
+          .or(`odds_updated_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()},updated_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()},created_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()}`);
 
         const slatePlayers = [...new Set((slateProps || []).map((p: any) => p.player_name).filter(Boolean))];
         if (slatePlayers.length > 0) {
@@ -268,10 +268,13 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase2",
-      label: "Recompute category sweet spots",
+      label: "Refresh upstream prop and stats inputs",
       run: async () => {
-        log("=== PHASE 2: Recomputing category sweet spots ===");
-        await invokeStep("Analyzing categories", "category-props-analyzer", { forceRefresh: true });
+        log("=== PHASE 2: Refreshing upstream prop and stats inputs ===");
+        await invokeParallel([
+          ["Refreshing today props", "refresh-todays-props", {}],
+          ["Refreshing PVS inputs", "pvs-data-ingestion", { mode: "live" }],
+        ]);
       },
     },
     {
@@ -286,12 +289,10 @@ Deno.serve(async (req) => {
       id: "phase3a",
       label: "Pre-generation tasks",
       run: async () => {
-        await invokeParallel([
-          ["Cleaning stale props", "cleanup-stale-props", { immediate: true }],
-          ["Scanning defensive matchups", "bot-matchup-defense-scanner", {}],
-          ["Detecting mispriced lines", "detect-mispriced-lines", {}],
-          ["Matchup intelligence analysis", "matchup-intelligence-analyzer", { action: "analyze_batch" }],
-        ]);
+        await invokeStep("Cleaning stale props", "cleanup-stale-props", { immediate: true });
+        markUnavailable("bot-matchup-defense-scanner", "legacy matchup defense scanner is not deployed");
+        markUnavailable("detect-mispriced-lines", "legacy mispriced-line feeder is not deployed");
+        markUnavailable("matchup-intelligence-analyzer", "legacy matchup intelligence feeder is not deployed");
       },
     },
     {
@@ -311,7 +312,7 @@ Deno.serve(async (req) => {
           .from("unified_props")
           .select("*", { count: "exact", head: true })
           .eq("bookmaker", "fanduel")
-          .gte("scraped_at", twoHoursAgo);
+          .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
 
         if (gateErr) {
           log(`⚠ Odds gate query error: ${gateErr.message} — proceeding anyway`);
@@ -322,13 +323,13 @@ Deno.serve(async (req) => {
         const freshCount = freshFdProps || 0;
         if (freshCount < 50) {
           log(`⚠ Only ${freshCount} fresh FanDuel props (need 50+) — attempting odds refresh`);
-          await invokeStep("Emergency odds scrape", "whale-odds-scraper", { mode: "full" });
+          await invokeStep("Emergency prop refresh", "refresh-todays-props", {});
 
           const { count: retryCount } = await supabase
             .from("unified_props")
             .select("*", { count: "exact", head: true })
             .eq("bookmaker", "fanduel")
-            .gte("scraped_at", new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+            .or(`odds_updated_at.gte.${new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()},updated_at.gte.${new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()},created_at.gte.${new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()}`);
 
           const afterScrape = retryCount || 0;
           if (afterScrape < 50) {
