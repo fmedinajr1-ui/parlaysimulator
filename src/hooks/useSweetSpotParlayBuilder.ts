@@ -1889,15 +1889,18 @@ export function useSweetSpotParlayBuilder() {
 
           if (!selected) return { ...pick, marketStatus: 'off_market' as const };
 
+          const marketStatus = deriveMarketStatus(selected, rows);
+          const lineFreshness = getLineFreshness(selected);
+
           return {
             ...pick,
             selectedBook: selected.bookmaker ?? null,
             availableBooks: getAvailableBooks(rows),
-            lineFreshness: getLineFreshness(selected),
+            lineFreshness,
             lineAgeMinutes: getLineAgeMinutes(selected),
             lineDrift: computeLineDrift(selected, rows),
-            marketStatus: deriveMarketStatus(selected, rows),
-            tierReason: `scanner ${deriveMarketStatus(selected, rows)} · ${getLineFreshness(selected)}`,
+            marketStatus,
+            tierReason: `scanner ${marketStatus} · ${lineFreshness}`,
           };
         })
         .filter((pick) => pick.marketStatus !== 'off_market');
