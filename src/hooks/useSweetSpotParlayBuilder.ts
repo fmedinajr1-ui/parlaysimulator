@@ -1958,9 +1958,8 @@ export function useSweetSpotParlayBuilder() {
     isNextSlate: false,
   };
 
-  // Build optimal 6-leg parlay using pure core function
-  const buildOptimalParlay = (): DreamTeamLeg[] => {
-    console.group("🏆 [Optimal Parlay Builder v3.4 - Pure Core Integration]");
+  const buildRecommendations = (funnelMode: BuilderFunnelMode = "aggressive") => {
+    console.group(`🏆 [Sweet Spot Recommendation Builder · ${funnelMode.toUpperCase()}]`);
     console.log(
       `🎛️ [Preset: ${SCORE_WEIGHTS.presetKey.toUpperCase()}] Pat×${SCORE_WEIGHTS.pattern} | L10×${SCORE_WEIGHTS.l10} | Conf×${SCORE_WEIGHTS.confidence} | Penalty: ${SCORE_WEIGHTS.missingL10Penalty}`,
     );
@@ -1968,54 +1967,107 @@ export function useSweetSpotParlayBuilder() {
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
       console.log("❌ No sweet spot picks available");
       console.groupEnd();
-      return [];
+      return null;
     }
 
-    // Serialize Maps to plain objects for pure core function
-    const input: BuilderInput = {
+    const input: BuilderInput & { funnelMode: BuilderFunnelMode } = {
       displayedDate: slateStatus.displayedDate,
       presetKey: SCORE_WEIGHTS.presetKey,
       picks: sweetSpotPicks,
       h2hMap: Object.fromEntries(h2hMap.entries()),
       gameContextMap: Object.fromEntries(gameContextMap.entries()),
       defenseMap: Object.fromEntries(defenseMap.entries()),
+      funnelMode,
     };
 
     const result = buildSweetSpotParlayCore(input);
-
-    // Console logging (side effect, kept in hook)
-    console.log(`📊 Total candidates: ${result.diagnostics.totalCandidates}`);
-    console.log(`🚫 Archetype blocked: ${result.diagnostics.archetypeFiltered}`);
-    if (result.diagnostics.h2hBlocked.length > 0) {
-      console.log(`🚫 H2H blocked (${result.diagnostics.h2hBlocked.length}):`);
-      result.diagnostics.h2hBlocked.forEach((b) => console.log(`   ❌ ${b}`));
+    console.log(`📊 Candidate pool: ${result.poolStats.candidateCount}`);
+    console.log(`✅ Recommended legs across packs: ${result.diagnostics.selectedCount}`);
+    if (result.diagnostics.conflictSkipped.length > 0) {
+      console.log(`↪️ Conflict skips (${result.diagnostics.conflictSkipped.length}):`);
+      result.diagnostics.conflictSkipped.slice(0, 10).forEach((item) => console.log(`   • ${item}`));
     }
-    if (result.diagnostics.patternBlocked.length > 0) {
-      console.log(`🚫 Pattern blocked (${result.diagnostics.patternBlocked.length}):`);
-      result.diagnostics.patternBlocked.forEach((b) => console.log(`   ❌ ${b}`));
+    if (result.diagnostics.downgradedSignals.length > 0) {
+      console.log(`🪂 Soft downgrades (${result.diagnostics.downgradedSignals.length}):`);
+      result.diagnostics.downgradedSignals.slice(0, 10).forEach((item) => console.log(`   • ${item}`));
     }
-    console.log(`✅ Selected: ${result.diagnostics.selectedCount} legs`);
-
-    if (result.selectedLegs.length > 0) {
-      console.log(`\n📋 FINAL SELECTION (${result.selectedLegs.length}/6 legs):`);
-      console.table(
-        result.selectedLegs.map((leg, i) => ({
-          "#": i + 1,
-          Player: leg.pick.player_name,
-          Category: leg.pick.category || "Fallback",
-          Prop: `${leg.pick.side.toUpperCase()} ${leg.pick.line} ${leg.pick.prop_type}`,
-          L10: leg.pick.l10HitRate ? `${(leg.pick.l10HitRate * 100).toFixed(0)}%` : "N/A",
-          Score: leg.score.toFixed(2),
-          DEF: leg.opponentDefenseRank ? `#${leg.opponentDefenseRank}` : "-",
-        })),
-      );
-    }
-
     console.groupEnd();
-    return result.selectedLegs;
+    return result;
   };
 
-  // Export frozen slate for golden snapshot testing
+  const aggressiveResult = sweetSpotPicks ? buildRecommendations("aggressive") : null;
+  const coreResult = sweetSpotPicks ? buildRecommendations("core") : null;
+
+  const recommendedParlays = aggressiveResult?.recommendations || {
+    twoLeg: null,
+    threeLeg: null,
+    fourLeg: null,
+  };
+
+  const coreRecommendedParlays = coreResult?.recommendations || {
+    twoLeg: null,
+    threeLeg: null,
+    fourLeg: null,
+  };
+
+  const rankedSlate = aggressiveResult?.rankedCandidates || [];
+  const poolStats = aggressiveResult?.poolStats || {
+    candidateCount: 0,
+    activeCount: 0,
+    scanningCount: 0,
+    staleCount: 0,
+    averageSafetyScore: 0,
+  };
+
+  const summarizeRecommendation = (recommendation: RecommendedParlay | null): BuilderSummary => ({
+    avgConfidence: recommendation?.avgConfidence || 0,
+    avgEdge:
+      recommendation && recommendation.legs.length > 0
+        ? recommendation.legs.reduce((sum, leg) => sum + (leg.pick.edge || 0), 0) / recommendation.legs.length
+        : 0,
+    avgL10HitRate: recommendation?.avgL10HitRate || 0,
+    uniqueTeams: recommendation?.uniqueTeams || 0,
+    propTypes: recommendation ? [...new Set(recommendation.legs.map((leg) => leg.pick.prop_type))] : [],
+    legCount: recommendation?.legCount || 0,
+    categories: recommendation
+      ? [...new Set(recommendation.legs.map((leg) => leg.pick.category).filter(Boolean) as string[])]
+      : [],
+  });
+
+  const combinedStats = summarizeRecommendation(recommendedParlays.threeLeg || recommendedParlays.twoLeg || recommendedParlays.fourLeg);
+
+  const addRecommendationToBuilder = (recommendation: RecommendedParlay | null) => {
+    if (!recommendation || recommendation.legs.length === 0) {
+      toast.error("No Sweet Spot recommendation available");
+      return;
+    }
+
+    clearParlay();
+
+    recommendation.legs.forEach((leg) => {
+      const description = `${leg.pick.player_name} ${leg.pick.prop_type} ${leg.pick.side.toUpperCase()} ${leg.pick.line}`;
+
+      addLeg({
+        source: "sharp",
+        description,
+        odds: -110,
+        playerName: leg.pick.player_name,
+        propType: leg.pick.prop_type,
+        line: leg.pick.line,
+        side: leg.pick.side as "over" | "under",
+        confidenceScore: leg.pick.confidence_score,
+        sourceData: {
+          selectedBook: leg.pick.selectedBook,
+          marketStatus: leg.pick.marketStatus,
+          qualityTier: leg.pick.qualityTier,
+          safetyScore: leg.pick.safetyScore,
+        },
+      });
+    });
+
+    toast.success(`Added ${recommendation.legCount}-leg Sweet Spot recommendation`);
+  };
+
   const exportFrozenSlate = () => {
     if (!sweetSpotPicks?.length) {
       console.warn("[FrozenSlate] No picks loaded yet");
@@ -2046,66 +2098,18 @@ export function useSweetSpotParlayBuilder() {
     console.log("[FrozenSlate] Exported", slateStatus.displayedDate, sweetSpotPicks.length, "picks");
   };
 
-  // Add optimal parlay to builder
-  const addOptimalParlayToBuilder = () => {
-    const optimalLegs = buildOptimalParlay();
-
-    if (optimalLegs.length === 0) {
-      toast.error("No sweet spot picks available to build parlay");
-      return;
-    }
-
-    clearParlay();
-
-    optimalLegs.forEach((leg) => {
-      const description = `${leg.pick.player_name} ${leg.pick.prop_type} ${leg.pick.side.toUpperCase()} ${leg.pick.line}`;
-
-      addLeg({
-        source: "sharp",
-        description,
-        odds: -110,
-        playerName: leg.pick.player_name,
-        propType: leg.pick.prop_type,
-        line: leg.pick.line,
-        side: leg.pick.side as "over" | "under",
-        confidenceScore: leg.pick.confidence_score,
-      });
-    });
-
-    toast.success(`Added ${optimalLegs.length}-leg Sweet Spot Dream Team parlay!`);
-  };
-
-  const optimalParlay = sweetSpotPicks ? buildOptimalParlay() : [];
-
-  // Calculate combined stats
-  const combinedStats = {
-    avgConfidence:
-      optimalParlay.length > 0
-        ? optimalParlay.reduce((sum, l) => sum + l.pick.confidence_score, 0) / optimalParlay.length
-        : 0,
-    avgEdge:
-      optimalParlay.length > 0 ? optimalParlay.reduce((sum, l) => sum + l.pick.edge, 0) / optimalParlay.length : 0,
-    avgL10HitRate:
-      optimalParlay.length > 0
-        ? optimalParlay.reduce((sum, l) => sum + (l.pick.l10HitRate || 0), 0) / optimalParlay.length
-        : 0,
-    uniqueTeams: new Set(optimalParlay.map((l) => l.team)).size,
-    propTypes: [...new Set(optimalParlay.map((l) => l.pick.prop_type))],
-    legCount: optimalParlay.length,
-    categories: [...new Set(optimalParlay.map((l) => l.pick.category).filter(Boolean))],
-  };
-
   return {
     sweetSpotPicks,
-    optimalParlay,
+    rankedSlate,
+    recommendedParlays,
+    coreRecommendedParlays,
     combinedStats,
+    poolStats,
     isLoading,
     refetch,
-    addOptimalParlayToBuilder,
-    buildOptimalParlay,
-    exportFrozenSlate, // v3.4: Export frozen slate for testing
+    addRecommendationToBuilder,
+    exportFrozenSlate,
     slateStatus,
-    // v3.4: Expose active preset for dashboard
     activePreset: SCORE_WEIGHTS.presetKey,
   };
 }
