@@ -46,7 +46,7 @@ const corsHeaders = {
 const MIN_APPROVED_RISK_PICKS = 8;
 const MIN_PICK_POOL_ROWS = 12;
 
-async function getRiskPickCount(supabase: ReturnType<typeof createClient>, targetDate: string): Promise<number> {
+async function getRiskPickCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
     .from("nba_risk_engine_picks")
     .select("id", { count: "exact", head: true })
@@ -56,7 +56,7 @@ async function getRiskPickCount(supabase: ReturnType<typeof createClient>, targe
   return count ?? 0;
 }
 
-async function getPoolCount(supabase: ReturnType<typeof createClient>, targetDate: string): Promise<number> {
+async function getPoolCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
     .from("bot_daily_pick_pool")
     .select("id", { count: "exact", head: true })
@@ -64,7 +64,7 @@ async function getPoolCount(supabase: ReturnType<typeof createClient>, targetDat
   return count ?? 0;
 }
 
-async function getParlayCount(supabase: ReturnType<typeof createClient>, targetDate: string): Promise<number> {
+async function getParlayCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
     .from("bot_daily_parlays")
     .select("id", { count: "exact", head: true })
@@ -73,7 +73,7 @@ async function getParlayCount(supabase: ReturnType<typeof createClient>, targetD
   return count ?? 0;
 }
 
-async function getStraightCount(supabase: ReturnType<typeof createClient>, targetDate: string): Promise<number> {
+async function getStraightCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
     .from("bot_straight_bets")
     .select("id", { count: "exact", head: true })
