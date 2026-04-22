@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { DeepSweetSpot, PropType } from '@/types/sweetSpot';
+import { BOOKMAKER_LABELS } from '@/lib/bookScannerMarket';
 
 // Map propType to odds API market key
 const PROP_TO_MARKET: Record<PropType, string> = {
@@ -12,10 +13,7 @@ const PROP_TO_MARKET: Record<PropType, string> = {
   steals: 'player_steals',
 };
 
-const BOOK_SHORT_LOG: Record<string, string> = {
-  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
-  betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
-};
+const BOOK_SHORT_LOG = BOOKMAKER_LABELS;
 
 export interface BookLine {
   line: number;
