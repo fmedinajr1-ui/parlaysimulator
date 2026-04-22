@@ -54,6 +54,13 @@ const MIN_CONFIDENCE_BY_TYPE: Record<string, number> = {
   'default': 6.5
 };
 
+const THIN_DAY_MIN_APPROVED_PICKS = 8;
+
+function bumpReason(map: Record<string, number>, reason: string | null | undefined) {
+  const key = (reason || 'unknown').slice(0, 120);
+  map[key] = (map[key] ?? 0) + 1;
+}
+
 // Points line tiers based on historical performance
 const POINTS_LINE_TIERS = {
   LOW: { min: 0, max: 14.5, hitRate: 57.9, edgeRequired: 1.0 },
@@ -1669,7 +1676,14 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, mode = 'full_slate', use_live_odds = false, preferred_bookmakers = ['fanduel', 'draftkings'] } = await req.json();
+    const {
+      action,
+      mode = 'full_slate',
+      use_live_odds = false,
+      preferred_bookmakers = ['fanduel', 'draftkings'],
+      thin_day_fallback = false,
+      minimum_approved_picks = THIN_DAY_MIN_APPROVED_PICKS,
+    } = await req.json();
 
     console.log(`[Risk Engine v3.1] Action: ${action}, Mode: ${mode}, Live Odds: ${use_live_odds}`);
 
@@ -1792,6 +1806,8 @@ serve(async (req) => {
 
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
+      const rejectionSummary: Record<string, number> = {};
+      const shouldUseThinDayFallback = !!thin_day_fallback;
       const processedPlayerProps = new Set<string>();
       const starsUsedByTeam: Record<string, string[]> = {};
       
@@ -1809,6 +1825,7 @@ serve(async (req) => {
           // Skip duplicates
           if (processedPlayerProps.has(playerPropKey)) {
             rejectedProps.push({ ...prop, rejection_reason: 'Duplicate prop type' });
+            bumpReason(rejectionSummary, 'Duplicate prop type');
             continue;
           }
           
@@ -1819,6 +1836,7 @@ serve(async (req) => {
           
           if (playerPropsCount >= 2) {
             rejectedProps.push({ ...prop, rejection_reason: 'Max 2 props per player' });
+            bumpReason(rejectionSummary, 'Max 2 props per player');
             continue;
           }
           
@@ -1833,6 +1851,7 @@ serve(async (req) => {
                 ...prop, 
                 rejection_reason: `One star per team: ${teamStars[0]} already selected` 
               });
+              bumpReason(rejectionSummary, 'One star per team');
               continue;
             }
           }
@@ -1867,6 +1886,7 @@ serve(async (req) => {
               player_role: 'UNKNOWN', 
               archetype: 'UNKNOWN' 
             });
+            bumpReason(rejectionSummary, 'Insufficient data');
             continue;
           }
           
@@ -2517,15 +2537,17 @@ serve(async (req) => {
           
           // Use prop-type specific minimum threshold
           const minConfidence = MIN_CONFIDENCE_BY_TYPE[normalizedPropType] || MIN_CONFIDENCE_BY_TYPE['default'];
+          const effectiveMinConfidence = shouldUseThinDayFallback ? Math.max(minConfidence - 0.5, 5.0) : minConfidence;
           
-          if (adjustedScore < minConfidence) {
+          if (adjustedScore < effectiveMinConfidence) {
             rejectedProps.push({ 
               ...prop, 
-              rejection_reason: `Confidence ${adjustedScore.toFixed(1)} < ${minConfidence} threshold for ${normalizedPropType}`, 
+              rejection_reason: `Confidence ${adjustedScore.toFixed(1)} < ${effectiveMinConfidence} threshold for ${normalizedPropType}`, 
               player_role: role, 
               archetype,
               confidence_score: adjustedScore
             });
+            bumpReason(rejectionSummary, `confidence_threshold:${normalizedPropType}`);
             continue;
           }
           
@@ -2678,6 +2700,13 @@ serve(async (req) => {
       
       // Sort by confidence
       approvedProps.sort((a, b) => b.confidence_score - a.confidence_score);
+
+      const approvedCount = approvedProps.length;
+      const thinDayTriggered = shouldUseThinDayFallback && approvedCount < Number(minimum_approved_picks || THIN_DAY_MIN_APPROVED_PICKS);
+      const topRejectionReasons = Object.entries(rejectionSummary)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([reason, count]) => ({ reason, count }));
       
       // Store approved picks - explicitly define fields to avoid column mismatch
       if (approvedProps.length > 0) {
@@ -2756,12 +2785,21 @@ serve(async (req) => {
       
       return new Response(JSON.stringify({
         success: true,
-        approvedCount: approvedProps.length,
+        approvedCount,
         rejectedCount: rejectedProps.length,
         approved: approvedProps,
         rejected: rejectedProps.slice(0, 30),
         mode,
         gameDate: today,
+        diagnostics: {
+          rawPropsScanned: props?.length || 0,
+          activePropsScanned: props?.length || 0,
+          approvedCount,
+          minimumApprovedPicks: Number(minimum_approved_picks || THIN_DAY_MIN_APPROVED_PICKS),
+          thinDayFallbackRequested: shouldUseThinDayFallback,
+          thinDayFallbackTriggered: thinDayTriggered,
+          topRejectionReasons,
+        },
         balance: {
           overs: balanceTracker.overCount,
           unders: balanceTracker.underCount,

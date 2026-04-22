@@ -43,6 +43,45 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MIN_APPROVED_RISK_PICKS = 8;
+const MIN_PICK_POOL_ROWS = 12;
+
+async function getRiskPickCount(supabase: any, targetDate: string): Promise<number> {
+  const { count } = await supabase
+    .from("nba_risk_engine_picks")
+    .select("id", { count: "exact", head: true })
+    .eq("game_date", targetDate)
+    .eq("mode", "full_slate")
+    .is("rejection_reason", null);
+  return count ?? 0;
+}
+
+async function getPoolCount(supabase: any, targetDate: string): Promise<number> {
+  const { count } = await supabase
+    .from("bot_daily_pick_pool")
+    .select("id", { count: "exact", head: true })
+    .eq("pick_date", targetDate);
+  return count ?? 0;
+}
+
+async function getParlayCount(supabase: any, targetDate: string): Promise<number> {
+  const { count } = await supabase
+    .from("bot_daily_parlays")
+    .select("id", { count: "exact", head: true })
+    .eq("parlay_date", targetDate)
+    .eq("outcome", "pending");
+  return count ?? 0;
+}
+
+async function getStraightCount(supabase: any, targetDate: string): Promise<number> {
+  const { count } = await supabase
+    .from("bot_straight_bets")
+    .select("id", { count: "exact", head: true })
+    .eq("bet_date", targetDate)
+    .eq("outcome", "pending");
+  return count ?? 0;
+}
+
 // BUG 1 FIX: canonical ET date helper — all "today" date references use this
 function getEasternDate(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -412,7 +451,22 @@ Deno.serve(async (req) => {
       id: "phase3b",
       label: "Risk engine",
       run: async () => {
-        await invokeStep("Running risk engine", "nba-player-prop-risk-engine", { action: "analyze_slate", mode: "full_slate" });
+        const targetDate = todayET();
+        await invokeStep("Running risk engine", "nba-player-prop-risk-engine", {
+          action: "analyze_slate",
+          mode: "full_slate",
+          thin_day_fallback: true,
+          minimum_approved_picks: MIN_APPROVED_RISK_PICKS,
+        });
+
+        const approvedCount = await getRiskPickCount(supabase, targetDate);
+        if (approvedCount < MIN_APPROVED_RISK_PICKS) {
+          warnings.push(`Risk engine produced only ${approvedCount} approved picks for ${targetDate}`);
+          results["nba-player-prop-risk-engine"] = `warning:thin_output:${approvedCount}`;
+          await sendPipelineAlert(
+            `⚠️ *Risk Engine Thin Output*\n\n*Date:* ${targetDate}\n*Approved picks:* ${approvedCount}\n*Minimum target:* ${MIN_APPROVED_RISK_PICKS}\n*Run:* \`${currentRunId.slice(0,8)}\``,
+          );
+        }
       },
     },
     {
@@ -534,18 +588,25 @@ Deno.serve(async (req) => {
         }
 
         const targetDate = todayET();
-        const { count: poolCount } = await supabase
-          .from("bot_daily_pick_pool")
-          .select("*", { count: "exact", head: true })
-          .eq("pick_date", targetDate);
+        let poolCount = await getPoolCount(supabase, targetDate);
 
-        if ((poolCount || 0) < 12) {
-          const { count: riskCount } = await supabase
-            .from("nba_risk_engine_picks")
-            .select("*", { count: "exact", head: true })
-            .eq("game_date", targetDate)
-            .eq("mode", "full_slate")
-            .is("rejection_reason", null);
+        if (poolCount < MIN_PICK_POOL_ROWS) {
+          const { data: rebuiltPoolData, error: rebuiltPoolError } = await supabase.functions.invoke("build-daily-pick-pool", {
+            body: { date: targetDate, minimum_risk_rows: MIN_APPROVED_RISK_PICKS, minimum_pool_rows: MIN_PICK_POOL_ROWS, fallback_limit: 40 },
+          });
+
+          poolCount = await getPoolCount(supabase, targetDate);
+          const rebuildStatus = rebuiltPoolError
+            ? `error:${rebuiltPoolError.message || JSON.stringify(rebuiltPoolError)}`
+            : `recovered:${poolCount}`;
+          results["build-daily-pick-pool:auto"] = rebuildStatus;
+          if (rebuiltPoolData?.diagnostics?.pool_status) {
+            results["build-daily-pick-pool:auto_status"] = String(rebuiltPoolData.diagnostics.pool_status);
+          }
+        }
+
+        if ((poolCount || 0) < MIN_PICK_POOL_ROWS) {
+          const riskCount = await getRiskPickCount(supabase, targetDate);
           const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
           const { count: freshFdProps } = await supabase
             .from("unified_props")
@@ -570,13 +631,8 @@ Deno.serve(async (req) => {
 
         await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: targetDate });
 
-        // BUG 1 FIX: ET date — parlays are stored with ET parlay_date
         const todayP = todayET();
-        const { count: parlayCount } = await supabase
-          .from("bot_daily_parlays")
-          .select("*", { count: "exact", head: true })
-          .eq("parlay_date", todayP)
-          .eq("outcome", "pending");
+        const parlayCount = await getParlayCount(supabase, todayP);
         if ((parlayCount || 0) === 0) {
           sendPipelineAlert(
             `⚠️ *Zero Output Warning*\n\nParlay generation completed but produced *0 parlays* for ${todayP}.\n\nCheck: odds freshness, FanDuel line availability, injury gates.`
@@ -687,17 +743,23 @@ Deno.serve(async (req) => {
       id: "phase3i",
       label: "Generate straight bets",
       run: async () => {
-        markUnavailable("bot-generate-straight-bets", "straight bet generator is not deployed in the current backend");
-
-        // BUG 1 FIX: ET date
         const todayS = todayET();
-        const { count: straightCount } = await supabase
-          .from("bot_straight_bets")
-          .select("*", { count: "exact", head: true })
-          .eq("bet_date", todayS);
+        const poolCount = await getPoolCount(supabase, todayS);
+        if (poolCount < MIN_PICK_POOL_ROWS) {
+          results["bot-generate-straight-bets"] = `blocked:thin_pool:${poolCount}`;
+          warnings.push(`Straight bet generation blocked: thin pool (${poolCount} rows)`);
+          sendPipelineAlert(
+            `⚠️ *Straight Generation Blocked*\n\n*Date:* ${todayS}\n*Pick pool:* ${poolCount}\n*Cause:* pick pool below minimum threshold\n*Run:* \`${currentRunId.slice(0,8)}\``,
+          );
+          return;
+        }
+
+        await invokeStep("Generating straight bets", "bot-generate-straight-bets", { date: todayS, dry_run: false });
+
+        const straightCount = await getStraightCount(supabase, todayS);
         if ((straightCount || 0) === 0) {
           sendPipelineAlert(
-            `⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`
+            `⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`,
           );
         }
       },
