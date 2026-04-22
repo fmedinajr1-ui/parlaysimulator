@@ -134,6 +134,10 @@ export interface LivePropData {
   lineMovement?: number;
   lastLineUpdate?: string;
   bookmaker?: string;
+  selectedBook?: string | null;
+  hasActiveBookLine?: boolean;
+  lineFreshness?: LineFreshness;
+  lineDrift?: number;
   
   // Closest-line matching (v7.4)
   closestLine?: number;
