@@ -3,6 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { toast } from "sonner";
+import {
+  computeLineDrift,
+  deriveMarketStatus,
+  getAvailableBooks,
+  getLineAgeMinutes,
+  getLineFreshness,
+  pickPreferredMarketLine,
+} from "@/lib/bookScannerMarket";
 
 // Get today's date in Eastern Time for consistent filtering
 function getEasternDate(): string {
