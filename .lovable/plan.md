@@ -1,167 +1,173 @@
 
-Fix the broken pipeline first, then optimize the shared input data layer so every backend function receives cleaner, fresher, and more consistent data.
+Investigate the empty pools in a strict top-down order, because the current evidence shows the pool is not failing at the UI layer — it is failing upstream before generation.
 
-## Phase 1 — Restore the pipeline so it actually runs end-to-end
+## What the investigation already shows
 
-### 1. Replace broken function calls with real, current backend steps
-The current rebuild orchestrator is invoking several function names that are missing and returning 404s. I’ll audit every referenced step in `refresh-l10-and-rebuild` and classify them as:
+### Confirmed facts
+- `bot_daily_pick_pool` has data for prior days, but nothing for `2026-04-22`.
+  - Latest counts found:
+    - `2026-04-21`: 317
+    - `2026-04-20`: 146
+- `nba_risk_engine_picks` currently has no recent rows returned by date/mode checks.
+- `bot_daily_parlays` still had rows on `2026-04-21`, which means yesterday’s pipeline produced downstream output from an earlier working input set.
+- `bot_straight_bets` has no recent daily production pattern; the latest rows are from `2026-04-09`.
+- `unified_props` is not empty:
+  - active FanDuel props exist for both `2026-04-22` and `2026-04-23`
+  - but `fresh_fanduel_props_2h = 0`
+- `refresh-todays-props` upserts props without writing `odds_updated_at`, while the orchestrator freshness gate relies on `coalesce(odds_updated_at, updated_at, created_at)`.
+- The rebuild function’s latest logs show it was still inside StatMuse batches around 200s elapsed, right before shutdown. That means the pipeline may be timing out before it even reaches the phases that refresh props, run the risk engine, or generate parlays.
 
-- required generation steps
-- optional alert/reporting steps
-- renamed/legacy steps that should be repointed
-- dead steps that should be removed
+### Most likely failure chain
+```text
+refresh-l10-and-rebuild
+  -> spends too long in StatMuse phase
+  -> shuts down before later phases
+  -> fresh props gate never meaningfully recovers
+  -> risk engine either never runs or has no fresh inputs
+  -> no process writes today's bot_daily_pick_pool
+  -> parlay-engine-v2 receives empty pool
+  -> pools look empty in app
+```
+
+### Important structural finding
+In the current codebase, I found:
+- readers of `bot_daily_pick_pool`
+- the table creation migration
+- diagnostics that count pool rows
+
+But I did not find any active function in the repo that inserts into `bot_daily_pick_pool`.
+
+That means one of these is true:
+1. the writer function was removed from the codebase but historical rows remain in the database
+2. the writer exists under a renamed function path not matching the table name
+3. the old pipeline depended on a legacy function that is no longer deployed
+4. the pool is supposed to be built from `nba_risk_engine_picks`, but that bridging step is currently missing
+
+## Step-by-step investigation plan
+
+### 1. Verify whether the rebuild is dying before the pool-building stages
+Inspect the rebuild runtime and phase completion sequence for today’s runs:
+- confirm whether `phase2`, `phase3b`, and `phase3c` are reached
+- confirm whether shutdown occurs during `phase1_5` StatMuse scraping
+- map actual last completed phase vs expected downstream side effects
 
 Goal:
-- stop the orchestrator from calling functions that do not exist
-- make required generation paths point to real deployed functions
-- keep optional steps from breaking the run
+- determine whether the pipeline is failing due to sequencing/timeout before any pool generation logic can run
 
-### 2. Restore generation coverage for the outputs you care about
-I’ll make sure the working pipeline produces:
+### 2. Identify the real source of `bot_daily_pick_pool`
+Audit the current backend for the actual writer path:
+- search for renamed or indirect writers
+- inspect legacy orchestration assumptions
+- compare yesterday’s surviving output shape against the current code
+- determine whether the pool should be sourced from:
+  - `nba_risk_engine_picks`
+  - `category_sweet_spots`
+  - another intermediate table
+  - a removed legacy function
 
-- today’s parlays
-- today’s straight bets
-- sharp/heat/lottery outputs only if those generators still exist and are valid
-- DNA/grade metadata only if the grading function is actually part of the current system
+Goal:
+- answer the core question: what is supposed to populate `bot_daily_pick_pool` today?
 
-If a missing function was replaced by a newer one, I’ll wire the orchestrator to the newer function instead of restoring old dead code.
+### 3. Check whether the risk engine is producing candidates but not bridging them into the pool
+Trace `nba-player-prop-risk-engine` end-to-end:
+- verify it is invoked in the rebuild after the timeout-prone phases
+- verify it writes rows for today
+- verify its filters are not over-rejecting because of stale or mismatched inputs
+- compare approved vs rejected counts and reasons
 
-### 3. Make the orchestrator honest about success vs failure
-Right now the UI can show a generic pipeline error even when the top-level trigger started correctly.
+Goal:
+- separate “no candidates produced” from “candidates produced but never copied into pool”
 
-I’ll update the backend response so it distinguishes:
-- started
-- completed
-- completed with warnings
-- failed on required generation
-- produced zero outputs
+### 4. Fix the freshness contract on upstream props
+The current prop refresh writes active props, but the freshness diagnostics still report zero fresh FanDuel props. I’ll inspect and then correct the freshness contract so all downstream phases agree on recency:
+- ensure refreshed rows update a canonical freshness timestamp
+- standardize all freshness checks to the same source field
+- verify today/tomorrow slate rows are being judged correctly in ET
 
-That way the frontend only shows success when the backend confirms real outputs were produced.
+Goal:
+- stop false “stale input” conditions from blocking later steps
 
-### 4. Fix the refresh UI messaging
-In `SlateRefreshControls` I’ll update the client flow so it says:
+### 5. Reduce or defer the StatMuse phase so the rebuild can reach generation
+Because the rebuild logs show long runtime inside StatMuse, I’ll adjust the orchestration so pool-critical work happens first:
+- move pool-critical prop refresh / risk engine / pool generation ahead of long per-player enrichment
+- or cap/defer StatMuse batching so it cannot consume the entire runtime budget
+- preserve enrichment as optional/non-blocking instead of gatekeeping slate generation
 
-- “Pipeline started” for long-running accepted jobs
-- “Pipeline completed with warnings” when only optional steps fail
-- “Pipeline failed to generate parlays/straight bets” when required steps fail
-- “Pipeline complete” only when the backend confirms output rows exist
+Goal:
+- make the rebuild reliably reach candidate generation on every run
 
-This removes the false “working”/“not working” ambiguity.
+### 6. Restore or implement the missing pool-builder
+Once the real intended source is confirmed, I’ll restore the missing bridge:
+- if a legacy function is still the correct design, restore/repoint it
+- if the pool should now derive from `nba_risk_engine_picks`, implement a dedicated pool-builder function
+- normalize the fields required by downstream readers:
+  - `pick_date`
+  - `player_name`
+  - `prop_type`
+  - `recommended_side`
+  - `recommended_line`
+  - `confidence_score`
+  - `composite_score`
+  - `projected_value`
+  - `l10_hit_rate`, `l10_avg`, `l3_avg`
+  - `category`
+  - `rejection_reason`
+  - `was_used_in_parlay`
 
-## Phase 2 — Optimize the data that feeds all functions
+Goal:
+- guarantee that today’s pool is explicitly generated instead of assumed
 
-Once the pipeline is stable, I’ll optimize the shared data layer so the functions operate on better inputs instead of each function defending itself against bad or stale data.
+### 7. Add explicit diagnostics for every handoff
+Add structured counts after each pipeline stage:
+- active props loaded
+- fresh FanDuel props
+- risk engine approved rows
+- pool rows written
+- parlay candidates surviving line validation
+- parlays inserted
+- straight bets inserted
 
-### 5. Inventory the upstream data sources used by the pipeline
-I’ll map what data each major function depends on, especially:
+Also return “zero-output reasons” directly in the response payload.
 
-- `unified_props`
-- game logs / L10 data
-- injury / lineup freshness
-- bookmaker-specific prop availability
-- category/risk/scoring inputs
-- any precomputed research or matchup tables
+Goal:
+- make the next empty-pool incident obvious in one run
 
-For each source, I’ll identify:
-- freshness window
-- required fields
-- duplicate patterns
-- null/invalid values
-- naming inconsistencies
-- bookmaker mismatches
-- sport/date/timezone issues
+### 8. Verify with post-run database checks
+After the fixes:
+- confirm `bot_daily_pick_pool` has rows for today
+- confirm `nba_risk_engine_picks` has today’s `mode='full_slate'` rows
+- confirm `bot_daily_parlays` gets today’s pending rows
+- confirm the UI bench/pipeline views stop showing empty-state because the database is actually populated
 
-### 6. Create a shared input contract for downstream functions
-Instead of each function making assumptions differently, I’ll standardize the minimum required input rules for pipeline consumers.
-
-Examples:
-- canonical player name
-- canonical market/prop type
-- canonical side/direction
-- consistent line number typing
-- standardized bookmaker preference fields
-- freshness timestamps in ET-aware logic
-- required matchup/game identifiers
-
-This makes the feeding layer consistent across all generation and scoring functions.
-
-### 7. Add centralized data-quality gates before generation
-Before parlay and straight-bet generation runs, I’ll add a compact validation pass that checks for:
-
-- stale bookmaker data
-- insufficient FanDuel coverage
-- missing line values
-- missing player/game linkage
-- duplicate props
-- malformed prop types
-- obviously unusable rows
-
-Instead of letting every function fail later, bad data gets filtered or flagged once upstream.
-
-### 8. Reduce redundant reads and inconsistent filtering
-Many pipelines degrade because each function re-queries the same large datasets with slightly different filters.
-
-I’ll optimize this by:
-- consolidating repeated filters where practical
-- standardizing “today” and ET date handling
-- aligning freshness thresholds across related functions
-- narrowing reads to the columns/rows actually needed
-- making sure downstream functions consume the same valid candidate pool when appropriate
-
-This improves both reliability and performance.
-
-### 9. Add visibility into data health
-So this doesn’t become a hidden issue again, I’ll add clearer diagnostics around the inputs feeding generation:
-
-- counts of fresh props by bookmaker
-- candidate pool size before generation
-- rows filtered for missing/invalid fields
-- final usable records passed into key generators
-- zero-output reasons returned explicitly instead of only logged
-
-That makes it much easier to see whether failures are code issues or data-quality issues.
-
-## Phase 3 — Validate the repaired and optimized flow
-
-### 10. Re-run and verify the full daily flow
-After implementation, I’ll verify that:
-
-- the full pipeline can be invoked successfully
-- today’s `bot_daily_parlays` rows are created
-- today’s `bot_straight_bets` rows are created
-- missing-function 404s are gone
-- the UI reports the correct state
-- the candidate data flowing into major functions is fresher and cleaner than before
-
-## Files likely involved
+## Files most likely involved
 - `supabase/functions/refresh-l10-and-rebuild/index.ts`
-- `src/components/market/SlateRefreshControls.tsx`
-- any currently active generator functions that replace missing legacy ones
-- shared upstream data readers/filters used by those functions
-- possibly selected database reads/validation helpers if the data contract needs to be centralized
+- `supabase/functions/refresh-todays-props/index.ts`
+- `supabase/functions/nba-player-prop-risk-engine/index.ts`
+- one new or restored pool-builder function under `supabase/functions/`
+- possibly a migration only if the pool needs missing indexes/defaults, not for simple population logic
 
 ## Technical details
 ```text
-Current state
-UI trigger -> refresh-l10-and-rebuild
-           -> calls missing legacy functions
-           -> 404s on required steps
-           -> zero outputs
-           -> generic pipeline error
+Observed current state
+active unified_props exist
+  but freshness gate says 0 fresh props
+  and rebuild appears to timeout during StatMuse
+  and no active writer is present for bot_daily_pick_pool
+  and today's pool is empty
 
 Target state
-UI trigger -> refresh-l10-and-rebuild
-           -> calls only real current functions
-           -> validates upstream input quality
-           -> runs required generators on clean candidate data
-           -> returns structured status
-           -> UI reports real outcome accurately
+rebuild reaches pool-critical phases first
+  -> props receive consistent freshness timestamps
+  -> risk engine produces approved candidates
+  -> dedicated pool-builder writes bot_daily_pick_pool
+  -> parlay engine consumes today's pool
+  -> parlays/straights generate
 ```
 
 ## Expected outcome
-After this work:
-
-- the pipeline will actually generate today’s slate again
-- the UI will stop showing misleading generic errors
-- the data feeding all functions will be cleaner, more consistent, and easier to debug
-- later function-level tuning will be much easier because the shared input layer will be trustworthy
+After this investigation and fix:
+- we’ll know exactly why pools are empty today, not just where they are empty
+- the pipeline will stop timing out before candidate generation
+- upstream prop freshness will be measured consistently
+- `bot_daily_pick_pool` will be repopulated for today from a real, explicit source
+- downstream parlays and straight bets will have valid inputs again
