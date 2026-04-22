@@ -4,11 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { toast } from "sonner";
 import {
-  computeLineDrift,
-  deriveMarketStatus,
-  getAvailableBooks,
-  getLineAgeMinutes,
-  getLineFreshness,
+  buildScannerMarketMeta,
   pickPreferredMarketLine,
 } from "@/lib/bookScannerMarket";
 import type { QualityTier } from "@/types/sweetSpot";
@@ -1874,18 +1870,12 @@ export function useSweetSpotParlayBuilder() {
 
           if (!selected) return { ...pick, marketStatus: 'off_market' as const };
 
-          const marketStatus = deriveMarketStatus(selected, rows);
-          const lineFreshness = getLineFreshness(selected);
+          const scannerMeta = buildScannerMarketMeta(selected, rows);
 
           return {
             ...pick,
-            selectedBook: selected.bookmaker ?? null,
-            availableBooks: getAvailableBooks(rows),
-            lineFreshness,
-            lineAgeMinutes: getLineAgeMinutes(selected),
-            lineDrift: computeLineDrift(selected, rows),
-            marketStatus,
-            tierReason: `scanner ${marketStatus} · ${lineFreshness}`,
+            ...scannerMeta,
+            tierReason: `scanner ${scannerMeta.marketStatus} · ${scannerMeta.lineFreshness}`,
           };
         })
         .filter((pick) => pick.marketStatus !== 'off_market');

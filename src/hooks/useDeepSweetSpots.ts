@@ -2,11 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEasternDate } from "@/lib/dateUtils";
 import {
-  computeLineDrift,
-  deriveMarketStatus,
-  getAvailableBooks,
-  getLineAgeMinutes,
-  getLineFreshness,
+  buildScannerMarketMeta,
   pickPreferredMarketLine,
 } from "@/lib/bookScannerMarket";
 import type { 
@@ -613,11 +609,16 @@ export function useDeepSweetSpots() {
         const playerLogs = logsByPlayer.get(prop.player_name) || [];
         if (playerLogs.length < 5) continue; // Need minimum data
 
-        const lineFreshness = getLineFreshness(prop);
-        const lineAgeMinutes = getLineAgeMinutes(prop);
-        const lineDrift = computeLineDrift(prop, prop.marketRows);
-        const marketStatus = deriveMarketStatus(prop, prop.marketRows);
-        const availableBooks = getAvailableBooks(prop.marketRows);
+        const scannerMeta = buildScannerMarketMeta(prop, prop.marketRows);
+        const {
+          lineFreshness,
+          lineAgeMinutes,
+          lineDrift = 0,
+          marketStatus,
+          availableBooks,
+          selectedBook,
+          hasActiveBookLine,
+        } = scannerMeta;
 
         if (marketStatus === 'off_market') continue;
         
@@ -802,7 +803,7 @@ export function useDeepSweetSpots() {
           hitRateL10,
           edge,
           line,
-          selectedBook: prop.bookmaker ?? undefined,
+          ...scannerMeta,
         });
         
         // Skip AVOID tier with very low hit rates
@@ -836,7 +837,7 @@ export function useDeepSweetSpots() {
           sweetSpotScore,
           qualityTier,
           analysisTimestamp: new Date().toISOString(),
-          selectedBook: prop.bookmaker ?? undefined,
+          selectedBook,
           availableBooks,
           lineFreshness,
           lineAgeMinutes,
