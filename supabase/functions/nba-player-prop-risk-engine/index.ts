@@ -1676,7 +1676,14 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, mode = 'full_slate', use_live_odds = false, preferred_bookmakers = ['fanduel', 'draftkings'] } = await req.json();
+    const {
+      action,
+      mode = 'full_slate',
+      use_live_odds = false,
+      preferred_bookmakers = ['fanduel', 'draftkings'],
+      thin_day_fallback = false,
+      minimum_approved_picks = THIN_DAY_MIN_APPROVED_PICKS,
+    } = await req.json();
 
     console.log(`[Risk Engine v3.1] Action: ${action}, Mode: ${mode}, Live Odds: ${use_live_odds}`);
 
@@ -1799,6 +1806,8 @@ serve(async (req) => {
 
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
+      const rejectionSummary: Record<string, number> = {};
+      const shouldUseThinDayFallback = !!thin_day_fallback;
       const processedPlayerProps = new Set<string>();
       const starsUsedByTeam: Record<string, string[]> = {};
       
@@ -1816,6 +1825,7 @@ serve(async (req) => {
           // Skip duplicates
           if (processedPlayerProps.has(playerPropKey)) {
             rejectedProps.push({ ...prop, rejection_reason: 'Duplicate prop type' });
+            bumpReason(rejectionSummary, 'Duplicate prop type');
             continue;
           }
           
@@ -1826,6 +1836,7 @@ serve(async (req) => {
           
           if (playerPropsCount >= 2) {
             rejectedProps.push({ ...prop, rejection_reason: 'Max 2 props per player' });
+            bumpReason(rejectionSummary, 'Max 2 props per player');
             continue;
           }
           
@@ -1840,6 +1851,7 @@ serve(async (req) => {
                 ...prop, 
                 rejection_reason: `One star per team: ${teamStars[0]} already selected` 
               });
+              bumpReason(rejectionSummary, 'One star per team');
               continue;
             }
           }
@@ -1874,6 +1886,7 @@ serve(async (req) => {
               player_role: 'UNKNOWN', 
               archetype: 'UNKNOWN' 
             });
+            bumpReason(rejectionSummary, 'Insufficient data');
             continue;
           }
           
