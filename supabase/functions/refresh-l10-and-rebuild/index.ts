@@ -559,37 +559,14 @@ Deno.serve(async (req) => {
 
     log(`=== RUN COMPLETE (${elapsed()}ms) — ${skipped.length} phases skipped ===`);
 
-    // BUG 4 FIX: both "ok" and "ok:forced" are valid success states.
-    // Also properly inspects the invoke return value instead of swallowing errors.
-    const dnaResult = results["score-parlays-dna"] ?? "";
-    const dnaSucceeded = dnaResult === "ok" || dnaResult === "ok:forced";
-    if (!dnaSucceeded) {
-      log(`⚠ DNA audit did not complete (stored status: "${dnaResult}") — forcing standalone run`);
-      try {
-        const { error: forcedDnaErr } = await supabase.functions.invoke("score-parlays-dna", { body: {} });
-        if (forcedDnaErr) {
-          results["score-parlays-dna"] = `forced_error: ${forcedDnaErr.message}`;
-          log(`❌ Forced DNA audit returned error: ${forcedDnaErr.message}`);
-          sendPipelineAlert(
-            `🚨 *DNA Audit Failed*\n\nForced retry returned an error.\n*Error:* ${forcedDnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``
-          );
-        } else {
-          results["score-parlays-dna"] = "ok:forced";
-          log("✅ Forced DNA audit completed");
-        }
-      } catch (dnaErr: any) {
-        results["score-parlays-dna"] = `forced_error: ${dnaErr.message}`;
-        log(`❌ Forced DNA audit threw: ${dnaErr.message}`);
-        sendPipelineAlert(
-          `🚨 *DNA Audit Failed*\n\nForced retry also threw.\n*Error:* ${dnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``
-        );
-      }
-    }
-
     // End-of-run failure summary
     const failedSteps = Object.entries(results).filter(
       ([, v]) => v.startsWith("error:") || v.startsWith("exception:") || v.startsWith("forced_error:")
     );
+    const optionalFailures = failedSteps.filter(([fn]) => NON_FATAL_STEPS.has(fn) || (results[fn] ?? "").startsWith("unavailable:"));
+    const requiredFailures = failedSteps.filter(([fn]) => !NON_FATAL_STEPS.has(fn));
+    const diagnostics = await collectDataQualityDiagnostics();
+
     if (failedSteps.length > 0) {
       const failList = failedSteps.map(([fn, status]) => `❌ \`${fn}\`: ${status}`).join("\n");
       const okCount = Object.values(results).filter(v => v === "ok" || v === "ok:forced").length;
@@ -611,8 +588,17 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({
-      success: true, run_id: currentRunId, attempt: currentAttempt,
-      last_completed: lastCompleted, results, skipped,
+      success: requiredFailures.length === 0,
+      completed: skipped.length === 0,
+      run_id: currentRunId,
+      attempt: currentAttempt,
+      last_completed: lastCompleted,
+      results,
+      warnings,
+      skipped,
+      required_failures: requiredFailures,
+      optional_failures: optionalFailures,
+      diagnostics,
       will_continue: skipped.length > 0 && currentAttempt < MAX_ATTEMPTS,
       elapsed: elapsed(),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
