@@ -74,6 +74,7 @@ Deno.serve(async (req) => {
 
   const results: Record<string, string> = {};
   const skipped: string[] = [];
+  const warnings: string[] = [];
 
   // BUG 2 FIX: closure-scoped flag — not shared between invocations or
   // across concurrent runs, and automatically reset for every fresh request.
@@ -89,6 +90,59 @@ Deno.serve(async (req) => {
 
   const elapsed = () => Date.now() - functionStartTime;
   const hasTime = () => elapsed() < TIMEOUT_MS;
+  const todayET = () => getEasternDate();
+
+  const markUnavailable = (fnName: string, reason: string, isOptional = true) => {
+    results[fnName] = `unavailable: ${reason}`;
+    const message = `${fnName}: ${reason}`;
+    warnings.push(message);
+    log(`ℹ ${message}`);
+    if (!isOptional) {
+      skipped.push(fnName);
+    }
+  };
+
+  const collectDataQualityDiagnostics = async () => {
+    const freshWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const targetDate = todayET();
+
+    const [freshFdPropsRes, pickPoolRes, todayParlaysRes, todayStraightsRes] = await Promise.all([
+      supabase
+        .from("unified_props")
+        .select("id", { count: "exact", head: true })
+        .eq("bookmaker", "fanduel")
+        .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`),
+      supabase
+        .from("bot_daily_pick_pool")
+        .select("id", { count: "exact", head: true })
+        .eq("pick_date", targetDate),
+      supabase
+        .from("bot_daily_parlays")
+        .select("id, tier", { count: "exact" })
+        .eq("parlay_date", targetDate)
+        .eq("outcome", "pending"),
+      supabase
+        .from("bot_straight_bets")
+        .select("id", { count: "exact", head: true })
+        .eq("bet_date", targetDate)
+        .eq("outcome", "pending"),
+    ]);
+
+    const parlays = todayParlaysRes.data ?? [];
+
+    return {
+      target_date: targetDate,
+      input_quality: {
+        fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
+        pick_pool_candidates: pickPoolRes.count ?? 0,
+      },
+      generated_counts: {
+        parlays_total: todayParlaysRes.count ?? 0,
+        lottery_parlays: parlays.filter((row: any) => row.tier === "lottery").length,
+        straight_bets_total: todayStraightsRes.count ?? 0,
+      },
+    };
+  };
 
   // Non-fatal steps: log warning but don't send pipeline failure alert
   const NON_FATAL_STEPS = new Set([
@@ -191,7 +245,7 @@ Deno.serve(async (req) => {
         const { data: slateProps } = await supabase
           .from("unified_props")
           .select("player_name")
-          .gte("scraped_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
+          .or(`odds_updated_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()},updated_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()},created_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()}`);
 
         const slatePlayers = [...new Set((slateProps || []).map((p: any) => p.player_name).filter(Boolean))];
         if (slatePlayers.length > 0) {
@@ -214,10 +268,13 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase2",
-      label: "Recompute category sweet spots",
+      label: "Refresh upstream prop and stats inputs",
       run: async () => {
-        log("=== PHASE 2: Recomputing category sweet spots ===");
-        await invokeStep("Analyzing categories", "category-props-analyzer", { forceRefresh: true });
+        log("=== PHASE 2: Refreshing upstream prop and stats inputs ===");
+        await invokeParallel([
+          ["Refreshing today props", "refresh-todays-props", {}],
+          ["Refreshing PVS inputs", "pvs-data-ingestion", { mode: "live" }],
+        ]);
       },
     },
     {
@@ -232,12 +289,10 @@ Deno.serve(async (req) => {
       id: "phase3a",
       label: "Pre-generation tasks",
       run: async () => {
-        await invokeParallel([
-          ["Cleaning stale props", "cleanup-stale-props", { immediate: true }],
-          ["Scanning defensive matchups", "bot-matchup-defense-scanner", {}],
-          ["Detecting mispriced lines", "detect-mispriced-lines", {}],
-          ["Matchup intelligence analysis", "matchup-intelligence-analyzer", { action: "analyze_batch" }],
-        ]);
+        await invokeStep("Cleaning stale props", "cleanup-stale-props", { immediate: true });
+        markUnavailable("bot-matchup-defense-scanner", "legacy matchup defense scanner is not deployed");
+        markUnavailable("detect-mispriced-lines", "legacy mispriced-line feeder is not deployed");
+        markUnavailable("matchup-intelligence-analyzer", "legacy matchup intelligence feeder is not deployed");
       },
     },
     {
@@ -257,7 +312,7 @@ Deno.serve(async (req) => {
           .from("unified_props")
           .select("*", { count: "exact", head: true })
           .eq("bookmaker", "fanduel")
-          .gte("scraped_at", twoHoursAgo);
+          .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
 
         if (gateErr) {
           log(`⚠ Odds gate query error: ${gateErr.message} — proceeding anyway`);
@@ -268,13 +323,13 @@ Deno.serve(async (req) => {
         const freshCount = freshFdProps || 0;
         if (freshCount < 50) {
           log(`⚠ Only ${freshCount} fresh FanDuel props (need 50+) — attempting odds refresh`);
-          await invokeStep("Emergency odds scrape", "whale-odds-scraper", { mode: "full" });
+          await invokeStep("Emergency prop refresh", "refresh-todays-props", {});
 
           const { count: retryCount } = await supabase
             .from("unified_props")
             .select("*", { count: "exact", head: true })
             .eq("bookmaker", "fanduel")
-            .gte("scraped_at", new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+            .or(`odds_updated_at.gte.${new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()},updated_at.gte.${new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()},created_at.gte.${new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()}`);
 
           const afterScrape = retryCount || 0;
           if (afterScrape < 50) {
@@ -304,7 +359,7 @@ Deno.serve(async (req) => {
     },
     {
       id: "phase3c",
-      label: "Wide generate + rank + curated + force fresh",
+      label: "Generate parlays with live engine",
       run: async () => {
         // BUG 2 FIX: reads closure-scoped variable, not globalThis
         if (oddsGateBlocked) {
@@ -312,14 +367,10 @@ Deno.serve(async (req) => {
           return;
         }
 
-        // BUG 3 FIX: removed stale final_cap:25 — regen-loop v7 only uses it
-        // for a log entry; actual cap is hardcoded to FINAL_PARLAY_CAP = 50
-        await invokeStep("Wide generate + rank + select", "bot-quality-regen-loop", {});
-        await invokeStep("Running curated pipeline", "bot-curated-pipeline", {});
-        await invokeStep("Force fresh mispriced parlays", "bot-force-fresh-parlays", {});
+        await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: todayET() });
 
         // BUG 1 FIX: ET date — parlays are stored with ET parlay_date
-        const todayP = getEasternDate();
+        const todayP = todayET();
         const { count: parlayCount } = await supabase
           .from("bot_daily_parlays")
           .select("*", { count: "exact", head: true })
@@ -336,10 +387,8 @@ Deno.serve(async (req) => {
       id: "phase3d",
       label: "Sharp + heat scan",
       run: async () => {
-        await invokeParallel([
-          ["Building sharp parlays", "sharp-parlay-builder", { action: "build" }],
-          ["Scanning heat tracker", "heat-prop-engine", { action: "scan" }],
-        ]);
+        markUnavailable("sharp-parlay-builder", "legacy sharp parlay function is not deployed");
+        await invokeStep("Scanning heat tracker", "heat-prop-engine", { action: "scan" });
       },
     },
     {
@@ -353,10 +402,8 @@ Deno.serve(async (req) => {
       id: "phase3f",
       label: "Ladder + diversity",
       run: async () => {
-        await invokeParallel([
-          ["Ladder challenge", "nba-ladder-challenge", {}],
-          ["Diversity rebalance", "bot-daily-diversity-rebalance", {}],
-        ]);
+        await invokeStep("Ladder challenge", "nba-ladder-challenge", {});
+        markUnavailable("bot-daily-diversity-rebalance", "legacy diversity rebalance function is not deployed");
       },
     },
     {
@@ -388,24 +435,24 @@ Deno.serve(async (req) => {
       id: "phase3_gold",
       label: "Gold Signal Parlay Engine (FanDuel predictions)",
       run: async () => {
-        await invokeStep("Gold signal parlay engine", "gold-signal-parlay-engine", {});
+        markUnavailable("gold-signal-parlay-engine", "legacy gold signal generator is not deployed");
       },
     },
     {
       id: "phase3_verdict",
       label: "Final Verdict cross-engine consensus",
       run: async () => {
-        await invokeStep("Final Verdict engine", "final-verdict-engine", {});
+        markUnavailable("final-verdict-engine", "legacy verdict engine is not deployed");
       },
     },
     {
       id: "phase3g",
       label: "DNA audit (mandatory post-generation)",
       run: async () => {
-        await invokeStep("DNA parlay audit", "score-parlays-dna", {});
+        markUnavailable("score-parlays-dna", "legacy DNA audit function is not deployed");
 
         // BUG 1 FIX: ET date for post-DNA graded-parlay check
-        const todayStr = getEasternDate();
+        const todayStr = todayET();
         const { data: gradedParlays } = await supabase
           .from("bot_daily_parlays")
           .select("id")
@@ -439,10 +486,10 @@ Deno.serve(async (req) => {
       id: "phase3i",
       label: "Generate straight bets",
       run: async () => {
-        await invokeStep("Generating straight bets", "bot-generate-straight-bets", {});
+        markUnavailable("bot-generate-straight-bets", "straight bet generator is not deployed in the current backend");
 
         // BUG 1 FIX: ET date
-        const todayS = getEasternDate();
+        const todayS = todayET();
         const { count: straightCount } = await supabase
           .from("bot_straight_bets")
           .select("*", { count: "exact", head: true })
@@ -458,21 +505,21 @@ Deno.serve(async (req) => {
       id: "phase3h",
       label: "Slate status",
       run: async () => {
-        await invokeStep("Sending slate status", "bot-slate-status-update", {});
+        markUnavailable("bot-slate-status-update", "customer slate status broadcaster is not deployed");
       },
     },
     {
       id: "phase3j",
       label: "Broadcast sweet spot picks",
       run: async () => {
-        await invokeStep("Broadcasting sweet spot picks", "broadcast-sweet-spots", {});
+        markUnavailable("broadcast-sweet-spots", "sweet spot broadcaster is not deployed");
       },
     },
     {
       id: "phase3k",
       label: "Sync all engines to tracker",
       run: async () => {
-        await invokeStep("Engine tracker sync", "engine-tracker-sync", {});
+        markUnavailable("engine-tracker-sync", "engine tracker sync is not deployed");
       },
     },
   ];
@@ -513,37 +560,18 @@ Deno.serve(async (req) => {
 
     log(`=== RUN COMPLETE (${elapsed()}ms) — ${skipped.length} phases skipped ===`);
 
-    // BUG 4 FIX: both "ok" and "ok:forced" are valid success states.
-    // Also properly inspects the invoke return value instead of swallowing errors.
-    const dnaResult = results["score-parlays-dna"] ?? "";
-    const dnaSucceeded = dnaResult === "ok" || dnaResult === "ok:forced";
-    if (!dnaSucceeded) {
-      log(`⚠ DNA audit did not complete (stored status: "${dnaResult}") — forcing standalone run`);
-      try {
-        const { error: forcedDnaErr } = await supabase.functions.invoke("score-parlays-dna", { body: {} });
-        if (forcedDnaErr) {
-          results["score-parlays-dna"] = `forced_error: ${forcedDnaErr.message}`;
-          log(`❌ Forced DNA audit returned error: ${forcedDnaErr.message}`);
-          sendPipelineAlert(
-            `🚨 *DNA Audit Failed*\n\nForced retry returned an error.\n*Error:* ${forcedDnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``
-          );
-        } else {
-          results["score-parlays-dna"] = "ok:forced";
-          log("✅ Forced DNA audit completed");
-        }
-      } catch (dnaErr: any) {
-        results["score-parlays-dna"] = `forced_error: ${dnaErr.message}`;
-        log(`❌ Forced DNA audit threw: ${dnaErr.message}`);
-        sendPipelineAlert(
-          `🚨 *DNA Audit Failed*\n\nForced retry also threw.\n*Error:* ${dnaErr.message}\n*Run:* \`${currentRunId.slice(0,8)}\``
-        );
-      }
-    }
-
     // End-of-run failure summary
     const failedSteps = Object.entries(results).filter(
       ([, v]) => v.startsWith("error:") || v.startsWith("exception:") || v.startsWith("forced_error:")
     );
+    const unavailableSteps = Object.entries(results).filter(([, v]) => v.startsWith("unavailable:"));
+    const optionalFailures = [
+      ...failedSteps.filter(([fn]) => NON_FATAL_STEPS.has(fn)),
+      ...unavailableSteps,
+    ];
+    const requiredFailures = failedSteps.filter(([fn]) => !NON_FATAL_STEPS.has(fn));
+    const diagnostics = await collectDataQualityDiagnostics();
+
     if (failedSteps.length > 0) {
       const failList = failedSteps.map(([fn, status]) => `❌ \`${fn}\`: ${status}`).join("\n");
       const okCount = Object.values(results).filter(v => v === "ok" || v === "ok:forced").length;
@@ -565,8 +593,17 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({
-      success: true, run_id: currentRunId, attempt: currentAttempt,
-      last_completed: lastCompleted, results, skipped,
+      success: requiredFailures.length === 0,
+      completed: skipped.length === 0,
+      run_id: currentRunId,
+      attempt: currentAttempt,
+      last_completed: lastCompleted,
+      results,
+      warnings,
+      skipped,
+      required_failures: requiredFailures,
+      optional_failures: optionalFailures,
+      diagnostics,
       will_continue: skipped.length > 0 && currentAttempt < MAX_ATTEMPTS,
       elapsed: elapsed(),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

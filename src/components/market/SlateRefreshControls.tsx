@@ -10,6 +10,26 @@ import { Progress } from "@/components/ui/progress";
 import { usePipelinePreflight } from "@/hooks/usePipelinePreflight";
 import { getEasternDate } from "@/lib/dateUtils";
 
+interface PipelineInvokeResponse {
+  success?: boolean;
+  completed?: boolean;
+  run_id?: string;
+  warnings?: string[];
+  required_failures?: [string, string][];
+  optional_failures?: [string, string][];
+  diagnostics?: {
+    generated_counts?: {
+      parlays_total?: number;
+      straight_bets_total?: number;
+    };
+    input_quality?: {
+      fresh_fanduel_props_2h?: number;
+      pick_pool_candidates?: number;
+    };
+  };
+  will_continue?: boolean;
+}
+
 interface EngineStep {
   name: string;
   function?: string;
@@ -179,7 +199,7 @@ export function SlateRefreshControls() {
 
     try {
       setCurrentStep(1);
-      const { error } = await supabase.functions.invoke('refresh-l10-and-rebuild');
+      const { data, error } = await supabase.functions.invoke<PipelineInvokeResponse>('refresh-l10-and-rebuild');
       if (error) {
         // Check if it's a timeout/fetch error — pipeline still runs server-side
         const isTimeout = String(error?.message || error).toLowerCase().includes('fetch') 
@@ -196,7 +216,24 @@ export function SlateRefreshControls() {
       } else {
         invalidateAllQueries();
         setLastRefresh(new Date());
-        toast.success('L10 data refreshed & all parlays rebuilt! 🎯');
+        const parlayCount = data?.diagnostics?.generated_counts?.parlays_total ?? 0;
+        const straightBetCount = data?.diagnostics?.generated_counts?.straight_bets_total ?? 0;
+        const freshFanDuelProps = data?.diagnostics?.input_quality?.fresh_fanduel_props_2h ?? 0;
+        const requiredFailures = data?.required_failures?.length ?? 0;
+        const optionalFailures = data?.optional_failures?.length ?? 0;
+
+        if (requiredFailures > 0) {
+          toast.error(`Pipeline ran, but required generation failed (${requiredFailures} issue${requiredFailures > 1 ? 's' : ''}).`);
+        } else if (parlayCount > 0) {
+          const warningSuffix = optionalFailures > 0
+            ? ` with ${optionalFailures} warning${optionalFailures > 1 ? 's' : ''}`
+            : '';
+          toast.success(`Pipeline complete: ${parlayCount} parlays${straightBetCount ? `, ${straightBetCount} straight bets` : ''}${warningSuffix}.`);
+        } else if (data?.will_continue) {
+          toast.success('Pipeline started and is continuing in the background.');
+        } else {
+          toast.warning(`Pipeline finished with no new parlays. Fresh FanDuel props: ${freshFanDuelProps}.`);
+        }
       }
     } catch (err: any) {
       // Network-level timeout (Failed to fetch)
