@@ -28,6 +28,7 @@ type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE' | 'ON_T
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
 type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
 type MainTab = 'sweet-spots' | 'matchup-scanner' | 'contrarian';
+type FunnelMode = 'core' | 'aggressive';
 
 export default function SweetSpots() {
   const { data, isLoading, error, refetch, isFetching } = useDeepSweetSpots();
@@ -53,6 +54,7 @@ export default function SweetSpots() {
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('score');
   const [paceFilter, setPaceFilter] = useState<PaceFilter>('all');
+  const [funnelMode, setFunnelMode] = useState<FunnelMode>('core');
   
   // Monte Carlo simulation hook
   const {
@@ -88,6 +90,19 @@ export default function SweetSpots() {
       filtered = filtered.filter(s => s.propType === propFilter);
     }
     
+    // Apply funnel mode first
+    if (funnelMode === 'core') {
+      filtered = filtered.filter(s => 
+        s.marketStatus === 'active' &&
+        (s.qualityTier === 'ELITE' || s.qualityTier === 'PREMIUM')
+      );
+    } else {
+      filtered = filtered.filter(s =>
+        s.marketStatus !== 'off_market' &&
+        s.qualityTier !== 'AVOID'
+      );
+    }
+
     // Apply quality filter
     if (qualityFilter === 'ELITE') {
       filtered = filtered.filter(s => s.qualityTier === 'ELITE');
@@ -319,6 +334,46 @@ export default function SweetSpots() {
                 });
               }}
             />
+
+            {/* Funnel Toggle */}
+            <Card className="border-border/60 bg-card/60">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Sweet Spot Funnel</p>
+                    <p className="text-xs text-muted-foreground">
+                      Switch instantly between tight scanner-first Core picks and a wider Aggressive slate.
+                    </p>
+                  </div>
+                  <div className="inline-flex rounded-lg border border-border p-1 bg-background/60">
+                    <Button
+                      size="sm"
+                      variant={funnelMode === 'core' ? 'default' : 'ghost'}
+                      onClick={() => setFunnelMode('core')}
+                      className="h-8 px-3 text-xs"
+                    >
+                      Core
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={funnelMode === 'aggressive' ? 'default' : 'ghost'}
+                      onClick={() => setFunnelMode('aggressive')}
+                      className="h-8 px-3 text-xs"
+                    >
+                      Aggressive
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                  <span className="rounded-full border border-border px-2 py-0.5">
+                    {funnelMode === 'core' ? 'Active market only' : 'Includes scanner downgrades'}
+                  </span>
+                  <span className="rounded-full border border-border px-2 py-0.5">
+                    {funnelMode === 'core' ? 'ELITE + PREMIUM' : 'ELITE through STANDARD'}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
 
         {/* Summary Stats */}
         {data?.stats && (
