@@ -1,172 +1,123 @@
 
-Fix the actual break in the parlay pipeline: today’s run is producing status messages because the orchestrator completes, but the parlay engine has nothing meaningful to build from.
+Implement an automatic “missing pool” recovery path so parlay generation can rebuild `bot_daily_pick_pool` from `nba_risk_engine_picks` on demand instead of failing with status-only output.
 
-## What the current investigation confirms
+## What will be changed
 
-- `bot_daily_pick_pool` is empty for today (`2026-04-22`) but had `317` rows yesterday.
-- `bot_daily_parlays` is empty for today, while yesterday had pending parlays.
-- `nba_risk_engine_picks` has only `1` pick today, and it is the only approved `full_slate` risk-engine output.
-- `parlay-engine-v2` does not build from `nba_risk_engine_picks` directly. It only reads `bot_daily_pick_pool`.
-- There is no active writer in the current codebase that populates `bot_daily_pick_pool` from today’s risk picks.
-- Even if the pool-builder existed, today’s upstream volume is still too thin: one approved pick is not enough to generate valid parlays.
-- Recent backend logs also show the PrizePicks scraper is getting `403`s, which likely reduces upstream prop coverage and contributes to the low-risk-pick count.
-
-## Root cause
-
-This is a two-layer failure:
-
-1. Structural break:
-   - `parlay-engine-v2` expects `bot_daily_pick_pool`
-   - the current pipeline never populates that table for today
-
-2. Upstream starvation:
-   - today’s risk engine only produced 1 usable pick
-   - so downstream generation would still be starved unless we add a fallback or pool-building strategy that can draw from other approved sources
-
-## Implementation plan
-
-### 1. Add a dedicated daily pick-pool builder
-Create a backend function that rebuilds `bot_daily_pick_pool` for a target date from approved sources, in priority order.
-
-Primary source:
+### 1. Keep `build-daily-pick-pool` as the single source of truth
+The project already has a dedicated builder in `supabase/functions/build-daily-pick-pool/index.ts`. That function should remain the canonical converter from:
 - `nba_risk_engine_picks`
-  - use approved/full-slate rows only
-  - map:
-    - `side` -> `recommended_side`
-    - `line` -> `recommended_line`
-    - `confidence_score` -> both `confidence_score` and normalized `composite_score`
-    - `true_median` / `l10_avg` fallback -> `projected_value`
-    - `l10_hit_rate`, `l10_avg`
-    - signal/category mapping from risk-engine metadata instead of `"uncategorized"` where possible
+- optional fallback `category_sweet_spots`
 
-Fallback sources when risk volume is too low:
-- `category_sweet_spots`
-- optionally other already-approved pick sources used elsewhere in the app/backend
+into:
+- `bot_daily_pick_pool`
 
-Behavior:
-- clear/rebuild only the target date’s rows
-- dedupe by player + prop + side + line
-- reject rows missing side/line/player
-- write structured diagnostics: source counts, inserted count, skipped count, dedupe count
+No second pool-building implementation should be introduced elsewhere.
 
-### 2. Wire the pool builder into the orchestrator before parlay generation
-Update `refresh-l10-and-rebuild/index.ts` so the sequence becomes:
+### 2. Add automatic self-healing inside `parlay-engine-v2`
+Update `supabase/functions/parlay-engine-v2/index.ts` so it does this before declaring `empty_pick_pool`:
+
+1. Load `bot_daily_pick_pool` for the target date
+2. If the pool is missing or below a configurable minimum threshold:
+   - invoke `build-daily-pick-pool`
+   - reload the pool
+3. Only return `empty_pick_pool` / `thin_pool` if the pool is still insufficient after the rebuild attempt
+
+This makes the engine resilient when:
+- the orchestrator was skipped
+- the pool was cleared manually
+- a scheduled run partially failed
+- someone invokes generation directly through another function
+
+### 3. Make the rebuild attempt safe and idempotent
+The auto-build path should:
+- only run once per request
+- target the same ET date the engine is generating for
+- preserve the builder’s existing dedupe logic
+- avoid infinite retry loops
+- surface whether the pool was:
+  - already present
+  - auto-rebuilt successfully
+  - still too thin after rebuild
+
+### 4. Return explicit diagnostics about the auto-build
+Extend `parlay-engine-v2` responses to include structured fields such as:
+- `pool_auto_build_attempted`
+- `pool_auto_build_success`
+- `pool_before_count`
+- `pool_after_count`
+- `pool_build_diagnostics`
+
+That way, a zero-output day becomes debuggable immediately instead of looking like a silent engine failure.
+
+### 5. Tighten the degraded reason contract
+Refine the engine’s failure states so they distinguish:
+- `empty_pick_pool` — no pool even after rebuild
+- `thin_pick_pool` — pool exists but below minimum threshold
+- `no_book_matched_candidates` — pool exists but no live lines matched
+- `no_valid_parlays_built` — candidates exist but strategy constraints rejected all builds
+
+This will make alerts and downstream debugging much clearer.
+
+### 6. Keep the orchestrator, but make it complementary rather than the only path
+`refresh-l10-and-rebuild` already invokes `build-daily-pick-pool`. That should stay in place for scheduled runs.
+
+Small refinement:
+- keep the proactive pool-build phase in `supabase/functions/refresh-l10-and-rebuild/index.ts`
+- update its status messaging so it reflects whether the pool was built fresh, reused, or remained thin
+- rely on `parlay-engine-v2` as the final safety net if a later run finds the pool missing anyway
+
+### 7. Ensure broadcast flows inherit the fix automatically
+`parlay-engine-v2-broadcast` already calls `parlay-engine-v2` when `generate_first` is enabled. Once `parlay-engine-v2` can auto-build a missing pool, that broadcast path will inherit the same recovery behavior without needing duplicate logic.
+
+## Files to update
+
+- `supabase/functions/parlay-engine-v2/index.ts`
+- `supabase/functions/refresh-l10-and-rebuild/index.ts`
+
+Likely no new file is required, because:
+- `supabase/functions/build-daily-pick-pool/index.ts` already exists and should be reused
+
+## Behavior after the change
+
+If `bot_daily_pick_pool` is missing for today:
 
 ```text
-refresh props
--> run risk engine
--> build daily pick pool
--> verify pool count
--> run parlay-engine-v2
--> run downstream scanners
+parlay-engine-v2
+→ checks pool
+→ detects empty/thin pool
+→ invokes build-daily-pick-pool
+→ reloads pool
+→ continues generation if pool recovered
+→ otherwise returns a precise degraded reason
 ```
 
-Add an explicit pre-generation gate:
-- if `bot_daily_pick_pool` count is below a minimum threshold, do not silently continue
-- mark the run as degraded/failed
-- send a clear admin alert with:
-  - risk pick count
-  - pool count
-  - fresh prop count
-  - likely cause
+## Technical details
 
-This prevents “messages but no parlays” behavior.
+- Use the existing ET date helper behavior so the pool date and parlay date stay aligned.
+- Keep score integrity intact: continue using the composite score written by `build-daily-pick-pool` as the ranking confidence.
+- Do not move pool-building logic into frontend code.
+- Do not introduce raw SQL or duplicate conversion code.
+- The auto-build should use validated defaults such as:
+  - `minimum_risk_rows: 8`
+  - `minimum_pool_rows: 12`
+  - `fallback_limit: 40`
+- The rebuild attempt should be request-scoped only, not stored in globals.
 
-### 3. Make `parlay-engine-v2` fail loudly and diagnostically on empty input
-Adjust `supabase/functions/parlay-engine-v2/index.ts` so that:
-- empty pool returns a structured response explaining why no parlays were built
-- it reports:
-  - pool rows loaded
-  - candidates after book matching
-  - leg rejections by reason
-- in non-dry-run mode, if zero pool rows are present, it should return a clear failure/degraded status instead of appearing successful
+## Validation after implementation
 
-This will make future breakages obvious.
-
-### 4. Improve pool scoring so the engine can rank candidates properly
-Use the existing project rule from memory:
-- final pool confidence should be driven by a meaningful composite score, not flat/raw hit-rate defaults
-
-Implementation details:
-- compute `confidence_score` / `composite_score` from available upstream fields:
-  - model confidence
-  - hit rate
-  - edge
-  - category weighting
-  - optional price sanity
-- avoid writing generic `"uncategorized"` unless no better label exists
-- preserve enough score variance for engine ranking and strategy selection
-
-### 5. Add a resilience fallback when risk-engine volume is too low
-Because today only one risk pick exists, the pipeline needs a controlled fallback path.
-
-Add fallback policy in the pool builder:
-- if risk-engine approved picks < threshold, supplement from `category_sweet_spots`
-- only include rows that have:
-  - active line
-  - actual/recommended line
-  - confidence floor
-  - valid side
-- tag fallback origin in `category` or a source field so diagnostics stay honest
-
-Goal:
-- allow the engine to generate a slate on thin days without pretending everything came from the risk engine
-
-### 6. Tighten upstream observability around the low-volume source problem
-The pool issue is the immediate blocker, but upstream coverage is also broken.
-
-Add diagnostics to the orchestrator alert payload:
-- fresh prop count
-- risk-engine approved count
-- pool built count
-- category fallback count
-- parlay insert count
-
-Also investigate and patch the current broken data inputs that are reducing candidate volume:
-- PrizePicks scraper `403` failures
-- any source-specific schema issues causing props not to qualify
-- source mismatches that prevent approved picks from becoming usable pool rows
-
-This part should be done after the pool builder is restored, so we separate “missing bridge” from “low source volume”.
-
-### 7. Verify with an end-to-end rebuild
-After implementation:
-- trigger the rebuild for today
-- confirm:
-  - `bot_daily_pick_pool` is populated
-  - `parlay-engine-v2` receives candidates
-  - `bot_daily_parlays` gets new pending rows
-  - UI shows actual parlays instead of only status messaging
-
-Validation checks:
-- count rows in `bot_daily_pick_pool` for today
-- inspect a sample of inserted pool rows for correct side/line/category/confidence
-- run `parlay-engine-v2` dry-run and verify `candidates_in > 0`
-- confirm inserted parlays for today
-- verify no silent “ok with zero output” path remains
-
-## Files likely to change
-
-- `supabase/functions/refresh-l10-and-rebuild/index.ts`
-- `supabase/functions/parlay-engine-v2/index.ts`
-- new backend function for pool building, likely:
-  - `supabase/functions/build-daily-pick-pool/index.ts`
-
-Potentially also:
-- source mapping helpers or shared utilities for score normalization
-- tests for the new pool-builder and parlay empty-input diagnostics
-
-## Technical notes
-
-- No schema change is strictly required because `bot_daily_pick_pool` already exists with the needed columns.
-- This is primarily an orchestration and data-bridging fix.
-- The most important behavioral change is: zero-input generation must become an explicit failure state, not a “successful run with warnings.”
-- The fallback path should be conservative, so it restores output without degrading slate quality too aggressively.
+1. Invoke `parlay-engine-v2` for a date with an empty pool
+2. Confirm it automatically calls the pool builder
+3. Confirm `bot_daily_pick_pool` is populated
+4. Confirm the engine either:
+   - generates parlays, or
+   - returns a precise degraded reason with pool diagnostics
+5. Confirm orchestrator logs and alerts reflect the recovered-vs-failed state clearly
 
 ## Expected outcome
 
-After this fix:
-- today’s approved picks will actually be transformed into parlay candidates
-- empty-pool days will be surfaced immediately instead of hidden behind status messages
-- parlay generation will either produce real slates or fail with a precise reason
-- the app will stop appearing “alive” while generating nothing
+After this change:
+- missing pools will no longer cause confusing “messages only” runs
+- the system will auto-convert `nba_risk_engine_picks` into `bot_daily_pick_pool` when needed
+- scheduled rebuilds remain proactive
+- direct generation paths become self-healing
+- failures become explicit and diagnosable instead of silent
