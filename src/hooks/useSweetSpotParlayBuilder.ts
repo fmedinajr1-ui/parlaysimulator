@@ -386,6 +386,27 @@ export interface DecisionTrace {
   blockReason?: string;
 }
 
+export interface DecisionTraceRow {
+  player: string;
+  team?: string;
+  category: string | null;
+  prop?: string;
+  side?: string;
+  archetypeAligned: boolean;
+  patternScore: number;
+  patternReason?: string;
+  defenseRank?: number;
+  l10?: number;
+  conf?: number;
+  scoreTotal: number;
+  scorePattern: number;
+  scoreL10: number;
+  scoreConf: number;
+  scorePenalty: number;
+  selected: boolean;
+  blockedReason?: string;
+}
+
 export interface DreamTeamLeg {
   pick: SweetSpotPick;
   team: string;

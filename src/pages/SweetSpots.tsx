@@ -19,17 +19,17 @@ import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
 import { cn } from "@/lib/utils";
 import { AppShell } from "@/components/layout/AppShell";
-import type { PropType, DeepSweetSpot } from "@/types/sweetSpot";
+import type { PropType, DeepSweetSpot, SweetSpotFunnelMode } from "@/types/sweetSpot";
 import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
 import type { PlayerMatchupAnalysis } from "@/types/matchupScanner";
+import { useSweetSpotFunnelPreference } from "@/hooks/useSweetSpotFunnelPreference";
+import { toast } from "sonner";
 
 type PropFilter = PropType | 'all';
 type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE' | 'ON_TRACK';
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
 type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
 type MainTab = 'sweet-spots' | 'matchup-scanner' | 'contrarian';
-type FunnelMode = 'core' | 'aggressive';
-
 export default function SweetSpots() {
   const { data, isLoading, error, refetch, isFetching } = useDeepSweetSpots();
   const { addLeg } = useParlayBuilder();
@@ -54,7 +54,7 @@ export default function SweetSpots() {
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('score');
   const [paceFilter, setPaceFilter] = useState<PaceFilter>('all');
-  const [funnelMode, setFunnelMode] = useState<FunnelMode>('core');
+  const { funnelMode, setFunnelMode, isSaving: isSavingFunnelMode } = useSweetSpotFunnelPreference();
   
   // Monte Carlo simulation hook
   const {
@@ -82,6 +82,14 @@ export default function SweetSpots() {
     [enrichedSpots]
   );
   
+  const handleFunnelModeChange = useCallback(async (nextMode: SweetSpotFunnelMode) => {
+    if (nextMode === funnelMode) return;
+    const result = await setFunnelMode(nextMode);
+    if (!result.success) {
+      toast.error("Saved locally, but backend sync failed");
+    }
+  }, [funnelMode, setFunnelMode]);
+
   const filteredSpots = useMemo(() => {
     let filtered = [...enrichedSpots];
     
@@ -158,7 +166,7 @@ export default function SweetSpots() {
     });
     
     return filtered;
-  }, [enrichedSpots, propFilter, qualityFilter, paceFilter, sortBy, spotsWithLineMovement]);
+  }, [enrichedSpots, funnelMode, propFilter, qualityFilter, paceFilter, sortBy, spotsWithLineMovement]);
   
   const handleAddToBuilder = (spot: DeepSweetSpot) => {
     const propConfig = PROP_TYPE_CONFIG[spot.propType];
@@ -349,7 +357,8 @@ export default function SweetSpots() {
                     <Button
                       size="sm"
                       variant={funnelMode === 'core' ? 'default' : 'ghost'}
-                      onClick={() => setFunnelMode('core')}
+                      onClick={() => handleFunnelModeChange('core')}
+                      disabled={isSavingFunnelMode}
                       className="h-8 px-3 text-xs"
                     >
                       Core
@@ -357,7 +366,8 @@ export default function SweetSpots() {
                     <Button
                       size="sm"
                       variant={funnelMode === 'aggressive' ? 'default' : 'ghost'}
-                      onClick={() => setFunnelMode('aggressive')}
+                      onClick={() => handleFunnelModeChange('aggressive')}
+                      disabled={isSavingFunnelMode}
                       className="h-8 px-3 text-xs"
                     >
                       Aggressive

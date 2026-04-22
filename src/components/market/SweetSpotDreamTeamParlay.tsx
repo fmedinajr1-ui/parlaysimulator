@@ -26,6 +26,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
+import { useSweetSpotFunnelPreference } from "@/hooks/useSweetSpotFunnelPreference";
 
 const getPropTypeColor = (propType: string): string => {
   const type = propType.toLowerCase();
@@ -199,7 +200,7 @@ function RecommendationCard({
 
 export function SweetSpotDreamTeamParlay() {
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [funnelMode, setFunnelMode] = useState<BuilderFunnelMode>("aggressive");
+  const { funnelMode, setFunnelMode, isSaving: isSavingFunnelMode } = useSweetSpotFunnelPreference();
   const {
     recommendedParlays,
     coreRecommendedParlays,
@@ -214,6 +215,15 @@ export function SweetSpotDreamTeamParlay() {
 
   const activePacks = funnelMode === "core" ? coreRecommendedParlays : recommendedParlays;
   const cards = [activePacks.twoLeg, activePacks.threeLeg, activePacks.fourLeg].filter(Boolean);
+
+  const handleFunnelChange = async (value: string) => {
+    const nextMode = value as BuilderFunnelMode;
+    if (nextMode === funnelMode) return;
+    const result = await setFunnelMode(nextMode);
+    if (!result.success) {
+      toast.error("Saved locally, but backend sync failed");
+    }
+  };
 
   const handleRegenerate = async () => {
     setIsRegenerating(true);
@@ -318,10 +328,10 @@ export function SweetSpotDreamTeamParlay() {
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
-          <Tabs value={funnelMode} onValueChange={(value) => setFunnelMode(value as BuilderFunnelMode)}>
+          <Tabs value={funnelMode} onValueChange={handleFunnelChange}>
             <TabsList className="grid grid-cols-2 w-[240px]">
-              <TabsTrigger value="core">Core</TabsTrigger>
-              <TabsTrigger value="aggressive">Aggressive</TabsTrigger>
+              <TabsTrigger value="core" disabled={isSavingFunnelMode}>Core</TabsTrigger>
+              <TabsTrigger value="aggressive" disabled={isSavingFunnelMode}>Aggressive</TabsTrigger>
             </TabsList>
           </Tabs>
 
