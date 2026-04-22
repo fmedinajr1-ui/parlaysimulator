@@ -1,128 +1,176 @@
 
-## Fix the bad engine selection, missing Sweet Spot picks, and Telegram truncation
+## Rebuild Sweet Spots as a scanner-aware ranking layer, not a separate gated silo
 
-### What will be fixed
+### What will change
 
-Your screenshots point to three separate issues:
+You’re right: Sweet Spots should not behave like an isolated model. They need to work cohesively with the live book scanners so the system is using the same line truth, freshness rules, drift checks, and bookmaker priorities everywhere.
 
-1. The wrong content is getting sent or prioritized, so a weaker engine is showing up instead of Sweet Spot.
-2. Some parlay messages are poorly labeled (`uncategorized`) so you can’t tell why a pick was chosen.
-3. Long Telegram messages are being cut off, so you can’t actually read the full output.
+Right now the codebase has a split:
+- `nba-player-prop-risk-engine` writes Sweet Spot-style picks into `category_sweet_spots`
+- `useDeepSweetSpots` rebuilds another Sweet Spot slate directly from `unified_props`
+- parlay/scanner systems already use book-aware rules like bookmaker priority, freshness, `is_active`, and line-drift gates
+
+That means Sweet Spots can feel disconnected from what the scanners consider valid.
 
 ### Implementation plan
 
-#### 1. Audit which engine produced each bad message and stop weak outputs from winning by default
-I’ll trace the current Telegram sources and separate them by message type:
-- Parlay engine broadcasts
-- Sweet Spot broadcasts
-- AI research digest
-- Accuracy reports
+#### 1. Make Sweet Spots consume the same scanner truth model
+I’ll align Sweet Spots with the live odds/scanner layer so they use the same core inputs and rules:
+- active lines from `unified_props`
+- bookmaker-awareness (`fanduel`, `draftkings`, `betmgm`, etc.)
+- freshness using `odds_updated_at` / `updated_at`
+- line-drift awareness
+- side-specific price availability (`over_price` / `under_price`)
 
-Then I’ll add a strict source-aware routing rule so:
-- Sweet Spot messages are sent as their own top-tier feed, not buried behind generic parlay output
-- low-quality or fallback engine outputs don’t get promoted ahead of Sweet Spot
-- every Telegram message clearly identifies its engine and strategy in readable terms
+This makes Sweet Spots a ranked overlay on top of scanner-verified book data instead of an independent funnel.
 
-#### 2. Fix the “uncategorized” labeling in parlay messages
-The screenshot shows legs rendering as `uncategorized · conf 0.86`, which means the message formatter is exposing raw or unmapped signal/category data.
+#### 2. Introduce scanner-aware Sweet Spot eligibility tiers
+Instead of one hard “approved or rejected” Sweet Spot gate, I’ll move to scanner-aware tiers:
 
-I’ll normalize this so every leg shows:
-- readable category name
-- readable prop name
-- readable reason label
-- confidence only if useful
-
-Example direction:
 ```text
-Scoot Henderson — Rebounds + Assists OVER 5.5 (+105) [FD]
-Volume Scorer · conf 0.86
+Core
+- active preferred-book line
+- fresh odds
+- low drift
+- strongest stat/profile score
+
+Aggressive
+- active line still available
+- fresh enough, but weaker score or more drift
+- still usable, just ranked lower
+
+Watch
+- scanner sees the prop, but line moved / weaker stat case / stale-ish context
+- visible for monitoring, not premium placement
 ```
 
-If the source category is missing, the formatter will fall back to a safe human-readable label instead of `uncategorized`.
+This keeps cohesion with scanners while still giving you more volume.
 
-#### 3. Restore Sweet Spot as a first-class outbound message path
-Right now the orchestration references `broadcast-sweet-spots`, but the source visible in the repo suggests Sweet Spot delivery is either missing, stale, or not guaranteed to run cleanly.
+#### 3. Keep only the scanner protections that must remain hard
+These should stay as hard blocks because they are book-integrity issues:
+- no active book line
+- no price on the chosen side
+- no usable `current_line`
+- extremely stale odds
+- severe line drift from the recommended number
+- broken prop mapping / unsupported market
 
-I’ll fix this by:
-- verifying the Sweet Spot broadcaster path end-to-end
-- ensuring Sweet Spot picks are pulled from `category_sweet_spots` for today’s ET date
-- making the Sweet Spot broadcast fail loudly if no picks are sent, instead of silently disappearing
-- keeping Sweet Spot separate from parlay-engine narratives so its best picks are always visible
+This preserves market truth.
 
-If the broadcaster is missing or drifted from production, I’ll recreate it from current data contracts and wire it back into the daily flow.
+#### 4. Soften the stat-side Sweet Spot gates into ranking penalties
+These are the parts that should become softer so Sweet Spots stay broad:
+- L10 floor
+- reliability tier
+- some confidence minimums
+- some prop-specific edge thresholds
+- some context mismatches
 
-#### 4. Add full Telegram message chunking so nothing gets cut off
-The truncation in your screenshot is real. One function already hard-caps long messages and appends “Message truncated,” and the parlay broadcaster currently sends a single Telegram message without reusable chunking.
+Instead of disappearing, these picks drop from Core to Aggressive or Watch.
 
-I’ll implement a shared Telegram chunking utility that:
-- splits long messages safely before the Telegram character limit
-- preserves formatting
-- breaks on paragraph or section boundaries when possible
-- numbers chunks like `(1/3), (2/3), (3/3)` so you can read everything in order
-- keeps inline buttons only on the first chunk if needed
+That gives you “less gates” while still honoring scanner validity.
 
-This chunker should be used in:
-- parlay-engine-v2-broadcast
-- AI research digest
-- any shared Telegram sender path available in the project
+#### 5. Refactor `useDeepSweetSpots` to become scanner-cohesive
+`useDeepSweetSpots` already builds off `unified_props`, which is the right direction. I’ll tighten its relationship to scanners by:
+- adding bookmaker preference logic similar to parlay engine behavior
+- scoring based on freshest preferred available line, not just any FanDuel row
+- exposing line freshness and drift status in the spot metadata
+- reducing silent skips and replacing them with tier downgrades
+- preserving multi-book context where available for ranking and UI display
 
-Goal: no more silent cutoffs and no more “Message truncated” unless a hard external failure occurs.
+This will make the Sweet Spots page feel like an extension of the scanner ecosystem.
 
-#### 5. Fix engine accuracy reporting so the “worst engine” can be identified correctly
-The current accuracy report shown in the code is based on `fanduel_prediction_accuracy`, which is not the same thing as:
-- Sweet Spot performance
-- parlay-engine-v2 performance
-- research digest usefulness
+#### 6. Bring homepage Sweet Spots in line with scanner-backed ranking
+`SweetSpotPicksCard` is currently too restrictive and only shows a thin subset. I’ll update it so it:
+- prioritizes scanner-valid Core picks first
+- includes Aggressive picks when Core supply is thin
+- shows why a pick is downgraded instead of hiding it
+- uses broader but still book-aware visibility rules
 
-I’ll split reporting by engine/source so you can compare:
-- Sweet Spot hit rate
-- parlay engine hit rate by strategy
-- signal-type accuracy
-- CLV vs outcome, where relevant
+Result: more live picks, but still tied to real book availability.
 
-That will prevent one weak engine from hiding inside aggregate stats and will make it obvious when Sweet Spot is outperforming the rest.
+#### 7. Make Sweet Spot output reusable by book-scanner-powered engines
+I’ll make sure the widened Sweet Spot layer can feed cleanly into:
+- Sweet Spot parlay builder
+- Heat/line movement workflows
+- scanner-based live monitoring
+- downstream ranking components
 
-#### 6. Add protections so weak engine output gets suppressed automatically
-After the accuracy split is in place, I’ll add guardrails so a strategy can be muted or deprioritized when:
-- recent hit rate falls below threshold
-- too many “uncategorized” legs appear
-- message quality fails formatting checks
-- the engine is missing sufficient rationale/source tags
+That means normalizing shared fields like:
+- selected bookmaker
+- line freshness
+- drift from original line
+- quality tier
+- scanner status
 
-This keeps the bot from shipping junk just because a generator returned something.
+So every downstream system reads the same truth instead of reinventing it.
+
+#### 8. Add shared scanner metadata to Sweet Spot objects
+I’ll extend the Sweet Spot shape so each pick can carry book-aware metadata such as:
+- `selectedBook`
+- `lineFreshness`
+- `lineDrift`
+- `hasActiveBookLine`
+- `marketStatus`
+- `tierReason`
+
+This lets the UI and builders explain why a pick is Core vs Aggressive vs Watch.
+
+#### 9. Preserve parlay/scanner consistency with existing market rules
+The parlay engine already uses:
+- `BOOKMAKER_PRIORITY`
+- `MAX_BOOK_LINE_AGE_MIN`
+- `MAX_LINE_DRIFT`
+- active line checks
+
+I’ll mirror those rules in the Sweet Spot path so Sweet Spots do not recommend props the scanner/parlay layer would later reject.
+
+This is the key cohesion fix.
 
 ### Files likely involved
 
-- `supabase/functions/parlay-engine-v2-broadcast/index.ts`
-- `supabase/functions/ai-research-agent/index.ts`
-- shared Telegram sender utilities if present in the codebase
-- Sweet Spot broadcaster function or its replacement
-- accuracy reporting functions such as `supabase/functions/accuracy-report/index.ts`
-- possibly `_shared` formatter/constants files for readable labels
+- `src/hooks/useDeepSweetSpots.ts`
+- `src/types/sweetSpot.ts`
+- `src/components/market/SweetSpotPicksCard.tsx`
+- `src/pages/SweetSpots.tsx`
+- `src/hooks/useSweetSpotParlayBuilder.ts`
+- `supabase/functions/nba-player-prop-risk-engine/index.ts`
+- possibly shared scanner-aligned constants/utilities extracted from existing book-aware logic
 
 ### Technical details
 
-#### Root causes already visible in code
-- `ai-research-agent` explicitly hard-truncates long Telegram digests near 4000 chars and appends `Message truncated`
-- `parlay-engine-v2-broadcast` sends a single Telegram message and does not appear to use shared chunking
-- parlay message rendering uses raw `signal_source`, which explains labels like `uncategorized`
-- Sweet Spot is referenced by orchestration, but the broadcaster source is not clearly present in the visible repo snapshot, so delivery may be missing, drifted, or silently failing
-- current accuracy reporting is signal-based, not engine-based, so it can’t answer “which engine is actually worst?”
+#### Current cohesion gap
+- `useDeepSweetSpots` currently reads only FanDuel rows from `unified_props`
+- parlay engine already has explicit bookmaker priority + freshness + drift logic
+- backend Sweet Spot generation is stricter on statistical gates than on scanner alignment
+- homepage Sweet Spots hide too many valid scanner-supported candidates
+
+#### New design direction
+Sweet Spots become:
+- scanner-verified first
+- statistically ranked second
+- tiered instead of binary
+- reusable by builders and live tracking
+
+#### Core rule
+```text
+If the scanner would reject the market as invalid, Sweet Spots should not surface it as a premium pick.
+If the scanner accepts the market but the stats are weaker, downgrade it instead of deleting it.
+```
 
 ### Verification after implementation
 
-I’ll verify with these checks:
-1. A long Telegram digest arrives as multiple ordered chunks with no missing text.
-2. A parlay message no longer shows `uncategorized`.
-3. Sweet Spot picks are sent for today when eligible records exist.
-4. Engine-by-engine accuracy output clearly separates Sweet Spot from parlay engine strategies.
-5. Weak or malformed engine messages are suppressed instead of broadcast.
+1. Sweet Spot picks always map to active scanner-visible book lines.
+2. Picks shown on homepage and Sweet Spots page align with current market availability.
+3. Core/Aggressive/Watch counts increase without surfacing broken or stale lines.
+4. Sweet Spot parlay builder can use the broader pool without fighting the scanner truth model.
+5. Picks rejected by scanner-level market rules do not leak into premium Sweet Spot surfaces.
+6. UI clearly explains whether a pick is downgraded due to drift, freshness, or weaker statistical quality.
 
 ### Expected outcome
 
 After this change:
-- you’ll see the full Telegram content, not clipped fragments
-- Sweet Spot will show up reliably when it has qualified picks
-- bad engines won’t dominate just because they generated something
-- every message will clearly explain what engine produced it and why
-- accuracy will finally be attributable to the right source
+- Sweet Spots will feel like part of the live book scanner system, not a disconnected side engine
+- more picks will surface because stat gates are softer
+- book integrity stays protected because scanner rules remain hard
+- homepage, Sweet Spots page, and parlay builder will all use the same market truth
+- the system will be broader, faster, and much more coherent
