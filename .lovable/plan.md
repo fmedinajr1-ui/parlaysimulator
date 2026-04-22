@@ -1,176 +1,180 @@
 
-## Rebuild Sweet Spots as a scanner-aware ranking layer, not a separate gated silo
+Implement a new Sweet Spot-backed parlay builder flow that starts from the widest scanner-ranked Sweet Spot slate, then recommends the safest 2-, 3-, and 4-leg combinations by ranking rather than by stacking more hard filters.
 
 ### What will change
 
-You’re right: Sweet Spots should not behave like an isolated model. They need to work cohesively with the live book scanners so the system is using the same line truth, freshness rules, drift checks, and bookmaker priorities everywhere.
+#### 1. Reposition the builder around the Sweet Spot ranked slate
+The current builder still pulls from older category/risk-engine sources and then applies multiple hard rejections:
+- H2H blocks
+- winning-pattern blocks
+- minimum-edge hard blocks
+- fixed category-formula quotas
+- fixed 6-leg target
 
-Right now the codebase has a split:
-- `nba-player-prop-risk-engine` writes Sweet Spot-style picks into `category_sweet_spots`
-- `useDeepSweetSpots` rebuilds another Sweet Spot slate directly from `unified_props`
-- parlay/scanner systems already use book-aware rules like bookmaker priority, freshness, `is_active`, and line-drift gates
+I’ll refactor it so the primary input is the scanner-aware Sweet Spot slate from the same ranking logic already used by the Sweet Spots experience:
+- widest eligible slate first
+- market-aware ordering first
+- softer downgrade logic preserved
+- safest combinations selected from the ranked pool
 
-That means Sweet Spots can feel disconnected from what the scanners consider valid.
+#### 2. Add a “widest ranked slate” intake mode
+The builder will load candidates in this order:
+1. active scanner-valid Sweet Spots first
+2. then stale/scanning-but-still-usable Sweet Spots if needed
+3. exclude only true off-market/broken entries
 
-### Implementation plan
-
-#### 1. Make Sweet Spots consume the same scanner truth model
-I’ll align Sweet Spots with the live odds/scanner layer so they use the same core inputs and rules:
-- active lines from `unified_props`
-- bookmaker-awareness (`fanduel`, `draftkings`, `betmgm`, etc.)
-- freshness using `odds_updated_at` / `updated_at`
-- line-drift awareness
-- side-specific price availability (`over_price` / `under_price`)
-
-This makes Sweet Spots a ranked overlay on top of scanner-verified book data instead of an independent funnel.
-
-#### 2. Introduce scanner-aware Sweet Spot eligibility tiers
-Instead of one hard “approved or rejected” Sweet Spot gate, I’ll move to scanner-aware tiers:
-
+That means the intake becomes:
 ```text
-Core
-- active preferred-book line
-- fresh odds
-- low drift
-- strongest stat/profile score
-
-Aggressive
-- active line still available
-- fresh enough, but weaker score or more drift
-- still usable, just ranked lower
-
-Watch
-- scanner sees the prop, but line moved / weaker stat case / stale-ish context
-- visible for monitoring, not premium placement
+Load broad ranked slate
+→ keep all scanner-valid candidates
+→ do not re-kill picks for weaker stats
+→ rank and recommend safest combinations
 ```
 
-This keeps cohesion with scanners while still giving you more volume.
+#### 3. Replace fixed 6-leg formula building with 2–4 leg recommendation packs
+Instead of one formula-driven 6-leg Dream Team, the builder will generate:
+- safest 2-leg
+- safest 3-leg
+- safest 4-leg
 
-#### 3. Keep only the scanner protections that must remain hard
-These should stay as hard blocks because they are book-integrity issues:
-- no active book line
-- no price on the chosen side
-- no usable `current_line`
-- extremely stale odds
-- severe line drift from the recommended number
-- broken prop mapping / unsupported market
+These will be auto-recommended from the same ranked pool, so you can immediately use the safest compact combinations instead of forcing a larger slip.
 
-This preserves market truth.
+#### 4. Remove secondary hard rejection layers from final recommendation
+The current core builder blocks too much after picks are already admitted:
+- H2H rejection
+- pattern rejection
+- minimum projection/edge rejection
+- category formula enforcement
 
-#### 4. Soften the stat-side Sweet Spot gates into ranking penalties
-These are the parts that should become softer so Sweet Spots stay broad:
-- L10 floor
-- reliability tier
-- some confidence minimums
-- some prop-specific edge thresholds
-- some context mismatches
+I’ll change those from binary rejection to ranking penalties or informational metadata, except for true structural blockers:
+- off-market / no valid line
+- exact opposite-side same-player conflict
+- duplicate player leg collision
+- clearly broken data row
 
-Instead of disappearing, these picks drop from Core to Aggressive or Watch.
+Everything else becomes score impact, not elimination.
 
-That gives you “less gates” while still honoring scanner validity.
-
-#### 5. Refactor `useDeepSweetSpots` to become scanner-cohesive
-`useDeepSweetSpots` already builds off `unified_props`, which is the right direction. I’ll tighten its relationship to scanners by:
-- adding bookmaker preference logic similar to parlay engine behavior
-- scoring based on freshest preferred available line, not just any FanDuel row
-- exposing line freshness and drift status in the spot metadata
-- reducing silent skips and replacing them with tier downgrades
-- preserving multi-book context where available for ranking and UI display
-
-This will make the Sweet Spots page feel like an extension of the scanner ecosystem.
-
-#### 6. Bring homepage Sweet Spots in line with scanner-backed ranking
-`SweetSpotPicksCard` is currently too restrictive and only shows a thin subset. I’ll update it so it:
-- prioritizes scanner-valid Core picks first
-- includes Aggressive picks when Core supply is thin
-- shows why a pick is downgraded instead of hiding it
-- uses broader but still book-aware visibility rules
-
-Result: more live picks, but still tied to real book availability.
-
-#### 7. Make Sweet Spot output reusable by book-scanner-powered engines
-I’ll make sure the widened Sweet Spot layer can feed cleanly into:
-- Sweet Spot parlay builder
-- Heat/line movement workflows
-- scanner-based live monitoring
-- downstream ranking components
-
-That means normalizing shared fields like:
-- selected bookmaker
-- line freshness
-- drift from original line
+#### 5. Score for safety instead of gatekeeping
+The recommendation engine will compute a “safest parlay” score from the ranked slate using:
+- Sweet Spot score
 - quality tier
-- scanner status
+- market status/freshness
+- line drift
+- confidence score
+- L10 hit rate when present
+- mild correlation/synergy effects
+- diversity across players/teams when helpful
 
-So every downstream system reads the same truth instead of reinventing it.
+This keeps the selection intelligent without deleting half the slate.
 
-#### 8. Add shared scanner metadata to Sweet Spot objects
-I’ll extend the Sweet Spot shape so each pick can carry book-aware metadata such as:
-- `selectedBook`
-- `lineFreshness`
-- `lineDrift`
-- `hasActiveBookLine`
-- `marketStatus`
-- `tierReason`
+#### 6. Add a builder mode/funnel option
+The new builder should follow the same Sweet Spot funnel language already used elsewhere:
+- Core: tighter recommended combos from active premium-quality candidates
+- Aggressive: broader ranked pool with fallback scanner-valid candidates
 
-This lets the UI and builders explain why a pick is Core vs Aggressive vs Watch.
+This keeps the parlay builder aligned with the Core vs Aggressive Sweet Spot experience instead of inventing another hidden funnel.
 
-#### 9. Preserve parlay/scanner consistency with existing market rules
-The parlay engine already uses:
-- `BOOKMAKER_PRIORITY`
-- `MAX_BOOK_LINE_AGE_MIN`
-- `MAX_LINE_DRIFT`
-- active line checks
+#### 7. Update the UI to show the new recommendation structure
+The current `SweetSpotDreamTeamParlay` UI is framed as one “Optimal Parlay” and assumes a larger fixed build. I’ll update it to show:
+- safest 2-leg card
+- safest 3-leg card
+- safest 4-leg card
+- active funnel badge (Core or Aggressive)
+- why a combo is recommended
+- wider-slate count / candidate pool count
 
-I’ll mirror those rules in the Sweet Spot path so Sweet Spots do not recommend props the scanner/parlay layer would later reject.
+The add-to-builder action will work per recommendation, not only as one monolithic build.
 
-This is the key cohesion fix.
+#### 8. Preserve explanations instead of silent filtering
+For each recommended combo, the UI will explain why it floated to the top:
+- fresh active book
+- high Sweet Spot score
+- strong L10 support
+- low drift
+- low internal conflict
+- downgraded but still viable if in Aggressive mode
 
-### Files likely involved
+That way weaker candidates are visible as lower-ranked, not mysteriously absent.
 
-- `src/hooks/useDeepSweetSpots.ts`
-- `src/types/sweetSpot.ts`
-- `src/components/market/SweetSpotPicksCard.tsx`
-- `src/pages/SweetSpots.tsx`
+### Files to update
+
 - `src/hooks/useSweetSpotParlayBuilder.ts`
-- `supabase/functions/nba-player-prop-risk-engine/index.ts`
-- possibly shared scanner-aligned constants/utilities extracted from existing book-aware logic
+  - refactor intake source toward ranked Sweet Spot pool
+  - add funnel-aware candidate selection
+  - generate safest 2/3/4-leg recommendations
+  - replace hard filters with score penalties where possible
+- `src/components/market/SweetSpotDreamTeamParlay.tsx`
+  - redesign from one fixed parlay into recommended 2–4 leg packs
+  - add funnel indicator and add-to-builder per pack
+- `src/hooks/useDailyParlays.ts`
+  - adapt any consumers expecting only one `optimalParlay`
+- `src/hooks/useSweetSpotParlayBuilder.test.ts`
+  - rewrite/add tests for ranked-slate intake and 2/3/4-leg outputs
+- possibly `src/types/sweetSpot.ts`
+  - only if a shared recommendation/metadata type is needed
 
-### Technical details
+### Technical design
 
-#### Current cohesion gap
-- `useDeepSweetSpots` currently reads only FanDuel rows from `unified_props`
-- parlay engine already has explicit bookmaker priority + freshness + drift logic
-- backend Sweet Spot generation is stricter on statistical gates than on scanner alignment
-- homepage Sweet Spots hide too many valid scanner-supported candidates
-
-#### New design direction
-Sweet Spots become:
-- scanner-verified first
-- statistically ranked second
-- tiered instead of binary
-- reusable by builders and live tracking
-
-#### Core rule
+#### New builder shape
+Instead of:
 ```text
-If the scanner would reject the market as invalid, Sweet Spots should not surface it as a premium pick.
-If the scanner accepts the market but the stats are weaker, downgrade it instead of deleting it.
+fetch mixed sources
+→ hard reject heavily
+→ force formula categories
+→ fill to 6 legs
 ```
 
-### Verification after implementation
+It will become:
+```text
+fetch broad Sweet Spot ranked slate
+→ keep scanner-valid candidates
+→ apply soft safety scoring
+→ build best 2-leg, 3-leg, 4-leg recommendations
+```
 
-1. Sweet Spot picks always map to active scanner-visible book lines.
-2. Picks shown on homepage and Sweet Spots page align with current market availability.
-3. Core/Aggressive/Watch counts increase without surfacing broken or stale lines.
-4. Sweet Spot parlay builder can use the broader pool without fighting the scanner truth model.
-5. Picks rejected by scanner-level market rules do not leak into premium Sweet Spot surfaces.
-6. UI clearly explains whether a pick is downgraded due to drift, freshness, or weaker statistical quality.
+#### Hard blocks that should remain
+Only keep truly necessary blockers:
+- off-market candidate
+- missing selected line / broken line row
+- duplicate exact leg
+- same-player opposite-side conflict
+- impossible combination state
+
+#### Soft penalties instead of blocks
+These become score reductions:
+- weaker H2H
+- weaker L10
+- stale/scanning status
+- lower confidence
+- drift
+- weaker pattern fit
+- thinner projection support
+
+#### Output contract
+The hook should return something like:
+- `recommendedParlays.twoLeg`
+- `recommendedParlays.threeLeg`
+- `recommendedParlays.fourLeg`
+- `candidatePool`
+- `funnelMode`
+- `poolStats`
+
+This will make the UI simpler and keep downstream consumers explicit.
+
+### Verification
+
+1. Core mode recommends 2-, 3-, and 4-leg combos from the tightest active Sweet Spot pool.
+2. Aggressive mode widens the candidate pool without collapsing into empty results.
+3. Picks no longer disappear because of extra H2H/pattern/edge kill gates.
+4. Off-market and broken-line candidates still stay out.
+5. Add-to-builder works for each recommended combo.
+6. Tests cover deterministic output for ranked intake and combo sizes 2/3/4.
 
 ### Expected outcome
 
 After this change:
-- Sweet Spots will feel like part of the live book scanner system, not a disconnected side engine
-- more picks will surface because stat gates are softer
-- book integrity stays protected because scanner rules remain hard
-- homepage, Sweet Spots page, and parlay builder will all use the same market truth
-- the system will be broader, faster, and much more coherent
+- the builder will start from the widest valid Sweet Spot slate
+- you’ll get instant safest 2–4 leg recommendations
+- stronger picks rise by score instead of weaker picks getting hard-killed
+- Core and Aggressive behavior will stay aligned with the Sweet Spot funnel
+- the parlay builder will feel much broader, faster, and more usable
