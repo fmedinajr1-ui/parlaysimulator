@@ -1,0 +1,41 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`SweetSpot Parlay Builder - Golden Snapshot > locks score values for frozen slate 1`] = `
+[
+  {
+    "player": "Luguentz Dort",
+    "score": "15.025",
+  },
+  {
+    "player": "Ja Morant",
+    "score": "11.417",
+  },
+  {
+    "player": "Dorian Finney-Smith",
+    "score": "8.533",
+  },
+  {
+    "player": "Unknown Rookie",
+    "score": "8.313",
+  },
+  {
+    "player": "Nikola Vucevic",
+    "score": "6.720",
+  },
+  {
+    "player": "Rudy Gobert",
+    "score": "4.910",
+  },
+]
+`;
+
+exports[`SweetSpot Parlay Builder - Golden Snapshot > produces stable Optimal legs for frozen slate 1`] = `
+[
+  "Luguentz Dort|LOW_SCORER_UNDER",
+  "Ja Morant|STAR_FLOOR_OVER",
+  "Dorian Finney-Smith|ROLE_PLAYER_REB",
+  "Unknown Rookie|LOW_SCORER_UNDER",
+  "Nikola Vucevic|BIG_ASSIST_OVER",
+  "Rudy Gobert|ELITE_REB_OVER",
+]
+`;
