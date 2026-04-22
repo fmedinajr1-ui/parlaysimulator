@@ -851,19 +851,23 @@ export interface BuilderInput {
  * Output from pure core builder function
  */
 export interface BuilderOutput {
-  selectedLegs: DreamTeamLeg[];
+  rankedCandidates: DreamTeamLeg[];
+  recommendations: RecommendationSet;
   traces: DecisionTraceRow[];
   diagnostics: {
     totalCandidates: number;
-    archetypeFiltered: number;
-    h2hBlocked: string[];
-    patternBlocked: string[];
+    structurallyBlocked: number;
+    conflictSkipped: string[];
+    downgradedSignals: string[];
     selectedCount: number;
   };
+  poolStats: RecommendationPoolStats;
   activePreset: string;
   displayedDate: string;
+  funnelMode: BuilderFunnelMode;
 }
 
+// ========== PURE CORE BUILDER FUNCTION v3.4 ==========
 // ========== PURE CORE BUILDER FUNCTION v3.4 ==========
 /**
  * Pure, testable core function for building optimal parlays
