@@ -86,6 +86,14 @@ export function useSweetSpotFunnelPreference() {
 
         if (error) throw error;
 
+        await supabase.functions.invoke("sweet-spot-telegram-sync", {
+          body: {
+            funnelMode: nextMode,
+            source: "app-toggle",
+            notifyAdmin: true,
+          },
+        });
+
         return { success: true, persisted: "cloud" as const };
       } catch (error) {
         console.error("[SweetSpotPreference] Failed to save funnel mode:", error);
