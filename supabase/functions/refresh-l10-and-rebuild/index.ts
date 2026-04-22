@@ -75,6 +75,7 @@ Deno.serve(async (req) => {
   const results: Record<string, string> = {};
   const skipped: string[] = [];
   const warnings: string[] = [];
+  const statmuseDiagnostics: Record<string, number | string> = {};
 
   // BUG 2 FIX: closure-scoped flag — not shared between invocations or
   // across concurrent runs, and automatically reset for every fresh request.
@@ -242,27 +243,135 @@ Deno.serve(async (req) => {
       label: "Scrape StatMuse quarter stats",
       run: async () => {
         log("=== PHASE 1.5: Scraping real quarter stats (StatMuse) ===");
-        const { data: slateProps } = await supabase
+        const freshnessWindow = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+        const recentBaselineWindow = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const PHASE_BUDGET_MS = 45_000;
+        const BATCH_SIZE = 4;
+        const MAX_PLAYERS_PER_RUN = 12;
+        const phaseStartedAt = Date.now();
+
+        const { data: slateProps, error: slatePropsError } = await supabase
           .from("unified_props")
           .select("player_name")
-          .or(`odds_updated_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()},updated_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()},created_at.gte.${new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()}`);
+          .or(`odds_updated_at.gte.${freshnessWindow},updated_at.gte.${freshnessWindow},created_at.gte.${freshnessWindow}`);
+
+        if (slatePropsError) {
+          const reason = `slate props lookup failed: ${slatePropsError.message}`;
+          warnings.push(`StatMuse phase: ${reason}`);
+          results["scrape-statmuse-quarter-stats"] = `warning:${reason}`;
+          statmuseDiagnostics.statmuse_phase_status = "slate_lookup_failed";
+          log(`⚠ ${reason}`);
+          return;
+        }
 
         const slatePlayers = [...new Set((slateProps || []).map((p: any) => p.player_name).filter(Boolean))];
-        if (slatePlayers.length > 0) {
-          for (let i = 0; i < slatePlayers.length; i++) {
-            if (!hasTime()) {
-              log(`⏭ Skipping remaining StatMuse batches (${i}/${slatePlayers.length}) — timeout`);
-              break;
-            }
-            await invokeStep(
-              `StatMuse quarter stats batch ${i + 1}/${slatePlayers.length}`,
-              "scrape-statmuse-quarter-stats",
-              { playerNames: [slatePlayers[i]] }
-            );
-          }
-          log(`StatMuse: processed ${slatePlayers.length} slate players`);
-        } else {
+        statmuseDiagnostics.slate_players_total = slatePlayers.length;
+
+        if (slatePlayers.length === 0) {
+          statmuseDiagnostics.statmuse_phase_status = "no_slate_players";
           log("No slate players found, skipping StatMuse scrape");
+          return;
+        }
+
+        const { data: recentBaselines, error: recentBaselinesError } = await supabase
+          .from("player_quarter_baselines")
+          .select("player_name, updated_at, data_source")
+          .in("player_name", slatePlayers)
+          .eq("data_source", "statmuse")
+          .gte("updated_at", recentBaselineWindow);
+
+        if (recentBaselinesError) {
+          const reason = `baseline coverage lookup failed: ${recentBaselinesError.message}`;
+          warnings.push(`StatMuse phase: ${reason}`);
+          results["scrape-statmuse-quarter-stats"] = `warning:${reason}`;
+          statmuseDiagnostics.statmuse_phase_status = "baseline_lookup_failed";
+          log(`⚠ ${reason}`);
+          return;
+        }
+
+        const coveredPlayers = new Set((recentBaselines || []).map((row: any) => row.player_name).filter(Boolean));
+        const missingPlayers = slatePlayers.filter(player => !coveredPlayers.has(player));
+        const playersToAttempt = missingPlayers.slice(0, MAX_PLAYERS_PER_RUN);
+
+        statmuseDiagnostics.statmuse_recent_baseline_players = coveredPlayers.size;
+        statmuseDiagnostics.statmuse_missing_players = missingPlayers.length;
+        statmuseDiagnostics.statmuse_players_capped = Math.max(0, missingPlayers.length - playersToAttempt.length);
+
+        if (playersToAttempt.length === 0) {
+          statmuseDiagnostics.statmuse_phase_status = "no_missing_players";
+          results["scrape-statmuse-quarter-stats"] = "ok:no_missing_players";
+          log(`StatMuse: ${coveredPlayers.size}/${slatePlayers.length} slate players already covered by recent baselines`);
+          return;
+        }
+
+        let attemptedBatches = 0;
+        let processedPlayers = 0;
+        let failedPlayers = 0;
+        let completedAllBatches = true;
+
+        for (let i = 0; i < playersToAttempt.length; i += BATCH_SIZE) {
+          const batch = playersToAttempt.slice(i, i + BATCH_SIZE);
+          const phaseElapsed = Date.now() - phaseStartedAt;
+          if (!hasTime() || phaseElapsed >= PHASE_BUDGET_MS) {
+            completedAllBatches = false;
+            log(`⏭ Skipping remaining StatMuse batches (${i}/${playersToAttempt.length}) — phase budget hit at ${phaseElapsed}ms`);
+            break;
+          }
+
+          attemptedBatches += 1;
+          log(`▶ StatMuse quarter stats batch ${attemptedBatches}: ${batch.join(", ")}`);
+
+          try {
+            const { data, error } = await supabase.functions.invoke("scrape-statmuse-quarter-stats", {
+              body: { playerNames: batch },
+            });
+
+            if (error) {
+              failedPlayers += batch.length;
+              completedAllBatches = false;
+              const errMsg = error.message || JSON.stringify(error);
+              warnings.push(`StatMuse batch ${attemptedBatches} failed: ${errMsg}`);
+              log(`⚠ StatMuse batch ${attemptedBatches} failed: ${errMsg}`);
+              continue;
+            }
+
+            const playerResults = (data && typeof data === "object" && data.results && typeof data.results === "object")
+              ? data.results as Record<string, string>
+              : {};
+
+            for (const playerName of batch) {
+              const status = playerResults[playerName] || "unknown";
+              if (status.startsWith("ok")) {
+                processedPlayers += 1;
+              } else {
+                failedPlayers += 1;
+              }
+            }
+          } catch (e: any) {
+            failedPlayers += batch.length;
+            completedAllBatches = false;
+            const errMsg = e?.message || "Unknown exception";
+            warnings.push(`StatMuse batch ${attemptedBatches} exception: ${errMsg}`);
+            log(`❌ StatMuse batch ${attemptedBatches} exception: ${errMsg}`);
+          }
+        }
+
+        statmuseDiagnostics.statmuse_batches_attempted = attemptedBatches;
+        statmuseDiagnostics.statmuse_players_attempted = playersToAttempt.length;
+        statmuseDiagnostics.statmuse_players_processed = processedPlayers;
+        statmuseDiagnostics.statmuse_players_failed = failedPlayers;
+        statmuseDiagnostics.statmuse_phase_budget_ms = PHASE_BUDGET_MS;
+        statmuseDiagnostics.statmuse_phase_elapsed_ms = Date.now() - phaseStartedAt;
+
+        if (processedPlayers === 0 && failedPlayers > 0) {
+          statmuseDiagnostics.statmuse_phase_status = completedAllBatches ? "failed" : "skipped_timeout";
+          results["scrape-statmuse-quarter-stats"] = `warning:${failedPlayers}_players_failed`;
+        } else if (!completedAllBatches || failedPlayers > 0) {
+          statmuseDiagnostics.statmuse_phase_status = !completedAllBatches ? "partial_timeout" : "partial";
+          results["scrape-statmuse-quarter-stats"] = `partial:${processedPlayers}_ok:${failedPlayers}_failed`;
+        } else {
+          statmuseDiagnostics.statmuse_phase_status = "completed";
+          results["scrape-statmuse-quarter-stats"] = `ok:${processedPlayers}_players`;
         }
       },
     },
@@ -604,6 +713,7 @@ Deno.serve(async (req) => {
       required_failures: requiredFailures,
       optional_failures: optionalFailures,
       diagnostics,
+      statmuse_diagnostics: statmuseDiagnostics,
       will_continue: skipped.length > 0 && currentAttempt < MAX_ATTEMPTS,
       elapsed: elapsed(),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
