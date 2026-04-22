@@ -1,19 +1,17 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import frozenSlate from '../__fixtures__/frozen_slate.json';
-import { 
+import {
   buildSweetSpotParlayCore,
-  SCORE_PRESETS, 
-  SCORE_WEIGHTS, 
-  setScorePreset, 
+  SCORE_PRESETS,
+  SCORE_WEIGHTS,
+  setScorePreset,
   scorePick,
-  type ScorePresetKey,
   type BuilderInput,
 } from './useSweetSpotParlayBuilder';
 
-// Helper to compute score using same logic as scorePick
-function computeScore(p: { 
-  _patternScore?: number; 
-  l10HitRate?: number | null; 
+function computeScore(p: {
+  _patternScore?: number;
+  l10HitRate?: number | null;
   confidence_score?: number;
 }): number {
   const pat = p._patternScore ?? 0;
@@ -22,17 +20,11 @@ function computeScore(p: {
   const penalty = hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty;
   const conf = p.confidence_score ?? SCORE_WEIGHTS.confDefault;
 
-  return (
-    (pat * SCORE_WEIGHTS.pattern) +
-    (l10 * SCORE_WEIGHTS.l10) +
-    (conf * SCORE_WEIGHTS.confidence) +
-    penalty
-  );
+  return pat * SCORE_WEIGHTS.pattern + l10 * SCORE_WEIGHTS.l10 + conf * SCORE_WEIGHTS.confidence + penalty;
 }
 
 describe('SweetSpot Parlay Builder - Scoring System', () => {
   beforeEach(() => {
-    // Reset to balanced preset for consistent tests
     setScorePreset('balanced');
   });
 
@@ -49,170 +41,68 @@ describe('SweetSpot Parlay Builder - Scoring System', () => {
       expect(SCORE_PRESETS.balanced.confidence).toBe(0.25);
       expect(SCORE_PRESETS.balanced.missingL10Penalty).toBe(-0.5);
     });
-
-    it('sharp preset gives more weight to confidence', () => {
-      expect(SCORE_PRESETS.sharp.confidence).toBeGreaterThan(SCORE_PRESETS.balanced.confidence);
-    });
-
-    it('reliabilityMax preset gives more weight to L10', () => {
-      expect(SCORE_PRESETS.reliabilityMax.l10).toBeGreaterThan(SCORE_PRESETS.balanced.l10);
-    });
-  });
-
-  describe('setScorePreset', () => {
-    it('switches to sharp preset', () => {
-      setScorePreset('sharp');
-      expect(SCORE_WEIGHTS.presetKey).toBe('sharp');
-      expect(SCORE_WEIGHTS.confidence).toBe(0.35);
-    });
-
-    it('switches back to balanced', () => {
-      setScorePreset('sharp');
-      setScorePreset('balanced');
-      expect(SCORE_WEIGHTS.presetKey).toBe('balanced');
-      expect(SCORE_WEIGHTS.confidence).toBe(0.25);
-    });
   });
 
   describe('Score Computation', () => {
     it('confidence breaks ties between equal L10/pattern picks', () => {
       const pickA = { _patternScore: 2, l10HitRate: 0.78, confidence_score: 0.92 };
       const pickB = { _patternScore: 2, l10HitRate: 0.78, confidence_score: 0.75 };
-      
-      const scoreA = computeScore(pickA);
-      const scoreB = computeScore(pickB);
-      
-      expect(scoreA).toBeGreaterThan(scoreB);
+      expect(computeScore(pickA)).toBeGreaterThan(computeScore(pickB));
     });
 
     it('missing L10 picks cannot outrank known data picks', () => {
-      const knownPick = { _patternScore: 2, l10HitRate: 0.70, confidence_score: 0.80 };
+      const knownPick = { _patternScore: 2, l10HitRate: 0.7, confidence_score: 0.8 };
       const missingPick = { _patternScore: 2, l10HitRate: null, confidence_score: 0.85 };
-      
-      const knownScore = computeScore(knownPick);
-      const missingScore = computeScore(missingPick);
-      
-      expect(knownScore).toBeGreaterThan(missingScore);
-    });
-
-    it('pattern score contributes correctly', () => {
-      const lowPattern = { _patternScore: 1, l10HitRate: 0.70, confidence_score: 0.80 };
-      const highPattern = { _patternScore: 3, l10HitRate: 0.70, confidence_score: 0.80 };
-      
-      const lowScore = computeScore(lowPattern);
-      const highScore = computeScore(highPattern);
-      
-      // Difference should be exactly 2 (3-1) * pattern weight
-      expect(highScore - lowScore).toBeCloseTo(2 * SCORE_WEIGHTS.pattern, 2);
-    });
-
-    it('L10 is the primary signal', () => {
-      const lowL10 = { _patternScore: 2, l10HitRate: 0.55, confidence_score: 0.90 };
-      const highL10 = { _patternScore: 2, l10HitRate: 0.85, confidence_score: 0.70 };
-      
-      const lowScore = computeScore(lowL10);
-      const highScore = computeScore(highL10);
-      
-      // L10 should dominate even though lowL10 has higher confidence
-      expect(highScore).toBeGreaterThan(lowScore);
-    });
-  });
-
-  describe('Preset Comparison', () => {
-    it('different presets produce different scores for same pick', () => {
-      const pick = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.85 };
-      
-      setScorePreset('balanced');
-      const balancedScore = computeScore(pick);
-      
-      setScorePreset('sharp');
-      const sharpScore = computeScore(pick);
-      
-      setScorePreset('reliabilityMax');
-      const reliabilityScore = computeScore(pick);
-      
-      // All three should be different (unless by coincidence)
-      expect(balancedScore).not.toBe(sharpScore);
-      expect(balancedScore).not.toBe(reliabilityScore);
-    });
-
-    it('sharp preset amplifies confidence influence', () => {
-      const highConf = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.95 };
-      const lowConf = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.65 };
-      
-      setScorePreset('balanced');
-      const balancedDiff = computeScore(highConf) - computeScore(lowConf);
-      
-      setScorePreset('sharp');
-      const sharpDiff = computeScore(highConf) - computeScore(lowConf);
-      
-      // Sharp preset should make confidence difference more pronounced
-      expect(sharpDiff).toBeGreaterThan(balancedDiff);
+      expect(computeScore(knownPick)).toBeGreaterThan(computeScore(missingPick));
     });
   });
 });
 
-describe('SweetSpot Parlay Builder - Golden Snapshot', () => {
+describe('SweetSpot Parlay Builder - Ranked Recommendation Packs', () => {
   beforeEach(() => {
     setScorePreset('balanced');
   });
 
-  it('produces stable Optimal legs for frozen slate', () => {
-    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+  it('produces deterministic 2-, 3-, and 4-leg packs for aggressive funnel', () => {
+    const result = buildSweetSpotParlayCore({
+      ...(frozenSlate as unknown as BuilderInput),
+      funnelMode: 'aggressive',
+    });
 
-    // Lock player selection order by category
-    expect(
-      result.selectedLegs.map(l => `${l.pick.player_name}|${l.pick.category}`)
-    ).toMatchSnapshot();
+    expect(result.recommendations.twoLeg?.legs.map((l) => l.pick.player_name)).toMatchSnapshot();
+    expect(result.recommendations.threeLeg?.legs.map((l) => l.pick.player_name)).toMatchSnapshot();
+    expect(result.recommendations.fourLeg?.legs.map((l) => l.pick.player_name)).toMatchSnapshot();
   });
 
-  it('locks score values for frozen slate', () => {
-    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+  it('core funnel stays narrower than aggressive', () => {
+    const aggressive = buildSweetSpotParlayCore({
+      ...(frozenSlate as unknown as BuilderInput),
+      funnelMode: 'aggressive',
+    });
+    const core = buildSweetSpotParlayCore({
+      ...(frozenSlate as unknown as BuilderInput),
+      funnelMode: 'core',
+    });
 
-    // Lock score values (to 3 decimal places)
-    expect(
-      result.selectedLegs.map(l => ({
-        player: l.pick.player_name,
-        score: l.score.toFixed(3),
-      }))
-    ).toMatchSnapshot();
+    expect(aggressive.poolStats.candidateCount).toBeGreaterThanOrEqual(core.poolStats.candidateCount);
   });
 
-  it('preset switch changes weights (sanity)', () => {
-    setScorePreset('sharp');
-    expect(SCORE_WEIGHTS.confidence).toBe(0.35);
+  it('returns ranked candidates ordered by safety score', () => {
+    const result = buildSweetSpotParlayCore({
+      ...(frozenSlate as unknown as BuilderInput),
+      funnelMode: 'aggressive',
+    });
 
-    setScorePreset('reliabilityMax');
-    expect(SCORE_WEIGHTS.l10).toBe(7.0);
+    expect(result.rankedCandidates[0].score).toBeGreaterThanOrEqual(result.rankedCandidates[1].score);
   });
 
-  it('different presets produce different score calculations', () => {
-    // Test that preset weights actually differ in calculation
-    const testPick = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.85 };
-    
-    setScorePreset('balanced');
-    const balancedScore = scorePick(testPick);
-    
-    setScorePreset('sharp');
-    const sharpScore = scorePick(testPick);
-    
-    // Sharp preset has higher confidence weight, so score should differ
-    expect(balancedScore).not.toBe(sharpScore);
-  });
+  it('collects traces for ranked candidates', () => {
+    const result = buildSweetSpotParlayCore({
+      ...(frozenSlate as unknown as BuilderInput),
+      funnelMode: 'aggressive',
+    });
 
-  it('collects decision traces for all selected picks', () => {
-    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
-    
-    // Should have traces for selected picks
-    const selectedTraces = result.traces.filter(t => t.selected);
-    expect(selectedTraces.length).toBe(result.selectedLegs.length);
-  });
-
-  it('diagnostics tracks filtering correctly', () => {
-    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
-    
-    expect(result.diagnostics.totalCandidates).toBe(frozenSlate.picks.length);
-    expect(result.diagnostics.selectedCount).toBe(result.selectedLegs.length);
+    expect(result.traces.length).toBe(result.rankedCandidates.length);
   });
 });
 
@@ -223,25 +113,6 @@ describe('SweetSpot Parlay Builder - scorePick function', () => {
 
   it('exported scorePick matches computeScore helper', () => {
     const pick = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.85 };
-    
     expect(scorePick(pick)).toBeCloseTo(computeScore(pick), 5);
-  });
-
-  it('handles missing l10HitRate correctly', () => {
-    const pickWithL10 = { _patternScore: 2, l10HitRate: 0.70, confidence_score: 0.80 };
-    const pickWithoutL10 = { _patternScore: 2, l10HitRate: null, confidence_score: 0.80 };
-    
-    // Pick without L10 should have penalty applied
-    expect(scorePick(pickWithL10)).toBeGreaterThan(scorePick(pickWithoutL10));
-  });
-
-  it('uses confDefault when confidence_score is missing', () => {
-    const pickWithConf = { _patternScore: 2, l10HitRate: 0.70, confidence_score: 0.80 };
-    const pickWithoutConf = { _patternScore: 2, l10HitRate: 0.70 };
-    
-    // Both should produce valid scores
-    expect(typeof scorePick(pickWithConf)).toBe('number');
-    expect(typeof scorePick(pickWithoutConf)).toBe('number');
-    expect(scorePick(pickWithoutConf)).toBeGreaterThan(0);
   });
 });

@@ -216,8 +216,8 @@ function extractPatterns(legs: UnifiedParlayLeg[]): string[] {
 export function useDailyParlays() {
   const today = getEasternDate();
   
-  // Get Sweet Spot Dream Team parlay
-  const { optimalParlay, isLoading: sweetSpotLoading, combinedStats } = useSweetSpotParlayBuilder();
+  // Get Sweet Spot builder recommendations
+  const { recommendedParlays, isLoading: sweetSpotLoading, combinedStats } = useSweetSpotParlayBuilder();
   
   // Fetch Sharp AI Parlays
   const { data: sharpParlays, isLoading: sharpLoading } = useQuery({
@@ -282,21 +282,21 @@ export function useDailyParlays() {
   // Aggregate all parlays into unified format
   const dailyParlays: DailyParlay[] = [];
   
-  // Add Sweet Spot Dream Team (OPTIMAL)
-  if (optimalParlay && optimalParlay.length > 0) {
-    const legs: UnifiedParlayLeg[] = optimalParlay.map(leg => {
+  const sweetSpotPrimary = recommendedParlays.threeLeg || recommendedParlays.twoLeg || recommendedParlays.fourLeg;
+
+  if (sweetSpotPrimary && sweetSpotPrimary.legs.length > 0) {
+    const legs: UnifiedParlayLeg[] = sweetSpotPrimary.legs.map(leg => {
       const projectedValue = leg.pick.projectedValue;
       const actualLine = leg.pick.actualLine || leg.pick.line;
       const side = leg.pick.side.toLowerCase() as 'over' | 'under';
-      
-      // Calculate edge: for OVER, edge = projected - line; for UNDER, edge = line - projected
+
       let edge: number | undefined;
       if (projectedValue != null && actualLine != null) {
-        edge = side === 'over' 
-          ? projectedValue - actualLine 
+        edge = side === 'over'
+          ? projectedValue - actualLine
           : actualLine - projectedValue;
       }
-      
+
       return {
         playerName: leg.pick.player_name,
         propType: leg.pick.prop_type,
@@ -311,14 +311,14 @@ export function useDailyParlays() {
         edge,
       };
     });
-    
+
     dailyParlays.push({
-      id: 'sweet-spot-optimal',
-      type: 'OPTIMAL',
+      id: `sweet-spot-${sweetSpotPrimary.key}`,
+      type: 'SAFE',
       source: 'sweet-spot',
       legCount: legs.length,
       legs,
-      combinedOdds: Math.round(850 * (legs.length / 6)), // Approximate based on leg count
+      combinedOdds: Math.round(350 * Math.max(1, legs.length - 1)),
       winProbability: combinedStats.avgL10HitRate || 0.62,
       patterns: combinedStats.categories.filter(Boolean) as string[],
       riskLevel: 'LOW',
