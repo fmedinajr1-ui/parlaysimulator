@@ -49,6 +49,7 @@ export interface SweetSpotPick {
   reliabilityModifier?: number | null;
   selectedBook?: string | null;
   availableBooks?: string[];
+  hasActiveBookLine?: boolean;
   lineFreshness?: 'fresh' | 'stale' | 'expired';
   lineAgeMinutes?: number | null;
   lineDrift?: number;
