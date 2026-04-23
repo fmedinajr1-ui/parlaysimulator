@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { etDateKey } from "../_shared/date-et.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -61,25 +62,45 @@ function getPlayerName(prop: BDLPlayerProp): string {
   return `Player_${prop.player_id}`;
 }
 
-// Get today's date boundaries in Eastern Time
-function getEasternTodayBoundaries(): { start: Date; end: Date } {
-  const now = new Date();
-  
-  // Get current date in Eastern Time (format: YYYY-MM-DD)
-  const easternDate = new Intl.DateTimeFormat('en-CA', { 
+function getEtParts(at: Date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric',
     month: '2-digit',
-    day: '2-digit'
-  }).format(now);
-  
-  // Create boundaries: Eastern midnight to next Eastern midnight in UTC
-  // EST = UTC-5, EDT = UTC-4
-  // Using -05:00 (EST) as a safe default - games will still match during EDT
-  const startET = new Date(`${easternDate}T00:00:00-05:00`);
-  const endET = new Date(`${easternDate}T23:59:59-05:00`);
-  
-  return { start: startET, end: endET };
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(at);
+
+  const lookup = (type: string) => parts.find((part) => part.type === type)?.value || '00';
+
+  return {
+    year: Number(lookup('year')),
+    month: Number(lookup('month')),
+    day: Number(lookup('day')),
+    hour: Number(lookup('hour')) % 24,
+    minute: Number(lookup('minute')),
+    second: Number(lookup('second')),
+  };
+}
+
+function easternDateToUtcRange(easternDate: string): { start: Date; end: Date } {
+  const [year, month, day] = easternDate.split('-').map(Number);
+  const approxUtc = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const approxParts = getEtParts(approxUtc);
+  const approxMidnightUtc = new Date(approxUtc);
+  approxMidnightUtc.setUTCMinutes(approxMidnightUtc.getUTCMinutes() - ((approxParts.hour * 60) + approxParts.minute));
+  approxMidnightUtc.setUTCSeconds(approxMidnightUtc.getUTCSeconds() - approxParts.second);
+  const start = new Date(approxMidnightUtc);
+  const end = new Date(start.getTime() + (24 * 60 * 60 * 1000) - 1000);
+  return { start, end };
+}
+
+// Get today's date boundaries in Eastern Time, DST-safe
+function getEasternTodayBoundaries(todayKey: string): { start: Date; end: Date } {
+  return easternDateToUtcRange(todayKey);
 }
 
 // Delay helper for rate limiting
@@ -308,8 +329,8 @@ serve(async (req) => {
 
     // Step 1: Delete old props (commence_time in the past)
     const now = new Date().toISOString();
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = etDateKey();
+    const ingestTimestamp = new Date().toISOString();
     
     // If force_clear, delete ALL props for this sport (not just stale ones)
     if (force_clear) {
@@ -364,7 +385,7 @@ serve(async (req) => {
       console.log(`[refresh-todays-props] Found ${events.length} upcoming events`);
 
       // Filter to today's games only (using Eastern Time boundaries)
-      const { start: todayStart, end: todayEnd } = getEasternTodayBoundaries();
+      const { start: todayStart, end: todayEnd } = getEasternTodayBoundaries(todayStr);
       console.log(`[refresh-todays-props] Eastern day bounds: ${todayStart.toISOString()} to ${todayEnd.toISOString()}`);
 
       const todaysEvents = events.filter((event: any) => {
@@ -444,7 +465,7 @@ serve(async (req) => {
               for (const marketData of bookmaker.markets || []) {
                 for (const outcome of marketData.outcomes || []) {
                   const gameDescription = `${event.away_team} @ ${event.home_team}`;
-                  const prop = {
+                   const prop = {
                     event_id: event.id,
                     sport: sport,
                     game_description: gameDescription,
@@ -458,6 +479,8 @@ serve(async (req) => {
                     under_price: outcome.name === 'Under' ? outcome.price : null,
                     is_active: true,
                     category: 'the_odds_api',
+                     odds_updated_at: ingestTimestamp,
+                     updated_at: ingestTimestamp,
                   };
                   
                   allProps.push(prop);
@@ -491,7 +514,11 @@ serve(async (req) => {
         }
       }
 
-      finalProps = Array.from(consolidatedProps.values());
+      finalProps = Array.from(consolidatedProps.values()).map((prop) => ({
+        ...prop,
+        odds_updated_at: prop.odds_updated_at || ingestTimestamp,
+        updated_at: prop.updated_at || ingestTimestamp,
+      }));
       console.log(`[refresh-todays-props] Consolidated to ${finalProps.length} unique props from The Odds API`);
 
       // Step 4: If no props from The Odds API and NBA, try BDL fallback
@@ -532,6 +559,13 @@ serve(async (req) => {
         }
       }
 
+      const latestFreshness = finalProps.reduce<string | null>((latest, row) => {
+        const candidate = row.odds_updated_at || row.updated_at || null;
+        if (!candidate) return latest;
+        if (!latest) return candidate;
+        return new Date(candidate).getTime() > new Date(latest).getTime() ? candidate : latest;
+      }, null);
+
       console.log(`[refresh-todays-props] Inserted ${insertedCount} props from ${dataSource}`);
 
       return new Response(JSON.stringify({
@@ -542,6 +576,13 @@ serve(async (req) => {
         events: finalProps.length > 0 ? Math.ceil(finalProps.length / 20) : 0,
         apiCalls: apiCallsMade,
         data_source: dataSource,
+        diagnostics: {
+          target_date_et: todayStr,
+          et_window_start_utc: getEasternTodayBoundaries(todayStr).start.toISOString(),
+          et_window_end_utc: getEasternTodayBoundaries(todayStr).end.toISOString(),
+          props_parsed: finalProps.length,
+          latest_freshness_at: latestFreshness,
+        },
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
