@@ -1,80 +1,108 @@
 
-Goal: remove the `bot_daily_pick_pool` dependency from generation flow and make the parlay/straight/uploaded generators read directly from live source tables, while preserving the current safety gates and verifying the odds/stat feeds still support the pipeline.
+Goal: fully repair the upstream pipeline so today’s generators can produce again by restoring fresh live odds, repopulating source tables, and exposing exact block reasons when upstream stages fail.
 
 What will change
 
-1. Replace pick-pool staging with direct candidate loading
-- Refactor `parlay-engine-v2` so it builds candidate legs directly from:
-  - `nba_risk_engine_picks` as the primary ranked source
-  - `category_sweet_spots` as the fallback source when risk output is thin
-  - `unified_props` for live line matching, price selection, freshness, and drift checks
-- Recreate the current composite scoring in-memory so the engine still gets differentiated rankings without needing rows prewritten to `bot_daily_pick_pool`.
+1. Repair `refresh-todays-props` freshness + date handling
+- Replace the local UTC date construction in `supabase/functions/refresh-todays-props/index.ts` with the shared Eastern-time helper pattern so “today” always matches the rest of the pipeline.
+- Fix the current ET boundary logic that hardcodes `-05:00`; use a DST-safe ET date strategy so today’s games are selected correctly year-round.
+- Ensure every inserted/upserted `unified_props` row carries reliable freshness fields used by all gates:
+  - `odds_updated_at`
+  - `updated_at` fallback compatibility
+- Preserve the current trusted-bookmaker filtering and Ball Don’t Lie fallback, but make the function return richer diagnostics:
+  - events found
+  - events in ET window
+  - props parsed
+  - props inserted
+  - data source used
+  - latest row freshness timestamp
 
-2. Remove pick-pool gating from orchestration
-- Update `refresh-l10-and-rebuild` to stop using:
-  - `getPoolCount`
-  - `MIN_PICK_POOL_ROWS`
-  - `phase3b_pool`
-  - `thin_pool` blocking for uploaded pipeline and parlay generation
-- Replace those checks with direct source-health checks:
-  - approved risk pick count
-  - fallback sweet-spot count
-  - fresh `unified_props` count
-- Keep the existing odds freshness gate, since that protects against stale line generation.
+2. Harden the risk engine against empty/stale upstream input
+- Update `supabase/functions/nba-player-prop-risk-engine/index.ts` to use the same canonical ET helper as the rest of the backend.
+- Tighten the initial `unified_props` pull so it only analyzes rows that are both relevant to the current ET slate and fresh enough to be actionable.
+- Expand its response diagnostics so the orchestrator and dashboard can see:
+  - total props scanned
+  - fresh props scanned
+  - distinct players scanned
+  - approved count
+  - thin-day fallback requested/triggered
+  - top rejection reasons
+  - latest supporting game-log freshness
+- If source props are empty or stale, return an explicit blocked reason instead of just producing zero approved picks.
 
-3. Refactor uploaded pipeline generator to read direct sources
-- Remove its dependence on pool size as a precondition.
-- Let it score directly from:
-  - multi-book `unified_props`
-  - `prop_candidates`
-  - `bot_owner_rules`
-- Keep its existing zero-output warning, but make the warning explain the real cause:
-  - insufficient multi-book coverage
-  - missing `prop_candidates`
-  - conflicting manual override rules
-  instead of “thin pool”.
+3. Restore fallback source visibility and sweet-spot health
+- Trace all active runtime dependencies on `category_sweet_spots` and keep it as a monitored fallback source rather than an assumed healthy source.
+- Add explicit health checks around `category_sweet_spots` in the orchestrator and diagnostics so the system distinguishes:
+  - fallback source empty
+  - fallback source stale-date mismatch
+  - fallback source present but nonessential
+- If risk rows are thin but sweet spots exist, keep current fallback behavior; if both are empty, surface that as a first-class upstream failure.
 
-4. Refactor straight-bet generation the same way
-- Update `bot-generate-straight-bets` to load the same direct candidate set instead of reading `bot_daily_pick_pool`.
-- Preserve current ranking, freshness, and line-availability protections.
+4. Upgrade orchestrator preflight from generic “thin” to stage-level block states
+- Extend `supabase/functions/refresh-l10-and-rebuild/index.ts` so Phase 2/3 preflight records stage-specific statuses before generation:
+  - `blocked:stale_odds`
+  - `blocked:no_props_for_today`
+  - `blocked:risk_empty`
+  - `blocked:risk_thin`
+  - `blocked:sweet_spots_empty`
+  - `blocked:no_usable_matches`
+- Keep the FanDuel freshness gate, but log and return richer evidence:
+  - fresh FanDuel count
+  - latest FanDuel update
+  - latest any-book update
+  - post-refresh retry counts
+- When the risk engine returns low volume, include its rejection summary in the warning/alert payload instead of only the final approved count.
 
-5. Keep the feeds, remove only the staging layer
-- `refresh-todays-props` remains the live odds ingestion path.
-- `nba-stats-fetcher` remains the NBA historical/stats sync path with ESPN primary and Ball Don’t Lie fallback.
-- No removal of the real data sources; only the intermediate staging table is removed from runtime generation.
+5. Expand the dashboard from simulation-only coverage into true upstream health
+- Extend `src/hooks/useSimulationCoverageDiagnostics.ts` so it also reports upstream ingest health, not just match coverage:
+  - latest odds ingest time
+  - latest risk row time
+  - latest sweet-spot row time
+  - stale source counts
+  - readiness by stage
+  - explicit block code
+- Update `src/components/bot/ShadowPicksFeed.tsx` so the panel explains the failed stage in plain language:
+  - Odds stale
+  - No live props for today
+  - Risk engine found nothing usable
+  - Sweet-spot fallback unavailable
+  - Book matches failed due to stale rows / missing prices / line drift
+- Keep the current summary cards and progress bars, but add a compact “Upstream stages” section so zero outputs are immediately traceable.
 
-Validation to perform after implementation
+6. Add a backend diagnostic endpoint for source-stage audits
+- Expand or adapt the existing diagnostics function pattern so there is one backend response that summarizes, for a target ET date:
+  - `unified_props` freshness by bookmaker
+  - risk engine approvals and rejection reasons
+  - sweet-spot fallback counts
+  - parlay/straight/uploaded output counts
+  - last successful timestamps per source
+- This becomes the single source of truth for both admin debugging and the dashboard hook.
 
-1. Verify live feed readiness
-- Invoke the prop refresh path and confirm `unified_props` receives fresh active rows.
-- Invoke the NBA stats fetcher and confirm historical rows still populate from the current fetch logic.
-- Confirm the orchestration logs show direct-source counts instead of pool counts.
-
-2. Verify direct parlay generation
-- Run the orchestrator and confirm parlays generate without `build-daily-pick-pool`.
-- Confirm no phase is blocked for `thin_pool`.
-
-3. Verify direct uploaded-pipeline generation
-- Invoke uploaded pipeline through the orchestrator and directly.
-- Confirm it can run without a pool prerequisite.
-
-4. Verify straight bets
-- Confirm straight bet generation still works from direct sources.
-
-5. Regression checks
-- Ensure line freshness gate still blocks stale data.
-- Ensure same-game concentration and distinct-game guards still behave the same.
-- Ensure ranking remains non-flat after removing pool persistence.
+7. Validate end-to-end recovery after the repair
+- Re-run the upstream sequence in order:
+  1. refresh today’s props
+  2. run risk engine
+  3. verify fallback source availability
+  4. run orchestrator generation
+- Confirm all of the following:
+  - fresh FanDuel rows exist inside the freshness window
+  - ET date alignment matches current slate
+  - approved `nba_risk_engine_picks` exist for today
+  - fallback sweet spots are correctly classified as available or absent
+  - parlay / straight / uploaded generators receive usable direct-source rows
+  - the dashboard shows `ready` or a precise blocked reason instead of generic zero-output ambiguity
 
 Files expected to change
+- `supabase/functions/refresh-todays-props/index.ts`
+- `supabase/functions/nba-player-prop-risk-engine/index.ts`
 - `supabase/functions/refresh-l10-and-rebuild/index.ts`
-- `supabase/functions/parlay-engine-v2/index.ts`
-- `supabase/functions/bot-generate-straight-bets/index.ts`
-- `supabase/functions/uploaded-pipeline-generator/index.ts`
-- possibly shared helper extraction under `supabase/functions/_shared/` if direct candidate loading is centralized
+- `supabase/functions/bot-leg-production-diagnostics/index.ts`
+- `src/hooks/useSimulationCoverageDiagnostics.ts`
+- `src/components/bot/ShadowPicksFeed.tsx`
+- possibly `supabase/functions/_shared/date-et.ts` usage imports where ET logic is standardized
 
-Technical notes
-- Right now the Odds feed is wired through `refresh-todays-props`, which writes into `unified_props`.
-- Ball Don’t Lie is also wired in code: `nba-stats-fetcher` uses ESPN first and Ball Don’t Lie as fallback, and `refresh-todays-props` has Ball Don’t Lie fallback logic for props.
-- The “pick pool” is currently not just a list; it is a staging/ranking layer used by parlay and straight-bet generators. Removing it requires moving its normalization, dedupe, fallback, and composite-score logic into the generators or a shared loader.
-- The safest implementation is not to delete the table first, but to remove all runtime reads/writes to it, verify output parity, and only then decide whether the table can be retired fully.
+Technical details
+- The current main upstream weakness is in `refresh-todays-props`: it still uses `toISOString().split('T')[0]` and a hardcoded `-05:00` ET boundary, which risks wrong-day slates and stale freshness behavior.
+- `nba-player-prop-risk-engine` currently reads all active NBA props with only a broad `commence_time >= today` filter and depends on `category_sweet_spots` for L10 hit-rate context; if upstream props are stale or misdated, the engine starves.
+- The project memory already establishes ET standardization as a core rule and requires real-line validation against live `unified_props`.
+- The repair focuses on restoring upstream source truth first, then making block reasons visible so the system is debuggable the next time data quality drops.
