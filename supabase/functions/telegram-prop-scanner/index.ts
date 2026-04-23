@@ -22,6 +22,27 @@ async function sendMessage(chat_id: number, text: string) {
   });
 }
 
+async function sendMessageWithButtons(chat_id: number, text: string, buttons: { text: string; data: string }[][]) {
+  await fetch(`${TELEGRAM_API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id, text, parse_mode: "Markdown", disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))),
+      },
+    }),
+  });
+}
+
+async function answerCallback(callback_query_id: string, text?: string) {
+  await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id, text: text ?? "" }),
+  });
+}
+
 async function downloadTelegramPhoto(file_id: string): Promise<string> {
   const res = await fetch(`${TELEGRAM_API}/getFile?file_id=${file_id}`);
   const j = await res.json();
@@ -224,15 +245,47 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
 }
 
 async function handleHelp(chat_id: number) {
-  await sendMessage(chat_id,
-    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start [sport] [book]\` — start session (defaults: nba + fanduel)\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n_Aliases:_ fd, dk, hr, hardrock bet, hard rock, pp, ud\n\n*Examples*\n\`/scan start hardrock\`\n\`/scan start nba fanduel\`\n\`/scan start mlb dk\`\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
+  await sendMessageWithButtons(
+    chat_id,
+    `👋 *Welcome to Parlayfarm Scanner*\n\n*Just send a screenshot* of any sportsbook prop page — we'll auto-start a session and capture every prop.\n\nAfter scanning, tap a button to build a parlay or switch books.\n\n_Default: NBA · FanDuel. Tap below to change anytime._`,
+    [
+      [
+        { text: "📚 FanDuel", data: "book:fanduel" },
+        { text: "📚 DraftKings", data: "book:draftkings" },
+      ],
+      [
+        { text: "📚 Hard Rock", data: "book:hardrock" },
+        { text: "📚 PrizePicks", data: "book:prizepicks" },
+        { text: "📚 Underdog", data: "book:underdog" },
+      ],
+      [
+        { text: "🏀 NBA", data: "sport:nba" },
+        { text: "⚾ MLB", data: "sport:mlb" },
+        { text: "🏈 NFL", data: "sport:nfl" },
+      ],
+    ],
+  );
 }
 
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
-  const session = await getActiveSession(supabase, chat_id);
+  let session = await getActiveSession(supabase, chat_id);
   if (!session) {
-    await sendMessage(chat_id, "ℹ️ No active session. `/scan start <sport> <book>` first.");
-    return;
+    const user_id = await resolveUserForChat(supabase, chat_id);
+    if (!user_id) {
+      await sendMessage(chat_id, "🚫 *Not authorized.* Link your Telegram chat to your account first.");
+      return;
+    }
+    const { data: created, error: cErr } = await supabase
+      .from("ocr_scan_sessions")
+      .insert({ user_id, telegram_chat_id: chat_id, sport: "nba", book: "fanduel", capture_mode: "telegram" })
+      .select("*")
+      .single();
+    if (cErr || !created) {
+      await sendMessage(chat_id, `❌ Could not start session: ${cErr?.message ?? "unknown"}`);
+      return;
+    }
+    session = created;
+    await sendMessage(chat_id, `✨ *New session started* — NBA · FanDuel\n_Tap "Wrong book?" below if needed._`);
   }
   await sendMessage(chat_id, `🔎 Scanning ${photoFileIds.length} screenshot${photoFileIds.length > 1 ? "s" : ""}…`);
   try {
@@ -249,7 +302,23 @@ async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string
     if (j.parsed === 0) { await sendMessage(chat_id, "👀 No props detected."); return; }
     const lines = (j.props as any[]).slice(0, 12).map((p, i) => fmtPropLine(p, i));
     const more = j.props.length > 12 ? `\n…and ${j.props.length - 12} more` : "";
-    await sendMessage(chat_id, `✅ *${j.parsed} prop${j.parsed > 1 ? "s" : ""} captured* (${j.inserted} new)\n\n${lines.join("\n")}${more}\n\n\`/scan parlay 3\` to build.`);
+    await sendMessageWithButtons(
+      chat_id,
+      `✅ *${j.parsed} prop${j.parsed > 1 ? "s" : ""} captured* (${j.inserted} new) · *${session.book}* / ${session.sport.toUpperCase()}\n\n${lines.join("\n")}${more}`,
+      [
+        [
+          { text: "🎯 Build 3-leg", data: "parlay:3" },
+          { text: "🎯 Build 5-leg", data: "parlay:5" },
+        ],
+        [
+          { text: "📋 Show pool", data: "pool" },
+          { text: "✅ End session", data: "end" },
+        ],
+        [
+          { text: "🔄 Wrong book?", data: "switchbook" },
+        ],
+      ],
+    );
   } catch (e) {
     await sendMessage(chat_id, `❌ Capture error: ${e instanceof Error ? e.message : "unknown"}`);
   }
@@ -275,6 +344,45 @@ Deno.serve(async (req) => {
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const update = await req.json();
+
+    // Inline button taps
+    if (update.callback_query) {
+      const cq = update.callback_query;
+      const cb_chat_id = cq.message?.chat?.id;
+      const data: string = cq.data ?? "";
+      await answerCallback(cq.id);
+      if (!cb_chat_id) return new Response("ok");
+
+      if (data.startsWith("book:")) {
+        await handleBook(supabase, cb_chat_id, [data.slice(5)]);
+      } else if (data.startsWith("sport:")) {
+        const sport = data.slice(6);
+        const session = await getActiveSession(supabase, cb_chat_id);
+        if (!session) {
+          const user_id = await resolveUserForChat(supabase, cb_chat_id);
+          if (user_id) {
+            await supabase.from("ocr_scan_sessions").insert({ user_id, telegram_chat_id: cb_chat_id, sport, book: "fanduel", capture_mode: "telegram" });
+            await sendMessage(cb_chat_id, `✅ Sport set to *${sport.toUpperCase()}*. Send a screenshot to begin.`);
+          }
+        } else {
+          await supabase.from("ocr_scan_sessions").update({ sport }).eq("id", session.id);
+          await sendMessage(cb_chat_id, `✅ Sport switched to *${sport.toUpperCase()}*.`);
+        }
+      } else if (data === "switchbook") {
+        await sendMessageWithButtons(cb_chat_id, "Pick the sportsbook you screenshotted from:", [
+          [{ text: "FanDuel", data: "book:fanduel" }, { text: "DraftKings", data: "book:draftkings" }],
+          [{ text: "Hard Rock", data: "book:hardrock" }, { text: "PrizePicks", data: "book:prizepicks" }, { text: "Underdog", data: "book:underdog" }],
+        ]);
+      } else if (data === "pool") {
+        await handlePool(supabase, cb_chat_id);
+      } else if (data === "end") {
+        await handleEnd(supabase, cb_chat_id);
+      } else if (data.startsWith("parlay:")) {
+        await handleParlay(supabase, cb_chat_id, [data.slice(7)]);
+      }
+      return new Response("ok");
+    }
+
     const msg = update.message ?? update.edited_message;
     if (!msg) return new Response("ok");
     const chat_id = msg.chat?.id;
@@ -290,6 +398,38 @@ Deno.serve(async (req) => {
     const text = (msg.text ?? "").trim();
     if (!text) return new Response("ok");
     if (text === "/start" || text === "/help" || text === "/scan") { await handleHelp(chat_id); return new Response("ok"); }
+
+    // Top-level shortcuts
+    if (text.startsWith("/book")) {
+      const parts = text.split(/\s+/).slice(1);
+      await handleBook(supabase, chat_id, parts);
+      return new Response("ok");
+    }
+    if (text.startsWith("/sport")) {
+      const parts = text.split(/\s+/).slice(1);
+      const sport = (parts[0] ?? "").toLowerCase();
+      if (!sport) { await sendMessage(chat_id, "Usage: `/sport nba` (or mlb, nfl, nhl, wnba…)"); return new Response("ok"); }
+      const session = await getActiveSession(supabase, chat_id);
+      if (!session) {
+        const user_id = await resolveUserForChat(supabase, chat_id);
+        if (user_id) {
+          await supabase.from("ocr_scan_sessions").insert({ user_id, telegram_chat_id: chat_id, sport, book: "fanduel", capture_mode: "telegram" });
+          await sendMessage(chat_id, `✅ Sport set to *${sport.toUpperCase()}*. Send a screenshot to begin.`);
+        }
+      } else {
+        await supabase.from("ocr_scan_sessions").update({ sport }).eq("id", session.id);
+        await sendMessage(chat_id, `✅ Sport switched to *${sport.toUpperCase()}*.`);
+      }
+      return new Response("ok");
+    }
+    if (text === "/pool") { await handlePool(supabase, chat_id); return new Response("ok"); }
+    if (text === "/end") { await handleEnd(supabase, chat_id); return new Response("ok"); }
+    if (text.startsWith("/parlay")) {
+      const parts = text.split(/\s+/).slice(1);
+      await handleParlay(supabase, chat_id, parts);
+      return new Response("ok");
+    }
+
     if (text.startsWith("/scan ")) {
       const parts = text.split(/\s+/).slice(1);
       const sub = parts[0];
@@ -300,7 +440,11 @@ Deno.serve(async (req) => {
       else if (sub === "parlay") await handleParlay(supabase, chat_id, args);
       else if (sub === "end") await handleEnd(supabase, chat_id);
       else await handleHelp(chat_id);
+      return new Response("ok");
     }
+
+    // Any other text → show the friendly help with buttons
+    await handleHelp(chat_id);
     return new Response("ok");
   } catch (e) {
     console.error("telegram-prop-scanner error", e);
