@@ -55,6 +55,25 @@ Deno.serve(async (req) => {
   let totalProcessed = 0;
   let iterations = 0;
   const handlerUrl = `${SUPABASE_URL}/functions/v1/telegram-prop-scanner`;
+  let webhookCleared = false;
+
+  const clearWebhookIfNeeded = async () => {
+    if (webhookCleared) return;
+    try {
+      await fetch(`${GATEWAY_URL}/deleteWebhook`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "X-Connection-Api-Key": TELEGRAM_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ drop_pending_updates: false }),
+      });
+      webhookCleared = true;
+    } catch (e) {
+      console.error("[telegram-poll] deleteWebhook failed", e);
+    }
+  };
 
   while (true) {
     const elapsed = Date.now() - startedAt;
@@ -82,6 +101,13 @@ Deno.serve(async (req) => {
       });
       const data = await res.json();
       if (!res.ok || data?.ok === false) {
+        const desc = String(data?.description ?? "");
+        // 409 Conflict: a webhook is set; remove it and retry once.
+        if ((res.status === 409 || /webhook/i.test(desc)) && !webhookCleared) {
+          console.warn("[telegram-poll] webhook conflict — removing webhook and retrying");
+          await clearWebhookIfNeeded();
+          continue;
+        }
         console.error("[telegram-poll] getUpdates failed", res.status, data);
         return new Response(
           JSON.stringify({ ok: false, error: "getUpdates_failed", status: res.status, data }),
