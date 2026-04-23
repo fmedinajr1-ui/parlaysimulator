@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { etDateKey } from "../_shared/date-et.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1653,16 +1654,10 @@ function extractStatFromLog(log: any, column: string): number {
   return 0;
 }
 
-// ============ EASTERN TIME HELPER ============
-function getEasternDate(): string {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-CA', { 
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-  return formatter.format(now);
+const FRESH_PROP_WINDOW_MINUTES = 120;
+
+function isoMinutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60 * 1000).toISOString();
 }
 
 // ============ MAIN SERVER ============
@@ -1688,7 +1683,8 @@ serve(async (req) => {
     console.log(`[Risk Engine v3.1] Action: ${action}, Mode: ${mode}, Live Odds: ${use_live_odds}`);
 
     if (action === 'analyze_slate') {
-      const today = getEasternDate();
+      const today = etDateKey();
+      const freshPropWindow = isoMinutesAgo(FRESH_PROP_WINDOW_MINUTES);
       console.log(`[Risk Engine v3.1] Analyzing slate for ${today}`);
       
       // 1. Fetch active NBA props
@@ -1697,10 +1693,47 @@ serve(async (req) => {
         .select('*')
         .eq('sport', 'basketball_nba')
         .eq('is_active', true)
-        .gte('commence_time', today);
+        .gte('commence_time', `${today}T00:00:00Z`)
+        .or(`odds_updated_at.gte.${freshPropWindow},updated_at.gte.${freshPropWindow},created_at.gte.${freshPropWindow}`);
 
       if (propsError) throw propsError;
-      console.log(`[Risk Engine v3.1] Found ${props?.length || 0} active props`);
+      console.log(`[Risk Engine v3.1] Found ${props?.length || 0} fresh active props`);
+
+      const rawPropsScanned = props?.length || 0;
+      const distinctPlayersScanned = new Set((props || []).map((prop: any) => prop.player_name).filter(Boolean)).size;
+      const latestPropFreshnessAt = (props || []).reduce<string | null>((latest: string | null, prop: any) => {
+        const candidate = prop.odds_updated_at || prop.updated_at || prop.created_at || null;
+        if (!candidate) return latest;
+        if (!latest) return candidate;
+        return new Date(candidate).getTime() > new Date(latest).getTime() ? candidate : latest;
+      }, null);
+
+      if (rawPropsScanned === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          approvedCount: 0,
+          rejectedCount: 0,
+          approved: [],
+          rejected: [],
+          mode,
+          gameDate: today,
+          blockedReason: 'blocked:no_fresh_props_for_today',
+          diagnostics: {
+            rawPropsScanned: 0,
+            freshPropsScanned: 0,
+            distinctPlayersScanned: 0,
+            approvedCount: 0,
+            minimumApprovedPicks: Number(minimum_approved_picks || THIN_DAY_MIN_APPROVED_PICKS),
+            thinDayFallbackRequested: !!thin_day_fallback,
+            thinDayFallbackTriggered: false,
+            topRejectionReasons: [],
+            latestPropFreshnessAt: null,
+            latestGameLogFreshnessAt: null,
+          },
+          engineVersion: 'v3.1 - Sweet Spot Optimization System',
+          message: 'No fresh unified_props rows were available for today\'s ET slate',
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
 
       // 2. Fetch upcoming games
       const { data: games } = await supabase
@@ -1760,6 +1793,12 @@ serve(async (req) => {
       const gameLogs = allGameLogs;
       
       console.log(`[Risk Engine v3.1] Fetched ${gameLogs?.length || 0} game logs for ${playerNames.length} players`);
+      const latestGameLogFreshnessAt = (gameLogs || []).reduce<string | null>((latest: string | null, log: any) => {
+        const candidate = log.created_at || log.updated_at || log.game_date || null;
+        if (!candidate) return latest;
+        if (!latest) return candidate;
+        return new Date(candidate).getTime() > new Date(latest).getTime() ? candidate : latest;
+      }, null);
 
       // 6. Fetch player archetypes (if exists)
       const { data: archetypes } = await supabase
@@ -2791,14 +2830,19 @@ serve(async (req) => {
         rejected: rejectedProps.slice(0, 30),
         mode,
         gameDate: today,
+        blockedReason: approvedCount === 0 ? 'blocked:risk_empty' : thinDayTriggered ? 'blocked:risk_thin' : null,
         diagnostics: {
-          rawPropsScanned: props?.length || 0,
-          activePropsScanned: props?.length || 0,
+          rawPropsScanned,
+          activePropsScanned: rawPropsScanned,
+          freshPropsScanned: rawPropsScanned,
+          distinctPlayersScanned,
           approvedCount,
           minimumApprovedPicks: Number(minimum_approved_picks || THIN_DAY_MIN_APPROVED_PICKS),
           thinDayFallbackRequested: shouldUseThinDayFallback,
           thinDayFallbackTriggered: thinDayTriggered,
           topRejectionReasons,
+          latestPropFreshnessAt,
+          latestGameLogFreshnessAt,
         },
         balance: {
           overs: balanceTracker.overCount,
