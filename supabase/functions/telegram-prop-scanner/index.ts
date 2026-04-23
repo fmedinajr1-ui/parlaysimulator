@@ -344,6 +344,45 @@ Deno.serve(async (req) => {
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const update = await req.json();
+
+    // Inline button taps
+    if (update.callback_query) {
+      const cq = update.callback_query;
+      const cb_chat_id = cq.message?.chat?.id;
+      const data: string = cq.data ?? "";
+      await answerCallback(cq.id);
+      if (!cb_chat_id) return new Response("ok");
+
+      if (data.startsWith("book:")) {
+        await handleBook(supabase, cb_chat_id, [data.slice(5)]);
+      } else if (data.startsWith("sport:")) {
+        const sport = data.slice(6);
+        const session = await getActiveSession(supabase, cb_chat_id);
+        if (!session) {
+          const user_id = await resolveUserForChat(supabase, cb_chat_id);
+          if (user_id) {
+            await supabase.from("ocr_scan_sessions").insert({ user_id, telegram_chat_id: cb_chat_id, sport, book: "fanduel", capture_mode: "telegram" });
+            await sendMessage(cb_chat_id, `✅ Sport set to *${sport.toUpperCase()}*. Send a screenshot to begin.`);
+          }
+        } else {
+          await supabase.from("ocr_scan_sessions").update({ sport }).eq("id", session.id);
+          await sendMessage(cb_chat_id, `✅ Sport switched to *${sport.toUpperCase()}*.`);
+        }
+      } else if (data === "switchbook") {
+        await sendMessageWithButtons(cb_chat_id, "Pick the sportsbook you screenshotted from:", [
+          [{ text: "FanDuel", data: "book:fanduel" }, { text: "DraftKings", data: "book:draftkings" }],
+          [{ text: "Hard Rock", data: "book:hardrock" }, { text: "PrizePicks", data: "book:prizepicks" }, { text: "Underdog", data: "book:underdog" }],
+        ]);
+      } else if (data === "pool") {
+        await handlePool(supabase, cb_chat_id);
+      } else if (data === "end") {
+        await handleEnd(supabase, cb_chat_id);
+      } else if (data.startsWith("parlay:")) {
+        await handleParlay(supabase, cb_chat_id, [data.slice(7)]);
+      }
+      return new Response("ok");
+    }
+
     const msg = update.message ?? update.edited_message;
     if (!msg) return new Response("ok");
     const chat_id = msg.chat?.id;
@@ -359,6 +398,38 @@ Deno.serve(async (req) => {
     const text = (msg.text ?? "").trim();
     if (!text) return new Response("ok");
     if (text === "/start" || text === "/help" || text === "/scan") { await handleHelp(chat_id); return new Response("ok"); }
+
+    // Top-level shortcuts
+    if (text.startsWith("/book")) {
+      const parts = text.split(/\s+/).slice(1);
+      await handleBook(supabase, chat_id, parts);
+      return new Response("ok");
+    }
+    if (text.startsWith("/sport")) {
+      const parts = text.split(/\s+/).slice(1);
+      const sport = (parts[0] ?? "").toLowerCase();
+      if (!sport) { await sendMessage(chat_id, "Usage: `/sport nba` (or mlb, nfl, nhl, wnba…)"); return new Response("ok"); }
+      const session = await getActiveSession(supabase, chat_id);
+      if (!session) {
+        const user_id = await resolveUserForChat(supabase, chat_id);
+        if (user_id) {
+          await supabase.from("ocr_scan_sessions").insert({ user_id, telegram_chat_id: chat_id, sport, book: "fanduel", capture_mode: "telegram" });
+          await sendMessage(chat_id, `✅ Sport set to *${sport.toUpperCase()}*. Send a screenshot to begin.`);
+        }
+      } else {
+        await supabase.from("ocr_scan_sessions").update({ sport }).eq("id", session.id);
+        await sendMessage(chat_id, `✅ Sport switched to *${sport.toUpperCase()}*.`);
+      }
+      return new Response("ok");
+    }
+    if (text === "/pool") { await handlePool(supabase, chat_id); return new Response("ok"); }
+    if (text === "/end") { await handleEnd(supabase, chat_id); return new Response("ok"); }
+    if (text.startsWith("/parlay")) {
+      const parts = text.split(/\s+/).slice(1);
+      await handleParlay(supabase, chat_id, parts);
+      return new Response("ok");
+    }
+
     if (text.startsWith("/scan ")) {
       const parts = text.split(/\s+/).slice(1);
       const sub = parts[0];
@@ -369,7 +440,11 @@ Deno.serve(async (req) => {
       else if (sub === "parlay") await handleParlay(supabase, chat_id, args);
       else if (sub === "end") await handleEnd(supabase, chat_id);
       else await handleHelp(chat_id);
+      return new Response("ok");
     }
+
+    // Any other text → show the friendly help with buttons
+    await handleHelp(chat_id);
     return new Response("ok");
   } catch (e) {
     console.error("telegram-prop-scanner error", e);
