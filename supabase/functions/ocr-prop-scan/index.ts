@@ -560,14 +560,17 @@ Deno.serve(async (req) => {
         { ...p, prop_type: propType },
         String(sport).toLowerCase(),
       );
+      // Use the recommended side when the model has one — that's the value bet,
+      // not whichever side the user happened to screenshot.
+      const finalSide = xref.recommended_side ?? p.side;
       enriched.push({
         session_id,
         player_name: String(p.player_name).trim(),
         prop_type: propType,
-        side: p.side,
+        side: finalSide,
         line: Number(p.line),
-        over_price: typeof p.over_price === "number" ? p.over_price : null,
-        under_price: typeof p.under_price === "number" ? p.under_price : null,
+        over_price: typeof p.over_price === "number" ? p.over_price : (xref.market_over_price ?? null),
+        under_price: typeof p.under_price === "number" ? p.under_price : (xref.market_under_price ?? null),
         raw_ocr_text: p.raw_text ?? null,
         confidence: typeof p.confidence === "number" ? p.confidence : 0.85,
         source_channel,
