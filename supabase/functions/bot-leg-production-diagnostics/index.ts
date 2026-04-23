@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { etDateKey } from "../_shared/date-et.ts";
+import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -256,18 +257,13 @@ Deno.serve(async (req) => {
     const parsed = parseBody(await req.json().catch(() => ({})));
     const now = new Date();
 
-    const [riskRes, poolRes, parlayRes, straightRes] = await Promise.all([
+    const [riskRes, parlayRes, straightRes, directSourceState, sweetSpotRes] = await Promise.all([
       supabase
         .from("nba_risk_engine_picks")
         .select("id, player_name, prop_type, side, line, confidence_score, edge, l10_hit_rate, true_median, l10_avg, rejection_reason, created_at, game_date, mode")
         .eq("game_date", parsed.date)
         .eq("mode", "full_slate")
         .order("created_at", { ascending: false }),
-      supabase
-        .from("bot_daily_pick_pool")
-        .select("id, pick_date, player_name, prop_type, recommended_side, recommended_line, confidence_score, composite_score, projected_value, category, l10_hit_rate, l10_avg, l3_avg, created_at")
-        .eq("pick_date", parsed.date)
-        .order("composite_score", { ascending: false }),
       supabase
         .from("bot_daily_parlays")
         .select("id, strategy_name, tier, outcome, expected_odds, combined_probability, created_at")
@@ -280,14 +276,19 @@ Deno.serve(async (req) => {
         .eq("bet_date", parsed.date)
         .eq("outcome", "pending")
         .order("created_at", { ascending: false }),
+      loadDirectPickRows(supabase, { targetDate: parsed.date, minimumRiskRows: 8, fallbackLimit: 40 }),
+      supabase
+        .from("category_sweet_spots")
+        .select("id", { count: "exact", head: true })
+        .eq("analysis_date", parsed.date)
+        .eq("is_active", true),
     ]);
 
     if (riskRes.error) throw riskRes.error;
-    if (poolRes.error) throw poolRes.error;
     if (parlayRes.error) throw parlayRes.error;
     if (straightRes.error) throw straightRes.error;
 
-    let poolRows = (poolRes.data ?? []) as PoolRow[];
+    let poolRows = (directSourceState.rows ?? []) as PoolRow[];
 
     if (parsed.playerSearch) {
       poolRows = poolRows.filter((row) => row.player_name.toLowerCase().includes(parsed.playerSearch!));
@@ -383,6 +384,12 @@ Deno.serve(async (req) => {
         player_search: parsed.playerSearch,
         failed_only: parsed.failedOnly,
       },
+      source_health: {
+        risk_source_rows: directSourceState.diagnostics?.direct_rows_from_risk ?? 0,
+        fallback_source_rows: directSourceState.diagnostics?.direct_rows_from_fallback ?? 0,
+        source_status: directSourceState.diagnostics?.source_status ?? "empty",
+        sweet_spot_rows_active: sweetSpotRes.count ?? 0,
+      },
       summary: {
         risk_rows_total: approvedRiskRows.length + rejectedRiskRows.length,
         risk_rows_approved: approvedRiskRows.length,
@@ -432,6 +439,7 @@ Deno.serve(async (req) => {
         failed_rows: poolWithStatus.filter((row) => row.status !== "matched_fresh").length,
         blocker_breakdown: topCounts(blockerCounts, 12),
         rows: filteredPool.slice(0, 250),
+        diagnostics: directSourceState.diagnostics,
       },
       book_scan: {
         ...bookHealth,
@@ -465,6 +473,7 @@ Deno.serve(async (req) => {
           thin_risk_output: approvedRiskRows.length < 8,
           thin_pool: poolRows.length > 0 && poolRows.length < 12,
           empty_pool: poolRows.length === 0,
+          empty_sweet_spots: (sweetSpotRes.count ?? 0) === 0,
           no_book_matches: (blockerCounts.no_book_match ?? 0) === poolRows.length && poolRows.length > 0,
           stale_lines: (blockerCounts.matched_stale ?? 0) > 0,
           drifted_lines: (blockerCounts.matched_line_moved ?? 0) > 0,
