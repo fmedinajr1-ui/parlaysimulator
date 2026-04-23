@@ -519,19 +519,38 @@ Deno.serve(async (req) => {
       label: "Risk engine",
       run: async () => {
         const targetDate = todayET();
-        await invokeStep("Running risk engine", "nba-player-prop-risk-engine", {
+        const { data, error } = await supabase.functions.invoke("nba-player-prop-risk-engine", {
           action: "analyze_slate",
           mode: "full_slate",
           thin_day_fallback: true,
           minimum_approved_picks: MIN_APPROVED_RISK_PICKS,
         });
 
+        if (error) {
+          const errMsg = error.message || "Unknown risk engine error";
+          log(`⚠ Running risk engine error: ${errMsg}`);
+          results["nba-player-prop-risk-engine"] = `error: ${errMsg}`;
+          await sendPipelineAlert(
+            `🚨 *Pipeline Step Error*\n\n*Step:* Risk engine\n*Function:* \`nba-player-prop-risk-engine\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``,
+          );
+          return;
+        }
+
+        const blockedReason = data?.blockedReason as string | undefined;
+        const rejectionSummary = Array.isArray(data?.diagnostics?.topRejectionReasons)
+          ? data.diagnostics.topRejectionReasons.slice(0, 5).map((item: any) => `${item.reason}: ${item.count}`).join(" | ")
+          : "none";
+
+        results["nba-player-prop-risk-engine"] = blockedReason
+          ? `${blockedReason}:${data?.approvedCount ?? 0}`
+          : "ok";
+
         const approvedCount = await getRiskPickCount(supabase, targetDate);
         if (approvedCount < MIN_APPROVED_RISK_PICKS) {
           warnings.push(`Risk engine produced only ${approvedCount} approved picks for ${targetDate}`);
-          results["nba-player-prop-risk-engine"] = `warning:thin_output:${approvedCount}`;
+          results["nba-player-prop-risk-engine"] = blockedReason || `warning:thin_output:${approvedCount}`;
           await sendPipelineAlert(
-            `⚠️ *Risk Engine Thin Output*\n\n*Date:* ${targetDate}\n*Approved picks:* ${approvedCount}\n*Minimum target:* ${MIN_APPROVED_RISK_PICKS}\n*Run:* \`${currentRunId.slice(0,8)}\``,
+            `⚠️ *Risk Engine Thin Output*\n\n*Date:* ${targetDate}\n*Approved picks:* ${approvedCount}\n*Minimum target:* ${MIN_APPROVED_RISK_PICKS}\n*Block:* ${blockedReason || 'warning:thin_output'}\n*Top rejections:* ${rejectionSummary}\n*Run:* \`${currentRunId.slice(0,8)}\``,
           );
         }
       },
@@ -542,11 +561,21 @@ Deno.serve(async (req) => {
       run: async () => {
         log("=== PRE-GENERATION GATE: Checking FanDuel odds freshness ===");
         const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-        const { count: freshFdProps, error: gateErr } = await supabase
+        const [{ count: freshFdProps, error: gateErr }, { data: latestFdRows }] = await Promise.all([
+          supabase
           .from("unified_props")
           .select("*", { count: "exact", head: true })
           .eq("bookmaker", "fanduel")
-          .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
+          .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`),
+          supabase
+            .from("unified_props")
+            .select("bookmaker, odds_updated_at, updated_at")
+            .eq("bookmaker", "fanduel")
+            .order("odds_updated_at", { ascending: false })
+            .limit(1),
+        ]);
+
+        const latestFdUpdateAt = latestFdRows?.[0]?.odds_updated_at || latestFdRows?.[0]?.updated_at || null;
 
         if (gateErr) {
           log(`⚠ Odds gate query error: ${gateErr.message} — proceeding anyway`);
@@ -568,7 +597,7 @@ Deno.serve(async (req) => {
           const afterScrape = retryCount || 0;
           if (afterScrape < 50) {
             log(`❌ GATE BLOCKED: Still only ${afterScrape} FanDuel props — skipping generation`);
-            results["odds_gate"] = `blocked:${afterScrape}_props`;
+            results["odds_gate"] = `blocked:stale_odds:${afterScrape}_props`;
 
             // BUG 2 FIX: closure-scoped flag, never persists across invocations
             oddsGateBlocked = true;
@@ -584,10 +613,10 @@ Deno.serve(async (req) => {
           }
 
           log(`✅ Emergency scrape recovered: ${afterScrape} fresh FanDuel props — proceeding`);
-          results["odds_gate"] = `recovered:${afterScrape}_props`;
+          results["odds_gate"] = `recovered:${afterScrape}_props:last_${latestFdUpdateAt || 'unknown'}`;
         } else {
           log(`✅ Odds gate passed: ${freshCount} fresh FanDuel props`);
-          results["odds_gate"] = `passed:${freshCount}_props`;
+          results["odds_gate"] = `passed:${freshCount}_props:last_${latestFdUpdateAt || 'unknown'}`;
         }
       },
     },
