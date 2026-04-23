@@ -133,11 +133,16 @@ export async function loadDirectPickRows(
   const targetDate = options.targetDate ?? etDateKey();
   const minimumRiskRows = options.minimumRiskRows ?? 8;
   const fallbackLimit = options.fallbackLimit ?? 40;
+  const rawPropsLimit = options.rawPropsLimit ?? 60;
+  const allowRawPropsFallback = options.allowRawPropsFallback ?? true;
 
   const diagnostics: Record<string, unknown> = {
     target_date: targetDate,
     minimum_risk_rows: minimumRiskRows,
     fallback_limit: fallbackLimit,
+    raw_props_limit: rawPropsLimit,
+    allow_raw_props_fallback: allowRawPropsFallback,
+    risk_layer_bypassed: true,
   };
 
   const [riskRes, sweetRes, weightsRes] = await Promise.all([
