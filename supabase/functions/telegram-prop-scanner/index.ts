@@ -255,6 +255,7 @@ Deno.serve(async (req) => {
       const sub = parts[0];
       const args = parts.slice(1);
       if (sub === "start") await handleStart(supabase, chat_id, args);
+      else if (sub === "book") await handleBook(supabase, chat_id, args);
       else if (sub === "pool") await handlePool(supabase, chat_id);
       else if (sub === "parlay") await handleParlay(supabase, chat_id, args);
       else if (sub === "end") await handleEnd(supabase, chat_id);
