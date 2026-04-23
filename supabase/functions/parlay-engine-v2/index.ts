@@ -334,7 +334,7 @@ Deno.serve(async (req) => {
         mapping_notes: mappingNotes,
         report: slate.report,
       }), {
-        status,
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
