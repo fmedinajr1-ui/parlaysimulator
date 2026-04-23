@@ -17,7 +17,7 @@ export interface DirectPickRow {
   was_used_in_parlay: boolean;
   category: string;
   created_at: string;
-  source_origin: "risk" | "fallback";
+  source_origin: "risk" | "fallback" | "raw_props";
 }
 
 interface WeightRow {
@@ -59,6 +59,8 @@ export interface DirectPickSourceOptions {
   targetDate?: string;
   minimumRiskRows?: number;
   fallbackLimit?: number;
+  rawPropsLimit?: number;
+  allowRawPropsFallback?: boolean;
 }
 
 export interface DirectPickSourceResult {
