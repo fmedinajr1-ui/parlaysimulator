@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
 import { getEasternDate } from '@/lib/dateUtils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
@@ -31,7 +32,8 @@ import {
   FileJson,
   FileSpreadsheet,
   ShieldCheck,
-  Database
+  Database,
+  Copy
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
@@ -209,6 +211,7 @@ export function AIGenerativeProgressDashboard() {
   const [isRefreshingStats, setIsRefreshingStats] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<string>('');
   const [isAnalyzingPending, setIsAnalyzingPending] = useState(false);
+  const [manualGuidanceDraft, setManualGuidanceDraft] = useState('');
   const [pendingAnalysisResults, setPendingAnalysisResults] = useState<VerificationSummary | null>(null);
   const {
     date: trainingDate,
@@ -794,6 +797,53 @@ export function AIGenerativeProgressDashboard() {
       minute: '2-digit',
     });
 
+  const generatedGuidanceTemplate = selectedProps.length === 0
+    ? ''
+    : [
+        `GAME: ${selectedGame?.gameDescription || 'Unknown game'}`,
+        `TIPOFF: ${selectedGame?.commenceTime ? formatTrainingTime(selectedGame.commenceTime) : 'Unknown'}`,
+        `SPORT: ${selectedGame?.sport ? formatTrainingSport(selectedGame.sport) : 'Unknown'}`,
+        '',
+        'SELECTED PROPS:',
+        ...selectedProps.map((prop, index) => {
+          const pricing = [
+            prop.overPrice !== null ? `Over ${prop.overPrice > 0 ? '+' : ''}${prop.overPrice}` : null,
+            prop.underPrice !== null ? `Under ${prop.underPrice > 0 ? '+' : ''}${prop.underPrice}` : null,
+          ].filter(Boolean).join(' • ');
+
+          return `${index + 1}. ${prop.playerName} — ${formatPropType(prop.propType)} — Line ${prop.currentLine ?? '—'}${pricing ? ` — ${pricing}` : ''}`;
+        }),
+        '',
+        'GUIDANCE FOR BOT:',
+        '- Preferred direction:',
+        '- Why this market should be prioritized:',
+        '- What to avoid:',
+        '- Ranking among selected props:',
+        '- Confidence note:',
+        '- Book / line context to respect:',
+        '',
+        'OPERATOR NOTES:',
+        '- Tailor the bot around matchup context, live book quality, and your manual read.',
+      ].join('\n');
+
+  useEffect(() => {
+    setManualGuidanceDraft(generatedGuidanceTemplate);
+  }, [generatedGuidanceTemplate]);
+
+  const handleCopyManualGuidance = async () => {
+    if (!manualGuidanceDraft.trim()) {
+      toast.error('No guidance template to copy yet');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(manualGuidanceDraft);
+      toast.success('Guidance template copied');
+    } catch (error) {
+      toast.error('Failed to copy guidance template');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -1274,6 +1324,91 @@ export function AIGenerativeProgressDashboard() {
                                   {prop.playerName} • {formatPropType(prop.propType)} • {prop.currentLine ?? '—'}
                                 </Badge>
                               ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-lg border bg-background/70 p-4 space-y-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="space-y-1">
+                              <h3 className="text-base font-semibold">Step 3 — review selected props and edit bot guidance</h3>
+                              <p className="text-sm text-muted-foreground">Review the exact props you selected, then tailor the ready-to-edit training note before the next action.</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">{selectedProps.length} props in scope</Badge>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handleCopyManualGuidance}
+                                disabled={selectedProps.length === 0}
+                              >
+                                <Copy className="mr-2 h-4 w-4" />
+                                Copy template
+                              </Button>
+                            </div>
+                          </div>
+
+                          {selectedProps.length === 0 ? (
+                            <div className="rounded-lg border border-dashed bg-muted/10 p-8 text-center">
+                              <p className="font-medium">Step 3 will unlock once props are selected.</p>
+                              <p className="text-sm text-muted-foreground">Choose one or more props in Step 2 to generate the editable guidance template.</p>
+                            </div>
+                          ) : (
+                            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                              <div className="rounded-lg border">
+                                <div className="border-b bg-muted/10 px-4 py-3">
+                                  <p className="font-medium">Selected prop package</p>
+                                  <p className="text-sm text-muted-foreground">Exact player + market + line combinations that will feed the manual training instruction.</p>
+                                </div>
+                                <div className="space-y-3 p-4">
+                                  {selectedProps.map((prop, index) => (
+                                    <div key={prop.key} className="rounded-lg border bg-background p-4">
+                                      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                                        <div>
+                                          <p className="text-xs uppercase text-muted-foreground">Prop {index + 1}</p>
+                                          <p className="font-semibold">{prop.playerName}</p>
+                                          <p className="text-sm text-muted-foreground">
+                                            {formatPropType(prop.propType)} • Line {prop.currentLine ?? '—'}
+                                          </p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                          <Badge variant={prop.freshRowCount > 0 ? 'secondary' : 'outline'}>{prop.freshRowCount} fresh</Badge>
+                                          <Badge variant="outline">{prop.bookmakerCount} books</Badge>
+                                        </div>
+                                      </div>
+                                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                        {prop.overPrice !== null && <span>Over {prop.overPrice > 0 ? '+' : ''}{prop.overPrice}</span>}
+                                        {prop.underPrice !== null && <span>Under {prop.underPrice > 0 ? '+' : ''}{prop.underPrice}</span>}
+                                        {prop.latestUpdateAt && <span>Latest {formatTrainingTime(prop.latestUpdateAt)}</span>}
+                                      </div>
+                                      <div className="mt-3 flex flex-wrap gap-1">
+                                        {prop.bookmakers.map((book) => (
+                                          <Badge key={book} variant="outline">{book}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="rounded-lg border">
+                                <div className="border-b bg-muted/10 px-4 py-3">
+                                  <p className="font-medium">Ready-to-edit guidance template</p>
+                                  <p className="text-sm text-muted-foreground">Edit this note exactly how you want the bot to interpret the selected prop package.</p>
+                                </div>
+                                <div className="space-y-3 p-4">
+                                  <div className="rounded-md border bg-muted/10 p-3 text-xs text-muted-foreground">
+                                    This draft auto-refreshes when your selected props change. Edit it here to prepare the next manual training action.
+                                  </div>
+                                  <Textarea
+                                    value={manualGuidanceDraft}
+                                    onChange={(event) => setManualGuidanceDraft(event.target.value)}
+                                    className="min-h-[420px] font-mono text-xs"
+                                    placeholder="Your bot guidance template will appear here once props are selected."
+                                  />
+                                </div>
+                              </div>
                             </div>
                           )}
                         </div>
