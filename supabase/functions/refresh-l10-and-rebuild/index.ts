@@ -643,17 +643,15 @@ Deno.serve(async (req) => {
         const sweetSpotCount = await getSweetSpotCount(supabase, targetDate);
 
         if (riskCount === 0 && sweetSpotCount === 0) {
-          results["uploaded-pipeline-generator"] = `blocked:no_sources:risk_${riskCount}:fallback_${sweetSpotCount}`;
-          warnings.push(`Uploaded pipeline generation blocked: no direct candidate sources (${riskCount} risk, ${sweetSpotCount} fallback)`);
-          await sendPipelineAlert(
-            `⚠️ *Uploaded Pipeline Blocked*\n\n*Date:* ${targetDate}\n*Risk picks:* ${riskCount}\n*Fallback sweet spots:* ${sweetSpotCount}\n*Cause:* no direct source rows available\n*Run:* \`${currentRunId.slice(0,8)}\``,
-          );
-          return;
+          // RISK LAYER BYPASSED — fall through to raw_props source instead of blocking
+          warnings.push(`Uploaded pipeline: no risk/sweet rows — falling back to raw unified_props (risk_layer:bypassed)`);
+          log(`ℹ Risk + fallback empty; proceeding with raw_props source`);
         }
 
         await invokeStep("Generating uploaded pipeline picks", "uploaded-pipeline-generator", {
           dry_run: false,
           limit: 12,
+          allow_raw_props_fallback: true,
         });
 
         const uploadedCount = await getUploadedPipelinePickCount(supabase, targetDate);
