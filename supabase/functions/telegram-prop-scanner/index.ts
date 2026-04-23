@@ -245,15 +245,47 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
 }
 
 async function handleHelp(chat_id: number) {
-  await sendMessage(chat_id,
-    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start [sport] [book]\` — start session (defaults: nba + fanduel)\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n_Aliases:_ fd, dk, hr, hardrock bet, hard rock, pp, ud\n\n*Examples*\n\`/scan start hardrock\`\n\`/scan start nba fanduel\`\n\`/scan start mlb dk\`\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
+  await sendMessageWithButtons(
+    chat_id,
+    `👋 *Welcome to Parlayfarm Scanner*\n\n*Just send a screenshot* of any sportsbook prop page — we'll auto-start a session and capture every prop.\n\nAfter scanning, tap a button to build a parlay or switch books.\n\n_Default: NBA · FanDuel. Tap below to change anytime._`,
+    [
+      [
+        { text: "📚 FanDuel", data: "book:fanduel" },
+        { text: "📚 DraftKings", data: "book:draftkings" },
+      ],
+      [
+        { text: "📚 Hard Rock", data: "book:hardrock" },
+        { text: "📚 PrizePicks", data: "book:prizepicks" },
+        { text: "📚 Underdog", data: "book:underdog" },
+      ],
+      [
+        { text: "🏀 NBA", data: "sport:nba" },
+        { text: "⚾ MLB", data: "sport:mlb" },
+        { text: "🏈 NFL", data: "sport:nfl" },
+      ],
+    ],
+  );
 }
 
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
-  const session = await getActiveSession(supabase, chat_id);
+  let session = await getActiveSession(supabase, chat_id);
   if (!session) {
-    await sendMessage(chat_id, "ℹ️ No active session. `/scan start <sport> <book>` first.");
-    return;
+    const user_id = await resolveUserForChat(supabase, chat_id);
+    if (!user_id) {
+      await sendMessage(chat_id, "🚫 *Not authorized.* Link your Telegram chat to your account first.");
+      return;
+    }
+    const { data: created, error: cErr } = await supabase
+      .from("ocr_scan_sessions")
+      .insert({ user_id, telegram_chat_id: chat_id, sport: "nba", book: "fanduel", capture_mode: "telegram" })
+      .select("*")
+      .single();
+    if (cErr || !created) {
+      await sendMessage(chat_id, `❌ Could not start session: ${cErr?.message ?? "unknown"}`);
+      return;
+    }
+    session = created;
+    await sendMessage(chat_id, `✨ *New session started* — NBA · FanDuel\n_Tap "Wrong book?" below if needed._`);
   }
   await sendMessage(chat_id, `🔎 Scanning ${photoFileIds.length} screenshot${photoFileIds.length > 1 ? "s" : ""}…`);
   try {
