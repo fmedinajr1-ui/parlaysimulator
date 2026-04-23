@@ -172,13 +172,28 @@ async function ensureSession(supabase: any, chat_id: number, overrides?: { sport
   return created;
 }
 
+const REASON_LABEL: Record<string, string> = {
+  unsupported_market: "no liquid market for this prop",
+  no_market_data: "no live sportsbook line found",
+  low_l10_sample: "not enough recent games",
+  no_edge: "no edge vs market",
+};
+
 function fmtPropLine(p: any, i: number): string {
-  const odds = p.side === "over" ? p.over_price : p.under_price;
-  const oddsStr = odds == null ? "" : ` (${odds > 0 ? "+" : ""}${odds})`;
-  const dna = p.dna_score != null ? ` · DNA ${p.dna_score}` : "";
-  const flag = p.blocked ? " 🔴" : (p.dna_score ?? 0) >= 70 ? " 🟢" : " 🟡";
-  const reason = p.blocked ? `\n    ↳ _${p.block_reason}_` : "";
-  return `${i + 1}. *${p.player_name}* — ${p.prop_type} ${p.side.toUpperCase()} ${p.line}${oddsStr}${dna}${flag}${reason}`;
+  const side = (p.recommended_side ?? p.side ?? "").toString();
+  const sideStr = side ? side.toUpperCase() : "—";
+  const market = side === "over" ? p.over_price : side === "under" ? p.under_price : null;
+  const oddsStr = market == null ? "" : ` (${market > 0 ? "+" : ""}${market})`;
+
+  if (p.blocked) {
+    const why = REASON_LABEL[p.block_reason as string] ?? p.block_reason ?? "blocked";
+    return `${i + 1}. *${p.player_name}* — ${p.prop_type} ${p.line} 🔴\n    ↳ _${why}_`;
+  }
+
+  const edgeStr = p.edge_pct != null ? ` · ✅ +${Number(p.edge_pct).toFixed(0)}% edge` : "";
+  const head = `${i + 1}. *${p.player_name}* — ${p.prop_type} ${sideStr} ${p.line}${oddsStr}${edgeStr}`;
+  if (p.verdict) return `${head}\n    ↳ _${p.verdict}_`;
+  return head;
 }
 
 async function handleStart(supabase: any, chat_id: number, args: string[]) {
@@ -273,7 +288,18 @@ async function handleParlay(supabase: any, chat_id: number, args: string[]) {
   });
   const j = await res.json();
   if (!j.ok || !j.parlays?.length) {
-    await sendMessage(chat_id, `🤔 Could not build (${j.reason ?? "unknown"}).`);
+    if (j.reason === "pool_too_small") {
+      const total = j.total_scanned ?? 0;
+      const withEdge = j.with_edge ?? 0;
+      const msg = total === 0
+        ? "🤔 Pool is empty — send a screenshot first."
+        : withEdge === 0
+          ? `🤔 Couldn't build — none of the ${total} scanned props show a real edge vs the market right now.\n\nTry a different book or a different game.`
+          : `🤔 Couldn't build — only ${withEdge} of ${total} props have a real edge. Send more screenshots to grow the pool.`;
+      await sendMessage(chat_id, msg);
+    } else {
+      await sendMessage(chat_id, `🤔 Could not build (${j.reason ?? "unknown"}).`);
+    }
     return;
   }
   const blocks = j.parlays.map((p: any, i: number) => {

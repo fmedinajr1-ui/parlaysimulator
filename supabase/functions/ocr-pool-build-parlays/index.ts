@@ -32,18 +32,17 @@ function gameId(tags: string[] | null): string | null {
 
 function buildLegReasoning(l: any): string {
   const bits: string[] = [];
+  if (l.edge_pct != null) bits.push(`+${Number(l.edge_pct).toFixed(0)}% edge`);
   if (l.l10_hit_rate != null) bits.push(`L10 ${(l.l10_hit_rate * 100).toFixed(0)}%`);
   if (l.l10_avg != null) bits.push(`avg ${l.l10_avg.toFixed(1)}`);
   if (l.sweet_spot_id) bits.push("sweet spot");
   if (l.dna_score != null) bits.push(`DNA ${l.dna_score}`);
-  if (l.market_price_delta != null && l.market_price_delta !== 0)
-    bits.push(`${l.market_price_delta > 0 ? "+" : ""}${l.market_price_delta} vs market`);
   return bits.join(" · ");
 }
 
 function buildParlay(props: any[], targetLegs: number) {
   const sorted = [...props].sort(
-    (a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0),
+    (a, b) => (Number(b.edge_pct ?? 0) - Number(a.edge_pct ?? 0)) || ((b.composite_score ?? 0) - (a.composite_score ?? 0)),
   );
   const legs: any[] = [];
   const playerSet = new Set<string>();
@@ -119,17 +118,35 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("session_id", session_id)
       .eq("blocked", false);
+    // Auto mode requires a real edge AND a recommended side.
+    if (mode !== "manual") {
+      q = q.not("recommended_side", "is", null).gte("edge_pct", 4);
+    }
     if (mode === "manual" && selected_prop_ids?.length) {
       q = q.in("id", selected_prop_ids);
     }
     const { data: pool, error } = await q;
     if (error) throw new Error(error.message);
     if (!pool || pool.length < 2) {
+      // Surface a friendly reason for the Telegram renderer
+      const { count: totalCount } = await supabase
+        .from("ocr_scanned_props")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", session_id);
+      const { count: edgeCount } = await supabase
+        .from("ocr_scanned_props")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", session_id)
+        .eq("blocked", false)
+        .gte("edge_pct", 4);
       return new Response(
         JSON.stringify({
           ok: true,
           parlays: [],
-          reason: `pool_too_small:${pool?.length ?? 0}`,
+          reason: "pool_too_small",
+          pool_size: pool?.length ?? 0,
+          total_scanned: totalCount ?? 0,
+          with_edge: edgeCount ?? 0,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
