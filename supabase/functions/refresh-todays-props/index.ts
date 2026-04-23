@@ -537,6 +537,12 @@ serve(async (req) => {
     }
 
     // Step 5: Insert into unified_props
+    finalProps = finalProps.map((prop) => ({
+      ...prop,
+      odds_updated_at: prop.odds_updated_at || ingestTimestamp,
+      updated_at: prop.updated_at || ingestTimestamp,
+    }));
+
     let insertedCount = 0;
     if (finalProps.length > 0) {
       // Insert in batches of 100
