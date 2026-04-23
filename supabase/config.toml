@@ -545,3 +545,6 @@ verify_jwt = false
 
 [functions.telegram-prop-scanner]
 verify_jwt = false
+
+[functions.telegram-prop-scanner-setup]
+verify_jwt = false
