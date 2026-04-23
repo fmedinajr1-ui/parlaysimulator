@@ -140,7 +140,7 @@ function americanToImpliedProb(odds: number | null | undefined): number | null {
 }
 
 function buildVisionMessages(frames: string[], book: string, sport: string) {
-  const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nIf a single card shows BOTH over and under, output TWO rows (one per side).\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
+  const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nCRITICAL: Emit ONE row per (player + prop_type + line). If the card shows BOTH over and under prices, put them in over_price and under_price on the SAME row — DO NOT duplicate the row. Pick side='over' as the default placeholder; the system computes the real recommendation.\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
 
   const content: any[] = [{ type: "text", text: "Extract all visible player props from these screenshots." }];
   for (const f of frames) {
