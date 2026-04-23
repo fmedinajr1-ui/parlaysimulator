@@ -2838,7 +2838,10 @@ serve(async (req) => {
         rejected: rejectedProps.slice(0, 30),
         mode,
         gameDate: today,
-        blockedReason: approvedCount === 0 ? 'blocked:risk_empty' : thinDayTriggered ? 'blocked:risk_thin' : null,
+        // RISK LAYER BYPASSED — advisory only, never block downstream
+        blockedReason: null,
+        riskLayerStatus: approvedCount === 0 ? 'empty' : thinDayTriggered ? 'thin' : 'active',
+        advisoryReason: approvedCount === 0 ? 'risk_empty' : thinDayTriggered ? 'risk_thin' : null,
         diagnostics: {
           rawPropsScanned,
           activePropsScanned: rawPropsScanned,
