@@ -12,6 +12,7 @@ const corsHeaders = {
 };
 
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const OPENAI_VISION_URL = "https://api.openai.com/v1/chat/completions";
 const VISION_MODEL = "google/gemini-3-flash-preview";
 
 const BOOK_HINTS: Record<string, string> = {
@@ -82,10 +83,7 @@ function normalizePropType(raw: string): string {
   return map[s] ?? s;
 }
 
-async function visionOcr(frames: string[], book: string, sport: string) {
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) throw new Error("LOVABLE_API_KEY missing");
-
+function buildVisionMessages(frames: string[], book: string, sport: string) {
   const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nIf a single card shows BOTH over and under, output TWO rows (one per side).\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
 
   const content: any[] = [{ type: "text", text: "Extract all visible player props from these screenshots." }];
@@ -94,15 +92,38 @@ async function visionOcr(frames: string[], book: string, sport: string) {
     content.push({ type: "image_url", image_url: { url } });
   }
 
+  return {
+    system,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content },
+    ],
+  };
+}
+
+function parseVisionToolCall(data: any) {
+  const call = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!call) return [];
+  try {
+    const parsed = JSON.parse(call.function.arguments);
+    return Array.isArray(parsed.props) ? parsed.props : [];
+  } catch {
+    return [];
+  }
+}
+
+async function lovableVisionOcr(frames: string[], book: string, sport: string) {
+  const apiKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!apiKey) throw new Error("LOVABLE_API_KEY missing");
+
+  const { messages } = buildVisionMessages(frames, book, sport);
+
   const res = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: VISION_MODEL,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content },
-      ],
+      messages,
       tools: [VISION_TOOL_SCHEMA],
       tool_choice: { type: "function", function: { name: "extract_props" } },
     }),
@@ -113,14 +134,79 @@ async function visionOcr(frames: string[], book: string, sport: string) {
   if (!res.ok) throw new Error(`vision_${res.status}: ${await res.text()}`);
 
   const data = await res.json();
-  const call = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!call) return [];
-  try {
-    const parsed = JSON.parse(call.function.arguments);
-    return Array.isArray(parsed.props) ? parsed.props : [];
-  } catch {
-    return [];
+  return parseVisionToolCall(data);
+}
+
+async function openAiVisionOcr(frames: string[], book: string, sport: string) {
+  const openAIKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openAIKey) throw new Error("OPENAI_API_KEY missing");
+
+  const { messages } = buildVisionMessages(frames, book, sport);
+  const models = ["gpt-4o", "gpt-4o-mini"];
+  let lastError: Error | null = null;
+
+  for (const model of models) {
+    const res = await fetch(OPENAI_VISION_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openAIKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages,
+        tools: [VISION_TOOL_SCHEMA],
+        tool_choice: { type: "function", function: { name: "extract_props" } },
+      }),
+    });
+
+    if (res.status === 402) throw new Error("openai_credits_exhausted");
+    if (res.status === 429) {
+      lastError = new Error("openai_rate_limited");
+      continue;
+    }
+    if (!res.ok) {
+      const detail = await res.text();
+      lastError = new Error(`openai_vision_${res.status}: ${detail}`);
+      if (res.status >= 500 && model !== models[models.length - 1]) continue;
+      throw lastError;
+    }
+
+    const data = await res.json();
+    return parseVisionToolCall(data);
   }
+
+  throw lastError ?? new Error("openai_vision_failed");
+}
+
+async function visionOcr(frames: string[], book: string, sport: string) {
+  const hasLovable = Boolean(Deno.env.get("LOVABLE_API_KEY"));
+  const hasOpenAI = Boolean(Deno.env.get("OPENAI_API_KEY"));
+  if (!hasLovable && !hasOpenAI) throw new Error("ocr_provider_not_configured");
+
+  let lovableError: Error | null = null;
+
+  if (hasLovable) {
+    try {
+      return await lovableVisionOcr(frames, book, sport);
+    } catch (error) {
+      lovableError = error instanceof Error ? error : new Error(String(error));
+      console.error("[ocr-prop-scan] Lovable OCR failed:", lovableError.message);
+      if (!hasOpenAI) throw lovableError;
+    }
+  }
+
+  if (hasOpenAI) {
+    try {
+      return await openAiVisionOcr(frames, book, sport);
+    } catch (error) {
+      const openAiError = error instanceof Error ? error : new Error(String(error));
+      console.error("[ocr-prop-scan] OpenAI OCR failed:", openAiError.message);
+      if (lovableError?.message === "ai_credits_exhausted" && openAiError.message === "openai_credits_exhausted") {
+        throw new Error("ai_credits_exhausted");
+      }
+      throw openAiError;
+    }
+  }
+
+  throw lovableError ?? new Error("ocr_provider_unavailable");
 }
 
 function mapStatKey(propType: string, table: string): string | null {
@@ -331,8 +417,17 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error("ocr-prop-scan error", e);
     const msg = e instanceof Error ? e.message : "unknown";
-    const status = msg === "rate_limited" ? 429 : msg === "ai_credits_exhausted" ? 402 : 500;
-    return new Response(JSON.stringify({ ok: false, error: msg }), {
+    const error = msg === "openai_credits_exhausted" ? "ai_credits_exhausted" : msg;
+    const status = error === "rate_limited" ? 429 : error === "ai_credits_exhausted" ? 402 : 500;
+    const message =
+      error === "rate_limited"
+        ? "Scanner is busy right now. Please try the screenshot again in a minute."
+        : error === "ai_credits_exhausted"
+          ? "Scanner AI balance is exhausted right now. Add more AI balance to resume screenshot scanning."
+          : error === "ocr_provider_not_configured"
+            ? "Scanner OCR is not configured."
+            : "Scanner failed to analyze the screenshot.";
+    return new Response(JSON.stringify({ ok: false, error, message }), {
       status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
