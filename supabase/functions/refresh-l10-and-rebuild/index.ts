@@ -678,29 +678,16 @@ Deno.serve(async (req) => {
         const riskCount = await getRiskPickCount(supabase, targetDate);
         const sweetSpotCount = await getSweetSpotCount(supabase, targetDate);
         if ((riskCount || 0) === 0 && (sweetSpotCount || 0) === 0) {
-          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-          const { count: freshFdProps } = await supabase
-            .from("unified_props")
-            .select("*", { count: "exact", head: true })
-            .eq("bookmaker", "fanduel")
-            .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
-
-          results["parlay-engine-v2"] = `blocked:no_sources:risk_${riskCount || 0}:fallback_${sweetSpotCount || 0}`;
-          warnings.push(`Parlay generation blocked: no direct sources (${riskCount || 0} risk, ${sweetSpotCount || 0} fallback)`);
-          await sendPipelineAlert(
-            `⚠️ *Parlay Generation Blocked*
-
-*Date:* ${targetDate}
-*Fresh props:* ${freshFdProps || 0}
-*Risk picks:* ${riskCount || 0}
-*Fallback sweet spots:* ${sweetSpotCount || 0}
-*Cause:* no direct source rows available
-*Run:* \`${currentRunId.slice(0,8)}\``
-          );
-          return;
+          // RISK LAYER BYPASSED — let parlay engine try raw unified_props fallback
+          warnings.push(`Parlay engine: no risk/sweet rows — using raw_props fallback (risk_layer:bypassed)`);
+          log(`ℹ Risk + fallback empty; running parlay-engine-v2 with allow_raw_props_fallback`);
         }
 
-        await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: targetDate });
+        await invokeStep("Generating parlays", "parlay-engine-v2", {
+          dry_run: false,
+          date: targetDate,
+          allow_raw_props_fallback: true,
+        });
 
         const todayP = todayET();
         const parlayCount = await getParlayCount(supabase, todayP);
