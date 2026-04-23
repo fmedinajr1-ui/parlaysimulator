@@ -44,6 +44,8 @@ const corsHeaders = {
 };
 
 const MIN_APPROVED_RISK_PICKS = 8;
+// KILL SWITCH — risk layer is advisory, never gate the slate
+const RISK_LAYER_BYPASSED = true;
 
 async function getRiskPickCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
@@ -215,17 +217,19 @@ Deno.serve(async (req) => {
     const riskCount = riskRes.count ?? 0;
     const sweetSpotCount = sweetSpotRes.count ?? 0;
 
+    // Risk layer is now advisory. Only block on (1) no fresh props at all, or
+    // (2) no usable matches downstream. Risk thin/empty = soft warning.
     const blockCode = freshFdCount === 0
       ? (totalFdCount === 0 ? "blocked:no_props_for_today" : "blocked:stale_odds")
-      : riskCount === 0
-        ? "blocked:risk_empty"
-        : riskCount < MIN_APPROVED_RISK_PICKS
-          ? "blocked:risk_thin"
-          : sweetSpotCount === 0
-            ? "blocked:sweet_spots_empty"
-            : ((todayParlaysRes.count ?? 0) + (todayStraightsRes.count ?? 0)) === 0
-              ? "blocked:no_usable_matches"
-              : "ready";
+      : ((todayParlaysRes.count ?? 0) + (todayStraightsRes.count ?? 0)) === 0
+        ? "blocked:no_usable_matches"
+        : "ready";
+
+    const riskLayerStatus = riskCount === 0
+      ? "empty"
+      : riskCount < MIN_APPROVED_RISK_PICKS
+        ? "thin"
+        : "active";
 
     return {
       target_date: targetDate,
