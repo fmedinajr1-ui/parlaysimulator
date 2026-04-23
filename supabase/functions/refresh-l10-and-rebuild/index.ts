@@ -92,6 +92,21 @@ async function getUploadedPipelinePickCount(supabase: any, targetDate: string): 
   return count ?? 0;
 }
 
+async function getLatestSourceTimestamp(
+  supabase: any,
+  table: string,
+  selectColumn: string,
+  filters: Array<[string, string | boolean]>,
+): Promise<string | null> {
+  let query = supabase.from(table).select(selectColumn).order(selectColumn, { ascending: false }).limit(1);
+  for (const [column, value] of filters) {
+    query = query.eq(column, value);
+  }
+  const { data, error } = await query;
+  if (error) return null;
+  return data?.[0]?.[selectColumn] ?? null;
+}
+
 // BUG 1 FIX: canonical ET date helper — all "today" date references use this
 function getEasternDate(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -156,12 +171,16 @@ Deno.serve(async (req) => {
     const freshWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const targetDate = todayET();
 
-    const [freshFdPropsRes, riskRes, sweetSpotRes, todayParlaysRes, todayStraightsRes] = await Promise.all([
+    const [freshFdPropsRes, allFdPropsRes, riskRes, sweetSpotRes, todayParlaysRes, todayStraightsRes, latestFdFreshnessAt, latestAnyBookFreshnessAt, latestRiskAt, latestSweetSpotAt] = await Promise.all([
       supabase
         .from("unified_props")
         .select("id", { count: "exact", head: true })
         .eq("bookmaker", "fanduel")
         .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`),
+      supabase
+        .from("unified_props")
+        .select("id", { count: "exact", head: true })
+        .eq("bookmaker", "fanduel"),
       supabase
         .from("nba_risk_engine_picks")
         .select("id", { count: "exact", head: true })
@@ -183,25 +202,55 @@ Deno.serve(async (req) => {
         .select("id", { count: "exact", head: true })
         .eq("bet_date", targetDate)
         .eq("outcome", "pending"),
+      getLatestSourceTimestamp(supabase, "unified_props", "odds_updated_at", [["bookmaker", "fanduel"]]),
+      getLatestSourceTimestamp(supabase, "unified_props", "updated_at", []),
+      getLatestSourceTimestamp(supabase, "nba_risk_engine_picks", "created_at", [["game_date", targetDate], ["mode", "full_slate"]]),
+      getLatestSourceTimestamp(supabase, "category_sweet_spots", "created_at", [["analysis_date", targetDate], ["is_active", true]]),
     ]);
 
     const parlays = todayParlaysRes.data ?? [];
 
+    const freshFdCount = freshFdPropsRes.count ?? 0;
+    const totalFdCount = allFdPropsRes.count ?? 0;
+    const riskCount = riskRes.count ?? 0;
+    const sweetSpotCount = sweetSpotRes.count ?? 0;
+
+    const blockCode = freshFdCount === 0
+      ? (totalFdCount === 0 ? "blocked:no_props_for_today" : "blocked:stale_odds")
+      : riskCount === 0
+        ? "blocked:risk_empty"
+        : riskCount < MIN_APPROVED_RISK_PICKS
+          ? "blocked:risk_thin"
+          : sweetSpotCount === 0
+            ? "blocked:sweet_spots_empty"
+            : ((todayParlaysRes.count ?? 0) + (todayStraightsRes.count ?? 0)) === 0
+              ? "blocked:no_usable_matches"
+              : "ready";
+
     return {
       target_date: targetDate,
-        input_quality: {
-          fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
-          direct_risk_candidates: riskRes.count ?? 0,
-          direct_fallback_candidates: sweetSpotRes.count ?? 0,
-        },
+      block_code: blockCode,
+      input_quality: {
+        fresh_fanduel_props_2h: freshFdCount,
+        total_fanduel_props: totalFdCount,
+        direct_risk_candidates: riskCount,
+        direct_fallback_candidates: sweetSpotCount,
+      },
       generated_counts: {
         parlays_total: todayParlaysRes.count ?? 0,
         lottery_parlays: parlays.filter((row: any) => row.tier === "lottery").length,
         straight_bets_total: todayStraightsRes.count ?? 0,
       },
+      freshness: {
+        latest_fanduel_update_at: latestFdFreshnessAt,
+        latest_any_book_update_at: latestAnyBookFreshnessAt,
+        latest_risk_update_at: latestRiskAt,
+        latest_sweet_spot_update_at: latestSweetSpotAt,
+      },
       pipeline_health: {
-        direct_sources_ready: ((riskRes.count ?? 0) + (sweetSpotRes.count ?? 0)) > 0,
+        direct_sources_ready: (riskCount + sweetSpotCount) > 0,
         parlay_output_ready: (todayParlaysRes.count ?? 0) > 0,
+        ready: blockCode === "ready",
       },
     };
   };
