@@ -82,6 +82,16 @@ async function getStraightCount(supabase: any, targetDate: string): Promise<numb
   return count ?? 0;
 }
 
+async function getUploadedPipelinePickCount(supabase: any, targetDate: string): Promise<number> {
+  const { count } = await supabase
+    .from("bot_daily_picks")
+    .select("id", { count: "exact", head: true })
+    .eq("pick_date", targetDate)
+    .eq("generator", "uploaded-pipeline-v1")
+    .eq("status", "locked");
+  return count ?? 0;
+}
+
 // BUG 1 FIX: canonical ET date helper — all "today" date references use this
 function getEasternDate(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -574,6 +584,42 @@ Deno.serve(async (req) => {
 *Status:* ${poolStatus}
 *Run:* \`${currentRunId.slice(0,8)}\``
           );
+        }
+      },
+    },
+    {
+      id: "phase3b_uploaded",
+      label: "Generate uploaded pipeline picks",
+      run: async () => {
+        if (oddsGateBlocked) {
+          log("⏭ Skipping uploaded pipeline picks — odds gate blocked");
+          return;
+        }
+
+        const targetDate = todayET();
+        const poolCount = await getPoolCount(supabase, targetDate);
+
+        if (poolCount < MIN_PICK_POOL_ROWS) {
+          results["uploaded-pipeline-generator"] = `blocked:thin_pool:${poolCount}`;
+          warnings.push(`Uploaded pipeline generation blocked: thin pool (${poolCount} rows)`);
+          await sendPipelineAlert(
+            `⚠️ *Uploaded Pipeline Blocked*\n\n*Date:* ${targetDate}\n*Pick pool:* ${poolCount}\n*Cause:* pick pool below minimum threshold\n*Run:* \`${currentRunId.slice(0,8)}\``,
+          );
+          return;
+        }
+
+        await invokeStep("Generating uploaded pipeline picks", "uploaded-pipeline-generator", {
+          dry_run: false,
+          limit: 12,
+        });
+
+        const uploadedCount = await getUploadedPipelinePickCount(supabase, targetDate);
+        if ((uploadedCount || 0) === 0) {
+          await sendPipelineAlert(
+            `⚠️ *Zero Output Warning*\n\nUploaded pipeline generation completed but produced *0 uploaded-pipeline picks* for ${targetDate}.\n\nCheck: multi-book coverage in unified_props, historical prop_candidates, and manual override alignment.`,
+          );
+        } else {
+          results["uploaded-pipeline-generator"] = `ok:${uploadedCount}`;
         }
       },
     },
