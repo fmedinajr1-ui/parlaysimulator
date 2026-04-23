@@ -552,8 +552,24 @@ Deno.serve(async (req) => {
       String(sport).toLowerCase(),
     );
 
-    const enriched: any[] = [];
+    // Collapse duplicate rows the model may emit (one for over + one for under
+    // of the same prop). Merge prices into a single record per
+    // (player + prop_type + line).
+    const dedupMap = new Map<string, any>();
     for (const p of parsed) {
+      const key = `${String(p.player_name).trim().toLowerCase()}|${normalizePropType(String(p.prop_type))}|${Number(p.line)}`;
+      const existing = dedupMap.get(key);
+      if (!existing) {
+        dedupMap.set(key, { ...p });
+      } else {
+        if (existing.over_price == null && typeof p.over_price === "number") existing.over_price = p.over_price;
+        if (existing.under_price == null && typeof p.under_price === "number") existing.under_price = p.under_price;
+      }
+    }
+    const deduped = Array.from(dedupMap.values());
+
+    const enriched: any[] = [];
+    for (const p of deduped) {
       const propType = normalizePropType(String(p.prop_type));
       const xref = await crossReference(
         supabase,
