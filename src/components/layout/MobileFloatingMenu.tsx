@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Menu, X, Target, Users, Eye, Activity, Calculator, Shield, ChevronRight, LayoutDashboard, BookOpen } from "lucide-react";
+import { Menu, X, Target, Users, Eye, Activity, Calculator, Shield, ChevronRight, LayoutDashboard, BookOpen, ScanLine } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -13,6 +13,7 @@ const menuItems = [
   { icon: Target, label: "Analysis", path: "/sweet-spots", description: "Sweet spot analysis" },
   { icon: Users, label: "Team Bets", path: "/team-bets", description: "NCAAB spreads, totals & ML" },
   { icon: Eye, label: "Scout", path: "/scout", description: "AI video analysis" },
+  { icon: ScanLine, label: "Scan", path: "/scan", description: "OCR sportsbook prop scanner" },
   { icon: BookOpen, label: "Blog", path: "/blog", description: "Strategy & AI insights" },
 ];
 

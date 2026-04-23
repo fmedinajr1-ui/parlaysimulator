@@ -47,6 +47,7 @@ const Unsubscribe = React.lazy(() => import("./pages/Unsubscribe"));
 const GradeSlip = React.lazy(() => import("./pages/GradeSlip"));
 const AdminTikTok = React.lazy(() => import("./pages/admin/AdminTikTok"));
 const PropScanner = React.lazy(() => import("./pages/PropScanner"));
+const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -111,6 +112,7 @@ function AnimatedRoutes() {
               <Route path="/unsubscribe" element={<Unsubscribe />} />
               <Route path="/grade" element={<GradeSlip />} />
               <Route path="/scan" element={<PropScanner />} />
+              <Route path="/manual" element={<ManualBuilder />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
