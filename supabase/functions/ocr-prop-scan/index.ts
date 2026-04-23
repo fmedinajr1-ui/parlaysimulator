@@ -140,7 +140,7 @@ function americanToImpliedProb(odds: number | null | undefined): number | null {
 }
 
 function buildVisionMessages(frames: string[], book: string, sport: string) {
-  const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nIf a single card shows BOTH over and under, output TWO rows (one per side).\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
+  const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nCRITICAL: Emit ONE row per (player + prop_type + line). If the card shows BOTH over and under prices, put them in over_price and under_price on the SAME row — DO NOT duplicate the row. Pick side='over' as the default placeholder; the system computes the real recommendation.\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
 
   const content: any[] = [{ type: "text", text: "Extract all visible player props from these screenshots." }];
   for (const f of frames) {
@@ -552,8 +552,24 @@ Deno.serve(async (req) => {
       String(sport).toLowerCase(),
     );
 
-    const enriched: any[] = [];
+    // Collapse duplicate rows the model may emit (one for over + one for under
+    // of the same prop). Merge prices into a single record per
+    // (player + prop_type + line).
+    const dedupMap = new Map<string, any>();
     for (const p of parsed) {
+      const key = `${String(p.player_name).trim().toLowerCase()}|${normalizePropType(String(p.prop_type))}|${Number(p.line)}`;
+      const existing = dedupMap.get(key);
+      if (!existing) {
+        dedupMap.set(key, { ...p });
+      } else {
+        if (existing.over_price == null && typeof p.over_price === "number") existing.over_price = p.over_price;
+        if (existing.under_price == null && typeof p.under_price === "number") existing.under_price = p.under_price;
+      }
+    }
+    const deduped = Array.from(dedupMap.values());
+
+    const enriched: any[] = [];
+    for (const p of deduped) {
       const propType = normalizePropType(String(p.prop_type));
       const xref = await crossReference(
         supabase,
