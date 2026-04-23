@@ -252,6 +252,13 @@ Deno.serve(async (req) => {
     const now = new Date();
     const { candidates, mappingNotes, rejections } = buildCandidates(pool ?? [], props, now);
 
+    // Per-source candidate mix so the UI can surface where the slate is coming from.
+    const sourceMix = candidates.reduce<Record<string, number>>((acc, l) => {
+      const k = l.source_origin ?? "unknown";
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    }, {});
+
     const engine = new ParlayEngine();
     const slate = engine.generateSlate(candidates, now);
 
