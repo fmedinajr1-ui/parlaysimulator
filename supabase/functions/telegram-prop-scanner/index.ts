@@ -225,7 +225,7 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
 
 async function handleHelp(chat_id: number) {
   await sendMessage(chat_id,
-    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start <sport> <book>\` — start session\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
+    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start [sport] [book]\` — start session (defaults: nba + fanduel)\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n_Aliases:_ fd, dk, hr, hardrock bet, hard rock, pp, ud\n\n*Examples*\n\`/scan start hardrock\`\n\`/scan start nba fanduel\`\n\`/scan start mlb dk\`\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
 }
 
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
