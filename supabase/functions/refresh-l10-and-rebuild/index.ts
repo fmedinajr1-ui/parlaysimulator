@@ -55,14 +55,6 @@ async function getRiskPickCount(supabase: any, targetDate: string): Promise<numb
   return count ?? 0;
 }
 
-async function getPoolCount(supabase: any, targetDate: string): Promise<number> {
-  const { count } = await supabase
-    .from("bot_daily_pick_pool")
-    .select("id", { count: "exact", head: true })
-    .eq("pick_date", targetDate);
-  return count ?? 0;
-}
-
 async function getSweetSpotCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
     .from("category_sweet_spots")
@@ -730,12 +722,13 @@ Deno.serve(async (req) => {
       label: "Generate straight bets",
       run: async () => {
         const todayS = todayET();
-        const poolCount = await getPoolCount(supabase, todayS);
-        if (poolCount < MIN_PICK_POOL_ROWS) {
-          results["bot-generate-straight-bets"] = `blocked:thin_pool:${poolCount}`;
-          warnings.push(`Straight bet generation blocked: thin pool (${poolCount} rows)`);
+        const riskCount = await getRiskPickCount(supabase, todayS);
+        const sweetSpotCount = await getSweetSpotCount(supabase, todayS);
+        if ((riskCount || 0) === 0 && (sweetSpotCount || 0) === 0) {
+          results["bot-generate-straight-bets"] = `blocked:no_sources:risk_${riskCount || 0}:fallback_${sweetSpotCount || 0}`;
+          warnings.push(`Straight bet generation blocked: no direct sources (${riskCount || 0} risk, ${sweetSpotCount || 0} fallback)`);
           sendPipelineAlert(
-            `⚠️ *Straight Generation Blocked*\n\n*Date:* ${todayS}\n*Pick pool:* ${poolCount}\n*Cause:* pick pool below minimum threshold\n*Run:* \`${currentRunId.slice(0,8)}\``,
+            `⚠️ *Straight Generation Blocked*\n\n*Date:* ${todayS}\n*Risk picks:* ${riskCount || 0}\n*Fallback sweet spots:* ${sweetSpotCount || 0}\n*Cause:* no direct source rows available\n*Run:* \`${currentRunId.slice(0,8)}\``,
           );
           return;
         }
