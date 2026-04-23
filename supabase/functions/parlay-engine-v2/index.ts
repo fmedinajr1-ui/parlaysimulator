@@ -354,6 +354,7 @@ Deno.serve(async (req) => {
         sport: l.sport,
         confidence: l.confidence,
         signal_source: l.signal_source,
+        source_origin: l.source_origin ?? null,
       })),
       leg_count: p.legs.length,
       combined_probability: combinedProbability(p),
