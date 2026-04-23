@@ -908,6 +908,41 @@ Deno.serve(async (req) => {
       );
     }
 
+    const preflightChecks = [
+      {
+        name: 'Fresh FanDuel odds',
+        passed: (diagnostics.input_quality?.fresh_fanduel_props_2h ?? 0) > 0,
+        detail: `${diagnostics.input_quality?.fresh_fanduel_props_2h ?? 0} fresh / ${diagnostics.input_quality?.total_fanduel_props ?? 0} total`,
+      },
+      {
+        name: 'Risk candidates',
+        passed: (diagnostics.input_quality?.direct_risk_candidates ?? 0) >= MIN_APPROVED_RISK_PICKS,
+        detail: `${diagnostics.input_quality?.direct_risk_candidates ?? 0} approved rows`,
+      },
+      {
+        name: 'Fallback candidates',
+        passed: (diagnostics.input_quality?.direct_fallback_candidates ?? 0) > 0,
+        detail: `${diagnostics.input_quality?.direct_fallback_candidates ?? 0} active sweet spots`,
+      },
+    ];
+
+    await supabase.from('bot_activity_log').insert({
+      event_type: 'preflight_check',
+      severity: diagnostics.block_code === 'ready' ? 'info' : 'warning',
+      message: `Pipeline preflight ${diagnostics.block_code}`,
+      metadata: {
+        ready: diagnostics.block_code === 'ready',
+        block_code: diagnostics.block_code,
+        blockers: diagnostics.block_code === 'ready' ? [] : [diagnostics.block_code],
+        checks: preflightChecks,
+        freshness: diagnostics.freshness,
+        generated_counts: diagnostics.generated_counts,
+        input_quality: diagnostics.input_quality,
+      },
+    }).catch((insertError: any) => {
+      log(`⚠ Failed to store preflight_check log: ${insertError.message || insertError}`);
+    });
+
     // Auto-resume if phases were skipped
     if (skipped.length > 0 && currentAttempt < MAX_ATTEMPTS && lastCompleted) {
       log(`🔄 Auto-continuing: attempt ${currentAttempt + 1}/${MAX_ATTEMPTS}, resuming after "${lastCompleted}"`);
