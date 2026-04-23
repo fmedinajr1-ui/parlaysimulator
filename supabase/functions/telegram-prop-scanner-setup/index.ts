@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
 
     const body: Record<string, unknown> = {
       url: webhookUrl,
-      allowed_updates: ["message", "edited_message"],
+      allowed_updates: ["message", "edited_message", "callback_query"],
       drop_pending_updates: true,
     };
     if (secretToken) body.secret_token = secretToken;
