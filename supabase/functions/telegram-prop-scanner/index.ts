@@ -87,6 +87,45 @@ async function getActiveSession(supabase: any, chat_id: number) {
   return data;
 }
 
+async function ensureSession(supabase: any, chat_id: number, overrides?: { sport?: string; book?: string }) {
+  const active = await getActiveSession(supabase, chat_id);
+  if (active) {
+    const updates: Record<string, string> = {};
+    if (overrides?.sport && overrides.sport !== active.sport) updates.sport = overrides.sport;
+    if (overrides?.book && overrides.book !== active.book) updates.book = overrides.book;
+
+    if (Object.keys(updates).length === 0) return active;
+
+    const { data: updated, error } = await supabase
+      .from("ocr_scan_sessions")
+      .update(updates)
+      .eq("id", active.id)
+      .select("*")
+      .single();
+
+    if (error) throw new Error(error.message);
+    return updated;
+  }
+
+  const user_id = await resolveUserForChat(supabase, chat_id);
+  if (!user_id) return null;
+
+  const { data: created, error } = await supabase
+    .from("ocr_scan_sessions")
+    .insert({
+      user_id,
+      telegram_chat_id: chat_id,
+      sport: overrides?.sport ?? "nba",
+      book: overrides?.book ?? "fanduel",
+      capture_mode: "telegram",
+    })
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return created;
+}
+
 function fmtPropLine(p: any, i: number): string {
   const odds = p.side === "over" ? p.over_price : p.under_price;
   const oddsStr = odds == null ? "" : ` (${odds > 0 ? "+" : ""}${odds})`;
@@ -218,13 +257,13 @@ const BOOK_ALIASES: Record<string, string> = {
 };
 
 async function handleBook(supabase: any, chat_id: number, args: string[]) {
-  const session = await getActiveSession(supabase, chat_id);
-  if (!session) {
-    await sendMessage(chat_id, "ℹ️ No active session. `/scan start <sport> <book>` first.");
-    return;
-  }
   const raw = (args[0] ?? "").toLowerCase().replace(/\s+/g, "");
   if (!raw) {
+    const session = await getActiveSession(supabase, chat_id);
+    if (!session) {
+      await sendMessage(chat_id, "📚 Pick a book with `/book fanduel` (or dk, hardrock, pp, ud), then send a screenshot.");
+      return;
+    }
     await sendMessage(chat_id, `📚 *Current book:* ${session.book}\n\nUsage: \`/scan book <fanduel|draftkings|hardrock|prizepicks|underdog>\``);
     return;
   }
@@ -233,15 +272,17 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
     await sendMessage(chat_id, `❌ Unknown book *${raw}*.\nValid: ${VALID_BOOKS.join(", ")}`);
     return;
   }
-  const { error } = await supabase
-    .from("ocr_scan_sessions")
-    .update({ book })
-    .eq("id", session.id);
-  if (error) {
-    await sendMessage(chat_id, `❌ Could not update book: ${error.message}`);
+  try {
+    const session = await ensureSession(supabase, chat_id, { book });
+    if (!session) {
+      await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+      return;
+    }
+    await sendMessage(chat_id, `✅ *Book set to ${book}*\n\nNow send a screenshot and I'll scan it with the *${book}* layout.`);
+  } catch (error) {
+    await sendMessage(chat_id, `❌ Could not update book: ${error instanceof Error ? error.message : "unknown"}`);
     return;
   }
-  await sendMessage(chat_id, `✅ *Book overridden* → *${book}*\n\nNext screenshots will parse with the *${book}* layout.`);
 }
 
 async function handleHelp(chat_id: number) {
@@ -268,24 +309,16 @@ async function handleHelp(chat_id: number) {
 }
 
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
-  let session = await getActiveSession(supabase, chat_id);
+  let session;
+  try {
+    session = await ensureSession(supabase, chat_id);
+  } catch (error) {
+    await sendMessage(chat_id, `❌ Could not start session: ${error instanceof Error ? error.message : "unknown"}`);
+    return;
+  }
   if (!session) {
-    const user_id = await resolveUserForChat(supabase, chat_id);
-    if (!user_id) {
-      await sendMessage(chat_id, "🚫 *Not authorized.* Link your Telegram chat to your account first.");
-      return;
-    }
-    const { data: created, error: cErr } = await supabase
-      .from("ocr_scan_sessions")
-      .insert({ user_id, telegram_chat_id: chat_id, sport: "nba", book: "fanduel", capture_mode: "telegram" })
-      .select("*")
-      .single();
-    if (cErr || !created) {
-      await sendMessage(chat_id, `❌ Could not start session: ${cErr?.message ?? "unknown"}`);
-      return;
-    }
-    session = created;
-    await sendMessage(chat_id, `✨ *New session started* — NBA · FanDuel\n_Tap "Wrong book?" below if needed._`);
+    await sendMessage(chat_id, "🚫 *Not authorized.* Link your Telegram chat to your account first.");
+    return;
   }
   await sendMessage(chat_id, `🔎 Scanning ${photoFileIds.length} screenshot${photoFileIds.length > 1 ? "s" : ""}…`);
   try {
@@ -301,7 +334,7 @@ async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string
     if (!j.ok) { await sendMessage(chat_id, `❌ OCR failed: ${j.error ?? "unknown"}`); return; }
     if (j.parsed === 0) { await sendMessage(chat_id, "👀 No props detected."); return; }
     const lines = (j.props as any[]).slice(0, 12).map((p, i) => fmtPropLine(p, i));
-    const more = j.props.length > 12 ? `\n…and ${j.props.length - 12} more` : "";
+      const more = j.props.length > 12 ? `\n…and ${j.props.length - 12} more` : "";
     await sendMessageWithButtons(
       chat_id,
       `✅ *${j.parsed} prop${j.parsed > 1 ? "s" : ""} captured* (${j.inserted} new) · *${session.book}* / ${session.sport.toUpperCase()}\n\n${lines.join("\n")}${more}`,
@@ -353,20 +386,19 @@ Deno.serve(async (req) => {
       await answerCallback(cq.id);
       if (!cb_chat_id) return new Response("ok");
 
-      if (data.startsWith("book:")) {
+        if (data.startsWith("book:")) {
         await handleBook(supabase, cb_chat_id, [data.slice(5)]);
       } else if (data.startsWith("sport:")) {
         const sport = data.slice(6);
-        const session = await getActiveSession(supabase, cb_chat_id);
-        if (!session) {
-          const user_id = await resolveUserForChat(supabase, cb_chat_id);
-          if (user_id) {
-            await supabase.from("ocr_scan_sessions").insert({ user_id, telegram_chat_id: cb_chat_id, sport, book: "fanduel", capture_mode: "telegram" });
-            await sendMessage(cb_chat_id, `✅ Sport set to *${sport.toUpperCase()}*. Send a screenshot to begin.`);
+        try {
+          const session = await ensureSession(supabase, cb_chat_id, { sport });
+          if (!session) {
+            await sendMessage(cb_chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+          } else {
+            await sendMessage(cb_chat_id, `✅ *Sport set to ${sport.toUpperCase()}*\n\nNow send a screenshot and I'll scan it.`);
           }
-        } else {
-          await supabase.from("ocr_scan_sessions").update({ sport }).eq("id", session.id);
-          await sendMessage(cb_chat_id, `✅ Sport switched to *${sport.toUpperCase()}*.`);
+        } catch (error) {
+          await sendMessage(cb_chat_id, `❌ Could not update sport: ${error instanceof Error ? error.message : "unknown"}`);
         }
       } else if (data === "switchbook") {
         await sendMessageWithButtons(cb_chat_id, "Pick the sportsbook you screenshotted from:", [
@@ -395,6 +427,11 @@ Deno.serve(async (req) => {
       return new Response("ok");
     }
 
+    if (msg.document?.file_id && typeof msg.document?.mime_type === "string" && msg.document.mime_type.startsWith("image/")) {
+      await handlePhotos(supabase, chat_id, [msg.document.file_id]);
+      return new Response("ok");
+    }
+
     const text = (msg.text ?? "").trim();
     if (!text) return new Response("ok");
     if (text === "/start" || text === "/help" || text === "/scan") { await handleHelp(chat_id); return new Response("ok"); }
@@ -409,16 +446,15 @@ Deno.serve(async (req) => {
       const parts = text.split(/\s+/).slice(1);
       const sport = (parts[0] ?? "").toLowerCase();
       if (!sport) { await sendMessage(chat_id, "Usage: `/sport nba` (or mlb, nfl, nhl, wnba…)"); return new Response("ok"); }
-      const session = await getActiveSession(supabase, chat_id);
-      if (!session) {
-        const user_id = await resolveUserForChat(supabase, chat_id);
-        if (user_id) {
-          await supabase.from("ocr_scan_sessions").insert({ user_id, telegram_chat_id: chat_id, sport, book: "fanduel", capture_mode: "telegram" });
-          await sendMessage(chat_id, `✅ Sport set to *${sport.toUpperCase()}*. Send a screenshot to begin.`);
+      try {
+        const session = await ensureSession(supabase, chat_id, { sport });
+        if (!session) {
+          await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+        } else {
+          await sendMessage(chat_id, `✅ *Sport set to ${sport.toUpperCase()}*\n\nNow send a screenshot and I'll scan it.`);
         }
-      } else {
-        await supabase.from("ocr_scan_sessions").update({ sport }).eq("id", session.id);
-        await sendMessage(chat_id, `✅ Sport switched to *${sport.toUpperCase()}*.`);
+      } catch (error) {
+        await sendMessage(chat_id, `❌ Could not update sport: ${error instanceof Error ? error.message : "unknown"}`);
       }
       return new Response("ok");
     }
