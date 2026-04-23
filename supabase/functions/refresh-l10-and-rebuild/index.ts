@@ -805,15 +805,16 @@ Deno.serve(async (req) => {
         const riskCount = await getRiskPickCount(supabase, todayS);
         const sweetSpotCount = await getSweetSpotCount(supabase, todayS);
         if ((riskCount || 0) === 0 && (sweetSpotCount || 0) === 0) {
-          results["bot-generate-straight-bets"] = `blocked:no_sources:risk_${riskCount || 0}:fallback_${sweetSpotCount || 0}`;
-          warnings.push(`Straight bet generation blocked: no direct sources (${riskCount || 0} risk, ${sweetSpotCount || 0} fallback)`);
-          sendPipelineAlert(
-            `⚠️ *Straight Generation Blocked*\n\n*Date:* ${todayS}\n*Risk picks:* ${riskCount || 0}\n*Fallback sweet spots:* ${sweetSpotCount || 0}\n*Cause:* no direct source rows available\n*Run:* \`${currentRunId.slice(0,8)}\``,
-          );
-          return;
+          // RISK LAYER BYPASSED — generate straights from raw unified_props
+          warnings.push(`Straights: no risk/sweet rows — using raw_props fallback (risk_layer:bypassed)`);
+          log(`ℹ Straight bets running with allow_raw_props_fallback`);
         }
 
-        await invokeStep("Generating straight bets", "bot-generate-straight-bets", { date: todayS, dry_run: false });
+        await invokeStep("Generating straight bets", "bot-generate-straight-bets", {
+          date: todayS,
+          dry_run: false,
+          allow_raw_props_fallback: true,
+        });
 
         const straightCount = await getStraightCount(supabase, todayS);
         if ((straightCount || 0) === 0) {
