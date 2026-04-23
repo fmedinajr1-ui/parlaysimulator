@@ -7,7 +7,8 @@ import { americanOddsToImpliedProb, edgePct } from "../_shared/edge-calc.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -139,18 +140,24 @@ function formatPropType(propType: string) {
     .join(" ");
 }
 
-function consensusProbability(sideOffers: MarketOffer[], pairedOffers: MarketOffer[]) {
+function consensusProbability(
+  sideOffers: MarketOffer[],
+  pairedOffers: MarketOffer[],
+) {
   if (!sideOffers.length) return 0;
 
   const pairedByBook = new Map(
-    pairedOffers.map((offer) => [offer.sportsbook.toLowerCase(), offer])
+    pairedOffers.map((offer) => [offer.sportsbook.toLowerCase(), offer]),
   );
 
   const devigged = sideOffers
     .map((offer) => {
       const paired = pairedByBook.get(offer.sportsbook.toLowerCase());
       if (!paired) return null;
-      return removeVig([offer.impliedProbability, paired.impliedProbability])[0];
+      return removeVig([
+        offer.impliedProbability,
+        paired.impliedProbability,
+      ])[0];
     })
     .filter((value): value is number => value !== null);
 
@@ -161,8 +168,12 @@ function consensusProbability(sideOffers: MarketOffer[], pairedOffers: MarketOff
   return median(sideOffers.map((offer) => offer.impliedProbability));
 }
 
-function extractPreferredDirection(guidanceText: string): "over" | "under" | null {
-  const explicit = guidanceText.match(/preferred direction\s*:\s*(over|under)/i);
+function extractPreferredDirection(
+  guidanceText: string,
+): "over" | "under" | null {
+  const explicit = guidanceText.match(
+    /preferred direction\s*:\s*(over|under)/i,
+  );
   if (explicit) return explicit[1].toLowerCase() as "over" | "under";
 
   const loose = guidanceText.match(/\b(lean|prefer|play)\s+(over|under)\b/i);
@@ -181,8 +192,13 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function buildOffer(odds: number | null, sportsbook: string | null): MarketOffer | null {
-  if (odds === null || odds === undefined || !Number.isFinite(odds)) return null;
+function buildOffer(
+  odds: number | null,
+  sportsbook: string | null,
+): MarketOffer | null {
+  if (odds === null || odds === undefined || !Number.isFinite(odds)) {
+    return null;
+  }
   return {
     sportsbook: sportsbook || "unknown",
     americanOdds: odds,
@@ -191,7 +207,9 @@ function buildOffer(odds: number | null, sportsbook: string | null): MarketOffer
 }
 
 function chooseBestOffer(offers: MarketOffer[]) {
-  return [...offers].sort((a, b) => americanToDecimal(b.americanOdds) - americanToDecimal(a.americanOdds))[0] ?? null;
+  return [...offers].sort((a, b) =>
+    americanToDecimal(b.americanOdds) - americanToDecimal(a.americanOdds)
+  )[0] ?? null;
 }
 
 function buildManualRuleMap(rules: ManualTrainingRule[]) {
@@ -199,7 +217,10 @@ function buildManualRuleMap(rules: ManualTrainingRule[]) {
 
   for (const rule of rules) {
     const logic = rule.rule_logic;
-    if (!logic || logic.type !== "manual_training_guidance" || !logic.event_id || !logic.guidance_text) continue;
+    if (
+      !logic || logic.type !== "manual_training_guidance" || !logic.event_id ||
+      !logic.guidance_text
+    ) continue;
 
     const preferredDirection = extractPreferredDirection(logic.guidance_text);
 
@@ -227,7 +248,8 @@ function findClosestCandidate(
 ) {
   const matches = candidateRows.filter(
     (row) =>
-      normalizeKeyPart(row.player_name) === normalizeKeyPart(market.playerName) &&
+      normalizeKeyPart(row.player_name) ===
+        normalizeKeyPart(market.playerName) &&
       normalizeKeyPart(row.prop_type) === normalizeKeyPart(market.propType),
   );
 
@@ -263,36 +285,57 @@ function buildHistoricalAdjustment(
 
   if (sideHitRate !== null) {
     adjustedProbability = adjustedProbability * 0.65 + sideHitRate * 0.35;
-    drivers.push(`L10 ${market.side} hit rate: ${(sideHitRate * 100).toFixed(0)}%`);
+    drivers.push(
+      `L10 ${market.side} hit rate: ${(sideHitRate * 100).toFixed(0)}%`,
+    );
     sources.push("l10_form");
   }
 
   if (l3 !== null && l10 !== null && l10 > 0) {
     const trendRatio = l3 / l10;
-    const trendSupportsSide = market.side === "over" ? trendRatio > 1.05 : trendRatio < 0.95;
+    const trendSupportsSide = market.side === "over"
+      ? trendRatio > 1.05
+      : trendRatio < 0.95;
     if (trendSupportsSide) {
       adjustedProbability += 0.015;
     } else {
       adjustedProbability -= 0.01;
     }
-    drivers.push(`${historical?.player_name || market.playerName} L3 ${l3.toFixed(1)} vs L10 ${l10.toFixed(1)}`);
+    drivers.push(
+      `${historical?.player_name || market.playerName} L3 ${
+        l3.toFixed(1)
+      } vs L10 ${l10.toFixed(1)}`,
+    );
     sources.push("l3_vs_l10");
   }
 
   if (h2hAvg !== null && h2hGames >= 2) {
-    const h2hSupportsSide = market.side === "over" ? h2hAvg > market.line : h2hAvg < market.line;
+    const h2hSupportsSide = market.side === "over"
+      ? h2hAvg > market.line
+      : h2hAvg < market.line;
     adjustedProbability += h2hSupportsSide ? 0.015 : -0.015;
-    drivers.push(`H2H avg ${h2hAvg.toFixed(1)} across ${h2hGames} matchup${h2hGames === 1 ? "" : "s"}`);
+    drivers.push(
+      `H2H avg ${h2hAvg.toFixed(1)} across ${h2hGames} matchup${
+        h2hGames === 1 ? "" : "s"
+      }`,
+    );
     sources.push("h2h_history");
   }
 
   if (manualOverride) {
-    if (manualOverride.preferredDirection && manualOverride.preferredDirection !== market.side) {
+    if (
+      manualOverride.preferredDirection &&
+      manualOverride.preferredDirection !== market.side
+    ) {
       return null;
     }
 
-    adjustedProbability += manualOverride.preferredDirection === market.side ? 0.03 : 0;
-    drivers.push(`Manual guidance: ${shortenGuidance(manualOverride.guidanceText, 120)}`);
+    adjustedProbability += manualOverride.preferredDirection === market.side
+      ? 0.03
+      : 0;
+    drivers.push(
+      `Manual guidance: ${shortenGuidance(manualOverride.guidanceText, 120)}`,
+    );
     sources.push("manual_training_guidance");
   }
 
@@ -343,22 +386,42 @@ function buildPicks(
     ].join("::");
     const manualOverride = manualRuleMap.get(manualKey) ?? null;
     const historical = findClosestCandidate(historicalRows, market);
-    const adjustment = buildHistoricalAdjustment(market, historical, manualOverride);
+    const adjustment = buildHistoricalAdjustment(
+      market,
+      historical,
+      manualOverride,
+    );
 
     if (!adjustment) continue;
 
-    const edge = edgePct(adjustment.adjustedProbability, market.bestOffer.americanOdds);
+    const edge = edgePct(
+      adjustment.adjustedProbability,
+      market.bestOffer.americanOdds,
+    );
     if (edge < 5) continue;
 
     const { away, home } = parseTeams(market.gameDescription);
     const confidence = Math.round(
-      clamp(adjustment.adjustedProbability * 100 + edge * 0.9 + (manualOverride ? 2 : 0), 54, 91),
+      clamp(
+        adjustment.adjustedProbability * 100 + edge * 0.9 +
+          (manualOverride ? 2 : 0),
+        54,
+        91,
+      ),
     );
 
     const reasoning: PickReasoning = {
-      headline: `${market.playerName} ${formatPropType(market.propType)} ${market.side} has a price gap versus the rest of the market${manualOverride ? " and lines up with manual guidance" : ""}.`,
+      headline: `${market.playerName} ${
+        formatPropType(market.propType)
+      } ${market.side} has a price gap versus the rest of the market${
+        manualOverride ? " and lines up with manual guidance" : ""
+      }.`,
       drivers: [
-        `Best price ${market.side} ${market.bestOffer.americanOdds > 0 ? "+" : ""}${market.bestOffer.americanOdds} at ${market.bestOffer.sportsbook} vs ${market.consensusBookCount}-book consensus ${(market.consensusProbability * 100).toFixed(1)}%`,
+        `Best price ${market.side} ${
+          market.bestOffer.americanOdds > 0 ? "+" : ""
+        }${market.bestOffer.americanOdds} at ${market.bestOffer.sportsbook} vs ${market.consensusBookCount}-book consensus ${
+          (market.consensusProbability * 100).toFixed(1)
+        }%`,
         ...adjustment.drivers,
       ].slice(0, 3),
       risk_note: buildRiskNote(market, historical, manualOverride),
@@ -385,7 +448,13 @@ function buildPicks(
       american_odds: market.bestOffer.americanOdds,
       confidence,
       edge_pct: Number(edge.toFixed(2)),
-      tier: confidence >= 80 ? "elite" : confidence >= 70 ? "high" : confidence >= 60 ? "medium" : "exploration",
+      tier: confidence >= 80
+        ? "elite"
+        : confidence >= 70
+        ? "high"
+        : confidence >= 60
+        ? "medium"
+        : "exploration",
       reasoning,
       recency: {
         l3_avg: adjustment.l3 ?? undefined,
@@ -403,11 +472,16 @@ function buildPicks(
   }
 
   return picks
-    .sort((a, b) => (b.edge_pct ?? 0) - (a.edge_pct ?? 0) || b.confidence - a.confidence)
+    .sort((a, b) =>
+      (b.edge_pct ?? 0) - (a.edge_pct ?? 0) || b.confidence - a.confidence
+    )
     .slice(0, limit);
 }
 
-async function loadMarketRows(sb: ReturnType<typeof createClient>, sport?: string) {
+async function loadMarketRows(
+  sb: ReturnType<typeof createClient>,
+  sport?: string,
+) {
   const now = new Date();
   const end = new Date(now.getTime() + 36 * 60 * 60 * 1000);
 
@@ -416,7 +490,10 @@ async function loadMarketRows(sb: ReturnType<typeof createClient>, sport?: strin
     .select(
       "event_id, sport, game_description, commence_time, player_name, prop_type, current_line, bookmaker, is_active, odds_updated_at, updated_at, over_price, under_price",
     )
-    .gte("commence_time", new Date(now.getTime() - 60 * 60 * 1000).toISOString())
+    .gte(
+      "commence_time",
+      new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
+    )
     .lt("commence_time", end.toISOString())
     .not("player_name", "is", null)
     .not("prop_type", "is", null)
@@ -431,7 +508,10 @@ async function loadMarketRows(sb: ReturnType<typeof createClient>, sport?: strin
   return (data ?? []) as UnifiedPropRow[];
 }
 
-async function loadHistoricalRows(sb: ReturnType<typeof createClient>, sport?: string) {
+async function loadHistoricalRows(
+  sb: ReturnType<typeof createClient>,
+  sport?: string,
+) {
   let query = sb
     .from("prop_candidates")
     .select(
@@ -445,7 +525,10 @@ async function loadHistoricalRows(sb: ReturnType<typeof createClient>, sport?: s
 
   const { data, error } = await query;
   if (error) {
-    console.warn("[uploaded-pipeline-generator] prop_candidates load failed", error.message);
+    console.warn(
+      "[uploaded-pipeline-generator] prop_candidates load failed",
+      error.message,
+    );
     return [] as PropCandidateRow[];
   }
 
@@ -460,7 +543,10 @@ async function loadManualTrainingRules(sb: ReturnType<typeof createClient>) {
     .eq("enforcement", "manual_override");
 
   if (error) {
-    console.warn("[uploaded-pipeline-generator] manual rule load failed", error.message);
+    console.warn(
+      "[uploaded-pipeline-generator] manual rule load failed",
+      error.message,
+    );
     return [] as ManualTrainingRule[];
   }
 
@@ -472,7 +558,10 @@ function buildMarkets(rows: UnifiedPropRow[]) {
 
   for (const row of rows) {
     if (row.is_active === false) continue;
-    if (!row.player_name || !row.prop_type || row.current_line === null || !row.commence_time || !row.game_description || !row.sport) continue;
+    if (
+      !row.player_name || !row.prop_type || row.current_line === null ||
+      !row.commence_time || !row.game_description || !row.sport
+    ) continue;
 
     const key = [
       normalizeKeyPart(row.event_id || `${row.sport}:${row.game_description}`),
@@ -572,7 +661,9 @@ async function savePicks(sb: ReturnType<typeof createClient>, picks: Pick[]) {
     generated_at: pick.generated_at,
   }));
 
-  const { error } = await sb.from("bot_daily_picks").upsert(rows, { onConflict: "id" });
+  const { error } = await sb.from("bot_daily_picks").upsert(rows, {
+    onConflict: "id",
+  });
   if (error) throw error;
   return rows.length;
 }
@@ -583,12 +674,17 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const parsed = BodySchema.safeParse(req.method === "POST" ? await req.json().catch(() => ({})) : {});
+    const parsed = BodySchema.safeParse(
+      req.method === "POST" ? await req.json().catch(() => ({})) : {},
+    );
     if (!parsed.success) {
-      return new Response(JSON.stringify({ error: parsed.error.flatten().fieldErrors }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: parsed.error.flatten().fieldErrors }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     const { dry_run, sport, limit } = parsed.data;
@@ -608,38 +704,44 @@ Deno.serve(async (req) => {
     const picks = buildPicks(markets, historicalRows, manualRuleMap, limit);
     const saved = dry_run ? 0 : await savePicks(sb, picks);
 
-    return new Response(JSON.stringify({
-      success: true,
-      generator: "uploaded-pipeline-v1",
-      dry_run,
-      inputs: {
-        market_rows: marketRows.length,
-        market_candidates: markets.length,
-        historical_rows: historicalRows.length,
-        manual_rules: manualRules.length,
-        manual_rule_matches: manualRuleMap.size,
+    return new Response(
+      JSON.stringify({
+        success: true,
+        generator: "uploaded-pipeline-v1",
+        dry_run,
+        inputs: {
+          market_rows: marketRows.length,
+          market_candidates: markets.length,
+          historical_rows: historicalRows.length,
+          manual_rules: manualRules.length,
+          manual_rule_matches: manualRuleMap.size,
+        },
+        generated: picks.length,
+        saved,
+        picks: picks.slice(0, 5).map((pick) => ({
+          id: pick.id,
+          player_name: pick.player_name,
+          prop_type: pick.prop_type,
+          line: pick.line,
+          side: pick.side,
+          edge_pct: pick.edge_pct,
+          confidence: pick.confidence,
+        })),
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
-      generated: picks.length,
-      saved,
-      picks: picks.slice(0, 5).map((pick) => ({
-        id: pick.id,
-        player_name: pick.player_name,
-        prop_type: pick.prop_type,
-        line: pick.line,
-        side: pick.side,
-        edge_pct: pick.edge_pct,
-        confidence: pick.confidence,
-      })),
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    );
   } catch (error) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });
