@@ -520,10 +520,13 @@ Deno.serve(async (req) => {
       run: async () => {
         const targetDate = todayET();
         const { data, error } = await supabase.functions.invoke("nba-player-prop-risk-engine", {
-          action: "analyze_slate",
-          mode: "full_slate",
-          thin_day_fallback: true,
-          minimum_approved_picks: MIN_APPROVED_RISK_PICKS,
+          body: {
+            action: "analyze_slate",
+            mode: "full_slate",
+            use_live_odds: true,
+            thin_day_fallback: true,
+            minimum_approved_picks: MIN_APPROVED_RISK_PICKS,
+          },
         });
 
         if (error) {
