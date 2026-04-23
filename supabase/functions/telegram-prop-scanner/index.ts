@@ -302,7 +302,23 @@ async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string
     if (j.parsed === 0) { await sendMessage(chat_id, "👀 No props detected."); return; }
     const lines = (j.props as any[]).slice(0, 12).map((p, i) => fmtPropLine(p, i));
     const more = j.props.length > 12 ? `\n…and ${j.props.length - 12} more` : "";
-    await sendMessage(chat_id, `✅ *${j.parsed} prop${j.parsed > 1 ? "s" : ""} captured* (${j.inserted} new)\n\n${lines.join("\n")}${more}\n\n\`/scan parlay 3\` to build.`);
+    await sendMessageWithButtons(
+      chat_id,
+      `✅ *${j.parsed} prop${j.parsed > 1 ? "s" : ""} captured* (${j.inserted} new) · *${session.book}* / ${session.sport.toUpperCase()}\n\n${lines.join("\n")}${more}`,
+      [
+        [
+          { text: "🎯 Build 3-leg", data: "parlay:3" },
+          { text: "🎯 Build 5-leg", data: "parlay:5" },
+        ],
+        [
+          { text: "📋 Show pool", data: "pool" },
+          { text: "✅ End session", data: "end" },
+        ],
+        [
+          { text: "🔄 Wrong book?", data: "switchbook" },
+        ],
+      ],
+    );
   } catch (e) {
     await sendMessage(chat_id, `❌ Capture error: ${e instanceof Error ? e.message : "unknown"}`);
   }
