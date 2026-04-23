@@ -339,7 +339,13 @@ async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string
       body: JSON.stringify({ session_id: session.id, frames, book: session.book, sport: session.sport, source_channel: "telegram" }),
     });
     const j = await res.json();
-    if (!j.ok) { await sendMessage(chat_id, `❌ OCR failed: ${j.error ?? "unknown"}`); return; }
+    if (!j.ok) {
+      const friendly = j.message ?? (j.error === "ai_credits_exhausted"
+        ? "Scanner AI balance is exhausted right now. Add more AI balance, then try the screenshot again."
+        : `OCR failed: ${j.error ?? "unknown"}`);
+      await sendMessage(chat_id, `❌ ${friendly}`);
+      return;
+    }
     if (j.parsed === 0) { await sendMessage(chat_id, "👀 No props detected."); return; }
     const lines = (j.props as any[]).slice(0, 12).map((p, i) => fmtPropLine(p, i));
       const more = j.props.length > 12 ? `\n…and ${j.props.length - 12} more` : "";
