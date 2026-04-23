@@ -234,6 +234,8 @@ Deno.serve(async (req) => {
     return {
       target_date: targetDate,
       block_code: blockCode,
+      risk_layer_status: riskLayerStatus,
+      risk_layer_bypassed: RISK_LAYER_BYPASSED,
       input_quality: {
         fresh_fanduel_props_2h: freshFdCount,
         total_fanduel_props: totalFdCount,
