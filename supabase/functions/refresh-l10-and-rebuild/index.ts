@@ -92,6 +92,21 @@ async function getUploadedPipelinePickCount(supabase: any, targetDate: string): 
   return count ?? 0;
 }
 
+async function getLatestSourceTimestamp(
+  supabase: any,
+  table: string,
+  selectColumn: string,
+  filters: Array<[string, string | boolean]>,
+): Promise<string | null> {
+  let query = supabase.from(table).select(selectColumn).order(selectColumn, { ascending: false }).limit(1);
+  for (const [column, value] of filters) {
+    query = query.eq(column, value);
+  }
+  const { data, error } = await query;
+  if (error) return null;
+  return data?.[0]?.[selectColumn] ?? null;
+}
+
 // BUG 1 FIX: canonical ET date helper — all "today" date references use this
 function getEasternDate(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -156,12 +171,16 @@ Deno.serve(async (req) => {
     const freshWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const targetDate = todayET();
 
-    const [freshFdPropsRes, riskRes, sweetSpotRes, todayParlaysRes, todayStraightsRes] = await Promise.all([
+    const [freshFdPropsRes, allFdPropsRes, riskRes, sweetSpotRes, todayParlaysRes, todayStraightsRes, latestFdFreshnessAt, latestAnyBookFreshnessAt, latestRiskAt, latestSweetSpotAt] = await Promise.all([
       supabase
         .from("unified_props")
         .select("id", { count: "exact", head: true })
         .eq("bookmaker", "fanduel")
         .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`),
+      supabase
+        .from("unified_props")
+        .select("id", { count: "exact", head: true })
+        .eq("bookmaker", "fanduel"),
       supabase
         .from("nba_risk_engine_picks")
         .select("id", { count: "exact", head: true })
@@ -183,25 +202,55 @@ Deno.serve(async (req) => {
         .select("id", { count: "exact", head: true })
         .eq("bet_date", targetDate)
         .eq("outcome", "pending"),
+      getLatestSourceTimestamp(supabase, "unified_props", "odds_updated_at", [["bookmaker", "fanduel"]]),
+      getLatestSourceTimestamp(supabase, "unified_props", "updated_at", []),
+      getLatestSourceTimestamp(supabase, "nba_risk_engine_picks", "created_at", [["game_date", targetDate], ["mode", "full_slate"]]),
+      getLatestSourceTimestamp(supabase, "category_sweet_spots", "created_at", [["analysis_date", targetDate], ["is_active", true]]),
     ]);
 
     const parlays = todayParlaysRes.data ?? [];
 
+    const freshFdCount = freshFdPropsRes.count ?? 0;
+    const totalFdCount = allFdPropsRes.count ?? 0;
+    const riskCount = riskRes.count ?? 0;
+    const sweetSpotCount = sweetSpotRes.count ?? 0;
+
+    const blockCode = freshFdCount === 0
+      ? (totalFdCount === 0 ? "blocked:no_props_for_today" : "blocked:stale_odds")
+      : riskCount === 0
+        ? "blocked:risk_empty"
+        : riskCount < MIN_APPROVED_RISK_PICKS
+          ? "blocked:risk_thin"
+          : sweetSpotCount === 0
+            ? "blocked:sweet_spots_empty"
+            : ((todayParlaysRes.count ?? 0) + (todayStraightsRes.count ?? 0)) === 0
+              ? "blocked:no_usable_matches"
+              : "ready";
+
     return {
       target_date: targetDate,
-        input_quality: {
-          fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
-          direct_risk_candidates: riskRes.count ?? 0,
-          direct_fallback_candidates: sweetSpotRes.count ?? 0,
-        },
+      block_code: blockCode,
+      input_quality: {
+        fresh_fanduel_props_2h: freshFdCount,
+        total_fanduel_props: totalFdCount,
+        direct_risk_candidates: riskCount,
+        direct_fallback_candidates: sweetSpotCount,
+      },
       generated_counts: {
         parlays_total: todayParlaysRes.count ?? 0,
         lottery_parlays: parlays.filter((row: any) => row.tier === "lottery").length,
         straight_bets_total: todayStraightsRes.count ?? 0,
       },
+      freshness: {
+        latest_fanduel_update_at: latestFdFreshnessAt,
+        latest_any_book_update_at: latestAnyBookFreshnessAt,
+        latest_risk_update_at: latestRiskAt,
+        latest_sweet_spot_update_at: latestSweetSpotAt,
+      },
       pipeline_health: {
-        direct_sources_ready: ((riskRes.count ?? 0) + (sweetSpotRes.count ?? 0)) > 0,
+        direct_sources_ready: (riskCount + sweetSpotCount) > 0,
         parlay_output_ready: (todayParlaysRes.count ?? 0) > 0,
+        ready: blockCode === "ready",
       },
     };
   };
@@ -470,19 +519,38 @@ Deno.serve(async (req) => {
       label: "Risk engine",
       run: async () => {
         const targetDate = todayET();
-        await invokeStep("Running risk engine", "nba-player-prop-risk-engine", {
+        const { data, error } = await supabase.functions.invoke("nba-player-prop-risk-engine", {
           action: "analyze_slate",
           mode: "full_slate",
           thin_day_fallback: true,
           minimum_approved_picks: MIN_APPROVED_RISK_PICKS,
         });
 
+        if (error) {
+          const errMsg = error.message || "Unknown risk engine error";
+          log(`⚠ Running risk engine error: ${errMsg}`);
+          results["nba-player-prop-risk-engine"] = `error: ${errMsg}`;
+          await sendPipelineAlert(
+            `🚨 *Pipeline Step Error*\n\n*Step:* Risk engine\n*Function:* \`nba-player-prop-risk-engine\`\n*Error:* ${errMsg}\n*Elapsed:* ${(elapsed()/1000).toFixed(1)}s\n*Run:* \`${currentRunId.slice(0,8)}\``,
+          );
+          return;
+        }
+
+        const blockedReason = data?.blockedReason as string | undefined;
+        const rejectionSummary = Array.isArray(data?.diagnostics?.topRejectionReasons)
+          ? data.diagnostics.topRejectionReasons.slice(0, 5).map((item: any) => `${item.reason}: ${item.count}`).join(" | ")
+          : "none";
+
+        results["nba-player-prop-risk-engine"] = blockedReason
+          ? `${blockedReason}:${data?.approvedCount ?? 0}`
+          : "ok";
+
         const approvedCount = await getRiskPickCount(supabase, targetDate);
         if (approvedCount < MIN_APPROVED_RISK_PICKS) {
           warnings.push(`Risk engine produced only ${approvedCount} approved picks for ${targetDate}`);
-          results["nba-player-prop-risk-engine"] = `warning:thin_output:${approvedCount}`;
+          results["nba-player-prop-risk-engine"] = blockedReason || `warning:thin_output:${approvedCount}`;
           await sendPipelineAlert(
-            `⚠️ *Risk Engine Thin Output*\n\n*Date:* ${targetDate}\n*Approved picks:* ${approvedCount}\n*Minimum target:* ${MIN_APPROVED_RISK_PICKS}\n*Run:* \`${currentRunId.slice(0,8)}\``,
+            `⚠️ *Risk Engine Thin Output*\n\n*Date:* ${targetDate}\n*Approved picks:* ${approvedCount}\n*Minimum target:* ${MIN_APPROVED_RISK_PICKS}\n*Block:* ${blockedReason || 'warning:thin_output'}\n*Top rejections:* ${rejectionSummary}\n*Run:* \`${currentRunId.slice(0,8)}\``,
           );
         }
       },
@@ -493,11 +561,21 @@ Deno.serve(async (req) => {
       run: async () => {
         log("=== PRE-GENERATION GATE: Checking FanDuel odds freshness ===");
         const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-        const { count: freshFdProps, error: gateErr } = await supabase
+        const [{ count: freshFdProps, error: gateErr }, { data: latestFdRows }] = await Promise.all([
+          supabase
           .from("unified_props")
           .select("*", { count: "exact", head: true })
           .eq("bookmaker", "fanduel")
-          .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
+          .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`),
+          supabase
+            .from("unified_props")
+            .select("bookmaker, odds_updated_at, updated_at")
+            .eq("bookmaker", "fanduel")
+            .order("odds_updated_at", { ascending: false })
+            .limit(1),
+        ]);
+
+        const latestFdUpdateAt = latestFdRows?.[0]?.odds_updated_at || latestFdRows?.[0]?.updated_at || null;
 
         if (gateErr) {
           log(`⚠ Odds gate query error: ${gateErr.message} — proceeding anyway`);
@@ -519,7 +597,7 @@ Deno.serve(async (req) => {
           const afterScrape = retryCount || 0;
           if (afterScrape < 50) {
             log(`❌ GATE BLOCKED: Still only ${afterScrape} FanDuel props — skipping generation`);
-            results["odds_gate"] = `blocked:${afterScrape}_props`;
+            results["odds_gate"] = `blocked:stale_odds:${afterScrape}_props`;
 
             // BUG 2 FIX: closure-scoped flag, never persists across invocations
             oddsGateBlocked = true;
@@ -535,10 +613,10 @@ Deno.serve(async (req) => {
           }
 
           log(`✅ Emergency scrape recovered: ${afterScrape} fresh FanDuel props — proceeding`);
-          results["odds_gate"] = `recovered:${afterScrape}_props`;
+          results["odds_gate"] = `recovered:${afterScrape}_props:last_${latestFdUpdateAt || 'unknown'}`;
         } else {
           log(`✅ Odds gate passed: ${freshCount} fresh FanDuel props`);
-          results["odds_gate"] = `passed:${freshCount}_props`;
+          results["odds_gate"] = `passed:${freshCount}_props:last_${latestFdUpdateAt || 'unknown'}`;
         }
       },
     },
@@ -829,6 +907,41 @@ Deno.serve(async (req) => {
         `⚠️ *Pipeline Run Complete With Errors*\n\n*Run:* \`${currentRunId.slice(0,8)}\` | Attempt ${currentAttempt}/${MAX_ATTEMPTS}\n\n${failList}\n\n✅ ${okCount} steps OK | ⏭ ${skipped.length} skipped\n*Duration:* ${(elapsed()/1000).toFixed(1)}s`
       );
     }
+
+    const preflightChecks = [
+      {
+        name: 'Fresh FanDuel odds',
+        passed: (diagnostics.input_quality?.fresh_fanduel_props_2h ?? 0) > 0,
+        detail: `${diagnostics.input_quality?.fresh_fanduel_props_2h ?? 0} fresh / ${diagnostics.input_quality?.total_fanduel_props ?? 0} total`,
+      },
+      {
+        name: 'Risk candidates',
+        passed: (diagnostics.input_quality?.direct_risk_candidates ?? 0) >= MIN_APPROVED_RISK_PICKS,
+        detail: `${diagnostics.input_quality?.direct_risk_candidates ?? 0} approved rows`,
+      },
+      {
+        name: 'Fallback candidates',
+        passed: (diagnostics.input_quality?.direct_fallback_candidates ?? 0) > 0,
+        detail: `${diagnostics.input_quality?.direct_fallback_candidates ?? 0} active sweet spots`,
+      },
+    ];
+
+    await supabase.from('bot_activity_log').insert({
+      event_type: 'preflight_check',
+      severity: diagnostics.block_code === 'ready' ? 'info' : 'warning',
+      message: `Pipeline preflight ${diagnostics.block_code}`,
+      metadata: {
+        ready: diagnostics.block_code === 'ready',
+        block_code: diagnostics.block_code,
+        blockers: diagnostics.block_code === 'ready' ? [] : [diagnostics.block_code],
+        checks: preflightChecks,
+        freshness: diagnostics.freshness,
+        generated_counts: diagnostics.generated_counts,
+        input_quality: diagnostics.input_quality,
+      },
+    }).catch((insertError: any) => {
+      log(`⚠ Failed to store preflight_check log: ${insertError.message || insertError}`);
+    });
 
     // Auto-resume if phases were skipped
     if (skipped.length > 0 && currentAttempt < MAX_ATTEMPTS && lastCompleted) {

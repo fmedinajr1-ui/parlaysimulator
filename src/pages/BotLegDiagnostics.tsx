@@ -247,9 +247,15 @@ export default function BotLegDiagnostics() {
           <>
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SummaryMetric label="First engine approved" value={data.summary.risk_rows_approved} hint={`${data.summary.risk_rows_rejected} rejected`} />
-              <SummaryMetric label="Pool rows" value={data.summary.pool_rows_total} hint={data.pick_pool.status} />
+              <SummaryMetric label="Direct source rows" value={data.summary.pool_rows_total} hint={data.pick_pool.status} />
               <SummaryMetric label="Fresh matched legs" value={data.summary.matched_fresh_rows} hint={`${data.summary.pool_rows_failing} failing`} />
               <SummaryMetric label="Books scanning" value={data.summary.scanning_books ? "Yes" : "No"} hint={data.summary.final_reason ?? "No final reason"} />
+            </section>
+
+            <section className="grid gap-4 xl:grid-cols-3">
+              <SummaryMetric label="Risk source rows" value={data.source_health?.risk_source_rows ?? 0} hint={data.source_health?.source_status ?? 'unknown'} />
+              <SummaryMetric label="Fallback rows" value={data.source_health?.fallback_source_rows ?? 0} hint={`${data.source_health?.sweet_spot_rows_active ?? 0} active sweet spots`} />
+              <SummaryMetric label="Primary blocker" value={data.summary.primary_blocker ?? 'none'} hint={data.summary.final_reason ?? 'outputs present'} />
             </section>
 
             <section className="grid gap-4 xl:grid-cols-[1.25fr_1fr]">
@@ -286,17 +292,26 @@ export default function BotLegDiagnostics() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <CardTitle className="flex items-center gap-2 text-xl"><Database className="h-5 w-5" /> Pool output</CardTitle>
-                      <CardDescription>What the builder is currently feeding downstream.</CardDescription>
+                      <CardDescription>What direct-source loading is currently feeding downstream.</CardDescription>
                     </div>
                     <Badge variant="outline">{data.pick_pool.status}</Badge>
                   </div>
-                  <div className="text-xs text-muted-foreground">Showing {Math.min(data.pick_pool.rows.length, 120)} of {data.pick_pool.rows.length} pool rows</div>
+                  <div className="text-xs text-muted-foreground">Showing {Math.min(data.pick_pool.rows.length, 120)} of {data.pick_pool.rows.length} direct-source rows</div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <BreakdownChips items={data.pick_pool.blocker_breakdown} />
+                  {data.pick_pool.diagnostics ? (
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+                      Source status: <span className="font-medium text-foreground">{formatValue(data.pick_pool.diagnostics.source_status)}</span>
+                      <span className="mx-2">•</span>
+                      Risk accepted: <span className="font-medium text-foreground">{formatValue(data.pick_pool.diagnostics.direct_rows_from_risk)}</span>
+                      <span className="mx-2">•</span>
+                      Fallback accepted: <span className="font-medium text-foreground">{formatValue(data.pick_pool.diagnostics.direct_rows_from_fallback)}</span>
+                    </div>
+                  ) : null}
                   <DataTable
                     rows={data.pick_pool.rows.slice(0, 120)}
-                    emptyMessage="No pool rows for this date."
+                    emptyMessage="No direct-source rows for this date."
                     columns={[
                       { key: "player_name", label: "Player" },
                       { key: "prop_type", label: "Prop" },
@@ -382,7 +397,7 @@ export default function BotLegDiagnostics() {
                   <Card>
                     <CardHeader>
                       <CardTitle>Manual-fix view</CardTitle>
-                      <CardDescription>Exactly which pool legs are failing, with live line, drift, age, and reason.</CardDescription>
+                      <CardDescription>Exactly which direct-source legs are failing, with live line, drift, age, and reason.</CardDescription>
                       <div className="text-xs text-muted-foreground">Showing {Math.min(data.pick_pool.rows.length, 200)} of {data.pick_pool.rows.length} rows in this manual-fix table</div>
                     </CardHeader>
                     <CardContent>
