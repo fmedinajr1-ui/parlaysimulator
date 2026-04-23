@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { etDateKey } from "../_shared/date-et.ts";
 import { BOOKMAKER_PRIORITY, MAX_BOOK_LINE_AGE_MIN, MAX_LINE_DRIFT } from "../_shared/parlay-engine-v2/config.ts";
+import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,7 +62,6 @@ interface StraightBetRow {
   created_at: string;
 }
 
-const AUTO_POOL_MINIMUM_ROWS = 12;
 const MAX_STANDARD_STRAIGHTS = 8;
 const MAX_CEILING_STRAIGHTS = 4;
 const MIN_STANDARD_COMPOSITE_SCORE = 70;
@@ -91,59 +91,6 @@ function normalizeSide(value: string | null | undefined): string | null {
 
 function normalizeKey(playerName: string, propType: string): string {
   return `${playerName.trim().toLowerCase()}|${propType.trim().toLowerCase()}`;
-}
-
-async function loadPoolRows(
-  sb: any,
-  targetDate: string,
-): Promise<PoolRow[]> {
-  const { data, error } = await sb
-    .from("bot_daily_pick_pool")
-    .select("id, pick_date, player_name, prop_type, recommended_side, recommended_line, confidence_score, composite_score, projected_value, category, l10_hit_rate, l10_avg, l3_avg, created_at")
-    .eq("pick_date", targetDate)
-    .order("composite_score", { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as PoolRow[];
-}
-
-async function ensurePoolRows(
-  sb: any,
-  targetDate: string,
-) {
-  const initialPool = await loadPoolRows(sb, targetDate);
-  const poolBeforeCount = initialPool.length;
-
-  if (poolBeforeCount >= AUTO_POOL_MINIMUM_ROWS) {
-    return {
-      pool: initialPool,
-      poolBeforeCount,
-      poolAfterCount: poolBeforeCount,
-      poolAutoBuildAttempted: false,
-      poolAutoBuildSuccess: false,
-      poolBuildDiagnostics: null as Record<string, unknown> | null,
-    };
-  }
-
-  const { data, error } = await sb.functions.invoke("build-daily-pick-pool", {
-    body: {
-      date: targetDate,
-      minimum_risk_rows: 8,
-      minimum_pool_rows: AUTO_POOL_MINIMUM_ROWS,
-      fallback_limit: 40,
-    },
-  });
-
-  const rebuiltPool = await loadPoolRows(sb, targetDate);
-  return {
-    pool: rebuiltPool,
-    poolBeforeCount,
-    poolAfterCount: rebuiltPool.length,
-    poolAutoBuildAttempted: true,
-    poolAutoBuildSuccess: !error && rebuiltPool.length >= AUTO_POOL_MINIMUM_ROWS,
-    poolBuildDiagnostics: error
-      ? { ...(data?.diagnostics ?? {}), invoke_error: error.message || JSON.stringify(error) }
-      : (data?.diagnostics ?? null),
-  };
 }
 
 function pickPreferredBook(rows: PropRow[]): PropRow | null {
@@ -198,26 +145,30 @@ Deno.serve(async (req) => {
     const dryRun = body.dry_run === true;
     const deleteExisting = body.delete_existing !== false;
 
-    const poolState = await ensurePoolRows(sb, targetDate);
+    const directSourceState = await loadDirectPickRows(sb, { targetDate, minimumRiskRows: 8, fallbackLimit: 40 });
+    const poolState = {
+      pool: directSourceState.rows as PoolRow[],
+      poolBeforeCount: directSourceState.rows.length,
+      poolAfterCount: directSourceState.rows.length,
+      poolAutoBuildAttempted: false,
+      poolAutoBuildSuccess: directSourceState.rows.length > 0,
+      poolBuildDiagnostics: directSourceState.diagnostics,
+    };
     const diagnostics: Record<string, unknown> = {
       target_date: targetDate,
-      pool_before_count: poolState.poolBeforeCount,
-      pool_after_count: poolState.poolAfterCount,
-      pool_auto_build_attempted: poolState.poolAutoBuildAttempted,
-      pool_auto_build_success: poolState.poolAutoBuildSuccess,
-      pool_build_diagnostics: poolState.poolBuildDiagnostics,
+      direct_rows_loaded: poolState.poolAfterCount,
+      source_diagnostics: poolState.poolBuildDiagnostics,
     };
 
     const zeroPool = poolState.poolAfterCount === 0;
-    const thinPool = poolState.poolAfterCount > 0 && poolState.poolAfterCount < AUTO_POOL_MINIMUM_ROWS;
-    if (zeroPool || thinPool) {
+    if (zeroPool) {
       return new Response(JSON.stringify({
         success: false,
         degraded: true,
-        degraded_reason: zeroPool ? "empty_pick_pool" : "thin_pick_pool",
+        degraded_reason: "empty_direct_sources",
         diagnostics,
       }), {
-        status: zeroPool ? 409 : 422,
+        status: 409,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -373,7 +324,7 @@ Deno.serve(async (req) => {
     ];
 
     Object.assign(diagnostics, {
-      pool_rows_loaded: poolState.poolAfterCount,
+      direct_rows_loaded: poolState.poolAfterCount,
       book_matched_rows: bookMatchedRows,
       stale_rejected: staleRejected,
       drift_rejected: driftRejected,
@@ -430,7 +381,7 @@ Deno.serve(async (req) => {
       inserted,
       diagnostics,
     }), {
-      status: degradedReason ? 422 : 200,
+      status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
