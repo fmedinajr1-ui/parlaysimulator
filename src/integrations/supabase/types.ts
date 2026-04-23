@@ -9793,6 +9793,134 @@ export type Database = {
         }
         Relationships: []
       }
+      ocr_scan_sessions: {
+        Row: {
+          book: string
+          capture_mode: string
+          created_at: string
+          finalized_at: string | null
+          id: string
+          sport: string
+          status: string
+          telegram_chat_id: number | null
+          user_id: string
+        }
+        Insert: {
+          book: string
+          capture_mode: string
+          created_at?: string
+          finalized_at?: string | null
+          id?: string
+          sport: string
+          status?: string
+          telegram_chat_id?: number | null
+          user_id: string
+        }
+        Update: {
+          book?: string
+          capture_mode?: string
+          created_at?: string
+          finalized_at?: string | null
+          id?: string
+          sport?: string
+          status?: string
+          telegram_chat_id?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ocr_scanned_props: {
+        Row: {
+          block_reason: string | null
+          blocked: boolean
+          composite_score: number | null
+          confidence: number | null
+          correlation_tags: string[] | null
+          created_at: string
+          dna_score: number | null
+          id: string
+          l10_avg: number | null
+          l10_hit_rate: number | null
+          line: number
+          market_price_delta: number | null
+          matched_unified_prop_id: string | null
+          opp_def_rank: number | null
+          over_price: number | null
+          player_name: string
+          prop_type: string
+          raw_ocr_text: string | null
+          selected_for_parlay: boolean
+          session_id: string
+          side: string
+          source_channel: string
+          source_origin: string
+          sweet_spot_id: string | null
+          under_price: number | null
+        }
+        Insert: {
+          block_reason?: string | null
+          blocked?: boolean
+          composite_score?: number | null
+          confidence?: number | null
+          correlation_tags?: string[] | null
+          created_at?: string
+          dna_score?: number | null
+          id?: string
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          line: number
+          market_price_delta?: number | null
+          matched_unified_prop_id?: string | null
+          opp_def_rank?: number | null
+          over_price?: number | null
+          player_name: string
+          prop_type: string
+          raw_ocr_text?: string | null
+          selected_for_parlay?: boolean
+          session_id: string
+          side: string
+          source_channel?: string
+          source_origin?: string
+          sweet_spot_id?: string | null
+          under_price?: number | null
+        }
+        Update: {
+          block_reason?: string | null
+          blocked?: boolean
+          composite_score?: number | null
+          confidence?: number | null
+          correlation_tags?: string[] | null
+          created_at?: string
+          dna_score?: number | null
+          id?: string
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          line?: number
+          market_price_delta?: number | null
+          matched_unified_prop_id?: string | null
+          opp_def_rank?: number | null
+          over_price?: number | null
+          player_name?: string
+          prop_type?: string
+          raw_ocr_text?: string | null
+          selected_for_parlay?: boolean
+          session_id?: string
+          side?: string
+          source_channel?: string
+          source_origin?: string
+          sweet_spot_id?: string | null
+          under_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ocr_scanned_props_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "ocr_scan_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       odds_snapshots: {
         Row: {
           away_team: string

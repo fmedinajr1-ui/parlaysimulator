@@ -536,3 +536,12 @@ verify_jwt = false
 
 [functions.send-daily-pick-drip]
 verify_jwt = false
+
+[functions.ocr-prop-scan]
+verify_jwt = false
+
+[functions.ocr-pool-build-parlays]
+verify_jwt = false
+
+[functions.telegram-prop-scanner]
+verify_jwt = false
