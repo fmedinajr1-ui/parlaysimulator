@@ -14,33 +14,52 @@ const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const FILE_API = `https://api.telegram.org/file/bot${BOT_TOKEN}`;
 const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
 
+async function telegramRequest(method: string, body: Record<string, unknown>, fallbackBody?: Record<string, unknown>) {
+  const send = async (payload: Record<string, unknown>) => {
+    const response = await fetch(`${TELEGRAM_API}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    let parsed: any = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text }; }
+    if (!response.ok || parsed?.ok === false) {
+      throw new Error(parsed?.description || `Telegram ${method} failed (${response.status})`);
+    }
+    return parsed;
+  };
+
+  try {
+    return await send(body);
+  } catch (error) {
+    if (!fallbackBody) throw error;
+    console.error(`telegram ${method} primary failed`, error instanceof Error ? error.message : error);
+    return await send(fallbackBody);
+  }
+}
+
 async function sendMessage(chat_id: number, text: string) {
-  await fetch(`${TELEGRAM_API}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id, text, parse_mode: "Markdown", disable_web_page_preview: true }),
-  });
+  await telegramRequest(
+    "sendMessage",
+    { chat_id, text, parse_mode: "Markdown", disable_web_page_preview: true },
+    { chat_id, text, disable_web_page_preview: true },
+  );
 }
 
 async function sendMessageWithButtons(chat_id: number, text: string, buttons: { text: string; data: string }[][]) {
-  await fetch(`${TELEGRAM_API}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id, text, parse_mode: "Markdown", disable_web_page_preview: true,
-      reply_markup: {
-        inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))),
-      },
-    }),
-  });
+  const reply_markup = {
+    inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))),
+  };
+  await telegramRequest(
+    "sendMessage",
+    { chat_id, text, parse_mode: "Markdown", disable_web_page_preview: true, reply_markup },
+    { chat_id, text, disable_web_page_preview: true, reply_markup },
+  );
 }
 
 async function answerCallback(callback_query_id: string, text?: string) {
-  await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ callback_query_id, text: text ?? "" }),
-  });
+  await telegramRequest("answerCallbackQuery", { callback_query_id, text: text ?? "" });
 }
 
 async function downloadTelegramPhoto(file_id: string): Promise<string> {
@@ -66,19 +85,19 @@ async function resolveUserForChat(supabase: any, chat_id: number) {
   if (sub?.email) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id")
+      .select("user_id")
       .eq("email", sub.email)
       .maybeSingle();
-    if (profile?.id) return profile.id as string;
+    if (profile?.user_id) return profile.user_id as string;
   }
   if (ADMIN_CHAT_ID && String(chat_id) === String(ADMIN_CHAT_ID)) {
     const { data: anyUser } = await supabase
       .from("profiles")
-      .select("id")
+      .select("user_id")
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
-    return anyUser?.id ?? null;
+    return anyUser?.user_id ?? null;
   }
   return null;
 }
