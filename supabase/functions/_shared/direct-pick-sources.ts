@@ -286,6 +286,86 @@ export async function loadDirectPickRows(
     }
   }
 
+  // RISK LAYER BYPASS — if both risk and fallback came up empty (or thin),
+  // pull straight from unified_props for today so the slate never starves.
+  let rawPropsScanned = 0;
+  let rawPropsAccepted = 0;
+  let rawPropsSkipped = 0;
+  const needsRawProps = allowRawPropsFallback && rows.length < minimumRiskRows;
+  if (needsRawProps) {
+    const freshWindow = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const rawRes = await sb
+      .from("unified_props")
+      .select("player_name, prop_type, current_line, recommended_side, recommendation, confidence, composite_score, category, over_price, under_price, odds_updated_at, updated_at, created_at, sport, is_active")
+      .eq("sport", "basketball_nba")
+      .eq("is_active", true)
+      .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`)
+      .order("composite_score", { ascending: false, nullsFirst: false })
+      .limit(rawPropsLimit * 3);
+
+    if (!rawRes.error) {
+      for (const prop of (rawRes.data || []) as any[]) {
+        rawPropsScanned += 1;
+        const playerName = (prop.player_name || "").trim();
+        const propType = (prop.prop_type || "").trim();
+        const line = safeNumber(prop.current_line);
+        // Pick a side: prefer explicit recommended_side, else infer from prices
+        let side = normalizeSide(prop.recommended_side) || normalizeSide(prop.recommendation);
+        if (!side) {
+          const over = safeNumber(prop.over_price);
+          const under = safeNumber(prop.under_price);
+          if (over != null && under != null) side = over <= under ? "over" : "under";
+          else if (over != null) side = "over";
+          else if (under != null) side = "under";
+        }
+        if (!playerName || !propType || !side || line == null) {
+          rawPropsSkipped += 1;
+          continue;
+        }
+        const dedupeKey = buildDedupeKey(playerName, propType, side, line);
+        if (seen.has(dedupeKey)) { rawPropsSkipped += 1; continue; }
+
+        const category = (prop.category || inferCategoryFromProp(propType) || "UNKNOWN").toString().toUpperCase();
+        const weightRow = weightMap.get(`${category}__${side}`);
+        const weightMultiplier = weightRow?.is_blocked ? 0 : weightRow?.weight ?? 1;
+        const confidenceRaw = safeNumber(prop.confidence) ?? 0.55;
+        const confidenceTenScale = confidenceRaw <= 1 ? confidenceRaw * 10 : confidenceRaw;
+        const composite = computeCompositeScore({
+          confidenceTenScale,
+          l10HitRate: null,
+          edge: 0,
+          weightMultiplier,
+          sourceBoost: -6, // de-prioritise raw_props vs risk/sweet
+        });
+
+        seen.add(dedupeKey);
+        rows.push({
+          id: `raw:${dedupeKey}`,
+          pick_date: targetDate,
+          player_name: playerName,
+          prop_type: propType,
+          recommended_side: side,
+          recommended_line: line,
+          l10_hit_rate: null,
+          l10_avg: null,
+          l3_avg: null,
+          confidence_score: composite,
+          composite_score: composite,
+          projected_value: line,
+          rejection_reason: null,
+          was_used_in_parlay: false,
+          category,
+          created_at: prop.odds_updated_at || prop.updated_at || prop.created_at || new Date().toISOString(),
+          source_origin: "raw_props",
+        });
+        rawPropsAccepted += 1;
+        if (rawPropsAccepted >= rawPropsLimit) break;
+      }
+    } else {
+      diagnostics.raw_props_error = rawRes.error.message || String(rawRes.error);
+    }
+  }
+
   rows.sort((a, b) => (b.composite_score - a.composite_score) || (b.l10_hit_rate ?? 0) - (a.l10_hit_rate ?? 0));
 
   Object.assign(diagnostics, {
