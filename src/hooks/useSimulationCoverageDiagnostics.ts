@@ -48,6 +48,7 @@ interface DiagnosticReason {
 
 interface SimulationCoverageDiagnostics {
   targetDate: string;
+  blockCode: string;
   threshold: {
     minRiskRows: number;
     freshOddsWindowMinutes: number;
@@ -63,6 +64,22 @@ interface SimulationCoverageDiagnostics {
     freshMatchedRows: number;
     outputsToday: number;
     readiness: "ready" | "thin" | "blocked";
+  };
+  upstream: {
+    latestOddsUpdateAt: string | null;
+    latestRiskUpdateAt: string | null;
+    latestSweetSpotUpdateAt: string | null;
+    staleSourceCounts: {
+      staleRiskRows: number;
+      staleOddsRows: number;
+      emptySweetSpots: number;
+    };
+    stages: Array<{
+      key: string;
+      label: string;
+      status: "good" | "warn" | "bad";
+      detail: string;
+    }>;
   };
   reasons: DiagnosticReason[];
   coverage: {
@@ -159,10 +176,24 @@ export function useSimulationCoverageDiagnostics() {
       const outputRows = (outputsRes.data || []) as OutputRow[];
       const propRows = (propsRes.data || []) as PropRow[];
 
+      const latestOddsUpdateAt = propRows.reduce<string | null>((latest, row) => {
+        const candidate = row.odds_updated_at || row.updated_at || null;
+        if (!candidate) return latest;
+        if (!latest) return candidate;
+        return new Date(candidate).getTime() > new Date(latest).getTime() ? candidate : latest;
+      }, null);
+
+      const latestRiskUpdateAt = riskRows.reduce<string | null>((latest, row) => {
+        if (!row.created_at) return latest;
+        if (!latest) return row.created_at;
+        return new Date(row.created_at).getTime() > new Date(latest).getTime() ? row.created_at : latest;
+      }, null);
+
       const freshOddsRows = propRows.filter((row) => {
         const updatedAt = row.odds_updated_at || row.updated_at;
         return row.is_active !== false && ageMinutes(updatedAt, now) <= FRESH_ODDS_WINDOW_MINUTES;
       }).length;
+      const staleOddsRows = propRows.length - freshOddsRows;
 
       const propsByKey = new Map<string, PropRow[]>();
       for (const row of propRows) {
@@ -226,8 +257,48 @@ export function useSimulationCoverageDiagnostics() {
           ? "thin"
           : "blocked";
 
+      const blockCode = freshOddsRows === 0
+        ? (propRows.length === 0 ? "blocked:no_props_for_today" : "blocked:stale_odds")
+        : freshRiskRows.length === 0
+          ? "blocked:risk_empty"
+          : freshRiskRows.length < MIN_RISK_ROWS
+            ? "blocked:risk_thin"
+            : fallbackRows === 0
+              ? "blocked:sweet_spots_empty"
+              : freshMatchedRows === 0
+                ? "blocked:no_usable_matches"
+                : "ready";
+
+      const stages = [
+        {
+          key: "odds",
+          label: "Odds ingest",
+          status: freshOddsRows > 0 ? "good" : propRows.length > 0 ? "warn" : "bad",
+          detail: freshOddsRows > 0 ? `${freshOddsRows} fresh rows in window` : propRows.length > 0 ? "rows exist but freshness gate failed" : "no live props for today",
+        },
+        {
+          key: "risk",
+          label: "Risk engine",
+          status: freshRiskRows.length >= MIN_RISK_ROWS ? "good" : freshRiskRows.length > 0 ? "warn" : "bad",
+          detail: freshRiskRows.length > 0 ? `${freshRiskRows.length}/${MIN_RISK_ROWS} fresh approved rows` : "no fresh approved risk rows",
+        },
+        {
+          key: "fallback",
+          label: "Sweet-spot fallback",
+          status: fallbackRows > 0 ? "good" : "warn",
+          detail: fallbackRows > 0 ? `${fallbackRows} active fallback rows` : "fallback source empty or not needed",
+        },
+        {
+          key: "matching",
+          label: "Book matching",
+          status: freshMatchedRows >= MIN_RISK_ROWS ? "good" : freshMatchedRows > 0 ? "warn" : "bad",
+          detail: freshMatchedRows > 0 ? `${freshMatchedRows} legs survived freshness and drift checks` : "no usable matched legs",
+        },
+      ] as const;
+
       return {
         targetDate,
+        blockCode,
         threshold: {
           minRiskRows: MIN_RISK_ROWS,
           freshOddsWindowMinutes: FRESH_ODDS_WINDOW_MINUTES,
@@ -243,6 +314,17 @@ export function useSimulationCoverageDiagnostics() {
           freshMatchedRows,
           outputsToday: outputRows.length,
           readiness,
+        },
+        upstream: {
+          latestOddsUpdateAt,
+          latestRiskUpdateAt,
+          latestSweetSpotUpdateAt: null,
+          staleSourceCounts: {
+            staleRiskRows,
+            staleOddsRows,
+            emptySweetSpots: fallbackRows === 0 ? 1 : 0,
+          },
+          stages: [...stages],
         },
         reasons,
         coverage: {
