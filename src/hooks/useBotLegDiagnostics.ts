@@ -15,6 +15,12 @@ export interface DiagnosticsRow {
 export interface BotLegDiagnosticsResponse {
   success: boolean;
   target_date: string;
+  source_health?: {
+    risk_source_rows: number;
+    fallback_source_rows: number;
+    source_status: string;
+    sweet_spot_rows_active: number;
+  };
   filters: {
     bookmaker: string | null;
     player_search: string | null;
@@ -54,6 +60,7 @@ export interface BotLegDiagnosticsResponse {
     failed_rows: number;
     blocker_breakdown: DiagnosticsOption[];
     rows: DiagnosticsRow[];
+    diagnostics?: DiagnosticsRow;
   };
   book_scan: {
     total_rows: number;
