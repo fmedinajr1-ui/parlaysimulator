@@ -24,6 +24,7 @@ interface PoolRow {
   l10_avg?: number | null;
   l3_avg?: number | null;
   created_at: string;
+  source_origin?: string | null;
 }
 
 interface PropRow {
