@@ -147,9 +147,45 @@ async function handleEnd(supabase: any, chat_id: number) {
   await sendMessage(chat_id, `✅ Session \`${session.id.slice(0, 8)}\` finalized.`);
 }
 
+const VALID_BOOKS = ["fanduel", "draftkings", "hardrock", "prizepicks", "underdog"];
+const BOOK_ALIASES: Record<string, string> = {
+  fd: "fanduel", fanduel: "fanduel",
+  dk: "draftkings", draftkings: "draftkings", "draft-kings": "draftkings",
+  hr: "hardrock", hrb: "hardrock", hardrock: "hardrock", "hard-rock": "hardrock", "hard_rock": "hardrock",
+  pp: "prizepicks", prizepicks: "prizepicks", "prize-picks": "prizepicks",
+  ud: "underdog", underdog: "underdog", "under-dog": "underdog",
+};
+
+async function handleBook(supabase: any, chat_id: number, args: string[]) {
+  const session = await getActiveSession(supabase, chat_id);
+  if (!session) {
+    await sendMessage(chat_id, "ℹ️ No active session. `/scan start <sport> <book>` first.");
+    return;
+  }
+  const raw = (args[0] ?? "").toLowerCase().replace(/\s+/g, "");
+  if (!raw) {
+    await sendMessage(chat_id, `📚 *Current book:* ${session.book}\n\nUsage: \`/scan book <fanduel|draftkings|hardrock|prizepicks|underdog>\``);
+    return;
+  }
+  const book = BOOK_ALIASES[raw] ?? raw;
+  if (!VALID_BOOKS.includes(book)) {
+    await sendMessage(chat_id, `❌ Unknown book *${raw}*.\nValid: ${VALID_BOOKS.join(", ")}`);
+    return;
+  }
+  const { error } = await supabase
+    .from("ocr_scan_sessions")
+    .update({ book })
+    .eq("id", session.id);
+  if (error) {
+    await sendMessage(chat_id, `❌ Could not update book: ${error.message}`);
+    return;
+  }
+  await sendMessage(chat_id, `✅ *Book overridden* → *${book}*\n\nNext screenshots will parse with the *${book}* layout.`);
+}
+
 async function handleHelp(chat_id: number) {
   await sendMessage(chat_id,
-    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start <sport> <book>\` — start session\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
+    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start <sport> <book>\` — start session\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
 }
 
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
@@ -219,6 +255,7 @@ Deno.serve(async (req) => {
       const sub = parts[0];
       const args = parts.slice(1);
       if (sub === "start") await handleStart(supabase, chat_id, args);
+      else if (sub === "book") await handleBook(supabase, chat_id, args);
       else if (sub === "pool") await handlePool(supabase, chat_id);
       else if (sub === "parlay") await handleParlay(supabase, chat_id, args);
       else if (sub === "end") await handleEnd(supabase, chat_id);
