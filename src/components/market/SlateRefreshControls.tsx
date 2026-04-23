@@ -286,6 +286,23 @@ export function SlateRefreshControls() {
         </Card>
       )}
 
+      {/* Risk Layer Bypass Badge */}
+      {!preflightLoading && riskLayerBypassed && (riskLayerStatus === 'empty' || riskLayerStatus === 'thin') && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="py-2 px-4">
+            <div className="flex items-center gap-2 text-xs">
+              <ShieldCheck className="h-3.5 w-3.5 text-amber-500" />
+              <span className="font-medium text-amber-600 dark:text-amber-400">
+                Risk layer bypassed
+              </span>
+              <span className="text-muted-foreground">
+                — risk_layer:{riskLayerStatus} · using sweet spots + raw unified_props
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Main Refresh Controls */}
       <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-background">
         <CardContent className="py-3 px-4">
