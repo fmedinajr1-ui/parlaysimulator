@@ -231,14 +231,9 @@ Deno.serve(async (req) => {
     const dryRun = body.dry_run !== false; // default to dry_run for safety
     const targetDate = body.date ?? etDateKey();
 
-    const {
-      pool,
-      poolBeforeCount,
-      poolAfterCount,
-      poolAutoBuildAttempted,
-      poolAutoBuildSuccess,
-      poolBuildDiagnostics,
-    } = await ensurePoolRows(sb, targetDate);
+    const directSourceState = await loadDirectPickRows(sb, { targetDate, minimumRiskRows: 8, fallbackLimit: 40 });
+    const pool = directSourceState.rows as PoolRow[];
+    const poolAfterCount = pool.length;
 
     // Load matching props for odds + game context
     const playerNames = Array.from(new Set((pool ?? []).map(p => p.player_name).filter(Boolean)));
@@ -282,12 +277,9 @@ Deno.serve(async (req) => {
     }
 
     const zeroPool = poolAfterCount === 0;
-    const thinPool = poolAfterCount > 0 && poolAfterCount < AUTO_POOL_MINIMUM_ROWS;
     const zeroCandidates = candidates.length === 0;
     const degradedReason = zeroPool
-      ? "empty_pick_pool"
-      : thinPool
-        ? "thin_pick_pool"
+      ? "empty_direct_sources"
       : zeroCandidates
         ? "no_book_matched_candidates"
         : slate.parlays.length === 0
@@ -301,12 +293,8 @@ Deno.serve(async (req) => {
         degraded_reason: degradedReason,
         dry_run: true,
         target_date: targetDate,
-        pool_rows_loaded: poolAfterCount,
-        pool_before_count: poolBeforeCount,
-        pool_after_count: poolAfterCount,
-        pool_auto_build_attempted: poolAutoBuildAttempted,
-        pool_auto_build_success: poolAutoBuildSuccess,
-        pool_build_diagnostics: poolBuildDiagnostics,
+        direct_rows_loaded: poolAfterCount,
+        source_diagnostics: directSourceState.diagnostics,
         candidates_in: candidates.length,
         mapping_notes: mappingNotes,
         eligibility,
@@ -333,18 +321,14 @@ Deno.serve(async (req) => {
     }
 
     if (degradedReason) {
-      const status = zeroPool ? 409 : 422;
+       const status = zeroPool ? 409 : 422;
       return new Response(JSON.stringify({
         success: false,
         degraded: true,
         degraded_reason: degradedReason,
         target_date: targetDate,
-        pool_rows_loaded: poolAfterCount,
-        pool_before_count: poolBeforeCount,
-        pool_after_count: poolAfterCount,
-        pool_auto_build_attempted: poolAutoBuildAttempted,
-        pool_auto_build_success: poolAutoBuildSuccess,
-        pool_build_diagnostics: poolBuildDiagnostics,
+         direct_rows_loaded: poolAfterCount,
+         source_diagnostics: directSourceState.diagnostics,
         candidates_in: candidates.length,
         eligibility,
         mapping_notes: mappingNotes,
@@ -397,12 +381,8 @@ Deno.serve(async (req) => {
       degraded: false,
       dry_run: false,
       target_date: targetDate,
-      pool_rows_loaded: poolAfterCount,
-      pool_before_count: poolBeforeCount,
-      pool_after_count: poolAfterCount,
-      pool_auto_build_attempted: poolAutoBuildAttempted,
-      pool_auto_build_success: poolAutoBuildSuccess,
-      pool_build_diagnostics: poolBuildDiagnostics,
+      direct_rows_loaded: poolAfterCount,
+      source_diagnostics: directSourceState.diagnostics,
       candidates_in: candidates.length,
       inserted,
       report: slate.report,

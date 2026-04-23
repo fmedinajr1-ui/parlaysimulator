@@ -145,26 +145,30 @@ Deno.serve(async (req) => {
     const dryRun = body.dry_run === true;
     const deleteExisting = body.delete_existing !== false;
 
-    const poolState = await ensurePoolRows(sb, targetDate);
+    const directSourceState = await loadDirectPickRows(sb, { targetDate, minimumRiskRows: 8, fallbackLimit: 40 });
+    const poolState = {
+      pool: directSourceState.rows as PoolRow[],
+      poolBeforeCount: directSourceState.rows.length,
+      poolAfterCount: directSourceState.rows.length,
+      poolAutoBuildAttempted: false,
+      poolAutoBuildSuccess: directSourceState.rows.length > 0,
+      poolBuildDiagnostics: directSourceState.diagnostics,
+    };
     const diagnostics: Record<string, unknown> = {
       target_date: targetDate,
-      pool_before_count: poolState.poolBeforeCount,
-      pool_after_count: poolState.poolAfterCount,
-      pool_auto_build_attempted: poolState.poolAutoBuildAttempted,
-      pool_auto_build_success: poolState.poolAutoBuildSuccess,
-      pool_build_diagnostics: poolState.poolBuildDiagnostics,
+      direct_rows_loaded: poolState.poolAfterCount,
+      source_diagnostics: poolState.poolBuildDiagnostics,
     };
 
     const zeroPool = poolState.poolAfterCount === 0;
-    const thinPool = poolState.poolAfterCount > 0 && poolState.poolAfterCount < AUTO_POOL_MINIMUM_ROWS;
-    if (zeroPool || thinPool) {
+    if (zeroPool) {
       return new Response(JSON.stringify({
         success: false,
         degraded: true,
-        degraded_reason: zeroPool ? "empty_pick_pool" : "thin_pick_pool",
+        degraded_reason: "empty_direct_sources",
         diagnostics,
       }), {
-        status: zeroPool ? 409 : 422,
+        status: 409,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -320,7 +324,7 @@ Deno.serve(async (req) => {
     ];
 
     Object.assign(diagnostics, {
-      pool_rows_loaded: poolState.poolAfterCount,
+      direct_rows_loaded: poolState.poolAfterCount,
       book_matched_rows: bookMatchedRows,
       stale_rejected: staleRejected,
       drift_rejected: driftRejected,
