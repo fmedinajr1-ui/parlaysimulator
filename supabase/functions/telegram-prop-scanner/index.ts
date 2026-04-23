@@ -59,10 +59,18 @@ async function downloadTelegramPhoto(file_id: string): Promise<string> {
 async function resolveUserForChat(supabase: any, chat_id: number) {
   const { data: sub } = await supabase
     .from("email_subscribers")
-    .select("user_id")
+    .select("user_id, email")
     .eq("telegram_chat_id", chat_id)
     .maybeSingle();
   if (sub?.user_id) return sub.user_id as string;
+  if (sub?.email) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("email", sub.email)
+      .maybeSingle();
+    if (profile?.id) return profile.id as string;
+  }
   if (ADMIN_CHAT_ID && String(chat_id) === String(ADMIN_CHAT_ID)) {
     const { data: anyUser } = await supabase
       .from("profiles")
