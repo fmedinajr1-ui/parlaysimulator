@@ -1,6 +1,7 @@
 // @ts-nocheck
-// Telegram webhook for the OCR Prop Scanner.
-// One-time setup: set the bot's webhook URL to this function's URL via Telegram's setWebhook API.
+// OCR Prop Scanner update handler.
+// Receives one Telegram update at a time (POSTed by the telegram-poll function)
+// and replies via the Telegram connector gateway (no bot token needed in code).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -9,16 +10,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const FILE_API = `https://api.telegram.org/file/bot${BOT_TOKEN}`;
+const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
 const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
+
+function gatewayHeaders() {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
+  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+  if (!TELEGRAM_API_KEY) throw new Error("TELEGRAM_API_KEY is not configured (link the Telegram connector)");
+  return {
+    Authorization: `Bearer ${LOVABLE_API_KEY}`,
+    "X-Connection-Api-Key": TELEGRAM_API_KEY,
+    "Content-Type": "application/json",
+  } as Record<string, string>;
+}
 
 async function telegramRequest(method: string, body: Record<string, unknown>, fallbackBody?: Record<string, unknown>) {
   const send = async (payload: Record<string, unknown>) => {
-    const response = await fetch(`${TELEGRAM_API}/${method}`, {
+    const response = await fetch(`${GATEWAY_URL}/${method}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: gatewayHeaders(),
       body: JSON.stringify(payload),
     });
     const text = await response.text();
@@ -63,11 +74,19 @@ async function answerCallback(callback_query_id: string, text?: string) {
 }
 
 async function downloadTelegramPhoto(file_id: string): Promise<string> {
-  const res = await fetch(`${TELEGRAM_API}/getFile?file_id=${file_id}`);
+  const headers = gatewayHeaders();
+  const res = await fetch(`${GATEWAY_URL}/getFile`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ file_id }),
+  });
   const j = await res.json();
-  if (!j.ok) throw new Error(`getFile failed`);
+  if (!res.ok || !j.ok) throw new Error(`getFile failed: ${JSON.stringify(j)}`);
   const path = j.result.file_path;
-  const fileRes = await fetch(`${FILE_API}/${path}`);
+  const fileRes = await fetch(`${GATEWAY_URL}/file/${path}`, {
+    headers: { Authorization: headers.Authorization, "X-Connection-Api-Key": headers["X-Connection-Api-Key"] },
+  });
+  if (!fileRes.ok) throw new Error(`file download failed (${fileRes.status})`);
   const buf = await fileRes.arrayBuffer();
   const bytes = new Uint8Array(buf);
   let bin = "";
