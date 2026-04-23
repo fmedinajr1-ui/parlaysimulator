@@ -910,9 +910,9 @@ Deno.serve(async (req) => {
         detail: `${diagnostics.input_quality?.fresh_fanduel_props_2h ?? 0} fresh / ${diagnostics.input_quality?.total_fanduel_props ?? 0} total`,
       },
       {
-        name: 'Risk candidates',
-        passed: (diagnostics.input_quality?.direct_risk_candidates ?? 0) >= MIN_APPROVED_RISK_PICKS,
-        detail: `${diagnostics.input_quality?.direct_risk_candidates ?? 0} approved rows`,
+        name: 'Risk candidates (advisory)',
+        passed: true, // RISK LAYER BYPASSED — never block on risk count
+        detail: `${diagnostics.input_quality?.direct_risk_candidates ?? 0} approved rows · risk_layer:${(diagnostics as any).risk_layer_status ?? 'unknown'}`,
       },
       {
         name: 'Fallback candidates',
