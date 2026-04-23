@@ -156,16 +156,23 @@ Deno.serve(async (req) => {
     const freshWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const targetDate = todayET();
 
-    const [freshFdPropsRes, pickPoolRes, todayParlaysRes, todayStraightsRes] = await Promise.all([
+    const [freshFdPropsRes, riskRes, sweetSpotRes, todayParlaysRes, todayStraightsRes] = await Promise.all([
       supabase
         .from("unified_props")
         .select("id", { count: "exact", head: true })
         .eq("bookmaker", "fanduel")
         .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`),
       supabase
-        .from("bot_daily_pick_pool")
+        .from("nba_risk_engine_picks")
         .select("id", { count: "exact", head: true })
-        .eq("pick_date", targetDate),
+        .eq("game_date", targetDate)
+        .eq("mode", "full_slate")
+        .is("rejection_reason", null),
+      supabase
+        .from("category_sweet_spots")
+        .select("id", { count: "exact", head: true })
+        .eq("analysis_date", targetDate)
+        .eq("is_active", true),
       supabase
         .from("bot_daily_parlays")
         .select("id, tier", { count: "exact" })
@@ -184,7 +191,8 @@ Deno.serve(async (req) => {
       target_date: targetDate,
         input_quality: {
           fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
-          pick_pool_candidates: pickPoolRes.count ?? 0,
+          direct_risk_candidates: riskRes.count ?? 0,
+          direct_fallback_candidates: sweetSpotRes.count ?? 0,
         },
       generated_counts: {
         parlays_total: todayParlaysRes.count ?? 0,
@@ -192,7 +200,7 @@ Deno.serve(async (req) => {
         straight_bets_total: todayStraightsRes.count ?? 0,
       },
       pipeline_health: {
-        pick_pool_ready: (pickPoolRes.count ?? 0) >= 12,
+        direct_sources_ready: ((riskRes.count ?? 0) + (sweetSpotRes.count ?? 0)) > 0,
         parlay_output_ready: (todayParlaysRes.count ?? 0) > 0,
       },
     };
