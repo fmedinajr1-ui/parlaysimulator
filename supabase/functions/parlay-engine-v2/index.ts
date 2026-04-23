@@ -208,6 +208,7 @@ function buildCandidates(
       player_active: true, // no injury feed yet
       defensive_context_updated_at: null, // gate skipped this phase
       selected_book: selectedBook,
+      source_origin: row.source_origin ?? null,
     });
   }
 
