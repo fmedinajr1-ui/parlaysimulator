@@ -1,190 +1,97 @@
+## What's actually broken
 
+Looking at the live data, every prop your bot scanned today says `no_match_in_unified_props`. That's why the pool is empty and it can't build a parlay. Three concrete bugs:
 
-## Goal
-Add a new **OCR Prop Scanner** with three capture modes (screen recording, screenshot burst, live camera), full deep cross-reference (DNA + sweet-spot + correlation), both auto-parlays AND a manual builder — accessible from the **web app** AND **Telegram** so you can scan props from your phone while inside the sportsbook app.
+1. **Prop-type names don't line up.** Your market table (`unified_props`) stores `player_points`, `player_rebounds_assists`, `player_threes`, etc. The scanner normalizes OCR text to `points`, `ra`, `threes`. They never match.
+2. **Player names don't line up.** PrizePicks renders `CJ McCollum`. The market data has `C.J. McCollum`. The current `ilike '%CJ McCollum%'` returns zero rows because of the periods.
+3. **Junk prop types from PrizePicks get passed through.** Things like `2_pt_made`, `fg_made`, `rebs+asts` aren't markets that exist in `unified_props` at all — they should either be mapped to a real market or dropped.
 
-## What gets built
+On top of that, you said: *"we should know if it's going to be under or over."* Right now the scanner just takes whatever side appeared on the screen. It never tells you to flip from Over to Under when Under has the edge.
 
-### 1. New web route: `/scan` — Prop Scanner
+## The fix
 
-Single page, three capture-mode tabs, live session pool, dual output panel.
+### 1. Prop-type alias map (matching layer)
+
+Add a single source of truth that maps every short name **and** every PrizePicks/Underdog quirk to the canonical Odds-API names:
 
 ```text
-┌───────────────────────────────────────────────────────────────┐
-│ Prop Scanner — Session: NBA · 2026-04-23 · FanDuel            │
-├───────────────────────────────────────────────────────────────┤
-│ [📹 Record]  [📸 Screenshots]  [🎥 Camera]   Book: [FD▼]      │
-├───────────────────────────────────────────────────────────────┤
-│ Capture surface (active mode renders here)                    │
-├───────────────────────────────────────────────────────────────┤
-│ Session Pool (live, deduped, scored, multi-select)            │
-│   ☑ LeBron · Points Over 27.5 (-115)       DNA:87 🟢          │
-│   ☑ Tatum · Threes Over 3.5 (+105)         DNA:74 🟡          │
-│   ☐ Brunson · Assists Under 6.5 (-110)     DNA:42 🔴          │
-│     ↳ blocked: low L10 hit rate, opp def #28                  │
-├───────────────────────────────────────────────────────────────┤
-│ [⚡ Auto-Parlays]    [🛠 Manual Builder]                       │
-└───────────────────────────────────────────────────────────────┘
+points              → player_points
+rebounds            → player_rebounds
+assists             → player_assists
+threes              → player_threes
+pra                 → player_points_rebounds_assists
+pr                  → player_points_rebounds
+pa                  → player_points_assists
+ra / rebs+asts      → player_rebounds_assists
+2_pt_made / fg_made → DROP (no liquid market) → flag prop as "unsupported_market"
+shots_on_goal       → player_shots_on_goal
+hits / total_bases  → unchanged (MLB)
 ```
 
-### 2. Capture pipeline (3 modes, user picks per session)
+Anything still unmatched after the alias pass gets dropped from the pool with `block_reason="unsupported_market"` instead of polluting the scan list.
 
-Reuses what already exists in the repo.
+### 2. Smarter player-name match
 
-| Mode | Foundation | New work |
-|------|------------|----------|
-| Screen recording | `lib/video-frame-extractor.ts`, `ScoutVideoUpload` | Record sportsbook tab, sample 1 fps, perceptual-hash dedupe |
-| Burst screenshots | `lib/image-compression.ts` (OCR preprocessing) | Drop-zone + paste tray, batch queue |
-| Live camera | `lib/live-stream-capture.ts`, `ScoutLiveCapture` | Freeze-frame button, OCR overlay |
+Strip punctuation and collapse to lowercase tokens on **both sides** before comparing, so `CJ McCollum` matches `C.J. McCollum`. Match strategy, in order:
+- exact lowercased+depunctuated equality
+- last-name + first-initial fallback (handles "C McCollum" style)
+- only then fall back to `ilike` partial match
 
-All three funnel into the same edge function: `ocr-prop-scan`.
+### 3. Auto-pick Over vs Under (the part you really asked for)
 
-### 3. New edge function: `ocr-prop-scan`
+Instead of using whichever side the screenshot showed, for every captured prop the scanner will compute an **edge for both sides** and recommend one:
 
-Input: `{ frames: base64[], book, sport, session_id }`.
-Pipeline:
-1. **Vision OCR** — Lovable AI (`google/gemini-3-flash-preview`) with structured-output tool schema → `[{player_name, prop_type, line, side, over_price, under_price, confidence, raw_text}]`. Book-aware system prompt picks the layout parser.
-2. **Normalize** — canonical prop types, American odds, side mapping (PrizePicks "more"/"less" → over/under).
-3. **Deep cross-reference** (parallel per prop):
-   - `unified_props` match → real-line presence + price delta
-   - L10 hit rate + season avg from `nba_player_game_logs` / `mlb_player_game_logs`
-   - opponent defensive rank + pace
-   - `category_sweet_spots` membership
-   - DNA score via existing pick-DNA helpers
-   - correlation gates (`mem://logic/parlay/same-game-concentration`)
-4. **Persist** to `ocr_scanned_props`.
-5. **Return** enriched rows.
+For each `(player, prop_type, line)` we look up:
+- `over_price` and `under_price` from `unified_props` (the true market)
+- L10 hit rate for both directions from `nba_player_game_logs` / `mlb_player_game_logs`
+- Optional sweet-spot tag
 
-### 4. New edge function: `ocr-pool-build-parlays`
+We compute a **fair probability** from L10 (`hits_over / 10`), convert the market odds to **implied probability**, and the side with the bigger `fair_prob − implied_prob` (the **edge**) wins. Threshold: edge ≥ 4%. If neither side clears 4%, the prop is marked `no_edge` and excluded from the parlay pool.
 
-Input: `{ session_id, selected_prop_ids?, target_legs (2–6), mode: 'auto'|'manual' }`.
-- Reuses `parlay-engine-v2` scoring + correlation, scoped to the captured pool only.
-- `auto`: returns 1–4 ranked tickets with leg-by-leg DNA + correlation reasoning.
-- `manual`: returns live conflict feedback as the user toggles legs.
-- Generated parlays stored with `source_origin: 'ocr_scan'` so they're isolated from the main slate.
+Each captured prop in the pool will store:
+- `recommended_side` (over | under | none)
+- `edge_pct` (e.g. +7.2%)
+- `fair_prob` and `implied_prob`
+- A short `verdict` like *"UNDER 17.5 — L10 hit 7/10, market priced 52%, fair 70%, edge +18%"*
 
-### 5. Telegram integration
+The pool screen and the parlay builder then use `recommended_side` instead of the side the user happened to see on the book.
 
-Telegram is **not just a notifier** here — it's a full capture surface.
+### 4. Pool & parlay builder updates
 
-**New edge function: `telegram-prop-scanner`** (called from the existing `telegram-poll` worker)
+- `composite_score` becomes `edge_pct * 10 + l10_hit_bonus + sweet_spot_bonus` so high-edge legs sort first.
+- The parlay builder pulls only props with `edge_pct ≥ 4%` AND `recommended_side` set.
+- `block_reason` reasons get human-friendly: `unsupported_market`, `no_edge`, `no_market_data`, `low_l10_sample`.
 
-Routes the following commands and message types:
+### 5. Telegram output gets a clear verdict
 
-| Trigger | Behavior |
-|---------|----------|
-| `/scan start <sport> <book>` | Creates a new `ocr_scan_sessions` row tied to your Telegram chat ID. Replies "Session started — send screenshots." |
-| Photo / image message | `getFile` → download via gateway → forward bytes to `ocr-prop-scan` → reply with parsed legs + DNA chips inline. |
-| Forwarded sportsbook screenshot | Same path. Multiple photos in a media group are batched into one OCR call. |
-| `/scan pool` | Returns current session pool as a numbered list with DNA scores + block reasons. |
-| `/scan parlay [legs]` | Calls `ocr-pool-build-parlays` (auto mode), replies with 1–3 ranked tickets. |
-| `/scan add 1 3 5` | Marks props as selected for manual builder, then `/scan parlay` builds from selection only. |
-| `/scan end` | Finalizes the session. |
+Each line in the pool message becomes:
 
-Authorization: Telegram chat ID is mapped to a `user_id` via the existing `telegram_authorized_accounts` table (Destiny_0711 already wired per `mem://telegram/authorized-accounts`). Unauthorized chats get a polite reject.
-
-Replies use the standardized human-readable prop labels (`mem://telegram/ui-standardization`) and rich Markdown formatting (`mem://telegram/message-formatting`).
-
-### 6. New tables
-
-```sql
-create table public.ocr_scan_sessions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  telegram_chat_id bigint,                -- nullable; set when started from Telegram
-  sport text not null,
-  book text not null,                     -- 'fanduel'|'draftkings'|'hardrock'|'prizepicks'|'underdog'
-  capture_mode text not null,             -- 'recording'|'screenshots'|'camera'|'telegram'
-  status text not null default 'active',  -- 'active'|'finalized'|'archived'
-  created_at timestamptz default now(),
-  finalized_at timestamptz
-);
-
-create table public.ocr_scanned_props (
-  id uuid primary key default gen_random_uuid(),
-  session_id uuid not null references public.ocr_scan_sessions(id) on delete cascade,
-  player_name text not null,
-  prop_type text not null,
-  side text not null,
-  line numeric not null,
-  over_price int,
-  under_price int,
-  raw_ocr_text text,
-  confidence numeric,
-  matched_unified_prop_id uuid,
-  market_price_delta int,
-  l10_hit_rate numeric,
-  l10_avg numeric,
-  opp_def_rank int,
-  sweet_spot_id uuid,
-  dna_score int,
-  composite_score int,
-  correlation_tags text[],
-  blocked boolean default false,
-  block_reason text,
-  selected_for_parlay boolean default false,
-  source_origin text default 'ocr_scan',
-  source_channel text default 'web',      -- 'web'|'telegram'
-  created_at timestamptz default now(),
-  unique (session_id, player_name, prop_type, side, line)
-);
+```
+1. James Harden — points UNDER 17.5  ✅ +12% edge
+   ↳ L10 4/10 over · market -110 · fair 60% under
 ```
 
-RLS: owner-only (`user_id = auth.uid()`), with a service-role bypass for the Telegram edge function.
+And when the bot can't build a parlay, instead of the confusing `pool_too_small:0`, it will say:
 
-### 7. New web hooks + components
-
-- `src/hooks/useOcrScanSession.ts` — create/load session, realtime stream of new props
-- `src/hooks/useOcrCapture.ts` — unified interface over the 3 modes
-- `src/components/scan/CaptureModeTabs.tsx`
-- `src/components/scan/ScreenRecordCapture.tsx` (`getDisplayMedia`)
-- `src/components/scan/ScreenshotTray.tsx` (drop / paste / batch)
-- `src/components/scan/CameraCapture.tsx`
-- `src/components/scan/SessionPool.tsx` (live grid, DNA chips, block reasons, multi-select)
-- `src/components/scan/AutoParlayPanel.tsx`
-- `src/components/scan/ManualBuilderPanel.tsx` (extends existing `ManualParlayPanel`)
-- `src/pages/PropScanner.tsx` (route `/scan`)
-
-### 8. Book-aware OCR tuning
-
-System prompt branches on `book`:
-- **FanDuel** — over/under stacked, line above prices
-- **DraftKings** — line + prices on one row
-- **Hard Rock** — dense grid, bolded player name
-- **PrizePicks / Underdog** — pick'em (no odds), "more"/"less" → over/under
-
-All books normalize to one canonical schema downstream.
+```
+🤔 Couldn't build a parlay yet — only 1 prop has a real edge.
+Send more screenshots or try a different book/sport.
+```
 
 ## Files touched
 
-**New**
-- `src/pages/PropScanner.tsx`
-- `src/hooks/useOcrScanSession.ts`, `useOcrCapture.ts`
-- `src/components/scan/*` (7 files)
-- `supabase/functions/ocr-prop-scan/index.ts`
-- `supabase/functions/ocr-pool-build-parlays/index.ts`
-- `supabase/functions/telegram-prop-scanner/index.ts`
-- 1 migration: tables + RLS + realtime publication on `ocr_scanned_props`
+- `supabase/functions/ocr-prop-scan/index.ts` — alias map, name normalizer, dual-side edge calculator, new fields in the insert payload
+- `supabase/functions/ocr-pool-build-parlays/index.ts` — filter on `edge_pct`, sort by edge, friendlier reason text
+- `supabase/functions/telegram-prop-scanner/index.ts` — render verdict line with recommended side + edge
+- Schema: a small migration adding `recommended_side`, `edge_pct`, `fair_prob`, `implied_prob`, `verdict` columns to `ocr_scanned_props`
 
-**Edited**
-- `src/App.tsx` — `/scan` route
-- top-nav layout — add "Scan" link
-- `src/components/manual/ManualParlayPanel.tsx` — accept `sourcePool` prop
-- `supabase/functions/telegram-poll/index.ts` — dispatch photo + `/scan` commands to `telegram-prop-scanner`
+## What you'll see after this ships
 
-## Technical notes
+Send the same FanDuel screenshot you sent earlier:
 
-- OCR via Lovable AI Gateway (no extra key); structured output via tool calling.
-- Frame dedupe via existing perceptual hash in `video-frame-extractor`.
-- Web pool updates over realtime (`postgres_changes` on `ocr_scanned_props`).
-- All web capture is client-side; only base64 frames hit the function.
-- Telegram photo path uses the gateway's `getFile` + `/file/{path}` flow already documented in your Telegram integration.
-- Rate-limit guard on `ocr-prop-scan` (max 2 frames/sec/user) protects AI quota.
-- Telegram replies surface block reasons + DNA scores inline so you can decide on the spot.
+- `2 pt Made` rows for Harden/Mitchell/etc. → silently dropped (unsupported)
+- `points`, `rebounds`, `pra`, `ra` → matched to the real market lines
+- Each prop shows whether Over or Under is the value side, with a percentage edge
+- Parlay builder picks the top-edge legs across distinct games and prints a real ticket
 
-## Out of scope for v1
-
-- Auto-grading captured props against settled outcomes (defer to existing settlement orchestrator later).
-- Sharing scan sessions between users.
-- Background "always on" capture.
-
+No more `no_match_in_unified_props` on legitimate props, no more empty pools, and the bot tells you which side to bet — not just what was on the screen.

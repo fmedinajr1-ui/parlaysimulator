@@ -9838,17 +9838,23 @@ export type Database = {
           correlation_tags: string[] | null
           created_at: string
           dna_score: number | null
+          edge_pct: number | null
+          fair_prob: number | null
           id: string
+          implied_prob: number | null
           l10_avg: number | null
           l10_hit_rate: number | null
           line: number
+          market_over_price: number | null
           market_price_delta: number | null
+          market_under_price: number | null
           matched_unified_prop_id: string | null
           opp_def_rank: number | null
           over_price: number | null
           player_name: string
           prop_type: string
           raw_ocr_text: string | null
+          recommended_side: string | null
           selected_for_parlay: boolean
           session_id: string
           side: string
@@ -9856,6 +9862,7 @@ export type Database = {
           source_origin: string
           sweet_spot_id: string | null
           under_price: number | null
+          verdict: string | null
         }
         Insert: {
           block_reason?: string | null
@@ -9865,17 +9872,23 @@ export type Database = {
           correlation_tags?: string[] | null
           created_at?: string
           dna_score?: number | null
+          edge_pct?: number | null
+          fair_prob?: number | null
           id?: string
+          implied_prob?: number | null
           l10_avg?: number | null
           l10_hit_rate?: number | null
           line: number
+          market_over_price?: number | null
           market_price_delta?: number | null
+          market_under_price?: number | null
           matched_unified_prop_id?: string | null
           opp_def_rank?: number | null
           over_price?: number | null
           player_name: string
           prop_type: string
           raw_ocr_text?: string | null
+          recommended_side?: string | null
           selected_for_parlay?: boolean
           session_id: string
           side: string
@@ -9883,6 +9896,7 @@ export type Database = {
           source_origin?: string
           sweet_spot_id?: string | null
           under_price?: number | null
+          verdict?: string | null
         }
         Update: {
           block_reason?: string | null
@@ -9892,17 +9906,23 @@ export type Database = {
           correlation_tags?: string[] | null
           created_at?: string
           dna_score?: number | null
+          edge_pct?: number | null
+          fair_prob?: number | null
           id?: string
+          implied_prob?: number | null
           l10_avg?: number | null
           l10_hit_rate?: number | null
           line?: number
+          market_over_price?: number | null
           market_price_delta?: number | null
+          market_under_price?: number | null
           matched_unified_prop_id?: string | null
           opp_def_rank?: number | null
           over_price?: number | null
           player_name?: string
           prop_type?: string
           raw_ocr_text?: string | null
+          recommended_side?: string | null
           selected_for_parlay?: boolean
           session_id?: string
           side?: string
@@ -9910,6 +9930,7 @@ export type Database = {
           source_origin?: string
           sweet_spot_id?: string | null
           under_price?: number | null
+          verdict?: string | null
         }
         Relationships: [
           {

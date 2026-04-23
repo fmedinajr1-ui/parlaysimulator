@@ -83,6 +83,62 @@ function normalizePropType(raw: string): string {
   return map[s] ?? s;
 }
 
+// Maps the scanner's short prop type to the canonical name used in unified_props
+// (which follows the Odds API "player_*" convention).
+const UNIFIED_PROP_MAP: Record<string, string> = {
+  points: "player_points",
+  rebounds: "player_rebounds",
+  assists: "player_assists",
+  threes: "player_threes",
+  pra: "player_points_rebounds_assists",
+  pr: "player_points_rebounds",
+  pa: "player_points_assists",
+  ra: "player_rebounds_assists",
+  shots_on_goal: "player_shots_on_goal",
+  steals: "player_steals",
+  blocks: "player_blocks",
+  goals: "player_goals",
+  // MLB / others stay as-is — they aren't prefixed in unified_props for those sports
+  hits: "hits",
+  total_bases: "total_bases",
+  strikeouts: "strikeouts",
+  passing_yards: "passing_yards",
+  rushing_yards: "rushing_yards",
+  receiving_yards: "receiving_yards",
+  receptions: "receptions",
+};
+
+// Prop types that exist on PrizePicks/Underdog but have no liquid sportsbook
+// market. Drop them from the pool instead of failing to match.
+const UNSUPPORTED_PROP_TYPES = new Set([
+  "2_pt_made",
+  "fg_made",
+  "fg_attempts",
+  "free_throws_made",
+  "ft_made",
+  "first_basket",
+  "double_double",
+  "triple_double",
+]);
+
+function depunct(name: string): string {
+  return name.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function lastNameInitialKey(name: string): string | null {
+  const tokens = depunct(name).split(" ").filter(Boolean);
+  if (tokens.length < 2) return null;
+  const first = tokens[0][0];
+  const last = tokens[tokens.length - 1];
+  return `${first}|${last}`;
+}
+
+function americanToImpliedProb(odds: number | null | undefined): number | null {
+  if (odds == null || Number.isNaN(odds)) return null;
+  if (odds > 0) return 100 / (odds + 100);
+  return Math.abs(odds) / (Math.abs(odds) + 100);
+}
+
 function buildVisionMessages(frames: string[], book: string, sport: string) {
   const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nIf a single card shows BOTH over and under, output TWO rows (one per side).\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
 
@@ -244,103 +300,219 @@ function computeDna(args: {
   return Math.max(0, Math.min(100, score));
 }
 
-async function crossReference(supabase: any, prop: any, sport: string) {
-  const playerLike = prop.player_name;
-  const propType = normalizePropType(prop.prop_type);
+const EDGE_THRESHOLD = 0.04; // 4% — minimum fair-vs-implied edge to consider a side "live"
 
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: matches } = await supabase
+async function findUnifiedMatch(supabase: any, playerName: string, unifiedPropType: string, line: number, today: string) {
+  // Strategy 1: depunct exact match — the strongest signal (handles "CJ McCollum" vs "C.J. McCollum")
+  const target = depunct(playerName);
+  const { data: candidates } = await supabase
     .from("unified_props")
     .select("id,player_name,prop_type,current_line,over_price,under_price,event_id,commence_time")
-    .ilike("player_name", `%${playerLike}%`)
-    .eq("prop_type", propType)
+    .eq("prop_type", unifiedPropType)
     .gte("commence_time", today)
-    .limit(5);
+    .limit(400);
 
-  let matched: any = null;
-  if (matches && matches.length > 0) {
-    matched =
-      matches.find((m: any) => Math.abs(Number(m.current_line) - Number(prop.line)) < 0.5) ??
-      matches[0];
+  if (!candidates || candidates.length === 0) return null;
+
+  const sameLine = (m: any) => Math.abs(Number(m.current_line) - Number(line)) < 0.5;
+
+  // Pass 1 — depunctuated equality
+  let pool = candidates.filter((m: any) => depunct(m.player_name) === target);
+  if (pool.length > 0) return pool.find(sameLine) ?? pool[0];
+
+  // Pass 2 — last-name + first-initial
+  const key = lastNameInitialKey(playerName);
+  if (key) {
+    pool = candidates.filter((m: any) => lastNameInitialKey(m.player_name) === key);
+    if (pool.length > 0) return pool.find(sameLine) ?? pool[0];
   }
 
-  const marketPrice = prop.side === "over" ? matched?.over_price : matched?.under_price;
-  const ocrPrice = prop.side === "over" ? prop.over_price : prop.under_price;
-  const marketPriceDelta =
-    typeof marketPrice === "number" && typeof ocrPrice === "number"
-      ? Number(ocrPrice) - Number(marketPrice)
-      : null;
+  // Pass 3 — last name only (handles missing first initial)
+  const tokens = target.split(" ").filter(Boolean);
+  if (tokens.length > 0) {
+    const last = tokens[tokens.length - 1];
+    pool = candidates.filter((m: any) => {
+      const t = depunct(m.player_name).split(" ").filter(Boolean);
+      return t.length > 0 && t[t.length - 1] === last;
+    });
+    if (pool.length === 1) return pool[0]; // only safe if unambiguous
+  }
 
-  let l10Hit: number | null = null;
+  return null;
+}
+
+async function crossReference(supabase: any, prop: any, sport: string) {
+  const propType = normalizePropType(prop.prop_type);
+  const line = Number(prop.line);
+
+  // Hard drop: prop types that simply do not exist as a real market
+  if (UNSUPPORTED_PROP_TYPES.has(propType)) {
+    return {
+      matched_unified_prop_id: null,
+      market_price_delta: null,
+      market_over_price: null,
+      market_under_price: null,
+      l10_hit_rate: null,
+      l10_avg: null,
+      sweet_spot_id: null,
+      dna_score: 0,
+      composite_score: 0,
+      correlation_tags: [],
+      blocked: true,
+      block_reason: "unsupported_market",
+      recommended_side: null,
+      edge_pct: null,
+      fair_prob: null,
+      implied_prob: null,
+      verdict: "Unsupported market",
+    };
+  }
+
+  const unifiedPropType = UNIFIED_PROP_MAP[propType] ?? propType;
+  const today = new Date().toISOString().slice(0, 10);
+  const matched = await findUnifiedMatch(supabase, prop.player_name, unifiedPropType, line, today);
+
+  // L10 lookup (used for both sides)
+  let l10Vals: number[] = [];
   let l10Avg: number | null = null;
   const logsTable =
-    sport.toLowerCase() === "nba"
-      ? "nba_player_game_logs"
-      : sport.toLowerCase() === "mlb"
-        ? "mlb_player_game_logs"
-        : null;
+    sport === "nba" ? "nba_player_game_logs"
+    : sport === "mlb" ? "mlb_player_game_logs"
+    : null;
+
   if (logsTable) {
-    const { data: logs } = await supabase
+    const { data: logsExact } = await supabase
       .from(logsTable)
       .select("*")
-      .ilike("player_name", `%${playerLike}%`)
+      .eq("player_name", matched?.player_name ?? prop.player_name)
       .order("game_date", { ascending: false })
       .limit(10);
-    if (logs && logs.length > 0) {
+    let logs = logsExact ?? [];
+    if (logs.length === 0) {
+      const { data: logsFuzzy } = await supabase
+        .from(logsTable)
+        .select("*")
+        .ilike("player_name", `%${prop.player_name}%`)
+        .order("game_date", { ascending: false })
+        .limit(10);
+      logs = logsFuzzy ?? [];
+    }
+    if (logs.length > 0) {
       const statKey = mapStatKey(propType, logsTable);
       if (statKey) {
-        const vals = logs
-          .map((l: any) => Number(l[statKey]))
-          .filter((v: number) => !Number.isNaN(v));
-        if (vals.length > 0) {
-          l10Avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-          const hits = vals.filter((v: number) =>
-            prop.side === "over" ? v > Number(prop.line) : v < Number(prop.line),
-          ).length;
-          l10Hit = hits / vals.length;
-        }
+        l10Vals = logs.map((l: any) => Number(l[statKey])).filter((v: number) => !Number.isNaN(v));
+        if (l10Vals.length > 0) l10Avg = l10Vals.reduce((a, b) => a + b, 0) / l10Vals.length;
       }
     }
   }
 
+  const overHits = l10Vals.filter((v) => v > line).length;
+  const underHits = l10Vals.filter((v) => v < line).length;
+  const fairOver = l10Vals.length > 0 ? overHits / l10Vals.length : null;
+  const fairUnder = l10Vals.length > 0 ? underHits / l10Vals.length : null;
+
+  // Sweet spot lookup
   let sweetSpotId: string | null = null;
   const { data: sweet } = await supabase
     .from("category_sweet_spots")
     .select("id")
-    .ilike("player_name", `%${playerLike}%`)
+    .ilike("player_name", `%${prop.player_name}%`)
     .eq("category", propType)
     .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
     .limit(1)
     .maybeSingle();
   sweetSpotId = sweet?.id ?? null;
 
-  const dna = computeDna({ l10Hit, marketPriceDelta, hasMatch: !!matched, sweetSpotId });
-  const composite = Math.round(
-    (l10Hit ?? 0.5) * 50 + (sweetSpotId ? 20 : 0) + (matched ? 15 : 0) + (dna >= 70 ? 15 : 0),
-  );
+  // No matched market → cannot compute edge → block
+  if (!matched) {
+    return {
+      matched_unified_prop_id: null,
+      market_price_delta: null,
+      market_over_price: null,
+      market_under_price: null,
+      l10_hit_rate: null,
+      l10_avg: l10Avg,
+      sweet_spot_id: sweetSpotId,
+      dna_score: 30,
+      composite_score: 0,
+      correlation_tags: [],
+      blocked: true,
+      block_reason: "no_market_data",
+      recommended_side: null,
+      edge_pct: null,
+      fair_prob: null,
+      implied_prob: null,
+      verdict: `No live market for ${prop.player_name} ${propType} ${line}`,
+    };
+  }
+
+  const impliedOver = americanToImpliedProb(matched.over_price);
+  const impliedUnder = americanToImpliedProb(matched.under_price);
+
+  // Compute edge for each side; pick the bigger one
+  const overEdge = fairOver != null && impliedOver != null ? fairOver - impliedOver : null;
+  const underEdge = fairUnder != null && impliedUnder != null ? fairUnder - impliedUnder : null;
+
+  let recommendedSide: "over" | "under" | null = null;
+  let edge: number | null = null;
+  let fairProb: number | null = null;
+  let impliedProb: number | null = null;
+
+  if (overEdge != null || underEdge != null) {
+    if ((overEdge ?? -1) >= (underEdge ?? -1)) {
+      recommendedSide = "over"; edge = overEdge; fairProb = fairOver; impliedProb = impliedOver;
+    } else {
+      recommendedSide = "under"; edge = underEdge; fairProb = fairUnder; impliedProb = impliedUnder;
+    }
+  }
 
   let blocked = false;
   let blockReason: string | null = null;
-  if (!matched) {
-    blocked = true;
-    blockReason = "no_match_in_unified_props";
-  } else if (l10Hit !== null && l10Hit < 0.3) {
-    blocked = true;
-    blockReason = `low_l10_hit_rate:${(l10Hit * 100).toFixed(0)}%`;
-  } else if (dna < 35) {
-    blocked = true;
-    blockReason = `low_dna:${dna}`;
+  let verdict = "";
+
+  if (l10Vals.length === 0) {
+    blocked = true; blockReason = "low_l10_sample";
+    verdict = `No L10 sample for ${prop.player_name}`;
+  } else if (edge == null || edge < EDGE_THRESHOLD) {
+    blocked = true; blockReason = "no_edge";
+    const o = overEdge != null ? `O ${(overEdge * 100).toFixed(0)}%` : "O n/a";
+    const u = underEdge != null ? `U ${(underEdge * 100).toFixed(0)}%` : "U n/a";
+    verdict = `No edge — ${o} · ${u}`;
+  } else {
+    const sideHits = recommendedSide === "over" ? overHits : underHits;
+    const marketPx = recommendedSide === "over" ? matched.over_price : matched.under_price;
+    const pxStr = marketPx != null ? `${marketPx > 0 ? "+" : ""}${marketPx}` : "n/a";
+    verdict = `${recommendedSide!.toUpperCase()} ${line} — L10 ${sideHits}/${l10Vals.length} · market ${pxStr} · fair ${(fairProb! * 100).toFixed(0)}% · edge +${(edge * 100).toFixed(0)}%`;
   }
 
+  // composite_score = edge weighted heavily, plus bonuses
+  const edgeBoost = edge != null ? Math.max(0, edge) * 200 : 0; // edge of 10% → 20
+  const composite = Math.round(
+    edgeBoost
+      + (sweetSpotId ? 15 : 0)
+      + (l10Vals.length >= 8 ? 10 : 0)
+      + (fairProb != null && fairProb >= 0.7 ? 10 : 0)
+      + 30 // base
+  );
+
+  const dna = computeDna({
+    l10Hit: fairProb,
+    marketPriceDelta: null,
+    hasMatch: true,
+    sweetSpotId,
+  });
+
   const correlationTags: string[] = [];
-  if (matched?.event_id) correlationTags.push(`game:${matched.event_id}`);
+  if (matched.event_id) correlationTags.push(`game:${matched.event_id}`);
   if (sweetSpotId) correlationTags.push("sweet_spot");
-  if (l10Hit !== null && l10Hit >= 0.7) correlationTags.push("hot_l10");
+  if (fairProb != null && fairProb >= 0.7) correlationTags.push("hot_l10");
 
   return {
-    matched_unified_prop_id: matched?.id ?? null,
-    market_price_delta: marketPriceDelta,
-    l10_hit_rate: l10Hit,
+    matched_unified_prop_id: matched.id,
+    market_over_price: matched.over_price ?? null,
+    market_under_price: matched.under_price ?? null,
+    market_price_delta: null,
+    l10_hit_rate: fairProb,
     l10_avg: l10Avg,
     sweet_spot_id: sweetSpotId,
     dna_score: dna,
@@ -348,6 +520,11 @@ async function crossReference(supabase: any, prop: any, sport: string) {
     correlation_tags: correlationTags,
     blocked,
     block_reason: blockReason,
+    recommended_side: recommendedSide,
+    edge_pct: edge != null ? Number((edge * 100).toFixed(2)) : null,
+    fair_prob: fairProb,
+    implied_prob: impliedProb,
+    verdict,
   };
 }
 
@@ -383,14 +560,17 @@ Deno.serve(async (req) => {
         { ...p, prop_type: propType },
         String(sport).toLowerCase(),
       );
+      // Use the recommended side when the model has one — that's the value bet,
+      // not whichever side the user happened to screenshot.
+      const finalSide = xref.recommended_side ?? p.side;
       enriched.push({
         session_id,
         player_name: String(p.player_name).trim(),
         prop_type: propType,
-        side: p.side,
+        side: finalSide,
         line: Number(p.line),
-        over_price: typeof p.over_price === "number" ? p.over_price : null,
-        under_price: typeof p.under_price === "number" ? p.under_price : null,
+        over_price: typeof p.over_price === "number" ? p.over_price : (xref.market_over_price ?? null),
+        under_price: typeof p.under_price === "number" ? p.under_price : (xref.market_under_price ?? null),
         raw_ocr_text: p.raw_text ?? null,
         confidence: typeof p.confidence === "number" ? p.confidence : 0.85,
         source_channel,
