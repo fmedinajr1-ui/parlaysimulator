@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { getEasternDate } from '@/lib/dateUtils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
@@ -38,6 +39,7 @@ import { AILearningInsights } from './AILearningInsights';
 import { ManualStatsEntry } from './ManualStatsEntry';
 import { Json } from '@/integrations/supabase/types';
 import { useManualTrainingGames } from '@/hooks/useManualTrainingGames';
+import { useManualTrainingProps } from '@/hooks/useManualTrainingProps';
 
 interface AIGeneratedParlay {
   id: string;
@@ -221,6 +223,22 @@ export function AIGenerativeProgressDashboard() {
     isRefetching: isTrainingGamesRefetching,
     refetch: refetchTrainingGames,
   } = useManualTrainingGames();
+  const {
+    players: trainingPlayers,
+    selectedPlayer,
+    selectedPlayerName,
+    setSelectedPlayerName,
+    selectedProps,
+    togglePropSelection,
+    formatPropType,
+    isLoading: isTrainingPropsLoading,
+    isRefetching: isTrainingPropsRefetching,
+    refetch: refetchTrainingProps,
+  } = useManualTrainingProps({
+    eventId: selectedGame?.eventId,
+    gameDescription: selectedGame?.gameDescription,
+    commenceTime: selectedGame?.commenceTime,
+  });
 
   useEffect(() => {
     fetchData();
@@ -984,6 +1002,221 @@ export function AIGenerativeProgressDashboard() {
                   {selectedGame.hasFanDuel && <Badge variant="outline">FanDuel</Badge>}
                 </div>
               </div>
+            </div>
+          )}
+
+          {selectedGame && (
+            <div className="rounded-lg border bg-background/60 p-4 space-y-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-1">
+                  <h3 className="text-base font-semibold">Step 2 — choose players and props</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Load the selected game’s player pool, pick a player, then mark the props you want to guide next.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{trainingPlayers.length} players</Badge>
+                  <Badge variant="outline">{selectedProps.length} props selected</Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refetchTrainingProps()}
+                    disabled={isTrainingPropsLoading || isTrainingPropsRefetching}
+                  >
+                    {isTrainingPropsLoading || isTrainingPropsRefetching ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    Refresh players
+                  </Button>
+                </div>
+              </div>
+
+              {isTrainingPropsLoading ? (
+                <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                  <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <div key={index} className="space-y-2 rounded-md border bg-background/70 p-3">
+                        <div className="h-4 w-2/3 rounded bg-muted" />
+                        <div className="h-3 w-1/2 rounded bg-muted" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div key={index} className="space-y-2 rounded-md border bg-background/70 p-4">
+                        <div className="h-4 w-1/3 rounded bg-muted" />
+                        <div className="h-3 w-2/3 rounded bg-muted" />
+                        <div className="h-8 rounded bg-muted" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : trainingPlayers.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/10 p-8 text-center">
+                  <p className="font-medium">No player props found for this game yet.</p>
+                  <p className="text-sm text-muted-foreground">
+                    Refresh after the books populate player markets, then choose which props to guide.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                  <div className="space-y-3">
+                    <div className="rounded-lg border bg-muted/10 p-3">
+                      <p className="text-xs uppercase text-muted-foreground">Available players</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Sorted by prop coverage so the deepest book profiles stay on top.</p>
+                    </div>
+                    <ScrollArea className="h-[420px] rounded-lg border">
+                      <div className="space-y-2 p-3">
+                        {trainingPlayers.map((player) => {
+                          const isSelected = selectedPlayerName === player.name;
+
+                          return (
+                            <button
+                              key={player.name}
+                              type="button"
+                              onClick={() => setSelectedPlayerName(player.name)}
+                              className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                                isSelected ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-muted/20'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-medium leading-tight">{player.name}</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {player.propCount} props • {player.activePropCount} active • {player.freshPropCount} fresh
+                                  </p>
+                                </div>
+                                {player.hasFanDuel && <Badge variant="outline">FanDuel</Badge>}
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-1">
+                                {player.bookmakers.slice(0, 4).map((book) => (
+                                  <Badge key={book} variant="outline">{book}</Badge>
+                                ))}
+                                {player.bookmakers.length > 4 && (
+                                  <Badge variant="outline">+{player.bookmakers.length - 4} more</Badge>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </ScrollArea>
+                  </div>
+
+                  <div className="space-y-4">
+                    {selectedPlayer ? (
+                      <>
+                        <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 md:grid-cols-4">
+                          <div>
+                            <p className="text-xs uppercase text-muted-foreground">Selected player</p>
+                            <p className="font-semibold">{selectedPlayer.name}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase text-muted-foreground">Prop coverage</p>
+                            <p className="font-semibold">{selectedPlayer.propCount} tracked props</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase text-muted-foreground">Books</p>
+                            <p className="font-semibold">{selectedPlayer.bookmakers.length} books</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase text-muted-foreground">Ready for next step</p>
+                            <p className="font-semibold">{selectedProps.length} chosen props</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border">
+                          <div className="border-b bg-muted/10 px-4 py-3">
+                            <p className="font-medium">Prop menu for {selectedPlayer.name}</p>
+                            <p className="text-sm text-muted-foreground">Choose the exact markets you want to guide with manual bot instructions.</p>
+                          </div>
+                          <ScrollArea className="h-[420px]">
+                            <div className="space-y-3 p-4">
+                              {selectedPlayer.props.map((prop) => {
+                                const isChecked = selectedProps.some((selectedProp) => selectedProp.key === prop.key);
+
+                                return (
+                                  <label
+                                    key={prop.key}
+                                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors ${
+                                      isChecked ? 'border-primary bg-primary/5' : 'border-border bg-background hover:bg-muted/20'
+                                    }`}
+                                  >
+                                    <Checkbox
+                                      checked={isChecked}
+                                      onCheckedChange={() => togglePropSelection(prop.key)}
+                                      className="mt-1"
+                                    />
+                                    <div className="min-w-0 flex-1 space-y-3">
+                                      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                                        <div>
+                                          <p className="font-medium">{formatPropType(prop.propType)}</p>
+                                          <p className="text-sm text-muted-foreground">
+                                            Line {prop.currentLine ?? '—'}
+                                            {prop.overPrice !== null ? ` • Over ${prop.overPrice > 0 ? '+' : ''}${prop.overPrice}` : ''}
+                                            {prop.underPrice !== null ? ` • Under ${prop.underPrice > 0 ? '+' : ''}${prop.underPrice}` : ''}
+                                          </p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                          <Badge variant={prop.freshRowCount > 0 ? 'secondary' : 'outline'}>
+                                            {prop.freshRowCount} fresh
+                                          </Badge>
+                                          <Badge variant="outline">{prop.activeRowCount} active rows</Badge>
+                                          {prop.hasFanDuel && <Badge variant="outline">FanDuel</Badge>}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                        <span>{prop.bookmakerCount} books</span>
+                                        <span>•</span>
+                                        <span>{prop.rowCount} market rows</span>
+                                        {prop.latestUpdateAt && (
+                                          <>
+                                            <span>•</span>
+                                            <span>Latest {formatTrainingTime(prop.latestUpdateAt)}</span>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      <div className="flex flex-wrap gap-1">
+                                        {prop.bookmakers.map((book) => (
+                                          <Badge key={book} variant="outline">{book}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </ScrollArea>
+                        </div>
+
+                        <div className="rounded-lg border bg-muted/10 p-4">
+                          <p className="text-xs uppercase text-muted-foreground">Queued for Step 3</p>
+                          {selectedProps.length === 0 ? (
+                            <p className="mt-2 text-sm text-muted-foreground">Pick one or more props above and I’ll wire the next manual-guidance step into those exact markets.</p>
+                          ) : (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {selectedProps.map((prop) => (
+                                <Badge key={prop.key} variant="secondary">
+                                  {prop.playerName} • {formatPropType(prop.propType)} • {prop.currentLine ?? '—'}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="rounded-lg border border-dashed bg-muted/10 p-8 text-center">
+                        <p className="font-medium">Choose a player to see available props.</p>
+                        <p className="text-sm text-muted-foreground">Once selected, Step 3 can target specific lines with your manual guidance.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
