@@ -30,6 +30,7 @@ export interface ManualTrainingPropOption {
   activeRowCount: number;
   freshRowCount: number;
   latestUpdateAt: string | null;
+  latestAgeMinutes: number | null;
   hasFanDuel: boolean;
   overPrice: number | null;
   underPrice: number | null;
@@ -72,6 +73,7 @@ export function useManualTrainingProps({
 }: ManualTrainingPropsParams) {
   const [selectedPlayerName, setSelectedPlayerName] = useState<string | null>(null);
   const [selectedPropKeys, setSelectedPropKeys] = useState<string[]>([]);
+  const [freshnessFilterHours, setFreshnessFilterHours] = useState<number | null>(6);
 
   const query = useQuery({
     queryKey: ["manual-training-props", eventId, gameDescription, commenceTime],
@@ -154,6 +156,7 @@ export function useManualTrainingProps({
             activeRowCount: 0,
             freshRowCount: 0,
             latestUpdateAt: null,
+            latestAgeMinutes: null,
             hasFanDuel: false,
             overPrice: row.over_price,
             underPrice: row.under_price,
@@ -178,6 +181,7 @@ export function useManualTrainingProps({
         }
         if (!prop.latestUpdateAt || (updateAt && new Date(updateAt).getTime() > new Date(prop.latestUpdateAt).getTime())) {
           prop.latestUpdateAt = updateAt;
+          prop.latestAgeMinutes = updateAt ? ageMinutes : null;
         }
         if (prop.overPrice === null && row.over_price !== null) {
           prop.overPrice = row.over_price;
@@ -244,6 +248,37 @@ export function useManualTrainingProps({
     [players, selectedPlayerName]
   );
 
+  const filteredSelectedPlayer = useMemo(() => {
+    if (!selectedPlayer) return null;
+    if (freshnessFilterHours === null) return selectedPlayer;
+
+    const maxAgeMinutes = freshnessFilterHours * 60;
+    return {
+      ...selectedPlayer,
+      props: selectedPlayer.props.filter(
+        (prop) => prop.latestAgeMinutes !== null && prop.latestAgeMinutes <= maxAgeMinutes
+      ),
+    };
+  }, [selectedPlayer, freshnessFilterHours]);
+
+  const filteredPropGroups = useMemo(() => {
+    const groups = new Map<string, ManualTrainingPropOption[]>();
+
+    for (const prop of filteredSelectedPlayer?.props || []) {
+      const current = groups.get(prop.propType) || [];
+      current.push(prop);
+      groups.set(prop.propType, current);
+    }
+
+    return Array.from(groups.entries())
+      .map(([propType, props]) => ({
+        propType,
+        props,
+        selectedCount: props.filter((prop) => selectedPropKeys.includes(prop.key)).length,
+      }))
+      .sort((a, b) => formatPropType(a.propType).localeCompare(formatPropType(b.propType)));
+  }, [filteredSelectedPlayer, selectedPropKeys]);
+
   useEffect(() => {
     if (!selectedPlayer) {
       if (selectedPropKeys.length) setSelectedPropKeys([]);
@@ -268,14 +303,38 @@ export function useManualTrainingProps({
     );
   };
 
+  const selectAllPropsByType = (propType: string) => {
+    const propKeys = (filteredSelectedPlayer?.props || [])
+      .filter((prop) => prop.propType === propType)
+      .map((prop) => prop.key);
+
+    setSelectedPropKeys((current) => Array.from(new Set([...current, ...propKeys])));
+  };
+
+  const deselectAllPropsByType = (propType: string) => {
+    const propKeys = new Set(
+      (filteredSelectedPlayer?.props || [])
+        .filter((prop) => prop.propType === propType)
+        .map((prop) => prop.key)
+    );
+
+    setSelectedPropKeys((current) => current.filter((key) => !propKeys.has(key)));
+  };
+
   return {
     players,
     selectedPlayer,
+    filteredSelectedPlayer,
+    filteredPropGroups,
     selectedPlayerName,
     setSelectedPlayerName,
+    freshnessFilterHours,
+    setFreshnessFilterHours,
     selectedPropKeys,
     selectedProps,
     togglePropSelection,
+    selectAllPropsByType,
+    deselectAllPropsByType,
     formatPropType,
     isLoading: query.isLoading,
     isRefetching: query.isRefetching,
