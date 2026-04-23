@@ -25,6 +25,8 @@ export interface CandidateLeg {
   defensive_context_updated_at?: Date | null;
   /** v2.6: which bookmaker the line + price came from (e.g. "fanduel"). */
   selected_book?: string | null;
+  /** Origin of the underlying pick row: "risk" | "fallback" | "raw_props". */
+  source_origin?: string | null;
 }
 
 // ---------- Leg helpers ----------
