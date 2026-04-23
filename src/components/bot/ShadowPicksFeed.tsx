@@ -6,10 +6,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Bot, Play, RefreshCw } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { AlertTriangle, Bot, CheckCircle2, Clock3, Play, RefreshCw, Radar } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useSimulationCoverageDiagnostics } from '@/hooks/useSimulationCoverageDiagnostics';
 
 interface ShadowPick {
   id: string;
@@ -28,6 +30,7 @@ interface ShadowPick {
 
 export function ShadowPicksFeed() {
   const { toast } = useToast();
+  const { data: diagnostics, isLoading: diagnosticsLoading, refetch: refetchDiagnostics } = useSimulationCoverageDiagnostics();
   const [picks, setPicks] = useState<ShadowPick[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -112,6 +115,7 @@ export function ShadowPicksFeed() {
       if (error) throw error;
       toast({ title: '🔬 Simulation Complete', description: `Generated ${data?.picksCreated || 0} shadow picks` });
       fetchPicks();
+      refetchDiagnostics();
     } catch (e) {
       toast({ title: 'Simulation Failed', description: e instanceof Error ? e.message : 'Unknown error', variant: 'destructive' });
     } finally {
@@ -132,6 +136,25 @@ export function ShadowPicksFeed() {
 
   const scoreColor = (score: number) =>
     score >= 80 ? 'text-green-400' : score >= 60 ? 'text-amber-400' : 'text-red-400';
+
+  const reasonTone = (status: 'good' | 'warn' | 'bad') => {
+    switch (status) {
+      case 'good':
+        return 'border-primary/20 bg-primary/5 text-primary';
+      case 'warn':
+        return 'border-border bg-secondary/50 text-foreground';
+      case 'bad':
+        return 'border-destructive/20 bg-destructive/10 text-destructive';
+      default:
+        return 'border-border bg-muted/30 text-muted-foreground';
+    }
+  };
+
+  const readinessTone = diagnostics?.summary.readiness === 'ready'
+    ? 'text-primary'
+    : diagnostics?.summary.readiness === 'thin'
+      ? 'text-foreground'
+      : 'text-destructive';
 
   return (
     <Card>
@@ -181,6 +204,82 @@ export function ShadowPicksFeed() {
         </div>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Radar className="h-4 w-4 text-primary" />
+                Freshness & coverage
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Explains why a run produced 0 outputs by checking fresh risk rows, live odds coverage, and minimum match thresholds.
+              </p>
+            </div>
+            <div className={cn('text-xs font-medium uppercase tracking-wide', readinessTone)}>
+              {diagnosticsLoading ? 'Loading' : diagnostics?.summary.readiness || 'Unknown'}
+            </div>
+          </div>
+
+          {diagnosticsLoading ? (
+            <div className="mt-3 space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : diagnostics ? (
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Fresh risk</div>
+                  <div className="mt-1 text-lg font-semibold">{diagnostics.summary.freshRiskRows}/{diagnostics.threshold.minRiskRows}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{diagnostics.summary.staleRiskRows} stale</div>
+                </div>
+                <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Fresh odds</div>
+                  <div className="mt-1 text-lg font-semibold">{diagnostics.summary.freshOddsRows}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{diagnostics.summary.oddsRows} total rows</div>
+                </div>
+                <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Matched legs</div>
+                  <div className="mt-1 text-lg font-semibold">{diagnostics.summary.freshMatchedRows}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">usable vs min threshold</div>
+                </div>
+                <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Outputs today</div>
+                  <div className="mt-1 text-lg font-semibold">{diagnostics.summary.outputsToday}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">shadow picks created</div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                  <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" /> Risk freshness</span>
+                    <span>{Math.round(diagnostics.coverage.riskProgressPct)}%</span>
+                  </div>
+                  <Progress value={diagnostics.coverage.riskProgressPct} className="h-2" />
+                </div>
+                <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                  <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Match coverage</span>
+                    <span>{Math.round(diagnostics.coverage.matchProgressPct)}%</span>
+                  </div>
+                  <Progress value={diagnostics.coverage.matchProgressPct} className="h-2" />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {diagnostics.reasons.map((reason) => (
+                  <div key={reason.label} className={cn('inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs', reasonTone(reason.status))}>
+                    {reason.status === 'bad' ? <AlertTriangle className="h-3.5 w-3.5" /> : reason.status === 'warn' ? <Clock3 className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                    <span>{reason.label}</span>
+                    <span className="font-mono">{reason.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         {loading ? (
           <div className="space-y-2">
             <Skeleton className="h-16 w-full" />
