@@ -24,6 +24,7 @@ interface PoolRow {
   l10_avg?: number | null;
   l3_avg?: number | null;
   created_at: string;
+  source_origin?: string | null;
 }
 
 interface PropRow {
@@ -195,6 +196,13 @@ Deno.serve(async (req) => {
     let driftRejected = 0;
     let missingPriceRejected = 0;
     let inactiveRejected = 0;
+    const sourceMix: Record<string, number> = {};
+    const insertedSourceMix: Record<string, number> = {};
+    const bumpMix = (m: Record<string, number>, k: string | null | undefined) => {
+      const key = (k ?? "unknown").toString();
+      m[key] = (m[key] ?? 0) + 1;
+    };
+    for (const r of poolState.pool) bumpMix(sourceMix, (r as PoolRow).source_origin);
 
     const now = new Date();
     const standardCandidates: StraightBetRow[] = [];
@@ -246,12 +254,15 @@ Deno.serve(async (req) => {
       const lineGap = Math.abs(bookLine - Number(row.recommended_line));
       const bufferPct = bookLine === 0 ? 0 : Math.abs(((projectedValue ?? l10Avg ?? bookLine) - bookLine) / bookLine);
       const baseKey = `${row.player_name}|${row.prop_type}|${side}`.toLowerCase();
+      const origin = (row.source_origin ?? "unknown").toString();
+      const sourceTag = `${origin}:${row.category ?? "pick_pool"}`;
 
       if (!insertedKeys.has(`standard|${baseKey}`)
         && compositeScore >= MIN_STANDARD_COMPOSITE_SCORE
         && (l10HitRate == null || l10HitRate >= MIN_STANDARD_HIT_RATE)) {
         insertedKeys.add(`standard|${baseKey}`);
         const stake = computeStakeUnits(compositeScore, l10HitRate, STANDARD_STAKE_MULTIPLIER);
+        bumpMix(insertedSourceMix, origin);
         standardCandidates.push({
           bet_date: targetDate,
           player_name: row.player_name,
@@ -267,7 +278,7 @@ Deno.serve(async (req) => {
           composite_score: compositeScore,
           l10_hit_rate: l10HitRate,
           l10_avg: l10Avg,
-          source: row.category ?? "pick_pool",
+          source: sourceTag,
           line_source: matched.bookmaker ?? null,
           bet_type: "standard_straight",
           outcome: "pending",
@@ -288,6 +299,7 @@ Deno.serve(async (req) => {
         if (ceilingLine > bookLine) {
           insertedKeys.add(`ceiling|${baseKey}`);
           const stake = computeStakeUnits(compositeScore, l10HitRate, CEILING_STAKE_MULTIPLIER);
+          bumpMix(insertedSourceMix, origin);
           ceilingCandidates.push({
             bet_date: targetDate,
             player_name: row.player_name,
@@ -303,7 +315,7 @@ Deno.serve(async (req) => {
             composite_score: compositeScore,
             l10_hit_rate: l10HitRate,
             l10_avg: l10Avg,
-            source: row.category ?? "pick_pool",
+            source: sourceTag,
             line_source: matched.bookmaker ?? null,
             bet_type: "ceiling_straight",
             outcome: "pending",
@@ -334,6 +346,8 @@ Deno.serve(async (req) => {
       ceiling_candidates: ceilingCandidates.length,
       standard_inserted: standardCandidates.slice(0, MAX_STANDARD_STRAIGHTS).length,
       ceiling_inserted: ceilingCandidates.slice(0, MAX_CEILING_STRAIGHTS).length,
+      pool_source_mix: sourceMix,
+      inserted_source_mix: insertedSourceMix,
     });
 
     if (dryRun) {

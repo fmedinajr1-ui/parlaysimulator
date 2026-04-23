@@ -91,6 +91,7 @@ interface PoolRow {
   l10_avg?: number | null;
   l3_avg?: number | null;
   created_at: string;
+  source_origin?: string | null;
 }
 
 interface PropRow {
@@ -207,6 +208,7 @@ function buildCandidates(
       player_active: true, // no injury feed yet
       defensive_context_updated_at: null, // gate skipped this phase
       selected_book: selectedBook,
+      source_origin: row.source_origin ?? null,
     });
   }
 
@@ -249,6 +251,13 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const { candidates, mappingNotes, rejections } = buildCandidates(pool ?? [], props, now);
+
+    // Per-source candidate mix so the UI can surface where the slate is coming from.
+    const sourceMix = candidates.reduce<Record<string, number>>((acc, l) => {
+      const k = l.source_origin ?? "unknown";
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    }, {});
 
     const engine = new ParlayEngine();
     const slate = engine.generateSlate(candidates, now);
@@ -295,6 +304,7 @@ Deno.serve(async (req) => {
         target_date: targetDate,
         direct_rows_loaded: poolAfterCount,
         source_diagnostics: directSourceState.diagnostics,
+        candidate_source_mix: sourceMix,
         candidates_in: candidates.length,
         mapping_notes: mappingNotes,
         eligibility,
@@ -315,6 +325,7 @@ Deno.serve(async (req) => {
             sport: l.sport,
             confidence: l.confidence,
             signal: l.signal_source,
+            source_origin: l.source_origin ?? null,
           })),
         })),
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -329,6 +340,7 @@ Deno.serve(async (req) => {
         target_date: targetDate,
          direct_rows_loaded: poolAfterCount,
          source_diagnostics: directSourceState.diagnostics,
+        candidate_source_mix: sourceMix,
         candidates_in: candidates.length,
         eligibility,
         mapping_notes: mappingNotes,
@@ -352,6 +364,7 @@ Deno.serve(async (req) => {
         sport: l.sport,
         confidence: l.confidence,
         signal_source: l.signal_source,
+        source_origin: l.source_origin ?? null,
       })),
       leg_count: p.legs.length,
       combined_probability: combinedProbability(p),
@@ -383,6 +396,7 @@ Deno.serve(async (req) => {
       target_date: targetDate,
       direct_rows_loaded: poolAfterCount,
       source_diagnostics: directSourceState.diagnostics,
+      candidate_source_mix: sourceMix,
       candidates_in: candidates.length,
       inserted,
       report: slate.report,
