@@ -445,7 +445,7 @@ export default function Admin() {
                 Quick Actions
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-0 flex flex-wrap gap-2">
               <Button 
                 onClick={() => navigate('/verify-email?test=true')}
                 variant="outline"
@@ -454,6 +454,14 @@ export default function Admin() {
               >
                 <Mail className="w-4 h-4" />
                 Test Email Verification
+              </Button>
+              <Button 
+                onClick={() => setActiveSection('ai-generator')}
+                size="sm"
+                className="gap-2"
+              >
+                <Sparkles className="w-4 h-4" />
+                Open AI Training
               </Button>
             </CardContent>
           </Card>
