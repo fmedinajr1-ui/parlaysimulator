@@ -76,8 +76,48 @@ function fmtPropLine(p: any, i: number): string {
 }
 
 async function handleStart(supabase: any, chat_id: number, args: string[]) {
-  const sport = (args[0] ?? "nba").toLowerCase();
-  const book = (args[1] ?? "fanduel").toLowerCase();
+  // Smart arg parsing — users type things like:
+  //   /scan start hardrock bet      → book="hardrock bet" (Hard Rock), sport=nba
+  //   /scan start fanduel           → book="fanduel", sport=nba
+  //   /scan start nba fanduel       → sport=nba, book=fanduel
+  //   /scan start fanduel nba       → book=fanduel, sport=nba (reversed)
+  const VALID_SPORTS = ["nba", "nfl", "mlb", "nhl", "ncaab", "ncaaf", "wnba", "tennis", "soccer", "mma", "ufc", "golf", "pga"];
+  const raw = args.map((a) => a.toLowerCase());
+  const joined = raw.join(" ").replace(/\s+/g, " ").trim();
+
+  // Try to detect a book in the full joined string (handles "hardrock bet", "hard rock", "draft kings")
+  const compact = joined.replace(/\s+/g, "");
+  const bookFromJoined = BOOK_ALIASES[compact] ?? (VALID_BOOKS.includes(compact) ? compact : null);
+
+  let sport = "nba";
+  let book = "fanduel";
+
+  if (bookFromJoined) {
+    // Whole arg list resolved to a book — keep default sport
+    book = bookFromJoined;
+  } else {
+    // Try positional: token0 = sport or book, token1 = the other
+    const t0 = raw[0];
+    const t1 = raw[1];
+    const t0Book = t0 ? (BOOK_ALIASES[t0] ?? (VALID_BOOKS.includes(t0) ? t0 : null)) : null;
+    const t1Book = t1 ? (BOOK_ALIASES[t1] ?? (VALID_BOOKS.includes(t1) ? t1 : null)) : null;
+    const t0Sport = t0 && VALID_SPORTS.includes(t0) ? t0 : null;
+    const t1Sport = t1 && VALID_SPORTS.includes(t1) ? t1 : null;
+
+    if (t0Sport && t1Book) { sport = t0Sport; book = t1Book; }
+    else if (t0Book && t1Sport) { book = t0Book; sport = t1Sport; }
+    else if (t0Book) { book = t0Book; if (t1Sport) sport = t1Sport; }
+    else if (t0Sport) { sport = t0Sport; if (t1Book) book = t1Book; }
+    else if (t0) {
+      // Couldn't recognize — bail with help
+      await sendMessage(
+        chat_id,
+        `❌ Couldn't recognize \`${joined}\`.\n\nUsage: \`/scan start <sport> <book>\`\n*Sports:* ${VALID_SPORTS.slice(0, 6).join(", ")}…\n*Books:* ${VALID_BOOKS.join(", ")}\n\nExamples:\n\`/scan start hardrock\`\n\`/scan start nba fanduel\``,
+      );
+      return;
+    }
+  }
+
   const user_id = await resolveUserForChat(supabase, chat_id);
   if (!user_id) {
     await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
@@ -185,7 +225,7 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
 
 async function handleHelp(chat_id: number) {
   await sendMessage(chat_id,
-    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start <sport> <book>\` — start session\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
+    `🔍 *Prop Scanner — Telegram*\n\n*Commands*\n\`/scan start [sport] [book]\` — start session (defaults: nba + fanduel)\n\`/scan book <name>\` — override sportsbook layout\n\`/scan pool\` — list captured props\n\`/scan parlay [legs]\` — auto-build (default 3)\n\`/scan end\` — finalize\n\n*Books*\nfanduel · draftkings · hardrock · prizepicks · underdog\n_Aliases:_ fd, dk, hr, hardrock bet, hard rock, pp, ud\n\n*Examples*\n\`/scan start hardrock\`\n\`/scan start nba fanduel\`\n\`/scan start mlb dk\`\n\n*Capture*\nSend sportsbook screenshots while a session is active.`);
 }
 
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
