@@ -4,6 +4,7 @@ import { z } from "https://esm.sh/zod@3.23.8";
 import type { Pick, PickReasoning } from "../_shared/constants.ts";
 import { etDateKey } from "../_shared/date-et.ts";
 import { americanOddsToImpliedProb, edgePct } from "../_shared/edge-calc.ts";
+import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -707,10 +708,11 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const [marketRows, historicalRows, manualRules] = await Promise.all([
+    const [marketRows, historicalRows, manualRules, directSourceState] = await Promise.all([
       loadMarketRows(sb, sport),
       loadHistoricalRows(sb, sport),
       loadManualTrainingRules(sb),
+      loadDirectPickRows(sb, { targetDate: etDateKey(), minimumRiskRows: 8, fallbackLimit: 40 }),
     ]);
 
     const markets = buildMarkets(marketRows);
@@ -729,7 +731,9 @@ Deno.serve(async (req) => {
           historical_rows: historicalRows.length,
           manual_rules: manualRules.length,
           manual_rule_matches: manualRuleMap.size,
+          direct_source_rows: directSourceState.rows.length,
         },
+        source_diagnostics: directSourceState.diagnostics,
         generated: picks.length,
         saved,
         picks: picks.slice(0, 5).map((pick) => ({

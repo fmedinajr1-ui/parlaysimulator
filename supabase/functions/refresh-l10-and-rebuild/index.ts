@@ -44,7 +44,6 @@ const corsHeaders = {
 };
 
 const MIN_APPROVED_RISK_PICKS = 8;
-const MIN_PICK_POOL_ROWS = 12;
 
 async function getRiskPickCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
@@ -61,6 +60,15 @@ async function getPoolCount(supabase: any, targetDate: string): Promise<number> 
     .from("bot_daily_pick_pool")
     .select("id", { count: "exact", head: true })
     .eq("pick_date", targetDate);
+  return count ?? 0;
+}
+
+async function getSweetSpotCount(supabase: any, targetDate: string): Promise<number> {
+  const { count } = await supabase
+    .from("category_sweet_spots")
+    .select("id", { count: "exact", head: true })
+    .eq("analysis_date", targetDate)
+    .eq("is_active", true);
   return count ?? 0;
 }
 
@@ -182,10 +190,10 @@ Deno.serve(async (req) => {
 
     return {
       target_date: targetDate,
-      input_quality: {
-        fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
-        pick_pool_candidates: pickPoolRes.count ?? 0,
-      },
+        input_quality: {
+          fresh_fanduel_props_2h: freshFdPropsRes.count ?? 0,
+          pick_pool_candidates: pickPoolRes.count ?? 0,
+        },
       generated_counts: {
         parlays_total: todayParlaysRes.count ?? 0,
         lottery_parlays: parlays.filter((row: any) => row.tier === "lottery").length,
@@ -535,59 +543,6 @@ Deno.serve(async (req) => {
       },
     },
     {
-      id: "phase3b_pool",
-      label: "Build daily pick pool",
-      run: async () => {
-        if (oddsGateBlocked) {
-          log("⏭ Skipping pool build — odds gate blocked");
-          return;
-        }
-
-        const targetDate = todayET();
-        log("=== PHASE 3B.5: Building daily pick pool ===");
-        const { data, error } = await supabase.functions.invoke("build-daily-pick-pool", {
-          body: { date: targetDate, minimum_risk_rows: 8, minimum_pool_rows: 12, fallback_limit: 40 },
-        });
-
-        if (error) {
-          const errMsg = error.message || JSON.stringify(error);
-          results["build-daily-pick-pool"] = `error: ${errMsg}`;
-          warnings.push(`Daily pick pool build failed: ${errMsg}`);
-          await sendPipelineAlert(`🚨 *Pick Pool Build Failed*
-
-*Date:* ${targetDate}
-*Error:* ${errMsg}
-*Run:* \`${currentRunId.slice(0,8)}\``);
-          return;
-        }
-
-        const diagnostics = (data && typeof data === "object" && data.diagnostics && typeof data.diagnostics === "object")
-          ? data.diagnostics as Record<string, unknown>
-          : {};
-        const poolRowsBuilt = Number(diagnostics.pool_rows_built ?? diagnostics.pool_rows_inserted ?? 0);
-        const riskRowsAccepted = Number(diagnostics.risk_rows_accepted ?? 0);
-        const fallbackRowsAccepted = Number(diagnostics.fallback_rows_accepted ?? 0);
-        const poolStatus = String(diagnostics.pool_status ?? "unknown");
-
-        results["build-daily-pick-pool"] = poolStatus === "ready"
-          ? `ok:${poolRowsBuilt}_rows`
-          : `warning:${poolStatus}:${poolRowsBuilt}_rows`;
-
-        if (poolRowsBuilt < 12) {
-          await sendPipelineAlert(
-            `⚠️ *Pick Pool Too Thin*
-
-*Date:* ${targetDate}
-*Risk picks accepted:* ${riskRowsAccepted}
-*Fallback picks accepted:* ${fallbackRowsAccepted}
-*Pool rows built:* ${poolRowsBuilt}
-*Status:* ${poolStatus}
-*Run:* \`${currentRunId.slice(0,8)}\``
-          );
-        }
-      },
-    },
-    {
       id: "phase3b_uploaded",
       label: "Generate uploaded pipeline picks",
       run: async () => {
@@ -597,13 +552,14 @@ Deno.serve(async (req) => {
         }
 
         const targetDate = todayET();
-        const poolCount = await getPoolCount(supabase, targetDate);
+        const riskCount = await getRiskPickCount(supabase, targetDate);
+        const sweetSpotCount = await getSweetSpotCount(supabase, targetDate);
 
-        if (poolCount < MIN_PICK_POOL_ROWS) {
-          results["uploaded-pipeline-generator"] = `blocked:thin_pool:${poolCount}`;
-          warnings.push(`Uploaded pipeline generation blocked: thin pool (${poolCount} rows)`);
+        if (riskCount === 0 && sweetSpotCount === 0) {
+          results["uploaded-pipeline-generator"] = `blocked:no_sources:risk_${riskCount}:fallback_${sweetSpotCount}`;
+          warnings.push(`Uploaded pipeline generation blocked: no direct candidate sources (${riskCount} risk, ${sweetSpotCount} fallback)`);
           await sendPipelineAlert(
-            `⚠️ *Uploaded Pipeline Blocked*\n\n*Date:* ${targetDate}\n*Pick pool:* ${poolCount}\n*Cause:* pick pool below minimum threshold\n*Run:* \`${currentRunId.slice(0,8)}\``,
+            `⚠️ *Uploaded Pipeline Blocked*\n\n*Date:* ${targetDate}\n*Risk picks:* ${riskCount}\n*Fallback sweet spots:* ${sweetSpotCount}\n*Cause:* no direct source rows available\n*Run:* \`${currentRunId.slice(0,8)}\``,
           );
           return;
         }
@@ -634,25 +590,9 @@ Deno.serve(async (req) => {
         }
 
         const targetDate = todayET();
-        let poolCount = await getPoolCount(supabase, targetDate);
-
-        if (poolCount < MIN_PICK_POOL_ROWS) {
-          const { data: rebuiltPoolData, error: rebuiltPoolError } = await supabase.functions.invoke("build-daily-pick-pool", {
-            body: { date: targetDate, minimum_risk_rows: MIN_APPROVED_RISK_PICKS, minimum_pool_rows: MIN_PICK_POOL_ROWS, fallback_limit: 40 },
-          });
-
-          poolCount = await getPoolCount(supabase, targetDate);
-          const rebuildStatus = rebuiltPoolError
-            ? `error:${rebuiltPoolError.message || JSON.stringify(rebuiltPoolError)}`
-            : `recovered:${poolCount}`;
-          results["build-daily-pick-pool:auto"] = rebuildStatus;
-          if (rebuiltPoolData?.diagnostics?.pool_status) {
-            results["build-daily-pick-pool:auto_status"] = String(rebuiltPoolData.diagnostics.pool_status);
-          }
-        }
-
-        if ((poolCount || 0) < MIN_PICK_POOL_ROWS) {
-          const riskCount = await getRiskPickCount(supabase, targetDate);
+        const riskCount = await getRiskPickCount(supabase, targetDate);
+        const sweetSpotCount = await getSweetSpotCount(supabase, targetDate);
+        if ((riskCount || 0) === 0 && (sweetSpotCount || 0) === 0) {
           const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
           const { count: freshFdProps } = await supabase
             .from("unified_props")
@@ -660,16 +600,16 @@ Deno.serve(async (req) => {
             .eq("bookmaker", "fanduel")
             .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
 
-          results["parlay-engine-v2"] = `blocked:thin_pool:${poolCount || 0}`;
-          warnings.push(`Parlay generation blocked: thin pool (${poolCount || 0} rows)`);
+          results["parlay-engine-v2"] = `blocked:no_sources:risk_${riskCount || 0}:fallback_${sweetSpotCount || 0}`;
+          warnings.push(`Parlay generation blocked: no direct sources (${riskCount || 0} risk, ${sweetSpotCount || 0} fallback)`);
           await sendPipelineAlert(
             `⚠️ *Parlay Generation Blocked*
 
 *Date:* ${targetDate}
 *Fresh props:* ${freshFdProps || 0}
 *Risk picks:* ${riskCount || 0}
-*Pick pool:* ${poolCount || 0}
-*Cause:* pick pool below minimum threshold
+*Fallback sweet spots:* ${sweetSpotCount || 0}
+*Cause:* no direct source rows available
 *Run:* \`${currentRunId.slice(0,8)}\``
           );
           return;
