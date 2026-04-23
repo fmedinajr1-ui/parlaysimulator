@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminRole } from "@/hooks/useAdminRole";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Loader2, Sparkles, Check, X, RefreshCw, Film, Zap } from "lucide-react";
+import { Loader2, Sparkles, Check, X, RefreshCw, Film, Zap, Brain } from "lucide-react";
 import PublishTab from "@/components/admin/tiktok/PublishTab";
 import HookLabTab from "@/components/admin/tiktok/HookLabTab";
 import AccountBlotatoConfig from "@/components/admin/tiktok/AccountBlotatoConfig";
@@ -122,15 +122,23 @@ export default function AdminTikTok() {
 
   return (
     <div className="container mx-auto max-w-7xl p-4 md:p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl md:text-3xl font-display font-bold">TikTok Pipeline</h1>
           <p className="text-sm text-muted-foreground">Script generation, safety gate, and persona management</p>
         </div>
-        <Button onClick={runGenerator} disabled={generating}>
-          {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-          Generate Scripts
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to="/admin">
+              <Brain className="w-4 h-4 mr-2" />
+              AI Training Page
+            </Link>
+          </Button>
+          <Button onClick={runGenerator} disabled={generating}>
+            {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+            Generate Scripts
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="queue" className="w-full">
