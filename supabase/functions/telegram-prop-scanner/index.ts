@@ -22,6 +22,27 @@ async function sendMessage(chat_id: number, text: string) {
   });
 }
 
+async function sendMessageWithButtons(chat_id: number, text: string, buttons: { text: string; data: string }[][]) {
+  await fetch(`${TELEGRAM_API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id, text, parse_mode: "Markdown", disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))),
+      },
+    }),
+  });
+}
+
+async function answerCallback(callback_query_id: string, text?: string) {
+  await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id, text: text ?? "" }),
+  });
+}
+
 async function downloadTelegramPhoto(file_id: string): Promise<string> {
   const res = await fetch(`${TELEGRAM_API}/getFile?file_id=${file_id}`);
   const j = await res.json();
