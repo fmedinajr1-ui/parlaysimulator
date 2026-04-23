@@ -381,6 +381,12 @@ export async function loadDirectPickRows(
     direct_rows_built: rows.length,
     direct_rows_from_risk: rows.filter((row) => row.source_origin === "risk").length,
     direct_rows_from_fallback: rows.filter((row) => row.source_origin === "fallback").length,
+    used_raw_props: needsRawProps,
+    raw_props_scanned: rawPropsScanned,
+    raw_props_accepted: rawPropsAccepted,
+    raw_props_skipped: rawPropsSkipped,
+    direct_rows_from_raw_props: rows.filter((row) => row.source_origin === "raw_props").length,
+    risk_layer_status: riskAccepted === 0 ? "empty" : riskAccepted < minimumRiskRows ? "thin" : "active",
     source_status: rows.length === 0 ? "empty" : rows.length < minimumRiskRows ? "thin" : "ready",
   });
 
