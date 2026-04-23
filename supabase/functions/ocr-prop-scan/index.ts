@@ -83,6 +83,62 @@ function normalizePropType(raw: string): string {
   return map[s] ?? s;
 }
 
+// Maps the scanner's short prop type to the canonical name used in unified_props
+// (which follows the Odds API "player_*" convention).
+const UNIFIED_PROP_MAP: Record<string, string> = {
+  points: "player_points",
+  rebounds: "player_rebounds",
+  assists: "player_assists",
+  threes: "player_threes",
+  pra: "player_points_rebounds_assists",
+  pr: "player_points_rebounds",
+  pa: "player_points_assists",
+  ra: "player_rebounds_assists",
+  shots_on_goal: "player_shots_on_goal",
+  steals: "player_steals",
+  blocks: "player_blocks",
+  goals: "player_goals",
+  // MLB / others stay as-is — they aren't prefixed in unified_props for those sports
+  hits: "hits",
+  total_bases: "total_bases",
+  strikeouts: "strikeouts",
+  passing_yards: "passing_yards",
+  rushing_yards: "rushing_yards",
+  receiving_yards: "receiving_yards",
+  receptions: "receptions",
+};
+
+// Prop types that exist on PrizePicks/Underdog but have no liquid sportsbook
+// market. Drop them from the pool instead of failing to match.
+const UNSUPPORTED_PROP_TYPES = new Set([
+  "2_pt_made",
+  "fg_made",
+  "fg_attempts",
+  "free_throws_made",
+  "ft_made",
+  "first_basket",
+  "double_double",
+  "triple_double",
+]);
+
+function depunct(name: string): string {
+  return name.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function lastNameInitialKey(name: string): string | null {
+  const tokens = depunct(name).split(" ").filter(Boolean);
+  if (tokens.length < 2) return null;
+  const first = tokens[0][0];
+  const last = tokens[tokens.length - 1];
+  return `${first}|${last}`;
+}
+
+function americanToImpliedProb(odds: number | null | undefined): number | null {
+  if (odds == null || Number.isNaN(odds)) return null;
+  if (odds > 0) return 100 / (odds + 100);
+  return Math.abs(odds) / (Math.abs(odds) + 100);
+}
+
 function buildVisionMessages(frames: string[], book: string, sport: string) {
   const system = `You are a precise sportsbook OCR parser. Extract EVERY player prop visible.\nBook: ${book}\nSport: ${sport}\n${BOOK_HINTS[book] ?? ""}\nIf a single card shows BOTH over and under, output TWO rows (one per side).\nOnly include props where the player_name and line are clearly readable.\nReturn structured tool call only.`;
 
