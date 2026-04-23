@@ -212,6 +212,7 @@ export function AIGenerativeProgressDashboard() {
   const [refreshProgress, setRefreshProgress] = useState<string>('');
   const [isAnalyzingPending, setIsAnalyzingPending] = useState(false);
   const [manualGuidanceDraft, setManualGuidanceDraft] = useState('');
+  const [isSavingManualGuidance, setIsSavingManualGuidance] = useState(false);
   const [pendingAnalysisResults, setPendingAnalysisResults] = useState<VerificationSummary | null>(null);
   const {
     date: trainingDate,
@@ -844,6 +845,55 @@ export function AIGenerativeProgressDashboard() {
     }
   };
 
+  const handleSaveManualGuidance = async () => {
+    if (!selectedGame) {
+      toast.error('Choose a game first');
+      return;
+    }
+
+    if (selectedProps.length === 0) {
+      toast.error('Select at least one prop before saving');
+      return;
+    }
+
+    if (!manualGuidanceDraft.trim()) {
+      toast.error('Guidance text is empty');
+      return;
+    }
+
+    setIsSavingManualGuidance(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('save-manual-training-guidance', {
+        body: {
+          eventId: selectedGame.eventId,
+          gameDescription: selectedGame.gameDescription,
+          sport: selectedGame.sport,
+          commenceTime: selectedGame.commenceTime,
+          guidanceText: manualGuidanceDraft.trim(),
+          props: selectedProps.map((prop) => ({
+            key: prop.key,
+            playerName: prop.playerName,
+            propType: prop.propType,
+            currentLine: prop.currentLine,
+            bookmakerCount: prop.bookmakerCount,
+            bookmakers: prop.bookmakers,
+            latestUpdateAt: prop.latestUpdateAt,
+            overPrice: prop.overPrice,
+            underPrice: prop.underPrice,
+          })),
+        },
+      });
+
+      if (error) throw error;
+
+      toast.success(`Saved manual guidance to ${data?.rule?.rule_key || 'bot_owner_rules'}`);
+    } catch (error) {
+      toast.error('Failed to save manual guidance: ' + (error as Error).message);
+    } finally {
+      setIsSavingManualGuidance(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -1346,6 +1396,17 @@ export function AIGenerativeProgressDashboard() {
                                 <Copy className="mr-2 h-4 w-4" />
                                 Copy template
                               </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={handleSaveManualGuidance}
+                                disabled={selectedProps.length === 0 || !manualGuidanceDraft.trim() || isSavingManualGuidance}
+                              >
+                                {isSavingManualGuidance ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : null}
+                                Save Step 4
+                              </Button>
                             </div>
                           </div>
 
@@ -1400,6 +1461,7 @@ export function AIGenerativeProgressDashboard() {
                                 <div className="space-y-3 p-4">
                                   <div className="rounded-md border bg-muted/10 p-3 text-xs text-muted-foreground">
                                     This draft auto-refreshes when your selected props change. Edit it here to prepare the next manual training action.
+                                    Step 4 will save this text into the backend rule for the selected game and prop package.
                                   </div>
                                   <Textarea
                                     value={manualGuidanceDraft}
