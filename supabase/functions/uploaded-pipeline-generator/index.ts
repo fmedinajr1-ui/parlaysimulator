@@ -398,7 +398,7 @@ function buildPicks(
       adjustment.adjustedProbability,
       market.bestOffer.americanOdds,
     );
-    if (edge < 5) continue;
+    if (edge < 3) continue;
 
     const { away, home } = parseTeams(market.gameDescription);
     const confidence = Math.round(
@@ -485,27 +485,41 @@ async function loadMarketRows(
   const now = new Date();
   const end = new Date(now.getTime() + 36 * 60 * 60 * 1000);
 
-  let query = sb
-    .from("unified_props")
-    .select(
-      "event_id, sport, game_description, commence_time, player_name, prop_type, current_line, bookmaker, is_active, odds_updated_at, updated_at, over_price, under_price",
-    )
-    .gte(
-      "commence_time",
-      new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
-    )
-    .lt("commence_time", end.toISOString())
-    .not("player_name", "is", null)
-    .not("prop_type", "is", null)
-    .not("current_line", "is", null);
+  const collected: UnifiedPropRow[] = [];
+  const pageSize = 1000;
 
-  if (sport) {
-    query = query.eq("sport", sport);
+  for (let offset = 0; offset < 5000; offset += pageSize) {
+    let query = sb
+      .from("unified_props")
+      .select(
+        "event_id, sport, game_description, commence_time, player_name, prop_type, current_line, bookmaker, is_active, odds_updated_at, updated_at, over_price, under_price",
+      )
+      .gte(
+        "commence_time",
+        new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
+      )
+      .lt("commence_time", end.toISOString())
+      .not("player_name", "is", null)
+      .not("prop_type", "is", null)
+      .not("current_line", "is", null)
+      .range(offset, offset + pageSize - 1);
+
+    if (sport) {
+      query = query.eq("sport", sport);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const page = (data ?? []) as UnifiedPropRow[];
+    collected.push(...page);
+
+    if (page.length < pageSize) {
+      break;
+    }
   }
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data ?? []) as UnifiedPropRow[];
+  return collected;
 }
 
 async function loadHistoricalRows(
