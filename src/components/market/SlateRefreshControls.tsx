@@ -55,7 +55,7 @@ export function SlateRefreshControls() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const queryClient = useQueryClient();
   const rebuildInProgress = useRef(false);
-  const { isHealthy, blockers, lastCheckTime, isLoading: preflightLoading } = usePipelinePreflight();
+  const { isHealthy, blockers, lastCheckTime, isLoading: preflightLoading, riskLayerStatus, riskLayerBypassed } = usePipelinePreflight();
 
   const invalidateAllQueries = () => {
     queryClient.invalidateQueries({ queryKey: ['sweet-spot-parlay-picks'] });
