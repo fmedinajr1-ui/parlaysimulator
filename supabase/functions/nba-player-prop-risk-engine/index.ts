@@ -1847,6 +1847,7 @@ serve(async (req) => {
       const rejectedProps: any[] = [];
       const rejectionSummary: Record<string, number> = {};
       const shouldUseThinDayFallback = !!thin_day_fallback;
+      const emergencyNoL10Mode = shouldUseThinDayFallback && l10HitRateMap.size === 0;
       const processedPlayerProps = new Set<string>();
       const starsUsedByTeam: Record<string, string[]> = {};
       
@@ -2019,13 +2020,16 @@ serve(async (req) => {
           // ============ PROP TYPE PERFORMANCE TIER CHECK ============
           const normalizedPropType = normalizePropTypeForTier(prop.prop_type);
           const propPerf = PROP_TYPE_PERFORMANCE_TIERS[normalizedPropType] || { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 };
+          const effectiveMinEdgeRequired = emergencyNoL10Mode
+            ? Math.max(propPerf.minEdgeRequired - 0.5, 0.5)
+            : propPerf.minEdgeRequired;
           
           // Check minimum edge requirement for this prop type tier
           // v4.4: Use raw edge for minimum check (calibration is for confidence, not filtering)
-          if (Math.abs(rawEdge) < propPerf.minEdgeRequired) {
+          if (Math.abs(rawEdge) < effectiveMinEdgeRequired) {
             rejectedProps.push({ 
               ...prop, 
-              rejection_reason: `EDGE TOO THIN: ${normalizedPropType} (${propPerf.tier}) needs edge ≥${propPerf.minEdgeRequired}, got ${Math.abs(rawEdge).toFixed(1)}`,
+              rejection_reason: `EDGE TOO THIN: ${normalizedPropType} (${propPerf.tier}) needs edge ≥${effectiveMinEdgeRequired}, got ${Math.abs(rawEdge).toFixed(1)}${emergencyNoL10Mode ? ' (thin-day fallback active)' : ''}`,
               player_role: 'UNKNOWN',
               archetype: 'UNKNOWN'
             });
@@ -2576,7 +2580,11 @@ serve(async (req) => {
           
           // Use prop-type specific minimum threshold
           const minConfidence = MIN_CONFIDENCE_BY_TYPE[normalizedPropType] || MIN_CONFIDENCE_BY_TYPE['default'];
-          const effectiveMinConfidence = shouldUseThinDayFallback ? Math.max(minConfidence - 0.5, 5.0) : minConfidence;
+          const effectiveMinConfidence = emergencyNoL10Mode
+            ? Math.max(minConfidence - 1.0, 4.5)
+            : shouldUseThinDayFallback
+              ? Math.max(minConfidence - 0.5, 5.0)
+              : minConfidence;
           
           if (adjustedScore < effectiveMinConfidence) {
             rejectedProps.push({ 
