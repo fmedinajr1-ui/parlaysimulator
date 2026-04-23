@@ -226,10 +226,16 @@ export function AIGenerativeProgressDashboard() {
   const {
     players: trainingPlayers,
     selectedPlayer,
+    filteredSelectedPlayer,
+    filteredPropGroups,
     selectedPlayerName,
     setSelectedPlayerName,
+    freshnessFilterHours,
+    setFreshnessFilterHours,
     selectedProps,
     togglePropSelection,
+    selectAllPropsByType,
+    deselectAllPropsByType,
     formatPropType,
     isLoading: isTrainingPropsLoading,
     isRefetching: isTrainingPropsRefetching,
@@ -1017,6 +1023,23 @@ export function AIGenerativeProgressDashboard() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{trainingPlayers.length} players</Badge>
                   <Badge variant="outline">{selectedProps.length} props selected</Badge>
+                  <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm">
+                    <span className="text-muted-foreground">Freshness</span>
+                    <select
+                      value={freshnessFilterHours === null ? 'all' : String(freshnessFilterHours)}
+                      onChange={(event) =>
+                        setFreshnessFilterHours(event.target.value === 'all' ? null : Number(event.target.value))
+                      }
+                      className="bg-transparent outline-none"
+                    >
+                      <option value="all">All updates</option>
+                      <option value="1">Last 1 hour</option>
+                      <option value="2">Last 2 hours</option>
+                      <option value="4">Last 4 hours</option>
+                      <option value="6">Last 6 hours</option>
+                      <option value="12">Last 12 hours</option>
+                    </select>
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1132,9 +1155,50 @@ export function AIGenerativeProgressDashboard() {
                             <p className="font-medium">Prop menu for {selectedPlayer.name}</p>
                             <p className="text-sm text-muted-foreground">Choose the exact markets you want to guide with manual bot instructions.</p>
                           </div>
+                          {filteredSelectedPlayer && (
+                            <div className="border-b bg-background px-4 py-3 space-y-3">
+                              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                <span>
+                                  Showing {filteredSelectedPlayer.props.length} of {selectedPlayer.props.length} props
+                                </span>
+                                <span>•</span>
+                                <span>
+                                  {freshnessFilterHours === null
+                                    ? 'No freshness limit'
+                                    : `Updated within ${freshnessFilterHours} hour${freshnessFilterHours === 1 ? '' : 's'}`}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {filteredPropGroups.map((group) => (
+                                  <div key={group.propType} className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/10 px-3 py-2">
+                                    <Badge variant="outline">{formatPropType(group.propType)}</Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      {group.selectedCount}/{group.props.length} selected
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => selectAllPropsByType(group.propType)}
+                                    >
+                                      Select all
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => deselectAllPropsByType(group.propType)}
+                                    >
+                                      Clear
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <ScrollArea className="h-[420px]">
                             <div className="space-y-3 p-4">
-                              {selectedPlayer.props.map((prop) => {
+                              {(filteredSelectedPlayer?.props || []).map((prop) => {
                                 const isChecked = selectedProps.some((selectedProp) => selectedProp.key === prop.key);
 
                                 return (
@@ -1189,6 +1253,12 @@ export function AIGenerativeProgressDashboard() {
                                   </label>
                                 );
                               })}
+                              {filteredSelectedPlayer && filteredSelectedPlayer.props.length === 0 && (
+                                <div className="rounded-lg border border-dashed bg-muted/10 p-8 text-center">
+                                  <p className="font-medium">No props match this freshness window.</p>
+                                  <p className="text-sm text-muted-foreground">Increase the hours filter to bring older markets back into view.</p>
+                                </div>
+                              )}
                             </div>
                           </ScrollArea>
                         </div>
