@@ -156,6 +156,8 @@ export function ShadowPicksFeed() {
       ? 'text-foreground'
       : 'text-destructive';
 
+  const blockCodeLabel = diagnostics?.blockCode?.replace('blocked:', '').replace(/_/g, ' ') || 'unknown';
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -213,6 +215,9 @@ export function ShadowPicksFeed() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Explains why a run produced 0 outputs by checking fresh risk rows, live odds coverage, and minimum match thresholds.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Current blocker: <span className="font-medium text-foreground">{diagnosticsLoading ? 'loading' : blockCodeLabel}</span>
               </p>
             </div>
             <div className={cn('text-xs font-medium uppercase tracking-wide', readinessTone)}>
@@ -275,6 +280,31 @@ export function ShadowPicksFeed() {
                     <span className="font-mono">{reason.count}</span>
                   </div>
                 ))}
+              </div>
+
+              <div className="rounded-md border border-border/60 bg-card/60 p-3">
+                <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Upstream stages</span>
+                  <span>{diagnostics.upstream.latestOddsUpdateAt ? new Date(diagnostics.upstream.latestOddsUpdateAt).toLocaleTimeString() : 'No odds refresh'}</span>
+                </div>
+                <div className="space-y-2">
+                  {diagnostics.upstream.stages.map((stage) => (
+                    <div key={stage.key} className="flex items-start justify-between gap-3 rounded-md border border-border/50 px-3 py-2 text-xs">
+                      <div>
+                        <div className="font-medium text-foreground">{stage.label}</div>
+                        <div className="text-muted-foreground">{stage.detail}</div>
+                      </div>
+                      <Badge variant="outline" className={cn('uppercase', reasonTone(stage.status))}>
+                        {stage.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 text-[11px] text-muted-foreground md:grid-cols-3">
+                  <div>Odds updated: {diagnostics.upstream.latestOddsUpdateAt ? new Date(diagnostics.upstream.latestOddsUpdateAt).toLocaleString() : '—'}</div>
+                  <div>Risk updated: {diagnostics.upstream.latestRiskUpdateAt ? new Date(diagnostics.upstream.latestRiskUpdateAt).toLocaleString() : '—'}</div>
+                  <div>Sweet spots updated: {diagnostics.upstream.latestSweetSpotUpdateAt ? new Date(diagnostics.upstream.latestSweetSpotUpdateAt).toLocaleString() : '—'}</div>
+                </div>
               </div>
             </div>
           ) : null}

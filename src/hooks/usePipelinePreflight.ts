@@ -9,6 +9,7 @@ interface PreflightCheck {
 
 interface PreflightResult {
   isHealthy: boolean;
+  blockCode: string | null;
   blockers: string[];
   checks: PreflightCheck[];
   lastCheckTime: string | null;
@@ -39,6 +40,7 @@ export function usePipelinePreflight(): PreflightResult {
 
   return {
     isHealthy: metadata?.ready ?? true,
+    blockCode: typeof (metadata as any)?.block_code === 'string' ? (metadata as any).block_code : null,
     blockers: metadata?.blockers ?? [],
     checks: metadata?.checks ?? [],
     lastCheckTime: data?.created_at ?? null,

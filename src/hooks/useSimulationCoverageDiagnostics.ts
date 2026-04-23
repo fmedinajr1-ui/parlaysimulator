@@ -21,6 +21,7 @@ type SweetSpotRow = {
   prop_type: string | null;
   recommended_side: string | null;
   recommended_line: number | null;
+  created_at: string | null;
 };
 
 type PropRow = {
@@ -148,7 +149,7 @@ export function useSimulationCoverageDiagnostics() {
           .eq("mode", "full_slate"),
         supabase
           .from("category_sweet_spots")
-          .select("player_name, prop_type, recommended_side, recommended_line")
+          .select("player_name, prop_type, recommended_side, recommended_line, created_at")
           .eq("analysis_date", targetDate)
           .eq("is_active", true),
         supabase
@@ -173,6 +174,7 @@ export function useSimulationCoverageDiagnostics() {
       const freshRiskRows = riskRows.filter((row) => ageMinutes(row.created_at, now) <= STALE_RISK_WINDOW_MINUTES);
       const staleRiskRows = riskRows.length - freshRiskRows.length;
       const fallbackRows = ((sweetRes.data || []) as SweetSpotRow[]).length;
+      const sweetSpotRows = (sweetRes.data || []) as SweetSpotRow[];
       const outputRows = (outputsRes.data || []) as OutputRow[];
       const propRows = (propsRes.data || []) as PropRow[];
 
@@ -184,6 +186,11 @@ export function useSimulationCoverageDiagnostics() {
       }, null);
 
       const latestRiskUpdateAt = riskRows.reduce<string | null>((latest, row) => {
+        if (!row.created_at) return latest;
+        if (!latest) return row.created_at;
+        return new Date(row.created_at).getTime() > new Date(latest).getTime() ? row.created_at : latest;
+      }, null);
+      const latestSweetSpotUpdateAt = sweetSpotRows.reduce<string | null>((latest, row) => {
         if (!row.created_at) return latest;
         if (!latest) return row.created_at;
         return new Date(row.created_at).getTime() > new Date(latest).getTime() ? row.created_at : latest;
@@ -318,7 +325,7 @@ export function useSimulationCoverageDiagnostics() {
         upstream: {
           latestOddsUpdateAt,
           latestRiskUpdateAt,
-          latestSweetSpotUpdateAt: null,
+          latestSweetSpotUpdateAt,
           staleSourceCounts: {
             staleRiskRows,
             staleOddsRows,
