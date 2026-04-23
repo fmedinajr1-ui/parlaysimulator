@@ -346,6 +346,8 @@ Deno.serve(async (req) => {
       ceiling_candidates: ceilingCandidates.length,
       standard_inserted: standardCandidates.slice(0, MAX_STANDARD_STRAIGHTS).length,
       ceiling_inserted: ceilingCandidates.slice(0, MAX_CEILING_STRAIGHTS).length,
+      pool_source_mix: sourceMix,
+      inserted_source_mix: insertedSourceMix,
     });
 
     if (dryRun) {
