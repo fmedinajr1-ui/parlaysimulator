@@ -720,6 +720,15 @@ Deno.serve(async (req) => {
     const picks = buildPicks(markets, historicalRows, manualRuleMap, limit);
     const saved = dry_run ? 0 : await savePicks(sb, picks);
 
+    const sourceMix = (directSourceState.rows ?? []).reduce<Record<string, number>>(
+      (acc, r: any) => {
+        const k = (r.source_origin ?? "unknown").toString();
+        acc[k] = (acc[k] ?? 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -732,6 +741,7 @@ Deno.serve(async (req) => {
           manual_rules: manualRules.length,
           manual_rule_matches: manualRuleMap.size,
           direct_source_rows: directSourceState.rows.length,
+          direct_source_mix: sourceMix,
         },
         source_diagnostics: directSourceState.diagnostics,
         generated: picks.length,
