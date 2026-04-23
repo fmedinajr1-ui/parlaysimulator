@@ -44,6 +44,8 @@ const corsHeaders = {
 };
 
 const MIN_APPROVED_RISK_PICKS = 8;
+// KILL SWITCH — risk layer is advisory, never gate the slate
+const RISK_LAYER_BYPASSED = true;
 
 async function getRiskPickCount(supabase: any, targetDate: string): Promise<number> {
   const { count } = await supabase
@@ -215,21 +217,25 @@ Deno.serve(async (req) => {
     const riskCount = riskRes.count ?? 0;
     const sweetSpotCount = sweetSpotRes.count ?? 0;
 
+    // Risk layer is now advisory. Only block on (1) no fresh props at all, or
+    // (2) no usable matches downstream. Risk thin/empty = soft warning.
     const blockCode = freshFdCount === 0
       ? (totalFdCount === 0 ? "blocked:no_props_for_today" : "blocked:stale_odds")
-      : riskCount === 0
-        ? "blocked:risk_empty"
-        : riskCount < MIN_APPROVED_RISK_PICKS
-          ? "blocked:risk_thin"
-          : sweetSpotCount === 0
-            ? "blocked:sweet_spots_empty"
-            : ((todayParlaysRes.count ?? 0) + (todayStraightsRes.count ?? 0)) === 0
-              ? "blocked:no_usable_matches"
-              : "ready";
+      : ((todayParlaysRes.count ?? 0) + (todayStraightsRes.count ?? 0)) === 0
+        ? "blocked:no_usable_matches"
+        : "ready";
+
+    const riskLayerStatus = riskCount === 0
+      ? "empty"
+      : riskCount < MIN_APPROVED_RISK_PICKS
+        ? "thin"
+        : "active";
 
     return {
       target_date: targetDate,
       block_code: blockCode,
+      risk_layer_status: riskLayerStatus,
+      risk_layer_bypassed: RISK_LAYER_BYPASSED,
       input_quality: {
         fresh_fanduel_props_2h: freshFdCount,
         total_fanduel_props: totalFdCount,
@@ -637,17 +643,15 @@ Deno.serve(async (req) => {
         const sweetSpotCount = await getSweetSpotCount(supabase, targetDate);
 
         if (riskCount === 0 && sweetSpotCount === 0) {
-          results["uploaded-pipeline-generator"] = `blocked:no_sources:risk_${riskCount}:fallback_${sweetSpotCount}`;
-          warnings.push(`Uploaded pipeline generation blocked: no direct candidate sources (${riskCount} risk, ${sweetSpotCount} fallback)`);
-          await sendPipelineAlert(
-            `⚠️ *Uploaded Pipeline Blocked*\n\n*Date:* ${targetDate}\n*Risk picks:* ${riskCount}\n*Fallback sweet spots:* ${sweetSpotCount}\n*Cause:* no direct source rows available\n*Run:* \`${currentRunId.slice(0,8)}\``,
-          );
-          return;
+          // RISK LAYER BYPASSED — fall through to raw_props source instead of blocking
+          warnings.push(`Uploaded pipeline: no risk/sweet rows — falling back to raw unified_props (risk_layer:bypassed)`);
+          log(`ℹ Risk + fallback empty; proceeding with raw_props source`);
         }
 
         await invokeStep("Generating uploaded pipeline picks", "uploaded-pipeline-generator", {
           dry_run: false,
           limit: 12,
+          allow_raw_props_fallback: true,
         });
 
         const uploadedCount = await getUploadedPipelinePickCount(supabase, targetDate);
@@ -674,29 +678,16 @@ Deno.serve(async (req) => {
         const riskCount = await getRiskPickCount(supabase, targetDate);
         const sweetSpotCount = await getSweetSpotCount(supabase, targetDate);
         if ((riskCount || 0) === 0 && (sweetSpotCount || 0) === 0) {
-          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-          const { count: freshFdProps } = await supabase
-            .from("unified_props")
-            .select("*", { count: "exact", head: true })
-            .eq("bookmaker", "fanduel")
-            .or(`odds_updated_at.gte.${twoHoursAgo},updated_at.gte.${twoHoursAgo},created_at.gte.${twoHoursAgo}`);
-
-          results["parlay-engine-v2"] = `blocked:no_sources:risk_${riskCount || 0}:fallback_${sweetSpotCount || 0}`;
-          warnings.push(`Parlay generation blocked: no direct sources (${riskCount || 0} risk, ${sweetSpotCount || 0} fallback)`);
-          await sendPipelineAlert(
-            `⚠️ *Parlay Generation Blocked*
-
-*Date:* ${targetDate}
-*Fresh props:* ${freshFdProps || 0}
-*Risk picks:* ${riskCount || 0}
-*Fallback sweet spots:* ${sweetSpotCount || 0}
-*Cause:* no direct source rows available
-*Run:* \`${currentRunId.slice(0,8)}\``
-          );
-          return;
+          // RISK LAYER BYPASSED — let parlay engine try raw unified_props fallback
+          warnings.push(`Parlay engine: no risk/sweet rows — using raw_props fallback (risk_layer:bypassed)`);
+          log(`ℹ Risk + fallback empty; running parlay-engine-v2 with allow_raw_props_fallback`);
         }
 
-        await invokeStep("Generating parlays", "parlay-engine-v2", { dry_run: false, date: targetDate });
+        await invokeStep("Generating parlays", "parlay-engine-v2", {
+          dry_run: false,
+          date: targetDate,
+          allow_raw_props_fallback: true,
+        });
 
         const todayP = todayET();
         const parlayCount = await getParlayCount(supabase, todayP);
@@ -814,15 +805,16 @@ Deno.serve(async (req) => {
         const riskCount = await getRiskPickCount(supabase, todayS);
         const sweetSpotCount = await getSweetSpotCount(supabase, todayS);
         if ((riskCount || 0) === 0 && (sweetSpotCount || 0) === 0) {
-          results["bot-generate-straight-bets"] = `blocked:no_sources:risk_${riskCount || 0}:fallback_${sweetSpotCount || 0}`;
-          warnings.push(`Straight bet generation blocked: no direct sources (${riskCount || 0} risk, ${sweetSpotCount || 0} fallback)`);
-          sendPipelineAlert(
-            `⚠️ *Straight Generation Blocked*\n\n*Date:* ${todayS}\n*Risk picks:* ${riskCount || 0}\n*Fallback sweet spots:* ${sweetSpotCount || 0}\n*Cause:* no direct source rows available\n*Run:* \`${currentRunId.slice(0,8)}\``,
-          );
-          return;
+          // RISK LAYER BYPASSED — generate straights from raw unified_props
+          warnings.push(`Straights: no risk/sweet rows — using raw_props fallback (risk_layer:bypassed)`);
+          log(`ℹ Straight bets running with allow_raw_props_fallback`);
         }
 
-        await invokeStep("Generating straight bets", "bot-generate-straight-bets", { date: todayS, dry_run: false });
+        await invokeStep("Generating straight bets", "bot-generate-straight-bets", {
+          date: todayS,
+          dry_run: false,
+          allow_raw_props_fallback: true,
+        });
 
         const straightCount = await getStraightCount(supabase, todayS);
         if ((straightCount || 0) === 0) {
@@ -918,9 +910,9 @@ Deno.serve(async (req) => {
         detail: `${diagnostics.input_quality?.fresh_fanduel_props_2h ?? 0} fresh / ${diagnostics.input_quality?.total_fanduel_props ?? 0} total`,
       },
       {
-        name: 'Risk candidates',
-        passed: (diagnostics.input_quality?.direct_risk_candidates ?? 0) >= MIN_APPROVED_RISK_PICKS,
-        detail: `${diagnostics.input_quality?.direct_risk_candidates ?? 0} approved rows`,
+        name: 'Risk candidates (advisory)',
+        passed: true, // RISK LAYER BYPASSED — never block on risk count
+        detail: `${diagnostics.input_quality?.direct_risk_candidates ?? 0} approved rows · risk_layer:${(diagnostics as any).risk_layer_status ?? 'unknown'}`,
       },
       {
         name: 'Fallback candidates',

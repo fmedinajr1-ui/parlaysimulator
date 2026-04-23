@@ -55,7 +55,7 @@ export function SlateRefreshControls() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const queryClient = useQueryClient();
   const rebuildInProgress = useRef(false);
-  const { isHealthy, blockers, lastCheckTime, isLoading: preflightLoading } = usePipelinePreflight();
+  const { isHealthy, blockers, lastCheckTime, isLoading: preflightLoading, riskLayerStatus, riskLayerBypassed } = usePipelinePreflight();
 
   const invalidateAllQueries = () => {
     queryClient.invalidateQueries({ queryKey: ['sweet-spot-parlay-picks'] });
@@ -281,6 +281,23 @@ export function SlateRefreshControls() {
                   </p>
                 )}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Risk Layer Bypass Badge */}
+      {!preflightLoading && riskLayerBypassed && (riskLayerStatus === 'empty' || riskLayerStatus === 'thin') && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="py-2 px-4">
+            <div className="flex items-center gap-2 text-xs">
+              <ShieldCheck className="h-3.5 w-3.5 text-amber-500" />
+              <span className="font-medium text-amber-600 dark:text-amber-400">
+                Risk layer bypassed
+              </span>
+              <span className="text-muted-foreground">
+                — risk_layer:{riskLayerStatus} · using sweet spots + raw unified_props
+              </span>
             </div>
           </CardContent>
         </Card>
