@@ -11,6 +11,12 @@ import { Camera, Image as ImageIcon, Monitor, Loader2, Sparkles, Square, Upload 
 import { toast } from "sonner";
 import { useOcrScanSession, uploadFramesForOcr, buildParlaysFromPool } from "@/hooks/useOcrScanSession";
 import { compressImage } from "@/lib/image-compression";
+import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
+import { useNavigate } from "react-router-dom";
+
+function formatPropLabel(prop_type: string): string {
+  return prop_type.replace("player_", "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
 
 const SPORTS = ["nba", "mlb", "nfl", "nhl"];
 const BOOKS = [
@@ -28,6 +34,8 @@ async function fileToDataUrl(file: File): Promise<string> {
 
 export default function PropScanner() {
   const { session, props, startSession, finalizeSession, toggleSelected } = useOcrScanSession();
+  const { addLeg } = useParlayBuilder();
+  const navigate = useNavigate();
   const [sport, setSport] = useState("nba");
   const [book, setBook] = useState("fanduel");
   const [mode, setMode] = useState<"screenshots" | "recording" | "camera">("screenshots");
@@ -141,6 +149,27 @@ export default function PropScanner() {
     finally { setBuilding(false); }
   };
 
+  // Push selected OCR pool legs into the global Parlay Builder so users
+  // can fine-tune them inside the existing ManualParlayPanel + builder UI.
+  const sendSelectedToBuilder = () => {
+    const selected = props.filter(p => p.selected_for_parlay && !p.blocked);
+    if (selected.length === 0) { toast.error("Select at least 1 prop"); return; }
+    selected.forEach(p => {
+      const odds = (p.side === "over" ? p.over_price : p.under_price) ?? -110;
+      addLeg({
+        description: `${p.player_name} ${formatPropLabel(p.prop_type)} ${p.side.toUpperCase()} ${p.line}`,
+        odds,
+        source: "manual",
+        playerName: p.player_name,
+        propType: p.prop_type,
+        line: p.line,
+        side: p.side,
+      });
+    });
+    toast.success(`Sent ${selected.length} leg${selected.length > 1 ? "s" : ""} to Parlay Builder`);
+    navigate("/manual");
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground p-4 md:p-6">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -218,6 +247,9 @@ export default function PropScanner() {
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={handleManualBuild} disabled={building}>
                     Build from selected
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={sendSelectedToBuilder}>
+                    Send to Parlay Builder
                   </Button>
                   <Button size="sm" onClick={handleAutoBuild} disabled={building}>
                     {building ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Sparkles className="h-4 w-4 mr-1" />Auto-parlay</>}
