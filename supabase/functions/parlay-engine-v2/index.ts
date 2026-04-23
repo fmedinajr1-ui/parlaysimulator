@@ -20,6 +20,7 @@ import {
   MAX_BOOK_LINE_AGE_MIN,
   MAX_LINE_DRIFT,
 } from "../_shared/parlay-engine-v2/config.ts";
+import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -105,86 +106,6 @@ interface PropRow {
   updated_at: string | null;
   bookmaker?: string | null;
   odds_updated_at?: string | null;
-}
-
-interface PoolBuildDiagnostics {
-  pool_status?: string;
-  pool_rows_built?: number;
-  pool_rows_inserted?: number;
-  risk_rows_accepted?: number;
-  fallback_rows_accepted?: number;
-  [key: string]: unknown;
-}
-
-const AUTO_POOL_MINIMUM_ROWS = 12;
-
-async function loadPoolRows(
-  sb: any,
-  targetDate: string,
-): Promise<PoolRow[]> {
-  const { data, error } = await sb
-    .from("bot_daily_pick_pool")
-    .select("id, pick_date, player_name, prop_type, recommended_side, recommended_line, confidence_score, composite_score, projected_value, category, l10_hit_rate, l10_avg, l3_avg, created_at")
-    .eq("pick_date", targetDate);
-  if (error) throw error;
-  return (data ?? []) as PoolRow[];
-}
-
-async function ensurePoolRows(
-  sb: any,
-  targetDate: string,
-): Promise<{
-  pool: PoolRow[];
-  poolBeforeCount: number;
-  poolAfterCount: number;
-  poolAutoBuildAttempted: boolean;
-  poolAutoBuildSuccess: boolean;
-  poolBuildDiagnostics: PoolBuildDiagnostics | null;
-}> {
-  const initialPool = await loadPoolRows(sb, targetDate);
-  const poolBeforeCount = initialPool.length;
-
-  if (poolBeforeCount >= AUTO_POOL_MINIMUM_ROWS) {
-    return {
-      pool: initialPool,
-      poolBeforeCount,
-      poolAfterCount: poolBeforeCount,
-      poolAutoBuildAttempted: false,
-      poolAutoBuildSuccess: false,
-      poolBuildDiagnostics: null,
-    };
-  }
-
-  const { data, error } = await sb.functions.invoke("build-daily-pick-pool", {
-    body: {
-      date: targetDate,
-      minimum_risk_rows: 8,
-      minimum_pool_rows: AUTO_POOL_MINIMUM_ROWS,
-      fallback_limit: 40,
-    },
-  });
-
-  const poolBuildDiagnostics = (data && typeof data === "object" && data.diagnostics && typeof data.diagnostics === "object")
-    ? data.diagnostics as PoolBuildDiagnostics
-    : null;
-
-  const rebuiltPool = await loadPoolRows(sb, targetDate);
-  const poolAfterCount = rebuiltPool.length;
-  const poolAutoBuildSuccess = !error && poolAfterCount >= AUTO_POOL_MINIMUM_ROWS;
-
-  return {
-    pool: rebuiltPool,
-    poolBeforeCount,
-    poolAfterCount,
-    poolAutoBuildAttempted: true,
-    poolAutoBuildSuccess,
-    poolBuildDiagnostics: error
-      ? {
-          ...(poolBuildDiagnostics ?? {}),
-          invoke_error: error.message || JSON.stringify(error),
-        }
-      : poolBuildDiagnostics,
-  };
 }
 
 /** Pick the first row whose bookmaker matches the priority list, in order. */
