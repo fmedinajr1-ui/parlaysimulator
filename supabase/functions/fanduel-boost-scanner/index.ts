@@ -15,6 +15,7 @@ const corsHeaders = {
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const AI_MODEL = "google/gemini-2.5-flash";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape";
+const SCRAPINGBEE_URL = "https://app.scrapingbee.com/api/v1/";
 
 // Primary + fallback scrape targets. We try them in order and stop once we've
 // gotten usable markdown for each "logical" page. Multiple state subdomains
@@ -229,6 +230,127 @@ async function firecrawlScrapeWithRetry(
   return null;
 }
 
+/**
+ * ScrapingBee with JS rendering + premium proxy. FanDuel renders boosts
+ * client-side after geo + anti-bot checks; ScrapingBee's premium pool +
+ * stealth-proxy handles those better than Firecrawl.
+ * Returns raw HTML on success, null on failure.
+ */
+async function scrapingBeeFetch(
+  url: string,
+  apiKey: string,
+  opts?: { stealth?: boolean },
+): Promise<{ html: string | null; status: number; errorText?: string }> {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    url,
+    render_js: "true",
+    premium_proxy: "true",
+    country_code: "us",
+    wait: "5000",
+    // Wait until the boost cards (or their containers) appear
+    wait_browser: "networkidle2",
+    block_resources: "false",
+  });
+  if (opts?.stealth) {
+    params.set("stealth_proxy", "true");
+    params.delete("premium_proxy");
+  }
+
+  const res = await fetch(`${SCRAPINGBEE_URL}?${params.toString()}`, {
+    method: "GET",
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    return { html: null, status: res.status, errorText };
+  }
+  const html = await res.text();
+  return { html: html && html.length > 500 ? html : null, status: res.status };
+}
+
+async function scrapingBeeFetchWithRetry(
+  url: string,
+  apiKey: string,
+  maxAttempts = 3,
+): Promise<string | null> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Flip to stealth proxy on the last attempt for stubborn pages
+    const stealth = attempt === maxAttempts;
+    try {
+      const { html, status, errorText } = await scrapingBeeFetch(url, apiKey, { stealth });
+      if (html) {
+        if (attempt > 1) {
+          console.log(`scrapingbee ${url} succeeded on attempt ${attempt} (stealth=${stealth})`);
+        }
+        return html;
+      }
+      lastError = `status_${status}: ${(errorText ?? "").slice(0, 300)}`;
+      console.warn(`scrapingbee attempt ${attempt}/${maxAttempts} ${url} -> ${lastError}`);
+      // 401/403/404 are non-retryable
+      if ([400, 401, 403, 404].includes(status)) return null;
+      if (attempt < maxAttempts) {
+        const base = 1500 * Math.pow(2, attempt - 1);
+        await sleep(base + Math.floor(Math.random() * 500));
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      console.warn(`scrapingbee attempt ${attempt}/${maxAttempts} ${url} threw: ${lastError}`);
+      if (attempt < maxAttempts) {
+        await sleep(1500 * Math.pow(2, attempt - 1));
+      }
+    }
+  }
+  console.error(`scrapingbee exhausted ${maxAttempts} attempts for ${url}: ${lastError}`);
+  return null;
+}
+
+/**
+ * Strip HTML tags and collapse whitespace into a markdown-ish text blob
+ * suitable for the AI parser. We don't need real markdown — Gemini reads
+ * cleaned text just fine.
+ */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Unified scraper: tries ScrapingBee first (handles JS + anti-bot well),
+ * falls back to Firecrawl. Returns text/markdown for the AI parser.
+ */
+async function scrapePage(
+  url: string,
+  scrapingBeeKey: string | undefined,
+  firecrawlKey: string | undefined,
+): Promise<string | null> {
+  if (scrapingBeeKey) {
+    const html = await scrapingBeeFetchWithRetry(url, scrapingBeeKey);
+    if (html) {
+      const text = htmlToText(html);
+      if (text.length > 200) return text;
+      console.warn(`scrapingbee ${url}: html present but text too short (${text.length})`);
+    }
+  }
+  if (firecrawlKey) {
+    console.log(`falling back to firecrawl for ${url}`);
+    return await firecrawlScrapeWithRetry(url, firecrawlKey);
+  }
+  return null;
+}
+
 async function aiExtractBoosts(markdown: string): Promise<any[]> {
   const apiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!apiKey) throw new Error("LOVABLE_API_KEY missing");
@@ -318,8 +440,11 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const scrapingBeeKey = Deno.env.get("SCRAPINGBEE_API_KEY");
     const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY missing");
+    if (!scrapingBeeKey && !firecrawlKey) {
+      throw new Error("Neither SCRAPINGBEE_API_KEY nor FIRECRAWL_API_KEY configured");
+    }
 
     let scraped = 0;
     let parsed = 0;
@@ -342,7 +467,7 @@ Deno.serve(async (req) => {
       if (succeededLogical.has(logical)) continue;
 
       try {
-        const md = await firecrawlScrapeWithRetry(url, firecrawlKey);
+        const md = await scrapePage(url, scrapingBeeKey, firecrawlKey);
         if (!md) {
           errors.push(`scrape_empty:${url}`);
           continue;
