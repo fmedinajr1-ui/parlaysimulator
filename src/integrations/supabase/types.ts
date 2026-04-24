@@ -4113,6 +4113,98 @@ export type Database = {
         }
         Relationships: []
       }
+      fanduel_boost_fades: {
+        Row: {
+          boost_id: string
+          combined_american_odds: number | null
+          combined_fade_edge_pct: number | null
+          created_at: string
+          fade_legs: Json
+          id: string
+          skipped_legs: Json
+          telegram_sent_at: string | null
+          verdict: string
+        }
+        Insert: {
+          boost_id: string
+          combined_american_odds?: number | null
+          combined_fade_edge_pct?: number | null
+          created_at?: string
+          fade_legs?: Json
+          id?: string
+          skipped_legs?: Json
+          telegram_sent_at?: string | null
+          verdict: string
+        }
+        Update: {
+          boost_id?: string
+          combined_american_odds?: number | null
+          combined_fade_edge_pct?: number | null
+          created_at?: string
+          fade_legs?: Json
+          id?: string
+          skipped_legs?: Json
+          telegram_sent_at?: string | null
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fanduel_boost_fades_boost_id_fkey"
+            columns: ["boost_id"]
+            isOneToOne: true
+            referencedRelation: "fanduel_boosts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fanduel_boosts: {
+        Row: {
+          boost_hash: string
+          boosted_odds: number
+          category: string | null
+          expires_at: string | null
+          id: string
+          legs: Json
+          original_odds: number | null
+          pays_text: string | null
+          raw_text: string | null
+          scraped_at: string
+          source_url: string | null
+          sport: string | null
+          title: string
+        }
+        Insert: {
+          boost_hash: string
+          boosted_odds: number
+          category?: string | null
+          expires_at?: string | null
+          id?: string
+          legs: Json
+          original_odds?: number | null
+          pays_text?: string | null
+          raw_text?: string | null
+          scraped_at?: string
+          source_url?: string | null
+          sport?: string | null
+          title: string
+        }
+        Update: {
+          boost_hash?: string
+          boosted_odds?: number
+          category?: string | null
+          expires_at?: string | null
+          id?: string
+          legs?: Json
+          original_odds?: number | null
+          pays_text?: string | null
+          raw_text?: string | null
+          scraped_at?: string
+          source_url?: string | null
+          sport?: string | null
+          title?: string
+        }
+        Relationships: []
+      }
       fanduel_daily_parlay: {
         Row: {
           confidence_score: number | null
