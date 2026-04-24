@@ -16,10 +16,46 @@ const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const AI_MODEL = "google/gemini-2.5-flash";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape";
 
+// Primary + fallback scrape targets. We try them in order and stop once we've
+// gotten usable markdown for each "logical" page. Multiple state subdomains
+// help when one regional edge is geo-blocking the Firecrawl proxy.
 const TARGET_URLS = [
   "https://sportsbook.fanduel.com/promos",
   "https://sportsbook.fanduel.com/boosts",
+  // Fallback regional subdomains (FanDuel mirrors content per state)
+  "https://nj.sportsbook.fanduel.com/promos",
+  "https://nj.sportsbook.fanduel.com/boosts",
+  "https://pa.sportsbook.fanduel.com/promos",
+  "https://co.sportsbook.fanduel.com/boosts",
+  // Mobile / m. fallback (lighter JS, often easier to render)
+  "https://m.sportsbook.fanduel.com/promos",
+  "https://m.sportsbook.fanduel.com/boosts",
 ];
+
+// Tunnel/proxy errors that should trigger a retry with backoff.
+const RETRYABLE_ERROR_PATTERNS = [
+  "ERR_TUNNEL_CONNECTION_FAILED",
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "tunnel",
+  "proxy",
+  "timeout",
+  "503",
+  "502",
+  "504",
+  "429",
+];
+
+function isRetryable(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return RETRYABLE_ERROR_PATTERNS.some((p) => lower.includes(p.toLowerCase()));
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 const BOOST_TOOL_SCHEMA = {
   type: "function",
@@ -98,7 +134,15 @@ const BOOST_TOOL_SCHEMA = {
   },
 };
 
-async function firecrawlScrape(url: string, apiKey: string): Promise<string | null> {
+async function firecrawlScrapeOnce(
+  url: string,
+  apiKey: string,
+  opts?: { mobile?: boolean; waitMs?: number },
+): Promise<{ markdown: string | null; status: number; errorText?: string }> {
+  const userAgent = opts?.mobile
+    ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
   const res = await fetch(FIRECRAWL_URL, {
     method: "POST",
     headers: {
@@ -109,12 +153,16 @@ async function firecrawlScrape(url: string, apiKey: string): Promise<string | nu
       url,
       formats: ["markdown"],
       onlyMainContent: true,
-      waitFor: 4000,
+      waitFor: opts?.waitMs ?? 4000,
+      headers: { "User-Agent": userAgent },
+      // Geo-route through the US — FanDuel blocks non-US edges
+      location: { country: "US", languages: ["en-US"] },
     }),
   });
+
   if (!res.ok) {
-    console.error(`firecrawl ${url} failed: ${res.status} ${await res.text()}`);
-    return null;
+    const errorText = await res.text();
+    return { markdown: null, status: res.status, errorText };
   }
   const json = await res.json();
   const md =
@@ -122,7 +170,63 @@ async function firecrawlScrape(url: string, apiKey: string): Promise<string | nu
     json?.markdown ??
     json?.data?.content ??
     null;
-  return typeof md === "string" && md.length > 0 ? md : null;
+  return {
+    markdown: typeof md === "string" && md.length > 0 ? md : null,
+    status: res.status,
+  };
+}
+
+/**
+ * Scrape with exponential backoff. Retries on tunnel/proxy/timeout errors,
+ * alternates between desktop and mobile UA on retries, and bails immediately
+ * on non-retryable errors (4xx auth, 404, etc.).
+ */
+async function firecrawlScrapeWithRetry(
+  url: string,
+  apiKey: string,
+  maxAttempts = 4,
+): Promise<string | null> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const mobile = attempt % 2 === 0; // flip UA on even attempts
+    const waitMs = 4000 + (attempt - 1) * 1500;
+    try {
+      const { markdown, status, errorText } = await firecrawlScrapeOnce(url, apiKey, {
+        mobile,
+        waitMs,
+      });
+      if (markdown) {
+        if (attempt > 1) {
+          console.log(`firecrawl ${url} succeeded on attempt ${attempt} (mobile=${mobile})`);
+        }
+        return markdown;
+      }
+
+      lastError = `status_${status}: ${(errorText ?? "").slice(0, 300)}`;
+      console.warn(`firecrawl attempt ${attempt}/${maxAttempts} ${url} -> ${lastError}`);
+
+      // Non-retryable: auth (401/403), not found (404), payload (400)
+      if ([400, 401, 403, 404].includes(status)) return null;
+
+      // Retryable HTTP or empty body — exponential backoff with jitter
+      if (attempt < maxAttempts) {
+        const base = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s, 8s
+        const jitter = Math.floor(Math.random() * 500);
+        await sleep(base + jitter);
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      console.warn(`firecrawl attempt ${attempt}/${maxAttempts} ${url} threw: ${lastError}`);
+      if (!isRetryable(lastError)) return null;
+      if (attempt < maxAttempts) {
+        const base = 1000 * Math.pow(2, attempt - 1);
+        const jitter = Math.floor(Math.random() * 500);
+        await sleep(base + jitter);
+      }
+    }
+  }
+  console.error(`firecrawl exhausted ${maxAttempts} attempts for ${url}: ${lastError}`);
+  return null;
 }
 
 async function aiExtractBoosts(markdown: string): Promise<any[]> {
@@ -221,15 +325,30 @@ Deno.serve(async (req) => {
     let parsed = 0;
     let inserted = 0;
     const errors: string[] = [];
+    // Track which logical pages succeeded so once we have a /promos and
+    // /boosts page from any region, we can stop hitting fallbacks.
+    const succeededLogical = new Set<string>();
 
     for (const url of TARGET_URLS) {
+      // Logical key = trailing path (/promos vs /boosts). If we already got
+      // good markdown for that key, skip remaining regional fallbacks for it.
+      const logical = (() => {
+        try {
+          return new URL(url).pathname;
+        } catch {
+          return url;
+        }
+      })();
+      if (succeededLogical.has(logical)) continue;
+
       try {
-        const md = await firecrawlScrape(url, firecrawlKey);
+        const md = await firecrawlScrapeWithRetry(url, firecrawlKey);
         if (!md) {
           errors.push(`scrape_empty:${url}`);
           continue;
         }
         scraped++;
+        succeededLogical.add(logical);
 
         const boosts = await aiExtractBoosts(md);
         parsed += boosts.length;
