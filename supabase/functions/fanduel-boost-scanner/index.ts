@@ -16,6 +16,7 @@ const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const AI_MODEL = "google/gemini-2.5-flash";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape";
 const SCRAPINGBEE_URL = "https://app.scrapingbee.com/api/v1/";
+const SCRAPINGANT_URL = "https://api.scrapingant.com/v2/general";
 
 // Primary + fallback scrape targets. We try them in order and stop once we've
 // gotten usable markdown for each "logical" page. Multiple state subdomains
@@ -306,6 +307,82 @@ async function scrapingBeeFetchWithRetry(
 }
 
 /**
+ * ScrapingAnt with headless Chrome + residential proxy. Free tier gives
+ * 10k credits/month and handles JS-rendered, anti-bot pages like FanDuel
+ * better than Firecrawl. Returns raw HTML on success, null on failure.
+ */
+async function scrapingAntFetch(
+  url: string,
+  apiKey: string,
+  opts?: { mobile?: boolean },
+): Promise<{ html: string | null; status: number; errorText?: string }> {
+  const params = new URLSearchParams({
+    url,
+    "x-api-key": apiKey,
+    browser: "true",
+    proxy_type: "residential",
+    proxy_country: "US",
+    return_text: "false", // we want HTML; we strip tags ourselves
+    wait_for_selector: "body",
+  });
+  const userAgent = opts?.mobile
+    ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+  const res = await fetch(`${SCRAPINGANT_URL}?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      "Ant-User-Agent": userAgent,
+    },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    return { html: null, status: res.status, errorText };
+  }
+  const html = await res.text();
+  return { html: html && html.length > 500 ? html : null, status: res.status };
+}
+
+async function scrapingAntFetchWithRetry(
+  url: string,
+  apiKey: string,
+  maxAttempts = 4,
+): Promise<string | null> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const mobile = attempt % 2 === 0;
+    try {
+      const { html, status, errorText } = await scrapingAntFetch(url, apiKey, { mobile });
+      if (html) {
+        if (attempt > 1) {
+          console.log(`scrapingant ${url} succeeded on attempt ${attempt} (mobile=${mobile})`);
+        }
+        return html;
+      }
+      lastError = `status_${status}: ${(errorText ?? "").slice(0, 300)}`;
+      console.warn(`scrapingant attempt ${attempt}/${maxAttempts} ${url} -> ${lastError}`);
+      // Hard-fail on auth/quota/payment — fall through to next provider
+      // 422 = domain blocked on free plan (FanDuel is blocked, requires paid tier)
+      if ([400, 401, 402, 403, 404, 422].includes(status)) return null;
+      // 423 = rate-limited, 5xx = retryable
+      if (attempt < maxAttempts) {
+        const base = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s, 8s
+        const jitter = Math.floor(Math.random() * 500);
+        await sleep(base + jitter);
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      console.warn(`scrapingant attempt ${attempt}/${maxAttempts} ${url} threw: ${lastError}`);
+      if (attempt < maxAttempts) {
+        await sleep(1000 * Math.pow(2, attempt - 1));
+      }
+    }
+  }
+  console.error(`scrapingant exhausted ${maxAttempts} attempts for ${url}: ${lastError}`);
+  return null;
+}
+
+/**
  * Strip HTML tags and collapse whitespace into a markdown-ish text blob
  * suitable for the AI parser. We don't need real markdown — Gemini reads
  * cleaned text just fine.
@@ -328,25 +405,48 @@ function htmlToText(html: string): string {
 }
 
 /**
- * Unified scraper: tries ScrapingBee first (handles JS + anti-bot well),
- * falls back to Firecrawl. Returns text/markdown for the AI parser.
+ * Unified scraper: tries ScrapingAnt first (free 10k credits/mo + residential
+ * proxy + headless Chrome), falls back to ScrapingBee, then Firecrawl.
+ * Returns text/markdown for the AI parser.
  */
 async function scrapePage(
   url: string,
+  scrapingAntKey: string | undefined,
   scrapingBeeKey: string | undefined,
   firecrawlKey: string | undefined,
 ): Promise<string | null> {
+  if (scrapingAntKey) {
+    const t0 = Date.now();
+    const html = await scrapingAntFetchWithRetry(url, scrapingAntKey);
+    if (html) {
+      const text = htmlToText(html);
+      if (text.length > 200) {
+        console.log(`[scanner] ${url} via scrapingant in ${Date.now() - t0}ms (${text.length} chars)`);
+        return text;
+      }
+      console.warn(`scrapingant ${url}: html present but text too short (${text.length})`);
+    }
+  }
   if (scrapingBeeKey) {
+    const t0 = Date.now();
     const html = await scrapingBeeFetchWithRetry(url, scrapingBeeKey);
     if (html) {
       const text = htmlToText(html);
-      if (text.length > 200) return text;
+      if (text.length > 200) {
+        console.log(`[scanner] ${url} via scrapingbee in ${Date.now() - t0}ms (${text.length} chars)`);
+        return text;
+      }
       console.warn(`scrapingbee ${url}: html present but text too short (${text.length})`);
     }
   }
   if (firecrawlKey) {
-    console.log(`falling back to firecrawl for ${url}`);
-    return await firecrawlScrapeWithRetry(url, firecrawlKey);
+    const t0 = Date.now();
+    console.log(`[scanner] falling back to firecrawl for ${url}`);
+    const md = await firecrawlScrapeWithRetry(url, firecrawlKey);
+    if (md) {
+      console.log(`[scanner] ${url} via firecrawl in ${Date.now() - t0}ms (${md.length} chars)`);
+    }
+    return md;
   }
   return null;
 }
@@ -440,10 +540,11 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const scrapingAntKey = Deno.env.get("SCRAPINGANT_API_KEY");
     const scrapingBeeKey = Deno.env.get("SCRAPINGBEE_API_KEY");
     const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!scrapingBeeKey && !firecrawlKey) {
-      throw new Error("Neither SCRAPINGBEE_API_KEY nor FIRECRAWL_API_KEY configured");
+    if (!scrapingAntKey && !scrapingBeeKey && !firecrawlKey) {
+      throw new Error("No scraper API key configured (need SCRAPINGANT_API_KEY, SCRAPINGBEE_API_KEY, or FIRECRAWL_API_KEY)");
     }
 
     let scraped = 0;
@@ -467,7 +568,7 @@ Deno.serve(async (req) => {
       if (succeededLogical.has(logical)) continue;
 
       try {
-        const md = await scrapePage(url, scrapingBeeKey, firecrawlKey);
+        const md = await scrapePage(url, scrapingAntKey, scrapingBeeKey, firecrawlKey);
         if (!md) {
           errors.push(`scrape_empty:${url}`);
           continue;
