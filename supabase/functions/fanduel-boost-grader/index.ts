@@ -17,13 +17,50 @@ const EDGE_THRESHOLD = 0.04; // 4% fade edge per leg
 const MIN_FADE_LEGS = 2;
 
 // ---------- shared helpers (inlined from ocr-prop-scan) ----------
+const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
+function stripDiacritics(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
 function depunct(name: string): string {
-  return name.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  return stripDiacritics(String(name ?? ""))
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function nameTokens(name: string): string[] {
+  return depunct(name).split(" ").filter((t) => t && !NAME_SUFFIXES.has(t));
+}
+function canonicalName(name: string): string {
+  return nameTokens(name).join(" ");
 }
 function lastNameInitialKey(name: string): string | null {
-  const tokens = depunct(name).split(" ").filter(Boolean);
+  const tokens = nameTokens(name);
   if (tokens.length < 2) return null;
   return `${tokens[0][0]}|${tokens[tokens.length - 1]}`;
+}
+function lastNameOnly(name: string): string | null {
+  const tokens = nameTokens(name);
+  if (tokens.length === 0) return null;
+  return tokens[tokens.length - 1];
+}
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1]
+        ? prev
+        : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
 }
 function americanToImpliedProb(odds: number | null | undefined): number | null {
   if (odds == null || Number.isNaN(odds)) return null;
@@ -46,29 +83,71 @@ function combineAmericanOdds(legs: number[]): number {
   return Math.round(-100 / (decimal - 1));
 }
 
-// Map boost market_type → unified_props prop_type
+// Normalize raw market strings into a canonical key, then map to unified_props prop_type.
+function normalizeMarketKey(raw: string): string {
+  return String(raw ?? "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\+/g, " and ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(made|3pt|3 pt|3 pointers|3pointers|three pointers|threes made)\b/g, "threes")
+    .replace(/\bpts\b/g, "points")
+    .replace(/\breb\b/g, "rebounds")
+    .replace(/\bast\b/g, "assists")
+    .replace(/\bstl\b/g, "steals")
+    .replace(/\bblk\b/g, "blocks")
+    .replace(/\bso\b/g, "strikeouts")
+    .replace(/\bks\b/g, "strikeouts")
+    .replace(/\btb\b/g, "total bases")
+    .replace(/\bsog\b/g, "shots on goal")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const MARKET_MAP: Record<string, string> = {
-  player_points: "player_points",
-  player_rebounds: "player_rebounds",
-  player_assists: "player_assists",
-  player_threes: "player_threes",
-  player_threes_made: "player_threes",
-  player_pra: "player_points_rebounds_assists",
-  player_points_rebounds_assists: "player_points_rebounds_assists",
-  player_points_rebounds: "player_points_rebounds",
-  player_points_assists: "player_points_assists",
-  player_rebounds_assists: "player_rebounds_assists",
-  player_steals: "player_steals",
-  player_blocks: "player_blocks",
-  player_shots_on_goal: "player_shots_on_goal",
-  player_goals: "player_goals",
-  player_hits: "batter_hits",
-  hits: "batter_hits",
-  player_total_bases: "batter_total_bases",
-  total_bases: "batter_total_bases",
-  player_strikeouts: "pitcher_strikeouts",
-  strikeouts: "pitcher_strikeouts",
-  pitcher_strikeouts: "pitcher_strikeouts",
+  // NBA singles
+  "player points": "player_points",
+  "points": "player_points",
+  "player rebounds": "player_rebounds",
+  "rebounds": "player_rebounds",
+  "player assists": "player_assists",
+  "assists": "player_assists",
+  "player threes": "player_threes",
+  "threes": "player_threes",
+  "player steals": "player_steals",
+  "steals": "player_steals",
+  "player blocks": "player_blocks",
+  "blocks": "player_blocks",
+  // NBA combos
+  "player pra": "player_points_rebounds_assists",
+  "pra": "player_points_rebounds_assists",
+  "points rebounds and assists": "player_points_rebounds_assists",
+  "player points rebounds and assists": "player_points_rebounds_assists",
+  "player points rebounds assists": "player_points_rebounds_assists",
+  "points and rebounds": "player_points_rebounds",
+  "player points and rebounds": "player_points_rebounds",
+  "player points rebounds": "player_points_rebounds",
+  "points and assists": "player_points_assists",
+  "player points and assists": "player_points_assists",
+  "player points assists": "player_points_assists",
+  "rebounds and assists": "player_rebounds_assists",
+  "player rebounds and assists": "player_rebounds_assists",
+  "player rebounds assists": "player_rebounds_assists",
+  // NHL
+  "player shots on goal": "player_shots_on_goal",
+  "shots on goal": "player_shots_on_goal",
+  "player goals": "player_goals",
+  "goals": "player_goals",
+  // MLB
+  "player hits": "batter_hits",
+  "hits": "batter_hits",
+  "batter hits": "batter_hits",
+  "player total bases": "batter_total_bases",
+  "total bases": "batter_total_bases",
+  "batter total bases": "batter_total_bases",
+  "player strikeouts": "pitcher_strikeouts",
+  "strikeouts": "pitcher_strikeouts",
+  "pitcher strikeouts": "pitcher_strikeouts",
 };
 
 function flipSide(side: string | null): "over" | "under" | null {
@@ -87,35 +166,69 @@ async function findUnifiedMatch(
   today: string,
 ) {
   if (!playerName) return null;
-  const target = depunct(playerName);
+  const target = canonicalName(playerName);
   const { data: candidates } = await supabase
     .from("unified_props")
     .select("id,player_name,prop_type,current_line,over_price,under_price,event_id,commence_time")
     .eq("prop_type", unifiedPropType)
     .gte("commence_time", today)
-    .limit(400);
+    .limit(800);
 
   if (!candidates || candidates.length === 0) return null;
-  const sameLine = (m: any) => Math.abs(Number(m.current_line) - Number(line)) < 0.5;
 
-  let pool = candidates.filter((m: any) => depunct(m.player_name) === target);
-  if (pool.length > 0) return pool.find(sameLine) ?? pool[0];
+  // Tolerant line picking: prefer exact, then within 0.5, then within 1.0,
+  // then any (closest by absolute distance).
+  const closest = (pool: any[]) => {
+    if (pool.length === 0) return null;
+    const exact = pool.find((m) => Math.abs(Number(m.current_line) - Number(line)) < 0.01);
+    if (exact) return exact;
+    const within05 = pool
+      .filter((m) => Math.abs(Number(m.current_line) - Number(line)) <= 0.5)
+      .sort((a, b) => Math.abs(Number(a.current_line) - line) - Math.abs(Number(b.current_line) - line));
+    if (within05.length > 0) return within05[0];
+    const within1 = pool
+      .filter((m) => Math.abs(Number(m.current_line) - Number(line)) <= 1.0)
+      .sort((a, b) => Math.abs(Number(a.current_line) - line) - Math.abs(Number(b.current_line) - line));
+    if (within1.length > 0) return within1[0];
+    return [...pool].sort(
+      (a, b) => Math.abs(Number(a.current_line) - line) - Math.abs(Number(b.current_line) - line),
+    )[0];
+  };
 
+  // 1. Exact canonical match (suffix/diacritic insensitive).
+  let pool = candidates.filter((m: any) => canonicalName(m.player_name) === target);
+  if (pool.length > 0) return closest(pool);
+
+  // 2. First-initial + last-name match.
   const key = lastNameInitialKey(playerName);
   if (key) {
     pool = candidates.filter((m: any) => lastNameInitialKey(m.player_name) === key);
-    if (pool.length > 0) return pool.find(sameLine) ?? pool[0];
+    if (pool.length > 0) return closest(pool);
   }
 
-  const tokens = target.split(" ").filter(Boolean);
-  if (tokens.length > 0) {
-    const last = tokens[tokens.length - 1];
-    pool = candidates.filter((m: any) => {
-      const t = depunct(m.player_name).split(" ").filter(Boolean);
-      return t.length > 0 && t[t.length - 1] === last;
-    });
-    if (pool.length === 1) return pool[0];
+  // 3. Unique last-name match.
+  const last = lastNameOnly(playerName);
+  if (last) {
+    pool = candidates.filter((m: any) => lastNameOnly(m.player_name) === last);
+    if (pool.length === 1) return closest(pool);
+    if (pool.length > 1) {
+      // Tie-break by closeness on full canonical name.
+      const ranked = pool
+        .map((m: any) => ({ m, d: levenshtein(canonicalName(m.player_name), target) }))
+        .sort((a, b) => a.d - b.d);
+      if (ranked.length > 0 && ranked[0].d <= 2 && (ranked.length === 1 || ranked[1].d > ranked[0].d)) {
+        return closest([ranked[0].m]);
+      }
+    }
   }
+
+  // 4. Fuzzy fallback: closest canonical name within edit distance ≤ 2.
+  const fuzzy = candidates
+    .map((m: any) => ({ m, d: levenshtein(canonicalName(m.player_name), target) }))
+    .filter((r: any) => r.d <= 2)
+    .sort((a: any, b: any) => a.d - b.d);
+  if (fuzzy.length > 0) return closest([fuzzy[0].m]);
+
   return null;
 }
 
@@ -157,7 +270,8 @@ async function gradeOneLeg(supabase: any, leg: any, boostSport: string | null) {
   const fadeSide = flipSide(originalSide);
   const sport = (leg.sport ?? boostSport ?? "").toLowerCase() || null;
   const rawMarket = String(leg.market_type ?? "").toLowerCase();
-  const unifiedPropType = MARKET_MAP[rawMarket] ?? null;
+  const normalizedMarket = normalizeMarketKey(rawMarket);
+  const unifiedPropType = MARKET_MAP[normalizedMarket] ?? MARKET_MAP[rawMarket] ?? null;
 
   const baseLeg = {
     sport,
