@@ -173,4 +173,11 @@ Times are ET-aligned to the existing pipeline (per the project's pipeline-orches
 - A web UI for browsing past boost fades — everything lives in Telegram and the DB.
 - DraftKings / Hard Rock boost lobbies — same architecture, different scrape URL, can be added once FanDuel is dialed in.
 
-Approve and I'll build all three functions, the migration, and the cron jobs.
+## Status — built ✅
+
+- `fanduel-boost-scanner` — scrapes FanDuel `/promos` and `/boosts`, parses every boost, dedups via `boost_hash`.
+- `fanduel-boost-grader` — flips each leg, looks up real market in `unified_props`, computes fade edge from L10 logs, builds combined fade ticket.
+- `fanduel-boost-telegram` — posts the ticket to the admin Telegram via `bot-send-telegram`. Skips silently when no clean fade (set `?include_skips=1` to forward those too).
+- Cron schedules: scanner every :00/:30, grader at :01/:31, sender at :02/:32, hours 9am–11pm ET.
+
+Tables: `fanduel_boosts` and `fanduel_boost_fades` (already migrated).
