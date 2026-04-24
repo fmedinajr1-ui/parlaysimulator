@@ -270,7 +270,8 @@ async function gradeOneLeg(supabase: any, leg: any, boostSport: string | null) {
   const fadeSide = flipSide(originalSide);
   const sport = (leg.sport ?? boostSport ?? "").toLowerCase() || null;
   const rawMarket = String(leg.market_type ?? "").toLowerCase();
-  const unifiedPropType = MARKET_MAP[rawMarket] ?? null;
+  const normalizedMarket = normalizeMarketKey(rawMarket);
+  const unifiedPropType = MARKET_MAP[normalizedMarket] ?? MARKET_MAP[rawMarket] ?? null;
 
   const baseLeg = {
     sport,
