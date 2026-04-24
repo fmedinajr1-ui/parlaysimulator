@@ -1,97 +1,176 @@
-## What's actually broken
+## What this builds
 
-Looking at the live data, every prop your bot scanned today says `no_match_in_unified_props`. That's why the pool is empty and it can't build a parlay. Three concrete bugs:
+A fully automated **Boost Fader** that runs on a cron (no screenshots, no user input). It:
 
-1. **Prop-type names don't line up.** Your market table (`unified_props`) stores `player_points`, `player_rebounds_assists`, `player_threes`, etc. The scanner normalizes OCR text to `points`, `ra`, `threes`. They never match.
-2. **Player names don't line up.** PrizePicks renders `CJ McCollum`. The market data has `C.J. McCollum`. The current `ilike '%CJ McCollum%'` returns zero rows because of the periods.
-3. **Junk prop types from PrizePicks get passed through.** Things like `2_pt_made`, `fg_made`, `rebs+asts` aren't markets that exist in `unified_props` at all — they should either be mapped to a real market or dropped.
+1. Scrapes the FanDuel "Boosts" lobby (the page in your screenshot — "The Hundred", "First Frame Fever", odds-boost cards) using the existing Firecrawl integration.
+2. Parses each boost into structured legs: `(player or team, market, line, side, sport, game)`.
+3. For every leg, looks up the **real, un-boosted** market in `unified_props` (we already store live FanDuel + DraftKings lines there).
+4. Computes the fair probability per leg from L10 game logs / team trends, then derives the edge on the **opposite** side (the fade).
+5. Builds the inverted "fade ticket" with combined American odds.
+6. Posts the fade ticket to Telegram automatically — every fresh boost gets one alert, deduped so we don't spam the same boost twice.
 
-On top of that, you said: *"we should know if it's going to be under or over."* Right now the scanner just takes whatever side appeared on the screen. It never tells you to flip from Over to Under when Under has the edge.
+You stay completely hands-off. Open Telegram → see the fade picks for today's FanDuel boosts.
 
-## The fix
-
-### 1. Prop-type alias map (matching layer)
-
-Add a single source of truth that maps every short name **and** every PrizePicks/Underdog quirk to the canonical Odds-API names:
+## How it works (end-to-end)
 
 ```text
-points              → player_points
-rebounds            → player_rebounds
-assists             → player_assists
-threes              → player_threes
-pra                 → player_points_rebounds_assists
-pr                  → player_points_rebounds
-pa                  → player_points_assists
-ra / rebs+asts      → player_rebounds_assists
-2_pt_made / fg_made → DROP (no liquid market) → flag prop as "unsupported_market"
-shots_on_goal       → player_shots_on_goal
-hits / total_bases  → unchanged (MLB)
+                 ┌──────────────────────────────────────┐
+   Cron (every   │  fanduel-boost-scanner (NEW)         │
+   30 min)  ───▶ │  1. Firecrawl FanDuel /boosts page   │
+                 │  2. AI parser → structured legs       │
+                 │  3. Save to fanduel_boosts table      │
+                 └──────────────┬───────────────────────┘
+                                │ new boost rows
+                                ▼
+                 ┌──────────────────────────────────────┐
+                 │  fanduel-boost-grader (NEW)          │
+                 │  For each new boost:                 │
+                 │   • match each leg to unified_props  │
+                 │   • pull L10 from *_player_game_logs │
+                 │   • compute fade edge per leg        │
+                 │   • drop legs with no edge / bad data│
+                 │   • build combined fade ticket       │
+                 │  Save to fanduel_boost_fades table   │
+                 └──────────────┬───────────────────────┘
+                                │ ticket ready
+                                ▼
+                 ┌──────────────────────────────────────┐
+                 │  fanduel-boost-telegram (NEW)        │
+                 │  Send Telegram message via existing  │
+                 │  connector gateway. Dedup by         │
+                 │  boost_hash so each boost is sent    │
+                 │  exactly once.                       │
+                 └──────────────────────────────────────┘
 ```
 
-Anything still unmatched after the alias pass gets dropped from the pool with `block_reason="unsupported_market"` instead of polluting the scan list.
+The three functions are split so each can be re-run independently when debugging.
 
-### 2. Smarter player-name match
+## What you'll see in Telegram
 
-Strip punctuation and collapse to lowercase tokens on **both sides** before comparing, so `CJ McCollum` matches `C.J. McCollum`. Match strategy, in order:
-- exact lowercased+depunctuated equality
-- last-name + first-initial fallback (handles "C McCollum" style)
-- only then fall back to `ilike` partial match
+```text
+🚫 FanDuel Boost Fade — "First Frame Fever" 🔥
+Was +1581 → boosted to +1749 ($10 → $184.91)
+Our fade: +740 (4-leg UNDER ticket)
 
-### 3. Auto-pick Over vs Under (the part you really asked for)
+Combined fade edge: +18%
 
-Instead of using whichever side the screenshot showed, for every captured prop the scanner will compute an **edge for both sides** and recommend one:
-
-For each `(player, prop_type, line)` we look up:
-- `over_price` and `under_price` from `unified_props` (the true market)
-- L10 hit rate for both directions from `nba_player_game_logs` / `mlb_player_game_logs`
-- Optional sweet-spot tag
-
-We compute a **fair probability** from L10 (`hits_over / 10`), convert the market odds to **implied probability**, and the side with the bigger `fair_prob − implied_prob` (the **edge**) wins. Threshold: edge ≥ 4%. If neither side clears 4%, the prop is marked `no_edge` and excluded from the parlay pool.
-
-Each captured prop in the pool will store:
-- `recommended_side` (over | under | none)
-- `edge_pct` (e.g. +7.2%)
-- `fair_prob` and `implied_prob`
-- A short `verdict` like *"UNDER 17.5 — L10 hit 7/10, market priced 52%, fair 70%, edge +18%"*
-
-The pool screen and the parlay builder then use `recommended_side` instead of the side the user happened to see on the book.
-
-### 4. Pool & parlay builder updates
-
-- `composite_score` becomes `edge_pct * 10 + l10_hit_bonus + sweet_spot_bonus` so high-edge legs sort first.
-- The parlay builder pulls only props with `edge_pct ≥ 4%` AND `recommended_side` set.
-- `block_reason` reasons get human-friendly: `unsupported_market`, `no_edge`, `no_market_data`, `low_l10_sample`.
-
-### 5. Telegram output gets a clear verdict
-
-Each line in the pool message becomes:
-
-```
-1. James Harden — points UNDER 17.5  ✅ +12% edge
-   ↳ L10 4/10 over · market -110 · fair 60% under
+1. DET @ CIN — UNDER 0.5 1st-Inning Runs (-150)
+   ↳ Last 20 games at this park: 1st-inning runs hit only 38%
+2. MIN @ TB — UNDER 0.5 1st-Inning Runs (-140)
+   ↳ Both starters L5 inning-1 ERA < 2.00
+3. (skipped — LAA @ KC starter ERA too high, no fade edge)
+4. PIT @ MIL — UNDER 0.5 1st-Inning Runs (-135)
+   ↳ MIL starter has 0 first-inning runs allowed L7
 ```
 
-And when the bot can't build a parlay, instead of the confusing `pool_too_small:0`, it will say:
+If a boost is actually fairly priced (no fade edge on enough legs), the bot says so:
 
+```text
+ℹ️ FanDuel Boost "Mammoth Parlay" — looks fair, no clean fade. Skipped.
 ```
-🤔 Couldn't build a parlay yet — only 1 prop has a real edge.
-Send more screenshots or try a different book/sport.
+
+That honesty matters — most boosts are bad, but not all of them.
+
+## Database schema (one migration)
+
+```sql
+create table fanduel_boosts (
+  id uuid primary key default gen_random_uuid(),
+  boost_hash text unique not null,           -- sha256 of (title + legs) for dedup
+  title text not null,                       -- "First Frame Fever"
+  category text,                             -- "MLB Boosts" | "NBA Boosts" | "The Hundred"
+  original_odds integer,                     -- +1581
+  boosted_odds integer not null,             -- +1749
+  pays_text text,                            -- "$10 pays $184.91"
+  legs jsonb not null,                       -- [{sport,market,player_or_team,line,side,game}]
+  raw_text text,                             -- original Firecrawl markdown for debugging
+  scraped_at timestamptz not null default now(),
+  expires_at timestamptz                     -- last game start time
+);
+
+create table fanduel_boost_fades (
+  id uuid primary key default gen_random_uuid(),
+  boost_id uuid not null references fanduel_boosts(id) on delete cascade,
+  fade_legs jsonb not null,                  -- selected fade legs with edge/verdict
+  skipped_legs jsonb not null,               -- legs we couldn't fade (with reason)
+  combined_american_odds integer,
+  combined_fade_edge_pct numeric,
+  verdict text not null,                     -- "fade" | "skip"
+  telegram_sent_at timestamptz,
+  created_at timestamptz not null default now()
+);
 ```
 
-## Files touched
+Both tables get RLS with admin-only read; no user-facing UI required for v1.
 
-- `supabase/functions/ocr-prop-scan/index.ts` — alias map, name normalizer, dual-side edge calculator, new fields in the insert payload
-- `supabase/functions/ocr-pool-build-parlays/index.ts` — filter on `edge_pct`, sort by edge, friendlier reason text
-- `supabase/functions/telegram-prop-scanner/index.ts` — render verdict line with recommended side + edge
-- Schema: a small migration adding `recommended_side`, `edge_pct`, `fair_prob`, `implied_prob`, `verdict` columns to `ocr_scanned_props`
+## Functions
 
-## What you'll see after this ships
+### 1. `fanduel-boost-scanner` (cron, every 30 min during prime hours)
 
-Send the same FanDuel screenshot you sent earlier:
+- Calls Firecrawl on `https://sportsbook.fanduel.com/promos` and `https://sportsbook.fanduel.com/boosts` (Firecrawl handles the JS rendering — same pattern as `sportsbook-props-scraper`).
+- Sends the markdown to Lovable AI (`google/gemini-2.5-flash`) with a tool-call schema that extracts every boost: title, category, pre/post odds, payout text, and an array of legs `{ sport, player_name?, team?, market, line, side, game_description }`.
+- Hashes each boost and inserts into `fanduel_boosts` (dedup on `boost_hash`).
+- Returns count of new boosts captured.
 
-- `2 pt Made` rows for Harden/Mitchell/etc. → silently dropped (unsupported)
-- `points`, `rebounds`, `pra`, `ra` → matched to the real market lines
-- Each prop shows whether Over or Under is the value side, with a percentage edge
-- Parlay builder picks the top-edge legs across distinct games and prints a real ticket
+### 2. `fanduel-boost-grader` (cron, runs 1 min after scanner)
 
-No more `no_match_in_unified_props` on legitimate props, no more empty pools, and the bot tells you which side to bet — not just what was on the screen.
+For each `fanduel_boosts` row that has no `fanduel_boost_fades` entry yet:
+
+- For each leg, **flip** the side (boost says OVER → grade UNDER).
+- Look up the matching market in `unified_props` (existing player-prop matcher from `ocr-prop-scan` — depunct + last-name fallback). For team/game markets (1st-inning runs, team totals, moneylines) extend the matcher to handle `event_id` + market type.
+- Pull L10 from `nba_player_game_logs` / `mlb_player_game_logs` for player props, or use existing `mlb_first_inning_*` / team-trend tables for team-level boosts (we already have first-inning tables — `fetch-hardrock-longshots` uses similar logic).
+- Compute fair-vs-implied edge on the fade side, exactly the same math as `ocr-prop-scan` (`americanToImpliedProb`, `fairOver/fairUnder`, threshold 4%).
+- Drop legs with `low_l10_sample`, `no_market_data`, or `no_edge`.
+- Build the combined American odds from kept fade legs (need at least 2).
+- Save the result with `verdict='fade'` (>=2 fade legs) or `verdict='skip'` (otherwise).
+
+### 3. `fanduel-boost-telegram` (cron, runs 2 min after grader)
+
+- Pulls `fanduel_boost_fades` where `telegram_sent_at IS NULL`.
+- Renders the message (same gateway pattern used by `telegram-prop-scanner` / `bot-send-telegram`).
+- Sends to `TELEGRAM_CHAT_ID` (admin) — later can fan out to subscribers.
+- Stamps `telegram_sent_at` so we never double-send.
+
+### 4. Cron wiring (in the same migration)
+
+Three pg_cron jobs using `pg_net` to invoke each function in sequence:
+
+```sql
+select cron.schedule('fanduel-boost-scan',     '*/30 9-23 * * *', $$ ... call scanner ... $$);
+select cron.schedule('fanduel-boost-grade',    '1,31 9-23 * * *', $$ ... call grader  ... $$);
+select cron.schedule('fanduel-boost-telegram', '2,32 9-23 * * *', $$ ... call sender  ... $$);
+```
+
+Times are ET-aligned to the existing pipeline (per the project's pipeline-orchestration memory).
+
+## Edge cases handled honestly
+
+- **Boost has no comparable real market** (e.g., novelty SGP with rare combos) → mark each impossible leg `no_market_data`, skip.
+- **L10 sample too small** (rookies, just-traded players) → that leg gets `low_l10_sample`, skip — never fade on guesses.
+- **Boost is actually fair** → ticket saved with `verdict='skip'` and a one-line "boost looks fair" Telegram note (optional — togglable so it doesn't spam).
+- **Same boost re-scraped** → `boost_hash` unique constraint silently no-ops the insert.
+- **All-team/no-player boosts** ("Ducks to Win + Mammoth to Win") → match against team moneylines via `fetch-team-moneylines` data; if not gradable, skip.
+
+## Files added
+
+- `supabase/functions/fanduel-boost-scanner/index.ts`
+- `supabase/functions/fanduel-boost-grader/index.ts`
+- `supabase/functions/fanduel-boost-telegram/index.ts`
+- One migration: `fanduel_boosts` + `fanduel_boost_fades` tables, RLS, indexes
+- One insert (project-specific cron URLs + anon key, per the telegram polling pattern): three pg_cron jobs
+
+## Files reused (no edits)
+
+- `unified_props` table (existing FanDuel + DK lines)
+- `nba_player_game_logs`, `mlb_player_game_logs` (existing L10 source)
+- Firecrawl integration (existing `FIRECRAWL_API_KEY`)
+- Telegram connector gateway (existing `TELEGRAM_API_KEY` + `LOVABLE_API_KEY`)
+- Edge-calc math from `ocr-prop-scan` (will be inlined — small helper, not worth a shared module)
+
+## What's NOT in v1 (to keep scope tight)
+
+- Fan-out to multiple Telegram subscribers (admin chat only first; subscriber broadcast is a 5-min follow-up once the math is trusted).
+- A web UI for browsing past boost fades — everything lives in Telegram and the DB.
+- DraftKings / Hard Rock boost lobbies — same architecture, different scrape URL, can be added once FanDuel is dialed in.
+
+Approve and I'll build all three functions, the migration, and the cron jobs.
