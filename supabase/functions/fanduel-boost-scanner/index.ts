@@ -362,7 +362,8 @@ async function scrapingAntFetchWithRetry(
       lastError = `status_${status}: ${(errorText ?? "").slice(0, 300)}`;
       console.warn(`scrapingant attempt ${attempt}/${maxAttempts} ${url} -> ${lastError}`);
       // Hard-fail on auth/quota/payment — fall through to next provider
-      if ([400, 401, 402, 403, 404].includes(status)) return null;
+      // 422 = domain blocked on free plan (FanDuel is blocked, requires paid tier)
+      if ([400, 401, 402, 403, 404, 422].includes(status)) return null;
       // 423 = rate-limited, 5xx = retryable
       if (attempt < maxAttempts) {
         const base = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s, 8s
