@@ -316,23 +316,39 @@ async function scrapingAntFetch(
   apiKey: string,
   opts?: { mobile?: boolean },
 ): Promise<{ html: string | null; status: number; errorText?: string }> {
+  // Human-like dwell + scroll to defeat FanDuel's bot detector. The 423
+  // "browser detected" response means Akamai/PerimeterX flagged the headless
+  // session — extending wait time and simulating scroll greatly reduces this.
+  const jsSnippet = `
+    (async () => {
+      await new Promise(r => setTimeout(r, 2500));
+      window.scrollTo(0, document.body.scrollHeight / 3);
+      await new Promise(r => setTimeout(r, 1500));
+      window.scrollTo(0, document.body.scrollHeight / 2);
+      await new Promise(r => setTimeout(r, 1500));
+    })();
+  `.trim();
+  const jsSnippetB64 = btoa(jsSnippet);
+
   const params = new URLSearchParams({
     url,
     "x-api-key": apiKey,
     browser: "true",
     proxy_type: "residential",
     proxy_country: "US",
-    return_text: "false", // we want HTML; we strip tags ourselves
-    wait_for_selector: "body",
+    return_text: "false",
+    wait_for_selector: "main, [data-testid], .promo, .boost, a[href*='boost'], a[href*='promo']",
+    js_snippet: jsSnippetB64,
   });
   const userAgent = opts?.mobile
-    ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-    : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
+    : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
   const res = await fetch(`${SCRAPINGANT_URL}?${params.toString()}`, {
     method: "GET",
     headers: {
       "Ant-User-Agent": userAgent,
+      "Ant-Accept-Language": "en-US,en;q=0.9",
     },
   });
   if (!res.ok) {
