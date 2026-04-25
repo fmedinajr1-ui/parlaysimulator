@@ -18,6 +18,78 @@ const FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape";
 const SCRAPINGBEE_URL = "https://app.scrapingbee.com/api/v1/";
 const SCRAPINGANT_URL = "https://api.scrapingant.com/v2/general";
 
+/**
+ * Self-hosted Playwright + stealth worker. Deployed separately (see
+ * fanduel-worker/ in the repo). When `FANDUEL_WORKER_URL` is set we try it
+ * first — it's the only path that reliably bypasses Akamai for FanDuel.
+ * Returns raw HTML on success, null on failure.
+ */
+async function workerFetch(
+  url: string,
+  workerUrl: string,
+  workerSecret: string,
+): Promise<{ html: string | null; status: number; errorText?: string }> {
+  const endpoint = workerUrl.replace(/\/+$/, "") + "/scrape";
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${workerSecret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url, waitMs: 6000 }),
+      // Worker can take 8-15s for SPA hydration + scroll; give it room.
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) {
+      const errorText = await res.text();
+      return { html: null, status: res.status, errorText };
+    }
+    const json = await res.json();
+    if (!json?.ok || typeof json.html !== "string" || json.html.length < 500) {
+      return {
+        html: null,
+        status: json?.status ?? 0,
+        errorText: `worker_${json?.error ?? "empty_html"}`,
+      };
+    }
+    return { html: json.html, status: 200 };
+  } catch (e) {
+    return {
+      html: null,
+      status: 0,
+      errorText: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+async function workerFetchWithRetry(
+  url: string,
+  workerUrl: string,
+  workerSecret: string,
+  maxAttempts = 3,
+): Promise<string | null> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { html, status, errorText } = await workerFetch(url, workerUrl, workerSecret);
+    if (html) {
+      if (attempt > 1) {
+        console.log(`worker ${url} succeeded on attempt ${attempt}`);
+      }
+      return html;
+    }
+    lastError = `status_${status}: ${(errorText ?? "").slice(0, 300)}`;
+    console.warn(`worker attempt ${attempt}/${maxAttempts} ${url} -> ${lastError}`);
+    // 401 = bad secret, 400 = bad url; both non-retryable
+    if ([400, 401].includes(status)) return null;
+    if (attempt < maxAttempts) {
+      await sleep(1500 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 500));
+    }
+  }
+  console.error(`worker exhausted ${maxAttempts} attempts for ${url}: ${lastError}`);
+  return null;
+}
+
 // Primary + fallback scrape targets. We try them in order and stop once we've
 // gotten usable markdown for each "logical" page. Multiple state subdomains
 // help when one regional edge is geo-blocking the Firecrawl proxy.
@@ -411,16 +483,30 @@ function htmlToText(html: string): string {
 }
 
 /**
- * Unified scraper: tries ScrapingAnt first (free 10k credits/mo + residential
- * proxy + headless Chrome), falls back to ScrapingBee, then Firecrawl.
- * Returns text/markdown for the AI parser.
+ * Unified scraper: tries the self-hosted Playwright stealth worker first
+ * (the only path that reliably bypasses FanDuel's Akamai), then falls back
+ * to ScrapingAnt → ScrapingBee → Firecrawl. Returns text for the AI parser.
  */
 async function scrapePage(
   url: string,
+  workerUrl: string | undefined,
+  workerSecret: string | undefined,
   scrapingAntKey: string | undefined,
   scrapingBeeKey: string | undefined,
   firecrawlKey: string | undefined,
 ): Promise<string | null> {
+  if (workerUrl && workerSecret) {
+    const t0 = Date.now();
+    const html = await workerFetchWithRetry(url, workerUrl, workerSecret);
+    if (html) {
+      const text = htmlToText(html);
+      if (text.length > 200) {
+        console.log(`[scanner] ${url} via worker in ${Date.now() - t0}ms (${text.length} chars)`);
+        return text;
+      }
+      console.warn(`worker ${url}: html present but text too short (${text.length})`);
+    }
+  }
   if (scrapingAntKey) {
     const t0 = Date.now();
     const html = await scrapingAntFetchWithRetry(url, scrapingAntKey);
@@ -546,11 +632,13 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const workerUrl = Deno.env.get("FANDUEL_WORKER_URL");
+    const workerSecret = Deno.env.get("FANDUEL_WORKER_SECRET");
     const scrapingAntKey = Deno.env.get("SCRAPINGANT_API_KEY");
     const scrapingBeeKey = Deno.env.get("SCRAPINGBEE_API_KEY");
     const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!scrapingAntKey && !scrapingBeeKey && !firecrawlKey) {
-      throw new Error("No scraper API key configured (need SCRAPINGANT_API_KEY, SCRAPINGBEE_API_KEY, or FIRECRAWL_API_KEY)");
+    if (!(workerUrl && workerSecret) && !scrapingAntKey && !scrapingBeeKey && !firecrawlKey) {
+      throw new Error("No scraper configured (need FANDUEL_WORKER_URL+SECRET, SCRAPINGANT_API_KEY, SCRAPINGBEE_API_KEY, or FIRECRAWL_API_KEY)");
     }
 
     let scraped = 0;
@@ -574,7 +662,7 @@ Deno.serve(async (req) => {
       if (succeededLogical.has(logical)) continue;
 
       try {
-        const md = await scrapePage(url, scrapingAntKey, scrapingBeeKey, firecrawlKey);
+        const md = await scrapePage(url, workerUrl, workerSecret, scrapingAntKey, scrapingBeeKey, firecrawlKey);
         if (!md) {
           errors.push(`scrape_empty:${url}`);
           continue;
