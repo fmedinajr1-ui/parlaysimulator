@@ -316,29 +316,19 @@ async function scrapingAntFetch(
   apiKey: string,
   opts?: { mobile?: boolean },
 ): Promise<{ html: string | null; status: number; errorText?: string }> {
-  // Human-like dwell + scroll to defeat FanDuel's bot detector. The 423
-  // "browser detected" response means Akamai/PerimeterX flagged the headless
-  // session — extending wait time and simulating scroll greatly reduces this.
-  const jsSnippet = `
-    (async () => {
-      await new Promise(r => setTimeout(r, 2500));
-      window.scrollTo(0, document.body.scrollHeight / 3);
-      await new Promise(r => setTimeout(r, 1500));
-      window.scrollTo(0, document.body.scrollHeight / 2);
-      await new Promise(r => setTimeout(r, 1500));
-    })();
-  `.trim();
-  const jsSnippetB64 = btoa(jsSnippet);
-
+  // FanDuel's Akamai bot detector flags headless Chrome with JS rendering
+  // (status 423 "browser detected"). ScrapingAnt's `return_page_source=true`
+  // mode uses the real browser session WITHOUT executing JS, which has a
+  // much lower detection rate. The /promos and /boosts pages are SSR'd
+  // enough to extract boost names + odds. Residential US IPs minimize the
+  // regional/proxy fingerprint.
   const params = new URLSearchParams({
     url,
     "x-api-key": apiKey,
     browser: "true",
+    return_page_source: "true", // raw HTML from the browser, no JS render
     proxy_type: "residential",
     proxy_country: "US",
-    return_text: "false",
-    wait_for_selector: "main, [data-testid], .promo, .boost, a[href*='boost'], a[href*='promo']",
-    js_snippet: jsSnippetB64,
   });
   const userAgent = opts?.mobile
     ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
