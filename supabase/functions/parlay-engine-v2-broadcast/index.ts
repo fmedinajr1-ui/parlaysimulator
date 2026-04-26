@@ -417,7 +417,12 @@ Deno.serve(async (req) => {
         errors.push(`send_failed:${p.id}:${res.error}`);
       } else {
         await sb.from("bot_parlay_broadcasts").insert({
-          parlay_id: p.id, chat_id: chatId, telegram_message_id: res.message_id ?? null,
+          parlay_id: p.id,
+          chat_id: chatId,
+          telegram_message_id: res.message_id ?? null,
+          // Stamp the parlay's run-date so the Telegram→parlay mapping is
+          // self-verifying without a join. See mem://logic/parlay/broadcast-mapping.
+          parlay_date: p.parlay_date,
         });
         sent += 1;
       }
