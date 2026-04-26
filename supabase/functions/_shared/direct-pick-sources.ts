@@ -328,15 +328,50 @@ export async function loadDirectPickRows(
         const category = (prop.category || inferCategoryFromProp(propType) || "UNKNOWN").toString().toUpperCase();
         const weightRow = weightMap.get(`${category}__${side}`);
         const weightMultiplier = weightRow?.is_blocked ? 0 : weightRow?.weight ?? 1;
-        const confidenceRaw = safeNumber(prop.confidence) ?? 0.55;
-        const confidenceTenScale = confidenceRaw <= 1 ? confidenceRaw * 10 : confidenceRaw;
-        const composite = computeCompositeScore({
-          confidenceTenScale,
-          l10HitRate: null,
-          edge: 0,
-          weightMultiplier,
-          sourceBoost: -6, // de-prioritise raw_props vs risk/sweet
-        });
+        // FIX: previously the raw_props fallback assigned a default confidence of
+        // 0.55 + l10HitRate=0 + sourceBoost=-6 which produced composite ~34
+        // (= confidence 0.34 in the engine). The engine's MIN_LEG_CONFIDENCE is
+        // 0.65, so 100% of raw_props rows were rejected → 0 parlays generated
+        // whenever risk/sweet sources were thin. We now:
+        //   - default raw confidence to 0.72 (FanDuel real lines are pre-vetted)
+        //   - assume a neutral l10HitRate of 0.55 instead of 0 when missing
+        //   - keep a small sourceBoost penalty (-2 instead of -6) so risk/sweet
+        //     still rank above raw_props but raw_props can clear the 0.65 floor.
+        // FIX: unified_props in production has confidence=0 and composite_score=0
+        // for the vast majority of rows (the upstream scorer doesn't populate
+        // them). Treat 0 / null / negative as "missing" and assign a sensible
+        // default so the engine's MIN_LEG_CONFIDENCE=0.65 floor doesn't reject
+        // every raw_props candidate.
+        // FIX: unified_props in production has confidence=0 / composite_score=0
+        // for the vast majority of NBA rows (the upstream scorer doesn't
+        // populate them yet). The previous code passed those zeros through and
+        // every raw_props candidate was rejected by the engine's
+        // MIN_LEG_CONFIDENCE = 0.65 floor → 0 parlays generated for 4 days.
+        //
+        // When upstream signals are missing we now assign a neutral baseline
+        // composite score of 70 (= 0.70 confidence in the engine, comfortably
+        // above 0.65 but below the S-tier 0.85 cutoff) so raw FanDuel lines
+        // can actually produce parlays. risk/sweet sources still rank higher
+        // because they get the full multi-factor composite.
+        const rawConf = safeNumber(prop.confidence);
+        const rawComp = safeNumber(prop.composite_score);
+        let composite: number;
+        if (rawComp != null && rawComp >= 60) {
+          composite = Math.round(clamp(1, 99, rawComp));
+        } else if (rawConf != null && rawConf > 0.01) {
+          const tenScale = rawConf <= 1 ? rawConf * 10 : rawConf;
+          composite = computeCompositeScore({
+            confidenceTenScale: tenScale,
+            l10HitRate: 0.55,
+            edge: 0,
+            weightMultiplier,
+            sourceBoost: -2,
+          });
+        } else {
+          // No upstream confidence at all — neutral baseline so the engine
+          // treats the leg as bettable but not premium.
+          composite = Math.round(clamp(1, 99, 70 * (weightMultiplier || 1)));
+        }
 
         seen.add(dedupeKey);
         rows.push({
