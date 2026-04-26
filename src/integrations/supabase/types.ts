@@ -2291,6 +2291,44 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_signal_broadcasts: {
+        Row: {
+          alert_date: string
+          alert_id: string
+          chat_id: string
+          id: string
+          message_id: number | null
+          sent_at: string
+          signal_type: string
+        }
+        Insert: {
+          alert_date: string
+          alert_id: string
+          chat_id: string
+          id?: string
+          message_id?: number | null
+          sent_at?: string
+          signal_type: string
+        }
+        Update: {
+          alert_date?: string
+          alert_id?: string
+          chat_id?: string
+          id?: string
+          message_id?: number | null
+          sent_at?: string
+          signal_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_signal_broadcasts_alert_id_fkey"
+            columns: ["alert_id"]
+            isOneToOne: false
+            referencedRelation: "fanduel_prediction_alerts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_stake_config: {
         Row: {
           bankroll_doubler_stake: number
@@ -12908,6 +12946,27 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_alert_dedupe: {
+        Row: {
+          created_at: string
+          dedupe_key: string
+          expires_at: string
+          signal_type: string
+        }
+        Insert: {
+          created_at?: string
+          dedupe_key: string
+          expires_at: string
+          signal_type: string
+        }
+        Update: {
+          created_at?: string
+          dedupe_key?: string
+          expires_at?: string
+          signal_type?: string
+        }
+        Relationships: []
+      }
       simulation_accuracy: {
         Row: {
           accuracy_rate: number
@@ -15459,6 +15518,60 @@ export type Database = {
         }
         Relationships: []
       }
+      unified_props_snapshot: {
+        Row: {
+          composite_score: number | null
+          confidence: number | null
+          current_line: number | null
+          event_id: string
+          id: string
+          over_price: number | null
+          player_name: string | null
+          prop_type: string | null
+          pvs_tier: string | null
+          recommendation: string | null
+          recommended_side: string | null
+          snapshot_at: string
+          sport: string | null
+          under_price: number | null
+          unified_prop_id: string
+        }
+        Insert: {
+          composite_score?: number | null
+          confidence?: number | null
+          current_line?: number | null
+          event_id: string
+          id?: string
+          over_price?: number | null
+          player_name?: string | null
+          prop_type?: string | null
+          pvs_tier?: string | null
+          recommendation?: string | null
+          recommended_side?: string | null
+          snapshot_at?: string
+          sport?: string | null
+          under_price?: number | null
+          unified_prop_id: string
+        }
+        Update: {
+          composite_score?: number | null
+          confidence?: number | null
+          current_line?: number | null
+          event_id?: string
+          id?: string
+          over_price?: number | null
+          player_name?: string | null
+          prop_type?: string | null
+          pvs_tier?: string | null
+          recommendation?: string | null
+          recommended_side?: string | null
+          snapshot_at?: string
+          sport?: string | null
+          under_price?: number | null
+          unified_prop_id?: string
+        }
+        Relationships: []
+      }
       upcoming_games_cache: {
         Row: {
           activity_score: number | null
@@ -16074,6 +16187,28 @@ export type Database = {
           text_preview: string | null
         }
         Relationships: []
+      }
+      v_signal_broadcast_audit: {
+        Row: {
+          actual_signal_type: string | null
+          alert_created_at: string | null
+          alert_date: string | null
+          alert_id: string | null
+          audit_status: string | null
+          broadcast_id: string | null
+          chat_id: string | null
+          sent_at: string | null
+          signal_type: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_signal_broadcasts_alert_id_fkey"
+            columns: ["alert_id"]
+            isOneToOne: false
+            referencedRelation: "fanduel_prediction_alerts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Functions: {
