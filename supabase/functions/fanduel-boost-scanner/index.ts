@@ -544,12 +544,77 @@ async function scrapePage(
 }
 
 async function aiExtractBoosts(markdown: string): Promise<any[]> {
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) throw new Error("LOVABLE_API_KEY missing");
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!anthropicKey && !lovableKey) {
+    throw new Error("no_ai_key: set ANTHROPIC_API_KEY or LOVABLE_API_KEY");
+  }
 
   const system =
     "You parse sportsbook boost/promo pages into structured data. Treat every odds-boost card, featured parlay, and 'hundred' style multi-leg promo as a boost. Skip pure deposit-bonus ads with no parlay legs. Sports are lowercase (nba, mlb, nfl, nhl, ncaaf, ncaab, etc.). For each leg, extract enough info to look up the corresponding real market line later. American odds only.";
+  const userPrompt = `Extract every boost from this FanDuel promo page markdown. Return structured tool call only.\n\n---\n${markdown.slice(0, 30000)}`;
 
+  // Prefer Anthropic when configured.
+  if (anthropicKey) {
+    try {
+      return await anthropicExtractBoosts(anthropicKey, system, userPrompt);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Hard-fail on quota/auth so we don't burn fallback unnecessarily on retryable errors.
+      if (msg.startsWith("anthropic_credits_exhausted") || msg.startsWith("anthropic_auth")) {
+        if (!lovableKey) throw err;
+        console.warn(`[scanner] anthropic ${msg}, falling back to lovable ai`);
+      } else if (!lovableKey) {
+        throw err;
+      } else {
+        console.warn(`[scanner] anthropic failed (${msg}), falling back to lovable ai`);
+      }
+    }
+  }
+
+  return lovableExtractBoosts(lovableKey!, system, userPrompt);
+}
+
+async function anthropicExtractBoosts(apiKey: string, system: string, userPrompt: string): Promise<any[]> {
+  const toolSchema = BOOST_TOOL_SCHEMA.function;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-haiku-20241022",
+      max_tokens: 8192,
+      system,
+      tools: [
+        {
+          name: toolSchema.name,
+          description: toolSchema.description,
+          input_schema: toolSchema.parameters,
+        },
+      ],
+      tool_choice: { type: "tool", name: toolSchema.name },
+      messages: [{ role: "user", content: userPrompt }],
+    }),
+  });
+
+  if (res.status === 429) throw new Error("anthropic_rate_limited");
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(`anthropic_auth_${res.status}: ${await res.text()}`);
+  }
+  if (res.status === 402) throw new Error("anthropic_credits_exhausted");
+  if (!res.ok) throw new Error(`anthropic_${res.status}: ${await res.text()}`);
+
+  const data = await res.json();
+  const toolUse = (data.content ?? []).find((b: any) => b.type === "tool_use");
+  if (!toolUse) return [];
+  const input = toolUse.input ?? {};
+  return Array.isArray(input.boosts) ? input.boosts : [];
+}
+
+async function lovableExtractBoosts(apiKey: string, system: string, userPrompt: string): Promise<any[]> {
   const res = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -557,10 +622,7 @@ async function aiExtractBoosts(markdown: string): Promise<any[]> {
       model: AI_MODEL,
       messages: [
         { role: "system", content: system },
-        {
-          role: "user",
-          content: `Extract every boost from this FanDuel promo page markdown. Return structured tool call only.\n\n---\n${markdown.slice(0, 30000)}`,
-        },
+        { role: "user", content: userPrompt },
       ],
       tools: [BOOST_TOOL_SCHEMA],
       tool_choice: { type: "function", function: { name: "extract_boosts" } },
