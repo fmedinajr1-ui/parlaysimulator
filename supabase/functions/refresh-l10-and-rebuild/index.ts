@@ -921,22 +921,47 @@ Deno.serve(async (req) => {
       },
     ];
 
-    await supabase.from('bot_activity_log').insert({
-      event_type: 'preflight_check',
-      severity: diagnostics.block_code === 'ready' ? 'info' : 'warning',
-      message: `Pipeline preflight ${diagnostics.block_code}`,
-      metadata: {
-        ready: diagnostics.block_code === 'ready',
-        block_code: diagnostics.block_code,
-        blockers: diagnostics.block_code === 'ready' ? [] : [diagnostics.block_code],
-        checks: preflightChecks,
-        freshness: diagnostics.freshness,
-        generated_counts: diagnostics.generated_counts,
-        input_quality: diagnostics.input_quality,
-      },
-    }).catch((insertError: any) => {
-      log(`⚠ Failed to store preflight_check log: ${insertError.message || insertError}`);
-    });
+    // BUG 6 FIX: Supabase JS v2 query builder is a thenable, NOT a Promise —
+    // `.catch()` does not exist on it. Calling it throws
+    // `supabase.from(...).insert(...).catch is not a function` which aborts
+    // the entire orchestrator AFTER all phases ran, masking the real result.
+    // Wrap in try/catch instead.
+    try {
+      const { error: insertError } = await supabase.from('bot_activity_log').insert({
+        event_type: 'preflight_check',
+        severity: diagnostics.block_code === 'ready' ? 'info' : 'warning',
+        message: `Pipeline preflight ${diagnostics.block_code}`,
+        metadata: {
+          ready: diagnostics.block_code === 'ready',
+          block_code: diagnostics.block_code,
+          blockers: diagnostics.block_code === 'ready' ? [] : [diagnostics.block_code],
+          checks: preflightChecks,
+          freshness: diagnostics.freshness,
+          generated_counts: diagnostics.generated_counts,
+          input_quality: diagnostics.input_quality,
+        },
+      });
+      if (insertError) {
+        log(`⚠ Failed to store preflight_check log: ${insertError.message || insertError}`);
+      }
+    } catch (insertEx: any) {
+      log(`⚠ preflight_check insert threw: ${insertEx?.message || insertEx}`);
+    }
+
+    // BUG 7 FIX: Zero-parlay guardrail — alert admin when the orchestrator
+    // finishes successfully but produced no parlays for today. Without this
+    // the pipeline can rot for days while cron reports "succeeded".
+    try {
+      const todayCheck = todayET();
+      const finalParlayCount = await getParlayCount(supabase, todayCheck);
+      if ((finalParlayCount || 0) === 0) {
+        await sendPipelineAlert(
+          `🚨 *Pipeline Produced ZERO Parlays*\n\n*Date:* ${todayCheck}\n*Run:* \`${currentRunId.slice(0,8)}\`\n*Duration:* ${(elapsed()/1000).toFixed(1)}s\n\nAll phases completed but \`bot_daily_parlays\` is still empty.\nCheck: \`parlay-engine-v2\` rejection_reasons, \`bot_daily_pick_pool\` row counts, raw_props fallback confidence floor.`,
+        );
+      }
+    } catch {
+      // never let the guardrail crash the orchestrator
+    }
 
     // Auto-resume if phases were skipped
     if (skipped.length > 0 && currentAttempt < MAX_ATTEMPTS && lastCompleted) {
