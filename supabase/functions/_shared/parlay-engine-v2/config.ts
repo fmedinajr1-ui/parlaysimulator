@@ -153,8 +153,10 @@ export function propKey(prop_type: string, side: string): string {
 // CONFIDENCE & EDGE GATES
 // ---------------------------------------------------------------------------
 
-export const MIN_LEG_CONFIDENCE = 0.65;
-export const PREFERRED_LEG_CONFIDENCE = 0.72;
+// Restored 2026-04-26: leg-confidence floor reverted to 0.60 so the engine
+// produces enough qualifying legs to fill all daily strategies. Was 0.65.
+export const MIN_LEG_CONFIDENCE = 0.60;
+export const PREFERRED_LEG_CONFIDENCE = 0.68;
 export const S_TIER_CONFIDENCE_OVERRIDE = 0.60;
 export const MIN_PARLAY_EDGE = 0.15;
 
@@ -259,12 +261,12 @@ export interface ConfigOverride {
 
 export const PRESETS: Record<string, ConfigOverride> = {
   "v2.2": {
-    MIN_LEG_CONFIDENCE: 0.65,
+    MIN_LEG_CONFIDENCE: 0.60,
     MIN_PARLAY_ODDS: 300,
     STAKE_SIZING_MODE: "kelly_lite",
   },
   "v2.3-balanced": {
-    MIN_LEG_CONFIDENCE: 0.65,
+    MIN_LEG_CONFIDENCE: 0.60,
     MIN_PARLAY_ODDS: 500,
     STAKE_SIZING_MODE: "fractional_kelly",
   },
