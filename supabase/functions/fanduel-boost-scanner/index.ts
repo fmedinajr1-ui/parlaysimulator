@@ -312,18 +312,36 @@ async function firecrawlScrapeWithRetry(
 async function scrapingBeeFetch(
   url: string,
   apiKey: string,
-  opts?: { stealth?: boolean },
+  opts?: { stealth?: boolean; longWait?: boolean },
 ): Promise<{ html: string | null; status: number; errorText?: string }> {
+  // FanDuel boost grid mounts AFTER Akamai's JS challenge resolves and an
+  // XHR returns. networkidle2 fires too early, so we wait for an actual
+  // boost-related selector AND run a scroll scenario to trigger lazy
+  // hydration, then snapshot the post-render DOM.
+  const jsScenario = JSON.stringify({
+    instructions: [
+      { wait: 2500 },
+      { scroll_y: 800 },
+      { wait: 800 },
+      { scroll_y: 800 },
+      { wait: 800 },
+      { scroll_y: 800 },
+      { wait: 1500 },
+    ],
+  });
   const params = new URLSearchParams({
     api_key: apiKey,
     url,
     render_js: "true",
     premium_proxy: "true",
     country_code: "us",
-    wait: "5000",
-    // Wait until the boost cards (or their containers) appear
-    wait_browser: "networkidle2",
+    wait: opts?.longWait ? "12000" : "8000",
+    // Wait for any element that smells like a boost/promo card. ScrapingBee
+    // accepts a comma-separated CSS list and snapshots once one matches.
+    wait_for: '[data-test-id*="boost"], [class*="Boost"], [class*="boost"], a[href*="/boost"], a[href*="/promo"]',
     block_resources: "false",
+    return_page_source: "true",
+    js_scenario: jsScenario,
   });
   if (opts?.stealth) {
     params.set("stealth_proxy", "true");
@@ -338,23 +356,40 @@ async function scrapingBeeFetch(
     return { html: null, status: res.status, errorText };
   }
   const html = await res.text();
-  return { html: html && html.length > 500 ? html : null, status: res.status };
+  // Reject the JS bootloader stub: FanDuel returns ~2KB of script tags when
+  // rendering fails. Real boost pages are >>15KB and contain boost-ish words.
+  const bytes = html?.length ?? 0;
+  const lower = (html ?? "").toLowerCase();
+  const keywordHit =
+    lower.includes("boost") ||
+    lower.includes("parlay") ||
+    lower.includes("promo") ||
+    lower.includes("odds");
+  if (bytes < 15000 || !keywordHit) {
+    return {
+      html: null,
+      status: res.status,
+      errorText: `stub_response: ${bytes} bytes, keywordHit=${keywordHit}`,
+    };
+  }
+  return { html, status: res.status };
 }
 
 async function scrapingBeeFetchWithRetry(
   url: string,
   apiKey: string,
-  maxAttempts = 3,
+  maxAttempts = 4,
 ): Promise<string | null> {
   let lastError = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Flip to stealth proxy on the last attempt for stubborn pages
-    const stealth = attempt === maxAttempts;
+    // Attempt 1-2: premium proxy. Attempt 3: stealth. Attempt 4: stealth + longer wait.
+    const stealth = attempt >= 3;
+    const longWait = attempt === maxAttempts;
     try {
-      const { html, status, errorText } = await scrapingBeeFetch(url, apiKey, { stealth });
+      const { html, status, errorText } = await scrapingBeeFetch(url, apiKey, { stealth, longWait });
       if (html) {
         if (attempt > 1) {
-          console.log(`scrapingbee ${url} succeeded on attempt ${attempt} (stealth=${stealth})`);
+          console.log(`scrapingbee ${url} succeeded on attempt ${attempt} (stealth=${stealth}, longWait=${longWait}, ${html.length} bytes)`);
         }
         return html;
       }

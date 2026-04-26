@@ -1,51 +1,77 @@
-## Switch FanDuel boost scraper to ScrapingAnt (free) as primary
+## Force ScrapingBee to fully render FanDuel boost pages
 
-ScrapingAnt's free tier gives **10,000 API credits/month** with full headless Chrome rendering and anti-bot proxies — enough to comfortably cover the FanDuel boost scans (every 30 min, 9am–11pm ET ≈ 850 runs/mo, well under quota even at 10 credits/page).
+The scanner already requests `render_js=true` + `premium_proxy=true`, but FanDuel still returns the ~2KB JavaScript bootloader because:
 
-### What changes
+1. ScrapingBee uses `wait=5000` + `wait_browser=networkidle2`. FanDuel's SPA mounts boost cards **after** Akamai's JS challenge resolves and an XHR returns — `networkidle2` fires too early on this app.
+2. `block_resources=false` is set, but no CSS selector is required to be present before snapshot, so we capture the shell.
+3. No JS scenario is run, so we don't scroll or wait for the boost grid.
 
-**1. New secret**
-- Add `SCRAPINGANT_API_KEY` (you'll grab a free key at [scrapingant.com](https://scrapingant.com) — no credit card needed).
+### Changes — `supabase/functions/fanduel-boost-scanner/index.ts`
 
-**2. Refactor `supabase/functions/fanduel-boost-scanner/index.ts`**
+**1. Upgrade `scrapingBeeFetch` to wait for actual boost content**
 
-New scrape priority chain:
+Replace the params with a stricter rendering recipe:
 
 ```text
-ScrapingAnt (free, JS render, residential proxies)
-   ↓ on quota / 5xx / empty body
-ScrapingBee  (existing, when quota resets)
-   ↓ on 401 quota / failure
-Firecrawl    (existing, last resort)
+render_js          = true
+premium_proxy      = true              (stealth_proxy on retry)
+country_code       = us
+wait_for           = '[data-test-id*="boost"], [class*="Boost"], a[href*="/boost"]'
+wait               = 8000              (fallback if selector never matches)
+block_resources    = false
+return_page_source = true              (post-render DOM, not pre-render HTML)
+js_scenario        = JSON instructions: scroll 3x with 800ms pauses, then wait 1500ms
 ```
 
-- Add `scrapingAntFetchWithRetry(url, attempt)`:
-  - Endpoint: `https://api.scrapingant.com/v2/general`
-  - Params: `url`, `x-api-key=<SCRAPINGANT_API_KEY>`, `browser=true`, `proxy_type=residential`, `proxy_country=US`, `wait_for_selector` for boost cards, `return_text=true`
-  - Same exponential backoff (1s → 2s → 4s → 8s + jitter, max 4 attempts)
-  - UA rotation across attempts
-  - Treat HTTP 423 (rate-limited) and 5xx as retryable; treat 401/402 (quota) as hard-fail → fall through to next provider
-- Update `scrapePage()` orchestrator to try ScrapingAnt first, then ScrapingBee, then Firecrawl. Reuse the existing `succeededLogical` Set so we stop once `/promos` and `/boosts` each succeed.
-- Keep `htmlToText()` normalization unchanged — ScrapingAnt returns raw HTML.
-- Log which provider actually delivered the bytes (e.g. `[scanner] /promos via scrapingant in 4823ms`).
+`js_scenario` makes ScrapingBee run real interactions inside the headless browser before snapshotting — this is what triggers FanDuel's lazy-loaded boost grid to mount.
 
-**3. No DB or schema changes.** Tables, RLS, cron schedules, grader, and Telegram sender stay as-is.
+**2. Treat the JS-stub response as a retryable failure**
 
-**4. Deploy + verify**
-- Deploy `fanduel-boost-scanner`.
-- Manually invoke it once and check logs to confirm:
-  - ScrapingAnt returns HTML for `/promos` and `/boosts`
-  - Boost cards parse into rows in `fanduel_boosts`
-  - On a forced failure, fallback chain still works.
+Right now `html.length > 500` passes the check even when we got the bootloader. Add a content sanity gate inside `scrapingBeeFetch`:
+
+```text
+if html length < 15_000  → treat as miss
+if html does not contain any of: "boost", "odds", "parlay", "promo" → treat as miss
+```
+
+A miss returns `{ html: null, status: 200 }` so `scrapingBeeFetchWithRetry` retries (and flips to `stealth_proxy` on the final attempt, as today).
+
+**3. Bump retry count and stealth ordering**
+
+- `maxAttempts` 3 → 4
+- Attempt 1: `premium_proxy`
+- Attempt 2: `premium_proxy` (different UA via `forward_headers`)
+- Attempt 3: `stealth_proxy`
+- Attempt 4: `stealth_proxy` + longer `wait` (12000ms)
+
+**4. Logging**
+
+Log the rendered HTML byte size and whether the keyword gate matched, so future failures are diagnosable from a single line:
+`scrapingbee /promos -> 248K bytes, hit "boost" keyword, 23 cards likely`.
+
+### Cost impact
+
+ScrapingBee charges per credit:
+- `render_js=true` = 5 credits
+- `premium_proxy=true` = 25 credits (10 with stealth_proxy)
+- `js_scenario` = no extra cost
+- 4 attempts × 2 URLs (`/promos`, `/boosts`) × every 30 min, 9am–11pm ET ≈ ~6,800 credits/day worst case (typical: ~1,700/day with first-attempt success)
+
+This is well within the standard ScrapingBee plan you already pay for.
+
+### Verification after deploy
+
+1. Deploy `fanduel-boost-scanner`.
+2. Manually invoke it once.
+3. Check logs for:
+   - `scrapingbee /promos in <ms>ms (<chars> chars)` with chars > 30,000
+   - `aiExtractBoosts` returning > 0 boosts
+   - New rows in `fanduel_boosts` for today
+4. If still empty, inspect logs for which keyword check failed and we'll iterate on the selector list.
 
 ### What stays the same
-- Grader (`fanduel-boost-grader`) and Telegram sender (`fanduel-boost-telegram`) untouched.
-- Existing ScrapingBee + Firecrawl secrets remain — used as fallbacks only.
-- Cron schedule unchanged (`*/30 9-23 * * *`).
-
-### What you need to do
-1. Sign up at [scrapingant.com](https://scrapingant.com) (free, ~30 sec, no card).
-2. Copy your API key from the dashboard.
-3. When I prompt for the secret, paste it in.
-
-After that I'll wire everything up and run a live test.
+- Anthropic Claude Haiku 4.5 as the parser (working).
+- ScrapingAnt + Firecrawl as fallbacks.
+- Self-hosted worker path (still preferred when `FANDUEL_WORKER_URL` is set).
+- DB schema, cron schedule, grader, Telegram sender — unchanged.
+- No new secrets needed.
