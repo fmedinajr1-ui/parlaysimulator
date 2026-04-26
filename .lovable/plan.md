@@ -1,61 +1,57 @@
 
-## What we're doing and why
+## What's broken
 
-You picked **"Both — scope down boosts AND revert generator"**. After investigating, here's the real picture:
+Today is **2026-04-26 ET**. The parlay pipeline has been **silently dead since 2026-04-22** — last `bot_daily_parlays` row is from 2026-04-21, last `category_sweet_spots` is 2026-04-21, and `bot_daily_pick_pool` for today has 0 rows. Meanwhile `unified_props` is healthy (585 fresh NBA props in last 6 hrs) and the cron jobs `refresh-l10-and-rebuild-pretip` and `-retry` report `succeeded` every day.
 
-**Good news:** The parlay generator code (`parlay-engine-v2`, `uploaded-pipeline-generator`) was **never wired to FanDuel boosts**. It still reads `unified_props` (your real-lines FanDuel pipeline). No code revert needed there.
-
-**Bad news:** Today's `bot_daily_pick_pool` has only **3 picks** (vs 140–317 on normal days), and `bot_daily_parlays` has **zero rows for 2026-04-22**. The morning-prep pipeline that feeds the generator stopped producing — most likely a side effect of attention being on the boost scraper instead of the real-lines pipeline. So "revert" really means **diagnose and restart the real-lines pipeline so today's parlays generate again.**
+So the issue isn't infrastructure — cron fires, the orchestrator boots, the upstream feeds work. Something **inside the orchestrator** is bailing before it writes pool / parlays. I just manually invoked `refresh-l10-and-rebuild` and it's running cleanly through Phase 0 → Phase 1 right now (logs flowing). That means the function is healthy when triggered fresh; the scheduled runs were producing zero output silently.
 
 ## Plan
 
-### Part 1 — Scope down the FanDuel boost scanner (5 min change)
+### Step 1 — Let the manual run complete and inspect every phase
 
-In `supabase/functions/fanduel-boost-scanner/index.ts`:
+The pipeline I just kicked off is mid-execution. I'll watch logs for `phase3c`, `phase3g`, `phase3i`, `phase3_lottery`, `phase3_odds_gate` (the phases the file header flags as historically buggy) and the final pool/parlay write counts. Whatever phase silently produces 0 rows IS the bug.
 
-- Cut `TARGET_URLS` from 8 URLs down to **2**: only `https://sportsbook.fanduel.com/boosts` and the mobile fallback `https://m.sportsbook.fanduel.com/boosts`. Drop all `/promos` URLs and the regional state subdomains (`nj.`, `pa.`, `co.`).
-- Cut `maxAttempts` from 4 → **2** so we fail fast instead of burning ScrapingBee credits on a bot-detected page.
-- Add a hard sport filter so only **NBA** boosts get persisted to `fanduel_boosts` (skip MLB/NFL/etc. — keeps the table clean while we evaluate whether boosts are worth pursuing at all).
-- Result: ~85% fewer ScrapingBee credits per run. Boost scanner becomes a low-cost background experiment instead of the main event.
+### Step 2 — Diagnose the root cause and fix it
 
-### Part 2 — Restore the real-lines parlay pipeline (the actual fix)
+Most likely culprits based on the file's own bug-history header and the dead-data pattern:
 
-This is the one that matters. Steps:
+- **Stale `__oddsGateBlocked` global** (Bug 2 in the file header) — already fixed per the comments, but worth verifying the closure-scoped variable wasn't accidentally reverted.
+- **Date drift** (Bug 1) — verify all `getEasternDate()` calls are still in place.
+- **Phase 3c / Phase 3 lottery early-exit** when `nba_risk_engine_picks` is below `MIN_APPROVED_RISK_PICKS = 8`. Today has only **1** risk pick → matches the symptom exactly. The kill-switch `RISK_LAYER_BYPASSED = true` should bypass this gate; if a recent edit reintroduced the gate, generation would die here every day.
+- A downstream invoke (`bot-quality-regen-loop`, `score-parlays-dna`, sweet-spots scorer) may be throwing an unhandled error that aborts the orchestrator before it persists pool rows.
 
-1. **Diagnose why today's pool is empty.** Check edge function logs for the morning-prep orchestrator and the pool-build job to see whether they ran, errored, or silently produced zero picks.
-2. **Re-run the pipeline manually for 2026-04-22** to backfill today's pool from current `unified_props` data. This uses your existing real-lines code path — no code change needed if logs show it just didn't fire.
-3. **Verify fix** by checking that `bot_daily_pick_pool` for today has the normal 100+ picks and that `bot_daily_parlays` produces 3–5 parlays.
-4. **If the orchestrator code itself is broken** (vs just not having been triggered), inspect recent edits to `morning-prep-pipeline` / `refresh-l10-and-rebuild` and revert any that touched line-fetching logic. Per your saved memory `mem://infrastructure/pipeline/morning-prep-pipeline-unified`, this orchestrator is the canonical entry point.
+### Step 3 — Backfill today's slate
 
-### Part 3 — Confirm nothing else regressed
+Once the root cause is patched (or if the manual run already finishes successfully), confirm:
+- `bot_daily_pick_pool` for `2026-04-26` has 100+ rows
+- `bot_daily_parlays` for `2026-04-26` has 3–5 parlays
+- `category_sweet_spots` for `2026-04-26` is populated
 
-Quick sanity checks while we're in there:
-- `unified_props` has fresh FanDuel lines for today (the high-frequency 5-min sync is healthy).
-- Per `mem://infrastructure/market-data/fanduel-integration`, the `has_real_line` mandate is still enforced.
-- No code path in `parlay-engine-v2` has been accidentally pointed at `fanduel_boosts`.
+If the manual re-run completes but produces zero rows, force-call the downstream child functions in sequence (`build-pick-pool` → `bot-quality-regen-loop` → `score-parlays-dna`) to isolate which one is the silent-failure culprit, then patch that one.
+
+### Step 4 — Add a guardrail so this never silently dies again
+
+Add a single end-of-orchestrator assertion that, if `getParlayCount(today) === 0` after all phases run, sends a Telegram admin alert via the existing `sendPipelineAlert` helper (per `mem://infrastructure/pipeline/monitoring`). Right now success returns `succeeded` to cron even when zero parlays were produced — that's why this rotted for 4 days unnoticed.
 
 ## Technical details
 
-**Files I'll edit in build mode:**
-- `supabase/functions/fanduel-boost-scanner/index.ts` — trim `TARGET_URLS`, lower `maxAttempts`, add NBA sport filter before insert.
+**Files I'll likely edit in build mode:**
+- `supabase/functions/refresh-l10-and-rebuild/index.ts` — patch the silent-failure phase + add the zero-output Telegram alert at the bottom of the orchestrator.
+- Possibly `supabase/functions/build-pick-pool/index.ts` or whichever child function is identified as the failure point.
 
-**Files I'll likely NOT edit (pending diagnosis):**
-- `supabase/functions/parlay-engine-v2/index.ts` — appears intact, still reads `unified_props`.
-- `supabase/functions/uploaded-pipeline-generator/index.ts` — same.
+**Files I will NOT edit:**
+- Cron schedules (they're firing correctly).
+- `unified_props` ingestion (healthy).
+- Parlay engine v2 selection / validation logic (per `mem://logic/parlay/same-game-concentration` the 0.75 cap stays as-is).
+- `fanduel-boost-scanner` (the NBA-only scope-down from last turn stays).
 
-**Investigation tools I'll use after approval:**
-- `supabase--edge_function_logs` on `morning-prep-pipeline`, `refresh-l10-and-rebuild`, and `parlay-engine-v2` to find the failure point.
-- `supabase--read_query` to confirm `unified_props` freshness.
-- `supabase--curl_edge_functions` to manually re-trigger the pipeline once cause is found.
-
-**What I will NOT do:**
-- Will not delete the boost scanner or its schema (keeps the option open).
-- Will not change correlation gates, same-game caps, or any of the validation logic in `mem://logic/parlay/same-game-concentration` — those stay as-is.
-- Will not touch `unified_props` ingestion.
+**Investigation tools:**
+- `edge_function_logs` on `refresh-l10-and-rebuild` to tail the in-flight run.
+- `read_query` on `bot_daily_pick_pool`, `bot_daily_parlays`, `category_sweet_spots`, `nba_risk_engine_picks` for today after each phase.
+- If needed: `curl_edge_functions` to invoke individual child functions and isolate the failure point.
 
 ## Outcome
 
-After this:
-- Boost scanner runs cheap and quiet (NBA only, 2 URLs, fail fast).
-- Today's parlays get generated from real FanDuel lines.
-- We're back on the working pre-boost-scanner trajectory with one small experiment running on the side.
+- Today's parlays generate from real FanDuel lines (the 585 fresh NBA props already sitting in `unified_props`).
+- Whatever silently broke 4 days ago is patched.
+- The orchestrator alerts admin via Telegram if it ever produces 0 parlays again, so this can't rot for days unnoticed.
