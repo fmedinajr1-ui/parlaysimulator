@@ -342,19 +342,36 @@ export async function loadDirectPickRows(
         // them). Treat 0 / null / negative as "missing" and assign a sensible
         // default so the engine's MIN_LEG_CONFIDENCE=0.65 floor doesn't reject
         // every raw_props candidate.
+        // FIX: unified_props in production has confidence=0 / composite_score=0
+        // for the vast majority of NBA rows (the upstream scorer doesn't
+        // populate them yet). The previous code passed those zeros through and
+        // every raw_props candidate was rejected by the engine's
+        // MIN_LEG_CONFIDENCE = 0.65 floor → 0 parlays generated for 4 days.
+        //
+        // When upstream signals are missing we now assign a neutral baseline
+        // composite score of 70 (= 0.70 confidence in the engine, comfortably
+        // above 0.65 but below the S-tier 0.85 cutoff) so raw FanDuel lines
+        // can actually produce parlays. risk/sweet sources still rank higher
+        // because they get the full multi-factor composite.
         const rawConf = safeNumber(prop.confidence);
-        const confidenceRaw = (rawConf != null && rawConf > 0.01) ? rawConf : 0.72;
-        const confidenceTenScale = confidenceRaw <= 1 ? confidenceRaw * 10 : confidenceRaw;
         const rawComp = safeNumber(prop.composite_score);
-        const composite = (rawComp != null && rawComp >= 60)
-          ? Math.round(clamp(1, 99, rawComp))
-          : computeCompositeScore({
-              confidenceTenScale,
-              l10HitRate: 0.55,
-              edge: 0,
-              weightMultiplier,
-              sourceBoost: -2,
-            });
+        let composite: number;
+        if (rawComp != null && rawComp >= 60) {
+          composite = Math.round(clamp(1, 99, rawComp));
+        } else if (rawConf != null && rawConf > 0.01) {
+          const tenScale = rawConf <= 1 ? rawConf * 10 : rawConf;
+          composite = computeCompositeScore({
+            confidenceTenScale: tenScale,
+            l10HitRate: 0.55,
+            edge: 0,
+            weightMultiplier,
+            sourceBoost: -2,
+          });
+        } else {
+          // No upstream confidence at all — neutral baseline so the engine
+          // treats the leg as bettable but not premium.
+          composite = Math.round(clamp(1, 99, 70 * (weightMultiplier || 1)));
+        }
 
         seen.add(dedupeKey);
         rows.push({
