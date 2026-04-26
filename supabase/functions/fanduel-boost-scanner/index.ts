@@ -90,21 +90,19 @@ async function workerFetchWithRetry(
   return null;
 }
 
-// Primary + fallback scrape targets. We try them in order and stop once we've
-// gotten usable markdown for each "logical" page. Multiple state subdomains
-// help when one regional edge is geo-blocking the Firecrawl proxy.
+// SCOPED DOWN 2026-04-22: dropped from 8 URLs to 2 to conserve ScrapingBee
+// credits while we evaluate whether boosts are worth pursuing at all.
+// The real-lines parlay pipeline (unified_props) is the primary surface.
 const TARGET_URLS = [
-  "https://sportsbook.fanduel.com/promos",
   "https://sportsbook.fanduel.com/boosts",
-  // Fallback regional subdomains (FanDuel mirrors content per state)
-  "https://nj.sportsbook.fanduel.com/promos",
-  "https://nj.sportsbook.fanduel.com/boosts",
-  "https://pa.sportsbook.fanduel.com/promos",
-  "https://co.sportsbook.fanduel.com/boosts",
-  // Mobile / m. fallback (lighter JS, often easier to render)
-  "https://m.sportsbook.fanduel.com/promos",
+  // Mobile fallback — lighter JS, sometimes easier to render past Akamai.
   "https://m.sportsbook.fanduel.com/boosts",
 ];
+
+// SCOPED DOWN 2026-04-22: NBA-only persistence. Other sports get parsed
+// (cheap once we have the HTML) but skipped at insert time to keep the
+// fanduel_boosts table clean while we evaluate the experiment.
+const ALLOWED_SPORTS = new Set(["nba"]);
 
 // Tunnel/proxy errors that should trigger a retry with backoff.
 const RETRYABLE_ERROR_PATTERNS = [
