@@ -376,12 +376,12 @@ async function scrapingBeeFetch(
 async function scrapingBeeFetchWithRetry(
   url: string,
   apiKey: string,
-  maxAttempts = 4,
+  maxAttempts = 2,
 ): Promise<string | null> {
   let lastError = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Attempt 1-2: premium proxy. Attempt 3: stealth. Attempt 4: stealth + longer wait.
-    const stealth = attempt >= 3;
+    // SCOPED 2026-04-22: 2 attempts only. Attempt 1 premium, attempt 2 stealth+longWait.
+    const stealth = attempt >= 2;
     const longWait = attempt === maxAttempts;
     try {
       const { html, status, errorText } = await scrapingBeeFetch(url, apiKey, { stealth, longWait });
