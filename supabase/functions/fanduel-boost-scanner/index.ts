@@ -774,6 +774,9 @@ Deno.serve(async (req) => {
           const hash = await buildBoostHash(boost);
           const sport = inferSportFromBoost(boost);
 
+          // SCOPED 2026-04-22: only persist NBA boosts while we evaluate the experiment.
+          if (!sport || !ALLOWED_SPORTS.has(sport)) continue;
+
           const { error: insertError, data: insertData } = await supabase
             .from("fanduel_boosts")
             .insert({
