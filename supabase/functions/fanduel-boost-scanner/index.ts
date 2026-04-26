@@ -90,21 +90,19 @@ async function workerFetchWithRetry(
   return null;
 }
 
-// Primary + fallback scrape targets. We try them in order and stop once we've
-// gotten usable markdown for each "logical" page. Multiple state subdomains
-// help when one regional edge is geo-blocking the Firecrawl proxy.
+// SCOPED DOWN 2026-04-22: dropped from 8 URLs to 2 to conserve ScrapingBee
+// credits while we evaluate whether boosts are worth pursuing at all.
+// The real-lines parlay pipeline (unified_props) is the primary surface.
 const TARGET_URLS = [
-  "https://sportsbook.fanduel.com/promos",
   "https://sportsbook.fanduel.com/boosts",
-  // Fallback regional subdomains (FanDuel mirrors content per state)
-  "https://nj.sportsbook.fanduel.com/promos",
-  "https://nj.sportsbook.fanduel.com/boosts",
-  "https://pa.sportsbook.fanduel.com/promos",
-  "https://co.sportsbook.fanduel.com/boosts",
-  // Mobile / m. fallback (lighter JS, often easier to render)
-  "https://m.sportsbook.fanduel.com/promos",
+  // Mobile fallback — lighter JS, sometimes easier to render past Akamai.
   "https://m.sportsbook.fanduel.com/boosts",
 ];
+
+// SCOPED DOWN 2026-04-22: NBA-only persistence. Other sports get parsed
+// (cheap once we have the HTML) but skipped at insert time to keep the
+// fanduel_boosts table clean while we evaluate the experiment.
+const ALLOWED_SPORTS = new Set(["nba"]);
 
 // Tunnel/proxy errors that should trigger a retry with backoff.
 const RETRYABLE_ERROR_PATTERNS = [
@@ -378,12 +376,12 @@ async function scrapingBeeFetch(
 async function scrapingBeeFetchWithRetry(
   url: string,
   apiKey: string,
-  maxAttempts = 4,
+  maxAttempts = 2,
 ): Promise<string | null> {
   let lastError = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Attempt 1-2: premium proxy. Attempt 3: stealth. Attempt 4: stealth + longer wait.
-    const stealth = attempt >= 3;
+    // SCOPED 2026-04-22: 2 attempts only. Attempt 1 premium, attempt 2 stealth+longWait.
+    const stealth = attempt >= 2;
     const longWait = attempt === maxAttempts;
     try {
       const { html, status, errorText } = await scrapingBeeFetch(url, apiKey, { stealth, longWait });
@@ -775,6 +773,9 @@ Deno.serve(async (req) => {
 
           const hash = await buildBoostHash(boost);
           const sport = inferSportFromBoost(boost);
+
+          // SCOPED 2026-04-22: only persist NBA boosts while we evaluate the experiment.
+          if (!sport || !ALLOWED_SPORTS.has(sport)) continue;
 
           const { error: insertError, data: insertData } = await supabase
             .from("fanduel_boosts")

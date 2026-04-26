@@ -1,77 +1,61 @@
-## Force ScrapingBee to fully render FanDuel boost pages
 
-The scanner already requests `render_js=true` + `premium_proxy=true`, but FanDuel still returns the ~2KB JavaScript bootloader because:
+## What we're doing and why
 
-1. ScrapingBee uses `wait=5000` + `wait_browser=networkidle2`. FanDuel's SPA mounts boost cards **after** Akamai's JS challenge resolves and an XHR returns — `networkidle2` fires too early on this app.
-2. `block_resources=false` is set, but no CSS selector is required to be present before snapshot, so we capture the shell.
-3. No JS scenario is run, so we don't scroll or wait for the boost grid.
+You picked **"Both — scope down boosts AND revert generator"**. After investigating, here's the real picture:
 
-### Changes — `supabase/functions/fanduel-boost-scanner/index.ts`
+**Good news:** The parlay generator code (`parlay-engine-v2`, `uploaded-pipeline-generator`) was **never wired to FanDuel boosts**. It still reads `unified_props` (your real-lines FanDuel pipeline). No code revert needed there.
 
-**1. Upgrade `scrapingBeeFetch` to wait for actual boost content**
+**Bad news:** Today's `bot_daily_pick_pool` has only **3 picks** (vs 140–317 on normal days), and `bot_daily_parlays` has **zero rows for 2026-04-22**. The morning-prep pipeline that feeds the generator stopped producing — most likely a side effect of attention being on the boost scraper instead of the real-lines pipeline. So "revert" really means **diagnose and restart the real-lines pipeline so today's parlays generate again.**
 
-Replace the params with a stricter rendering recipe:
+## Plan
 
-```text
-render_js          = true
-premium_proxy      = true              (stealth_proxy on retry)
-country_code       = us
-wait_for           = '[data-test-id*="boost"], [class*="Boost"], a[href*="/boost"]'
-wait               = 8000              (fallback if selector never matches)
-block_resources    = false
-return_page_source = true              (post-render DOM, not pre-render HTML)
-js_scenario        = JSON instructions: scroll 3x with 800ms pauses, then wait 1500ms
-```
+### Part 1 — Scope down the FanDuel boost scanner (5 min change)
 
-`js_scenario` makes ScrapingBee run real interactions inside the headless browser before snapshotting — this is what triggers FanDuel's lazy-loaded boost grid to mount.
+In `supabase/functions/fanduel-boost-scanner/index.ts`:
 
-**2. Treat the JS-stub response as a retryable failure**
+- Cut `TARGET_URLS` from 8 URLs down to **2**: only `https://sportsbook.fanduel.com/boosts` and the mobile fallback `https://m.sportsbook.fanduel.com/boosts`. Drop all `/promos` URLs and the regional state subdomains (`nj.`, `pa.`, `co.`).
+- Cut `maxAttempts` from 4 → **2** so we fail fast instead of burning ScrapingBee credits on a bot-detected page.
+- Add a hard sport filter so only **NBA** boosts get persisted to `fanduel_boosts` (skip MLB/NFL/etc. — keeps the table clean while we evaluate whether boosts are worth pursuing at all).
+- Result: ~85% fewer ScrapingBee credits per run. Boost scanner becomes a low-cost background experiment instead of the main event.
 
-Right now `html.length > 500` passes the check even when we got the bootloader. Add a content sanity gate inside `scrapingBeeFetch`:
+### Part 2 — Restore the real-lines parlay pipeline (the actual fix)
 
-```text
-if html length < 15_000  → treat as miss
-if html does not contain any of: "boost", "odds", "parlay", "promo" → treat as miss
-```
+This is the one that matters. Steps:
 
-A miss returns `{ html: null, status: 200 }` so `scrapingBeeFetchWithRetry` retries (and flips to `stealth_proxy` on the final attempt, as today).
+1. **Diagnose why today's pool is empty.** Check edge function logs for the morning-prep orchestrator and the pool-build job to see whether they ran, errored, or silently produced zero picks.
+2. **Re-run the pipeline manually for 2026-04-22** to backfill today's pool from current `unified_props` data. This uses your existing real-lines code path — no code change needed if logs show it just didn't fire.
+3. **Verify fix** by checking that `bot_daily_pick_pool` for today has the normal 100+ picks and that `bot_daily_parlays` produces 3–5 parlays.
+4. **If the orchestrator code itself is broken** (vs just not having been triggered), inspect recent edits to `morning-prep-pipeline` / `refresh-l10-and-rebuild` and revert any that touched line-fetching logic. Per your saved memory `mem://infrastructure/pipeline/morning-prep-pipeline-unified`, this orchestrator is the canonical entry point.
 
-**3. Bump retry count and stealth ordering**
+### Part 3 — Confirm nothing else regressed
 
-- `maxAttempts` 3 → 4
-- Attempt 1: `premium_proxy`
-- Attempt 2: `premium_proxy` (different UA via `forward_headers`)
-- Attempt 3: `stealth_proxy`
-- Attempt 4: `stealth_proxy` + longer `wait` (12000ms)
+Quick sanity checks while we're in there:
+- `unified_props` has fresh FanDuel lines for today (the high-frequency 5-min sync is healthy).
+- Per `mem://infrastructure/market-data/fanduel-integration`, the `has_real_line` mandate is still enforced.
+- No code path in `parlay-engine-v2` has been accidentally pointed at `fanduel_boosts`.
 
-**4. Logging**
+## Technical details
 
-Log the rendered HTML byte size and whether the keyword gate matched, so future failures are diagnosable from a single line:
-`scrapingbee /promos -> 248K bytes, hit "boost" keyword, 23 cards likely`.
+**Files I'll edit in build mode:**
+- `supabase/functions/fanduel-boost-scanner/index.ts` — trim `TARGET_URLS`, lower `maxAttempts`, add NBA sport filter before insert.
 
-### Cost impact
+**Files I'll likely NOT edit (pending diagnosis):**
+- `supabase/functions/parlay-engine-v2/index.ts` — appears intact, still reads `unified_props`.
+- `supabase/functions/uploaded-pipeline-generator/index.ts` — same.
 
-ScrapingBee charges per credit:
-- `render_js=true` = 5 credits
-- `premium_proxy=true` = 25 credits (10 with stealth_proxy)
-- `js_scenario` = no extra cost
-- 4 attempts × 2 URLs (`/promos`, `/boosts`) × every 30 min, 9am–11pm ET ≈ ~6,800 credits/day worst case (typical: ~1,700/day with first-attempt success)
+**Investigation tools I'll use after approval:**
+- `supabase--edge_function_logs` on `morning-prep-pipeline`, `refresh-l10-and-rebuild`, and `parlay-engine-v2` to find the failure point.
+- `supabase--read_query` to confirm `unified_props` freshness.
+- `supabase--curl_edge_functions` to manually re-trigger the pipeline once cause is found.
 
-This is well within the standard ScrapingBee plan you already pay for.
+**What I will NOT do:**
+- Will not delete the boost scanner or its schema (keeps the option open).
+- Will not change correlation gates, same-game caps, or any of the validation logic in `mem://logic/parlay/same-game-concentration` — those stay as-is.
+- Will not touch `unified_props` ingestion.
 
-### Verification after deploy
+## Outcome
 
-1. Deploy `fanduel-boost-scanner`.
-2. Manually invoke it once.
-3. Check logs for:
-   - `scrapingbee /promos in <ms>ms (<chars> chars)` with chars > 30,000
-   - `aiExtractBoosts` returning > 0 boosts
-   - New rows in `fanduel_boosts` for today
-4. If still empty, inspect logs for which keyword check failed and we'll iterate on the selector list.
-
-### What stays the same
-- Anthropic Claude Haiku 4.5 as the parser (working).
-- ScrapingAnt + Firecrawl as fallbacks.
-- Self-hosted worker path (still preferred when `FANDUEL_WORKER_URL` is set).
-- DB schema, cron schedule, grader, Telegram sender — unchanged.
-- No new secrets needed.
+After this:
+- Boost scanner runs cheap and quiet (NBA only, 2 URLs, fail fast).
+- Today's parlays get generated from real FanDuel lines.
+- We're back on the working pre-boost-scanner trajectory with one small experiment running on the side.
