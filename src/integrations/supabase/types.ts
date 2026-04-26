@@ -2065,6 +2065,7 @@ export type Database = {
         Row: {
           chat_id: string
           id: string
+          parlay_date: string | null
           parlay_id: string
           sent_at: string
           telegram_message_id: number | null
@@ -2072,6 +2073,7 @@ export type Database = {
         Insert: {
           chat_id: string
           id?: string
+          parlay_date?: string | null
           parlay_id: string
           sent_at?: string
           telegram_message_id?: number | null
@@ -2079,6 +2081,7 @@ export type Database = {
         Update: {
           chat_id?: string
           id?: string
+          parlay_date?: string | null
           parlay_id?: string
           sent_at?: string
           telegram_message_id?: number | null
@@ -16025,6 +16028,31 @@ export type Database = {
           worst_3pt_vs_team?: number | null
         }
         Relationships: []
+      }
+      v_parlay_broadcast_audit: {
+        Row: {
+          broadcast_id: string | null
+          broadcast_parlay_date: string | null
+          chat_id: string | null
+          leg_count: number | null
+          parlay_id: string | null
+          parlay_table_date: string | null
+          sent_at: string | null
+          sent_et_date: string | null
+          status: string | null
+          strategy_name: string | null
+          telegram_message_id: number | null
+          tier: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_parlay_broadcasts_parlay_id_fkey"
+            columns: ["parlay_id"]
+            isOneToOne: false
+            referencedRelation: "bot_daily_parlays"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       v_player_game_summary: {
         Row: {
