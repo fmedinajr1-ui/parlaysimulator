@@ -585,7 +585,7 @@ async function anthropicExtractBoosts(apiKey: string, system: string, userPrompt
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-3-5-haiku-20241022",
       max_tokens: 8192,
       system,
       tools: [
