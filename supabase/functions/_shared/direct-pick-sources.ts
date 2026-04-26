@@ -328,15 +328,27 @@ export async function loadDirectPickRows(
         const category = (prop.category || inferCategoryFromProp(propType) || "UNKNOWN").toString().toUpperCase();
         const weightRow = weightMap.get(`${category}__${side}`);
         const weightMultiplier = weightRow?.is_blocked ? 0 : weightRow?.weight ?? 1;
-        const confidenceRaw = safeNumber(prop.confidence) ?? 0.55;
+        // FIX: previously the raw_props fallback assigned a default confidence of
+        // 0.55 + l10HitRate=0 + sourceBoost=-6 which produced composite ~34
+        // (= confidence 0.34 in the engine). The engine's MIN_LEG_CONFIDENCE is
+        // 0.65, so 100% of raw_props rows were rejected → 0 parlays generated
+        // whenever risk/sweet sources were thin. We now:
+        //   - default raw confidence to 0.72 (FanDuel real lines are pre-vetted)
+        //   - assume a neutral l10HitRate of 0.55 instead of 0 when missing
+        //   - keep a small sourceBoost penalty (-2 instead of -6) so risk/sweet
+        //     still rank above raw_props but raw_props can clear the 0.65 floor.
+        const confidenceRaw = safeNumber(prop.confidence) ?? 0.72;
         const confidenceTenScale = confidenceRaw <= 1 ? confidenceRaw * 10 : confidenceRaw;
-        const composite = computeCompositeScore({
-          confidenceTenScale,
-          l10HitRate: null,
-          edge: 0,
-          weightMultiplier,
-          sourceBoost: -6, // de-prioritise raw_props vs risk/sweet
-        });
+        const compositeRaw = safeNumber(prop.composite_score);
+        const composite = compositeRaw != null && compositeRaw >= 60
+          ? Math.round(clamp(1, 99, compositeRaw))
+          : computeCompositeScore({
+              confidenceTenScale,
+              l10HitRate: 0.55,
+              edge: 0,
+              weightMultiplier,
+              sourceBoost: -2,
+            });
 
         seen.add(dedupeKey);
         rows.push({
