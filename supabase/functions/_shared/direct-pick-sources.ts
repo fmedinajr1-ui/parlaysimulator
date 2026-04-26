@@ -337,11 +337,17 @@ export async function loadDirectPickRows(
         //   - assume a neutral l10HitRate of 0.55 instead of 0 when missing
         //   - keep a small sourceBoost penalty (-2 instead of -6) so risk/sweet
         //     still rank above raw_props but raw_props can clear the 0.65 floor.
-        const confidenceRaw = safeNumber(prop.confidence) ?? 0.72;
+        // FIX: unified_props in production has confidence=0 and composite_score=0
+        // for the vast majority of rows (the upstream scorer doesn't populate
+        // them). Treat 0 / null / negative as "missing" and assign a sensible
+        // default so the engine's MIN_LEG_CONFIDENCE=0.65 floor doesn't reject
+        // every raw_props candidate.
+        const rawConf = safeNumber(prop.confidence);
+        const confidenceRaw = (rawConf != null && rawConf > 0.01) ? rawConf : 0.72;
         const confidenceTenScale = confidenceRaw <= 1 ? confidenceRaw * 10 : confidenceRaw;
-        const compositeRaw = safeNumber(prop.composite_score);
-        const composite = compositeRaw != null && compositeRaw >= 60
-          ? Math.round(clamp(1, 99, compositeRaw))
+        const rawComp = safeNumber(prop.composite_score);
+        const composite = (rawComp != null && rawComp >= 60)
+          ? Math.round(clamp(1, 99, rawComp))
           : computeCompositeScore({
               confidenceTenScale,
               l10HitRate: 0.55,
