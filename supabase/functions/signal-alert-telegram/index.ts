@@ -90,28 +90,31 @@ function formatAlert(a: Alert): string {
   }
 
   if (a.signal_type === 'take_it_now') {
-    const prev = String(meta.previous_side ?? '?');
-    const jump = Number(meta.composite_jump ?? 0);
+    const gap = Number(meta.juice_gap ?? 0);
+    const overP = Number(meta.over_price ?? 0);
+    const underP = Number(meta.under_price ?? 0);
+    const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`);
     return [
       `⚡ *TAKE IT NOW* — ${escapeMd(sport)}`,
-      `The model just flipped on this prop. Get in before the line catches up.`,
+      `Steepest juice gap in this game — the book is openly favoring one side.`,
       ``,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
-      `${sideEmoji(side)} *${escapeMd(side)}* (was ${escapeMd(prev)})  •  confidence ${Math.round(conf)}%`,
-      `📈 composite jump ${jump >= 0 ? '+' : ''}${Math.round(jump * 10) / 10}`,
+      `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
+      `💰 prices: Over ${fmt(overP)} / Under ${fmt(underP)}  •  gap ${Math.round(gap)}`,
       `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ].join('\n');
   }
 
   if (a.signal_type === 'velocity_spike') {
-    const delta = Number(meta.delta ?? 0);
+    const cohortAvg = Number(meta.cohort_avg_confidence ?? 0);
+    const pct = Number(meta.percentile_rank ?? 0);
     return [
-      `🚀 *VELOCITY SPIKE* — ${escapeMd(sport)}`,
-      `Composite score jumped sharply vs. its 6-hour baseline.`,
+      `🚀 *SLATE OUTLIER* — ${escapeMd(sport)}`,
+      `One of the rarest-priced ${escapeMd(prop)} props on the slate today.`,
       ``,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
-      `📊 Δ composite +${Math.round(delta * 10) / 10}`,
+      `📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`,
       `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ].join('\n');
   }
