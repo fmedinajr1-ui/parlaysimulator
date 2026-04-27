@@ -2572,6 +2572,86 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_video_broadcast_recipients: {
+        Row: {
+          broadcast_id: string
+          chat_id: string
+          created_at: string
+          delivered: boolean
+          error_message: string | null
+          id: string
+          message_id: number | null
+        }
+        Insert: {
+          broadcast_id: string
+          chat_id: string
+          created_at?: string
+          delivered?: boolean
+          error_message?: string | null
+          id?: string
+          message_id?: number | null
+        }
+        Update: {
+          broadcast_id?: string
+          chat_id?: string
+          created_at?: string
+          delivered?: boolean
+          error_message?: string | null
+          id?: string
+          message_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_video_broadcast_recipients_broadcast_id_fkey"
+            columns: ["broadcast_id"]
+            isOneToOne: false
+            referencedRelation: "bot_video_broadcasts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bot_video_broadcasts: {
+        Row: {
+          admin_message_id: number | null
+          broadcast_at: string | null
+          caption: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          recipients_failed: number | null
+          recipients_succeeded: number | null
+          recipients_total: number | null
+          status: string
+          video_url: string
+        }
+        Insert: {
+          admin_message_id?: number | null
+          broadcast_at?: string | null
+          caption?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          recipients_failed?: number | null
+          recipients_succeeded?: number | null
+          recipients_total?: number | null
+          status?: string
+          video_url: string
+        }
+        Update: {
+          admin_message_id?: number | null
+          broadcast_at?: string | null
+          caption?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          recipients_failed?: number | null
+          recipients_succeeded?: number | null
+          recipients_total?: number | null
+          status?: string
+          video_url?: string
+        }
+        Relationships: []
+      }
       bot_weak_leg_tracker: {
         Row: {
           context: Json | null
