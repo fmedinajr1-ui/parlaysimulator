@@ -1,144 +1,95 @@
+# Plan — Engine-Powered Slip Analyzer
 
-# Plan — Fix alert variety + ship a Telegram explainer video
+## Problem
+The slip analyzer (Results page) currently calls two edge functions that **don't exist**: `analyze-parlay` and `generate-roasts`. So `aiAnalysis` is always `null`, every leg shows "N/A", and the only output users see is fallback static roasts. Meanwhile we already have 4 engines wired into `find-swap-alternatives` (Unified Props, Median Lock, Juiced Props, Hit Rates) plus tables for sharp signals, trap analysis, injuries, fatigue, and FanDuel signals — none are touched on the analyzer path.
 
-## Status checkpoint (end of session)
+## What Will Change
 
-**Part A — DONE & LIVE.** Movement-free detectors deployed. First post-deploy run produced 6 take_it_now + 14 velocity_spike alerts; telegram broadcaster sent 20 mixed alerts to admin chat. Cron continues every 15 min.
+### 1. New edge function: `analyze-parlay`
+Single endpoint the Results page already calls. For each uploaded leg it cross-references our engines and returns a real `LegAnalysis` (already typed in `src/types/parlay.ts`) plus a parlay-level summary.
 
-**Part B — VIDEO RENDERED.** MP4 delivered to `/mnt/documents/slip-explainer.mp4` (4.8MB, 14.6s, 1080x1920, with Brian VO). Broadcast pipeline still TODO.
+Per-leg engine cross-reference (parallel queries, fuzzy player+prop+line match):
+- **Unified Props** → `pvsScore`, `recommendation`, `combined_confidence` → drives `adjustedProbability`
+- **Median Lock Candidates** → `LOCK`/`STRONG` classification, `consensus_percentage`, `parlay_grade` → `medianLockData`
+- **Juiced Props** → juice level + direction → `juiceData`
+- **Player Prop Hit Rates (L10)** → `hitRatePercent`
+- **Sharp Signals** → recommendation + signal codes → `sharpRecommendation`, `sharpSignals`
+- **Trap Probability Analysis** → trap risk label → adds to `riskFactors`, can flip verdict to FADE
+- **Injury Reports** → matched by player → `injuryAlerts`
+- **Sports Fatigue Scores** → `fatigueData` (incl. B2B flag)
 
-### Render notes (for future re-renders)
-- Project at `/tmp/remotion-explainer/`. Composition id `main`, 480 frames @ 30fps.
-- Sandbox ffmpeg lacks `libfdk_aac`, so render is two-step: `REMOTION_NO_AUDIO=1 node scripts/render-remotion.mjs /tmp/slip-explainer-noaudio.mp4` then `ffmpeg -i noaudio.mp4 -i public/voiceover.mp3 -c:v copy -c:a aac -shortest out.mp4`.
-- Compositor binary patched: gnu variant overwritten with musl + ffmpeg/ffprobe symlinked from PATH.
-- Known visual issue: Scene 1 phone mockup is washed out vs the bright radial bg (low contrast). Scenes 2/3/4 look great. To fix: darken the radial gradient further or replace Scene 1 bg with a solid `#02050d`.
+Synthesis layer:
+- Build `researchSummary.signals[]` from each engine that returned a hit (positive/negative/neutral)
+- `strengthScore` = weighted sum (Unified 30%, Median Lock 25%, HitRate 20%, Sharp 15%, Trap −20% if high)
+- `overallVerdict`: `STRONG_PICK` ≥75, `LEAN_PICK` ≥55, `NEUTRAL` 40-55, `LEAN_FADE` 25-40, `STRONG_FADE` <25
+- `adjustedProbability` blends implied prob with engine consensus (capped ±15% delta to stay defensible)
+- `correlatedLegs` detection: same event_id or same last-name → flagged as same-game
 
-### Remaining TODO for Telegram delivery
-1. Storage bucket `marketing-videos` + tables `bot_video_broadcasts` / `bot_video_broadcast_recipients` already exist.
-2. Build `explainer-video-render` edge function: upload `/mnt/documents/slip-explainer.mp4` to the bucket, return public URL. (For one-off, can also be done manually via storage_upload.)
-3. Build `telegram-broadcast` edge function: sendVideo to admin first with inline "📣 Broadcast to all" callback button (`broadcast:<id>`).
-4. Wire `broadcast:<id>` callback into `supabase/functions/telegram-prop-scanner/index.ts` (~line 490) to fan out to `bot_user_preferences.chat_id` (8 rows).
+Parlay-level output added to response:
+- `recommendedAction`: `TAIL` / `TAIL_WITH_SWAPS` / `REBUILD` / `PASS`
+- `summary`: 2–3 sentence narrative ("3 of your 5 legs are sharp. Your Curry leg is a trap — books moved both sides. Drop it or swap to LeBron Over 6.5 ast (78% Median Lock).")
+- `keepLegs[]`, `swapLegs[]`, `dropLegs[]` — concrete actions per leg index
+- `suggestedSwaps[]` — pulls top 1 alternative per weak leg via the same logic as `find-swap-alternatives` (call its helper inline; no extra HTTP hop)
+- `expectedValueDelta` — projected EV improvement if user applies all suggested swaps
 
-## Part A — Why you're only seeing cascade alerts (root cause + fix)
+### 2. New edge function: `generate-roasts`
+Tiny wrapper around Lovable AI Gateway (`google/gemini-2.5-flash`) that takes legs + verdict + swap suggestions and returns 3 punchy roasts. Falls back to static lines on error so the Results page never breaks.
 
-### What I confirmed in the data
+### 3. Results page wiring (no UI rewrite required)
+`src/pages/Results.tsx` already consumes the exact `ParlayAnalysis` shape we'll return — `LegBreakdownScorecard`, `ConsolidatedVerdictCard`, `ParlayHealthCard`, `SmartLegSwapCard`, the new EV badges we just shipped — they'll all light up automatically once `aiAnalysis` is no longer null.
 
-- Last 24h alerts: **64 cascades, 0 take_it_now, 0 velocity_spike**.
-- Snapshot table has 2,240 rows, but across 384 props with ≥3 snapshots each:
-  - **0 props ever flipped sides**
-  - **0 props ever moved composite by ≥12**
-  - **avg `over_price` change = 0, avg `under_price` change = 0**
-- `unified_props` is refreshed once per day (last write 09:00 UTC) and not re-priced intraday. There is no live FanDuel re-poll feeding it.
-- `line_movements`, `juiced_prop_movement_history`, `odds_snapshots`, `extreme_movement_alerts` all have **0 rows in the last 24h** — so there is no other intraday price source to pivot to either.
+We'll add **one** new card above the roast: `EngineRecommendationCard` that surfaces the parlay-level `summary` + `recommendedAction` + the keep/swap/drop verdict counts in a single hero block, so users see the actionable answer immediately without scrolling.
 
-### Conclusion
+### 4. Homepage analyzer (`HomepageAnalyzer.tsx`)
+Currently only runs Monte Carlo simulation. After the existing simulation step, fire `analyze-parlay` in parallel and surface:
+- The `recommendedAction` chip on the risk banner
+- The `summary` sentence under the existing tier label
+- Top 1 swap suggestion inline per weak leg (with a "Use sharper pick" tap that copies to clipboard)
 
-Cascade only needs the *current* distribution of derived sides — that fires fine. Take-It-Now (side flip vs. snapshot) and Velocity Spike (composite jump vs. baseline) **need price movement that doesn't exist** in our pipeline today. The detectors aren't broken; they're starved.
+Free preview shows verdict + summary; the full leg-by-leg engine breakdown stays behind the existing $4.99 unlock (fits the current paid model).
 
-### Fix — three new detectors that work with the data we actually have
+## Technical Details
 
-Rewrite `signal-alert-engine` with three new "movement-free" signals so users get a steady mix of alerts every cycle instead of just cascades:
+**Files to create:**
+- `supabase/functions/analyze-parlay/index.ts` — engine cross-reference + synthesis
+- `supabase/functions/generate-roasts/index.ts` — Lovable AI roast generator
+- `supabase/functions/_shared/leg-matcher.ts` — fuzzy player/prop/line matching helper used by both analyze-parlay and find-swap-alternatives
+- `src/components/results/EngineRecommendationCard.tsx` — hero summary card
 
-1. **`take_it_now` — redefined as "Sharpest Side Asymmetry"**
-   Trigger: a single prop with juice gap ≥ 30 American points (e.g. Over -105 / Under -135 → gap 30) AND it is the steepest gap in its game. Means the book is hammering one side. Confidence mapping unchanged (60–90 floor).
+**Files to edit:**
+- `src/pages/Results.tsx` — add `EngineRecommendationCard` near the top; pass `recommendedAction` to existing components
+- `src/components/home/HomepageAnalyzer.tsx` — invoke `analyze-parlay`, render verdict chip + inline swaps in free preview
+- `supabase/functions/find-swap-alternatives/index.ts` — refactor to import from `_shared/leg-matcher.ts`
+- `src/types/parlay.ts` — extend `ParlayAnalysis` with `recommendedAction`, `summary`, `keepLegs`, `swapLegs`, `dropLegs`, `suggestedSwaps`, `expectedValueDelta`
 
-2. **`velocity_spike` — redefined as "Slate Outlier"**
-   Trigger: a player's derived confidence is in the **top 5%** of all active props for the same `prop_type` and `sport` today AND ≥ 70. Means the slate is telling us this is a rare price. Computed across the live snapshot, no history needed.
-
-3. **`cascade` — keep current logic** (≥3 same-team-same-direction). It works.
-
-All three keep the **60% confidence floor** and 2-hour dedupe. Keep existing snapshot insert so when intraday pricing eventually exists, the *original* flip/velocity logic can be re-enabled without a rewrite (gate it behind a feature flag).
-
-Result: every 15-min cycle should produce a balanced mix — cascades for crowd direction, take-it-now for sharp lines, velocity for slate-rare prices.
-
-### Telegram delivery tweaks
-
-Update `signal-alert-telegram` formatter to:
-- Reflect the new definitions in the "why we're alerting" sub-line (so it reads honest: "Steepest juice gap on the slate" instead of "the model just flipped").
-- Keep cascade message identical.
-- Keep the 25-per-run cap and tipoff guard.
-
-### Files touched (Part A)
-
-- `supabase/functions/signal-alert-engine/index.ts` — rewrite take_it_now & velocity_spike detectors; preserve cascade + snapshot insert.
-- `supabase/functions/signal-alert-telegram/index.ts` — update copy for the two redefined signal types.
-- `mem://logic/betting/take-it-now-logic` and `mem://logic/betting/fanduel-signals` — note the new definitions so future changes don't undo this.
-
----
-
-## Part B — "How to upload your slip" explainer video → Telegram
-
-### What we'll ship
-
-A **20-second 1080×1920 MP4** with **ElevenLabs voiceover** walking through the 3 steps: (1) snap/paste your slip → (2) AI scans & runs Monte Carlo → (3) get verdict + roast. Built with Remotion in the existing `worker/remotion/` setup, branded with the farm palette already in `src/components/farm/`.
-
-### Storyboard (4 scenes, ~5 sec each)
-
-```
-Scene 1 (0-5s)   "Drop your slip"        — Phone mockup, screenshot drops in, shutter sound
-Scene 2 (5-11s)  "We crunch the numbers" — 10,000 simulations counter, line chart sweeps
-Scene 3 (11-17s) "Get the verdict"       — Big % win prob + roast bubble pops in
-Scene 4 (17-20s) "Try it free"           — parlayfarm.com URL + Telegram bot handle
-```
-
-VO script (~55 words) generated via ElevenLabs (voice: Brian `nPczCjzI2devNBz1zQrb` — matches the farm tone). Audio stitched onto the Remotion timeline.
-
-### Telegram delivery — admin-first with one-tap broadcast
-
-Two new edge functions plus one tiny table:
-
-1. **`explainer-video-render`** (one-time, on-demand)
-   - Renders the MP4 locally inside the function via the existing `worker/` Remotion bundle.
-   - Uploads to a new public Storage bucket `marketing-videos`.
-   - Returns the public URL.
-
-2. **`telegram-broadcast`** (the new generic sender)
-   - Takes `{ video_url, caption, target: 'admin' | 'all' }`.
-   - For `admin`: calls Telegram `sendVideo` to `TELEGRAM_CHAT_ID` and attaches an **inline keyboard button** "📣 Broadcast to all subscribers" with `callback_data=broadcast:<broadcast_id>`.
-   - For `all`: loops over `bot_user_preferences.chat_id` (currently 8 rows), sends `sendVideo` to each, logs delivery per chat in a new `bot_video_broadcasts` table for dedupe + retry.
-
-3. **`telegram-poll` (existing) → extend to handle `callback_query`**
-   - When the admin taps the broadcast button, the callback hits the poll loop, which invokes `telegram-broadcast` with `target: 'all'` and the matching `broadcast_id`.
-   - Edits the original admin message to show "✅ Sent to N subscribers".
-
-`bot-send-telegram` stays untouched (it's text-only and admin-only by design). The new `telegram-broadcast` function adds video + multi-recipient capability without disrupting the rest of the alert pipeline.
-
-### New table
-
-```sql
-create table public.bot_video_broadcasts (
-  id uuid primary key default gen_random_uuid(),
-  video_url text not null,
-  caption text,
-  created_by text default 'admin',
-  status text not null default 'pending', -- pending | admin_sent | broadcast_sent
-  admin_message_id bigint,
-  recipients_total int default 0,
-  recipients_succeeded int default 0,
-  created_at timestamptz default now()
-);
--- RLS: service_role only.
+**Engine fan-out pattern (per leg):**
+```text
+                 ┌─► unified_props (PVS + confidence)
+                 ├─► median_lock_candidates (LOCK/STRONG)
+   leg ──fuzzy──►├─► juiced_props (juice level)
+                 ├─► player_prop_hitrates (L10)
+                 ├─► sharp_signals (sharp rec)
+                 ├─► trap_probability_analysis (trap risk)
+                 ├─► injury_reports (player match)
+                 └─► sports_fatigue_scores (B2B + load)
+                          │
+                          ▼
+                synthesizeLegAnalysis()
+                  → researchSummary
+                  → adjustedProbability
+                  → riskFactors / sharpSignals
 ```
 
-### Files touched (Part B)
+**Performance:** all 8 engine queries per leg run in `Promise.all`; expected total ~600ms for an 8-leg slip on the existing Supabase indexes. No new tables required.
 
-- `worker/remotion/src/compositions/SlipExplainer.tsx` — new 4-scene composition.
-- `worker/remotion/src/Root.tsx` — register the new composition.
-- `supabase/functions/explainer-video-render/index.ts` — new (renders + uploads).
-- `supabase/functions/telegram-broadcast/index.ts` — new (sendVideo, admin/all targeting, callback handling).
-- `supabase/functions/telegram-poll/index.ts` — extend to route `callback_query` → `telegram-broadcast`.
-- `supabase/migrations/<ts>_bot_video_broadcasts.sql` — new table + RLS.
-- Storage: create public `marketing-videos` bucket via migration.
+**Auth:** both new functions stay public (`verify_jwt = false` default) — the analyzer is used by anonymous visitors on the homepage. No PII written.
 
-### Verification before delivery
+**Lovable AI key:** `generate-roasts` uses `LOVABLE_API_KEY` (already provisioned for the project); no user secret prompt needed.
 
-1. Render the MP4 locally, save to `/mnt/documents/slip-explainer.mp4`, return as a `<lov-artifact>` so you can preview it before any Telegram send.
-2. Once you approve the cut, trigger `explainer-video-render` to upload it and `telegram-broadcast` with `target: 'admin'`. You'll see it on your Telegram with the broadcast button.
-3. Tapping the button fans it out to the 8 chat_ids in `bot_user_preferences`.
-
----
-
-## Open question I'm assuming "yes" on
-
-The 8 chat_ids in `bot_user_preferences` are unverified (none completed onboarding). I'll send to all of them — if any are stale/blocked, the broadcast log will mark them failed but the run won't crash. If you'd rather restrict to onboarded-only or a manual allowlist, say so before approving.
-
+## Outcome
+After this lands, dropping a slip into the analyzer returns:
+1. **A real verdict** ("REBUILD — 2 of 5 legs are traps")
+2. **A plain-English summary** of which legs to keep, swap, drop
+3. **Concrete sharper alternatives** sourced from 4+ engines, ranked by confidence gain
+4. **Per-leg engine evidence** (PVS, hit rate, sharp signals, trap flags, injuries, fatigue) feeding the existing EV badges and tap-to-expand risk drawer we just shipped
+5. The roast — but now as flavor on top of actual analysis, not the only output.

@@ -183,8 +183,33 @@ export interface CorrelationAnalysis {
 export interface ParlayAnalysis {
   legAnalyses: Array<LegAnalysis & { legIndex: number }>;
   correlatedLegs: CorrelatedLegPair[];
-  overallAssessment: string;
+  overallAssessment?: string;
   correlationAnalysis?: CorrelationAnalysis;
+  // Engine-driven recommendation surface
+  recommendedAction?: 'TAIL' | 'TAIL_WITH_SWAPS' | 'REBUILD' | 'PASS';
+  summary?: string;
+  keepLegs?: number[];
+  swapLegs?: number[];
+  dropLegs?: number[];
+  suggestedSwaps?: SuggestedSwap[];
+  expectedValueDelta?: number;
+  verdictCounts?: { picks: number; fades: number; neutral: number };
+}
+
+export interface SuggestedSwap {
+  legIndex: number;
+  original: string;
+  suggestion: {
+    source: 'median_lock' | 'unified_props' | 'juiced' | 'hitrate';
+    description: string;
+    playerName?: string;
+    propType?: string;
+    line?: number;
+    side?: string;
+    estimatedOdds: number;
+    confidence: number;
+    reason: string;
+  };
 }
 
 export interface ParlaySimulation {

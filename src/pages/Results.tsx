@@ -26,6 +26,7 @@ import { EnsembleConsensusCard } from "@/components/results/EnsembleConsensusCar
 import { CoachingInsightsCard } from "@/components/results/CoachingInsightsCard";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { ConsolidatedVerdictCard } from "@/components/results/ConsolidatedVerdictCard";
+import { EngineRecommendationCard } from "@/components/results/EngineRecommendationCard";
 import { SafeComponent } from "@/components/results/ComponentErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn, BarChart3, Zap, FileText } from "lucide-react";
@@ -406,6 +407,15 @@ const Results = () => {
               delay={0}
               simulation={simulation}
               aiAnalysis={aiAnalysis}
+            />
+          </SafeComponent>
+
+          {/* Engine-driven verdict + concrete swap suggestions */}
+          <SafeComponent name="EngineRecommendationCard">
+            <EngineRecommendationCard
+              analysis={aiAnalysis}
+              loading={isLoadingAnalysis}
+              delay={25}
             />
           </SafeComponent>
           
