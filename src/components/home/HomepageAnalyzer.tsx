@@ -30,6 +30,11 @@ interface AdvancedResults {
   overallAssessment: string;
 }
 
+interface EngineVerdict {
+  recommendedAction?: 'TAIL' | 'TAIL_WITH_SWAPS' | 'REBUILD' | 'PASS';
+  summary?: string;
+}
+
 export function HomepageAnalyzer() {
   const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<InputMode>("upload");
@@ -38,6 +43,7 @@ export function HomepageAnalyzer() {
   const [manualText, setManualText] = useState("");
   const [simulation, setSimulation] = useState<ParlaySimulation | null>(null);
   const [advancedResults, setAdvancedResults] = useState<AdvancedResults | null>(null);
+  const [engineVerdict, setEngineVerdict] = useState<EngineVerdict | null>(null);
   const [showAllLegs, setShowAllLegs] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -149,6 +155,12 @@ export function HomepageAnalyzer() {
       const sim = simulateParlay(parlayLegs, 100, providedTotal);
       setSimulation(sim);
       setState("results");
+      // Fire engine verdict in background — non-blocking
+      supabase.functions.invoke('analyze-parlay', {
+        body: { legs: legs.map((l) => ({ description: l.description, odds: parseInt(l.odds) || -110, player: l.player, propType: l.propType, line: l.line, side: l.side })) },
+      }).then(({ data }) => {
+        if (data?.recommendedAction) setEngineVerdict({ recommendedAction: data.recommendedAction, summary: data.summary });
+      }).catch(() => {});
     } catch {
       toast.error("Simulation failed");
       setState("idle");
@@ -175,6 +187,7 @@ export function HomepageAnalyzer() {
     setExtractedLegs([]);
     setSimulation(null);
     setAdvancedResults(null);
+    setEngineVerdict(null);
     setManualText("");
     setShowAllLegs(false);
   };
