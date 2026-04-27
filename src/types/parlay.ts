@@ -95,6 +95,7 @@ export interface EngineConsensus {
 
 export interface LegAnalysis {
   sport: string;
+  sportConfidence?: 'high' | 'medium' | 'low';
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
   team?: string;
   player?: string;
@@ -188,6 +189,7 @@ export interface ParlayAnalysis {
   // Engine-driven recommendation surface
   recommendedAction?: 'TAIL' | 'TAIL_WITH_SWAPS' | 'REBUILD' | 'PASS';
   summary?: string;
+  sportsDetected?: string[];
   keepLegs?: number[];
   swapLegs?: number[];
   dropLegs?: number[];
