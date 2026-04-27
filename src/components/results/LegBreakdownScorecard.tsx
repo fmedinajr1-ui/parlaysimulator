@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { FeedCard } from "../FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
-import { Share2, Download, Twitter, Instagram, Copy, Loader2, Check, X, AlertTriangle, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Share2, Download, Twitter, Instagram, Copy, Loader2, Check, X, AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, DollarSign, Activity, Flame, Shield, Zap } from "lucide-react";
 import { Button } from "../ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
@@ -15,17 +15,20 @@ interface LegBreakdownScorecardProps {
   legAnalyses?: Array<LegAnalysis & { legIndex: number }>;
   probability: number;
   delay?: number;
+  stake?: number;
 }
 
 export function LegBreakdownScorecard({ 
   legs, 
   legAnalyses, 
   probability,
-  delay = 0 
+  delay = 0,
+  stake = 10,
 }: LegBreakdownScorecardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [expandedLeg, setExpandedLeg] = useState<string | null>(null);
   const pct = probability * 100;
 
   const getLegAnalysis = (legIndex: number) => {
@@ -79,6 +82,24 @@ export function LegBreakdownScorecard({
       value: edge,
       display: `${edge >= 0 ? '+' : ''}${edge.toFixed(1)}%`,
       color: edge >= 2 ? 'text-neon-green' : edge >= 0 ? 'text-neon-cyan' : 'text-neon-red'
+    };
+  };
+
+  // Per-leg expected value in $ assuming equal-share stake allocation.
+  // EV = (adjustedProb * payout) - ((1 - adjustedProb) * legStake)
+  const getLegEV = (analysis: LegAnalysis | undefined, leg: ParlayLeg) => {
+    if (!analysis?.adjustedProbability) return null;
+    const legStake = stake / legs.length;
+    const decimal = leg.odds > 0 ? leg.odds / 100 + 1 : 100 / Math.abs(leg.odds) + 1;
+    const profit = legStake * (decimal - 1);
+    const p = analysis.adjustedProbability;
+    const ev = p * profit - (1 - p) * legStake;
+    return {
+      value: ev,
+      display: `${ev >= 0 ? '+' : ''}$${ev.toFixed(2)}`,
+      color: ev >= 0.5 ? 'text-neon-green' : ev >= 0 ? 'text-neon-cyan' : 'text-neon-red',
+      bg: ev >= 0.5 ? 'bg-neon-green/10' : ev >= 0 ? 'bg-neon-cyan/10' : 'bg-neon-red/10',
+      Icon: ev >= 0 ? TrendingUp : TrendingDown,
     };
   };
 
@@ -270,16 +291,39 @@ export function LegBreakdownScorecard({
           const analysis = getLegAnalysis(idx);
           const verdict = getVerdictConfig(analysis);
           const edge = getEdge(analysis, leg);
+          const ev = getLegEV(analysis, leg);
           const VerdictIcon = verdict.icon;
           const strengthScore = analysis?.researchSummary?.strengthScore;
+          const isExpanded = expandedLeg === leg.id;
+          const hasRiskDetail =
+            !!analysis &&
+            (
+              (analysis.riskFactors?.length ?? 0) > 0 ||
+              (analysis.sharpSignals?.length ?? 0) > 0 ||
+              (analysis.injuryAlerts?.length ?? 0) > 0 ||
+              !!analysis.fatigueData ||
+              !!analysis.juiceData ||
+              !!analysis.trendDirection ||
+              !!analysis.confidenceLevel
+            );
 
           return (
-            <div 
+            <div
               key={leg.id}
               className={cn(
-                "flex items-center gap-3 p-3 rounded-xl border transition-all",
+                "rounded-xl border transition-all overflow-hidden",
                 verdict.bg,
-                "border-border/30 hover:border-border/50"
+                isExpanded ? "border-current/40" : "border-border/30 hover:border-border/50"
+              )}
+            >
+            <button
+              type="button"
+              onClick={() => hasRiskDetail && setExpandedLeg(isExpanded ? null : leg.id)}
+              aria-expanded={isExpanded}
+              disabled={!hasRiskDetail}
+              className={cn(
+                "w-full flex items-center gap-3 p-3 text-left",
+                hasRiskDetail ? "cursor-pointer" : "cursor-default"
               )}
             >
               {/* Leg number */}
@@ -306,13 +350,31 @@ export function LegBreakdownScorecard({
                     {leg.description}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 mt-0.5">
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <span className="text-xs text-muted-foreground">
                     {leg.odds > 0 ? '+' : ''}{leg.odds}
                   </span>
+                  {ev && (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] font-mono px-1.5 py-0 h-4 border-current/30",
+                        ev.color,
+                        ev.bg
+                      )}
+                    >
+                      <ev.Icon className="w-2.5 h-2.5 mr-0.5" />
+                      EV {ev.display}
+                    </Badge>
+                  )}
+                  {edge && (
+                    <span className={cn("text-[10px] font-mono", edge.color)}>
+                      edge {edge.display}
+                    </span>
+                  )}
                   {strengthScore !== undefined && (
                     <span className={cn(
-                      "text-xs font-medium",
+                      "text-[10px] font-medium",
                       strengthScore >= 70 ? "text-neon-green" :
                       strengthScore >= 50 ? "text-neon-cyan" :
                       strengthScore >= 30 ? "text-neon-yellow" : "text-neon-red"
@@ -323,17 +385,132 @@ export function LegBreakdownScorecard({
                 </div>
               </div>
 
-              {/* Edge & Verdict */}
-              <div className="text-right shrink-0">
+              {/* Verdict + expand chevron */}
+              <div className="flex items-center gap-2 shrink-0">
                 <Badge variant="outline" className={cn("text-xs", verdict.color, verdict.bg, "border-current/30")}>
                   {verdict.label}
                 </Badge>
-                {edge && (
-                  <p className={cn("text-xs font-mono mt-1", edge.color)}>
-                    {edge.display}
-                  </p>
+                {hasRiskDetail && (
+                  <ChevronDown
+                    className={cn(
+                      "w-4 h-4 text-muted-foreground transition-transform",
+                      isExpanded && "rotate-180"
+                    )}
+                  />
                 )}
               </div>
+            </button>
+
+            {/* Tap-to-expand risk breakdown */}
+            {isExpanded && hasRiskDetail && (
+              <div className="px-3 pb-3 pt-0 space-y-2 border-t border-border/20 bg-card/30">
+                {/* Quick risk meters row */}
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {analysis?.confidenceLevel && (
+                    <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-card/60">
+                      <Shield className={cn(
+                        "w-3.5 h-3.5 mb-0.5",
+                        analysis.confidenceLevel === 'high' ? 'text-neon-green' :
+                        analysis.confidenceLevel === 'medium' ? 'text-neon-yellow' : 'text-neon-red'
+                      )} />
+                      <span className="text-[9px] uppercase text-muted-foreground tracking-wider">Confidence</span>
+                      <span className="text-[10px] font-bold capitalize">{analysis.confidenceLevel}</span>
+                    </div>
+                  )}
+                  {analysis?.trendDirection && (
+                    <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-card/60">
+                      <Activity className={cn(
+                        "w-3.5 h-3.5 mb-0.5",
+                        analysis.trendDirection === 'favorable' ? 'text-neon-green' :
+                        analysis.trendDirection === 'unfavorable' ? 'text-neon-red' : 'text-muted-foreground'
+                      )} />
+                      <span className="text-[9px] uppercase text-muted-foreground tracking-wider">Trend</span>
+                      <span className="text-[10px] font-bold capitalize">{analysis.trendDirection}</span>
+                    </div>
+                  )}
+                  {typeof analysis?.vegasJuice === 'number' && (
+                    <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-card/60">
+                      <DollarSign className={cn(
+                        "w-3.5 h-3.5 mb-0.5",
+                        analysis.vegasJuice <= 5 ? 'text-neon-green' :
+                        analysis.vegasJuice <= 8 ? 'text-neon-yellow' : 'text-neon-red'
+                      )} />
+                      <span className="text-[9px] uppercase text-muted-foreground tracking-wider">Juice</span>
+                      <span className="text-[10px] font-bold">{analysis.vegasJuice.toFixed(1)}%</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Injury alerts */}
+                {analysis?.injuryAlerts && analysis.injuryAlerts.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Injury Watch</p>
+                    {analysis.injuryAlerts.map((inj, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs p-1.5 rounded bg-neon-red/5 border border-neon-red/20">
+                        <AlertTriangle className="w-3 h-3 text-neon-red shrink-0" />
+                        <span className="text-foreground/80">
+                          <span className="font-semibold">{inj.player}</span> · {inj.status} · {inj.injuryType}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Risk factors */}
+                {analysis?.riskFactors && analysis.riskFactors.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Risk Factors</p>
+                    <ul className="space-y-1">
+                      {analysis.riskFactors.map((rf, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-xs text-foreground/80">
+                          <span className="text-neon-orange mt-0.5">•</span>
+                          <span>{rf}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Sharp signals */}
+                {analysis?.sharpSignals && analysis.sharpSignals.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Sharp Signals</p>
+                    <div className="flex flex-wrap gap-1">
+                      {analysis.sharpSignals.map((sig, i) => (
+                        <Badge key={i} variant="outline" className="text-[10px] bg-card/60">
+                          <Zap className="w-2.5 h-2.5 mr-0.5 text-neon-yellow" />
+                          {sig.replace(/_/g, ' ').toLowerCase()}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Fatigue */}
+                {analysis?.fatigueData && (
+                  <div className="flex items-center gap-2 text-xs p-1.5 rounded bg-card/60">
+                    <Flame className="w-3 h-3 text-neon-orange shrink-0" />
+                    <span className="text-muted-foreground">Fatigue:</span>
+                    <span className="font-medium">{analysis.fatigueData.fatigueCategory}</span>
+                    {analysis.fatigueData.isBackToBack && (
+                      <Badge variant="outline" className="text-[9px] text-neon-orange border-neon-orange/30 bg-neon-orange/10">B2B</Badge>
+                    )}
+                  </div>
+                )}
+
+                {/* EV math footer */}
+                {ev && (
+                  <div className="flex items-center justify-between pt-2 mt-1 border-t border-border/20">
+                    <span className="text-[10px] text-muted-foreground">
+                      Allocated stake ${(stake / legs.length).toFixed(2)} · win prob {((analysis?.adjustedProbability ?? 0) * 100).toFixed(0)}%
+                    </span>
+                    <span className={cn("text-xs font-mono font-bold", ev.color)}>
+                      EV {ev.display}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             </div>
           );
         })}
