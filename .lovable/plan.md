@@ -5,14 +5,19 @@
 
 **Part A — DONE & LIVE.** Movement-free detectors deployed. First post-deploy run produced 6 take_it_now + 14 velocity_spike alerts; telegram broadcaster sent 20 mixed alerts to admin chat. Cron continues every 15 min.
 
-**Part B — IN PROGRESS, paused.** Scaffolded but not rendered/deployed yet. To resume:
-1. `/tmp/remotion-explainer/` has package.json, tsconfig.json, Remotion + deps installed (musl compositor). Still need src/index.ts, src/Root.tsx, 4 scene files.
-2. ElevenLabs VO not yet generated (key available: `ELEVENLABS_API_KEY`). Voice: Brian `nPczCjzI2devNBz1zQrb`. Script ~55 words across 4 scenes.
-3. MP4 not yet rendered to `/mnt/documents/slip-explainer.mp4`.
-4. Storage bucket `marketing-videos` and tables `bot_video_broadcasts` + `bot_video_broadcast_recipients` already created (migration applied).
-5. Edge functions to create: `explainer-video-render` (uploads MP4 to bucket) and `telegram-broadcast` (sendVideo + admin/all targeting).
-6. Wire `broadcast:<id>` callback into existing `supabase/functions/telegram-prop-scanner/index.ts` (around line 490, alongside `parlay:` handler).
-7. Subscriber list lives in `bot_user_preferences.chat_id` (8 rows currently).
+**Part B — VIDEO RENDERED.** MP4 delivered to `/mnt/documents/slip-explainer.mp4` (4.8MB, 14.6s, 1080x1920, with Brian VO). Broadcast pipeline still TODO.
+
+### Render notes (for future re-renders)
+- Project at `/tmp/remotion-explainer/`. Composition id `main`, 480 frames @ 30fps.
+- Sandbox ffmpeg lacks `libfdk_aac`, so render is two-step: `REMOTION_NO_AUDIO=1 node scripts/render-remotion.mjs /tmp/slip-explainer-noaudio.mp4` then `ffmpeg -i noaudio.mp4 -i public/voiceover.mp3 -c:v copy -c:a aac -shortest out.mp4`.
+- Compositor binary patched: gnu variant overwritten with musl + ffmpeg/ffprobe symlinked from PATH.
+- Known visual issue: Scene 1 phone mockup is washed out vs the bright radial bg (low contrast). Scenes 2/3/4 look great. To fix: darken the radial gradient further or replace Scene 1 bg with a solid `#02050d`.
+
+### Remaining TODO for Telegram delivery
+1. Storage bucket `marketing-videos` + tables `bot_video_broadcasts` / `bot_video_broadcast_recipients` already exist.
+2. Build `explainer-video-render` edge function: upload `/mnt/documents/slip-explainer.mp4` to the bucket, return public URL. (For one-off, can also be done manually via storage_upload.)
+3. Build `telegram-broadcast` edge function: sendVideo to admin first with inline "📣 Broadcast to all" callback button (`broadcast:<id>`).
+4. Wire `broadcast:<id>` callback into `supabase/functions/telegram-prop-scanner/index.ts` (~line 490) to fan out to `bot_user_preferences.chat_id` (8 rows).
 
 ## Part A — Why you're only seeing cascade alerts (root cause + fix)
 
