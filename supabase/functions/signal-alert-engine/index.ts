@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { buildPlayerReasoning, buildGroupReasoning, type PlayerReasoning } from '../_shared/alert-explainer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,6 +65,15 @@ function normaliseSport(s: string | null): string {
   return m[s] || s.toUpperCase();
 }
 
+// Tiny in-run cache so multiple props from the same player+event don't re-query.
+function reasoningCache() {
+  const map = new Map<string, Promise<PlayerReasoning>>();
+  return {
+    get(key: string) { return map.get(key); },
+    set(key: string, p: Promise<PlayerReasoning>) { map.set(key, p); },
+  };
+}
+
 function dedupeKey(parts: Array<string | null | undefined>): string {
   return parts.map((p) => (p ?? '').toString().toLowerCase().trim()).join('|');
 }
@@ -94,6 +104,32 @@ Deno.serve(async (req) => {
   );
 
   const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0 };
+  const explainerCache = reasoningCache();
+
+  // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
+  // the alert still fires, just without the engine_reasoning attached.
+  const explain = async (p: ScoredProp, juiceGap: number | null): Promise<PlayerReasoning | null> => {
+    if (!p.player_name || !p.prop_type || !p.event_id) return null;
+    const key = `${p.event_id}|${p.player_name}|${p.prop_type}|${p.derived_side}|${p.current_line}`;
+    let pending = explainerCache.get(key);
+    if (!pending) {
+      pending = buildPlayerReasoning(supabase, {
+        player_name: p.player_name,
+        prop_type: p.prop_type,
+        side: p.derived_side,
+        line: Number(p.current_line ?? 0),
+        event_id: p.event_id,
+        sport: normaliseSport(p.sport),
+        juice_gap: juiceGap,
+      }).catch((err) => {
+        console.error('[signal-alert-engine] explainer failed for', p.player_name, err);
+        return null as unknown as PlayerReasoning;
+      });
+      explainerCache.set(key, pending);
+    }
+    const r = await pending;
+    return r ?? null;
+  };
 
   try {
     // 1) Pull active props (only fresh ones with both prices). We derive direction from prices,
@@ -187,14 +223,34 @@ Deno.serve(async (req) => {
       const dKey = dedupeKey(['cascade', groupKey]);
       if (!(await claimKey(dKey, 'cascade'))) continue;
 
-      const playerBreakdown = members.map((m) => ({
+      // Build per-player reasoning in parallel (≤8 players typically)
+      const reasonings = await Promise.all(
+        members.map((m) => {
+          const overP = Number(m.over_price ?? NaN);
+          const underP = Number(m.under_price ?? NaN);
+          const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
+          return explain(m, gap);
+        }),
+      );
+
+      const playerBreakdown = members.map((m, i) => ({
         player: m.player_name,
         confidence: m.derived_confidence,
         composite: m.derived_score,
         line: Number(m.current_line ?? 0),
         side: m.derived_side,
         pvs_tier: m.pvs_tier,
+        engine_reasoning: reasonings[i] ?? null,
       }));
+
+      const validReasonings = reasonings.filter((r): r is PlayerReasoning => !!r);
+      const groupReasoning = validReasonings.length > 0
+        ? buildGroupReasoning(validReasonings, first.derived_side, first.prop_type ?? '')
+        : null;
+
+      // Verdict roll-up so we can audit which cascades are "real"
+      const verdictCounts = { strong: 0, lean: 0, weak: 0 };
+      for (const r of validReasonings) verdictCounts[r.verdict.toLowerCase() as 'strong'|'lean'|'weak'] += 1;
 
       const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
         player_name: `TEAM CASCADE (${distinctPlayers.slice(0, 3).join(', ')}${distinctPlayers.length > 3 ? '…' : ''})`,
@@ -213,6 +269,9 @@ Deno.serve(async (req) => {
           line: first.current_line,
           alignment: 100,
           player_breakdown: playerBreakdown,
+          group_reasoning: groupReasoning,
+          verdict_counts: verdictCounts,
+          explainer_version: 'v1',
           source: 'unified_props_price_derived',
         },
       });
@@ -252,6 +311,8 @@ Deno.serve(async (req) => {
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
         if (!(await claimKey(dKey, 'take_it_now'))) continue;
 
+        const engine_reasoning = await explain(p, gap);
+
         const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
           player_name: p.player_name,
           event_id: p.event_id,
@@ -270,6 +331,8 @@ Deno.serve(async (req) => {
             under_price: p.under_price,
             line: p.current_line,
             pvs_tier: p.pvs_tier,
+            engine_reasoning,
+            explainer_version: 'v1',
             source: 'unified_props_price_derived',
           },
         });
@@ -308,6 +371,11 @@ Deno.serve(async (req) => {
           const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
           if (!(await claimKey(dKey, 'velocity_spike'))) continue;
 
+          const overP = Number(p.over_price ?? NaN);
+          const underP = Number(p.under_price ?? NaN);
+          const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
+          const engine_reasoning = await explain(p, gap);
+
           const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
             player_name: p.player_name,
             event_id: p.event_id,
@@ -328,6 +396,8 @@ Deno.serve(async (req) => {
               over_price: p.over_price,
               under_price: p.under_price,
               line: p.current_line,
+              engine_reasoning,
+              explainer_version: 'v1',
               source: 'unified_props_price_derived',
             },
           });

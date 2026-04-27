@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { formatPlayerReasoningLines, verdictBadge, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,6 +10,8 @@ const MIN_CONFIDENCE = 60;
 const LOOKBACK_HOURS = 6;          // only consider recent alerts
 const PER_RUN_CAP = 25;            // hard cap on Telegram messages per run
 const MIN_MINUTES_TO_TIPOFF = 5;   // skip alerts whose game already started
+const MAX_PLAYERS_RENDERED = 5;    // cap per-cascade detail to keep messages under Telegram's 4096 cap
+const MAX_MESSAGE_CHARS = 3500;    // safety margin under Telegram's 4096 limit
 
 function easternDate(d: Date = new Date()): string {
   // YYYY-MM-DD in America/New_York
@@ -72,21 +75,61 @@ function formatAlert(a: Alert): string {
   const meta = (a.metadata ?? {}) as Record<string, any>;
 
   if (a.signal_type === 'cascade') {
-    const players = Array.isArray(meta.player_breakdown) ? meta.player_breakdown : [];
-    const lines = players
-      .slice(0, 5)
-      .map((p: any) => `   • ${escapeMd(p.player ?? '')} — conf ${Math.round(Number(p.confidence ?? 0))}`)
-      .join('\n');
-    return [
-      `🌊 *CASCADE ALERT* — ${escapeMd(sport)}`,
-      `Three or more plays moving the same way on the same game.`,
-      ``,
-      `🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  ${sideEmoji(side)} confidence ${Math.round(conf)}%`,
-      `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
-      ``,
-      `*Players in the cascade:*`,
-      lines || `   • ${escapeMd(a.player_name)}`,
-    ].join('\n');
+    const players: any[] = Array.isArray(meta.player_breakdown) ? meta.player_breakdown : [];
+    const group = (meta.group_reasoning ?? null) as GroupReasoning | null;
+    const counts = (meta.verdict_counts ?? {}) as { strong?: number; lean?: number; weak?: number };
+
+    const out: string[] = [];
+    out.push(`🌊 *CASCADE ALERT* — ${escapeMd(sport)}`);
+    out.push(`${players.length} players aligned on the same side.`);
+    out.push('');
+    out.push(`🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  ${sideEmoji(side)} avg conf ${Math.round(conf)}%`);
+    out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
+
+    if (group?.headline_bullets?.length) {
+      out.push('');
+      out.push(`*Why this side:*`);
+      for (const b of group.headline_bullets.slice(0, 3)) out.push(`• ${escapeMd(b)}`);
+    }
+
+    if (counts && (counts.strong || counts.lean || counts.weak)) {
+      out.push('');
+      out.push(`*Verdict mix:* ✅ ${counts.strong ?? 0} strong  ·  ⚠️ ${counts.lean ?? 0} lean  ·  ❌ ${counts.weak ?? 0} weak`);
+    }
+
+    out.push('');
+    out.push(`*Players in the cascade:*`);
+
+    // Sort STRONG → LEAN → WEAK so the message leads with the highest-conviction legs
+    const order = { STRONG: 0, LEAN: 1, WEAK: 2 } as const;
+    const sorted = [...players].sort((a, b) => {
+      const av = order[(a.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
+      const bv = order[(b.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
+      return av - bv;
+    });
+
+    const rendered = sorted.slice(0, MAX_PLAYERS_RENDERED);
+    for (const p of rendered) {
+      const r = p.engine_reasoning as PlayerReasoning | null | undefined;
+      const sideStr = String(p.side ?? side);
+      const lineNum = Number(p.line ?? 0);
+      const cnf = Number(p.confidence ?? 0);
+      if (r) {
+        const lines = formatPlayerReasoningLines(p.player ?? '', sideStr === 'Over' ? 'Over' : 'Under', lineNum, cnf, r);
+        for (const ln of lines) out.push(escapeMd(ln));
+      } else {
+        out.push(escapeMd(`• ${p.player ?? ''}  ${(sideStr[0] ?? '?')} ${lineNum}  conf ${Math.round(cnf)}%`));
+      }
+    }
+    if (sorted.length > MAX_PLAYERS_RENDERED) {
+      out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more players — see dashboard_`);
+    }
+
+    let msg = out.join('\n');
+    if (msg.length > MAX_MESSAGE_CHARS) {
+      msg = msg.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated for length_';
+    }
+    return msg;
   }
 
   if (a.signal_type === 'take_it_now') {
@@ -94,7 +137,8 @@ function formatAlert(a: Alert): string {
     const overP = Number(meta.over_price ?? 0);
     const underP = Number(meta.under_price ?? 0);
     const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-    return [
+    const r = (meta.engine_reasoning ?? null) as PlayerReasoning | null;
+    const out: string[] = [
       `⚡ *TAKE IT NOW* — ${escapeMd(sport)}`,
       `Steepest juice gap in this game — the book is openly favoring one side.`,
       ``,
@@ -102,13 +146,25 @@ function formatAlert(a: Alert): string {
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
       `💰 prices: Over ${fmt(overP)} / Under ${fmt(underP)}  •  gap ${Math.round(gap)}`,
       `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
-    ].join('\n');
+    ];
+    if (r) {
+      out.push('');
+      out.push(`*Engine reasoning:* ${verdictBadge(r.verdict)}`);
+      out.push(escapeMd(`↳ ${r.headline}`));
+      if (r.matchup.opponent_team && (r.matchup.position_defense_rank ?? r.matchup.defense_rank) != null) {
+        const dr = r.matchup.position_defense_rank ?? r.matchup.defense_rank;
+        out.push(escapeMd(`↳ vs ${r.matchup.opponent_team} D rank #${dr}${r.form.l10_total ? ` · L10 ${side} ${r.form.l10_hits}/${r.form.l10_total}` : ''}`));
+      }
+      if (r.flags.length > 0) out.push(escapeMd(`↳ flags: ${r.flags.join(', ')}`));
+    }
+    return out.join('\n');
   }
 
   if (a.signal_type === 'velocity_spike') {
     const cohortAvg = Number(meta.cohort_avg_confidence ?? 0);
     const pct = Number(meta.percentile_rank ?? 0);
-    return [
+    const r = (meta.engine_reasoning ?? null) as PlayerReasoning | null;
+    const out: string[] = [
       `🚀 *SLATE OUTLIER* — ${escapeMd(sport)}`,
       `One of the rarest-priced ${escapeMd(prop)} props on the slate today.`,
       ``,
@@ -116,7 +172,17 @@ function formatAlert(a: Alert): string {
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
       `📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`,
       `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
-    ].join('\n');
+    ];
+    if (r) {
+      out.push('');
+      out.push(`*Engine reasoning:* ${verdictBadge(r.verdict)}`);
+      out.push(escapeMd(`↳ ${r.headline}`));
+      if (r.matchup.opponent_team && (r.matchup.position_defense_rank ?? r.matchup.defense_rank) != null) {
+        const dr = r.matchup.position_defense_rank ?? r.matchup.defense_rank;
+        out.push(escapeMd(`↳ vs ${r.matchup.opponent_team} D rank #${dr}${r.form.l10_total ? ` · L10 ${side} ${r.form.l10_hits}/${r.form.l10_total}` : ''}`));
+      }
+    }
+    return out.join('\n');
   }
 
   // Generic fallback (e.g. legacy snapback rows still in the table)
