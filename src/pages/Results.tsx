@@ -427,6 +427,7 @@ const Results = () => {
                 legs={simulation.legs}
                 legAnalyses={aiAnalysis?.legAnalyses}
                 probability={simulation.combinedProbability}
+                stake={simulation.stake}
                 delay={50}
               />
             </CelebrationEffect>
