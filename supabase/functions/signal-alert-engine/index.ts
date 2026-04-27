@@ -11,6 +11,7 @@ const FLIP_LOOKBACK_MIN = 30;         // window for take-it-now (recommendation 
 const VELOCITY_LOOKBACK_HRS = 6;      // baseline window for velocity spike
 const VELOCITY_SPIKE_DELTA = 12;      // composite_score jump required
 const DEDUPE_TTL_MIN = 120;           // 2-hour cross-run dedupe per Telegram rule
+const MIN_JUICE_GAP = 15;             // min American-odds gap to consider a directional signal
 
 type UnifiedProp = {
   id: string;
@@ -30,6 +31,12 @@ type UnifiedProp = {
   recommended_side: string | null;
   pvs_tier: string | null;
   updated_at: string;
+};
+
+type ScoredProp = UnifiedProp & {
+  derived_side: 'Over' | 'Under';
+  derived_confidence: number;
+  derived_score: number; // 0-100 magnitude (used for velocity baseline)
 };
 
 type Snapshot = {
@@ -55,6 +62,23 @@ function dedupeKey(parts: Array<string | null | undefined>): string {
   return parts.map((p) => (p ?? '').toString().toLowerCase().trim()).join('|');
 }
 
+// Derive direction + confidence from raw American odds.
+// Logic: the "better" priced side (less negative / more positive) is the implied edge for the bettor.
+// Confidence scales with the magnitude of the juice gap, mapped to a 60-90 range when the gap clears MIN_JUICE_GAP.
+function scoreFromPrices(over: number | null, under: number | null): { side: 'Over' | 'Under'; confidence: number; score: number } | null {
+  if (over == null || under == null) return null;
+  const gap = Math.abs(over - under);
+  if (gap < MIN_JUICE_GAP) return null;
+
+  // The side that pays MORE has the implied edge (sharps don't need to juice it).
+  const side: 'Over' | 'Under' = over > under ? 'Over' : 'Under';
+
+  // Map gap -> confidence: 15 -> 60, 50+ -> 90
+  const confidence = Math.min(90, Math.max(60, 60 + Math.round((gap - MIN_JUICE_GAP) * 0.85)));
+  // 0..100 magnitude for velocity baseline
+  const score = Math.min(100, gap);
+  return { side, confidence, score };
+}
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -66,21 +90,36 @@ Deno.serve(async (req) => {
   const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0 };
 
   try {
-    // 1) Pull active props (only fresh, recent ones)
-    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // last hour
+    // 1) Pull active props (only fresh ones with both prices). We derive direction from prices,
+    //    not from `recommended_side`, because the upstream scorer is currently silent.
+    const since = new Date(Date.now() - 90 * 60 * 1000).toISOString(); // last 90 min
     const { data: props, error: pErr } = await supabase
       .from('unified_props')
       .select('id,event_id,sport,game_description,commence_time,player_name,prop_type,bookmaker,current_line,over_price,under_price,composite_score,confidence,recommendation,recommended_side,pvs_tier,updated_at')
       .eq('is_active', true)
       .gte('updated_at', since)
-      .gte('confidence', MIN_CONFIDENCE)
-      .not('recommended_side', 'is', null);
+      .not('over_price', 'is', null)
+      .not('under_price', 'is', null);
 
     if (pErr) throw pErr;
-    const activeProps = (props ?? []) as UnifiedProp[];
-    console.log(`[signal-alert-engine] active props: ${activeProps.length}`);
+    const rawProps = (props ?? []) as UnifiedProp[];
 
-    // 2) Snapshot every active prop (for future change detection)
+    // 2) Score each prop from raw prices
+    const activeProps: ScoredProp[] = [];
+    for (const p of rawProps) {
+      const scored = scoreFromPrices(Number(p.over_price), Number(p.under_price));
+      if (!scored) continue;
+      if (scored.confidence < MIN_CONFIDENCE) continue;
+      activeProps.push({
+        ...p,
+        derived_side: scored.side,
+        derived_confidence: scored.confidence,
+        derived_score: scored.score,
+      });
+    }
+    console.log(`[signal-alert-engine] active props: ${rawProps.length} raw, ${activeProps.length} after scoring`);
+
+    // 3) Snapshot every active prop (for future change detection)
     if (activeProps.length > 0) {
       const snapRows = activeProps.map((p) => ({
         unified_prop_id: p.id,
@@ -91,10 +130,10 @@ Deno.serve(async (req) => {
         current_line: p.current_line,
         over_price: p.over_price,
         under_price: p.under_price,
-        composite_score: p.composite_score,
-        confidence: p.confidence,
+        composite_score: p.derived_score,
+        confidence: p.derived_confidence,
         recommendation: p.recommendation,
-        recommended_side: p.recommended_side,
+        recommended_side: p.derived_side,
         pvs_tier: p.pvs_tier,
       }));
       const { error: snapErr } = await supabase.from('unified_props_snapshot').insert(snapRows);
@@ -119,11 +158,11 @@ Deno.serve(async (req) => {
       return true;
     };
 
-    // 4) CASCADE detector — group by (event_id, prop_type, recommended_side)
-    const groups = new Map<string, UnifiedProp[]>();
+    // 4) CASCADE detector — group by (event_id, prop_type, derived_side)
+    const groups = new Map<string, ScoredProp[]>();
     for (const p of activeProps) {
-      if (!p.event_id || !p.prop_type || !p.recommended_side || !p.player_name) continue;
-      const key = `${p.event_id}|${p.prop_type}|${p.recommended_side.toLowerCase()}`;
+      if (!p.event_id || !p.prop_type || !p.player_name) continue;
+      const key = `${p.event_id}|${p.prop_type}|${p.derived_side.toLowerCase()}`;
       const arr = groups.get(key) ?? [];
       arr.push(p);
       groups.set(key, arr);
@@ -135,7 +174,7 @@ Deno.serve(async (req) => {
 
       const first = members[0];
       const avgConfidence = Math.round(
-        members.reduce((sum, m) => sum + Number(m.confidence ?? 0), 0) / members.length,
+        members.reduce((sum, m) => sum + m.derived_confidence, 0) / members.length,
       );
       if (avgConfidence < MIN_CONFIDENCE) continue;
 
@@ -144,10 +183,10 @@ Deno.serve(async (req) => {
 
       const playerBreakdown = members.map((m) => ({
         player: m.player_name,
-        confidence: Number(m.confidence ?? 0),
-        composite: Number(m.composite_score ?? 0),
+        confidence: m.derived_confidence,
+        composite: m.derived_score,
         line: Number(m.current_line ?? 0),
-        side: m.recommended_side,
+        side: m.derived_side,
         pvs_tier: m.pvs_tier,
       }));
 
@@ -155,7 +194,7 @@ Deno.serve(async (req) => {
         player_name: `TEAM CASCADE (${distinctPlayers.slice(0, 3).join(', ')}${distinctPlayers.length > 3 ? '…' : ''})`,
         event_id: first.event_id,
         signal_type: 'cascade',
-        prediction: first.recommended_side,
+        prediction: first.derived_side,
         confidence: avgConfidence,
         prop_type: first.prop_type,
         sport: normaliseSport(first.sport),
@@ -164,11 +203,11 @@ Deno.serve(async (req) => {
         commence_time: first.commence_time,
         metadata: {
           players_involved: distinctPlayers.length,
-          direction: first.recommended_side,
+          direction: first.derived_side,
           line: first.current_line,
           alignment: 100,
           player_breakdown: playerBreakdown,
-          source: 'unified_props',
+          source: 'unified_props_price_derived',
         },
       });
       if (insErr) {
@@ -196,10 +235,10 @@ Deno.serve(async (req) => {
 
       for (const p of activeProps) {
         const old = oldRec.get(p.id);
-        if (!old || !old.recommended_side || !p.recommended_side) continue;
-        if (old.recommended_side.toLowerCase() === p.recommended_side.toLowerCase()) continue;
+        if (!old || !old.recommended_side) continue;
+        if (old.recommended_side.toLowerCase() === p.derived_side.toLowerCase()) continue;
 
-        const conf = Number(p.confidence ?? 0);
+        const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.recommended_side]);
@@ -209,7 +248,7 @@ Deno.serve(async (req) => {
           player_name: p.player_name,
           event_id: p.event_id,
           signal_type: 'take_it_now',
-          prediction: p.recommended_side,
+          prediction: p.derived_side,
           confidence: Math.round(conf),
           prop_type: p.prop_type,
           sport: normaliseSport(p.sport),
@@ -218,12 +257,12 @@ Deno.serve(async (req) => {
           commence_time: p.commence_time,
           metadata: {
             previous_side: old.recommended_side,
-            new_side: p.recommended_side,
-            composite_jump: Number(p.composite_score ?? 0) - Number(old.composite_score ?? 0),
+            new_side: p.derived_side,
+            composite_jump: p.derived_score - Number(old.composite_score ?? 0),
             line: p.current_line,
             pvs_tier: p.pvs_tier,
             window_minutes: FLIP_LOOKBACK_MIN,
-            source: 'unified_props_snapshot',
+            source: 'unified_props_price_derived',
           },
         });
         if (insErr) {
@@ -255,11 +294,11 @@ Deno.serve(async (req) => {
         const cnt = counts.get(p.id);
         if (!sum || !cnt || cnt < 2) continue; // need real baseline
         const avg = sum / cnt;
-        const current = Number(p.composite_score ?? 0);
+        const current = p.derived_score;
         const delta = current - avg;
         if (delta < VELOCITY_SPIKE_DELTA) continue;
 
-        const conf = Number(p.confidence ?? 0);
+        const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
         const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
@@ -269,7 +308,7 @@ Deno.serve(async (req) => {
           player_name: p.player_name,
           event_id: p.event_id,
           signal_type: 'velocity_spike',
-          prediction: p.recommended_side,
+          prediction: p.derived_side,
           confidence: Math.round(conf),
           prop_type: p.prop_type,
           sport: normaliseSport(p.sport),
@@ -282,7 +321,7 @@ Deno.serve(async (req) => {
             delta: Math.round(delta * 10) / 10,
             window_hours: VELOCITY_LOOKBACK_HRS,
             line: p.current_line,
-            source: 'unified_props_snapshot',
+            source: 'unified_props_price_derived',
           },
         });
         if (insErr) {
