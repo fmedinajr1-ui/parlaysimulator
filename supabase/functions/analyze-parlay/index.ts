@@ -10,6 +10,9 @@ import {
   isFuzzyMatch,
   normalizePropType,
   americanToProb,
+  detectSport,
+  SPORT_ALIASES,
+  type SportKey,
   type ParsedLeg,
 } from '../_shared/leg-matcher.ts';
 
@@ -33,6 +36,7 @@ interface InputLeg {
   line?: number;
   side?: string;
   impliedProbability?: number;
+  sport?: string;
 }
 
 interface EngineHits {
@@ -49,11 +53,13 @@ interface EngineHits {
 async function gatherEngineHits(
   supabase: ReturnType<typeof createClient>,
   parsed: ParsedLeg,
+  sport: SportKey,
   today: string
 ): Promise<EngineHits> {
   if (!parsed.player) return {};
   const lastName = parsed.player.toLowerCase().split(/\s+/).slice(-1)[0];
   const ilikeName = `%${lastName}%`;
+  const sportAliases = SPORT_ALIASES[sport] ?? [sport];
 
   const [
     unifiedRes,
@@ -65,13 +71,14 @@ async function gatherEngineHits(
     injuryRes,
     fatigueRes,
   ] = await Promise.all([
-    supabase.from('unified_props').select('*').ilike('player_name', ilikeName).eq('is_active', true).limit(10),
+    supabase.from('unified_props').select('*').ilike('player_name', ilikeName).eq('is_active', true).in('sport', sportAliases).limit(10),
+    // median_lock_candidates has no sport column — rely on player+prop_type fuzzy match instead
     supabase.from('median_lock_candidates').select('*').ilike('player_name', ilikeName).eq('pick_date', today).limit(10),
-    supabase.from('juiced_props').select('*').ilike('player_name', ilikeName).eq('prop_date', today).limit(10),
-    supabase.from('player_prop_hitrates').select('*').ilike('player_name', ilikeName).gte('expires_at', new Date().toISOString()).limit(10),
-    supabase.from('sharp_signals').select('*').ilike('matchup', ilikeName).eq('is_active', true).limit(5),
-    supabase.from('trap_probability_analysis').select('*').ilike('player_name', ilikeName).limit(10),
-    supabase.from('injury_reports').select('*').ilike('player_name', ilikeName).order('updated_at', { ascending: false }).limit(3),
+    supabase.from('juiced_props').select('*').ilike('player_name', ilikeName).eq('prop_date', today).in('sport', sportAliases).limit(10),
+    supabase.from('player_prop_hitrates').select('*').ilike('player_name', ilikeName).gte('expires_at', new Date().toISOString()).in('sport', sportAliases).limit(10),
+    supabase.from('sharp_signals').select('*').ilike('matchup', ilikeName).eq('is_active', true).in('sport', sportAliases).limit(5),
+    supabase.from('trap_probability_analysis').select('*').ilike('player_name', ilikeName).in('sport', sportAliases).limit(10),
+    supabase.from('injury_reports').select('*').ilike('player_name', ilikeName).in('sport', sportAliases).order('updated_at', { ascending: false }).limit(3),
     parsed.player ? supabase.from('sports_fatigue_scores').select('*').limit(0) : Promise.resolve({ data: [] as any[] }),
   ]);
 
@@ -337,8 +344,10 @@ function synthesizeLeg(
 async function findTopSwap(
   supabase: ReturnType<typeof createClient>,
   parsed: ParsedLeg,
+  sport: SportKey,
   today: string
 ) {
+  const sportAliases = SPORT_ALIASES[sport] ?? [sport];
   // Prefer Median Lock LOCK/STRONG, then Unified high confidence
   const [mlRes, unRes] = await Promise.all([
     supabase
@@ -353,6 +362,7 @@ async function findTopSwap(
       .from('unified_props')
       .select('*')
       .eq('is_active', true)
+      .in('sport', sportAliases)
       .gte('confidence', 0.7)
       .order('confidence', { ascending: false })
       .limit(5),
@@ -442,17 +452,17 @@ Deno.serve(async (req) => {
     const legAnalyses = await Promise.all(
       inputLegs.map(async (raw, idx) => {
         const parsed = parseLeg(raw);
+        const { sport: detectedSport, confidence: sportConfidence } = detectSport(
+          { raw: raw.description, propType: raw.propType ?? parsed.propType, player: parsed.player },
+          raw.sport
+        );
         const impliedProbability =
           typeof raw.impliedProbability === 'number' && raw.impliedProbability > 0
             ? raw.impliedProbability
             : americanToProb(parsed.odds);
 
-        const hits = await gatherEngineHits(supabase, parsed, today);
+        const hits = await gatherEngineHits(supabase, parsed, detectedSport, today);
         const synth = synthesizeLeg(parsed, hits, impliedProbability);
-
-        // Detect sport from any engine hit (best effort)
-        const sport =
-          hits.unified?.sport ?? hits.medianLock?.sport ?? hits.juiced?.sport ?? hits.sharp?.sport ?? 'NBA';
 
         // Detect bet type
         const betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other' =
@@ -460,7 +470,8 @@ Deno.serve(async (req) => {
 
         return {
           legIndex: idx,
-          sport: String(sport).toUpperCase(),
+          sport: detectedSport,
+          sportConfidence,
           betType,
           player: parsed.player,
           ...synth,
@@ -509,7 +520,8 @@ Deno.serve(async (req) => {
     // Find swap suggestions for swap+drop legs
     for (const idx of [...swapLegs, ...dropLegs]) {
       const parsed = parseLeg(inputLegs[idx]);
-      const suggestion = await findTopSwap(supabase, parsed, today);
+      const legSport = (legAnalyses[idx]?.sport as SportKey) ?? 'NBA';
+      const suggestion = await findTopSwap(supabase, parsed, legSport, today);
       if (suggestion) {
         suggestedSwaps.push({
           legIndex: idx,
@@ -525,6 +537,9 @@ Deno.serve(async (req) => {
       swapsFound: suggestedSwaps.length,
     });
 
+    // Sports detected across the slip — surfaced for cross-sport awareness
+    const sportsDetected = Array.from(new Set(legAnalyses.map((l: any) => l.sport).filter(Boolean)));
+
     // Estimated EV delta if all swaps applied (assume +12% confidence per swap into 50/50 base)
     const expectedValueDelta = suggestedSwaps.length * 0.12;
 
@@ -533,6 +548,7 @@ Deno.serve(async (req) => {
       correlatedLegs: correlatedGroups,
       recommendedAction,
       summary,
+      sportsDetected,
       keepLegs,
       swapLegs,
       dropLegs,

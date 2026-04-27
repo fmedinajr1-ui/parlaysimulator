@@ -9,6 +9,128 @@ export interface ParsedLeg {
   side?: 'over' | 'under';
   team?: string;
   odds: number;
+  sport?: SportKey;
+  sportConfidence?: 'high' | 'medium' | 'low';
+}
+
+// ─── Sport routing ────────────────────────────────────────────────────────
+
+export type SportKey =
+  | 'NBA' | 'WNBA' | 'NCAAMB'
+  | 'MLB'
+  | 'NHL'
+  | 'NFL' | 'NCAAF'
+  | 'TENNIS' | 'MMA' | 'GOLF' | 'SOCCER';
+
+/** All sport-column aliases that appear in our engine tables for a canonical sport. */
+export const SPORT_ALIASES: Record<SportKey, string[]> = {
+  NBA: ['NBA', 'basketball_nba', 'nba'],
+  WNBA: ['WNBA', 'basketball_wnba', 'wnba'],
+  NCAAMB: ['NCAAMB', 'basketball_ncaamb', 'ncaamb'],
+  MLB: ['MLB', 'baseball_mlb', 'mlb'],
+  NHL: ['NHL', 'icehockey_nhl', 'nhl'],
+  NFL: ['NFL', 'NFL Prop', 'americanfootball_nfl', 'nfl'],
+  NCAAF: ['NCAAF', 'americanfootball_ncaaf', 'ncaaf'],
+  TENNIS: ['TENNIS', 'tennis', 'tennis_atp', 'tennis_wta'],
+  MMA: ['MMA', 'mma', 'mma_mixed_martial_arts'],
+  GOLF: ['GOLF', 'golf', 'golf_pga'],
+  SOCCER: ['SOCCER', 'soccer', 'soccer_mls', 'soccer_epl'],
+};
+
+/** Prop-type → sports it can belong to. Lowercased keys (raw, not normalized). */
+const PROP_TO_SPORTS: Array<{ patterns: RegExp[]; sports: SportKey[]; confidence: 'high' | 'medium' }> = [
+  // MLB-specific (high confidence — these props don't exist anywhere else)
+  { patterns: [/\bhits?\b/, /\btotal[_\s]?bases\b/, /\bhome[_\s]?runs?\b/, /\bhr\b/, /\brbis?\b/, /\bstolen[_\s]?bases?\b/, /\bsb\b/, /\bsingles?\b/, /\bdoubles?\b/, /\btriples?\b/, /\bwalks?\b/, /\bbb\b/, /\bpitcher\b/, /\bbatter\b/, /\bouts[_\s]?recorded\b/, /\bearned[_\s]?runs?\b/], sports: ['MLB'], confidence: 'high' },
+  { patterns: [/\bstrikeouts?\b/, /\bks\b/], sports: ['MLB'], confidence: 'medium' },
+  // NHL-specific
+  { patterns: [/\bshots[_\s]?on[_\s]?goal\b/, /\bsog\b/, /\bsaves?\b/, /\bblocked[_\s]?shots?\b/, /\bpower[_\s]?play[_\s]?points?\b/, /\bppp\b/, /\bgoalie\b/, /\bskater\b/], sports: ['NHL'], confidence: 'high' },
+  { patterns: [/\bgoals?\b/], sports: ['NHL', 'SOCCER'], confidence: 'medium' },
+  // NFL/NCAAF
+  { patterns: [/\bpassing[_\s]?yards?\b/, /\brushing[_\s]?yards?\b/, /\breceiving[_\s]?yards?\b/, /\bpass[_\s]?yds?\b/, /\brush[_\s]?yds?\b/, /\brec[_\s]?yds?\b/, /\breceptions?\b/, /\btouchdowns?\b/, /\btds?\b/, /\binterceptions?\b/, /\bcompletions?\b/, /\bsacks?\b/], sports: ['NFL', 'NCAAF'], confidence: 'high' },
+  // Tennis
+  { patterns: [/\baces?\b/, /\bdouble[_\s]?faults?\b/, /\bgames[_\s]?won\b/, /\bsets[_\s]?won\b/, /\bbreaks?\b/, /\btiebreaks?\b/], sports: ['TENNIS'], confidence: 'high' },
+  // MMA
+  { patterns: [/\bsignificant[_\s]?strikes?\b/, /\btakedowns?\b/, /\bfight[_\s]?to[_\s]?go[_\s]?distance\b/, /\bsubmission\b/, /\bko\/tko\b/], sports: ['MMA'], confidence: 'high' },
+  // Golf
+  { patterns: [/\bbirdies?\b/, /\bbogeys?\b/, /\bmade[_\s]?cut\b/, /\btop[_\s]?5\b/, /\btop[_\s]?10\b/, /\btop[_\s]?20\b/, /\beagles?\b/], sports: ['GOLF'], confidence: 'high' },
+  // Basketball default (lower confidence — many of these names overlap)
+  { patterns: [/\bpoints?\b/, /\bpts\b/, /\brebounds?\b/, /\breb\b/, /\bassists?\b/, /\bast\b/, /\bthrees?\b/, /\b3pm\b/, /\b3ptm\b/, /\bsteals?\b/, /\bstl\b/, /\bblocks?\b/, /\bblk\b/, /\bturnovers?\b/, /\bto\b/, /\bpra\b/, /\bdouble[_\s-]?double\b/, /\btriple[_\s-]?double\b/], sports: ['NBA', 'WNBA', 'NCAAMB'], confidence: 'medium' },
+];
+
+const LEAGUE_KEYWORDS: Array<{ pattern: RegExp; sport: SportKey }> = [
+  { pattern: /\bnba\b/i, sport: 'NBA' },
+  { pattern: /\bwnba\b/i, sport: 'WNBA' },
+  { pattern: /\bncaa[mb]\b/i, sport: 'NCAAMB' },
+  { pattern: /\bmlb\b|\bbaseball\b/i, sport: 'MLB' },
+  { pattern: /\bnhl\b|\bhockey\b/i, sport: 'NHL' },
+  { pattern: /\bnfl\b/i, sport: 'NFL' },
+  { pattern: /\bncaaf\b|\bcfb\b/i, sport: 'NCAAF' },
+  { pattern: /\batp\b|\bwta\b|\btennis\b/i, sport: 'TENNIS' },
+  { pattern: /\bufc\b|\bmma\b/i, sport: 'MMA' },
+  { pattern: /\bpga\b|\bgolf\b/i, sport: 'GOLF' },
+  { pattern: /\bmls\b|\bepl\b|\bsoccer\b|\bfootball\s*\(soccer\)/i, sport: 'SOCCER' },
+];
+
+/** Normalize anything the caller might pass as a sport hint into our canonical key. */
+export function canonicalizeSportHint(hint: unknown): SportKey | null {
+  if (!hint) return null;
+  const s = String(hint).toLowerCase().trim();
+  for (const [key, aliases] of Object.entries(SPORT_ALIASES) as [SportKey, string[]][]) {
+    if (aliases.some((a) => a.toLowerCase() === s)) return key;
+  }
+  // fuzzy contains
+  if (s.includes('nba')) return 'NBA';
+  if (s.includes('wnba')) return 'WNBA';
+  if (s.includes('mlb') || s.includes('baseball')) return 'MLB';
+  if (s.includes('nhl') || s.includes('hockey')) return 'NHL';
+  if (s.includes('nfl')) return 'NFL';
+  if (s.includes('ncaaf')) return 'NCAAF';
+  if (s.includes('ncaa')) return 'NCAAMB';
+  if (s.includes('tennis') || s.includes('atp') || s.includes('wta')) return 'TENNIS';
+  if (s.includes('mma') || s.includes('ufc')) return 'MMA';
+  if (s.includes('golf') || s.includes('pga')) return 'GOLF';
+  if (s.includes('soccer') || s.includes('mls') || s.includes('epl')) return 'SOCCER';
+  return null;
+}
+
+/**
+ * Detect the sport a parsed leg belongs to. Layered:
+ *   1. Caller hint (highest priority, marked 'high').
+ *   2. Prop-type signature (high or medium depending on uniqueness).
+ *   3. Description league/team keyword scan.
+ *   4. Fall back to NBA with 'low' confidence.
+ */
+export function detectSport(
+  parsed: { raw?: string; propType?: string; player?: string },
+  hint?: unknown
+): { sport: SportKey; confidence: 'high' | 'medium' | 'low' } {
+  const hinted = canonicalizeSportHint(hint);
+  if (hinted) return { sport: hinted, confidence: 'high' };
+
+  const propBlob = `${parsed.propType ?? ''} ${parsed.raw ?? ''}`.toLowerCase();
+
+  for (const rule of PROP_TO_SPORTS) {
+    if (rule.patterns.some((p) => p.test(propBlob))) {
+      // Disambiguate multi-sport rules using description keywords
+      if (rule.sports.length > 1 && parsed.raw) {
+        for (const kw of LEAGUE_KEYWORDS) {
+          if (kw.pattern.test(parsed.raw) && rule.sports.includes(kw.sport)) {
+            return { sport: kw.sport, confidence: 'high' };
+          }
+        }
+      }
+      return { sport: rule.sports[0], confidence: rule.confidence };
+    }
+  }
+
+  // Description-only fallback
+  if (parsed.raw) {
+    for (const kw of LEAGUE_KEYWORDS) {
+      if (kw.pattern.test(parsed.raw)) return { sport: kw.sport, confidence: 'medium' };
+    }
+  }
+
+  return { sport: 'NBA', confidence: 'low' };
 }
 
 const PROP_TYPE_MAP: Record<string, string> = {
