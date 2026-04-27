@@ -1,142 +1,83 @@
+# Sport-Aware Slip Analyzer
+
+## Problem
+
+Today `analyze-parlay` treats every leg as NBA. It queries `median_lock_candidates`, `juiced_props`, `sharp_signals`, `unified_props`, `player_prop_hitrates` with no sport filter, then guesses the sport from whatever row matched. On a cross-sport slip (NBA + MLB + NHL), the MLB and NHL legs either get zero hits or get matched to the wrong sport's data, producing low-confidence "NEUTRAL" verdicts and useless swap suggestions.
+
+The prop-type map in `_shared/leg-matcher.ts` also has collisions: `points` is shared between NBA and NHL, `hits` isn't tied to MLB, and football/tennis terms can leak across sports.
+
 ## Goal
 
-Make every signal alert (cascade first, then all engines) explain **why** each player was picked and **what they're going against** — so we can audit and tune the engines' decisions, not just see a list of names + confidence.
+Every leg uploaded through the analyzer is:
+1. Tagged with a sport BEFORE engine lookups (NBA / WNBA / NCAAMB / MLB / NHL / NFL / NCAAF / Tennis / MMA / Golf / Soccer).
+2. Cross-referenced ONLY against tables and rows for that sport.
+3. Returned with the sport visible in the leg card, and any swap suggestion drawn from the same sport.
 
-Today a cascade alert looks like:
+## Approach
 
-```
-🌊 CASCADE ALERT — NBA
-Players in the cascade:
-  • Jalen Duren — conf 90
-  • Cade Cunningham — conf 90
-  • Goga Bitadze — conf 90
-```
+### 1. Sport detection layer (`_shared/leg-matcher.ts`)
 
-That tells us nothing about *why*. We're going to make every player line carry its own one-glance explainer with the matchup it's running into and a smart-decision verdict.
+Add a `detectSport(parsed, rawDescription)` helper with a layered strategy:
 
-## What "informational per player" will look like
+- **Prop-type signature** (strongest signal):
+  - MLB: `hits, total_bases, home_runs, rbis, stolen_bases, strikeouts, pitcher_outs, walks, runs, singles, doubles, triples`
+  - NHL: `shots_on_goal, sog, saves, goals, blocked_shots, power_play_points, +/-`
+  - NFL/NCAAF: `passing_yards, rushing_yards, receiving_yards, receptions, touchdowns, interceptions, completions, sacks`
+  - Tennis: `aces, double_faults, games_won, sets_won, breaks`
+  - MMA: `significant_strikes, takedowns, fight_to_go_distance`
+  - Golf: `birdies, bogeys, made_cut, top_5, top_10`
+  - NBA/WNBA/NCAAMB: `points, rebounds, assists, threes, steals, blocks, pra, pr, pa, ra, double_double, triple_double` (default basketball)
+- **Caller hint**: respect `leg.sport` if the OCR/upload provided one.
+- **Description keywords fallback**: scan raw text for "MLB", "NHL", "NFL", team-name dictionaries, "vs", pitcher names, etc.
+- Returns a canonical sport key plus a confidence (`high | medium | low`).
 
-Per-player block in cascade alerts (and inline reason in single-player alerts):
+Update `PROP_TYPE_MAP` to be sport-scoped: keep one flat map for normalization but also export a `PROP_SPORT_MAP` that maps each normalized prop → the sport(s) it belongs to. Resolve collisions (`points`, `assists`, `goals`) by requiring sport context before normalization picks the wrong canonical form.
 
-```
-🌊 CASCADE ALERT — NBA  •  Pistons @ Magic  •  7:00 PM ET
-Prop: Rebounds UNDER  •  6 players aligned  •  avg conf 90%
+### 2. Sport-routed engine queries (`analyze-parlay/index.ts`)
 
-Why the engine flagged this side:
-• Magic allow 4th-fewest rebounds to opposing C's (L15)
-• Game total 218.5 → bottom-10 pace projection
-• No injury swing in MIA frontcourt (Carter Jr active)
+Refactor `gatherEngineHits(parsed, today)` → `gatherEngineHits(parsed, sport, today)`:
 
-Players in cascade (engine reasoning each):
-  • Jalen Duren  U 9.5  conf 90
-     ↳ vs ORL C-defense rank #4  •  L10 hit rate U 9.5: 7/10
-     ↳ Juice gap +28 (book hammering Under)  •  PVS C-tier
-     ↳ Verdict: STRONG — defense + price + form all align ✅
+- Add a `sport` filter to every `unified_props`, `median_lock_candidates`, `juiced_props`, `player_prop_hitrates`, `sharp_signals`, `trap_probability_analysis`, `injury_reports` query (those tables already store a `sport` / `sport_key` column — verify and use it).
+- For sport-specific tables, route by sport:
+  - **MLB** → also query `mlb_player_game_logs`, `mlb_pitcher_props`, `hrb_rbi_analysis`, `first_inning_hr_scanner` results when the prop type matches.
+  - **NHL** → query NHL-specific projection tables if present.
+  - **NFL** → query NFL prop tables if present.
+  - **Tennis** → query the tennis games analyzer outputs.
+- Skip tables that don't apply (don't waste a query hitting NBA-only tables for an MLB leg).
 
-  • Cade Cunningham  U 5.5  conf 90
-     ↳ vs ORL PG-defense rank #11 (neutral)
-     ↳ L10 hit rate U 5.5: 6/10  •  pace -3% vs season
-     ↳ Verdict: LEAN — price-driven, matchup neutral ⚠️
+Use `supabase--read_query` during implementation to confirm the exact column names and which sport-specific tables exist before wiring them in.
 
-  • Goga Bitadze  U 3.5  conf 90
-     ↳ ⚠️ Bench role: 14 min/g — volatility gate flagged
-     ↳ vs DET C-defense rank #22 (weak)
-     ↳ Verdict: WEAK — engine likely overconfident ❌
-```
+### 3. Sport-aware swap suggestions
 
-Three things change vs. today:
-1. **Group-level "why"** at the top of each cascade — opponent context shared across all the players.
-2. **Per-player explainer** — defensive rank for that player's position, L10 hit rate at that line, juice/PVS/minutes flags.
-3. **Smart-decision verdict** per player (`STRONG / LEAN / WEAK`) so we can see at a glance which legs are *really* driving the cascade and which are noise inflating the player count.
+`findTopSwap(parsed, today)` → `findTopSwap(parsed, sport, today)`:
+- Only return swaps from the same sport as the weak leg. An NBA points leg never gets swapped for an MLB strikeout pick.
+- For MLB legs, prefer `hrb_rbi_analysis` / pitcher signals over generic `median_lock_candidates`.
 
-## Where the data comes from (already in DB, just not joined)
+### 4. Frontend display (`src/components/results/EngineRecommendationCard.tsx` + `Results.tsx`)
 
-| Field shown | Source |
-|---|---|
-| Opponent defensive rank vs position | `matchup_intelligence.position_defense_rank`, `opponent_defensive_rank` |
-| Stat allowed by opponent | `matchup_intelligence.opponent_stat_allowed` |
-| Game script / blowout risk | `matchup_intelligence.game_script`, `blowout_risk` |
-| L10 hit rate at line | `nba_player_game_logs` / `mlb_player_game_logs` (count vs `current_line`) |
-| PVS tier + sub-scores | `unified_props.pvs_tier`, `pvs_minutes_score`, `pvs_matchup_score` |
-| Juice gap | already computed in `signal-alert-engine` (kept as-is) |
-| Minutes volatility flag | `unified_props.pvs_minutes_score` < threshold |
-| Injury context | `injury_reports` / `nba_injury_reports` for the opponent's relevant position |
-| Game total / pace | `unified_props.true_line` not useful here — use `matchup_intelligence.vegas_total` |
+- Show the detected sport badge on every leg card using `SportPropIcon`.
+- If sport detection confidence is `low`, show a small "Sport: NBA (assumed)" tag so the user can see when the analyzer fell back.
 
-No new tables. Pure cross-reference.
+### 5. Telegram path (`telegram-prop-scanner`)
 
-## Bidirectional check + verdict logic
+The Telegram analyzer already calls `analyze-parlay`; once the function is sport-aware, the bot inherits the fix automatically. Add a one-line "Sports detected: NBA · MLB · NHL" header to the response so users see cross-sport routing happened.
 
-Each player gets scored against the same direction the engine picked, on five axes:
+## Files to change
 
-1. **Opponent defense alignment** — does the opponent's positional defense rank push the prop *the way the engine called it*? (Under + top-10 defense = aligned)
-2. **L10 form alignment** — does the player's last-10 hit rate at this line agree with the side?
-3. **Pace / game-script alignment** — does game total push the side?
-4. **Juice alignment** — is the price gap consistent with the side?
-5. **Volatility / role** — minutes stable enough to trust?
+- `supabase/functions/_shared/leg-matcher.ts` — add `detectSport`, `PROP_SPORT_MAP`, sport-scoped normalization
+- `supabase/functions/analyze-parlay/index.ts` — thread sport through `gatherEngineHits`, `synthesizeLeg`, `findTopSwap`; add per-sport table routing
+- `supabase/functions/find-swap-alternatives/index.ts` — same sport-filter treatment if it exists
+- `src/components/results/EngineRecommendationCard.tsx` — sport badge + assumption hint
+- `src/pages/Results.tsx` — pass sport into card; show "Sports detected" summary
+- `supabase/functions/telegram-prop-scanner/index.ts` — surface detected sports list in reply
 
-Aligned axes → `STRONG` (≥4), `LEAN` (3), `WEAK` (≤2). The verdict goes back into `metadata.player_breakdown[i].engine_reasoning` so it's queryable and we can build an admin "why was this leg in the cascade?" view later.
+## Verification (per testing-policy memory: 5 independent tests)
 
-## Smart-decision feedback loop
+1. Pure NBA 3-leg slip → all legs tagged NBA, hits NBA tables, no MLB swap leakage.
+2. Pure MLB 3-leg slip (HR + Ks + Hits) → all legs tagged MLB, swap pulls from MLB engines.
+3. Mixed slip (NBA points + MLB HR + NHL SOG) → each leg gets correct sport, three different engine pools used.
+4. Ambiguous "Goals" leg → resolved to NHL via context, not MLB/Soccer.
+5. Tennis Aces leg → tagged Tennis, doesn't match NBA threes despite "3" in the line.
 
-The same `engine_reasoning` block gets persisted on `fanduel_prediction_alerts.metadata` so we can:
-- Settle alerts and ask: did `STRONG`-tagged legs hit more than `WEAK` ones?
-- If `WEAK` legs are inflating cascade size, raise the per-player floor to require ≥`LEAN` to count toward `CASCADE_MIN_PLAYERS`.
-- This gives us a measurable knob to tune the engine instead of guessing.
+No DB migrations required — all sport columns already exist on the engine tables.
 
-## Engines covered
-
-We'll apply the same explainer + bidirectional verdict pattern to every engine that writes to `fanduel_prediction_alerts`:
-
-- `signal-alert-engine` → cascade, take_it_now, velocity_spike (the priority — that's where 100+ alerts/wk come from)
-- `mlb-over-tracker` → sb_over_l10, hr_power_over, price_drift (MLB matchup data: pitcher quality + park factor + L10)
-
-Other engines that *don't* hit this table today (`fanduel-boost-scanner`, `team-bets-scoring-engine`, etc.) will get the same `engine_reasoning` shape on their own outputs in a follow-up so the schema is consistent across the system.
-
-## Files / changes
-
-### New
-- `supabase/functions/_shared/alert-explainer.ts` — pure helper that, given a `(player_name, prop_type, side, line, event_id, sport)`, returns:
-  ```ts
-  {
-    matchup: { defenseRank, statAllowed, gameScript, vegasTotal, blowoutRisk },
-    form:    { l10Hits, l10Total, hitRate },
-    role:    { minutesScore, minutesFlag },
-    pvs:     { tier, matchupScore, paceScore },
-    injuries:{ relevant: InjuryNote[] },
-    alignment: { defense, form, pace, juice, role }, // each: 'aligned' | 'neutral' | 'against'
-    verdict:  'STRONG' | 'LEAN' | 'WEAK',
-    headline: string,  // one-line "why" for the player
-  }
-  ```
-  Reads only — joins the tables listed above. No writes.
-
-### Modified
-- `supabase/functions/signal-alert-engine/index.ts` — for each prop in a cascade group, call the explainer and attach to `player_breakdown[i].engine_reasoning`. Also produce a group-level explainer (shared opponent context, game total, headline injuries) stored at `metadata.group_reasoning`. Same for `take_it_now` (single-player, becomes `metadata.engine_reasoning`) and `velocity_spike`.
-- `supabase/functions/signal-alert-telegram/index.ts` — render the new `engine_reasoning` blocks in `formatAlert`. Cascade gets the multi-line per-player layout shown above; take-it-now/velocity get a 2-line "why + matchup" inline.
-- `supabase/functions/mlb-over-tracker/index.ts` — same explainer call (MLB variant uses `mlb_player_game_logs` for L10 and pitcher matchup data already available).
-
-### Memory
-- New `mem://logic/alerts/explainer-contract.md` documenting the `engine_reasoning` shape so all future engines emit it consistently.
-
-## Telegram length safety
-
-Cascade messages can balloon. We will:
-- Cap rendered players at **5** in the message body, then "+N more — see dashboard".
-- Hard cap message at ~3,500 chars (Telegram limit is 4,096).
-- All players still stored in `metadata.player_breakdown` for audit.
-
-## Out of scope (this pass)
-
-- New UI surface for the reasoning blocks (will land in a follow-up once the data shape is proven).
-- Auto-tuning thresholds based on `STRONG/LEAN/WEAK` hit rates — the data needs to accumulate first.
-- Non-`fanduel_prediction_alerts` engines — same shape applied next pass once this one is verified.
-
-## Verification
-
-Per the project's testing rule, before considering this done we'll run **5 independent checks**:
-1. Trigger `signal-alert-engine` on a frozen slate; confirm every cascade row has `metadata.player_breakdown[i].engine_reasoning` and `metadata.group_reasoning`.
-2. Render the alert via `signal-alert-telegram` in dry-run mode and confirm it stays under the char cap with 8+ players.
-3. Spot-check 3 real cascade alerts: do the defense ranks + L10 hit rates pulled match what's in `matchup_intelligence` / `*_player_game_logs` directly?
-4. Verify `STRONG/LEAN/WEAK` verdict logic on hand-built fixtures (one of each).
-5. Confirm `mlb-over-tracker` SB and HR alerts get the same `engine_reasoning` block populated end-to-end.
