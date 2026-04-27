@@ -1,47 +1,92 @@
-# Telegram ↔ Parlay Mapping Audit
+## What's broken
 
-## Result of the audit
+The Cascade and Take-It-Now alert generator was removed from the codebase in a prior cleanup. As a result:
 
-I verified every Telegram message sent by the parlay broadcaster against its corresponding `bot_daily_parlays` row.
+- Last `cascade` signal: **2026-04-21**
+- Last `snapback_candidate` (Take-It-Now): **2026-04-13**
+- Last `velocity_spike`: **2026-04-20**
+- Last row in `line_movements` (upstream feed for these alerts): **2026-04-21 16:00 UTC**
 
-**Findings:**
-- **9 broadcasts** in `bot_parlay_broadcasts` total (matches what's been sent).
-- **0 missing parlays** — every `parlay_id` in a broadcast row resolves to a real parlay.
-- **0 date mismatches** — every parlay's `parlay_date` matches the Eastern-Time date the message was sent.
-- **0 duplicate sends** — no `(parlay_id, chat_id)` pair was broadcast twice.
+There is **no active cron job** producing any of these signals, and the underlying line-movement collector has also been silent for ~5 days. Memory files referenced in `mem/index.md` (e.g. `mem://logic/betting/take-it-now-logic`) no longer exist on disk.
 
-Sample (most recent):
-```text
-sent_at (ET date)   parlay_date   strategy             tier      msg_id   status
-2026-04-26          2026-04-26    optimal_combo        EDGE      28844    OK
-2026-04-26          2026-04-26    mega_lottery_scanner LOTTERY   28843    OK
-2026-04-26          2026-04-26    optimal_combo        EDGE      28842    OK
-2026-04-26          2026-04-26    mega_lottery_scanner LOTTERY   28841    OK
-2026-04-26          2026-04-26    optimal_combo        EDGE      28840    OK
-2026-04-21          2026-04-21    double_confirmed     EDGE      28556    OK
-…
-```
+The `fanduel_prediction_alerts` table, RLS, and downstream consumers (accuracy reports, parlay engine) are all still wired up — only the producer is missing.
 
-**Conclusion: there is no current join/filter mismatch to fix.** The broadcaster (`parlay-engine-v2-broadcast`) correctly:
-1. Pulls parlays via `parlay_date = targetDate` (ET).
-2. Looks up dedup state via `chat_id + parlay_id`.
-3. Records the resulting Telegram `message_id` keyed by `parlay_id` after each successful send.
+## Goal
 
-## Hardening proposal (small, defensive)
+Bring back a multi-sport alerts engine that writes `cascade`, `take_it_now`, and `velocity_spike` signals into `fanduel_prediction_alerts` and ships qualifying alerts to Telegram. Accuracy floor: **60%**, matching the parlay engine.
 
-Even though nothing is broken today, the join is implicit (no FK, no index, no monitor). I'd like to add three lightweight guardrails so any future drift is caught immediately:
+## Plan
 
-1. **Add a foreign key + index** on `bot_parlay_broadcasts.parlay_id → bot_daily_parlays(id) ON DELETE CASCADE`, plus an index on `(chat_id, parlay_id)` to speed the dedup lookup.
-2. **Stamp `parlay_date` onto the broadcast row** (new column `parlay_date date`) and write it at insert time inside `parlay-engine-v2-broadcast`. This makes the Telegram↔parlay mapping self-verifying without a join.
-3. **Add a verification view** `v_parlay_broadcast_audit` that exposes `(broadcast_id, parlay_id, parlay_date, sent_et_date, status)` so any future "did message N map to parlay X on date Y?" question is one query, not a script.
+### 1. Restore the upstream line-movement feed
 
-## Files to touch
+- Inspect `prop-sharp-sync` (cron `*/15 * * * *`) and confirm why it stopped writing to `line_movements` after Apr 21.
+- Inspect `unified-live-feed` (cron `*/30 * * * *`) for the same.
+- Fix whichever fetcher is failing (likely an API key, schema drift, or sport-window logic) so fresh rows resume flowing.
 
-- New migration: add column, FK, index, and view described above.
-- `supabase/functions/parlay-engine-v2-broadcast/index.ts`: include `parlay_date: p.parlay_date` in the `bot_parlay_broadcasts.insert(...)` payload.
-- `mem/logic/parlay/broadcast-mapping.md` (new): pin the rule "every Telegram parlay message must store `parlay_id` and `parlay_date`; broadcaster must filter by ET `parlay_date`".
+### 2. Build the new alerts engine: `signal-alert-engine`
+
+A single edge function that runs every 15 minutes during slate hours and emits all three signal types across MLB, NBA, NHL.
+
+**Cascade detector**
+- Group recent line movements by `(event_id, prop_type, direction)`.
+- A cascade fires when ≥3 distinct players on the same team move the same direction within a 60-min window (e.g. 3+ Braves hitters' RBI Unders all shorten together).
+- Cross-references `mlb-prop-cross-reference` for MLB to enforce the existing pitcher-quality and L10 gates.
+- Confidence is the average historical accuracy of its inputs, floored at 60%.
+
+**Take-It-Now (snapback) detector**
+- Detects sharp post-open reversals: a line that drifted ≥X% one way, then snapped back ≥Y% within ~20 minutes.
+- Reuses the directional logic memorialised in `mem://logic/betting/take-it-now-logic`: TAKE = shortening, FADE = lengthening; suppresses on ≥10-pt spreads and on poison-signal markets.
+- Confidence floor 60%.
+
+**Velocity Spike detector**
+- Flags single-player props with abnormal price velocity (Δprice / Δt) vs. the 7-day baseline for that prop type.
+- Requires correlated movement on at least one peer book (no isolated single-book spikes).
+
+All three writers populate `fanduel_prediction_alerts` with `signal_type`, `confidence`, `metadata`, and a stable hash key for dedupe (2-hour cross-run window, per existing memory rule).
+
+### 3. Telegram delivery: `signal-alert-telegram`
+
+- Pulls unsent rows from `fanduel_prediction_alerts` where `confidence ≥ 60` and not already broadcast.
+- Formats them in the conversational/narrative style we restored for parlays (per `mem://telegram/communication-style`).
+- Inserts into a new `bot_signal_broadcasts` table (FK to alert id, `chat_id`, `parlay_date`, `sent_at`) — same self-verifying pattern we just built for parlay broadcasts.
+- Dedupes by `(alert_id, chat_id)`.
+
+### 4. Cron + audit
+
+- Schedule `signal-alert-engine` every 15 min during 13:00–03:00 UTC (slate window).
+- Schedule `signal-alert-telegram` every 5 min in the same window.
+- Add a `v_signal_broadcast_audit` view mirroring the parlay one (flags `MISSING_ALERT`, `STORED_DATE_MISMATCH`, `SEND_DATE_DRIFT`).
+
+### 5. Memory + docs
+
+- Recreate `mem://logic/betting/cascade-engine.md`, `mem://logic/betting/take-it-now-logic.md`, `mem://logic/betting/velocity-spike.md` with the actual rules + 60% floor.
+- Update `mem://index.md` to point at the real files.
+
+## Technical details
+
+| Component | Type | Schedule |
+|---|---|---|
+| `signal-alert-engine` | new edge function | `*/15 13-23,0-3 * * *` |
+| `signal-alert-telegram` | new edge function | `*/5 13-23,0-3 * * *` |
+| `bot_signal_broadcasts` | new table + RLS | n/a |
+| `v_signal_broadcast_audit` | new view (security_invoker) | n/a |
+| `prop-sharp-sync` / `unified-live-feed` | bug fix | existing crons |
+
+Signal types written: `cascade`, `take_it_now` (replacing the old `snapback_candidate` label for clarity), `velocity_spike`. Existing `snapback_candidate` rows stay readable for historical accuracy reports.
+
+Confidence gate: `confidence >= 60` for Telegram delivery — applied in both the engine (skip writes below 60 on cascade) and the Telegram broadcaster (final filter).
+
+Dedupe: hash of `(signal_type, event_id, prop_type, direction, player_name)` with a 2-hour TTL, matching the existing FanDuel signal-deduplication rule.
+
+## Verification (after build)
+
+1. Confirm `line_movements.MAX(created_at)` advances within 30 min of deploy.
+2. Confirm `fanduel_prediction_alerts` shows new rows for all 3 signal types.
+3. Curl `signal-alert-telegram` and confirm rows land in `bot_signal_broadcasts` and a test message hits the admin chat.
+4. Run `v_signal_broadcast_audit` — expect zero `MISSING_*` or `MISMATCH` rows.
 
 ## Out of scope
 
-- No change to message format, dedup window, or accuracy gates.
-- No change to other Telegram senders (`bot-send-telegram`, `fanduel-boost-telegram`, etc.) — they are admin/notification senders and don't claim a parlay-row mapping.
+- No changes to the parlay engine or its 60% confidence floor (already restored).
+- No changes to RBI Unders logic.
+- No changes to existing fanduel-boost crons.
