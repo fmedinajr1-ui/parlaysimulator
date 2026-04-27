@@ -241,7 +241,7 @@ async function handleStart(supabase: any, chat_id: number, args: string[]) {
 
   const user_id = await resolveUserForChat(supabase, chat_id);
   if (!user_id) {
-    await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+    await sendMessage(chat_id, NOT_LINKED_MSG);
     return;
   }
   await supabase
@@ -347,7 +347,7 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
   try {
     const session = await ensureSession(supabase, chat_id, { book });
     if (!session) {
-      await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+      await sendMessage(chat_id, NOT_LINKED_MSG);
       return;
     }
     await sendMessage(chat_id, `✅ *Book set to ${book}*\n\nNow send a screenshot and I'll scan it with the *${book}* layout.`);
@@ -360,7 +360,7 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
 async function handleHelp(chat_id: number) {
   await sendMessageWithButtons(
     chat_id,
-    `👋 *Welcome to Parlayfarm Scanner*\n\n*Just send a screenshot* of any sportsbook prop page — we'll auto-start a session and capture every prop.\n\nAfter scanning, tap a button to build a parlay or switch books.\n\n_Default: NBA · FanDuel. Tap below to change anytime._`,
+    `👋 *Welcome to Parlayfarm Scanner*\n\n*Step 1 — Link your account (one time):*\nSend \`/link your@email.com\` (the email you signed up with).\n\n*Step 2 — Send a screenshot* of any sportsbook prop page. We'll auto-start a session, run it through 8 engines, and tell you which legs to keep, swap or drop.\n\n*Useful commands:*\n• \`/book fanduel\` (or dk, hardrock, pp, ud)\n• \`/sport nba\` (or mlb, nfl, nhl, wnba…)\n• \`/pool\` — see captured props\n• \`/parlay 3\` — auto-build a 3-leg ticket\n• \`/end\` — finalize session\n\n_Default: NBA · FanDuel. Tap below to change anytime._`,
     [
       [
         { text: "📚 FanDuel", data: "book:fanduel" },
@@ -380,6 +380,63 @@ async function handleHelp(chat_id: number) {
   );
 }
 
+const NOT_LINKED_MSG =
+  "🔗 *Link your account first*\n\nSend `/link your@email.com` using the email you signed up with at parlayfarm.com. Then you can send screenshots and I'll analyze them.";
+
+async function handleLink(supabase: any, chat_id: number, args: string[], from?: { username?: string }) {
+  const email = (args[0] ?? "").trim().toLowerCase();
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (!emailOk) {
+    await sendMessage(chat_id, "Usage: `/link your@email.com`\n\nUse the email you signed up with on parlayfarm.com.");
+    return;
+  }
+
+  // Find profile (real customer) for this email
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("user_id, email")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (!profile?.user_id) {
+    await sendMessage(
+      chat_id,
+      `❌ I couldn't find an account for *${email}*.\n\nMake sure you've signed up at parlayfarm.com first, then try \`/link ${email}\` again.`,
+    );
+    return;
+  }
+
+  // Detach this chat from any other email (rare), then upsert.
+  await supabase
+    .from("email_subscribers")
+    .update({ telegram_chat_id: null, telegram_username: null })
+    .eq("telegram_chat_id", String(chat_id))
+    .neq("email", email);
+
+  const payload = {
+    email,
+    user_id: profile.user_id,
+    telegram_chat_id: String(chat_id),
+    telegram_username: from?.username ?? null,
+    source: "telegram_link",
+    is_subscribed: true,
+  };
+
+  const { error } = await supabase
+    .from("email_subscribers")
+    .upsert(payload, { onConflict: "email" });
+
+  if (error) {
+    await sendMessage(chat_id, `❌ Couldn't link: ${error.message}`);
+    return;
+  }
+
+  await sendMessage(
+    chat_id,
+    `✅ *Linked to ${email}*\n\nYou're all set. Send a screenshot of any sportsbook prop page (FanDuel, DraftKings, Hard Rock, PrizePicks, Underdog) and I'll run it through 8 engines.\n\nQuick start:\n• \`/book fanduel\` then send a screenshot\n• \`/parlay 3\` after you've scanned a few\n• \`/help\` anytime`,
+  );
+}
+
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
   let session;
   try {
@@ -389,7 +446,7 @@ async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string
     return;
   }
   if (!session) {
-    await sendMessage(chat_id, "🚫 *Not authorized.* Link your Telegram chat to your account first.");
+    await sendMessage(chat_id, NOT_LINKED_MSG);
     return;
   }
   await sendMessage(chat_id, `🔎 Scanning ${photoFileIds.length} screenshot${photoFileIds.length > 1 ? "s" : ""}…`);
@@ -471,7 +528,7 @@ Deno.serve(async (req) => {
         try {
           const session = await ensureSession(supabase, cb_chat_id, { sport });
           if (!session) {
-            await sendMessage(cb_chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+            await sendMessage(cb_chat_id, NOT_LINKED_MSG);
           } else {
             await sendMessage(cb_chat_id, `✅ *Sport set to ${sport.toUpperCase()}*\n\nNow send a screenshot and I'll scan it.`);
           }
@@ -514,6 +571,12 @@ Deno.serve(async (req) => {
     if (!text) return new Response("ok");
     if (text === "/start" || text === "/help" || text === "/scan") { await handleHelp(chat_id); return new Response("ok"); }
 
+    if (text.startsWith("/link")) {
+      const parts = text.split(/\s+/).slice(1);
+      await handleLink(supabase, chat_id, parts, msg.from);
+      return new Response("ok");
+    }
+
     // Top-level shortcuts
     if (text.startsWith("/book")) {
       const parts = text.split(/\s+/).slice(1);
@@ -527,7 +590,7 @@ Deno.serve(async (req) => {
       try {
         const session = await ensureSession(supabase, chat_id, { sport });
         if (!session) {
-          await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+          await sendMessage(chat_id, NOT_LINKED_MSG);
         } else {
           await sendMessage(chat_id, `✅ *Sport set to ${sport.toUpperCase()}*\n\nNow send a screenshot and I'll scan it.`);
         }
