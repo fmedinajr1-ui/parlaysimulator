@@ -367,7 +367,7 @@ export async function findTopSwap(
       .order('confidence', { ascending: false })
       .limit(5),
   ]);
-  const ml = (mlRes.data ?? [])[0];
+  const ml = ((mlRes.data ?? []) as any[])[0];
   if (ml) {
     return {
       source: 'median_lock' as const,
@@ -381,7 +381,7 @@ export async function findTopSwap(
       reason: `🔒 ${ml.classification} • ${Number(ml.consensus_percentage ?? 0).toFixed(0)}% consensus`,
     };
   }
-  const un = (unRes.data ?? [])[0];
+  const un = ((unRes.data ?? []) as any[])[0];
   if (un) {
     return {
       source: 'unified_props' as const,
