@@ -346,6 +346,11 @@ export function HomepageAnalyzer() {
                 <div className="flex-1">
                   <p className="font-display text-xl tracking-wide">{tier.label}</p>
                   <p className="text-xs text-muted-foreground">{tier.subtext}</p>
+                  {engineVerdict?.summary && (
+                    <p className="text-xs text-foreground/80 mt-1.5 leading-snug">
+                      <span className="font-semibold text-primary">{engineVerdict.recommendedAction?.replace(/_/g, ' ')}:</span> {engineVerdict.summary}
+                    </p>
+                  )}
                 </div>
               </div>
 
