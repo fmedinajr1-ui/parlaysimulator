@@ -92,13 +92,19 @@ export const Scene2EngineFanout: React.FC = () => {
       {/* Engine chips fly in from a circular arrangement */}
       {ENGINES.map((eng, i) => {
         const angle = (i / ENGINES.length) * Math.PI * 2 - Math.PI / 2;
-        const finalRadius = 460;
+        // Smaller horizontal radius to keep wide chips inside the 1080 frame
+        const finalRadiusX = 360;
+        const finalRadiusY = 460;
         const startRadius = 900;
         const delay = 8 + i * 4;
         const s = spring({ frame: frame - delay, fps, config: { damping: 14, stiffness: 80 } });
-        const radius = interpolate(s, [0, 1], [startRadius, finalRadius]);
-        const x = cx + Math.cos(angle) * radius;
-        const y = cy + Math.sin(angle) * radius;
+        const t = interpolate(s, [0, 1], [0, 1]);
+        const startX = cx + Math.cos(angle) * startRadius;
+        const startY = cy + Math.sin(angle) * startRadius;
+        const endX = cx + Math.cos(angle) * finalRadiusX;
+        const endY = cy + Math.sin(angle) * finalRadiusY;
+        const x = interpolate(t, [0, 1], [startX, endX]);
+        const y = interpolate(t, [0, 1], [startY, endY]);
         const opacity = interpolate(s, [0, 0.4], [0, 1], { extrapolateRight: 'clamp' });
 
         // Lines from chip to hub
