@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
   try {
     // 1) Pull active props (only fresh ones with both prices). We derive direction from prices,
     //    not from `recommended_side`, because the upstream scorer is currently silent.
-    const since = new Date(Date.now() - 90 * 60 * 1000).toISOString(); // last 90 min
+    const since = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(); // last 6 hours (upstream sync cadence is loose)
     const { data: props, error: pErr } = await supabase
       .from('unified_props')
       .select('id,event_id,sport,game_description,commence_time,player_name,prop_type,bookmaker,current_line,over_price,under_price,composite_score,confidence,recommendation,recommended_side,pvs_tier,updated_at')
