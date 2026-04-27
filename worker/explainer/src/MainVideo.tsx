@@ -19,7 +19,7 @@ interface Props { audioUrl: string; timings: WordTiming[]; }
  * The 5 sentences in the script map 1:1 to scenes. We slice the word
  * timings array by sentence-ending punctuation in the original script.
  */
-const SENTENCE_WORD_COUNTS = [7, 24, 23, 12, 9]; // matches generate-voiceover.mjs SCRIPT
+const SENTENCE_WORD_COUNTS = [8, 26, 24, 14, 9]; // matches generate-voiceover.mjs SCRIPT
 
 function deriveSlots(timings: WordTiming[]) {
   const slots: { startSec: number; endSec: number }[] = [];
