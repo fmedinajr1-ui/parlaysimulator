@@ -571,6 +571,12 @@ Deno.serve(async (req) => {
     if (!text) return new Response("ok");
     if (text === "/start" || text === "/help" || text === "/scan") { await handleHelp(chat_id); return new Response("ok"); }
 
+    if (text.startsWith("/link")) {
+      const parts = text.split(/\s+/).slice(1);
+      await handleLink(supabase, chat_id, parts, msg.from);
+      return new Response("ok");
+    }
+
     // Top-level shortcuts
     if (text.startsWith("/book")) {
       const parts = text.split(/\s+/).slice(1);
