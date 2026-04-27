@@ -1,0 +1,10 @@
+{
+  "name": "explainer-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "node scripts/render.mjs",
+    "voiceover": "node scripts/generate-voiceover.mjs"
+  }
+}
