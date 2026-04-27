@@ -1,92 +1,139 @@
-## What's broken
 
-The Cascade and Take-It-Now alert generator was removed from the codebase in a prior cleanup. As a result:
+# Plan — Fix alert variety + ship a Telegram explainer video
 
-- Last `cascade` signal: **2026-04-21**
-- Last `snapback_candidate` (Take-It-Now): **2026-04-13**
-- Last `velocity_spike`: **2026-04-20**
-- Last row in `line_movements` (upstream feed for these alerts): **2026-04-21 16:00 UTC**
+## Status checkpoint (end of session)
 
-There is **no active cron job** producing any of these signals, and the underlying line-movement collector has also been silent for ~5 days. Memory files referenced in `mem/index.md` (e.g. `mem://logic/betting/take-it-now-logic`) no longer exist on disk.
+**Part A — DONE & LIVE.** Movement-free detectors deployed. First post-deploy run produced 6 take_it_now + 14 velocity_spike alerts; telegram broadcaster sent 20 mixed alerts to admin chat. Cron continues every 15 min.
 
-The `fanduel_prediction_alerts` table, RLS, and downstream consumers (accuracy reports, parlay engine) are all still wired up — only the producer is missing.
+**Part B — IN PROGRESS, paused.** Scaffolded but not rendered/deployed yet. To resume:
+1. `/tmp/remotion-explainer/` has package.json, tsconfig.json, Remotion + deps installed (musl compositor). Still need src/index.ts, src/Root.tsx, 4 scene files.
+2. ElevenLabs VO not yet generated (key available: `ELEVENLABS_API_KEY`). Voice: Brian `nPczCjzI2devNBz1zQrb`. Script ~55 words across 4 scenes.
+3. MP4 not yet rendered to `/mnt/documents/slip-explainer.mp4`.
+4. Storage bucket `marketing-videos` and tables `bot_video_broadcasts` + `bot_video_broadcast_recipients` already created (migration applied).
+5. Edge functions to create: `explainer-video-render` (uploads MP4 to bucket) and `telegram-broadcast` (sendVideo + admin/all targeting).
+6. Wire `broadcast:<id>` callback into existing `supabase/functions/telegram-prop-scanner/index.ts` (around line 490, alongside `parlay:` handler).
+7. Subscriber list lives in `bot_user_preferences.chat_id` (8 rows currently).
 
-## Goal
+## Part A — Why you're only seeing cascade alerts (root cause + fix)
 
-Bring back a multi-sport alerts engine that writes `cascade`, `take_it_now`, and `velocity_spike` signals into `fanduel_prediction_alerts` and ships qualifying alerts to Telegram. Accuracy floor: **60%**, matching the parlay engine.
+### What I confirmed in the data
 
-## Plan
+- Last 24h alerts: **64 cascades, 0 take_it_now, 0 velocity_spike**.
+- Snapshot table has 2,240 rows, but across 384 props with ≥3 snapshots each:
+  - **0 props ever flipped sides**
+  - **0 props ever moved composite by ≥12**
+  - **avg `over_price` change = 0, avg `under_price` change = 0**
+- `unified_props` is refreshed once per day (last write 09:00 UTC) and not re-priced intraday. There is no live FanDuel re-poll feeding it.
+- `line_movements`, `juiced_prop_movement_history`, `odds_snapshots`, `extreme_movement_alerts` all have **0 rows in the last 24h** — so there is no other intraday price source to pivot to either.
 
-### 1. Restore the upstream line-movement feed
+### Conclusion
 
-- Inspect `prop-sharp-sync` (cron `*/15 * * * *`) and confirm why it stopped writing to `line_movements` after Apr 21.
-- Inspect `unified-live-feed` (cron `*/30 * * * *`) for the same.
-- Fix whichever fetcher is failing (likely an API key, schema drift, or sport-window logic) so fresh rows resume flowing.
+Cascade only needs the *current* distribution of derived sides — that fires fine. Take-It-Now (side flip vs. snapshot) and Velocity Spike (composite jump vs. baseline) **need price movement that doesn't exist** in our pipeline today. The detectors aren't broken; they're starved.
 
-### 2. Build the new alerts engine: `signal-alert-engine`
+### Fix — three new detectors that work with the data we actually have
 
-A single edge function that runs every 15 minutes during slate hours and emits all three signal types across MLB, NBA, NHL.
+Rewrite `signal-alert-engine` with three new "movement-free" signals so users get a steady mix of alerts every cycle instead of just cascades:
 
-**Cascade detector**
-- Group recent line movements by `(event_id, prop_type, direction)`.
-- A cascade fires when ≥3 distinct players on the same team move the same direction within a 60-min window (e.g. 3+ Braves hitters' RBI Unders all shorten together).
-- Cross-references `mlb-prop-cross-reference` for MLB to enforce the existing pitcher-quality and L10 gates.
-- Confidence is the average historical accuracy of its inputs, floored at 60%.
+1. **`take_it_now` — redefined as "Sharpest Side Asymmetry"**
+   Trigger: a single prop with juice gap ≥ 30 American points (e.g. Over -105 / Under -135 → gap 30) AND it is the steepest gap in its game. Means the book is hammering one side. Confidence mapping unchanged (60–90 floor).
 
-**Take-It-Now (snapback) detector**
-- Detects sharp post-open reversals: a line that drifted ≥X% one way, then snapped back ≥Y% within ~20 minutes.
-- Reuses the directional logic memorialised in `mem://logic/betting/take-it-now-logic`: TAKE = shortening, FADE = lengthening; suppresses on ≥10-pt spreads and on poison-signal markets.
-- Confidence floor 60%.
+2. **`velocity_spike` — redefined as "Slate Outlier"**
+   Trigger: a player's derived confidence is in the **top 5%** of all active props for the same `prop_type` and `sport` today AND ≥ 70. Means the slate is telling us this is a rare price. Computed across the live snapshot, no history needed.
 
-**Velocity Spike detector**
-- Flags single-player props with abnormal price velocity (Δprice / Δt) vs. the 7-day baseline for that prop type.
-- Requires correlated movement on at least one peer book (no isolated single-book spikes).
+3. **`cascade` — keep current logic** (≥3 same-team-same-direction). It works.
 
-All three writers populate `fanduel_prediction_alerts` with `signal_type`, `confidence`, `metadata`, and a stable hash key for dedupe (2-hour cross-run window, per existing memory rule).
+All three keep the **60% confidence floor** and 2-hour dedupe. Keep existing snapshot insert so when intraday pricing eventually exists, the *original* flip/velocity logic can be re-enabled without a rewrite (gate it behind a feature flag).
 
-### 3. Telegram delivery: `signal-alert-telegram`
+Result: every 15-min cycle should produce a balanced mix — cascades for crowd direction, take-it-now for sharp lines, velocity for slate-rare prices.
 
-- Pulls unsent rows from `fanduel_prediction_alerts` where `confidence ≥ 60` and not already broadcast.
-- Formats them in the conversational/narrative style we restored for parlays (per `mem://telegram/communication-style`).
-- Inserts into a new `bot_signal_broadcasts` table (FK to alert id, `chat_id`, `parlay_date`, `sent_at`) — same self-verifying pattern we just built for parlay broadcasts.
-- Dedupes by `(alert_id, chat_id)`.
+### Telegram delivery tweaks
 
-### 4. Cron + audit
+Update `signal-alert-telegram` formatter to:
+- Reflect the new definitions in the "why we're alerting" sub-line (so it reads honest: "Steepest juice gap on the slate" instead of "the model just flipped").
+- Keep cascade message identical.
+- Keep the 25-per-run cap and tipoff guard.
 
-- Schedule `signal-alert-engine` every 15 min during 13:00–03:00 UTC (slate window).
-- Schedule `signal-alert-telegram` every 5 min in the same window.
-- Add a `v_signal_broadcast_audit` view mirroring the parlay one (flags `MISSING_ALERT`, `STORED_DATE_MISMATCH`, `SEND_DATE_DRIFT`).
+### Files touched (Part A)
 
-### 5. Memory + docs
+- `supabase/functions/signal-alert-engine/index.ts` — rewrite take_it_now & velocity_spike detectors; preserve cascade + snapshot insert.
+- `supabase/functions/signal-alert-telegram/index.ts` — update copy for the two redefined signal types.
+- `mem://logic/betting/take-it-now-logic` and `mem://logic/betting/fanduel-signals` — note the new definitions so future changes don't undo this.
 
-- Recreate `mem://logic/betting/cascade-engine.md`, `mem://logic/betting/take-it-now-logic.md`, `mem://logic/betting/velocity-spike.md` with the actual rules + 60% floor.
-- Update `mem://index.md` to point at the real files.
+---
 
-## Technical details
+## Part B — "How to upload your slip" explainer video → Telegram
 
-| Component | Type | Schedule |
-|---|---|---|
-| `signal-alert-engine` | new edge function | `*/15 13-23,0-3 * * *` |
-| `signal-alert-telegram` | new edge function | `*/5 13-23,0-3 * * *` |
-| `bot_signal_broadcasts` | new table + RLS | n/a |
-| `v_signal_broadcast_audit` | new view (security_invoker) | n/a |
-| `prop-sharp-sync` / `unified-live-feed` | bug fix | existing crons |
+### What we'll ship
 
-Signal types written: `cascade`, `take_it_now` (replacing the old `snapback_candidate` label for clarity), `velocity_spike`. Existing `snapback_candidate` rows stay readable for historical accuracy reports.
+A **20-second 1080×1920 MP4** with **ElevenLabs voiceover** walking through the 3 steps: (1) snap/paste your slip → (2) AI scans & runs Monte Carlo → (3) get verdict + roast. Built with Remotion in the existing `worker/remotion/` setup, branded with the farm palette already in `src/components/farm/`.
 
-Confidence gate: `confidence >= 60` for Telegram delivery — applied in both the engine (skip writes below 60 on cascade) and the Telegram broadcaster (final filter).
+### Storyboard (4 scenes, ~5 sec each)
 
-Dedupe: hash of `(signal_type, event_id, prop_type, direction, player_name)` with a 2-hour TTL, matching the existing FanDuel signal-deduplication rule.
+```
+Scene 1 (0-5s)   "Drop your slip"        — Phone mockup, screenshot drops in, shutter sound
+Scene 2 (5-11s)  "We crunch the numbers" — 10,000 simulations counter, line chart sweeps
+Scene 3 (11-17s) "Get the verdict"       — Big % win prob + roast bubble pops in
+Scene 4 (17-20s) "Try it free"           — parlayfarm.com URL + Telegram bot handle
+```
 
-## Verification (after build)
+VO script (~55 words) generated via ElevenLabs (voice: Brian `nPczCjzI2devNBz1zQrb` — matches the farm tone). Audio stitched onto the Remotion timeline.
 
-1. Confirm `line_movements.MAX(created_at)` advances within 30 min of deploy.
-2. Confirm `fanduel_prediction_alerts` shows new rows for all 3 signal types.
-3. Curl `signal-alert-telegram` and confirm rows land in `bot_signal_broadcasts` and a test message hits the admin chat.
-4. Run `v_signal_broadcast_audit` — expect zero `MISSING_*` or `MISMATCH` rows.
+### Telegram delivery — admin-first with one-tap broadcast
 
-## Out of scope
+Two new edge functions plus one tiny table:
 
-- No changes to the parlay engine or its 60% confidence floor (already restored).
-- No changes to RBI Unders logic.
-- No changes to existing fanduel-boost crons.
+1. **`explainer-video-render`** (one-time, on-demand)
+   - Renders the MP4 locally inside the function via the existing `worker/` Remotion bundle.
+   - Uploads to a new public Storage bucket `marketing-videos`.
+   - Returns the public URL.
+
+2. **`telegram-broadcast`** (the new generic sender)
+   - Takes `{ video_url, caption, target: 'admin' | 'all' }`.
+   - For `admin`: calls Telegram `sendVideo` to `TELEGRAM_CHAT_ID` and attaches an **inline keyboard button** "📣 Broadcast to all subscribers" with `callback_data=broadcast:<broadcast_id>`.
+   - For `all`: loops over `bot_user_preferences.chat_id` (currently 8 rows), sends `sendVideo` to each, logs delivery per chat in a new `bot_video_broadcasts` table for dedupe + retry.
+
+3. **`telegram-poll` (existing) → extend to handle `callback_query`**
+   - When the admin taps the broadcast button, the callback hits the poll loop, which invokes `telegram-broadcast` with `target: 'all'` and the matching `broadcast_id`.
+   - Edits the original admin message to show "✅ Sent to N subscribers".
+
+`bot-send-telegram` stays untouched (it's text-only and admin-only by design). The new `telegram-broadcast` function adds video + multi-recipient capability without disrupting the rest of the alert pipeline.
+
+### New table
+
+```sql
+create table public.bot_video_broadcasts (
+  id uuid primary key default gen_random_uuid(),
+  video_url text not null,
+  caption text,
+  created_by text default 'admin',
+  status text not null default 'pending', -- pending | admin_sent | broadcast_sent
+  admin_message_id bigint,
+  recipients_total int default 0,
+  recipients_succeeded int default 0,
+  created_at timestamptz default now()
+);
+-- RLS: service_role only.
+```
+
+### Files touched (Part B)
+
+- `worker/remotion/src/compositions/SlipExplainer.tsx` — new 4-scene composition.
+- `worker/remotion/src/Root.tsx` — register the new composition.
+- `supabase/functions/explainer-video-render/index.ts` — new (renders + uploads).
+- `supabase/functions/telegram-broadcast/index.ts` — new (sendVideo, admin/all targeting, callback handling).
+- `supabase/functions/telegram-poll/index.ts` — extend to route `callback_query` → `telegram-broadcast`.
+- `supabase/migrations/<ts>_bot_video_broadcasts.sql` — new table + RLS.
+- Storage: create public `marketing-videos` bucket via migration.
+
+### Verification before delivery
+
+1. Render the MP4 locally, save to `/mnt/documents/slip-explainer.mp4`, return as a `<lov-artifact>` so you can preview it before any Telegram send.
+2. Once you approve the cut, trigger `explainer-video-render` to upload it and `telegram-broadcast` with `target: 'admin'`. You'll see it on your Telegram with the broadcast button.
+3. Tapping the button fans it out to the 8 chat_ids in `bot_user_preferences`.
+
+---
+
+## Open question I'm assuming "yes" on
+
+The 8 chat_ids in `bot_user_preferences` are unverified (none completed onboarding). I'll send to all of them — if any are stale/blocked, the broadcast log will mark them failed but the run won't crash. If you'd rather restrict to onboarded-only or a manual allowlist, say so before approving.
+

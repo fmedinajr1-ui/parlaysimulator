@@ -7,11 +7,17 @@ const corsHeaders = {
 
 const MIN_CONFIDENCE = 60;            // global accuracy floor (matches parlay engine)
 const CASCADE_MIN_PLAYERS = 3;        // ≥3 same-event same-direction picks = cascade
-const FLIP_LOOKBACK_MIN = 30;         // window for take-it-now (recommendation flip)
-const VELOCITY_LOOKBACK_HRS = 6;      // baseline window for velocity spike
-const VELOCITY_SPIKE_DELTA = 12;      // composite_score jump required
 const DEDUPE_TTL_MIN = 120;           // 2-hour cross-run dedupe per Telegram rule
 const MIN_JUICE_GAP = 15;             // min American-odds gap to consider a directional signal
+
+// "Movement-free" detector tuning — used because unified_props is repriced
+// once daily, so true intraday flips/velocity can't be measured. These two
+// detectors instead surface (a) the steepest juice gap per game and
+// (b) the rarest-priced props on the slate.
+const TAKE_IT_NOW_MIN_GAP = 30;       // American odds gap that screams "book is hammering one side"
+const VELOCITY_TOP_PERCENTILE = 0.05; // top 5% of derived confidence per (sport, prop_type)
+const VELOCITY_MIN_CONFIDENCE = 70;   // raise the floor for "rare on slate"
+const VELOCITY_MIN_GROUP_SIZE = 20;   // don't compute percentile on tiny pools
 
 type UnifiedProp = {
   id: string;
@@ -216,32 +222,34 @@ Deno.serve(async (req) => {
       } else stats.cascades += 1;
     }
 
-    // 5) TAKE-IT-NOW detector — look for recommendation flips vs. recent snapshot history
-    const flipSince = new Date(Date.now() - FLIP_LOOKBACK_MIN * 60 * 1000).toISOString();
-    const propIds = activeProps.map((p) => p.id);
-    if (propIds.length > 0) {
-      const { data: history } = await supabase
-        .from('unified_props_snapshot')
-        .select('unified_prop_id,recommended_side,composite_score,confidence,snapshot_at')
-        .in('unified_prop_id', propIds)
-        .lt('snapshot_at', flipSince)
-        .order('snapshot_at', { ascending: false });
-
-      // earliest "old" recommendation per prop (within range)
-      const oldRec = new Map<string, Snapshot>();
-      for (const h of (history ?? []) as Snapshot[]) {
-        if (!oldRec.has(h.unified_prop_id)) oldRec.set(h.unified_prop_id, h);
+    // 5) TAKE-IT-NOW — "Sharpest Side Asymmetry"
+    //    Logic: a prop with juice gap >= TAKE_IT_NOW_MIN_GAP (e.g. -105 / -135 → gap 30)
+    //    AND it is the steepest juice gap in its game. The book is openly hammering one side.
+    //    Movement-free: works on a single snapshot, no history required.
+    {
+      const gapByGame = new Map<string, number>(); // event_id → max gap seen
+      const propGap = new Map<string, number>();   // prop.id → its gap
+      for (const p of activeProps) {
+        const over = Number(p.over_price ?? NaN);
+        const under = Number(p.under_price ?? NaN);
+        if (!Number.isFinite(over) || !Number.isFinite(under) || !p.event_id) continue;
+        const gap = Math.abs(over - under);
+        propGap.set(p.id, gap);
+        const cur = gapByGame.get(p.event_id) ?? 0;
+        if (gap > cur) gapByGame.set(p.event_id, gap);
       }
 
       for (const p of activeProps) {
-        const old = oldRec.get(p.id);
-        if (!old || !old.recommended_side) continue;
-        if (old.recommended_side.toLowerCase() === p.derived_side.toLowerCase()) continue;
+        const gap = propGap.get(p.id) ?? 0;
+        if (gap < TAKE_IT_NOW_MIN_GAP) continue;
+        if (!p.event_id) continue;
+        const top = gapByGame.get(p.event_id) ?? 0;
+        if (gap < top) continue; // only the steepest gap in the game
 
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
-        const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.recommended_side]);
+        const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
         if (!(await claimKey(dKey, 'take_it_now'))) continue;
 
         const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
@@ -256,12 +264,12 @@ Deno.serve(async (req) => {
           event_description: p.game_description,
           commence_time: p.commence_time,
           metadata: {
-            previous_side: old.recommended_side,
-            new_side: p.derived_side,
-            composite_jump: p.derived_score - Number(old.composite_score ?? 0),
+            detector: 'sharpest_juice_gap',
+            juice_gap: gap,
+            over_price: p.over_price,
+            under_price: p.under_price,
             line: p.current_line,
             pvs_tier: p.pvs_tier,
-            window_minutes: FLIP_LOOKBACK_MIN,
             source: 'unified_props_price_derived',
           },
         });
@@ -272,62 +280,62 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 6) VELOCITY SPIKE detector — current composite_score >> baseline
-    const baselineSince = new Date(Date.now() - VELOCITY_LOOKBACK_HRS * 60 * 60 * 1000).toISOString();
-    if (propIds.length > 0) {
-      const { data: baseline } = await supabase
-        .from('unified_props_snapshot')
-        .select('unified_prop_id,composite_score')
-        .in('unified_prop_id', propIds)
-        .gte('snapshot_at', baselineSince);
-
-      const baselineAvg = new Map<string, number>();
-      const counts = new Map<string, number>();
-      for (const b of baseline ?? []) {
-        const v = Number(b.composite_score ?? 0);
-        baselineAvg.set(b.unified_prop_id, (baselineAvg.get(b.unified_prop_id) ?? 0) + v);
-        counts.set(b.unified_prop_id, (counts.get(b.unified_prop_id) ?? 0) + 1);
+    // 6) VELOCITY SPIKE — "Slate Outlier"
+    //    Logic: derived_confidence is in the top VELOCITY_TOP_PERCENTILE for its
+    //    (sport, prop_type) cohort AND >= VELOCITY_MIN_CONFIDENCE. The slate is
+    //    telling us this is a rare price. Movement-free, computed cross-sectionally.
+    {
+      const cohorts = new Map<string, ScoredProp[]>();
+      for (const p of activeProps) {
+        if (!p.prop_type) continue;
+        const key = `${normaliseSport(p.sport)}|${p.prop_type}`;
+        const arr = cohorts.get(key) ?? [];
+        arr.push(p);
+        cohorts.set(key, arr);
       }
 
-      for (const p of activeProps) {
-        const sum = baselineAvg.get(p.id);
-        const cnt = counts.get(p.id);
-        if (!sum || !cnt || cnt < 2) continue; // need real baseline
-        const avg = sum / cnt;
-        const current = p.derived_score;
-        const delta = current - avg;
-        if (delta < VELOCITY_SPIKE_DELTA) continue;
+      for (const [cohortKey, members] of cohorts) {
+        if (members.length < VELOCITY_MIN_GROUP_SIZE) continue;
+        const sorted = [...members].sort((a, b) => b.derived_confidence - a.derived_confidence);
+        const cutoffIdx = Math.max(1, Math.floor(sorted.length * VELOCITY_TOP_PERCENTILE));
+        const winners = sorted.slice(0, cutoffIdx);
+        const cohortAvg = members.reduce((s, m) => s + m.derived_confidence, 0) / members.length;
 
-        const conf = p.derived_confidence;
-        if (conf < MIN_CONFIDENCE) continue;
+        for (const p of winners) {
+          if (p.derived_confidence < VELOCITY_MIN_CONFIDENCE) continue;
+          if (!p.event_id || !p.player_name) continue;
 
-        const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
-        if (!(await claimKey(dKey, 'velocity_spike'))) continue;
+          const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
+          if (!(await claimKey(dKey, 'velocity_spike'))) continue;
 
-        const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
-          player_name: p.player_name,
-          event_id: p.event_id,
-          signal_type: 'velocity_spike',
-          prediction: p.derived_side,
-          confidence: Math.round(conf),
-          prop_type: p.prop_type,
-          sport: normaliseSport(p.sport),
-          bookmaker: p.bookmaker ?? 'unknown',
-          event_description: p.game_description,
-          commence_time: p.commence_time,
-          metadata: {
-            baseline_composite: Math.round(avg * 10) / 10,
-            current_composite: Math.round(current * 10) / 10,
-            delta: Math.round(delta * 10) / 10,
-            window_hours: VELOCITY_LOOKBACK_HRS,
-            line: p.current_line,
-            source: 'unified_props_price_derived',
-          },
-        });
-        if (insErr) {
-          console.error('[signal-alert-engine] velocity_spike insert failed:', insErr);
-          stats.errors += 1;
-        } else stats.velocity_spike += 1;
+          const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
+            player_name: p.player_name,
+            event_id: p.event_id,
+            signal_type: 'velocity_spike',
+            prediction: p.derived_side,
+            confidence: Math.round(p.derived_confidence),
+            prop_type: p.prop_type,
+            sport: normaliseSport(p.sport),
+            bookmaker: p.bookmaker ?? 'unknown',
+            event_description: p.game_description,
+            commence_time: p.commence_time,
+            metadata: {
+              detector: 'slate_outlier',
+              cohort_key: cohortKey,
+              cohort_size: members.length,
+              cohort_avg_confidence: Math.round(cohortAvg * 10) / 10,
+              percentile_rank: Math.round((1 - winners.indexOf(p) / sorted.length) * 1000) / 10,
+              over_price: p.over_price,
+              under_price: p.under_price,
+              line: p.current_line,
+              source: 'unified_props_price_derived',
+            },
+          });
+          if (insErr) {
+            console.error('[signal-alert-engine] velocity_spike insert failed:', insErr);
+            stats.errors += 1;
+          } else stats.velocity_spike += 1;
+        }
       }
     }
 
