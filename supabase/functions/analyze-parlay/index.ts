@@ -51,7 +51,8 @@ interface EngineHits {
 }
 
 export async function gatherEngineHits(
-  supabase: ReturnType<typeof createClient>,
+  // Loose type so test fakes can be injected without fighting the SDK generics.
+  supabase: any,
   parsed: ParsedLeg,
   sport: SportKey,
   today: string
@@ -342,7 +343,7 @@ function synthesizeLeg(
 
 /** Inline swap suggestion: top 1 alternative for a weak leg pulled from engines. */
 export async function findTopSwap(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   parsed: ParsedLeg,
   sport: SportKey,
   today: string
