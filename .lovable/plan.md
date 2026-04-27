@@ -1,95 +1,96 @@
-# Plan — Engine-Powered Slip Analyzer
+# Plan — Re-render explainer (sharper Scene 1 + engine-led narrative)
 
 ## Problem
-The slip analyzer (Results page) currently calls two edge functions that **don't exist**: `analyze-parlay` and `generate-roasts`. So `aiAnalysis` is always `null`, every leg shows "N/A", and the only output users see is fallback static roasts. Meanwhile we already have 4 engines wired into `find-swap-alternatives` (Unified Props, Median Lock, Juiced Props, Hit Rates) plus tables for sharp signals, trap analysis, injuries, fatigue, and FanDuel signals — none are touched on the analyzer path.
+The current `/mnt/documents/slip-explainer.mp4` (3.98 MB) was rendered in a previous session and the Remotion source no longer exists in the sandbox (`/tmp` got reset). Two changes are needed:
+
+1. **Scene 1 (drop zone / phone mockup) reads soft** — low contrast between the phone frame, the slip card, and the dotted drop zone. On a phone-sized viewport it looks washed out.
+2. **The narrative still leans on "roast"** in the VO + on-screen text. The actual product value is the **cross-reference engine** (Unified Props, Median Lock, Juiced Props, L10 Hit Rates, Sharp Signals, Trap Probability, Injuries, Fatigue) that decides Over vs. Under per leg. The roast was already demoted to flavor in the analyzer itself — the video should match.
 
 ## What Will Change
 
-### 1. New edge function: `analyze-parlay`
-Single endpoint the Results page already calls. For each uploaded leg it cross-references our engines and returns a real `LegAnalysis` (already typed in `src/types/parlay.ts`) plus a parlay-level summary.
+### 1. Scaffold a fresh Remotion project at `worker/explainer/`
+Separate from `worker/remotion/` (which is the TikTok render pipeline — different compositions, props, audio timings). Keeps the explainer source version-controlled in the repo so future re-renders don't depend on `/tmp`.
 
-Per-leg engine cross-reference (parallel queries, fuzzy player+prop+line match):
-- **Unified Props** → `pvsScore`, `recommendation`, `combined_confidence` → drives `adjustedProbability`
-- **Median Lock Candidates** → `LOCK`/`STRONG` classification, `consensus_percentage`, `parlay_grade` → `medianLockData`
-- **Juiced Props** → juice level + direction → `juiceData`
-- **Player Prop Hit Rates (L10)** → `hitRatePercent`
-- **Sharp Signals** → recommendation + signal codes → `sharpRecommendation`, `sharpSignals`
-- **Trap Probability Analysis** → trap risk label → adds to `riskFactors`, can flip verdict to FADE
-- **Injury Reports** → matched by player → `injuryAlerts`
-- **Sports Fatigue Scores** → `fatigueData` (incl. B2B flag)
+Structure:
+```text
+worker/explainer/
+  package.json
+  tsconfig.json
+  scripts/render.mjs          # programmatic render → /mnt/documents/slip-explainer_v2.mp4
+  public/voiceover.mp3        # generated via Lovable AI / ElevenLabs at build
+  src/
+    index.ts                  # registerRoot
+    Root.tsx                  # single Composition "explainer", 1080x1920, 30fps
+    MainVideo.tsx             # TransitionSeries wiring 5 scenes + persistent BG
+    scenes/
+      Scene1_DropZone.tsx     # ← rebuilt with tighter contrast
+      Scene2_EngineFanout.tsx # ← rewritten: 8 engines cross-reference, no roast
+      Scene3_OverUnderCall.tsx# ← new framing: per-leg Over/Under verdict
+      Scene4_SwapSuggestion.tsx
+      Scene5_BroadcastCTA.tsx # admin-only one-tap broadcast button
+    components/
+      PhoneMockup.tsx         # shared device chrome (used in S1, S5)
+      EngineChip.tsx
+      VerdictPill.tsx
+```
 
-Synthesis layer:
-- Build `researchSummary.signals[]` from each engine that returned a hit (positive/negative/neutral)
-- `strengthScore` = weighted sum (Unified 30%, Median Lock 25%, HitRate 20%, Sharp 15%, Trap −20% if high)
-- `overallVerdict`: `STRONG_PICK` ≥75, `LEAN_PICK` ≥55, `NEUTRAL` 40-55, `LEAN_FADE` 25-40, `STRONG_FADE` <25
-- `adjustedProbability` blends implied prob with engine consensus (capped ±15% delta to stay defensible)
-- `correlatedLegs` detection: same event_id or same last-name → flagged as same-game
+### 2. Scene 1 contrast pass (the main visual fix)
+Concrete adjustments to `PhoneMockup` + `Scene1_DropZone`:
 
-Parlay-level output added to response:
-- `recommendedAction`: `TAIL` / `TAIL_WITH_SWAPS` / `REBUILD` / `PASS`
-- `summary`: 2–3 sentence narrative ("3 of your 5 legs are sharp. Your Curry leg is a trap — books moved both sides. Drop it or swap to LeBron Over 6.5 ast (78% Median Lock).")
-- `keepLegs[]`, `swapLegs[]`, `dropLegs[]` — concrete actions per leg index
-- `suggestedSwaps[]` — pulls top 1 alternative per weak leg via the same logic as `find-swap-alternatives` (call its helper inline; no extra HTTP hop)
-- `expectedValueDelta` — projected EV improvement if user applies all suggested swaps
+- Phone frame: bump bezel from `#1a1a1a` to **pure `#0a0a0a`** with a 2px inner highlight `rgba(255,255,255,0.08)` so the device pops off the gradient background.
+- Drop zone: dotted border weight `1px → 2.5px`, color `border-muted/30 → border-neon-cyan/70`, fill `bg-card/40 → bg-[#0d1620]` (solid panel, not translucent).
+- "Drop your slip here" label: `text-muted-foreground → text-white`, weight `500 → 700`, add a `text-shadow: 0 1px 2px rgba(0,0,0,0.6)` for legibility on the gradient.
+- Add a soft inner glow ring (`box-shadow: inset 0 0 32px rgba(0,255,200,0.12)`) that pulses on a 60-frame sine so the eye is drawn there without the existing "scan beam" effect overpowering the panel.
+- Slip card (the screenshot dropping in): bump shadow `shadow-lg → shadow-2xl` + add `ring-1 ring-white/15` so the card edge is visible against the dark phone.
+- Background gradient: shift midstop from `#0f1420` to `#080d18` to widen the contrast envelope behind the phone.
 
-### 2. New edge function: `generate-roasts`
-Tiny wrapper around Lovable AI Gateway (`google/gemini-2.5-flash`) that takes legs + verdict + swap suggestions and returns 3 punchy roasts. Falls back to static lines on error so the Results page never breaks.
+### 3. Voiceover + on-screen copy rewrite (remove "roast", lead with engines)
+New script (≈28 s, drives all 5 scene durations):
 
-### 3. Results page wiring (no UI rewrite required)
-`src/pages/Results.tsx` already consumes the exact `ParlayAnalysis` shape we'll return — `LegBreakdownScorecard`, `ConsolidatedVerdictCard`, `ParlayHealthCard`, `SmartLegSwapCard`, the new EV badges we just shipped — they'll all light up automatically once `aiAnalysis` is no longer null.
+| # | Scene | VO | On-screen |
+|---|---|---|---|
+| 1 | Drop zone | "Drop any parlay slip — screenshot or text." | "DROP. SCAN. DECIDE." |
+| 2 | Engine fan-out | "Eight engines cross-reference every leg in parallel — Unified PVS, Median Lock, Juiced Props, L10 hit rates, sharp money, trap probability, injuries, fatigue." | Animated chips for all 8 engines flying into a central node |
+| 3 | Over/Under call | "Each leg gets a verdict — keep, swap, or drop — with a sharper Over or Under built from real consensus, not a guess." | Per-leg "OVER 27.5 ✓ KEEP" / "UNDER 6.5 → SWAP" pills stagger in |
+| 4 | Swap suggestion | "Weak legs come back with a sharper alternative and a projected EV gain." | Strikethrough of weak leg → arrow → suggested leg with `+11% EV` chip |
+| 5 | Admin broadcast | "Approve once. Broadcast to every subscriber in a tap." | Big tappable "BROADCAST" button on the phone, then a ripple of chat bubbles |
 
-We'll add **one** new card above the roast: `EngineRecommendationCard` that surfaces the parlay-level `summary` + `recommendedAction` + the keep/swap/drop verdict counts in a single hero block, so users see the actionable answer immediately without scrolling.
+**Removed entirely:** every line that referenced "roast", "we'll roast it", "roasted to perfection", and the fire emoji. The CTA text on Scene 5 changes from `"GET ROASTED"` to `"BROADCAST"`. Lower-third stickers swap to engine names.
 
-### 4. Homepage analyzer (`HomepageAnalyzer.tsx`)
-Currently only runs Monte Carlo simulation. After the existing simulation step, fire `analyze-parlay` in parallel and surface:
-- The `recommendedAction` chip on the risk banner
-- The `summary` sentence under the existing tier label
-- Top 1 swap suggestion inline per weak leg (with a "Use sharper pick" tap that copies to clipboard)
+### 4. Voiceover regeneration
+Re-run the existing voiceover step (Lovable AI / ElevenLabs flow already used last render — `LOVABLE_API_KEY` provisioned) against the new script, write `worker/explainer/public/voiceover.mp3`, capture word timings to `worker/explainer/public/voiceover.timings.json`. Captions in Scene captions layer drive off these timings (same alignment pattern as `worker/remotion/src/compositions/VideoComposition.tsx`).
 
-Free preview shows verdict + summary; the full leg-by-leg engine breakdown stays behind the existing $4.99 unlock (fits the current paid model).
+### 5. Render + replace artifact
+- Programmatic render via `scripts/render.mjs` (sandbox-safe pattern: `chromeMode: "chrome-for-testing"`, `muted: false` since we want the VO baked in, `concurrency: 1`).
+- Output to **`/mnt/documents/slip-explainer_v2.mp4`** (versioned per project rules — keeps the original for comparison).
+- QA pass: extract frames at frame 30 (Scene 1 mid), frame 240 (engine fan-out peak), frame 540 (broadcast CTA) via `bunx remotion still`, view each PNG to confirm contrast + that the word "roast" appears nowhere on screen.
+- Upload the final MP4 to the existing `marketing-videos` Supabase storage bucket (already created in `20260427141253_*.sql`) under key `slip-explainer-v2.mp4` and update the `bot_video_broadcasts` row source-of-truth so the existing admin "Broadcast" button in `signal-alert-telegram` points at the new asset.
 
 ## Technical Details
 
 **Files to create:**
-- `supabase/functions/analyze-parlay/index.ts` — engine cross-reference + synthesis
-- `supabase/functions/generate-roasts/index.ts` — Lovable AI roast generator
-- `supabase/functions/_shared/leg-matcher.ts` — fuzzy player/prop/line matching helper used by both analyze-parlay and find-swap-alternatives
-- `src/components/results/EngineRecommendationCard.tsx` — hero summary card
+- `worker/explainer/package.json`, `tsconfig.json`, `scripts/render.mjs`
+- `worker/explainer/src/index.ts`, `Root.tsx`, `MainVideo.tsx`
+- `worker/explainer/src/scenes/Scene1_DropZone.tsx` … `Scene5_BroadcastCTA.tsx`
+- `worker/explainer/src/components/PhoneMockup.tsx`, `EngineChip.tsx`, `VerdictPill.tsx`
 
 **Files to edit:**
-- `src/pages/Results.tsx` — add `EngineRecommendationCard` near the top; pass `recommendedAction` to existing components
-- `src/components/home/HomepageAnalyzer.tsx` — invoke `analyze-parlay`, render verdict chip + inline swaps in free preview
-- `supabase/functions/find-swap-alternatives/index.ts` — refactor to import from `_shared/leg-matcher.ts`
-- `src/types/parlay.ts` — extend `ParlayAnalysis` with `recommendedAction`, `summary`, `keepLegs`, `swapLegs`, `dropLegs`, `suggestedSwaps`, `expectedValueDelta`
+- `supabase/functions/signal-alert-engine/index.ts` — swap the hardcoded video URL constant from `slip-explainer.mp4` → `slip-explainer-v2.mp4` (both Telegram preview send + broadcast payload).
+- `supabase/functions/signal-alert-telegram/index.ts` — same URL swap on the broadcast handler.
+- `.lovable/plan.md` — append a short "v2 explainer" note so the next session knows the source lives at `worker/explainer/`.
 
-**Engine fan-out pattern (per leg):**
-```text
-                 ┌─► unified_props (PVS + confidence)
-                 ├─► median_lock_candidates (LOCK/STRONG)
-   leg ──fuzzy──►├─► juiced_props (juice level)
-                 ├─► player_prop_hitrates (L10)
-                 ├─► sharp_signals (sharp rec)
-                 ├─► trap_probability_analysis (trap risk)
-                 ├─► injury_reports (player match)
-                 └─► sports_fatigue_scores (B2B + load)
-                          │
-                          ▼
-                synthesizeLegAnalysis()
-                  → researchSummary
-                  → adjustedProbability
-                  → riskFactors / sharpSignals
+**Render command:**
+```bash
+cd worker/explainer && bun install && node scripts/render.mjs
 ```
 
-**Performance:** all 8 engine queries per leg run in `Promise.all`; expected total ~600ms for an 8-leg slip on the existing Supabase indexes. No new tables required.
-
-**Auth:** both new functions stay public (`verify_jwt = false` default) — the analyzer is used by anonymous visitors on the homepage. No PII written.
-
-**Lovable AI key:** `generate-roasts` uses `LOVABLE_API_KEY` (already provisioned for the project); no user secret prompt needed.
+**Constraints applied:**
+- Stays under 30 s → well within the 600 s `code--exec` ceiling.
+- No `backdropFilter` (sandbox Chromium constraint) — Scene 1 inner glow uses `box-shadow inset` instead.
+- Fonts: `@remotion/google-fonts/Inter` + `@remotion/google-fonts/SpaceGrotesk` loaded at module scope.
+- The current `slip-explainer.mp4` is **not** deleted — kept as `_v1` reference per the iterating-on-artifacts convention.
 
 ## Outcome
-After this lands, dropping a slip into the analyzer returns:
-1. **A real verdict** ("REBUILD — 2 of 5 legs are traps")
-2. **A plain-English summary** of which legs to keep, swap, drop
-3. **Concrete sharper alternatives** sourced from 4+ engines, ranked by confidence gain
-4. **Per-leg engine evidence** (PVS, hit rate, sharp signals, trap flags, injuries, fatigue) feeding the existing EV badges and tap-to-expand risk drawer we just shipped
-5. The roast — but now as flavor on top of actual analysis, not the only output.
+- Scene 1 reads sharply on a 402×636 viewport: the phone frame, dotted drop zone, and slip card all have clearly distinct edges and the "Drop your slip here" label is high-contrast white on solid dark.
+- The whole video reframes the product around the **8-engine cross-reference deciding Over vs. Under per leg** — the word "roast" is gone from VO, captions, and on-screen stickers.
+- New asset lands at `/mnt/documents/slip-explainer_v2.mp4` and is wired into the existing admin one-tap broadcast button so a single tap pushes v2 to all subscribers.

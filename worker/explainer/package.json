@@ -1,0 +1,20 @@
+{
+  "name": "explainer-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "node scripts/render.mjs",
+    "voiceover": "node scripts/generate-voiceover.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.452",
+    "@remotion/cli": "^4.0.452",
+    "@remotion/compositor-linux-x64-musl": "^4.0.452",
+    "@remotion/google-fonts": "^4.0.452",
+    "@remotion/renderer": "^4.0.452",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "remotion": "^4.0.452"
+  }
+}
