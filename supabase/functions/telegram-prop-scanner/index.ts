@@ -241,7 +241,7 @@ async function handleStart(supabase: any, chat_id: number, args: string[]) {
 
   const user_id = await resolveUserForChat(supabase, chat_id);
   if (!user_id) {
-    await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+    await sendMessage(chat_id, NOT_LINKED_MSG);
     return;
   }
   await supabase
@@ -347,7 +347,7 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
   try {
     const session = await ensureSession(supabase, chat_id, { book });
     if (!session) {
-      await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+      await sendMessage(chat_id, NOT_LINKED_MSG);
       return;
     }
     await sendMessage(chat_id, `✅ *Book set to ${book}*\n\nNow send a screenshot and I'll scan it with the *${book}* layout.`);
@@ -446,7 +446,7 @@ async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string
     return;
   }
   if (!session) {
-    await sendMessage(chat_id, "🚫 *Not authorized.* Link your Telegram chat to your account first.");
+    await sendMessage(chat_id, NOT_LINKED_MSG);
     return;
   }
   await sendMessage(chat_id, `🔎 Scanning ${photoFileIds.length} screenshot${photoFileIds.length > 1 ? "s" : ""}…`);
@@ -528,7 +528,7 @@ Deno.serve(async (req) => {
         try {
           const session = await ensureSession(supabase, cb_chat_id, { sport });
           if (!session) {
-            await sendMessage(cb_chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+            await sendMessage(cb_chat_id, NOT_LINKED_MSG);
           } else {
             await sendMessage(cb_chat_id, `✅ *Sport set to ${sport.toUpperCase()}*\n\nNow send a screenshot and I'll scan it.`);
           }
@@ -590,7 +590,7 @@ Deno.serve(async (req) => {
       try {
         const session = await ensureSession(supabase, chat_id, { sport });
         if (!session) {
-          await sendMessage(chat_id, "🚫 *Not authorized*\n\nLink your Telegram chat to your account first.");
+          await sendMessage(chat_id, NOT_LINKED_MSG);
         } else {
           await sendMessage(chat_id, `✅ *Sport set to ${sport.toUpperCase()}*\n\nNow send a screenshot and I'll scan it.`);
         }
