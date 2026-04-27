@@ -8,6 +8,7 @@ import { SettledPicksTable } from "./SettledPicksTable";
 import { SidePerformanceCard } from "./SidePerformanceCard";
 import { HonestAccuracyBanner } from "./HonestAccuracyBanner";
 import { DailySignalScorecard } from "./DailySignalScorecard";
+import { MultiSportSignalAccuracy } from "./MultiSportSignalAccuracy";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -128,6 +129,9 @@ export function UnifiedAccuracyView() {
 
       {/* Daily Signal Scorecard */}
       <DailySignalScorecard />
+
+      {/* Multi-Sport Signal Accuracy — Cascade / Take It Now / Velocity Spike vs 60% floor */}
+      <MultiSportSignalAccuracy />
 
       {/* Composite Grade — CLV-based (labeled) */}
       <CompositeGradeCard
