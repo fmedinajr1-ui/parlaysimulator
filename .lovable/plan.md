@@ -1,6 +1,19 @@
 
 # Plan — Fix alert variety + ship a Telegram explainer video
 
+## Status checkpoint (end of session)
+
+**Part A — DONE & LIVE.** Movement-free detectors deployed. First post-deploy run produced 6 take_it_now + 14 velocity_spike alerts; telegram broadcaster sent 20 mixed alerts to admin chat. Cron continues every 15 min.
+
+**Part B — IN PROGRESS, paused.** Scaffolded but not rendered/deployed yet. To resume:
+1. `/tmp/remotion-explainer/` has package.json, tsconfig.json, Remotion + deps installed (musl compositor). Still need src/index.ts, src/Root.tsx, 4 scene files.
+2. ElevenLabs VO not yet generated (key available: `ELEVENLABS_API_KEY`). Voice: Brian `nPczCjzI2devNBz1zQrb`. Script ~55 words across 4 scenes.
+3. MP4 not yet rendered to `/mnt/documents/slip-explainer.mp4`.
+4. Storage bucket `marketing-videos` and tables `bot_video_broadcasts` + `bot_video_broadcast_recipients` already created (migration applied).
+5. Edge functions to create: `explainer-video-render` (uploads MP4 to bucket) and `telegram-broadcast` (sendVideo + admin/all targeting).
+6. Wire `broadcast:<id>` callback into existing `supabase/functions/telegram-prop-scanner/index.ts` (around line 490, alongside `parlay:` handler).
+7. Subscriber list lives in `bot_user_preferences.chat_id` (8 rows currently).
+
 ## Part A — Why you're only seeing cascade alerts (root cause + fix)
 
 ### What I confirmed in the data
