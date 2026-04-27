@@ -5,6 +5,7 @@ import { Check, AlertTriangle, RefreshCw, Ban, ArrowRight, Copy } from "lucide-r
 import { ParlayAnalysis } from "@/types/parlay";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { getSportEmoji } from "./SportPropIcon";
 
 interface Props {
   analysis: ParlayAnalysis | null;
@@ -68,6 +69,7 @@ export function EngineRecommendationCard({ analysis, loading, delay = 0 }: Props
   const Icon = cfg.icon;
   const counts = analysis.verdictCounts;
   const swaps = analysis.suggestedSwaps ?? [];
+  const sports = analysis.sportsDetected ?? [];
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -96,6 +98,25 @@ export function EngineRecommendationCard({ analysis, loading, delay = 0 }: Props
       {/* Plain English summary */}
       {analysis.summary && (
         <p className="text-sm text-foreground/90 leading-relaxed mb-3">{analysis.summary}</p>
+      )}
+
+      {/* Sports cross-referenced */}
+      {sports.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            Cross-referenced:
+          </span>
+          {sports.map((sp) => (
+            <Badge
+              key={sp}
+              variant="outline"
+              className="text-[11px] bg-card/60 border-border/40 gap-1"
+            >
+              <span>{getSportEmoji(sp)}</span>
+              <span>{sp}</span>
+            </Badge>
+          ))}
+        </div>
       )}
 
       {/* Verdict counts */}
