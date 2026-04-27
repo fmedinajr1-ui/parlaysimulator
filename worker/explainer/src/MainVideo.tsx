@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Audio, Sequence, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { loadFont as loadSpaceGrotesk } from '@remotion/google-fonts/SpaceGrotesk';
 import { Scene1DropZone } from './scenes/Scene1_DropZone';
@@ -62,7 +62,7 @@ export const MainVideo: React.FC<Props> = ({ audioUrl, timings }) => {
   return (
     <AbsoluteFill style={{ backgroundColor: '#03060c', fontFamily: 'Inter, sans-serif' }}>
       <PersistentBg />
-      {audioUrl && <Audio src={audioUrl} />}
+      {/* Audio is muxed in post-render via ffmpeg (Nix lacks libfdk_aac). */}
 
       {slots.map((slot, i) => {
         const Comp = SceneComponents[i];
