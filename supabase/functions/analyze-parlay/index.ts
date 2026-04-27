@@ -50,8 +50,9 @@ interface EngineHits {
   fatigue?: any;
 }
 
-async function gatherEngineHits(
-  supabase: ReturnType<typeof createClient>,
+export async function gatherEngineHits(
+  // Loose type so test fakes can be injected without fighting the SDK generics.
+  supabase: any,
   parsed: ParsedLeg,
   sport: SportKey,
   today: string
@@ -341,8 +342,8 @@ function synthesizeLeg(
 }
 
 /** Inline swap suggestion: top 1 alternative for a weak leg pulled from engines. */
-async function findTopSwap(
-  supabase: ReturnType<typeof createClient>,
+export async function findTopSwap(
+  supabase: any,
   parsed: ParsedLeg,
   sport: SportKey,
   today: string
@@ -367,7 +368,7 @@ async function findTopSwap(
       .order('confidence', { ascending: false })
       .limit(5),
   ]);
-  const ml = (mlRes.data ?? [])[0];
+  const ml = ((mlRes.data ?? []) as any[])[0];
   if (ml) {
     return {
       source: 'median_lock' as const,
@@ -381,7 +382,7 @@ async function findTopSwap(
       reason: `🔒 ${ml.classification} • ${Number(ml.consensus_percentage ?? 0).toFixed(0)}% consensus`,
     };
   }
-  const un = (unRes.data ?? [])[0];
+  const un = ((unRes.data ?? []) as any[])[0];
   if (un) {
     return {
       source: 'unified_props' as const,
