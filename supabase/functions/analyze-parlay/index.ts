@@ -50,7 +50,7 @@ interface EngineHits {
   fatigue?: any;
 }
 
-async function gatherEngineHits(
+export async function gatherEngineHits(
   supabase: ReturnType<typeof createClient>,
   parsed: ParsedLeg,
   sport: SportKey,
@@ -341,7 +341,7 @@ function synthesizeLeg(
 }
 
 /** Inline swap suggestion: top 1 alternative for a weak leg pulled from engines. */
-async function findTopSwap(
+export async function findTopSwap(
   supabase: ReturnType<typeof createClient>,
   parsed: ParsedLeg,
   sport: SportKey,
