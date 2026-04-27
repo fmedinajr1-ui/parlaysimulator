@@ -7,11 +7,17 @@ const corsHeaders = {
 
 const MIN_CONFIDENCE = 60;            // global accuracy floor (matches parlay engine)
 const CASCADE_MIN_PLAYERS = 3;        // ≥3 same-event same-direction picks = cascade
-const FLIP_LOOKBACK_MIN = 30;         // window for take-it-now (recommendation flip)
-const VELOCITY_LOOKBACK_HRS = 6;      // baseline window for velocity spike
-const VELOCITY_SPIKE_DELTA = 12;      // composite_score jump required
 const DEDUPE_TTL_MIN = 120;           // 2-hour cross-run dedupe per Telegram rule
 const MIN_JUICE_GAP = 15;             // min American-odds gap to consider a directional signal
+
+// "Movement-free" detector tuning — used because unified_props is repriced
+// once daily, so true intraday flips/velocity can't be measured. These two
+// detectors instead surface (a) the steepest juice gap per game and
+// (b) the rarest-priced props on the slate.
+const TAKE_IT_NOW_MIN_GAP = 30;       // American odds gap that screams "book is hammering one side"
+const VELOCITY_TOP_PERCENTILE = 0.05; // top 5% of derived confidence per (sport, prop_type)
+const VELOCITY_MIN_CONFIDENCE = 70;   // raise the floor for "rare on slate"
+const VELOCITY_MIN_GROUP_SIZE = 20;   // don't compute percentile on tiny pools
 
 type UnifiedProp = {
   id: string;
