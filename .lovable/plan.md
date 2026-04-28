@@ -1,83 +1,75 @@
-# Sport-Aware Slip Analyzer
+# Add Example Slips Carousel to Free Slip Upload Section
 
-## Problem
+Add a swipeable carousel of real-feel example slips (with verdict tier badges, grade scores, and the "killer leg" call-out) directly above the upload form on the Home page. This lets visitors *feel* the value of the analyzer before committing to upload their own slip.
 
-Today `analyze-parlay` treats every leg as NBA. It queries `median_lock_candidates`, `juiced_props`, `sharp_signals`, `unified_props`, `player_prop_hitrates` with no sport filter, then guesses the sport from whatever row matched. On a cross-sport slip (NBA + MLB + NHL), the MLB and NHL legs either get zero hits or get matched to the wrong sport's data, producing low-confidence "NEUTRAL" verdicts and useless swap suggestions.
+## What the user will see
 
-The prop-type map in `_shared/leg-matcher.ts` also has collisions: `points` is shared between NBA and NHL, `hits` isn't tied to MLB, and football/tennis terms can leak across sports.
+Right above the "Drop your parlay" upload card on the Home page, a new **"Real verdicts. Real slips."** section appears with a horizontally swipeable carousel of 5 example slip cards across different sports. Each card shows:
 
-## Goal
+- **Sport badge** (NBA / MLB / NHL / NFL / Tennis) with sport emoji
+- **Verdict tier ribbon**: 💎 LOCK, 🔥 HEAT, ⚖️ COIN FLIP, ⚠️ RISKY, or 💀 COOKED — color-coded
+- **Grade score** (e.g. "92/100") with a circular progress ring
+- **2–4 leg preview** (player + line + over/under) with each leg color-dotted green/yellow/red based on individual hit probability
+- **AI verdict line** — short punchy call (e.g. "Leg 3 (Tatum O27.5) misses 71% of sims — swap to O24.5 for +18% EV")
+- **"Killer leg" highlight** when applicable, with a subtle red glow on that leg row
 
-Every leg uploaded through the analyzer is:
-1. Tagged with a sport BEFORE engine lookups (NBA / WNBA / NCAAMB / MLB / NHL / NFL / NCAAF / Tennis / MMA / Golf / Soccer).
-2. Cross-referenced ONLY against tables and rows for that sport.
-3. Returned with the sport visible in the leg card, and any swap suggestion drawn from the same sport.
+The carousel is swipeable on mobile (touch gestures via Embla), shows snap-pagination dots, and has arrow buttons on desktop. Auto-advances every ~5s with pause-on-hover.
 
-## Approach
+A small caption under the carousel: *"This is what your verdict looks like — drop yours below 👇"* with a soft arrow pointing to the upload card.
 
-### 1. Sport detection layer (`_shared/leg-matcher.ts`)
+## Where it goes
 
-Add a `detectSport(parsed, rawDescription)` helper with a layered strategy:
+In `src/components/farm/UploadForm.tsx`, between the heading block (ending around line 85) and the `done`/form conditional (starting line 87). The carousel sits inside the same `max-w-3xl` container so it lines up with the form.
 
-- **Prop-type signature** (strongest signal):
-  - MLB: `hits, total_bases, home_runs, rbis, stolen_bases, strikeouts, pitcher_outs, walks, runs, singles, doubles, triples`
-  - NHL: `shots_on_goal, sog, saves, goals, blocked_shots, power_play_points, +/-`
-  - NFL/NCAAF: `passing_yards, rushing_yards, receiving_yards, receptions, touchdowns, interceptions, completions, sacks`
-  - Tennis: `aces, double_faults, games_won, sets_won, breaks`
-  - MMA: `significant_strikes, takedowns, fight_to_go_distance`
-  - Golf: `birdies, bogeys, made_cut, top_5, top_10`
-  - NBA/WNBA/NCAAMB: `points, rebounds, assists, threes, steals, blocks, pra, pr, pa, ra, double_double, triple_double` (default basketball)
-- **Caller hint**: respect `leg.sport` if the OCR/upload provided one.
-- **Description keywords fallback**: scan raw text for "MLB", "NHL", "NFL", team-name dictionaries, "vs", pitcher names, etc.
-- Returns a canonical sport key plus a confidence (`high | medium | low`).
+## Technical implementation
 
-Update `PROP_TYPE_MAP` to be sport-scoped: keep one flat map for normalization but also export a `PROP_SPORT_MAP` that maps each normalized prop → the sport(s) it belongs to. Resolve collisions (`points`, `assists`, `goals`) by requiring sport context before normalization picks the wrong canonical form.
+**1. New component: `src/components/farm/ExampleSlipsCarousel.tsx`**
+- Use `embla-carousel-react` (already in the project — see `src/components/ExampleCarousel.tsx` for the existing pattern to copy).
+- Add `embla-carousel-autoplay` plugin for auto-advance (already a transitive dep via embla; if not, fall back to a `setInterval` calling `emblaApi.scrollNext()`).
+- Pure presentational, no data fetching — example slips are a hardcoded constant array typed as `ExampleSlip[]`.
 
-### 2. Sport-routed engine queries (`analyze-parlay/index.ts`)
+**2. New helper file: `src/components/farm/exampleSlipsData.ts`**
+Export 5 example slips covering NBA, MLB, NHL, NFL, and Tennis, each with realistic player/line data, a verdict tier, grade score, killer-leg index, and a 1-line AI verdict. Tiers map to colors:
+- `lock` → green (`--sharp-green`)
+- `heat` → orange
+- `coin_flip` → yellow
+- `risky` → amber-red
+- `cooked` → red
 
-Refactor `gatherEngineHits(parsed, today)` → `gatherEngineHits(parsed, sport, today)`:
+**3. Sub-component: `ExampleSlipCard`** (inside the carousel file)
+- Card uses the existing `farm-panel` class for visual consistency.
+- Verdict ribbon styled like the existing "100% Free Verdict" ribbon in `UploadForm.tsx`.
+- Grade ring built with a small inline SVG (no extra deps).
+- Each leg row: dot + player name + line + odds, with red-glow ring when `index === killerLegIndex`.
 
-- Add a `sport` filter to every `unified_props`, `median_lock_candidates`, `juiced_props`, `player_prop_hitrates`, `sharp_signals`, `trap_probability_analysis`, `injury_reports` query (those tables already store a `sport` / `sport_key` column — verify and use it).
-- For sport-specific tables, route by sport:
-  - **MLB** → also query `mlb_player_game_logs`, `mlb_pitcher_props`, `hrb_rbi_analysis`, `first_inning_hr_scanner` results when the prop type matches.
-  - **NHL** → query NHL-specific projection tables if present.
-  - **NFL** → query NFL prop tables if present.
-  - **Tennis** → query the tennis games analyzer outputs.
-- Skip tables that don't apply (don't waste a query hitting NBA-only tables for an MLB leg).
+**4. Wire into `UploadForm.tsx`**
+- Import `ExampleSlipsCarousel`.
+- Render it after the social-proof row (after line 85), before the `done` ternary (line 87).
+- Wrap with a small section heading: "Real verdicts. Real slips. 🎯".
 
-Use `supabase--read_query` during implementation to confirm the exact column names and which sport-specific tables exist before wiring them in.
+## Layout sketch
 
-### 3. Sport-aware swap suggestions
+```text
+┌──────────────────────────────────────────┐
+│   Is your slip cooked or a lock?         │  (existing heading)
+│   12,400+ slips graded · ★★★★★ 4.9       │
+├──────────────────────────────────────────┤
+│   Real verdicts. Real slips. 🎯          │  (new)
+│   ┌────────┐  ┌────────┐  ┌────────┐    │
+│   │ 💎LOCK │  │🔥 HEAT │  │💀COOKED│ →  │  (swipeable)
+│   │ 92/100 │  │ 78/100 │  │ 31/100 │    │
+│   │ NBA    │  │ MLB    │  │ NFL    │    │
+│   │ 4 legs │  │ 3 legs │  │ 5 legs │    │
+│   └────────┘  └────────┘  └────────┘    │
+│   • • ● • •                              │  (dots)
+│   "This is what your verdict looks like" │
+├──────────────────────────────────────────┤
+│   [ Existing upload form card ]          │
+└──────────────────────────────────────────┘
+```
 
-`findTopSwap(parsed, today)` → `findTopSwap(parsed, sport, today)`:
-- Only return swaps from the same sport as the weak leg. An NBA points leg never gets swapped for an MLB strikeout pick.
-- For MLB legs, prefer `hrb_rbi_analysis` / pitcher signals over generic `median_lock_candidates`.
+## Out of scope
 
-### 4. Frontend display (`src/components/results/EngineRecommendationCard.tsx` + `Results.tsx`)
-
-- Show the detected sport badge on every leg card using `SportPropIcon`.
-- If sport detection confidence is `low`, show a small "Sport: NBA (assumed)" tag so the user can see when the analyzer fell back.
-
-### 5. Telegram path (`telegram-prop-scanner`)
-
-The Telegram analyzer already calls `analyze-parlay`; once the function is sport-aware, the bot inherits the fix automatically. Add a one-line "Sports detected: NBA · MLB · NHL" header to the response so users see cross-sport routing happened.
-
-## Files to change
-
-- `supabase/functions/_shared/leg-matcher.ts` — add `detectSport`, `PROP_SPORT_MAP`, sport-scoped normalization
-- `supabase/functions/analyze-parlay/index.ts` — thread sport through `gatherEngineHits`, `synthesizeLeg`, `findTopSwap`; add per-sport table routing
-- `supabase/functions/find-swap-alternatives/index.ts` — same sport-filter treatment if it exists
-- `src/components/results/EngineRecommendationCard.tsx` — sport badge + assumption hint
-- `src/pages/Results.tsx` — pass sport into card; show "Sports detected" summary
-- `supabase/functions/telegram-prop-scanner/index.ts` — surface detected sports list in reply
-
-## Verification (per testing-policy memory: 5 independent tests)
-
-1. Pure NBA 3-leg slip → all legs tagged NBA, hits NBA tables, no MLB swap leakage.
-2. Pure MLB 3-leg slip (HR + Ks + Hits) → all legs tagged MLB, swap pulls from MLB engines.
-3. Mixed slip (NBA points + MLB HR + NHL SOG) → each leg gets correct sport, three different engine pools used.
-4. Ambiguous "Goals" leg → resolved to NHL via context, not MLB/Soccer.
-5. Tennis Aces leg → tagged Tennis, doesn't match NBA threes despite "3" in the line.
-
-No DB migrations required — all sport columns already exist on the engine tables.
-
+- No backend / no database changes — purely static example data.
+- No real OCR or live grading on the carousel cards.
+- Does not modify the actual analyzer flow.
