@@ -2,6 +2,7 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Upload, Loader2, CheckCircle2, Sparkles, Zap, ShieldCheck, Star } from "lucide-react";
+import { ExampleSlipsCarousel } from "./ExampleSlipsCarousel";
 
 export function UploadForm() {
   const [email, setEmail] = useState("");
@@ -83,6 +84,9 @@ export function UploadForm() {
             </div>
           </div>
         </div>
+
+        {/* Example verdicts carousel — social proof before upload */}
+        {!done && <ExampleSlipsCarousel />}
 
         {done ? (
           <div className="farm-panel p-10 text-center">
