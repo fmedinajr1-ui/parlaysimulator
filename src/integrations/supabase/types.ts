@@ -3219,6 +3219,170 @@ export type Database = {
         }
         Relationships: []
       }
+      court_edge_l3_cache: {
+        Row: {
+          fetched_at: string
+          player_name: string
+          player_slug: string
+          raw_scores: Json
+          totals: number[]
+        }
+        Insert: {
+          fetched_at?: string
+          player_name: string
+          player_slug: string
+          raw_scores?: Json
+          totals?: number[]
+        }
+        Update: {
+          fetched_at?: string
+          player_name?: string
+          player_slug?: string
+          raw_scores?: Json
+          totals?: number[]
+        }
+        Relationships: []
+      }
+      court_edge_picks: {
+        Row: {
+          commence_at: string | null
+          created_at: string
+          edge: number
+          edge_pct: number
+          formula: Json
+          graded: boolean
+          id: string
+          indoor: boolean | null
+          line: number
+          market: string
+          matchup: string | null
+          opponent: string | null
+          player: string | null
+          projection: number
+          result: string | null
+          run_id: string
+          sets_format: string | null
+          source: string
+          surface: string | null
+          tournament: string | null
+          verdict: string
+          weather: Json | null
+        }
+        Insert: {
+          commence_at?: string | null
+          created_at?: string
+          edge: number
+          edge_pct: number
+          formula?: Json
+          graded?: boolean
+          id?: string
+          indoor?: boolean | null
+          line: number
+          market: string
+          matchup?: string | null
+          opponent?: string | null
+          player?: string | null
+          projection: number
+          result?: string | null
+          run_id: string
+          sets_format?: string | null
+          source: string
+          surface?: string | null
+          tournament?: string | null
+          verdict: string
+          weather?: Json | null
+        }
+        Update: {
+          commence_at?: string | null
+          created_at?: string
+          edge?: number
+          edge_pct?: number
+          formula?: Json
+          graded?: boolean
+          id?: string
+          indoor?: boolean | null
+          line?: number
+          market?: string
+          matchup?: string | null
+          opponent?: string | null
+          player?: string | null
+          projection?: number
+          result?: string | null
+          run_id?: string
+          sets_format?: string | null
+          source?: string
+          surface?: string | null
+          tournament?: string | null
+          verdict?: string
+          weather?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_edge_picks_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "court_edge_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      court_edge_runs: {
+        Row: {
+          duration_ms: number | null
+          errors: Json
+          id: string
+          log: Json
+          picks_count: number
+          ran_at: string
+          source: string
+          telegram_sent: boolean
+        }
+        Insert: {
+          duration_ms?: number | null
+          errors?: Json
+          id?: string
+          log?: Json
+          picks_count?: number
+          ran_at?: string
+          source?: string
+          telegram_sent?: boolean
+        }
+        Update: {
+          duration_ms?: number | null
+          errors?: Json
+          id?: string
+          log?: Json
+          picks_count?: number
+          ran_at?: string
+          source?: string
+          telegram_sent?: boolean
+        }
+        Relationships: []
+      }
+      court_edge_weather_cache: {
+        Row: {
+          city: string
+          fetched_at: string
+          humidity: number | null
+          temp_f: number | null
+          wind_mph: number | null
+        }
+        Insert: {
+          city: string
+          fetched_at?: string
+          humidity?: number | null
+          temp_f?: number | null
+          wind_mph?: number | null
+        }
+        Update: {
+          city?: string
+          fetched_at?: string
+          humidity?: number | null
+          temp_f?: number | null
+          wind_mph?: number | null
+        }
+        Relationships: []
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null
