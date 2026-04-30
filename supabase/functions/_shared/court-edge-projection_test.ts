@@ -52,3 +52,21 @@ Deno.test("verdictFromEdgePct: tier boundaries", () => {
   assertEquals(verdictFromEdgePct(6.01), "STRONG_OVER");
   assertEquals(verdictFromEdgePct(-6.01), "STRONG_UNDER");
 });
+
+Deno.test("project: role adjustments are pure additives, no double-counting", () => {
+  const base = {
+    p1_l3: [21, 21, 21],
+    p2_l3: [21, 21, 21],
+    surface: "clay" as const,
+    sets_format: "bo3" as const,
+    ml_home: null,
+    ml_away: null,
+    weather: null,
+    indoor: false,
+  };
+  const a = project(base);
+  const b = project({ ...base, role_adj_home: 0.4, role_adj_away: -0.6 });
+  assertAlmostEquals(b.projection - a.projection, -0.2, 0.0001);
+  assertEquals(b.role_adj_home, 0.4);
+  assertEquals(b.role_adj_away, -0.6);
+});

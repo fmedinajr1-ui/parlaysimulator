@@ -7,8 +7,20 @@ import {
   edgeFor,
   type ProjectionInput,
   type Verdict,
+  type ProjectionBreakdown,
 } from "../_shared/court-edge-projection.ts";
 import { detectTournament, type TournamentMeta } from "../_shared/court-edge-tournaments.ts";
+import {
+  roleAdjustment,
+  inferRoleFromL3,
+  heuristicRole,
+  archetypeLabel,
+  UNKNOWN_ROLE,
+  type PlayerRole,
+  type Archetype,
+} from "../_shared/court-edge-roles.ts";
+import { buildDrilldown } from "../_shared/court-edge-drilldown.ts";
+import { playerSlug } from "../_shared/court-edge-slug.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,7 +56,7 @@ interface PPProj {
 }
 
 interface L3Map {
-  [playerName: string]: { ok: boolean; totals?: number[]; error?: string };
+  [playerName: string]: { ok: boolean; totals?: number[]; raw?: string[]; error?: string };
 }
 
 interface Pick {
@@ -65,6 +77,12 @@ interface Pick {
   indoor: boolean;
   weather: Record<string, unknown> | null;
   commence_at: string | null;
+  role_home?: string | null;
+  role_away?: string | null;
+  role_adj_home?: number | null;
+  role_adj_away?: number | null;
+  role_reasons?: { home: string | null; away: string | null } | null;
+  drilldown_text?: string | null;
 }
 
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
@@ -201,25 +219,82 @@ Deno.serve(async (req) => {
     const l3Got = Object.values(l3).filter((r) => r?.ok).length;
     push(`L3 scraped: ${l3Got}/${players.length}`);
 
+    // 4b. Roles — DB seed table + heuristic fallback
+    const roleMap: Record<string, PlayerRole> = {};
+    try {
+      const slugs = players.map((p) => playerSlug(p)).filter(Boolean);
+      if (slugs.length > 0) {
+        const { data: rows } = await supabase
+          .from("court_edge_player_roles")
+          .select("player_slug,player_name,archetype,serve_tier,clay_score,grass_score,hard_score,notes")
+          .in("player_slug", slugs);
+        for (const r of rows || []) {
+          roleMap[r.player_name] = {
+            player_slug: r.player_slug,
+            player_name: r.player_name,
+            archetype: r.archetype as Archetype,
+            serve_tier: r.serve_tier,
+            clay_score: Number(r.clay_score),
+            grass_score: Number(r.grass_score),
+            hard_score: Number(r.hard_score),
+            notes: r.notes,
+            source: "db",
+          };
+        }
+      }
+    } catch (e) {
+      errors.push({ step: "roles_db", error: e instanceof Error ? e.message : String(e) });
+    }
+    // Heuristic fallback for any player still missing a role
+    for (const name of players) {
+      if (roleMap[name]) continue;
+      const slug = playerSlug(name);
+      const raw = (l3[name] as any)?.raw as string[] | undefined;
+      const inferred = inferRoleFromL3(raw, tournament.surface);
+      roleMap[name] = inferred === "unknown"
+        ? { ...UNKNOWN_ROLE, player_slug: slug, player_name: name }
+        : heuristicRole(name, slug, inferred);
+    }
+    const roleSeedHits = Object.values(roleMap).filter((r) => r.source === "db").length;
+    push(`Roles: ${roleSeedHits} from seed · ${players.length - roleSeedHits} heuristic`);
+
     // 5. Project picks
     const picks: Pick[] = [];
 
-    const projectMatch = (homeTotals: number[], awayTotals: number[]): ProjectionInput => ({
-      p1_l3: homeTotals,
-      p2_l3: awayTotals,
-      surface: tournament.surface,
-      sets_format: tournament.sets_format,
-      ml_home: null, ml_away: null,
-      weather, indoor: tournament.indoor,
-    });
+    const projectMatch = (homeTotals: number[], awayTotals: number[], roleH: PlayerRole, roleA: PlayerRole): { input: ProjectionInput; reasons: { home: string | null; away: string | null } } => {
+      const ctx = {
+        surface: tournament.surface,
+        indoor: tournament.indoor,
+        wind_mph: weather?.wind_mph ?? null,
+        temp_f: weather?.temp_f ?? null,
+      };
+      const adjH = roleAdjustment(roleH, ctx);
+      const adjA = roleAdjustment(roleA, ctx);
+      return {
+        input: {
+          p1_l3: homeTotals,
+          p2_l3: awayTotals,
+          surface: tournament.surface,
+          sets_format: tournament.sets_format,
+          ml_home: null, ml_away: null,
+          weather, indoor: tournament.indoor,
+          role_adj_home: adjH.adj_games,
+          role_adj_away: adjA.adj_games,
+        },
+        reasons: { home: adjH.reason, away: adjA.reason },
+      };
+    };
 
     // 5a. Odds API match totals
+    const breakdownByPick = new Map<number, { breakdown: ProjectionBreakdown; matchProjection: number }>();
     for (const ev of oddsEvents) {
       if (ev.total_point == null) continue;
       const h = l3[ev.home_team];
       const a = l3[ev.away_team];
       if (!h?.ok || !a?.ok || !h.totals?.length || !a.totals?.length) continue;
-      const inp = projectMatch(h.totals, a.totals);
+      const roleH = roleMap[ev.home_team] ?? UNKNOWN_ROLE;
+      const roleA = roleMap[ev.away_team] ?? UNKNOWN_ROLE;
+      const { input: inp, reasons } = projectMatch(h.totals, a.totals, roleH, roleA);
       inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away;
       const proj = project(inp);
       const e = edgeFor("match_total", proj.projection, ev.total_point);
@@ -241,7 +316,13 @@ Deno.serve(async (req) => {
         indoor: tournament.indoor,
         weather,
         commence_at: ev.commence_time,
+        role_home: roleH.archetype,
+        role_away: roleA.archetype,
+        role_adj_home: proj.role_adj_home,
+        role_adj_away: proj.role_adj_away,
+        role_reasons: reasons,
       });
+      breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
 
     // 5b. PrizePicks player totals — try to find opponent via odds events
@@ -253,8 +334,9 @@ Deno.serve(async (req) => {
       const opp = ev ? (ev.home_team === pp.player ? ev.away_team : ev.home_team) : null;
       const oppRow = opp ? l3[opp] : null;
       const opponentTotals = oppRow?.ok && oppRow.totals?.length ? oppRow.totals : me.totals;
-
-      const inp = projectMatch(me.totals, opponentTotals);
+      const roleH = roleMap[pp.player] ?? UNKNOWN_ROLE;
+      const roleA = opp ? (roleMap[opp] ?? UNKNOWN_ROLE) : UNKNOWN_ROLE;
+      const { input: inp, reasons } = projectMatch(me.totals, opponentTotals, roleH, roleA);
       if (ev) { inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away; }
       const proj = project(inp);
       const e = edgeFor("player_total_games", proj.projection, pp.line);
@@ -276,12 +358,88 @@ Deno.serve(async (req) => {
         indoor: tournament.indoor,
         weather,
         commence_at: pp.start_at || ev?.commence_time || null,
+        role_home: roleH.archetype,
+        role_away: roleA.archetype,
+        role_adj_home: proj.role_adj_home,
+        role_adj_away: proj.role_adj_away,
+        role_reasons: reasons,
       });
+      breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
 
     // 6. Sort
     picks.sort((a, b) => Math.abs(b.edge_pct) - Math.abs(a.edge_pct));
+    // breakdownByPick is keyed by *pre-sort* index. Re-key by the sorted picks so we can look up later.
+    const breakdownByPickRef = new Map<Pick, { breakdown: ProjectionBreakdown; matchProjection: number }>();
+    // Rebuild from picks by re-running a cheap lookup: we tagged formula with ProjectionBreakdown fields,
+    // so just re-derive a breakdown from formula on each pick instead of trying to remap indices.
+    for (const p of picks) {
+      const f = p.formula as any;
+      breakdownByPickRef.set(p, {
+        matchProjection: typeof f?.projection === "number" ? f.projection : p.projection,
+        breakdown: {
+          base_l3: f?.base_l3 ?? 0,
+          surface_mult: f?.surface_mult ?? 1,
+          sets_mult: f?.sets_mult ?? 1,
+          spread_adj: f?.spread_adj ?? 0,
+          weather_adj: f?.weather_adj ?? 0,
+          indoor_adj: f?.indoor_adj ?? 0,
+          role_adj_home: f?.role_adj_home ?? 0,
+          role_adj_away: f?.role_adj_away ?? 0,
+          projection: f?.projection ?? 0,
+        },
+      });
+    }
     push(`Total picks: ${picks.length}`);
+
+    // 6b. Build drilldown text for the top non-PASS picks (cap 5)
+    const DRILLDOWN_CAP = 5;
+    const topForDrilldown = picks.filter((p) => p.verdict !== "PASS").slice(0, DRILLDOWN_CAP);
+    for (const p of topForDrilldown) {
+      const ref = breakdownByPickRef.get(p);
+      if (!ref) continue;
+      const homeName = p.market === "match_total"
+        ? (p.matchup?.split(" vs ")[0] || "Player A")
+        : (p.player || "Player A");
+      const awayName = p.market === "match_total"
+        ? (p.matchup?.split(" vs ")[1] || "Player B")
+        : (p.opponent || "Opponent");
+      const lh = l3[homeName];
+      const la = l3[awayName];
+      const roleH = roleMap[homeName] ?? { ...UNKNOWN_ROLE, player_name: homeName };
+      const roleA = roleMap[awayName] ?? { ...UNKNOWN_ROLE, player_name: awayName };
+      const drill = buildDrilldown({
+        market: p.market,
+        matchup: p.matchup || `${homeName} vs ${awayName}`,
+        player_home: homeName,
+        player_away: awayName,
+        line: p.line,
+        projection: p.projection,
+        match_projection: ref.matchProjection,
+        edge_pct: p.edge_pct,
+        verdict: p.verdict,
+        source: p.source,
+        tournament_name: p.tournament,
+        surface: p.surface,
+        sets_format: p.sets_format,
+        indoor: p.indoor,
+        weather: weather as any,
+        l3_home: lh?.totals || [],
+        l3_away: la?.totals || [],
+        raw_home: (lh as any)?.raw || null,
+        raw_away: (la as any)?.raw || null,
+        breakdown: ref.breakdown,
+        role_home: roleH,
+        role_away: roleA,
+        role_reason_home: p.role_reasons?.home ?? null,
+        role_reason_away: p.role_reasons?.away ?? null,
+        ml_home: (p.formula as any)?.ml_home ?? null,
+        ml_away: (p.formula as any)?.ml_away ?? null,
+        bookmaker: (p.formula as any)?.bookmaker ?? null,
+        run_id: runId,
+      });
+      p.drilldown_text = drill;
+    }
 
     // 7. Persist picks
     if (picks.length > 0) {
@@ -318,6 +476,24 @@ Deno.serve(async (req) => {
       errors.push({ step: "telegram", error: e instanceof Error ? e.message : String(e) });
     }
 
+    // 8b. Send each drilldown as its own message (after digest)
+    let drilldownsSent = 0;
+    for (const p of topForDrilldown) {
+      if (!p.drilldown_text) continue;
+      try {
+        const tgRes = await callFunction("bot-send-telegram", {
+          message: p.drilldown_text,
+          parse_mode: "Markdown",
+          reference_key: `court_edge_drilldown:${runId}:${p.market}:${p.player || p.matchup}`,
+        });
+        if (tgRes?.success) drilldownsSent += 1;
+        else errors.push({ step: "drilldown_telegram", error: tgRes?.error || "send failed" });
+      } catch (e) {
+        errors.push({ step: "drilldown_telegram", error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    push(`Drilldowns sent: ${drilldownsSent}/${topForDrilldown.length}`);
+
     // 9. Update run row
     try {
       await supabase.from("court_edge_runs").update({
@@ -336,6 +512,7 @@ Deno.serve(async (req) => {
       run_id: runId,
       picks_count: picks.length,
       telegram_sent: telegramSent,
+      drilldowns_sent: drilldownsSent,
       errors,
       duration_ms: Date.now() - startedAt,
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });

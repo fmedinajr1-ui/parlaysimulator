@@ -2,6 +2,8 @@
 // 24h cache via court_edge_l3_cache. Concurrency capped at 3.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { playerSlug as sharedPlayerSlug } from "../_shared/court-edge-slug.ts";
+import { inferRoleFromL3 } from "../_shared/court-edge-roles.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,18 +13,7 @@ const corsHeaders = {
 const TA_BASE = "https://www.tennisabstract.com/cgi-bin/player.cgi";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function stripDiacritics(s: string): string {
-  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-export function playerSlug(name: string): string {
-  // "Stéfanos Tsitsipás" -> "StefanosTsitsipas"
-  const cleaned = stripDiacritics(name).replace(/[^A-Za-z\s'-]/g, "").trim();
-  return cleaned
-    .split(/\s+/)
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
-    .join("");
-}
+export const playerSlug = sharedPlayerSlug;
 
 function parseSetScore(s: string): number | null {
   // "6-4", "7-6(5)", "7-6^7", "6-3 ret."
@@ -151,7 +142,11 @@ Deno.serve(async (req) => {
       if (upserts.length > 0) {
         try {
           await supabase.from("court_edge_l3_cache").upsert(
-            upserts.map((u) => ({ ...u, fetched_at: new Date().toISOString() })),
+            upserts.map((u) => ({
+              ...u,
+              inferred_role: inferRoleFromL3((u.raw_scores as string[]) || [], "hard"),
+              fetched_at: new Date().toISOString(),
+            })),
             { onConflict: "player_slug" },
           );
         } catch (e) {

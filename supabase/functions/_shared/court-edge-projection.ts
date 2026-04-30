@@ -18,6 +18,9 @@ export interface ProjectionInput {
   ml_away?: number | null;  // American odds, away/p2
   weather?: WeatherInput | null;
   indoor?: boolean;
+  // Role-driven, player-specific game adjustments. Pure additives — never re-multiplied.
+  role_adj_home?: number | null;
+  role_adj_away?: number | null;
 }
 
 export interface ProjectionBreakdown {
@@ -27,6 +30,8 @@ export interface ProjectionBreakdown {
   spread_adj: number;
   weather_adj: number;
   indoor_adj: number;
+  role_adj_home: number;
+  role_adj_away: number;
   projection: number;
 }
 
@@ -96,7 +101,9 @@ export function project(input: ProjectionInput): ProjectionBreakdown {
   const sa = spreadAdj(input.ml_home, input.ml_away);
   const wa = weatherAdj(input.weather);
   const ia = indoorAdj(input.indoor);
-  const projection = base * sm * sf + sa + wa + ia;
+  const rh = Number.isFinite(input.role_adj_home as number) ? (input.role_adj_home as number) : 0;
+  const ra = Number.isFinite(input.role_adj_away as number) ? (input.role_adj_away as number) : 0;
+  const projection = base * sm * sf + sa + wa + ia + rh + ra;
   return {
     base_l3: base,
     surface_mult: sm,
@@ -104,6 +111,8 @@ export function project(input: ProjectionInput): ProjectionBreakdown {
     spread_adj: sa,
     weather_adj: wa,
     indoor_adj: ia,
+    role_adj_home: rh,
+    role_adj_away: ra,
     projection,
   };
 }
