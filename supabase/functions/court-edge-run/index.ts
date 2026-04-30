@@ -20,7 +20,7 @@ import {
   type Archetype,
 } from "../_shared/court-edge-roles.ts";
 import { buildDrilldown } from "../_shared/court-edge-drilldown.ts";
-import { playerSlug } from "../court-edge-scrape-l3/index.ts";
+import { playerSlug } from "../_shared/court-edge-slug.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
