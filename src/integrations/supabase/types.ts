@@ -3222,6 +3222,7 @@ export type Database = {
       court_edge_l3_cache: {
         Row: {
           fetched_at: string
+          inferred_role: string | null
           player_name: string
           player_slug: string
           raw_scores: Json
@@ -3229,6 +3230,7 @@ export type Database = {
         }
         Insert: {
           fetched_at?: string
+          inferred_role?: string | null
           player_name: string
           player_slug: string
           raw_scores?: Json
@@ -3236,6 +3238,7 @@ export type Database = {
         }
         Update: {
           fetched_at?: string
+          inferred_role?: string | null
           player_name?: string
           player_slug?: string
           raw_scores?: Json
@@ -3247,6 +3250,7 @@ export type Database = {
         Row: {
           commence_at: string | null
           created_at: string
+          drilldown_text: string | null
           edge: number
           edge_pct: number
           formula: Json
@@ -3260,6 +3264,11 @@ export type Database = {
           player: string | null
           projection: number
           result: string | null
+          role_adj_away: number | null
+          role_adj_home: number | null
+          role_away: string | null
+          role_home: string | null
+          role_reasons: Json | null
           run_id: string
           sets_format: string | null
           source: string
@@ -3271,6 +3280,7 @@ export type Database = {
         Insert: {
           commence_at?: string | null
           created_at?: string
+          drilldown_text?: string | null
           edge: number
           edge_pct: number
           formula?: Json
@@ -3284,6 +3294,11 @@ export type Database = {
           player?: string | null
           projection: number
           result?: string | null
+          role_adj_away?: number | null
+          role_adj_home?: number | null
+          role_away?: string | null
+          role_home?: string | null
+          role_reasons?: Json | null
           run_id: string
           sets_format?: string | null
           source: string
@@ -3295,6 +3310,7 @@ export type Database = {
         Update: {
           commence_at?: string | null
           created_at?: string
+          drilldown_text?: string | null
           edge?: number
           edge_pct?: number
           formula?: Json
@@ -3308,6 +3324,11 @@ export type Database = {
           player?: string | null
           projection?: number
           result?: string | null
+          role_adj_away?: number | null
+          role_adj_home?: number | null
+          role_away?: string | null
+          role_home?: string | null
+          role_reasons?: Json | null
           run_id?: string
           sets_format?: string | null
           source?: string
@@ -3325,6 +3346,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      court_edge_player_roles: {
+        Row: {
+          archetype: string
+          clay_score: number
+          created_at: string
+          grass_score: number
+          hard_score: number
+          id: string
+          notes: string | null
+          player_name: string
+          player_slug: string
+          serve_tier: string
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          archetype: string
+          clay_score?: number
+          created_at?: string
+          grass_score?: number
+          hard_score?: number
+          id?: string
+          notes?: string | null
+          player_name: string
+          player_slug: string
+          serve_tier?: string
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          archetype?: string
+          clay_score?: number
+          created_at?: string
+          grass_score?: number
+          hard_score?: number
+          id?: string
+          notes?: string | null
+          player_name?: string
+          player_slug?: string
+          serve_tier?: string
+          source?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       court_edge_runs: {
         Row: {
