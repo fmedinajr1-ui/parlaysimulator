@@ -76,39 +76,26 @@ Deno.serve(async (req) => {
     sixtyAgo.setDate(sixtyAgo.getDate() - 60);
     const sixtyStr = sixtyAgo.toISOString().split("T")[0];
 
-    const { data: logs, error: logsErr } = await supabase
-      .from("mlb_player_game_logs")
-      .select(
-        "player_name, team, opponent, game_date, home_runs, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed",
-      )
-      .gte("game_date", sixtyStr)
-      .limit(20000)
-      .range(0, 19999);
-    if (logsErr) throw logsErr;
-
-    // Supabase caps responses at 1000 unless we paginate. Fetch additional pages if needed.
-    let allLogs = logs ?? [];
-    if (allLogs.length === 1000) {
-      log("Pagination needed — fetching more logs");
-      let from = 1000;
-      const pageSize = 1000;
-      while (true) {
-        const { data: more, error: e2 } = await supabase
-          .from("mlb_player_game_logs")
-          .select(
-            "player_name, team, opponent, game_date, home_runs, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed",
-          )
-          .gte("game_date", sixtyStr)
-          .range(from, from + pageSize - 1);
-        if (e2) { log(`page err: ${e2.message}`); break; }
-        if (!more || more.length === 0) break;
-        allLogs = allLogs.concat(more);
-        if (more.length < pageSize) break;
-        from += pageSize;
-        if (from > 100000) break;
-      }
+    // Always paginate — Supabase hard-caps responses at 1000 rows
+    let allLogs: any[] = [];
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data: page, error: pErr } = await supabase
+        .from("mlb_player_game_logs")
+        .select(
+          "player_name, team, opponent, game_date, home_runs, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed",
+        )
+        .gte("game_date", sixtyStr)
+        .range(from, from + pageSize - 1);
+      if (pErr) { log(`page err: ${pErr.message}`); break; }
+      if (!page || page.length === 0) break;
+      allLogs = allLogs.concat(page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+      if (from > 100000) break;
     }
-    log(`Loaded ${allLogs.length} game logs (after pagination)`);
+    log(`Loaded ${allLogs.length} game logs`);
     log(`Loaded ${logs?.length ?? 0} game logs`);
 
     // Index logs by team -> [date, hr] and by player -> pitcher HR/9
