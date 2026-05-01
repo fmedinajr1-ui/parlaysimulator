@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { formatPlayerReasoningLines, verdictBadge, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
+import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -111,18 +112,34 @@ function formatAlert(a: Alert): string {
     const rendered = sorted.slice(0, MAX_PLAYERS_RENDERED);
     for (const p of rendered) {
       const r = p.engine_reasoning as PlayerReasoning | null | undefined;
+      const roleCtx = (p.role_context ?? null) as PlayerRoleContext | null;
       const sideStr = String(p.side ?? side);
       const lineNum = Number(p.line ?? 0);
       const cnf = Number(p.confidence ?? 0);
       if (r) {
         const lines = formatPlayerReasoningLines(p.player ?? '', sideStr === 'Over' ? 'Over' : 'Under', lineNum, cnf, r);
         for (const ln of lines) out.push(escapeMd(ln));
+        const roleLine = formatRoleLine(roleCtx);
+        if (roleLine) out.push(escapeMd(`   ↳ ${roleLine}`));
       } else {
         out.push(escapeMd(`• ${p.player ?? ''}  ${(sideStr[0] ?? '?')} ${lineNum}  conf ${Math.round(cnf)}%`));
+        const roleLine = formatRoleLine(roleCtx);
+        if (roleLine) out.push(escapeMd(`   ↳ ${roleLine}`));
       }
     }
     if (sorted.length > MAX_PLAYERS_RENDERED) {
       out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more players — see dashboard_`);
+    }
+
+    // Surface miss-by-1 suppression so we can audit / build trust.
+    const dropped = Array.isArray((meta as any).dropped_legs) ? (meta as any).dropped_legs as Array<{ player: string; reason: string }> : [];
+    if (dropped.length > 0) {
+      out.push('');
+      out.push(`*Filtered (miss-by-1 risk):* ${dropped.length} leg${dropped.length === 1 ? '' : 's'}`);
+      for (const d of dropped.slice(0, 3)) {
+        out.push(escapeMd(`   • ${d.player} — ${d.reason}`));
+      }
+      if (dropped.length > 3) out.push(`_+${dropped.length - 3} more dropped_`);
     }
 
     let msg = out.join('\n');
