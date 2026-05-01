@@ -84,6 +84,45 @@ function formatAlert(a: Alert): string {
     out.push(`🌊 *CASCADE ALERT* — ${escapeMd(sport)}`);
     out.push(`${players.length} players aligned on the same side.`);
     out.push('');
+
+    // ─── Recommended action header ───
+    // Reads verdict_counts to give a single-line decision instead of forcing the user
+    // to interpret the WEAK/LEAN/STRONG mix themselves.
+    const sN = Number(counts.strong ?? 0);
+    const lN = Number(counts.lean ?? 0);
+    const wN = Number(counts.weak ?? 0);
+    const total = sN + lN + wN;
+    // Detect "fade-bait" pattern: every leg WEAK + most legs have a large juice gap on the alerted side + cold L10
+    let bigJuiceCount = 0;
+    let coldL10Count = 0;
+    let volatileCount = 0;
+    for (const p of players) {
+      const r = (p?.engine_reasoning ?? null) as PlayerReasoning | null;
+      if (!r) continue;
+      const sigs: string[] = Array.isArray((r as any).signals) ? (r as any).signals : [];
+      const flatSigs = sigs.join(' ').toLowerCase();
+      if (/juice gap\s*[+]?\d{3,}/i.test(flatSigs)) bigJuiceCount += 1;
+      if (/cold l10|l10 (over|under)\s*[0-3]\/10/i.test(flatSigs)) coldL10Count += 1;
+      if (/volatile minutes/i.test(flatSigs)) volatileCount += 1;
+    }
+    let action = '';
+    if (total === 0) {
+      action = `🟡 *Action: REVIEW* — no verdict data, inspect manually.`;
+    } else if (sN >= 3) {
+      action = `🟢 *Action: TAIL* — bet ${escapeMd(side)} as alerted. ${sN} STRONG verdicts.`;
+    } else if (sN >= 1 && wN <= 1) {
+      action = `🟢 *Action: TAIL (small)* — ${sN} STRONG / ${lN} LEAN. Reduce stake.`;
+    } else if (wN === total && bigJuiceCount >= Math.ceil(total / 2) && (coldL10Count >= 2 || volatileCount >= 2)) {
+      const fadeSide = /over|yes/i.test(side) ? 'Under' : 'Over';
+      action = `🔴 *Action: FADE* — bet *${fadeSide}* on these. All ${wN} WEAK + book paying for ${escapeMd(side)} (bait pattern).`;
+    } else if (wN >= total - 1 && sN === 0) {
+      action = `⚪ *Action: SKIP* — ${wN} WEAK / ${lN} LEAN, 0 STRONG. No edge confirmed.`;
+    } else {
+      action = `🟡 *Action: PASS or small fade* — mixed signals, ${sN} STRONG / ${lN} LEAN / ${wN} WEAK.`;
+    }
+    out.push(action);
+    out.push('');
+
     out.push(`🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  ${sideEmoji(side)} avg conf ${Math.round(conf)}%`);
     out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
 
