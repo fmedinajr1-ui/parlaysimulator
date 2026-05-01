@@ -269,6 +269,35 @@ Deno.serve(async (req) => {
         .from("category_sweet_spots")
         .upsert(sweetRows, { onConflict: "player_name,prop_type,analysis_date" });
       if (ssErr) log(`sweet_spots upsert err: ${ssErr.message}`);
+
+      // 6) Telegram digest for top S+A picks
+      const lines = [
+        `🚫 *No Home Run — Team Locks*`,
+        `_Standalone bets only · S+A tier · max ${MAX_BROADCAST}/day_`,
+        ``,
+        ...top.map((r) => {
+          const tierEmoji = r.tier === "S" ? "🟢" : "🔵";
+          const pct = (r.p_no_hr * 100).toFixed(0);
+          const pitcher = r.opposing_pitcher
+            ? `vs ${r.opposing_pitcher} (${r.opponent})`
+            : `vs ${r.opponent}`;
+          const detail = `Team L30 ${r.team_hr_per_game_l30.toFixed(2)} HR/g · Park ${r.park_hr_factor.toFixed(2)} · Pitcher HR/9 ${
+            r.pitcher_hr9 != null ? Number(r.pitcher_hr9).toFixed(2) : "n/a"
+          }`;
+          return `${tierEmoji} *${r.team}* ${pitcher} — p(No HR) *${pct}%* · ${r.tier}\n   ${detail}`;
+        }),
+      ];
+      try {
+        await supabase.functions.invoke("bot-send-telegram", {
+          body: {
+            message: lines.join("\n"),
+            parse_mode: "Markdown",
+            admin_only: false,
+          },
+        });
+      } catch (tgErr) {
+        log(`telegram broadcast err: ${tgErr instanceof Error ? tgErr.message : String(tgErr)}`);
+      }
     }
 
     log(
