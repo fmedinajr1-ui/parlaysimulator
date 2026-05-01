@@ -68,9 +68,19 @@ Deno.serve(async (req) => {
       .order('analysis_date', { ascending: true })
       .limit(500);
 
+    // === PART 2b: Settle Team No-HR picks ===
+    const { data: unsettledNoHR } = await supabase
+      .from('category_sweet_spots')
+      .select('id, player_name, prop_type, recommended_side, recommended_line, analysis_date, confidence_score')
+      .eq('category', 'MLB_NO_HR_TEAM')
+      .is('outcome', null)
+      .order('analysis_date', { ascending: true })
+      .limit(500);
+
     const allUnsettled = [
       ...(unsettledSB || []).map(a => ({ ...a, _type: 'sb' as const })),
       ...(unsettledHR || []).map(a => ({ ...a, _type: 'hr' as const })),
+      ...(unsettledNoHR || []).map(a => ({ ...a, _type: 'no_hr_team' as const })),
     ];
 
     if (allUnsettled.length === 0) {
@@ -96,7 +106,7 @@ Deno.serve(async (req) => {
     const playerNames = [...new Set(allUnsettled.map(a => a.player_name))];
     const { data: gameLogs, error: logErr } = await supabase
       .from('mlb_player_game_logs')
-      .select('player_name, game_date, stolen_bases, home_runs')
+      .select('player_name, team, game_date, stolen_bases, home_runs')
       .gte('game_date', startStr)
       .limit(5000);
 
@@ -119,6 +129,16 @@ Deno.serve(async (req) => {
         sb: gl.stolen_bases ?? 0,
         hr: gl.home_runs ?? 0,
       });
+    }
+
+    // Build team-level HR map for No HR settlement: team -> date -> total_team_hr
+    const teamHRMap = new Map<string, Map<string, number>>();
+    for (const gl of gameLogs) {
+      const team = (gl as any).team;
+      if (!team) continue;
+      if (!teamHRMap.has(team)) teamHRMap.set(team, new Map());
+      const cur = teamHRMap.get(team)!.get(gl.game_date) ?? 0;
+      teamHRMap.get(team)!.set(gl.game_date, cur + (gl.home_runs ?? 0));
     }
 
     // Settle SB alerts
@@ -193,12 +213,49 @@ Deno.serve(async (req) => {
       hrSettled++;
     }
 
+    // Settle Team No-HR picks
+    let noHRSettled = 0, noHRCorrect = 0, noHRIncorrect = 0;
+    for (const pick of (unsettledNoHR || [])) {
+      // player_name field stores the team for this category
+      const team = pick.player_name;
+      const teamDates = teamHRMap.get(team);
+      if (!teamDates) continue;
+
+      const pickDate = pick.analysis_date;
+      const nextDay = new Date(pickDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDayStr = nextDay.toISOString().split('T')[0];
+
+      const teamHR = teamDates.get(pickDate) ?? teamDates.get(nextDayStr);
+      if (teamHR === undefined) continue;
+
+      const wasCorrect = teamHR === 0; // No HR wins iff team hit 0 HR
+      if (wasCorrect) noHRCorrect++; else noHRIncorrect++;
+
+      await supabase.from('category_sweet_spots').update({
+        actual_value: teamHR,
+        outcome: wasCorrect ? 'hit' : 'miss',
+        settled_at: new Date().toISOString(),
+      }).eq('id', pick.id);
+
+      // Mirror into mlb_no_hr_team_analysis if a row exists
+      await supabase.from('mlb_no_hr_team_analysis').update({
+        actual_team_hr: teamHR,
+        outcome: wasCorrect ? 'hit' : 'miss',
+        settled_at: new Date().toISOString(),
+      }).eq('team', team).eq('game_date', pickDate);
+
+      noHRSettled++;
+    }
+
     const totalSettled = sbSettled + hrSettled;
     const sbWinRate = sbSettled > 0 ? ((sbCorrect / sbSettled) * 100).toFixed(1) : 'N/A';
     const hrWinRate = hrSettled > 0 ? ((hrCorrect / hrSettled) * 100).toFixed(1) : 'N/A';
+    const noHRWinRate = noHRSettled > 0 ? ((noHRCorrect / noHRSettled) * 100).toFixed(1) : 'N/A';
 
     log(`SB: ${sbSettled} settled (${sbCorrect}W/${sbIncorrect}L = ${sbWinRate}%)`);
     log(`HR: ${hrSettled} settled (${hrCorrect}W/${hrIncorrect}L = ${hrWinRate}%)`);
+    log(`NoHR-Team: ${noHRSettled} settled (${noHRCorrect}W/${noHRIncorrect}L = ${noHRWinRate}%)`);
 
     // === PART 3: Historical performance report ===
     // Get all-time stats for Over SB and Over HR
@@ -231,7 +288,8 @@ Deno.serve(async (req) => {
     }
 
     // Send Telegram report
-    if (totalSettled > 0) {
+    const totalSettledAll = totalSettled + noHRSettled;
+    if (totalSettledAll > 0) {
       const sbTotal = totalSBW + totalSBL;
       const hrTotal = totalHRW + totalHRL;
       const sbAllTimeRate = sbTotal > 0 ? ((totalSBW / sbTotal) * 100).toFixed(1) : 'N/A';
@@ -248,6 +306,7 @@ Deno.serve(async (req) => {
         `*Today's Settlements:*`,
         sbSettled > 0 ? `🏃 SB: ${sbCorrect}W/${sbIncorrect}L (${sbWinRate}%)` : null,
         hrSettled > 0 ? `💥 HR: ${hrCorrect}W/${hrIncorrect}L (${hrWinRate}%)` : null,
+        noHRSettled > 0 ? `🚫 No HR (Team): ${noHRCorrect}W/${noHRIncorrect}L (${noHRWinRate}%)` : null,
         ``,
         `*All-Time Performance:*`,
         sbTotal > 0 ? `🏃 Over SB: ${totalSBW}/${sbTotal} (${sbAllTimeRate}%)` : null,
@@ -264,6 +323,7 @@ Deno.serve(async (req) => {
       success: true,
       sb: { settled: sbSettled, correct: sbCorrect, incorrect: sbIncorrect, win_rate: parseFloat(sbWinRate === 'N/A' ? '0' : sbWinRate) },
       hr: { settled: hrSettled, correct: hrCorrect, incorrect: hrIncorrect, win_rate: parseFloat(hrWinRate === 'N/A' ? '0' : hrWinRate) },
+      no_hr_team: { settled: noHRSettled, correct: noHRCorrect, incorrect: noHRIncorrect, win_rate: parseFloat(noHRWinRate === 'N/A' ? '0' : noHRWinRate) },
       all_time: {
         sb: { wins: totalSBW, losses: totalSBL, total: totalSBW + totalSBL },
         hr: { wins: totalHRW, losses: totalHRL, total: totalHRW + totalHRL },
