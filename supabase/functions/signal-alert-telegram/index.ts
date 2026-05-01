@@ -132,14 +132,17 @@ function formatAlert(a: Alert): string {
     }
 
     // Surface miss-by-1 suppression so we can audit / build trust.
-    const dropped = Array.isArray((meta as any).dropped_legs) ? (meta as any).dropped_legs as Array<{ player: string; reason: string }> : [];
+    const droppedRaw = Array.isArray((meta as any).dropped_legs) ? (meta as any).dropped_legs as Array<{ player: string; reason: string }> : [];
+    // Defensive dedupe (engine now dedupes upstream, but old alerts in the queue may still carry duplicates).
+    const dropped = Array.from(new Map(droppedRaw.map((d) => [d.player, d])).values());
+    const DROPPED_RENDER_LIMIT = 5;
     if (dropped.length > 0) {
       out.push('');
       out.push(`*Filtered (miss-by-1 risk):* ${dropped.length} leg${dropped.length === 1 ? '' : 's'}`);
-      for (const d of dropped.slice(0, 3)) {
+      for (const d of dropped.slice(0, DROPPED_RENDER_LIMIT)) {
         out.push(escapeMd(`   • ${d.player} — ${d.reason}`));
       }
-      if (dropped.length > 3) out.push(`_+${dropped.length - 3} more dropped_`);
+      if (dropped.length > DROPPED_RENDER_LIMIT) out.push(`_+${dropped.length - DROPPED_RENDER_LIMIT} more dropped_`);
     }
 
     let msg = out.join('\n');
