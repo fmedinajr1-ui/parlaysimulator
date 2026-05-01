@@ -2,9 +2,11 @@
 
 ## Core
 parlay-engine-v2 MIN_LEG_CONFIDENCE pinned at 0.60. Never raise without explicit user approval.
+Cascade legs must clear a `0.5*std` band around L10 mean (BENCH/ROLE_PLAYER need `0.75*std`) and pass minutes floors (22 / 14 mpg) — see cascade-miss-by-1-guard.
 
 ## Memories
 - [Raw props confidence fix](mem://infrastructure/pipeline/raw-props-confidence-fix) — Why parlays go empty when risk/sweet are thin + the orchestrator .catch crash
 - [Parlay leg-confidence floor](mem://logic/parlay/leg-confidence-floor) — MIN_LEG_CONFIDENCE=0.60 rule, presets, and Telegram broadcaster health notes
 - [Parlay broadcast mapping](mem://logic/parlay/broadcast-mapping) — bot_parlay_broadcasts must store parlay_id + parlay_date; audit via v_parlay_broadcast_audit
 - [Alert explainer contract](mem://logic/alerts/explainer-contract) — Per-player engine_reasoning v1 + group_reasoning + verdict mix on fanduel_prediction_alerts metadata
+- [Cascade miss-by-1 guard](mem://logic/betting/cascade-miss-by-1-guard) — Danger-band + minutes floor suppressing cascade legs that statistically miss by 1
