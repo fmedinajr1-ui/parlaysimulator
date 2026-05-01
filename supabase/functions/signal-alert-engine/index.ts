@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { buildPlayerReasoning, buildGroupReasoning, type PlayerReasoning } from '../_shared/alert-explainer.ts';
+import { loadRoleContexts, dangerBandCheck, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -104,6 +105,7 @@ Deno.serve(async (req) => {
   );
 
   const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0 };
+  let dropped_legs_total = 0;
   const explainerCache = reasoningCache();
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
@@ -211,12 +213,52 @@ Deno.serve(async (req) => {
     }
 
     for (const [groupKey, members] of groups) {
-      const distinctPlayers = Array.from(new Set(members.map((m) => m.player_name)));
-      if (distinctPlayers.length < CASCADE_MIN_PLAYERS) continue;
+      const initialDistinct = Array.from(new Set(members.map((m) => m.player_name)));
+      if (initialDistinct.length < CASCADE_MIN_PLAYERS) continue;
 
-      const first = members[0];
+      // Miss-by-1 suppression — only relevant for NBA player props (others don't carry std/L10 baselines yet).
+      const isNbaProp = normaliseSport(members[0].sport) === 'NBA';
+      const dropped: Array<{ player: string; reason: string }> = [];
+      let filteredMembers = members;
+      let roleCtxMap: Map<string, PlayerRoleContext> = new Map();
+
+      if (isNbaProp) {
+        roleCtxMap = await loadRoleContexts(
+          supabase,
+          members.map((m) => ({ player_name: m.player_name ?? '', prop_type: m.prop_type })),
+        );
+
+        filteredMembers = members.filter((m) => {
+          if (!m.player_name) return true;
+          const ctx = roleCtxMap.get(m.player_name.toLowerCase());
+          if (!ctx) return true;
+          const check = dangerBandCheck({
+            side: m.derived_side,
+            line: Number(m.current_line ?? 0),
+            ctx,
+          });
+          if (check.drop) {
+            dropped.push({ player: m.player_name, reason: check.reason ?? 'danger_band' });
+            return false;
+          }
+          return true;
+        });
+      }
+
+      const distinctPlayers = Array.from(new Set(filteredMembers.map((m) => m.player_name)));
+      if (distinctPlayers.length < CASCADE_MIN_PLAYERS) {
+        dropped_legs_total += dropped.length;
+        if (dropped.length > 0) {
+          console.log(`[signal-alert-engine] cascade suppressed (${groupKey}) — ${dropped.length} legs dropped, only ${distinctPlayers.length} remain`);
+        }
+        continue;
+      }
+      dropped_legs_total += dropped.length;
+      const cascadeMembers = filteredMembers;
+
+      const first = cascadeMembers[0];
       const avgConfidence = Math.round(
-        members.reduce((sum, m) => sum + m.derived_confidence, 0) / members.length,
+        cascadeMembers.reduce((sum, m) => sum + m.derived_confidence, 0) / cascadeMembers.length,
       );
       if (avgConfidence < MIN_CONFIDENCE) continue;
 
@@ -225,7 +267,7 @@ Deno.serve(async (req) => {
 
       // Build per-player reasoning in parallel (≤8 players typically)
       const reasonings = await Promise.all(
-        members.map((m) => {
+        cascadeMembers.map((m) => {
           const overP = Number(m.over_price ?? NaN);
           const underP = Number(m.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
@@ -233,15 +275,28 @@ Deno.serve(async (req) => {
         }),
       );
 
-      const playerBreakdown = members.map((m, i) => ({
-        player: m.player_name,
-        confidence: m.derived_confidence,
-        composite: m.derived_score,
-        line: Number(m.current_line ?? 0),
-        side: m.derived_side,
-        pvs_tier: m.pvs_tier,
-        engine_reasoning: reasonings[i] ?? null,
-      }));
+      const playerBreakdown = cascadeMembers.map((m, i) => {
+        const ctx = m.player_name ? roleCtxMap.get(m.player_name.toLowerCase()) ?? null : null;
+        return {
+          player: m.player_name,
+          confidence: m.derived_confidence,
+          composite: m.derived_score,
+          line: Number(m.current_line ?? 0),
+          side: m.derived_side,
+          pvs_tier: m.pvs_tier,
+          role_context: ctx
+            ? {
+                archetype: ctx.archetype,
+                role_tier: ctx.role_tier,
+                avg_minutes: ctx.avg_minutes,
+                baseline_mean: ctx.baseline_mean,
+                baseline_std: ctx.baseline_std,
+                baseline_source: ctx.baseline_source,
+              }
+            : null,
+          engine_reasoning: reasonings[i] ?? null,
+        };
+      });
 
       const validReasonings = reasonings.filter((r): r is PlayerReasoning => !!r);
       const groupReasoning = validReasonings.length > 0
@@ -271,6 +326,8 @@ Deno.serve(async (req) => {
           player_breakdown: playerBreakdown,
           group_reasoning: groupReasoning,
           verdict_counts: verdictCounts,
+          dropped_legs: dropped,
+          danger_band_filtered: dropped.length,
           explainer_version: 'v1',
           source: 'unified_props_price_derived',
         },
@@ -409,7 +466,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, stats }), {
+    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total } }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
