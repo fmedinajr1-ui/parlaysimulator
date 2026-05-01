@@ -8429,6 +8429,87 @@ export type Database = {
         }
         Relationships: []
       }
+      mlb_no_hr_team_analysis: {
+        Row: {
+          actual_team_hr: number | null
+          blended_hr_per_game: number | null
+          block_reason: string | null
+          confidence_score: number | null
+          created_at: string
+          game_date: string
+          home_team: string | null
+          id: string
+          lambda: number | null
+          opponent: string | null
+          opposing_pitcher: string | null
+          outcome: string | null
+          p_no_hr: number | null
+          park_hr_factor: number | null
+          pitcher_hr9: number | null
+          pitcher_sample_ip: number | null
+          recommend: boolean | null
+          settled_at: string | null
+          team: string
+          team_games_l30: number | null
+          team_hr_per_game_l30: number | null
+          team_hr_per_game_season: number | null
+          tier: string | null
+          weather_mult: number | null
+        }
+        Insert: {
+          actual_team_hr?: number | null
+          blended_hr_per_game?: number | null
+          block_reason?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          game_date: string
+          home_team?: string | null
+          id?: string
+          lambda?: number | null
+          opponent?: string | null
+          opposing_pitcher?: string | null
+          outcome?: string | null
+          p_no_hr?: number | null
+          park_hr_factor?: number | null
+          pitcher_hr9?: number | null
+          pitcher_sample_ip?: number | null
+          recommend?: boolean | null
+          settled_at?: string | null
+          team: string
+          team_games_l30?: number | null
+          team_hr_per_game_l30?: number | null
+          team_hr_per_game_season?: number | null
+          tier?: string | null
+          weather_mult?: number | null
+        }
+        Update: {
+          actual_team_hr?: number | null
+          blended_hr_per_game?: number | null
+          block_reason?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          game_date?: string
+          home_team?: string | null
+          id?: string
+          lambda?: number | null
+          opponent?: string | null
+          opposing_pitcher?: string | null
+          outcome?: string | null
+          p_no_hr?: number | null
+          park_hr_factor?: number | null
+          pitcher_hr9?: number | null
+          pitcher_sample_ip?: number | null
+          recommend?: boolean | null
+          settled_at?: string | null
+          team?: string
+          team_games_l30?: number | null
+          team_hr_per_game_l30?: number | null
+          team_hr_per_game_season?: number | null
+          tier?: string | null
+          weather_mult?: number | null
+        }
+        Relationships: []
+      }
       mlb_player_game_logs: {
         Row: {
           at_bats: number | null
