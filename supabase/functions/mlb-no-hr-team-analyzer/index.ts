@@ -96,7 +96,6 @@ Deno.serve(async (req) => {
       if (from > 100000) break;
     }
     log(`Loaded ${allLogs.length} game logs`);
-    log(`Loaded ${logs?.length ?? 0} game logs`);
 
     // Index logs by team -> [date, hr] and by player -> pitcher HR/9
     const teamHRByDate = new Map<string, Map<string, number>>();
