@@ -10,3 +10,4 @@ Cascade legs must clear a `0.5*std` band around L10 mean (BENCH/ROLE_PLAYER need
 - [Parlay broadcast mapping](mem://logic/parlay/broadcast-mapping) — bot_parlay_broadcasts must store parlay_id + parlay_date; audit via v_parlay_broadcast_audit
 - [Alert explainer contract](mem://logic/alerts/explainer-contract) — Per-player engine_reasoning v1 + group_reasoning + verdict mix on fanduel_prediction_alerts metadata
 - [Cascade miss-by-1 guard](mem://logic/betting/cascade-miss-by-1-guard) — Danger-band + minutes floor suppressing cascade legs that statistically miss by 1
+- [Tennis data sync](mem://logic/betting/tennis-data-sync) — Court.Edge layered inputs (Odds API → PrizePicks → TA jsfrag → surface baseline); one-side-missing capped to LEAN_*
