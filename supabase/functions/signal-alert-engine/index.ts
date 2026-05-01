@@ -247,13 +247,19 @@ Deno.serve(async (req) => {
 
       const distinctPlayers = Array.from(new Set(filteredMembers.map((m) => m.player_name)));
       if (distinctPlayers.length < CASCADE_MIN_PLAYERS) {
-        dropped_legs_total += dropped.length;
-        if (dropped.length > 0) {
-          console.log(`[signal-alert-engine] cascade suppressed (${groupKey}) — ${dropped.length} legs dropped, only ${distinctPlayers.length} remain`);
+        const dedupedSkip = Array.from(
+          new Map(dropped.map((d) => [d.player, d])).values(),
+        );
+        dropped_legs_total += dedupedSkip.length;
+        if (dedupedSkip.length > 0) {
+          console.log(`[signal-alert-engine] cascade suppressed (${groupKey}) — ${dedupedSkip.length} legs dropped, only ${distinctPlayers.length} remain`);
         }
         continue;
       }
-      dropped_legs_total += dropped.length;
+      const dedupedDropped = Array.from(
+        new Map(dropped.map((d) => [d.player, d])).values(),
+      );
+      dropped_legs_total += dedupedDropped.length;
       const cascadeMembers = filteredMembers;
 
       const first = cascadeMembers[0];
@@ -326,8 +332,8 @@ Deno.serve(async (req) => {
           player_breakdown: playerBreakdown,
           group_reasoning: groupReasoning,
           verdict_counts: verdictCounts,
-          dropped_legs: dropped,
-          danger_band_filtered: dropped.length,
+          dropped_legs: dedupedDropped,
+          danger_band_filtered: dedupedDropped.length,
           explainer_version: 'v1',
           source: 'unified_props_price_derived',
         },
