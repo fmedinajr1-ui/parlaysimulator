@@ -3,9 +3,17 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, Loader2, Type, Upload } from "lucide-react";
+import { Sparkles, Loader2, Type, Upload, ArrowLeft } from "lucide-react";
 import { GradeReveal } from "./GradeReveal";
 import { EmailGate } from "./EmailGate";
+import {
+  EditableLegsTable,
+  legToGradePayload,
+  newBlankLeg,
+  parsePastedSlip,
+  type EditableLeg,
+} from "./EditableLegsTable";
+import { ClearerScreenshotNudge } from "@/components/upload/ClearerScreenshotNudge";
 
 interface GradeResult {
   letter_grade: string;
@@ -19,11 +27,13 @@ interface GradeResult {
 type Mode = "paste" | "upload";
 
 export function InlineSlipGraderPromo() {
-  const [mode, setMode] = useState<Mode>("paste");
+  const [mode, setMode] = useState<Mode>("upload");
   const [slipText, setSlipText] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GradeResult | null>(null);
   const [unlocked, setUnlocked] = useState(false);
+  const [legs, setLegs] = useState<EditableLeg[] | null>(null);
+  const [ocrFailed, setOcrFailed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const gradeLegs = async (legs: Array<{ description?: string; odds?: string; player?: string; propType?: string; line?: number; side?: string }>) => {
@@ -34,32 +44,33 @@ export function InlineSlipGraderPromo() {
     setResult(data as GradeResult);
   };
 
-  const handleGrade = async () => {
+  const handleParsePaste = () => {
     if (slipText.trim().length < 10) {
       toast.error("Paste a real slip — at least one leg.");
       return;
     }
+    const parsed = parsePastedSlip(slipText);
+    if (parsed.length === 0) {
+      toast.error("Couldn't find any legs in that.");
+      return;
+    }
+    setLegs(parsed);
+    setOcrFailed(false);
+  };
+
+  const handleGradeFromTable = async () => {
+    if (!legs || legs.length === 0) {
+      toast.error("Add at least one leg.");
+      return;
+    }
+    const cleaned = legs.filter((l) => l.player.trim() && l.line.trim());
+    if (cleaned.length === 0) {
+      toast.error("Each leg needs a player and a line.");
+      return;
+    }
     setLoading(true);
     try {
-      const legs = slipText
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0)
-        .map((line) => {
-          const oddsMatch = line.match(/[+-]\d{2,4}/);
-          return {
-            description: line,
-            odds: oddsMatch ? oddsMatch[0] : "-110",
-          };
-        });
-
-      if (legs.length === 0) {
-        toast.error("Couldn't find any legs in that.");
-        setLoading(false);
-        return;
-      }
-
-      await gradeLegs(legs);
+      await gradeLegs(cleaned.map(legToGradePayload));
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || "Grader broke. Try again.");
@@ -72,6 +83,7 @@ export function InlineSlipGraderPromo() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+    setOcrFailed(false);
     try {
       const reader = new FileReader();
       reader.onload = async () => {
@@ -83,11 +95,25 @@ export function InlineSlipGraderPromo() {
           if (error) throw error;
           const extractedLegs = data?.legs || [];
           if (!extractedLegs.length) {
-            toast.error("Couldn't read any legs from that image. Try pasting instead.");
+            setOcrFailed(true);
+            setLegs([newBlankLeg()]);
+            toast.error("Couldn't read that slip. Edit the legs by hand or try a clearer screenshot.");
             setLoading(false);
             return;
           }
-          await gradeLegs(extractedLegs);
+          // Map extracted legs into editable rows
+          const mapped: EditableLeg[] = extractedLegs.map((l: any) => ({
+            id: crypto.randomUUID(),
+            player: l.player || "",
+            propType: (l.propType || "points").toString().toLowerCase().replace(/\s+/g, "_"),
+            line: l.line != null ? String(l.line) : "",
+            side: l.side === "under" ? "under" : "over",
+            odds: (l.odds ?? "-110").toString(),
+            confidence: l.confidence,
+            raw: l.description,
+          }));
+          setLegs(mapped);
+          toast.success(`Read ${mapped.length} leg${mapped.length === 1 ? "" : "s"}. Review & edit before grading.`);
         } catch (err: any) {
           console.error(err);
           toast.error(err.message || "Upload failed");
@@ -111,7 +137,9 @@ export function InlineSlipGraderPromo() {
     setSlipText("");
     setResult(null);
     setUnlocked(false);
-    setMode("paste");
+    setMode("upload");
+    setLegs(null);
+    setOcrFailed(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -130,33 +158,36 @@ export function InlineSlipGraderPromo() {
                 Free Slip Grader
               </h2>
               <p className="text-sm text-muted-foreground">
-                Paste your slip or drop a screenshot. We'll tell you why it'll lose — and send you 7 days of free picks.
+                {legs
+                  ? "Review the auto-filled legs. Fix anything wrong, then grade."
+                  : "Drop a screenshot — we'll auto-fill every leg. Edit, then grade."}
               </p>
             </div>
           </div>
 
-          {/* Mode tabs */}
-          <div className="flex gap-1 p-1 bg-muted/50 rounded-xl mb-3">
-            {[
-              { id: "paste", icon: Type, label: "Paste" },
-              { id: "upload", icon: Upload, label: "Screenshot" },
-            ].map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setMode(m.id as Mode)}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition ${
-                  mode === m.id
-                    ? "bg-background text-foreground shadow"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <m.icon className="w-4 h-4" /> {m.label}
-              </button>
-            ))}
-          </div>
+          {!legs && (
+            <div className="flex gap-1 p-1 bg-muted/50 rounded-xl mb-3">
+              {[
+                { id: "upload", icon: Upload, label: "Screenshot" },
+                { id: "paste", icon: Type, label: "Paste" },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMode(m.id as Mode)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition ${
+                    mode === m.id
+                      ? "bg-background text-foreground shadow"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <m.icon className="w-4 h-4" /> {m.label}
+                </button>
+              ))}
+            </div>
+          )}
 
-          {mode === "paste" && (
+          {!legs && mode === "paste" && (
             <>
               <Textarea
                 value={slipText}
@@ -165,28 +196,19 @@ export function InlineSlipGraderPromo() {
                 className="min-h-[120px] mb-3 font-mono text-sm bg-background/50"
               />
               <Button
-                onClick={handleGrade}
+                onClick={handleParsePaste}
                 disabled={loading}
                 variant="neon"
                 size="lg"
                 className="w-full gap-2"
               >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Grading...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    Grade my slip free
-                  </>
-                )}
+                <Sparkles className="w-4 h-4" />
+                Parse legs
               </Button>
             </>
           )}
 
-          {mode === "upload" && (
+          {!legs && mode === "upload" && (
             <>
               <input
                 ref={fileInputRef}
@@ -204,7 +226,7 @@ export function InlineSlipGraderPromo() {
                 {loading ? (
                   <div className="flex flex-col items-center gap-2">
                     <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                    <div className="font-semibold text-sm">Reading your slip...</div>
+                    <div className="font-semibold text-sm">Reading your slip…</div>
                   </div>
                 ) : (
                   <>
@@ -217,6 +239,51 @@ export function InlineSlipGraderPromo() {
                 )}
               </button>
             </>
+          )}
+
+          {legs && (
+            <div className="space-y-3">
+              {ocrFailed && (
+                <ClearerScreenshotNudge
+                  onRetry={() => {
+                    setLegs(null);
+                    setOcrFailed(false);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                />
+              )}
+              <EditableLegsTable legs={legs} onChange={setLegs} />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  onClick={handleReset}
+                  className="gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+                <Button
+                  onClick={handleGradeFromTable}
+                  disabled={loading}
+                  variant="neon"
+                  size="lg"
+                  className="flex-1 gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Grading…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Grade my slip free
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
           )}
         </>
       )}

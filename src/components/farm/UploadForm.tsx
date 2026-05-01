@@ -1,28 +1,116 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Upload, Loader2, CheckCircle2, Sparkles, Zap, ShieldCheck, Star } from "lucide-react";
+import { Upload, Loader2, CheckCircle2, Sparkles, Zap, ShieldCheck, Star, Type, ArrowLeft } from "lucide-react";
 import { ExampleSlipsCarousel } from "./ExampleSlipsCarousel";
+import {
+  EditableLegsTable,
+  legToGradePayload,
+  newBlankLeg,
+  parsePastedSlip,
+  type EditableLeg,
+} from "@/components/grade/EditableLegsTable";
+import { ClearerScreenshotNudge } from "@/components/upload/ClearerScreenshotNudge";
 
 export function UploadForm() {
   const [email, setEmail] = useState("");
   const [slip, setSlip] = useState("");
+  const [mode, setMode] = useState<"upload" | "paste">("upload");
+  const [legs, setLegs] = useState<EditableLeg[] | null>(null);
+  const [ocrFailed, setOcrFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    setOcrFailed(false);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const base64 = (reader.result as string).split(",")[1];
+          const { data, error } = await supabase.functions.invoke("extract-parlay", {
+            body: { image: base64 },
+          });
+          if (error) throw error;
+          const extracted = data?.legs || [];
+          if (!extracted.length) {
+            setOcrFailed(true);
+            setLegs([newBlankLeg()]);
+            toast.error("Couldn't read that slip. Edit by hand or try a clearer screenshot.");
+            return;
+          }
+          const mapped: EditableLeg[] = extracted.map((l: any) => ({
+            id: crypto.randomUUID(),
+            player: l.player || "",
+            propType: (l.propType || "points").toString().toLowerCase().replace(/\s+/g, "_"),
+            line: l.line != null ? String(l.line) : "",
+            side: l.side === "under" ? "under" : "over",
+            odds: (l.odds ?? "-110").toString(),
+            confidence: l.confidence,
+            raw: l.description,
+          }));
+          setLegs(mapped);
+          toast.success(`Read ${mapped.length} leg${mapped.length === 1 ? "" : "s"}. Review before submitting.`);
+        } catch (err: any) {
+          console.error(err);
+          toast.error(err.message || "Upload failed");
+        } finally {
+          setLoading(false);
+        }
+      };
+      reader.onerror = () => {
+        toast.error("Couldn't read that file");
+        setLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Upload failed");
+      setLoading(false);
+    }
+  };
+
+  const handleParsePaste = () => {
+    if (slip.trim().length < 5) {
+      toast.error("Paste a real slip first.");
+      return;
+    }
+    const parsed = parsePastedSlip(slip);
+    if (parsed.length === 0) {
+      toast.error("Couldn't find any legs.");
+      return;
+    }
+    setLegs(parsed);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.includes("@") || slip.trim().length < 5) {
-      toast.error("Enter your email and paste your slip text.");
+    if (!email.includes("@")) {
+      toast.error("Enter your email so we can send the verdict.");
+      return;
+    }
+    if (!legs || legs.length === 0) {
+      toast.error("Upload a slip or add at least one leg.");
+      return;
+    }
+    const cleaned = legs.filter((l) => l.player.trim() && l.line.trim());
+    if (cleaned.length === 0) {
+      toast.error("Each leg needs a player and a line.");
       return;
     }
     setLoading(true);
     try {
+      const payloadLegs = cleaned.map(legToGradePayload);
+      const slipText = payloadLegs.map((l) => l.description).join("\n");
       const { error } = await supabase.from("leads").insert({
         email,
-        slip_text: slip,
+        slip_text: slipText,
         source: "free_slip_upload",
-        metadata: { user_agent: navigator.userAgent },
+        metadata: { user_agent: navigator.userAgent, legs: payloadLegs, ocr_failed: ocrFailed },
       });
       if (error) throw error;
       setDone(true);
@@ -117,25 +205,115 @@ export function UploadForm() {
                 🎁 100% Free Verdict
               </div>
 
-              <div className="border-2 border-dashed border-[hsl(var(--farm-line))] rounded-xl p-6 text-center hover:border-[hsl(var(--sharp-green)/0.6)] hover:bg-[hsl(var(--sharp-green)/0.04)] transition-all group">
-                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[hsl(var(--sharp-green)/0.1)] flex items-center justify-center group-hover:scale-110 transition-transform">
-                  <Upload className="w-5 h-5 text-[hsl(var(--sharp-green))]" />
+              {!legs && (
+                <div className="flex gap-1 p-1 bg-[hsl(var(--farm-bg))] rounded-xl">
+                  {[
+                    { id: "upload", icon: Upload, label: "Screenshot" },
+                    { id: "paste", icon: Type, label: "Paste" },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setMode(m.id as "upload" | "paste")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition ${
+                        mode === m.id
+                          ? "bg-[hsl(var(--sharp-green)/0.15)] text-[hsl(var(--farm-text))]"
+                          : "text-[hsl(var(--farm-muted))]"
+                      }`}
+                    >
+                      <m.icon className="w-4 h-4" /> {m.label}
+                    </button>
+                  ))}
                 </div>
-                <p className="text-sm font-semibold text-[hsl(var(--farm-text))]">
-                  Paste your slip text below
-                </p>
-                <p className="text-xs text-[hsl(var(--farm-muted))] mt-1">
-                  📸 Screenshot OCR coming soon
-                </p>
-              </div>
+              )}
 
-              <textarea
-                value={slip}
-                onChange={(e) => setSlip(e.target.value)}
-                placeholder={"Tatum Over 27.5 Pts -115\nLakers ML +150\nDavis Over 11.5 Reb -110…"}
-                rows={5}
-                className="w-full bg-[hsl(var(--farm-bg))] border border-[hsl(var(--farm-line))] rounded-lg px-4 py-3 text-sm font-mono focus:border-[hsl(var(--sharp-green))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--sharp-green)/0.2)] transition-all"
-              />
+              {!legs && mode === "upload" && (
+                <>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleScreenshotUpload}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={loading}
+                    className="w-full border-2 border-dashed border-[hsl(var(--farm-line))] rounded-xl p-8 text-center hover:border-[hsl(var(--sharp-green)/0.6)] hover:bg-[hsl(var(--sharp-green)/0.04)] transition-all group disabled:opacity-60"
+                  >
+                    {loading ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--sharp-green))]" />
+                        <div className="font-semibold text-sm">Reading your slip…</div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[hsl(var(--sharp-green)/0.1)] flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Upload className="w-5 h-5 text-[hsl(var(--sharp-green))]" />
+                        </div>
+                        <p className="text-sm font-semibold text-[hsl(var(--farm-text))]">
+                          Tap to upload a screenshot
+                        </p>
+                        <p className="text-xs text-[hsl(var(--farm-muted))] mt-1">
+                          We auto-fill every leg — you review before submitting
+                        </p>
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
+
+              {!legs && mode === "paste" && (
+                <>
+                  <textarea
+                    value={slip}
+                    onChange={(e) => setSlip(e.target.value)}
+                    placeholder={"Tatum Over 27.5 Pts -115\nDavis Over 11.5 Reb -110\nLuka Over 8.5 Ast +100"}
+                    rows={5}
+                    className="w-full bg-[hsl(var(--farm-bg))] border border-[hsl(var(--farm-line))] rounded-lg px-4 py-3 text-sm font-mono focus:border-[hsl(var(--sharp-green))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--sharp-green)/0.2)] transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleParsePaste}
+                    className="farm-btn-primary w-full text-sm flex items-center justify-center gap-2 py-3"
+                  >
+                    <Sparkles className="w-4 h-4" /> Parse legs
+                  </button>
+                </>
+              )}
+
+              {legs && (
+                <div className="space-y-3">
+                  {ocrFailed && (
+                    <ClearerScreenshotNudge
+                      onRetry={() => {
+                        setLegs(null);
+                        setOcrFailed(false);
+                        if (fileRef.current) fileRef.current.value = "";
+                      }}
+                    />
+                  )}
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs uppercase tracking-widest font-bold text-[hsl(var(--sharp-green))]">
+                      Review your legs
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLegs(null);
+                        setOcrFailed(false);
+                        if (fileRef.current) fileRef.current.value = "";
+                      }}
+                      className="text-xs text-[hsl(var(--farm-muted))] hover:text-[hsl(var(--farm-text))] inline-flex items-center gap-1"
+                    >
+                      <ArrowLeft className="w-3 h-3" /> start over
+                    </button>
+                  </div>
+                  <EditableLegsTable legs={legs} onChange={setLegs} />
+                </div>
+              )}
+
               <input
                 type="email"
                 value={email}
@@ -145,7 +323,7 @@ export function UploadForm() {
               />
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !legs || legs.length === 0}
                 className="farm-btn-primary w-full text-base flex items-center justify-center gap-2 py-4 font-black tracking-wide hover:scale-[1.01] active:scale-[0.99] transition-transform shadow-lg shadow-[hsl(var(--sharp-green)/0.25)]"
               >
                 {loading ? (
