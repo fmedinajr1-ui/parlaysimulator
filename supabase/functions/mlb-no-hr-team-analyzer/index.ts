@@ -261,13 +261,20 @@ Deno.serve(async (req) => {
     }
 
     // 5) Cap broadcast at 3 best (S first, then A) and push into category_sweet_spots
-    broadcastable.sort((a, b) => {
+    // Dedupe broadcast list by team (doubleheaders create dupes)
+    const seenBcast = new Set<string>();
+    const dedupedBroadcastable = broadcastable.filter((r) => {
+      if (seenBcast.has(r.team)) return false;
+      seenBcast.add(r.team);
+      return true;
+    });
+    dedupedBroadcastable.sort((a, b) => {
       const tA = a.tier === "S" ? 0 : 1;
       const tB = b.tier === "S" ? 0 : 1;
       if (tA !== tB) return tA - tB;
       return b.p_no_hr - a.p_no_hr;
     });
-    const top = broadcastable.slice(0, MAX_BROADCAST);
+    const top = dedupedBroadcastable.slice(0, MAX_BROADCAST);
 
     if (top.length > 0) {
       const sweetRows = top.map((r) => ({
