@@ -8434,6 +8434,7 @@ export type Database = {
           actual_team_hr: number | null
           blended_hr_per_game: number | null
           block_reason: string | null
+          broadcast_sent_at: string | null
           confidence_score: number | null
           created_at: string
           game_date: string
@@ -8460,6 +8461,7 @@ export type Database = {
           actual_team_hr?: number | null
           blended_hr_per_game?: number | null
           block_reason?: string | null
+          broadcast_sent_at?: string | null
           confidence_score?: number | null
           created_at?: string
           game_date: string
@@ -8486,6 +8488,7 @@ export type Database = {
           actual_team_hr?: number | null
           blended_hr_per_game?: number | null
           block_reason?: string | null
+          broadcast_sent_at?: string | null
           confidence_score?: number | null
           created_at?: string
           game_date?: string

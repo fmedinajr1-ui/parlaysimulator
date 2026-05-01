@@ -314,17 +314,36 @@ Deno.serve(async (req) => {
           return `${tierEmoji} *${r.team}* ${pitcher} — p(No HR) *${pct}%* · ${r.tier}\n   ${detail}`;
         }),
       ];
+      let broadcastDelivered = 0;
       try {
-        await supabase.functions.invoke("bot-send-telegram", {
-          body: {
-            message: lines.join("\n"),
-            parse_mode: "Markdown",
-            admin_only: false,
+        const { data: tgData, error: tgErr } = await supabase.functions.invoke(
+          "bot-send-telegram",
+          {
+            body: {
+              message: lines.join("\n"),
+              parse_mode: "Markdown",
+              admin_only: true,
+            },
           },
-        });
+        );
+        if (tgErr) {
+          log(`telegram broadcast err: ${tgErr.message ?? String(tgErr)}`);
+        } else if (tgData && (tgData.success === false || tgData.skipped === true)) {
+          log(`telegram broadcast skipped: ${JSON.stringify(tgData)}`);
+        } else {
+          broadcastDelivered = top.length;
+          const teams = top.map((r) => r.team);
+          const { error: stampErr } = await supabase
+            .from("mlb_no_hr_team_analysis")
+            .update({ broadcast_sent_at: new Date().toISOString() })
+            .eq("game_date", today)
+            .in("team", teams);
+          if (stampErr) log(`broadcast_sent_at stamp err: ${stampErr.message}`);
+        }
       } catch (tgErr) {
         log(`telegram broadcast err: ${tgErr instanceof Error ? tgErr.message : String(tgErr)}`);
       }
+      (globalThis as any).__noHrBroadcastDelivered = broadcastDelivered;
     }
 
     log(
@@ -337,7 +356,8 @@ Deno.serve(async (req) => {
       result: {
         analyzed: rows.length,
         recommendable: broadcastable.length,
-        broadcast: top.length,
+        broadcast_attempted: top.length,
+        broadcast_delivered: (globalThis as any).__noHrBroadcastDelivered ?? 0,
       },
     });
 
@@ -346,7 +366,8 @@ Deno.serve(async (req) => {
         success: true,
         analyzed: rows.length,
         recommendable: broadcastable.length,
-        broadcast: top.length,
+        broadcast_attempted: top.length,
+        broadcast_delivered: (globalThis as any).__noHrBroadcastDelivered ?? 0,
         top: top.map((r) => ({
           team: r.team,
           opp: r.opponent,

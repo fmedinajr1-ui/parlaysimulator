@@ -38,3 +38,7 @@ Models the DraftKings "1st Home Run Type — No" market: bet wins if the chosen 
 - `supabase/functions/_shared/mlb-no-hr-team-model_test.ts` — 6 Deno tests
 - `supabase/functions/_shared/mlb-park-factors.ts` — 30-park HR factor table
 - `supabase/functions/mlb-no-hr-team-analyzer/index.ts` — orchestrator
+
+### Constraints
+- Telegram broadcast MUST invoke `bot-send-telegram` with `admin_only: true`. Passing `false` causes the bot to silently return `{ skipped: true }` and the message is never sent.
+- After a confirmed send, stamp `mlb_no_hr_team_analysis.broadcast_sent_at = now()` for the broadcast teams on `game_date`. Use this column to verify delivery instead of trusting the invoke return alone.
