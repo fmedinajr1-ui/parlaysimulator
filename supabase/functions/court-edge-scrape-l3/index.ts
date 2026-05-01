@@ -11,6 +11,7 @@ const corsHeaders = {
 };
 
 const TA_BASE = "https://www.tennisabstract.com/cgi-bin/player.cgi";
+const TA_FRAG = "https://www.tennisabstract.com/jsfrags";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export const playerSlug = sharedPlayerSlug;
@@ -22,15 +23,18 @@ function parseSetScore(s: string): number | null {
   return parseInt(m[1], 10) + parseInt(m[2], 10);
 }
 
+// Pull every <td>SCORE</td> cell out of the recent-results table inside the
+// jsfrag and convert it to a per-match games total.
 function extractRecentTotals(html: string): { totals: number[]; raw: string[] } {
-  // TennisAbstract embeds match data in JS arrays. Heuristic: find score-like tokens.
-  // We grab anything matching a sequence of "X-Y" sets separated by spaces.
-  // Use a generous regex — false positives get filtered by sanity check (each total 6..40).
-  const re = /\b(\d{1,2}-\d{1,2}(?:\([0-9]+\))?(?:\s+\d{1,2}-\d{1,2}(?:\([0-9]+\))?){1,4})\b/g;
   const found: Array<{ raw: string; total: number }> = [];
+
+  // Each row in #recent-results has a Score cell of the form
+  //   <td>6-2 6-4</td>  or  <td>6-2 7-6(0)</td>  or  <td>3-6 6-4 6-2</td>
+  // We allow 2-5 sets and tiebreak parens.
+  const cellRe = /<td[^>]*>\s*(\d{1,2}-\d{1,2}(?:\([0-9]+\))?(?:\s+\d{1,2}-\d{1,2}(?:\([0-9]+\))?){1,4})\s*<\/td>/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    const raw = m[1];
+  while ((m = cellRe.exec(html)) !== null) {
+    const raw = m[1].trim();
     const sets = raw.split(/\s+/);
     let total = 0;
     let ok = true;
@@ -39,11 +43,27 @@ function extractRecentTotals(html: string): { totals: number[]; raw: string[] } 
       if (t == null) { ok = false; break; }
       total += t;
     }
-    if (ok && total >= 6 && total <= 80) {
-      found.push({ raw, total });
-    }
+    if (ok && total >= 6 && total <= 80) found.push({ raw, total });
     if (found.length >= 10) break;
   }
+
+  // Fallback: looser whitespace match across the whole document.
+  if (found.length === 0) {
+    const looseRe = /\b(\d{1,2}-\d{1,2}(?:\([0-9]+\))?(?:\s+\d{1,2}-\d{1,2}(?:\([0-9]+\))?){1,4})\b/g;
+    while ((m = looseRe.exec(html)) !== null) {
+      const raw = m[1];
+      const sets = raw.split(/\s+/);
+      let total = 0; let ok = true;
+      for (const s of sets) {
+        const t = parseSetScore(s);
+        if (t == null) { ok = false; break; }
+        total += t;
+      }
+      if (ok && total >= 6 && total <= 80) found.push({ raw, total });
+      if (found.length >= 10) break;
+    }
+  }
+
   return {
     totals: found.slice(0, 3).map((f) => f.total),
     raw: found.slice(0, 3).map((f) => f.raw),
@@ -53,18 +73,37 @@ function extractRecentTotals(html: string): { totals: number[]; raw: string[] } 
 async function scrapeOne(name: string): Promise<{ ok: boolean; totals?: number[]; raw?: string[]; error?: string }> {
   const slug = playerSlug(name);
   if (!slug) return { ok: false, error: "empty slug" };
-  const url = `${TA_BASE}?p=${slug}`;
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; CourtEdge/1.0)",
-      "Accept": "text/html",
-    },
-  });
-  if (!res.ok) return { ok: false, error: `status ${res.status}` };
-  const html = await res.text();
-  const { totals, raw } = extractRecentTotals(html);
-  if (totals.length === 0) return { ok: false, error: "no scores parsed" };
-  return { ok: true, totals, raw };
+  // Primary: TennisAbstract serves the recent-results table from a JS fragment
+  // at /jsfrags/<Slug>.js — that's where the actual match rows live. The HTML
+  // page only loads a shell that injects this fragment client-side.
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36",
+    "Accept": "text/html,application/javascript,*/*",
+    "Referer": `${TA_BASE}?p=${slug}`,
+  };
+
+  const tryUrls = [
+    `${TA_FRAG}/${slug}.js`,
+    `${TA_BASE}?p=${slug}`,
+    `https://www.tennisabstract.com/cgi-bin/player-classic.cgi?p=${slug}`,
+  ];
+
+  let lastErr = "no scores parsed";
+  let lastSnippet: string | null = null;
+  for (const url of tryUrls) {
+    try {
+      const res = await fetch(url, { headers });
+      if (!res.ok) { lastErr = `status ${res.status} @ ${url}`; continue; }
+      const html = await res.text();
+      const { totals, raw } = extractRecentTotals(html);
+      if (totals.length > 0) return { ok: true, totals, raw };
+      lastSnippet = html.slice(0, 400);
+    } catch (e) {
+      lastErr = `${e instanceof Error ? e.message : String(e)} @ ${url}`;
+    }
+  }
+  if (lastSnippet) console.log(`[court-edge-scrape-l3] no rows for ${slug}; first 400ch: ${lastSnippet.replace(/\s+/g, " ")}`);
+  return { ok: false, error: lastErr };
 }
 
 async function runWithConcurrency<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {

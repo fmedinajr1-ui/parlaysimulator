@@ -36,6 +36,8 @@ async function listTennisSportKeys(apiKey: string): Promise<string[]> {
     .map((s: { key: string }) => s.key);
 }
 
+const FORWARD_WINDOW_HOURS = 7 * 24; // was 48 — extend to 7d so Rome qualis etc. flow in early.
+
 async function fetchSportEvents(apiKey: string, sportKey: string): Promise<NormalizedEvent[]> {
   const url = `${ODDS_BASE}/${sportKey}/odds?regions=us,eu&markets=h2h,totals&oddsFormat=american&apiKey=${apiKey}`;
   const res = await fetch(url);
@@ -44,7 +46,7 @@ async function fetchSportEvents(apiKey: string, sportKey: string): Promise<Norma
     throw new Error(`odds for ${sportKey} ${res.status}: ${txt.slice(0, 200)}`);
   }
   const events = await res.json();
-  const cutoff = Date.now() + 48 * 60 * 60 * 1000;
+  const cutoff = Date.now() + FORWARD_WINDOW_HOURS * 60 * 60 * 1000;
   const out: NormalizedEvent[] = [];
 
   for (const ev of events || []) {
@@ -104,17 +106,22 @@ Deno.serve(async (req) => {
     const sportKeys = await listTennisSportKeys(apiKey);
     const events: NormalizedEvent[] = [];
     const errors: Array<{ sport: string; error: string }> = [];
+    const empty_sport_keys: string[] = [];
 
     for (const sk of sportKeys) {
       try {
         const ev = await fetchSportEvents(apiKey, sk);
+        if (ev.length === 0) empty_sport_keys.push(sk);
         events.push(...ev);
       } catch (e) {
         errors.push({ sport: sk, error: e instanceof Error ? e.message : String(e) });
       }
     }
+    if (empty_sport_keys.length > 0) {
+      console.log(`[court-edge-fetch-odds] sport keys with 0 events in next ${FORWARD_WINDOW_HOURS}h:`, empty_sport_keys.join(", "));
+    }
 
-    return new Response(JSON.stringify({ ok: true, sport_keys: sportKeys, events, errors }), {
+    return new Response(JSON.stringify({ ok: true, sport_keys: sportKeys, events, errors, empty_sport_keys, window_hours: FORWARD_WINDOW_HOURS }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
