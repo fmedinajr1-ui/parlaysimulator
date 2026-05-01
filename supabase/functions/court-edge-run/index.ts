@@ -21,6 +21,7 @@ import {
 } from "../_shared/court-edge-roles.ts";
 import { buildDrilldown } from "../_shared/court-edge-drilldown.ts";
 import { playerSlug } from "../_shared/court-edge-slug.ts";
+import { baselineL3, baselineFor, type Surface, type SetsFormat } from "../_shared/court-edge-baseline.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -149,6 +150,10 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   lines.push(`Leans ${leans}  ·  Pass ${passes}`);
   lines.push(`Sources: Odds API ${meta.sources.odds}  ·  PrizePicks ${meta.sources.pp}  ·  TennisAbstract ${meta.sources.l3}  ·  Weather ${meta.sources.wx}`);
   lines.push(`Run \`${meta.runId.slice(0, 8)}\`  ·  picks ${picks.length}  ·  errors ${meta.errors}`);
+  // "Why empty?" diagnostic footer — only when nothing actionable went out.
+  if (printed === 0 && (meta as any).diagnostics) {
+    lines.push(`Why empty? ${(meta as any).diagnostics}`);
+  }
   return lines.join("\n");
 }
 
@@ -287,17 +292,34 @@ Deno.serve(async (req) => {
 
     // 5a. Odds API match totals
     const breakdownByPick = new Map<number, { breakdown: ProjectionBreakdown; matchProjection: number }>();
+    const baselineSurface: Surface = (tournament.surface as Surface) || "unknown";
+    const baselineSets: SetsFormat = tournament.sets_format === "best_of_5" ? "best_of_5" : "best_of_3";
+    let baselineSidesUsed = 0;
     for (const ev of oddsEvents) {
       if (ev.total_point == null) continue;
       const h = l3[ev.home_team];
       const a = l3[ev.away_team];
-      if (!h?.ok || !a?.ok || !h.totals?.length || !a.totals?.length) continue;
+      const hOk = !!(h?.ok && h?.totals?.length);
+      const aOk = !!(a?.ok && a?.totals?.length);
+      // Loosened gate: if BOTH players are missing L3, skip. If only one is
+      // missing, fill that side with a surface baseline and cap verdict to LEAN_*.
+      if (!hOk && !aOk) continue;
+      const homeTotals = hOk ? h!.totals! : baselineL3(baselineSurface, baselineSets);
+      const awayTotals = aOk ? a!.totals! : baselineL3(baselineSurface, baselineSets);
+      const baselineUsed = !hOk || !aOk;
+      if (baselineUsed) baselineSidesUsed += 1;
       const roleH = roleMap[ev.home_team] ?? UNKNOWN_ROLE;
       const roleA = roleMap[ev.away_team] ?? UNKNOWN_ROLE;
-      const { input: inp, reasons } = projectMatch(h.totals, a.totals, roleH, roleA);
+      const { input: inp, reasons } = projectMatch(homeTotals, awayTotals, roleH, roleA);
       inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away;
       const proj = project(inp);
       const e = edgeFor("match_total", proj.projection, ev.total_point);
+      // Cap verdict to LEAN_* when one side is a baseline — never STRONG_*.
+      let verdict = e.verdict;
+      if (baselineUsed) {
+        if (verdict === "STRONG_OVER") verdict = "LEAN_OVER";
+        else if (verdict === "STRONG_UNDER") verdict = "LEAN_UNDER";
+      }
       picks.push({
         source: "odds_api",
         matchup: `${ev.home_team} vs ${ev.away_team}`,
@@ -308,8 +330,16 @@ Deno.serve(async (req) => {
         projection: Number(proj.projection.toFixed(2)),
         edge: Number(e.edge.toFixed(3)),
         edge_pct: Number(e.edge_pct.toFixed(2)),
-        verdict: e.verdict,
-        formula: { ...proj, ml_home: ev.ml_home, ml_away: ev.ml_away, bookmaker: ev.bookmaker },
+        verdict,
+        formula: {
+          ...proj,
+          ml_home: ev.ml_home,
+          ml_away: ev.ml_away,
+          bookmaker: ev.bookmaker,
+          baseline_used: baselineUsed,
+          baseline_side: baselineUsed ? (!hOk ? "home" : "away") : null,
+          baseline_reason: baselineUsed ? baselineFor(baselineSurface, baselineSets).reason : null,
+        },
         tournament: tournament.name,
         surface: tournament.surface,
         sets_format: tournament.sets_format,
@@ -391,6 +421,7 @@ Deno.serve(async (req) => {
       });
     }
     push(`Total picks: ${picks.length}`);
+    if (baselineSidesUsed > 0) push(`Baseline-fallback sides used: ${baselineSidesUsed}`);
 
     // 6b. Build drilldown text for the top non-PASS picks (cap 5)
     const DRILLDOWN_CAP = 5;
@@ -453,19 +484,23 @@ Deno.serve(async (req) => {
     }
 
     // 8. Telegram digest
+    const ppBlocked = ppRes?.ok && (ppRes as any)?.blocked === true;
+    const diagnostics = `odds_events=${oddsEvents.length} · pp_blocked=${ppBlocked} · l3_hits=${l3Got}/${players.length} · weather=${weather ? "ok" : "miss"} · baseline_sides=${baselineSidesUsed}`;
     const digest = buildDigest(picks, {
       date: easternDate(),
       tournament,
       weather,
       sources: {
         odds: oddsRes?.ok ? "✓" : "✗",
-        pp: ppRes?.ok ? (ppRes.blocked ? "blocked" : "✓") : "✗",
+        pp: ppRes?.ok ? (ppBlocked ? "blocked" : "✓") : "✗",
         l3: `${l3Got}/${players.length}`,
         wx: weather ? "✓" : "✗",
       },
       runId,
       errors: errors.length,
-    });
+      // Only buildDigest reads this; cast is safe — interface is structural.
+      ...({ diagnostics } as any),
+    } as any);
 
     let telegramSent = false;
     try {
