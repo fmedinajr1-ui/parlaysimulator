@@ -73,10 +73,10 @@ Deno.test("A tier: decent matchup, not ace-level", () => {
     team: "Pittsburgh Pirates",
     opponent: "Cleveland Guardians",
     homeTeam: "Cleveland Guardians",
-    teamHRPerGameL30: 0.95,
+    teamHRPerGameL30: 0.70,
     teamGamesL30: 30,
-    teamHRPerGameSeason: 1.0,
-    pitcherHR9: 1.1,
+    teamHRPerGameSeason: 0.75,
+    pitcherHR9: 1.0,
     pitcherSampleIP: 80,
   });
   assertEquals(r.tier, "A");
