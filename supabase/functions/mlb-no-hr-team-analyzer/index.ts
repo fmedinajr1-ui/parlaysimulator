@@ -82,8 +82,33 @@ Deno.serve(async (req) => {
         "player_name, team, opponent, game_date, home_runs, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed",
       )
       .gte("game_date", sixtyStr)
-      .limit(20000);
+      .limit(20000)
+      .range(0, 19999);
     if (logsErr) throw logsErr;
+
+    // Supabase caps responses at 1000 unless we paginate. Fetch additional pages if needed.
+    let allLogs = logs ?? [];
+    if (allLogs.length === 1000) {
+      log("Pagination needed — fetching more logs");
+      let from = 1000;
+      const pageSize = 1000;
+      while (true) {
+        const { data: more, error: e2 } = await supabase
+          .from("mlb_player_game_logs")
+          .select(
+            "player_name, team, opponent, game_date, home_runs, innings_pitched, earned_runs, pitcher_strikeouts, pitcher_hits_allowed",
+          )
+          .gte("game_date", sixtyStr)
+          .range(from, from + pageSize - 1);
+        if (e2) { log(`page err: ${e2.message}`); break; }
+        if (!more || more.length === 0) break;
+        allLogs = allLogs.concat(more);
+        if (more.length < pageSize) break;
+        from += pageSize;
+        if (from > 100000) break;
+      }
+    }
+    log(`Loaded ${allLogs.length} game logs (after pagination)`);
     log(`Loaded ${logs?.length ?? 0} game logs`);
 
     // Index logs by team -> [date, hr] and by player -> pitcher HR/9
@@ -97,7 +122,7 @@ Deno.serve(async (req) => {
     // using the BATTER side of game logs (sum HR by opponent on that date).
     const oppHRAllowed = new Map<string, Map<string, number>>(); // pitcher_team -> date -> hr_allowed
 
-    for (const r of logs || []) {
+    for (const r of allLogs) {
       const team = r.team || "";
       const date = r.game_date;
       const hr = r.home_runs ?? 0;
@@ -182,7 +207,7 @@ Deno.serve(async (req) => {
         const l7 = teamHRPerGame(side.team, 7);
 
         // Find opp's most-recent SP (a pitcher row in opp team in last 5 days)
-        const oppPitcherRow = (logs || [])
+        const oppPitcherRow = allLogs
           .filter((r) =>
             r.team === side.opp && (r.innings_pitched ?? 0) >= 4
           )
@@ -233,10 +258,19 @@ Deno.serve(async (req) => {
 
     // 4) Upsert analysis rows
     if (rows.length > 0) {
+      // Dedupe by (team, game_date) in case of double-headers / dup game entries
+      const seen = new Set<string>();
+      const dedupedRows = rows.filter((r) => {
+        const k = `${r.team}|${r.game_date}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
       const { error: upErr } = await supabase
         .from("mlb_no_hr_team_analysis")
-        .upsert(rows, { onConflict: "team,game_date" });
+        .upsert(dedupedRows, { onConflict: "team,game_date" });
       if (upErr) log(`upsert analysis err: ${upErr.message}`);
+      else log(`upserted ${dedupedRows.length} rows (${rows.length - dedupedRows.length} dupes removed)`);
     }
 
     // 5) Cap broadcast at 3 best (S first, then A) and push into category_sweet_spots
