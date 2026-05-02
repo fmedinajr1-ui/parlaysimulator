@@ -652,6 +652,14 @@ Deno.serve(async (req) => {
         await handleEnd(supabase, cb_chat_id);
       } else if (data.startsWith("parlay:")) {
         await handleParlay(supabase, cb_chat_id, [data.slice(7)]);
+      } else if (data === "render_next" || data.startsWith("render:")) {
+        // Admin-only inline render trigger
+        if (!ADMIN_CHAT_ID || String(cb_chat_id) !== String(ADMIN_CHAT_ID)) {
+          await sendMessage(cb_chat_id, "🚫 Admin only.");
+        } else {
+          const scriptId = data.startsWith("render:") ? data.slice(7) : null;
+          await triggerRender(cb_chat_id, scriptId);
+        }
       }
       return new Response("ok");
     }
@@ -730,6 +738,20 @@ Deno.serve(async (req) => {
       else if (sub === "parlay") await handleParlay(supabase, chat_id, args);
       else if (sub === "end") await handleEnd(supabase, chat_id);
       else await handleHelp(chat_id);
+      return new Response("ok");
+    }
+
+    // Admin-only: trigger Remotion render
+    //   /render            → next approved script in queue
+    //   /render <id>       → specific script id
+    if (text === "/render" || text.startsWith("/render ") || text.startsWith("/render@")) {
+      if (!ADMIN_CHAT_ID || String(chat_id) !== String(ADMIN_CHAT_ID)) {
+        await sendMessage(chat_id, "🚫 Admin only.");
+        return new Response("ok");
+      }
+      const parts = text.split(/\s+/).slice(1);
+      const scriptId = parts[0] && parts[0].length > 8 ? parts[0] : null;
+      await triggerRender(chat_id, scriptId);
       return new Response("ok");
     }
 
