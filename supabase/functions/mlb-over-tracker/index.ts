@@ -380,6 +380,7 @@ Deno.serve(async (req) => {
       sb: { settled: sbSettled, correct: sbCorrect, incorrect: sbIncorrect, win_rate: parseFloat(sbWinRate === 'N/A' ? '0' : sbWinRate) },
       hr: { settled: hrSettled, correct: hrCorrect, incorrect: hrIncorrect, win_rate: parseFloat(hrWinRate === 'N/A' ? '0' : hrWinRate) },
       no_hr_team: { settled: noHRSettled, correct: noHRCorrect, incorrect: noHRIncorrect, win_rate: parseFloat(noHRWinRate === 'N/A' ? '0' : noHRWinRate) },
+      pitcher_k_over: { settled: pitKSettled, correct: pitKCorrect, incorrect: pitKIncorrect, win_rate: parseFloat(pitKWinRate === 'N/A' ? '0' : pitKWinRate) },
       all_time: {
         sb: { wins: totalSBW, losses: totalSBL, total: totalSBW + totalSBL },
         hr: { wins: totalHRW, losses: totalHRL, total: totalHRW + totalHRL },
