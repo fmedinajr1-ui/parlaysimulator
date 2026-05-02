@@ -102,6 +102,51 @@ serve(async (req) => {
           logStep("Successfully credited scans", { userId, scansToCredit, result: data });
         }
       }
+
+      // NEW SUBSCRIBER WELCOME FLOW
+      // Fires welcome email + admin notification for any pup/top_dog/kennel_club signup.
+      const tier = session.metadata?.tier;
+      const signupEmail =
+        session.metadata?.email ||
+        session.customer_details?.email ||
+        session.customer_email ||
+        null;
+      const passwordId = session.metadata?.password_id;
+
+      if (tier && ["pup", "top_dog", "kennel_club"].includes(tier) && signupEmail) {
+        logStep("New subscriber detected — firing welcome flow", { tier, signupEmail });
+
+        // Look up the access password so we can include it in the welcome email
+        let accessPassword: string | null = null;
+        if (passwordId) {
+          const { data: pw } = await supabaseClient
+            .from("bot_access_passwords")
+            .select("password")
+            .eq("id", passwordId)
+            .maybeSingle();
+          accessPassword = pw?.password ?? null;
+        }
+
+        // Send welcome email (non-fatal if it fails)
+        try {
+          const { error: emailErr } = await supabaseClient.functions.invoke(
+            "send-bot-access-email",
+            { body: { email: signupEmail, password: accessPassword, tier } },
+          );
+          if (emailErr) logStep("send-bot-access-email error", { error: emailErr.message });
+          else logStep("Welcome email enqueued", { signupEmail });
+        } catch (e) {
+          logStep("send-bot-access-email threw", { error: String(e) });
+        }
+
+        // Notify admin on Telegram
+        const tierLabel =
+          tier === "kennel_club" ? "🏆 Kennel Club ($99/mo)" :
+          tier === "top_dog" ? "🐕 Top Dog ($29.99/mo)" : "🐶 The Pup (free)";
+        await notifyAdmin(`🆕 *New signup*\n\nTier: ${tierLabel}\nEmail: \`${signupEmail}\`${accessPassword ? `\nAccess code: \`${accessPassword}\`` : ""}\n\nWelcome email sent — they should redeem with \`/start <code>\` in @parlayiqbot.`);
+      } else {
+        logStep("checkout.session.completed had no signup tier metadata", { tier, hasEmail: !!signupEmail });
+      }
     } else if (event.type === "customer.subscription.updated") {
       const subscription = event.data.object as Stripe.Subscription;
       logStep("Subscription updated", { 
