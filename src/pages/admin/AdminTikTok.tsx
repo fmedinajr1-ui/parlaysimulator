@@ -94,6 +94,15 @@ export default function AdminTikTok() {
     if (error) toast.error(error.message);
     else { toast.success(`Render started — step: ${data?.step || "queued"}`); loadAll(); }
   }
+  async function renderNextApproved() {
+    toast.loading("Picking next approved script...", { id: "render-next" });
+    const { data, error } = await supabase.functions.invoke("tiktok-render-orchestrator", { body: {} });
+    toast.dismiss("render-next");
+    if (error) return toast.error(error.message);
+    if (data?.message?.includes("No approved")) return toast.info("No approved scripts in queue.");
+    toast.success(`Render started — ${data?.script_id?.slice(0, 8) ?? "?"} (${data?.step || "queued"})`);
+    loadAll();
+  }
   async function redispatchAwaiting() {
     setRedispatching(true);
     try {
@@ -137,6 +146,10 @@ export default function AdminTikTok() {
           <Button onClick={runGenerator} disabled={generating}>
             {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
             Generate Scripts
+          </Button>
+          <Button variant="secondary" onClick={renderNextApproved}>
+            <Film className="w-4 h-4 mr-2" />
+            Render Next Approved
           </Button>
         </div>
       </div>
