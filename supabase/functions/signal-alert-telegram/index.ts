@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { formatPlayerReasoningLines, verdictBadge, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
+import { buildCascadeSim, formatCascadeSimLines } from '../_shared/cascade-sim.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
