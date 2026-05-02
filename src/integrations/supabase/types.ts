@@ -1101,7 +1101,10 @@ export type Database = {
           is_active: boolean
           max_uses: number | null
           password: string
+          redeemed_at: string | null
+          redeemed_chat_id: string | null
           retrieved: boolean
+          tier: string | null
           times_used: number
         }
         Insert: {
@@ -1112,7 +1115,10 @@ export type Database = {
           is_active?: boolean
           max_uses?: number | null
           password: string
+          redeemed_at?: string | null
+          redeemed_chat_id?: string | null
           retrieved?: boolean
+          tier?: string | null
           times_used?: number
         }
         Update: {
@@ -1123,7 +1129,10 @@ export type Database = {
           is_active?: boolean
           max_uses?: number | null
           password?: string
+          redeemed_at?: string | null
+          redeemed_chat_id?: string | null
           retrieved?: boolean
+          tier?: string | null
           times_used?: number
         }
         Relationships: []
@@ -1288,8 +1297,10 @@ export type Database = {
           bankroll: number | null
           bankroll_confirmed_date: string | null
           chat_id: string
+          email: string | null
           id: string
           is_active: boolean
+          tier: string | null
           username: string | null
         }
         Insert: {
@@ -1298,8 +1309,10 @@ export type Database = {
           bankroll?: number | null
           bankroll_confirmed_date?: string | null
           chat_id: string
+          email?: string | null
           id?: string
           is_active?: boolean
+          tier?: string | null
           username?: string | null
         }
         Update: {
@@ -1308,8 +1321,10 @@ export type Database = {
           bankroll?: number | null
           bankroll_confirmed_date?: string | null
           chat_id?: string
+          email?: string | null
           id?: string
           is_active?: boolean
+          tier?: string | null
           username?: string | null
         }
         Relationships: []
