@@ -77,10 +77,20 @@ Deno.serve(async (req) => {
       .order('analysis_date', { ascending: true })
       .limit(500);
 
+    // === PART 2c: Settle Pitcher Strikeout OVER picks ===
+    const { data: unsettledPitK } = await supabase
+      .from('category_sweet_spots')
+      .select('id, player_name, prop_type, recommended_side, recommended_line, analysis_date, confidence_score')
+      .eq('category', 'MLB_PITCHER_K_OVER')
+      .is('outcome', null)
+      .order('analysis_date', { ascending: true })
+      .limit(500);
+
     const allUnsettled = [
       ...(unsettledSB || []).map(a => ({ ...a, _type: 'sb' as const })),
       ...(unsettledHR || []).map(a => ({ ...a, _type: 'hr' as const })),
       ...(unsettledNoHR || []).map(a => ({ ...a, _type: 'no_hr_team' as const })),
+      ...(unsettledPitK || []).map(a => ({ ...a, _type: 'pitcher_k' as const })),
     ];
 
     if (allUnsettled.length === 0) {
@@ -106,7 +116,7 @@ Deno.serve(async (req) => {
     const playerNames = [...new Set(allUnsettled.map(a => a.player_name))];
     const { data: gameLogs, error: logErr } = await supabase
       .from('mlb_player_game_logs')
-      .select('player_name, team, game_date, stolen_bases, home_runs')
+      .select('player_name, team, game_date, stolen_bases, home_runs, pitcher_strikeouts, innings_pitched')
       .gte('game_date', startStr)
       .limit(5000);
 
@@ -129,6 +139,15 @@ Deno.serve(async (req) => {
         sb: gl.stolen_bases ?? 0,
         hr: gl.home_runs ?? 0,
       });
+    }
+
+    // Build pitcher K lookup: normalized name → { date → pitcher_K }
+    const pitcherKMap = new Map<string, Map<string, number>>();
+    for (const gl of gameLogs) {
+      if (Number((gl as any).innings_pitched ?? 0) <= 0) continue;
+      const key = normalizeName(gl.player_name);
+      if (!pitcherKMap.has(key)) pitcherKMap.set(key, new Map());
+      pitcherKMap.get(key)!.set(gl.game_date, Number((gl as any).pitcher_strikeouts ?? 0));
     }
 
     // Build team-level HR map for No HR settlement: team -> date -> total_team_hr
@@ -257,6 +276,42 @@ Deno.serve(async (req) => {
     log(`HR: ${hrSettled} settled (${hrCorrect}W/${hrIncorrect}L = ${hrWinRate}%)`);
     log(`NoHR-Team: ${noHRSettled} settled (${noHRCorrect}W/${noHRIncorrect}L = ${noHRWinRate}%)`);
 
+    // Settle Pitcher K Over picks
+    let pitKSettled = 0, pitKCorrect = 0, pitKIncorrect = 0;
+    for (const pick of (unsettledPitK || [])) {
+      const pickDate = pick.analysis_date;
+      const normPick = normalizeName(pick.player_name);
+      let pitcherDates = pitcherKMap.get(normPick);
+      if (!pitcherDates) {
+        for (const [k, dates] of pitcherKMap.entries()) {
+          if (namesMatch(pick.player_name, k)) { pitcherDates = dates; break; }
+        }
+      }
+      if (!pitcherDates) continue;
+      const nextDay = new Date(pickDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDayStr = nextDay.toISOString().split('T')[0];
+      const k = pitcherDates.get(pickDate) ?? pitcherDates.get(nextDayStr);
+      if (k === undefined) continue;
+      const line = pick.recommended_line ?? 0;
+      const wasCorrect = k > line;
+      if (wasCorrect) pitKCorrect++; else pitKIncorrect++;
+      await supabase.from('category_sweet_spots').update({
+        actual_value: k,
+        outcome: wasCorrect ? 'hit' : 'miss',
+        settled_at: new Date().toISOString(),
+      }).eq('id', pick.id);
+      // Mirror to mlb_pitcher_k_analysis if present
+      await supabase.from('mlb_pitcher_k_analysis').update({
+        actual_k: k,
+        outcome: wasCorrect ? 'win' : 'loss',
+        settled_at: new Date().toISOString(),
+      }).eq('pitcher_name', pick.player_name).eq('game_date', pickDate);
+      pitKSettled++;
+    }
+    const pitKWinRate = pitKSettled > 0 ? ((pitKCorrect / pitKSettled) * 100).toFixed(1) : 'N/A';
+    log(`Pitcher-K: ${pitKSettled} settled (${pitKCorrect}W/${pitKIncorrect}L = ${pitKWinRate}%)`);
+
     // === PART 3: Historical performance report ===
     // Get all-time stats for Over SB and Over HR
     const { data: allSB } = await supabase
@@ -288,7 +343,7 @@ Deno.serve(async (req) => {
     }
 
     // Send Telegram report
-    const totalSettledAll = totalSettled + noHRSettled;
+    const totalSettledAll = totalSettled + noHRSettled + pitKSettled;
     if (totalSettledAll > 0) {
       const sbTotal = totalSBW + totalSBL;
       const hrTotal = totalHRW + totalHRL;
@@ -307,6 +362,7 @@ Deno.serve(async (req) => {
         sbSettled > 0 ? `🏃 SB: ${sbCorrect}W/${sbIncorrect}L (${sbWinRate}%)` : null,
         hrSettled > 0 ? `💥 HR: ${hrCorrect}W/${hrIncorrect}L (${hrWinRate}%)` : null,
         noHRSettled > 0 ? `🚫 No HR (Team): ${noHRCorrect}W/${noHRIncorrect}L (${noHRWinRate}%)` : null,
+        pitKSettled > 0 ? `⚾ Pitcher K Over: ${pitKCorrect}W/${pitKIncorrect}L (${pitKWinRate}%)` : null,
         ``,
         `*All-Time Performance:*`,
         sbTotal > 0 ? `🏃 Over SB: ${totalSBW}/${sbTotal} (${sbAllTimeRate}%)` : null,
