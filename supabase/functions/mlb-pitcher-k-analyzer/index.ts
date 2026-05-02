@@ -149,6 +149,18 @@ Deno.serve(async (req) => {
       return t.k / t.ab;
     }
 
+    // Normalize pitcher names for robust matching across data sources.
+    function normName(n: string): string {
+      return (n || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\bjr\.?\b|\bsr\.?\b|\bii+\b/g, "")
+        .replace(/[^a-z\s]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
     // Pre-fetch posted K lines for today
     const { data: lines } = await supabase
       .from("unified_props")
@@ -158,7 +170,7 @@ Deno.serve(async (req) => {
       .eq("is_active", true);
     const lineMap = new Map<string, number>();
     for (const l of (lines || [])) {
-      const k = (l.player_name || "").trim().toLowerCase();
+      const k = normName(l.player_name || "");
       if (k && l.current_line != null) lineMap.set(k, Number(l.current_line));
     }
     log(`Loaded ${lineMap.size} pitcher K lines from unified_props`);
@@ -182,8 +194,9 @@ Deno.serve(async (req) => {
                 // Outcomes look like: { name: 'Over', description: 'Spencer Strider', point: 7.5, price: -115 }
                 if (oc.name !== "Over") continue;
                 const name = (oc.description || "").trim().toLowerCase();
-                if (name && oc.point != null && !lineMap.has(name)) {
-                  lineMap.set(name, Number(oc.point));
+                const nname = normName(oc.description || "");
+                if (nname && oc.point != null && !lineMap.has(nname)) {
+                  lineMap.set(nname, Number(oc.point));
                   fetched++;
                 }
               }
@@ -222,7 +235,7 @@ Deno.serve(async (req) => {
         if (!stats) continue;
 
         const oppKRate = teamKRateValue(side.opp);
-        const line = lineMap.get(pitcherName.toLowerCase()) ?? null;
+        const line = lineMap.get(normName(pitcherName)) ?? null;
 
         const result = modelPitcherKOver({
           pitcherName,
