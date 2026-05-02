@@ -1,89 +1,47 @@
-## Plan: Fully autonomous TikTok daily generation (1 account, 2 posts/day)
+## Plan: Wire up `the_analyst` pilot account
 
-### Goal
-Pick **one** persona (recommend `the_analyst`), wire it end-to-end so 2 videos/day generate, render, and post to TikTok via Blotato — zero manual touches. Prove the loop works, then clone to other accounts.
+### IDs to plug in
 
----
-
-### Phase 1 — Pick & configure the pilot account
-
-You need to provide 4 IDs for `the_analyst` (or whichever persona you pick). I'll update the `tiktok_accounts` row with:
-
-| Field | Where to get it |
+| Field | Value |
 |---|---|
-| `tiktok_handle` | Your TikTok @ handle |
-| `blotato_account_id` | Blotato dashboard → Accounts → copy ID |
-| `heygen_avatar_id` | HeyGen → Avatars → pick one, copy ID |
-| `elevenlabs_voice_id` | (optional — defaults to George if blank) |
+| `tiktok_handle` | `@crackdatjackpot` |
+| `blotato_account_id` | `blt_rkJh4iWrVQYtx/1QKoScBgg/v+7IAgKQvhCenv10p2Q=` |
+| `heygen_avatar_id` | `1734725590` (extracted from the URL you pasted) |
+| `elevenlabs_voice_id` | `xpnPINZfvvstD607nURI` |
 
-Then flip `posting_active=true`, `auto_post_enabled=true` for that one row. The other 2 stay disabled.
+### ⚠️ Confirm before I run
+**HeyGen avatar ID**: You pasted `https://app.heygen.com/avatars/looks/public?avatarId=1734725590`. I'll use `1734725590` as the avatar ID. If HeyGen's API actually expects a different format (e.g. a UUID or `avatar_id` from API list), the renders will fail and we'll catch it on first run.
 
----
+### Steps
 
-### Phase 2 — Add auto-approval to script generator
+1. **Update DB row** for `the_analyst`:
+   ```sql
+   UPDATE tiktok_accounts SET
+     tiktok_handle = '@crackdatjackpot',
+     blotato_account_id = 'blt_rkJh4iWrVQYtx/1QKoScBgg/v+7IAgKQvhCenv10p2Q=',
+     heygen_avatar_id = '1734725590',
+     elevenlabs_voice_id = 'xpnPINZfvvstD607nURI',
+     posting_active = true,
+     auto_post_enabled = true,
+     status = 'active'
+   WHERE persona_key = 'the_analyst';
+   ```
+   Other 2 personas stay disabled.
 
-Modify `tiktok-script-generator/index.ts`:
-- Add `auto_approve` body param (default `false` for backward compat)
-- When `auto_approve=true` AND safety lint passes (`compliance >= 75`): set `status='approved'` directly instead of `'draft'`
-- Log auto-approval event to `tiktok_pipeline_logs`
+2. **Verify required secrets** exist (BLOTATO_API_KEY, HEYGEN_API_KEY, ELEVENLABS_API_KEY, PEXELS_API_KEY, REMOTION_WORKER_SECRET). Flag any missing.
 
-This keeps the manual flow intact for other personas; only the cron will pass `auto_approve=true`.
+3. **Verify cron jobs are live**: query `cron.job` to confirm `tiktok-daily-generator-the-analyst` (8am/4pm ET) and `tiktok-render-pickup-every-10min` are scheduled.
 
----
+4. **Smoke test (manual fire)**: trigger `tiktok-script-generator` once with `{persona_key:"the_analyst", auto_approve:true}` to:
+   - confirm a script lands with `status='approved'` and `compliance_score >= 75`
+   - watch the next 10-min cron pick it up → render orchestrator → ElevenLabs → HeyGen → Pexels → worker → callback → Blotato post
+   - tail edge function logs at each step
 
-### Phase 3 — Two new cron jobs
+5. **Report back**: tiktok URL of the first auto-posted video, total pipeline cost, any failures with the specific step that broke.
 
-**Cron A: Daily generator** — runs twice daily at 8am & 4pm ET (12:00 & 20:00 UTC)
-```
-0 12,20 * * * → POST tiktok-script-generator
-  body: { persona_key: "the_analyst", auto_approve: true, count: 1 }
-```
+### If anything fails
+- HeyGen 4xx on avatar → ask you to grab the avatar ID from HeyGen's API listing instead of the public URL
+- Blotato 4xx on accountId → re-check the format (the `=` and `/` chars look base64; should be safe but worth confirming Blotato accepts it raw)
+- Worker render timeout → check `worker/` deployment is live and `REMOTION_WORKER_SECRET` matches
 
-**Cron B: Render pickup** — runs every 10 min, processes approved scripts
-```
-*/10 * * * * → POST tiktok-render-orchestrator (no body = pick next approved)
-```
-
-The existing `tiktok-blotato-cron-every-minute` already handles the final post step.
-
----
-
-### Phase 4 — Safety guardrails
-
-- **Daily cap**: render orchestrator checks `tiktok_posts` count for the persona today. If ≥2, skip with `daily_cap_hit` log entry.
-- **Failure alerts**: if any pipeline step errors, send admin Telegram notification (uses existing `bot-send-telegram`).
-- **Account self-pause**: if 3 consecutive renders fail for a persona, auto-flip `auto_post_enabled=false` and Telegram alert.
-
----
-
-### Phase 5 — Admin UI surface
-
-Add a small status panel in the existing TikTok admin Publish tab showing:
-- Today's generation status per persona (Generated / Rendering / Posted / Failed)
-- Next scheduled run time
-- Quick toggle: "Pause daily auto-gen" per account
-
----
-
-### Pipeline flow (after build)
-
-```text
-8am ET cron        → script-generator (auto_approve)
-                       ↓
-                     status='approved' in tiktok_video_scripts
-                       ↓
-every 10min cron   → render-orchestrator → ElevenLabs → HeyGen → Pexels → Worker
-                       ↓
-worker callback    → render-callback → enqueue in tiktok_post_queue
-                       ↓
-every 1min cron    → blotato-cron → posts to TikTok
-                       ↓
-every 6h cron      → metrics-sync → pulls views/likes back
-```
-
----
-
-### What I need from you to start
-**Just one thing**: which persona to pilot (`the_analyst` / `the_edge` / 3rd one) and the 3 IDs for it. You can drop them now or after I deploy the infrastructure.
-
-If you want to test the loop without real posting first, I can also add a **`dry_run=true` flag** that skips the actual Blotato upload and logs what would have been posted. Say the word.
+Approve and I'll execute steps 1–5 in order.
