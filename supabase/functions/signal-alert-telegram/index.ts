@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { formatPlayerReasoningLines, verdictBadge, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
+import { buildCascadeSim, formatCascadeSimLines } from '../_shared/cascade-sim.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -122,6 +123,20 @@ function formatAlert(a: Alert): string {
     }
     out.push(action);
     out.push('');
+
+    // ─── Bankroll simulation panel ($100 default) ───
+    // Display aid only — translates the verdict mix into TAIL full / TAIL small / FADE $ outcomes.
+    try {
+      const simLegs = players.map((p) => ({ verdict: p?.engine_reasoning?.verdict ?? null }));
+      const sim = buildCascadeSim(counts, simLegs, 100);
+      if (sim) {
+        const simLines = formatCascadeSimLines(sim, players.length || total);
+        for (const ln of simLines) out.push(ln);
+        out.push('');
+      }
+    } catch (_e) {
+      // Non-fatal — skip sim block on any error.
+    }
 
     out.push(`🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  ${sideEmoji(side)} avg conf ${Math.round(conf)}%`);
     out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
