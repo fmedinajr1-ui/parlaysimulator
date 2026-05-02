@@ -260,10 +260,6 @@ Deno.serve(async (req) => {
           log(`event-odds err for ${g.id}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      // Hard-cap to the standard 0.5 main line; alt lines above 0.5 get dropped to 0.5
-      for (const [k, v] of lineMap.entries()) {
-        if (v > 0.5) lineMap.set(k, 0.5);
-      }
       log(`Fallback added ${fetched} RBI lines`);
     }
 
