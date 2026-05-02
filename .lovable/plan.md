@@ -1,81 +1,69 @@
-# RBI Unders rebuild — 4-variant bake-off + settlement tracking
+## Why a new subscriber couldn't access Telegram
 
-## Why this plan
+After tracing every step of the signup → Telegram pipeline, three concrete bugs are blocking new subscribers:
 
-- `mlb_rbi_under_analysis` last wrote on **2026-04-11**; no edge function in repo writes to it (analyzer was deleted).
-- No `0.6 / L3` threshold exists in DB or code — your memory of it can't be confirmed, so we'll **test all four candidate gates side-by-side** and let real settled results decide the winner.
-- `mlb_engine_picks` has no `result` column — we can't grade history. Adding one now so the next bake-off is data-driven.
+1. **Pup tier (free) creates no account.** `create-free-signup` opens a Stripe `setup` checkout but never:
+   - creates a Supabase auth user / `profiles` row,
+   - generates a `bot_access_passwords` entry (Stripe metadata has no `password_id`),
+   - inserts a row in `email_subscribers`.
+   
+   So when the user hits `/bot-success`, `retrieve-bot-password` throws "No password associated with this session." And later when they try `/link <email>` in Telegram, the scanner doesn't find a profile → "I couldn't find an account."
 
-## What I'll build
+2. **No `/start <password>` handler exists in the bot.** `BotSuccess.tsx` instructs users: "Send `/start <password>` to @parlayiqbot." `telegram-prop-scanner` only treats `/start` as a help alias and ignores the argument. There is no code anywhere that reads `bot_access_passwords`, marks the chat as `authorized_by='password'`, and inserts into `bot_authorized_users`. (Existing rows with `authorized_by='password'` came from a previous handler that has since been deleted.)
 
-### 1. Schema changes (migration)
-- `mlb_rbi_under_analysis`: add `variant text`, `line numeric`, `p_under numeric`, `edge numeric`, `expected_rbi numeric`, `l3_rbis numeric`, `l3_rbis_per_pa numeric`, `reason text`, `result text` (`WIN|LOSS|VOID|PENDING`), `actual_rbis integer`, `settled_at timestamptz`. Index `(analysis_date, variant, tier)`.
-- `mlb_engine_picks`: add `result text` default `'PENDING'`, `actual_value numeric`, `settled_at timestamptz`. Index `(prop_type, side, result)`.
+3. **No welcome / greeting message is sent on signup completion.** The Stripe webhook only handles `checkout.session.completed` for scan-credit top-ups — it never fires `send-bot-access-email`, never DMs the new user on Telegram, and never notifies the admin. So a new subscriber pays, sees the password page, tries the bot, gets nothing back.
 
-### 2. Shared model — `_shared/mlb-rbi-under-model.ts`
-Core Poisson scorer used by all variants:
-- `expected_RBI = batter_RBI_per_PA_blended * expected_PA * pitcher_quality_mult * park_RBI_mult * lineup_spot_mult`
-- `pUnder = poissonCDF(floor(line), expected_RBI)`
-- Universal hard blocks: Coors Field, batter L10 RBI/PA > 0.18 AND lineup spot 3–5.
+## What we'll change
 
-### 3. Four variants (run in parallel each scan)
-| Variant | L3 gate | Other gates |
-|---|---|---|
-| **A** | L3 RBI/PA ≤ 0.06 | pUnder ≥ 0.66, edge ≥ 5% |
-| **B** | L3 total RBIs ≤ 0.6 | pUnder ≥ 0.66, edge ≥ 5% |
-| **C** | none (Bayesian only) | pUnder ≥ 0.68, edge ≥ 5% |
-| **D** | L3 RBIs ≤ 1 AND pUnder ≥ 0.68 | edge ≥ 5% |
+### A. Pup signup creates a real account + password (server side)
+Edit `create-free-signup`:
+- Generate a one-time access password and insert into `bot_access_passwords` (same shape `create-bot-checkout` uses).
+- Create the Supabase auth user (`admin.createUser` with `email_confirm: true`, random secure password) so `/link <email>` resolves a profile. Upsert into `profiles` if a trigger doesn't already do it.
+- Upsert `email_subscribers` with `source='pup_signup'`, `is_subscribed=true`.
+- Pass `password_id`, `tier=pup`, and `email` in Stripe session metadata so `BotSuccess` and the webhook both work.
 
-Each candidate batter is scored once, then tagged with **every variant it passes**. One row per (player, variant) so a single hitter can appear under A, B, and D simultaneously and we get clean per-variant accuracy.
+### B. Add the missing `/start <password>` handler in `telegram-prop-scanner`
+In the existing command router:
+- If text matches `/start <8-12 char token>`, look it up in `bot_access_passwords`. If valid and not yet bound to another chat:
+  - Insert/upsert `bot_authorized_users` row with `chat_id`, `username`, `authorized_by='password'`, `is_active=true`.
+  - Mark the password as `redeemed_chat_id=<chat_id>` (new column or reuse `retrieved`).
+  - If we know the email from the originating Stripe session, also upsert `email_subscribers.telegram_chat_id` so all downstream broadcasts find them.
+  - Send the **greeting message** (welcome + how to use `/parlay`, `/scan`, `/book`).
+- If invalid: friendly error explaining how to get a password.
+- Keep `/start` (no arg) and `/help` as today.
 
-Tiers within each variant:
-- **S**: pUnder ≥ 0.74 AND edge ≥ 8%
-- **A**: meets variant min only
+### C. Stripe webhook fires welcome email + admin notify on every signup
+Extend `stripe-webhook`'s `checkout.session.completed` branch:
+- Read `session.metadata.tier` and `session.metadata.email`.
+- For `tier in ('pup','top_dog','kennel_club')`:
+  - Invoke `send-bot-access-email` with the customer's email (greeting + bot link + reminder to send `/start <password>`).
+  - Send an admin Telegram notification ("🆕 New signup: …").
+- This guarantees a greeting goes out the moment Stripe confirms the session, regardless of whether the user opened the success page.
 
-### 4. New edge function — `mlb-rbi-under-analyzer/index.ts`
-- Pulls today's lineups + probable pitchers from existing MLB ingestion tables.
-- Pulls `batter_rbis` Under lines from `unified_props`; falls back to The Odds API `event-odds` (same pattern as `mlb-pitcher-k-analyzer`).
-- Computes L3 stats from `mlb_player_game_logs`.
-- Name-normalize (NFD + suffix strip).
-- Inserts one row per (player × variant-passed) into `mlb_rbi_under_analysis`.
+### D. `send-bot-access-email` includes the password
+Tweak the email template to include the user's `/start <password>` line with copy-button-friendly formatting, so even users who close the success page can still activate.
 
-### 5. Pick promotion (only winning variants until proven)
-- Initially feed `parlay-engine-v2` candidates from **variant C only** (cleanest statistically) so we don't flood broadcasts during the bake-off.
-- A/B/D rows still get scored + persisted + settled — they're shadow-tracked for accuracy comparison without going to Telegram.
-- After ~7 days I can switch promotion to whichever variant has the best settled win-rate.
+### E. Verify Resend sender setup before relying on it
+`send-bot-access-email` is currently hard-coded to `from: ParlayIQ <onboarding@resend.dev>`. That sandbox sender only delivers to the Resend account owner's verified email — which is almost certainly why the new subscriber never received anything. We will:
+- Check that `RESEND_API_KEY` is configured.
+- Switch the `from` address to a verified custom domain (e.g. `noreply@parlayfarm.com`) **only if** that domain is verified in Resend; otherwise leave a clear admin-only Telegram warning so it's obvious why emails aren't going out.
 
-### 6. Settlement
-- Extend `mlb-over-tracker` to grade both:
-  - `mlb_rbi_under_analysis` rows → `result`, `actual_rbis`, `settled_at`.
-  - `mlb_engine_picks` rows where `prop_type='batter_rbis'` → `result`, `actual_value`, `settled_at`.
-- Under wins when actual RBIs ≤ floor(line); VOID on DNP.
+(If the user prefers, we can swap to the built-in Lovable transactional email system instead of Resend — happy to do that as a follow-up.)
 
-### 7. Cron
-- Insert (not migration — contains URL/anon key) a `pg_cron` job: `mlb-rbi-under-analyzer` at **11:05 AM ET** and **3:05 PM ET**.
+## Verification (5 manual tests, per project rule)
 
-### 8. Accuracy view
-- Create view `mlb_rbi_under_variant_accuracy` exposing per-variant: `picks`, `wins`, `losses`, `voids`, `win_rate`, `last_7d_win_rate`. So you (and I) can run one query and see which gate is winning.
+1. **Pup signup, full flow** — sign up with a brand-new email, complete Stripe setup, confirm `/bot-success` shows a password, confirm welcome email arrives, confirm `/start <password>` in `@parlayiqbot` returns the greeting.
+2. **Top-Dog signup** — same flow, end up in `bot_authorized_users` with `is_active=true`.
+3. **Re-use of password** — sending the same `/start <password>` from a second chat is rejected.
+4. **`/link <email>` still works** for users who lose the password but already have a profile.
+5. **Admin notification** — confirm the admin chat receives "🆕 New signup" within seconds of Stripe completion.
 
-### 9. Tests (5, per project rule)
-1. Cold 8-hole batter vs ace pitcher → passes A, C, D.
-2. Hot 4-hole batter vs weak pitcher → universal hard-block.
-3. Coors Field game → universal hard-block.
-4. Borderline pUnder=0.65, edge=4% → kept by none.
-5. Missing `unified_props` line → Odds API fallback returns line, scoring proceeds.
+## Files touched
 
-### 10. Memory
-- Update `mem://logic/betting/mlb-rbi-system` to document the 4-variant bake-off, settlement, and "promote variant C first" decision.
-- Refresh `mem://index.md` line.
+- `supabase/functions/create-free-signup/index.ts` (account + password + metadata)
+- `supabase/functions/telegram-prop-scanner/index.ts` (add `/start <password>` handler + greeting)
+- `supabase/functions/stripe-webhook/index.ts` (fire welcome email + admin notify on signup)
+- `supabase/functions/send-bot-access-email/index.ts` (include password, sender domain check)
+- Migration: optional `redeemed_chat_id` column on `bot_access_passwords`.
 
-## Files
-- new: `supabase/functions/_shared/mlb-rbi-under-model.ts` + `_test.ts`
-- new: `supabase/functions/mlb-rbi-under-analyzer/index.ts`
-- edit: `supabase/functions/mlb-over-tracker/index.ts`
-- edit: `supabase/functions/parlay-engine-v2/index.ts` (variant C promotion)
-- new migration: schema columns + accuracy view
-- insert (separate): cron schedule
-- edit: `mem/logic/betting/mlb-rbi-system.md`, `mem/index.md`
-
-Out of scope: RBI Overs (still suppressed), HRB analyzers (untouched).
-
-Approve and I'll build.
+No schema breaking changes; everything is additive.

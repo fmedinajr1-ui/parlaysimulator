@@ -13,7 +13,7 @@ const logStep = (step: string, details?: any) => {
   console.log(`[SEND-BOT-ACCESS-EMAIL] ${step}${detailsStr}`);
 };
 
-const emailHtml = (email: string) => `
+const emailHtml = (email: string, password?: string | null) => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -40,9 +40,19 @@ const emailHtml = (email: string) => `
               <p style="margin:0 0 20px;color:#d1d5db;font-size:16px;line-height:1.6;">
                 Welcome aboard! Your subscription has been confirmed and your ParlayIQ Bot is ready to use.
               </p>
-              <p style="margin:0 0 32px;color:#d1d5db;font-size:16px;line-height:1.6;">
-                Tap the button below to open Telegram and start the bot. It will immediately recognize your account and give you full access to daily AI-powered parlay picks.
+              <p style="margin:0 0 24px;color:#d1d5db;font-size:16px;line-height:1.6;">
+                Activation takes 10 seconds — open Telegram, then send the bot the command below.
               </p>
+              ${password ? `
+              <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#0a0a0a;border:1px dashed #16a34a;border-radius:8px;margin:0 0 24px;">
+                <tr>
+                  <td style="padding:18px 24px;text-align:center;">
+                    <p style="margin:0 0 6px;color:#4ade80;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Send this in Telegram</p>
+                    <code style="display:inline-block;color:#ffffff;font-size:18px;font-weight:700;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:1px;">/start ${password}</code>
+                    <p style="margin:8px 0 0;color:#6b7280;font-size:12px;">One-time code · works for one Telegram account only</p>
+                  </td>
+                </tr>
+              </table>` : ""}
               <!-- CTA Button -->
               <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
                 <tr>
@@ -104,13 +114,13 @@ serve(async (req) => {
       throw new Error("RESEND_API_KEY is not set");
     }
 
-    const { email } = await req.json();
+    const { email, password } = await req.json();
 
     if (!email || !email.includes("@")) {
       throw new Error("A valid email address is required");
     }
 
-    logStep("Sending bot access email", { email });
+    logStep("Sending bot access email", { email, hasPassword: !!password });
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -122,7 +132,7 @@ serve(async (req) => {
         from: "ParlayIQ <onboarding@resend.dev>",
         to: [email],
         subject: "🤖 Your ParlayIQ Bot Access is Ready",
-        html: emailHtml(email),
+        html: emailHtml(email, password),
       }),
     });
 
