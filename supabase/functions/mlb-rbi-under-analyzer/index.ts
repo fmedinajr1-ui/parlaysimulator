@@ -245,8 +245,12 @@ Deno.serve(async (req) => {
               for (const oc of (mk.outcomes || [])) {
                 if (oc.name !== "Under") continue;
                 const nname = normName(oc.description || "");
-                if (nname && oc.point != null && !lineMap.has(nname)) {
-                  lineMap.set(nname, Number(oc.point));
+                if (!nname || oc.point == null) continue;
+                const pt = Number(oc.point);
+                // Only keep the lowest (main) line per player; ignore alt lines (1.5/2.5)
+                const cur = lineMap.get(nname);
+                if (cur == null || pt < cur) {
+                  lineMap.set(nname, pt);
                   fetched++;
                 }
               }
@@ -255,6 +259,10 @@ Deno.serve(async (req) => {
         } catch (e) {
           log(`event-odds err for ${g.id}: ${e instanceof Error ? e.message : String(e)}`);
         }
+      }
+      // Hard-cap to the standard 0.5 main line; alt lines above 0.5 get dropped to 0.5
+      for (const [k, v] of lineMap.entries()) {
+        if (v > 0.5) lineMap.set(k, 0.5);
       }
       log(`Fallback added ${fetched} RBI lines`);
     }
