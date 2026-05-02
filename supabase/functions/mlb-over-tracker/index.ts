@@ -86,11 +86,30 @@ Deno.serve(async (req) => {
       .order('analysis_date', { ascending: true })
       .limit(500);
 
+    // === PART 2d: Settle Batter RBI UNDER picks (sweet spots + variant rows) ===
+    const { data: unsettledRbiSS } = await supabase
+      .from('category_sweet_spots')
+      .select('id, player_name, prop_type, recommended_side, recommended_line, analysis_date, confidence_score')
+      .eq('category', 'MLB_BATTER_RBI_UNDER')
+      .is('outcome', null)
+      .order('analysis_date', { ascending: true })
+      .limit(500);
+
+    const { data: unsettledRbiVariants } = await supabase
+      .from('mlb_rbi_under_analysis')
+      .select('id, player_name, line, analysis_date, variant')
+      .eq('result', 'PENDING')
+      .not('variant', 'is', null)
+      .order('analysis_date', { ascending: true })
+      .limit(2000);
+
     const allUnsettled = [
       ...(unsettledSB || []).map(a => ({ ...a, _type: 'sb' as const })),
       ...(unsettledHR || []).map(a => ({ ...a, _type: 'hr' as const })),
       ...(unsettledNoHR || []).map(a => ({ ...a, _type: 'no_hr_team' as const })),
       ...(unsettledPitK || []).map(a => ({ ...a, _type: 'pitcher_k' as const })),
+      ...(unsettledRbiSS || []).map(a => ({ ...a, _type: 'rbi_under_ss' as const })),
+      ...(unsettledRbiVariants || []).map(a => ({ ...a, _type: 'rbi_under_var' as const })),
     ];
 
     if (allUnsettled.length === 0) {
