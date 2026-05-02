@@ -437,6 +437,112 @@ async function handleLink(supabase: any, chat_id: number, args: string[], from?:
   );
 }
 
+async function handleStartPassword(
+  supabase: any,
+  chat_id: number,
+  token: string,
+  from?: { username?: string },
+) {
+  const cleaned = (token ?? "").trim();
+  if (!cleaned || cleaned.length < 4 || cleaned.length > 32) {
+    await sendMessage(
+      chat_id,
+      "❌ That doesn't look like a valid access code.\n\nIf you just signed up at parlayfarm.com, copy the access code from the success page and send it like this:\n\n`/start YOUR_CODE`",
+    );
+    return;
+  }
+
+  // Look up the password
+  const { data: pw, error: pwErr } = await supabase
+    .from("bot_access_passwords")
+    .select("id, password, is_active, max_uses, redeemed_chat_id, email, tier")
+    .eq("password", cleaned)
+    .maybeSingle();
+
+  if (pwErr) {
+    await sendMessage(chat_id, `❌ Couldn't validate code right now: ${pwErr.message}`);
+    return;
+  }
+  if (!pw) {
+    await sendMessage(
+      chat_id,
+      "❌ I don't recognize that access code.\n\nMake sure you copied it exactly from your signup success page. Codes are case-sensitive.\n\nNo code? Sign up at parlayfarm.com and you'll get one.",
+    );
+    return;
+  }
+  if (pw.is_active === false) {
+    await sendMessage(chat_id, "❌ That access code has been disabled. Contact support if you think this is a mistake.");
+    return;
+  }
+  if (pw.redeemed_chat_id && pw.redeemed_chat_id !== String(chat_id)) {
+    await sendMessage(
+      chat_id,
+      "❌ That access code has already been redeemed by another Telegram account.\n\nEach code only works for one person. Contact support if you need help.",
+    );
+    return;
+  }
+
+  // Authorize this chat
+  const { error: authErr } = await supabase
+    .from("bot_authorized_users")
+    .upsert(
+      {
+        chat_id: chat_id,
+        username: from?.username ?? null,
+        authorized_by: "password",
+        is_active: true,
+        email: pw.email ?? null,
+        tier: pw.tier ?? null,
+      },
+      { onConflict: "chat_id" },
+    );
+
+  if (authErr) {
+    await sendMessage(chat_id, `❌ Couldn't activate your account: ${authErr.message}`);
+    return;
+  }
+
+  // Mark password as redeemed
+  await supabase
+    .from("bot_access_passwords")
+    .update({
+      redeemed_chat_id: String(chat_id),
+      redeemed_at: new Date().toISOString(),
+      retrieved: true,
+    })
+    .eq("id", pw.id);
+
+  // Link email_subscribers row to this chat (so broadcasts find them)
+  if (pw.email) {
+    try {
+      await supabase
+        .from("email_subscribers")
+        .upsert(
+          {
+            email: pw.email,
+            telegram_chat_id: String(chat_id),
+            telegram_username: from?.username ?? null,
+            source: "bot_activation",
+            is_subscribed: true,
+          },
+          { onConflict: "email" },
+        );
+    } catch (e) {
+      console.warn("[handleStartPassword] email_subscribers upsert warning:", String(e));
+    }
+  }
+
+  const tierLabel = pw.tier === "kennel_club" ? "🏆 Kennel Club"
+    : pw.tier === "top_dog" ? "🐕 Top Dog"
+    : pw.tier === "pup" ? "🐶 The Pup"
+    : "✅ Activated";
+
+  await sendMessage(
+    chat_id,
+    `🎉 *Welcome to Parlayfarm!*\n\n${tierLabel} access is now active${pw.email ? ` for *${pw.email}*` : ""}.\n\n*What you can do right now:*\n• Send a screenshot of any sportsbook prop page — I'll run it through 8 engines and tell you keep / swap / drop.\n• \`/parlay 3\` — auto-build a vetted 3-leg ticket from the daily pool.\n• \`/book fanduel\` (or dk, hardrock, pp, ud) — set your book before scanning.\n• \`/sport nba\` (or mlb, nhl, wnba…) — set the sport.\n• \`/help\` — see everything.\n\nDaily picks will start flowing automatically. Let's eat 🥩`,
+  );
+}
+
 async function handlePhotos(supabase: any, chat_id: number, photoFileIds: string[]) {
   let session;
   try {
