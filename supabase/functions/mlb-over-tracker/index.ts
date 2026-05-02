@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
     const playerNames = [...new Set(allUnsettled.map(a => a.player_name))];
     const { data: gameLogs, error: logErr } = await supabase
       .from('mlb_player_game_logs')
-      .select('player_name, team, game_date, stolen_bases, home_runs, pitcher_strikeouts, innings_pitched')
+      .select('player_name, team, game_date, stolen_bases, home_runs, pitcher_strikeouts, innings_pitched, rbis, at_bats')
       .gte('game_date', startStr)
       .limit(5000);
 
@@ -167,6 +167,19 @@ Deno.serve(async (req) => {
       const key = normalizeName(gl.player_name);
       if (!pitcherKMap.has(key)) pitcherKMap.set(key, new Map());
       pitcherKMap.get(key)!.set(gl.game_date, Number((gl as any).pitcher_strikeouts ?? 0));
+    }
+
+    // Build batter RBI lookup: normalized name → { date → { rbis, played } }
+    const rbiMap = new Map<string, Map<string, { rbis: number; played: boolean }>>();
+    for (const gl of gameLogs) {
+      if (Number((gl as any).innings_pitched ?? 0) > 0) continue; // skip pitcher rows
+      const key = normalizeName(gl.player_name);
+      if (!rbiMap.has(key)) rbiMap.set(key, new Map());
+      const ab = Number((gl as any).at_bats ?? 0);
+      rbiMap.get(key)!.set(gl.game_date, {
+        rbis: Number((gl as any).rbis ?? 0),
+        played: ab > 0,
+      });
     }
 
     // Build team-level HR map for No HR settlement: team -> date -> total_team_hr
