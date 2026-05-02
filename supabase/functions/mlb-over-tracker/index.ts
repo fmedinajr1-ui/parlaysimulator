@@ -344,6 +344,71 @@ Deno.serve(async (req) => {
     const pitKWinRate = pitKSettled > 0 ? ((pitKCorrect / pitKSettled) * 100).toFixed(1) : 'N/A';
     log(`Pitcher-K: ${pitKSettled} settled (${pitKCorrect}W/${pitKIncorrect}L = ${pitKWinRate}%)`);
 
+    // === Settle Batter RBI UNDER picks ===
+    function findRbiOnDates(
+      name: string,
+      pickDate: string,
+    ): { rbis: number; played: boolean } | null {
+      const np = normalizeName(name);
+      let dates = rbiMap.get(np);
+      if (!dates) {
+        for (const [k, d] of rbiMap.entries()) {
+          if (namesMatch(name, k)) { dates = d; break; }
+        }
+      }
+      if (!dates) return null;
+      const next = new Date(pickDate);
+      next.setDate(next.getDate() + 1);
+      const nextStr = next.toISOString().split('T')[0];
+      return dates.get(pickDate) ?? dates.get(nextStr) ?? null;
+    }
+
+    let rbiSSSettled = 0, rbiSSWin = 0, rbiSSLoss = 0, rbiSSVoid = 0;
+    for (const pick of (unsettledRbiSS || [])) {
+      const stat = findRbiOnDates(pick.player_name, pick.analysis_date);
+      if (!stat) continue;
+      const line = pick.recommended_line ?? 0.5;
+      let outcome: 'hit' | 'miss' | 'void';
+      if (!stat.played) { outcome = 'void'; rbiSSVoid++; }
+      else if (stat.rbis <= Math.floor(line)) { outcome = 'hit'; rbiSSWin++; }
+      else { outcome = 'miss'; rbiSSLoss++; }
+      await supabase.from('category_sweet_spots').update({
+        actual_value: stat.rbis,
+        outcome,
+        settled_at: new Date().toISOString(),
+      }).eq('id', pick.id);
+      rbiSSSettled++;
+    }
+    const rbiSSRate = (rbiSSWin + rbiSSLoss) > 0
+      ? ((rbiSSWin / (rbiSSWin + rbiSSLoss)) * 100).toFixed(1)
+      : 'N/A';
+    log(`RBI-Under (sweet spots): ${rbiSSSettled} settled (${rbiSSWin}W/${rbiSSLoss}L/${rbiSSVoid}V = ${rbiSSRate}%)`);
+
+    // Variant-tagged rows for the bake-off accuracy view
+    let rbiVarSettled = 0;
+    const rbiVarPerVariant: Record<string, { w: number; l: number; v: number }> = {};
+    for (const row of (unsettledRbiVariants || [])) {
+      const stat = findRbiOnDates(row.player_name, row.analysis_date);
+      if (!stat) continue;
+      const line = row.line ?? 0.5;
+      let result: 'WIN' | 'LOSS' | 'VOID';
+      if (!stat.played) result = 'VOID';
+      else if (stat.rbis <= Math.floor(line)) result = 'WIN';
+      else result = 'LOSS';
+      await supabase.from('mlb_rbi_under_analysis').update({
+        result,
+        actual_rbis: stat.rbis,
+        settled_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      const v = row.variant ?? '?';
+      if (!rbiVarPerVariant[v]) rbiVarPerVariant[v] = { w: 0, l: 0, v: 0 };
+      if (result === 'WIN') rbiVarPerVariant[v].w++;
+      else if (result === 'LOSS') rbiVarPerVariant[v].l++;
+      else rbiVarPerVariant[v].v++;
+      rbiVarSettled++;
+    }
+    log(`RBI-Under (variants): ${rbiVarSettled} settled · ${JSON.stringify(rbiVarPerVariant)}`);
+
     // === PART 3: Historical performance report ===
     // Get all-time stats for Over SB and Over HR
     const { data: allSB } = await supabase
