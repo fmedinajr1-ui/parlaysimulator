@@ -190,7 +190,7 @@ Review at /admin/tiktok`;
 }
 
 // ─── Main pipeline ────────────────────────────────────────────────────────
-async function generateForBrief(template: VideoTemplate, payload: any, persona: TiktokAccount): Promise<{ ok: boolean; script_id?: string; reason?: string }> {
+async function generateForBrief(template: VideoTemplate, payload: any, persona: TiktokAccount, autoApprove = false): Promise<{ ok: boolean; script_id?: string; reason?: string; auto_approved?: boolean }> {
   // 1. Hook
   const fillVars: Record<string, string> = {};
   if (template === "pick_reveal" && payload.pick) fillVars.player = payload.pick.player_name.split(" ").pop();
@@ -246,6 +246,9 @@ async function generateForBrief(template: VideoTemplate, payload: any, persona: 
   if (script.compliance_score < MIN_COMPLIANCE) return { ok: false, reason: `low_compliance_${script.compliance_score}` };
 
   // 5. Persist as draft
+  // If auto_approve flag is on AND lint compliance is high enough, promote
+  // straight to "approved" so the render pickup cron picks it up without manual review.
+  const initialStatus = autoApprove && script.compliance_score >= MIN_COMPLIANCE ? "approved" : "draft";
   const { error } = await sb().from("tiktok_video_scripts").insert({
     id: script.id,
     account_id: script.account_id,
@@ -262,7 +265,8 @@ async function generateForBrief(template: VideoTemplate, payload: any, persona: 
     compliance_score: script.compliance_score,
     lint_transforms: script.lint_transforms,
     lint_warnings: script.lint_warnings,
-    status: "draft",
+    status: initialStatus,
+    reviewed_at: initialStatus === "approved" ? new Date().toISOString() : null,
   });
   if (error) return { ok: false, reason: `db_insert: ${error.message}` };
 
@@ -270,7 +274,7 @@ async function generateForBrief(template: VideoTemplate, payload: any, persona: 
   const msgId = await sendTelegramPreview(script, persona);
   if (msgId) await sb().from("tiktok_video_scripts").update({ telegram_message_id: msgId }).eq("id", script.id);
 
-  return { ok: true, script_id: script.id };
+  return { ok: true, script_id: script.id, auto_approved: initialStatus === "approved" };
 }
 
 // ─── Build today's briefs ─────────────────────────────────────────────────
@@ -323,18 +327,23 @@ Deno.serve(async (req) => {
     if (body.template && body.persona_key && body.payload) {
       const { data: persona } = await sb().from("tiktok_accounts").select("*").eq("persona_key", body.persona_key).maybeSingle();
       if (!persona) return new Response(JSON.stringify({ success: false, error: "persona not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const result = await generateForBrief(body.template, body.payload, persona as TiktokAccount);
+      const result = await generateForBrief(body.template, body.payload, persona as TiktokAccount, body.auto_approve === true);
       return new Response(JSON.stringify({ success: result.ok, ...result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Cron / batch mode
-    const briefs = await buildBriefs();
+    // body.persona_key restricts the run to one persona; body.auto_approve flips lint-passing scripts straight to "approved".
+    const allBriefs = await buildBriefs();
+    const briefs = body.persona_key
+      ? allBriefs.filter((b) => b.persona.persona_key === body.persona_key)
+      : allBriefs;
+    const autoApprove = body.auto_approve === true;
     const results: any[] = [];
     let generated = 0, rejected = 0;
     for (const brief of briefs) {
       let r: any = null;
       for (let attempt = 0; attempt < 2 && (!r || !r.ok); attempt++) {
-        try { r = await generateForBrief(brief.template, brief.payload, brief.persona); }
+        try { r = await generateForBrief(brief.template, brief.payload, brief.persona, autoApprove); }
         catch (e) { r = { ok: false, reason: (e as Error).message }; }
       }
       results.push({ persona: brief.persona.persona_key, template: brief.template, ...r });
@@ -344,14 +353,14 @@ Deno.serve(async (req) => {
     await sb().from("tiktok_pipeline_logs").insert({
       run_type: "script_generation",
       status: rejected === 0 ? "success" : (generated > 0 ? "partial" : "failed"),
-      message: `Generated ${generated} of ${briefs.length} scripts`,
+      message: `Generated ${generated} of ${briefs.length} scripts${autoApprove ? " (auto_approve)" : ""}`,
       metadata: { results },
       duration_ms: Date.now() - startMs,
       scripts_generated: generated,
       scripts_rejected: rejected,
     });
 
-    return new Response(JSON.stringify({ success: true, briefs: briefs.length, generated, rejected, results }), {
+    return new Response(JSON.stringify({ success: true, briefs: briefs.length, generated, rejected, auto_approve: autoApprove, results }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
