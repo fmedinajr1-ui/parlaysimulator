@@ -366,11 +366,19 @@ Deno.serve(async (req) => {
     }
 
     if (rows.length > 0) {
+      // Dedupe: same player can appear via both home- and away-side iterations
+      const seenIns = new Set<string>();
+      const dedupRows = rows.filter((r) => {
+        const key = `${r.player_name}|${r.analysis_date}|${r.variant}`;
+        if (seenIns.has(key)) return false;
+        seenIns.add(key);
+        return true;
+      });
       const { error: insErr } = await supabase
         .from("mlb_rbi_under_analysis")
-        .insert(rows);
-      if (insErr) log(`insert err: ${insErr.message}`);
-      else log(`inserted ${rows.length} variant-tagged rows`);
+        .upsert(dedupRows, { onConflict: "player_name,analysis_date,variant" });
+      if (insErr) log(`upsert err: ${insErr.message}`);
+      else log(`upserted ${dedupRows.length} variant-tagged rows (from ${rows.length} pre-dedupe)`);
     }
 
     // Broadcast top N from variant C
