@@ -12,9 +12,11 @@ export interface TemplateEntry {
 import { template as gradeWelcome } from './grade-welcome.tsx'
 import { template as dailyPickDrop } from './daily-pick-drop.tsx'
 import { template as day7Upgrade } from './day-7-upgrade.tsx'
+import { template as botAccess } from './bot-access.tsx'
 
 export const TEMPLATES: Record<string, TemplateEntry> = {
   'grade-welcome': gradeWelcome,
   'daily-pick-drop': dailyPickDrop,
   'day-7-upgrade': day7Upgrade,
+  'bot-access': botAccess,
 }
