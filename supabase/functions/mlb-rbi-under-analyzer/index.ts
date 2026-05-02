@@ -247,6 +247,8 @@ Deno.serve(async (req) => {
                 const nname = normName(oc.description || "");
                 if (!nname || oc.point == null) continue;
                 const pt = Number(oc.point);
+                // Reject alt lines outright — main RBI line is 0.5 (occasionally 1.5 for elite power bats).
+                if (pt > 1.5) continue;
                 // Only keep the lowest (main) line per player; ignore alt lines (1.5/2.5)
                 const cur = lineMap.get(nname);
                 if (cur == null || pt < cur) {
