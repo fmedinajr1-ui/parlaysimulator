@@ -571,6 +571,13 @@ Deno.serve(async (req) => {
     if (!text) return new Response("ok");
     if (text === "/start" || text === "/help" || text === "/scan") { await handleHelp(chat_id); return new Response("ok"); }
 
+    // /start <password> — redeem a one-time bot access password from signup
+    if (text.startsWith("/start ")) {
+      const token = text.slice("/start ".length).trim().split(/\s+/)[0] ?? "";
+      await handleStartPassword(supabase, chat_id, token, msg.from);
+      return new Response("ok");
+    }
+
     if (text.startsWith("/link")) {
       const parts = text.split(/\s+/).slice(1);
       await handleLink(supabase, chat_id, parts, msg.from);
