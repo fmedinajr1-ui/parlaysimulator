@@ -53,17 +53,19 @@ Deno.test("Test 3: Coors Field is universally hard-blocked", () => {
 });
 
 Deno.test("Test 4: borderline pUnder=0.65 / edge<0.05 kept by none", () => {
-  // tune RBI/PA so expected_RBI lands near 0.43 -> P(K=0|0.43) ≈ 0.65
+  // tune so expected_RBI ≈ 0.6 -> P(RBI<=0|0.6) ≈ 0.55, edge ≈ 0.015
   const r = modelRbiUnder({
     ...base(),
-    rbiPerPaL15: 0.10,
-    rbiPerPaSeason: 0.11,
+    rbiPerPaL15: 0.16,
+    rbiPerPaSeason: 0.16,
     pitcherEra: 4.20,
     parkRbiMult: 1.0,
     lineupSpot: 6,
-    l3Rbis: 1,
+    l3Rbis: 2,
     l3Pa: 12,
+    l10RbiPerPa: 0.14,
   });
+  assert(r.pUnder < 0.66, `pUnder=${r.pUnder} should be borderline`);
   assert(r.variantsPassed.length === 0, `expected zero variants, got ${r.variantsPassed.join(",")} pUnder=${r.pUnder} edge=${r.edge}`);
 });
 
