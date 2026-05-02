@@ -14,3 +14,4 @@ Cascade legs must clear a `0.5*std` band around L10 mean (BENCH/ROLE_PLAYER need
 - [Cascade sim panel](mem://logic/alerts/cascade-sim-panel) — $100 TAIL/FADE bankroll sim appended to cascade Telegram alerts (display aid only)
 - [Pitcher K Over (Ace Edge)](mem://logic/betting/pitcher-k-over-model) — Standalone pitcher strikeouts OVER engine; Bayesian K9 + opp K-rate + IP cap; replaces retired team No-HR model
 - [No HR Team — RETIRED](mem://logic/betting/no-hr-team-model) — RETIRED 2026-05-02 after 0/3; analyzer disabled, replaced by pitcher-k-over-model
+- [RBI Unders bake-off](mem://logic/betting/mlb-rbi-system) — Rebuilt RBI Unders analyzer with 4 parallel L3-gate variants (A/B/C/D); only variant C broadcasts during bake-off; settled via mlb-over-tracker; accuracy view `mlb_rbi_under_variant_accuracy`
