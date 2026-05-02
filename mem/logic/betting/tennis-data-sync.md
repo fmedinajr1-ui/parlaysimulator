@@ -25,3 +25,8 @@ So the cause is visible without DB lookups.
 
 ## Why this matters
 TennisAbstract serves recent-results from `/jsfrags/<Slug>.js`, not the HTML page. Parsing the HTML returns "no scores parsed" for every player. The scraper now hits the JS fragment first.
+
+## Odds API coverage ceiling (2026 season)
+The Odds API only carries top-tier ATP/WTA events. WTA 125Ks, ITFs, and most qualifiers are NOT priced — they appear on PrizePicks but never on `tennis_*` sport keys (sport listed but `events=[]`). Broadening sport-key filters does NOT recover them; the lines simply don't exist on US/EU sportsbooks.
+
+For PrizePicks-only matches, project against TennisAbstract L3 + clay/grass/hard surface baseline and cap verdicts to STRONG only when both players have TA profiles. One-side missing → LEAN cap (already enforced). Insert with `source='prizepicks_seed'` so dashboard can distinguish from `odds_api` runs.
