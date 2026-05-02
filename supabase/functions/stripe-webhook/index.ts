@@ -130,13 +130,20 @@ serve(async (req) => {
         // Send welcome email (non-fatal if it fails)
         try {
           const { error: emailErr } = await supabaseClient.functions.invoke(
-            "send-bot-access-email",
-            { body: { email: signupEmail, password: accessPassword, tier } },
+            "send-transactional-email",
+            {
+              body: {
+                templateName: "bot-access",
+                recipientEmail: signupEmail,
+                idempotencyKey: `bot-access-${session.id}`,
+                templateData: { password: accessPassword, tier },
+              },
+            },
           );
-          if (emailErr) logStep("send-bot-access-email error", { error: emailErr.message });
+          if (emailErr) logStep("send-transactional-email error", { error: emailErr.message });
           else logStep("Welcome email enqueued", { signupEmail });
         } catch (e) {
-          logStep("send-bot-access-email threw", { error: String(e) });
+          logStep("send-transactional-email threw", { error: String(e) });
         }
 
         // Notify admin on Telegram
