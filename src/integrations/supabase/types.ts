@@ -8395,6 +8395,7 @@ export type Database = {
       }
       mlb_engine_picks: {
         Row: {
+          actual_value: number | null
           confidence_score: number | null
           created_at: string
           game_date: string
@@ -8402,10 +8403,13 @@ export type Database = {
           line: number | null
           player_name: string
           prop_type: string
+          result: string | null
+          settled_at: string | null
           side: string
           signal_sources: Json | null
         }
         Insert: {
+          actual_value?: number | null
           confidence_score?: number | null
           created_at?: string
           game_date: string
@@ -8413,10 +8417,13 @@ export type Database = {
           line?: number | null
           player_name: string
           prop_type: string
+          result?: string | null
+          settled_at?: string | null
           side: string
           signal_sources?: Json | null
         }
         Update: {
+          actual_value?: number | null
           confidence_score?: number | null
           created_at?: string
           game_date?: string
@@ -8424,6 +8431,8 @@ export type Database = {
           line?: number | null
           player_name?: string
           prop_type?: string
+          result?: string | null
+          settled_at?: string | null
           side?: string
           signal_sources?: Json | null
         }
@@ -8668,49 +8677,88 @@ export type Database = {
       }
       mlb_rbi_under_analysis: {
         Row: {
+          actual_rbis: number | null
           analysis_date: string
           created_at: string
+          edge: number | null
+          expected_rbi: number | null
           id: string
           l10_hit_rate: number | null
           l10_rbis: number | null
+          l3_rbis: number | null
+          l3_rbis_per_pa: number | null
+          line: number | null
+          lineup_spot: number | null
           opponent: string | null
           opposing_pitcher: string | null
+          p_under: number | null
+          park: string | null
           pitcher_era: number | null
           pitcher_k_rate: number | null
           player_name: string
+          reason: string | null
+          result: string | null
           score: number | null
+          settled_at: string | null
           team: string | null
           tier: string | null
+          variant: string | null
         }
         Insert: {
+          actual_rbis?: number | null
           analysis_date?: string
           created_at?: string
+          edge?: number | null
+          expected_rbi?: number | null
           id?: string
           l10_hit_rate?: number | null
           l10_rbis?: number | null
+          l3_rbis?: number | null
+          l3_rbis_per_pa?: number | null
+          line?: number | null
+          lineup_spot?: number | null
           opponent?: string | null
           opposing_pitcher?: string | null
+          p_under?: number | null
+          park?: string | null
           pitcher_era?: number | null
           pitcher_k_rate?: number | null
           player_name: string
+          reason?: string | null
+          result?: string | null
           score?: number | null
+          settled_at?: string | null
           team?: string | null
           tier?: string | null
+          variant?: string | null
         }
         Update: {
+          actual_rbis?: number | null
           analysis_date?: string
           created_at?: string
+          edge?: number | null
+          expected_rbi?: number | null
           id?: string
           l10_hit_rate?: number | null
           l10_rbis?: number | null
+          l3_rbis?: number | null
+          l3_rbis_per_pa?: number | null
+          line?: number | null
+          lineup_spot?: number | null
           opponent?: string | null
           opposing_pitcher?: string | null
+          p_under?: number | null
+          park?: string | null
           pitcher_era?: number | null
           pitcher_k_rate?: number | null
           player_name?: string
+          reason?: string | null
+          result?: string | null
           score?: number | null
+          settled_at?: string | null
           team?: string | null
           tier?: string | null
+          variant?: string | null
         }
         Relationships: []
       }
@@ -16552,6 +16600,19 @@ export type Database = {
       }
     }
     Views: {
+      mlb_rbi_under_variant_accuracy: {
+        Row: {
+          losses: number | null
+          pending: number | null
+          settled_picks: number | null
+          variant: string | null
+          voids: number | null
+          win_rate_7d_pct: number | null
+          win_rate_pct: number | null
+          wins: number | null
+        }
+        Relationships: []
+      }
       ncaab_team_accuracy_metrics: {
         Row: {
           bet_type: string | null
