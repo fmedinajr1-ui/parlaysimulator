@@ -73,6 +73,39 @@ async function answerCallback(callback_query_id: string, text?: string) {
   await telegramRequest("answerCallbackQuery", { callback_query_id, text: text ?? "" });
 }
 
+// Admin-only: invoke the Remotion render orchestrator and reply with status.
+async function triggerRender(chat_id: number, scriptId: string | null) {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  await sendMessage(chat_id, scriptId ? `🎬 Dispatching render for \`${scriptId}\`...` : "🎬 Picking next approved script...");
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/tiktok-render-orchestrator`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE}` },
+      body: JSON.stringify(scriptId ? { script_id: scriptId } : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.success === false) {
+      await sendMessage(chat_id, `❌ Render failed: ${data?.error ?? data?.message ?? `HTTP ${res.status}`}`);
+      return;
+    }
+    if (data?.message?.includes("No approved")) {
+      await sendMessage(chat_id, "📭 No approved scripts in queue.");
+      return;
+    }
+    const lines = [
+      "✅ *Render started*",
+      data?.script_id ? `Script: \`${data.script_id}\`` : null,
+      data?.render_id ? `Render: \`${data.render_id}\`` : null,
+      data?.step ? `Step: *${data.step}*` : null,
+      data?.worker_job_id ? `Worker job: \`${data.worker_job_id}\`` : null,
+    ].filter(Boolean).join("\n");
+    await sendMessage(chat_id, lines);
+  } catch (e: any) {
+    await sendMessage(chat_id, `❌ Render error: ${e?.message ?? String(e)}`);
+  }
+}
+
 async function downloadTelegramPhoto(file_id: string): Promise<string> {
   const headers = gatewayHeaders();
   const res = await fetch(`${GATEWAY_URL}/getFile`, {
