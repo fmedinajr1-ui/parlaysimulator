@@ -44,6 +44,20 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // RETIRED 2026-05-02 — went 0/3 on 2026-05-01. Replaced by
+  // mlb-pitcher-k-analyzer (single-actor strikeout overs).
+  // We early-return so the cron stays harmless; analyzer code preserved
+  // below for audit / potential rollback.
+  return new Response(
+    JSON.stringify({
+      success: true,
+      disabled: true,
+      reason: "retired_after_0-3_2026-05-01",
+      replacement: "mlb-pitcher-k-analyzer",
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,

@@ -4,6 +4,8 @@ description: Team-level "1st HR Type — No" engine using Poisson p_no_hr from t
 type: feature
 ---
 
+> **STATUS: RETIRED 2026-05-02.** Went 0/3 on broadcast 2026-05-01 (Rangers, Marlins, Blue Jays — all teams homered). Structural problem: 9-batter HR risk dominates park+pitcher signal at the prices "No HR" pays (~-140 to -180). The `mlb-no-hr-team-analyzer` edge function early-returns `{disabled:true}`; data table preserved for audit. Replacement: see `mem://logic/betting/pitcher-k-over-model`.
+
 ## No Home Run (Team) Engine
 
 Models the DraftKings "1st Home Run Type — No" market: bet wins if the chosen team hits 0 HR in the game.
