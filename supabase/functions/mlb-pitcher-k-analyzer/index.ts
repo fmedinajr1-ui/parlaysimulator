@@ -161,7 +161,40 @@ Deno.serve(async (req) => {
       const k = (l.player_name || "").trim().toLowerCase();
       if (k && l.current_line != null) lineMap.set(k, Number(l.current_line));
     }
-    log(`Loaded ${lineMap.size} pitcher K lines`);
+    log(`Loaded ${lineMap.size} pitcher K lines from unified_props`);
+
+    // Fallback: if unified_props is dry, fetch K lines directly from the_odds_api
+    // event-odds endpoint (one call per game, market=pitcher_strikeouts).
+    if (lineMap.size === 0) {
+      log(`unified_props empty — falling back to the_odds_api pitcher_strikeouts market`);
+      let fetched = 0;
+      for (const g of games) {
+        try {
+          const evResp = await fetch(
+            `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${g.id}/odds/?apiKey=${oddsKey}&regions=us&markets=pitcher_strikeouts&oddsFormat=american`,
+          );
+          if (!evResp.ok) continue;
+          const ev = await evResp.json();
+          for (const bk of (ev.bookmakers || [])) {
+            for (const mk of (bk.markets || [])) {
+              if (mk.key !== "pitcher_strikeouts") continue;
+              for (const oc of (mk.outcomes || [])) {
+                // Outcomes look like: { name: 'Over', description: 'Spencer Strider', point: 7.5, price: -115 }
+                if (oc.name !== "Over") continue;
+                const name = (oc.description || "").trim().toLowerCase();
+                if (name && oc.point != null && !lineMap.has(name)) {
+                  lineMap.set(name, Number(oc.point));
+                  fetched++;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          log(`event-odds err for ${g.id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      log(`Fallback added ${fetched} K lines`);
+    }
 
     // Score each game
     const rows: any[] = [];
