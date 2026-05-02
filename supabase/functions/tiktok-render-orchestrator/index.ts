@@ -73,6 +73,31 @@ Deno.serve(async (req) => {
       scriptId = data.id;
     }
 
+    // ── 1b. Daily cap guard (max 2 posts per persona per day, ET) ────────
+    // Counts anything created today regardless of final status: rendering / queued /
+    // posted all count. Prevents runaway loops from spamming a persona.
+    const DAILY_CAP = 2;
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const { count: todayCount } = await sb
+      .from('tiktok_video_scripts')
+      .select('id', { count: 'exact', head: true })
+      .eq('target_persona_key', script.target_persona_key)
+      .in('status', ['rendering', 'queued', 'posted'])
+      .gte('created_at', `${today}T00:00:00-05:00`);
+    if ((todayCount ?? 0) >= DAILY_CAP) {
+      // Don't fail — just leave the script approved for tomorrow's slot or admin handling.
+      await sb.from('tiktok_pipeline_logs').insert({
+        run_type: 'render_orchestrator',
+        status: 'skipped',
+        message: `daily_cap_hit persona=${script.target_persona_key} count=${todayCount}`,
+        metadata: { script_id: script.id, persona: script.target_persona_key, cap: DAILY_CAP },
+      });
+      return jsonResp({ success: true, skipped: true, reason: 'daily_cap_hit', persona: script.target_persona_key, today_count: todayCount });
+    }
+
     // ── 2. Create render row + mark script as rendering ──────────────────
     const { data: account } = await sb.from('tiktok_accounts')
       .select('*').eq('persona_key', script.target_persona_key).maybeSingle();
