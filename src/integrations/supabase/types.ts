@@ -8513,6 +8513,87 @@ export type Database = {
         }
         Relationships: []
       }
+      mlb_pitcher_k_analysis: {
+        Row: {
+          actual_k: number | null
+          block_reason: string | null
+          broadcast_sent_at: string | null
+          confidence_score: number | null
+          created_at: string
+          edge: number | null
+          expected_ip: number | null
+          expected_k: number | null
+          game_date: string
+          home_team: string
+          id: string
+          line: number | null
+          opp_k_rate_mult: number | null
+          opponent: string
+          outcome: string
+          p_over: number | null
+          park_k_mult: number | null
+          pitcher_k9_blended: number | null
+          pitcher_k9_sample_starts: number | null
+          pitcher_name: string
+          recommend: boolean
+          settled_at: string | null
+          team: string
+          tier: string | null
+        }
+        Insert: {
+          actual_k?: number | null
+          block_reason?: string | null
+          broadcast_sent_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          edge?: number | null
+          expected_ip?: number | null
+          expected_k?: number | null
+          game_date: string
+          home_team: string
+          id?: string
+          line?: number | null
+          opp_k_rate_mult?: number | null
+          opponent: string
+          outcome?: string
+          p_over?: number | null
+          park_k_mult?: number | null
+          pitcher_k9_blended?: number | null
+          pitcher_k9_sample_starts?: number | null
+          pitcher_name: string
+          recommend?: boolean
+          settled_at?: string | null
+          team: string
+          tier?: string | null
+        }
+        Update: {
+          actual_k?: number | null
+          block_reason?: string | null
+          broadcast_sent_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          edge?: number | null
+          expected_ip?: number | null
+          expected_k?: number | null
+          game_date?: string
+          home_team?: string
+          id?: string
+          line?: number | null
+          opp_k_rate_mult?: number | null
+          opponent?: string
+          outcome?: string
+          p_over?: number | null
+          park_k_mult?: number | null
+          pitcher_k9_blended?: number | null
+          pitcher_k9_sample_starts?: number | null
+          pitcher_name?: string
+          recommend?: boolean
+          settled_at?: string | null
+          team?: string
+          tier?: string | null
+        }
+        Relationships: []
+      }
       mlb_player_game_logs: {
         Row: {
           at_bats: number | null
