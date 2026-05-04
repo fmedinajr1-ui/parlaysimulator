@@ -15,6 +15,7 @@ type BotSendPayload = {
   reference_key?: string;
   narrative_phase?: string | null;
   format_version?: string;
+  reply_to_message_id?: number | null;
 };
 
 const TELEGRAM_LIMIT = 4096;
@@ -114,6 +115,7 @@ Deno.serve(async (req) => {
           parse_mode: parseMode,
           disable_web_page_preview: true,
           reply_markup: index === 0 ? body.reply_markup : undefined,
+          reply_to_message_id: index === 0 && body.reply_to_message_id ? body.reply_to_message_id : undefined,
         }),
       });
 

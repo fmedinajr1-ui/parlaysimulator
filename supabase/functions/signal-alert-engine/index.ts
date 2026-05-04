@@ -282,7 +282,7 @@ Deno.serve(async (req) => {
         }),
       );
 
-      const playerBreakdown = cascadeMembers.map((m, i) => {
+      const playerBreakdownRaw = cascadeMembers.map((m, i) => {
         const ctx = m.player_name ? roleCtxMap.get(m.player_name.toLowerCase()) ?? null : null;
         return {
           player: m.player_name,
@@ -304,6 +304,18 @@ Deno.serve(async (req) => {
           engine_reasoning: reasonings[i] ?? null,
         };
       });
+
+      // Dedupe on (player + side + line) — same player can appear via multiple
+      // book/snapshot rows. Keep highest-confidence copy. Fixes "Josh Hart x2".
+      const dedupeMap = new Map<string, typeof playerBreakdownRaw[number]>();
+      for (const p of playerBreakdownRaw) {
+        const key = `${(p.player ?? '').toLowerCase()}|${p.side}|${p.line}`;
+        const existing = dedupeMap.get(key);
+        if (!existing || Number(p.confidence ?? 0) > Number(existing.confidence ?? 0)) {
+          dedupeMap.set(key, p);
+        }
+      }
+      const playerBreakdown = Array.from(dedupeMap.values());
 
       const validReasonings = reasonings.filter((r): r is PlayerReasoning => !!r);
       const groupReasoning = validReasonings.length > 0

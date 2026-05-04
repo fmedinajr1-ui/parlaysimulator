@@ -1,7 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { formatPlayerReasoningLines, verdictBadge, buildCounterRead, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
+import { formatPlayerReasoningPlain } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
-import { buildCascadeSim, formatCascadeSimLines } from '../_shared/cascade-sim.ts';
+import { buildCascadeSim, formatCascadeSimLines, formatCascadeSimPlain } from '../_shared/cascade-sim.ts';
+import { spikeNarrate, type SpikeActionKind } from '../_shared/spike-narrator.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -59,20 +61,24 @@ type Alert = {
   created_at: string;
 };
 
-function formatAlert(a: Alert): string {
+function formatAlert(a: Alert): string | string[] {
   const conf = Number(a.confidence ?? 0);
   const prop = prettyProp(a.prop_type);
   const side = a.prediction ?? '';
-  const game = a.event_description ?? 'Game TBD';
+  const game = a.event_description ?? "Tonight's slate";
   const sport = a.sport ?? '';
-  const tipoff = a.commence_time
-    ? new Date(a.commence_time).toLocaleString('en-US', {
+  let tipoff = '';
+  if (a.commence_time) {
+    const t = new Date(a.commence_time);
+    if (!isNaN(t.getTime())) {
+      tipoff = t.toLocaleString('en-US', {
         timeZone: 'America/New_York',
         hour: 'numeric',
         minute: '2-digit',
         timeZoneName: 'short',
-      })
-    : 'TBD';
+      });
+    }
+  }
 
   const meta = (a.metadata ?? {}) as Record<string, any>;
 
@@ -80,11 +86,6 @@ function formatAlert(a: Alert): string {
     const players: any[] = Array.isArray(meta.player_breakdown) ? meta.player_breakdown : [];
     const group = (meta.group_reasoning ?? null) as GroupReasoning | null;
     const counts = (meta.verdict_counts ?? {}) as { strong?: number; lean?: number; neutral?: number; weak?: number };
-
-    const out: string[] = [];
-    out.push(`🌊 *CASCADE ALERT* — ${escapeMd(sport)}`);
-    out.push(`${players.length} players aligned on the same side.`);
-    out.push('');
 
     // ─── Recommended action header ───
     // Reads verdict_counts to give a single-line decision instead of forcing the user
@@ -105,7 +106,7 @@ function formatAlert(a: Alert): string {
     const formAgree = validReasons.filter((r) => r.alignment.form === 'aligned').length;
 
     let action = '';
-    let actionKind: 'TAIL' | 'TAIL_SMALL' | 'REVIEW' | 'FADE' | 'SKIP' = 'REVIEW';
+    let actionKind: SpikeActionKind = 'REVIEW';
     if (total === 0) {
       action = `🟡 *Action: REVIEW* — no verdict data, inspect manually.`;
       actionKind = 'REVIEW';
@@ -131,95 +132,98 @@ function formatAlert(a: Alert): string {
       action = `🟡 *Action: REVIEW* — mixed (${sN}S/${lN}L/${nN}N/${wN}W). Inspect legs before risking.`;
       actionKind = 'REVIEW';
     }
-    out.push(action);
+    // ─── Spike narrator (plain English) ───
+    const narration = spikeNarrate({
+      actionKind, side, prop,
+      totalLegs: total || players.length,
+      strong: sN, lean: lN, neutral: nN, weak: wN,
+      modelAgree, modelDisagree, defenseAgainst,
+    });
 
-    // Counter-read line — always include for FADE/SKIP/REVIEW so the user sees both sides.
+    // ─── MESSAGE A — The Call ───
+    const msgA: string[] = [];
+    msgA.push(`🌊 *CASCADE* — ${escapeMd(sport)}  ·  ${players.length} players, same side`);
+    msgA.push(`🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  avg conf ${Math.round(conf)}%`);
+    const venueLine = tipoff
+      ? `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`
+      : `🏟️ ${escapeMd(game)}`;
+    msgA.push(venueLine);
+    msgA.push('');
+    msgA.push(action);
+    msgA.push('');
+    msgA.push(`💬 *Spike says:* ${escapeMd(narration)}`);
     if (actionKind !== 'TAIL' && validReasons.length > 0) {
       const cr = buildCounterRead(validReasons, /over|yes/i.test(side) ? 'Over' : 'Under');
-      if (cr) out.push(`_${escapeMd(cr)}_`);
+      if (cr) {
+        msgA.push('');
+        msgA.push(`_${escapeMd(cr)}_`);
+      }
     }
-    out.push('');
 
-    // ─── Bankroll simulation panel ($100 default) ───
-    // Display aid only — translates the verdict mix into TAIL full / TAIL small / FADE $ outcomes.
+    // ─── MESSAGE B — The Math (sim) ───
+    let msgB = '';
     try {
       const simLegs = players.map((p) => ({ verdict: p?.engine_reasoning?.verdict ?? null }));
       const sim = buildCascadeSim(counts, simLegs, 100);
       if (sim) {
-        const simLines = formatCascadeSimLines(sim, players.length || total);
-        for (const ln of simLines) out.push(ln);
-        out.push('');
+        const lines = formatCascadeSimPlain(sim, players.length || total, actionKind);
+        msgB = lines.join('\n');
       }
-    } catch (_e) {
-      // Non-fatal — skip sim block on any error.
-    }
+    } catch (_e) { /* non-fatal */ }
 
-    out.push(`🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  ${sideEmoji(side)} avg conf ${Math.round(conf)}%`);
-    out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
-
-    if (group?.headline_bullets?.length) {
-      out.push('');
-      out.push(`*Why this side:*`);
-      for (const b of group.headline_bullets.slice(0, 3)) out.push(`• ${escapeMd(b)}`);
-    }
-
-    if (counts && (counts.strong || counts.lean || counts.neutral || counts.weak)) {
-      out.push('');
-      out.push(`*Verdict mix:* ✅ ${counts.strong ?? 0} strong  ·  ⚠️ ${counts.lean ?? 0} lean  ·  🟡 ${counts.neutral ?? 0} neutral  ·  ❌ ${counts.weak ?? 0} weak`);
-    }
-
-    out.push('');
-    out.push(`*Players in the cascade:*`);
-
-    // Sort STRONG → LEAN → NEUTRAL → WEAK so the message leads with the highest-conviction legs
+    // ─── MESSAGE C — The Players ───
     const order = { STRONG: 0, LEAN: 1, NEUTRAL: 2, WEAK: 3 } as const;
     const sorted = [...players].sort((a, b) => {
       const av = order[(a.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
       const bv = order[(b.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
       return av - bv;
     });
-
+    const msgC: string[] = [];
+    msgC.push(`*Players in this cascade:*`);
+    if (counts && (counts.strong || counts.lean || counts.neutral || counts.weak)) {
+      msgC.push(`✅ ${counts.strong ?? 0} strong  ·  👍 ${counts.lean ?? 0} lean  ·  🟡 ${counts.neutral ?? 0} neutral  ·  ⚠️ ${counts.weak ?? 0} weak`);
+    }
+    msgC.push('');
     const rendered = sorted.slice(0, MAX_PLAYERS_RENDERED);
     for (const p of rendered) {
       const r = p.engine_reasoning as PlayerReasoning | null | undefined;
       const roleCtx = (p.role_context ?? null) as PlayerRoleContext | null;
       const sideStr = String(p.side ?? side);
       const lineNum = Number(p.line ?? 0);
-      const cnf = Number(p.confidence ?? 0);
+      const sideTyped: 'Over' | 'Under' = sideStr === 'Over' ? 'Over' : 'Under';
       if (r) {
-        const lines = formatPlayerReasoningLines(p.player ?? '', sideStr === 'Over' ? 'Over' : 'Under', lineNum, cnf, r);
-        for (const ln of lines) out.push(escapeMd(ln));
-        const roleLine = formatRoleLine(roleCtx);
-        if (roleLine) out.push(escapeMd(`   ↳ ${roleLine}`));
+        const lines = formatPlayerReasoningPlain(p.player ?? '', sideTyped, lineNum, prop, r);
+        for (const ln of lines) msgC.push(escapeMd(ln));
       } else {
-        out.push(escapeMd(`• ${p.player ?? ''}  ${(sideStr[0] ?? '?')} ${lineNum}  conf ${Math.round(cnf)}%`));
-        const roleLine = formatRoleLine(roleCtx);
-        if (roleLine) out.push(escapeMd(`   ↳ ${roleLine}`));
+        msgC.push(escapeMd(`• ${p.player ?? ''} — ${sideTyped} ${lineNum}`));
       }
+      const roleLine = formatRoleLine(roleCtx);
+      if (roleLine) msgC.push(escapeMd(`   ${roleLine}`));
+      msgC.push('');
     }
     if (sorted.length > MAX_PLAYERS_RENDERED) {
-      out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more players — see dashboard_`);
+      msgC.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more players — see dashboard_`);
     }
 
-    // Surface miss-by-1 suppression so we can audit / build trust.
+    // Filtered legs (miss-by-1) — short footer in C
     const droppedRaw = Array.isArray((meta as any).dropped_legs) ? (meta as any).dropped_legs as Array<{ player: string; reason: string }> : [];
-    // Defensive dedupe (engine now dedupes upstream, but old alerts in the queue may still carry duplicates).
     const dropped = Array.from(new Map(droppedRaw.map((d) => [d.player, d])).values());
-    const DROPPED_RENDER_LIMIT = 5;
+    const DROPPED_RENDER_LIMIT = 4;
     if (dropped.length > 0) {
-      out.push('');
-      out.push(`*Filtered (miss-by-1 risk):* ${dropped.length} leg${dropped.length === 1 ? '' : 's'}`);
+      msgC.push('');
+      msgC.push(`_Filtered ${dropped.length} miss-by-1 risk leg${dropped.length === 1 ? '' : 's'}:_`);
       for (const d of dropped.slice(0, DROPPED_RENDER_LIMIT)) {
-        out.push(escapeMd(`   • ${d.player} — ${d.reason}`));
+        msgC.push(escapeMd(`   • ${d.player}`));
       }
-      if (dropped.length > DROPPED_RENDER_LIMIT) out.push(`_+${dropped.length - DROPPED_RENDER_LIMIT} more dropped_`);
+      if (dropped.length > DROPPED_RENDER_LIMIT) msgC.push(escapeMd(`   +${dropped.length - DROPPED_RENDER_LIMIT} more`));
     }
 
-    let msg = out.join('\n');
-    if (msg.length > MAX_MESSAGE_CHARS) {
-      msg = msg.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated for length_';
-    }
-    return msg;
+    const messages: string[] = [];
+    messages.push(msgA.join('\n'));
+    if (msgB) messages.push(msgB);
+    messages.push(msgC.join('\n'));
+    // Trim each chunk to safety limit
+    return messages.map((m) => m.length > MAX_MESSAGE_CHARS ? m.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated_' : m);
   }
 
   if (a.signal_type === 'take_it_now') {
@@ -351,25 +355,32 @@ Deno.serve(async (req) => {
         }
       }
 
-      const message = formatAlert(alert);
-      const { data: sendResult, error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
-        body: {
-          message,
-          parse_mode: 'Markdown',
-          type: 'signal_alert',
-          reference_key: alert.id,
-          format_version: 'v1',
-        },
-      });
+      const formatted = formatAlert(alert);
+      const parts: string[] = Array.isArray(formatted) ? formatted : [formatted];
 
-      if (sendErr || !sendResult?.success) {
-        console.error('[signal-alert-telegram] send failed:', sendErr ?? sendResult);
-        stats.errors += 1;
-        continue;
+      let firstMessageId: number | null = null;
+      let anyError = false;
+      for (let p = 0; p < parts.length; p++) {
+        const { data: sendResult, error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
+          body: {
+            message: parts[p],
+            parse_mode: 'Markdown',
+            type: 'signal_alert',
+            reference_key: `${alert.id}:${p}`,
+            format_version: 'v3',
+            reply_to_message_id: p > 0 ? firstMessageId : undefined,
+          },
+        });
+        if (sendErr || !sendResult?.success) {
+          console.error('[signal-alert-telegram] send failed:', sendErr ?? sendResult);
+          anyError = true;
+          break;
+        }
+        const mid = typeof sendResult?.message_id === 'number' ? sendResult.message_id : null;
+        if (p === 0) firstMessageId = mid;
       }
-
-      const messageId =
-        typeof sendResult?.message_id === 'number' ? sendResult.message_id : null;
+      if (anyError) { stats.errors += 1; continue; }
+      const messageId = firstMessageId;
 
       const { error: logErr } = await supabase.from('bot_signal_broadcasts').insert({
         alert_id: alert.id,
