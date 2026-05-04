@@ -93,6 +93,8 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days') || 7)));
   const sportFilter = url.searchParams.get('sport') || null;
+  const maxAlerts = Math.min(500, Math.max(10, Number(url.searchParams.get('limit') || 200)));
+  const concurrency = Math.min(20, Math.max(1, Number(url.searchParams.get('concurrency') || 8)));
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -108,7 +110,7 @@ Deno.serve(async (req) => {
     .gte('created_at', since)
     .lt('commence_time', new Date().toISOString())
     .order('created_at', { ascending: false })
-    .limit(2000);
+    .limit(maxAlerts);
   if (sportFilter) q = q.eq('sport', sportFilter);
 
   const { data: alerts, error } = await q;
@@ -120,11 +122,12 @@ Deno.serve(async (req) => {
   let unparseable = 0;
   let unsettleable = 0;
 
-  for (const a of (alerts || [])) {
+  // deno-lint-ignore no-explicit-any
+  async function processOne(a: any): Promise<void> {
     const { side, line } = parseLine((a.metadata || null) as Record<string, unknown> | null, a.prediction);
     if (!side || line == null) {
       unparseable++;
-      continue;
+      return;
     }
     const lf = logField(a.prop_type || '');
     let actual: number | null = null;
@@ -177,6 +180,13 @@ Deno.serve(async (req) => {
       alignment: reasoning?.alignment ?? null,
       reason: reasoning?.headline ?? '',
     });
+  }
+
+  // Run in fixed-size batches to keep p99 under the edge timeout.
+  const queue = [...(alerts || [])];
+  while (queue.length > 0) {
+    const batch = queue.splice(0, concurrency);
+    await Promise.all(batch.map((a) => processOne(a).catch(() => undefined)));
   }
 
   // Bucket aggregations
