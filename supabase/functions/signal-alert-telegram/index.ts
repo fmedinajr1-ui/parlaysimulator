@@ -216,6 +216,13 @@ function formatAlert(a: Alert): string | string[] {
       out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more — see dashboard_`);
     }
 
+    // Verified-on-HRB footer (only when engine confirmed it)
+    const hrbVerified = (meta as any)?.hrb_verified === true || (meta as any)?.source_book === 'hardrockbet';
+    if (hrbVerified) {
+      out.push('');
+      out.push(`📘 _Lines verified on Hard Rock Bet_`);
+    }
+
     let single = out.join('\n');
     if (single.length > MAX_MESSAGE_CHARS) {
       single = single.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated_';
@@ -248,6 +255,10 @@ function formatAlert(a: Alert): string | string[] {
       }
       if (r.flags.length > 0) out.push(escapeMd(`↳ flags: ${r.flags.join(', ')}`));
     }
+    if ((meta as any)?.hrb_verified) {
+      out.push('');
+      out.push(`📘 _Lines verified on Hard Rock Bet_`);
+    }
     return out.join('\n');
   }
 
@@ -272,6 +283,10 @@ function formatAlert(a: Alert): string | string[] {
         const dr = r.matchup.position_defense_rank ?? r.matchup.defense_rank;
         out.push(escapeMd(`↳ vs ${r.matchup.opponent_team} D rank #${dr}${r.form.l10_total ? ` · L10 ${side} ${r.form.l10_hits}/${r.form.l10_total}` : ''}`));
       }
+    }
+    if ((meta as any)?.hrb_verified) {
+      out.push('');
+      out.push(`📘 _Lines verified on Hard Rock Bet_`);
     }
     return out.join('\n');
   }
