@@ -1,6 +1,7 @@
 // Court.Edge — pure projection engine. No I/O. Importable by edge functions and tests.
 
 import { priorFor, type Tour as PriorTour, type Sets as PriorSets, type Surface as PriorSurface } from "./court-edge-prior.ts";
+import { DEFAULT_COURT_EDGE_CONFIG, type CourtEdgeConfig } from "./court-edge-config.ts";
 
 export type Surface = "clay" | "hard" | "grass";
 export type SetsFormat = "bo3" | "bo5";
@@ -25,6 +26,8 @@ export interface ProjectionInput {
   role_adj_away?: number | null;
   // Phase 2: tour drives prior lookup. Optional for back-compat; default 'unknown' → WTA row.
   tour?: "atp" | "wta" | "unknown";
+  // Optional runtime overrides (loaded from court_edge_config). Falls back to compile-time defaults.
+  cfg?: Partial<CourtEdgeConfig>;
 }
 
 export interface ProjectionBreakdown {
@@ -97,8 +100,13 @@ export function spreadAdj(mlHome?: number | null, mlAway?: number | null): numbe
 }
 
 // Phase 2 — two-sided spread adjustment with a coin-flip OVER bias and a
-// harder cap on lopsided favourites.
-export function spreadAdjV2(mlHome?: number | null, mlAway?: number | null): number {
+// harder cap on lopsided favourites. Optional cfg override lets us tune the
+// mismatch cap and coin-flip bias without redeploying.
+export function spreadAdjV2(
+  mlHome?: number | null,
+  mlAway?: number | null,
+  cfg?: Partial<CourtEdgeConfig>,
+): number {
   if (mlHome == null || mlAway == null || !Number.isFinite(mlHome) || !Number.isFinite(mlAway)) return 0;
   const pH = americanToProb(mlHome);
   const pA = americanToProb(mlAway);
@@ -107,11 +115,16 @@ export function spreadAdjV2(mlHome?: number | null, mlAway?: number | null): num
   const nH = pH / sum;
   const nA = pA / sum;
   const diff = Math.abs(nH - nA);
+  const c = { ...DEFAULT_COURT_EDGE_CONFIG, ...(cfg ?? {}) };
+  const thr = c.spread_v2_coinflip_threshold;
+  const bias = c.spread_v2_coinflip_bias;
+  const maxBias = c.spread_v2_max_bias;
+  const cap = c.spread_v2_max_penalty;
   let adj: number;
-  if (diff < 0.10) adj = 0.6;
-  else adj = -3.0 * (diff - 0.10) / 0.40;
-  if (adj > 0.8) adj = 0.8;
-  if (adj < -3.0) adj = -3.0;
+  if (diff < thr) adj = bias;
+  else adj = -cap * (diff - thr) / Math.max(1e-6, 0.40);
+  if (adj > maxBias) adj = maxBias;
+  if (adj < -cap) adj = -cap;
   return adj;
 }
 
@@ -132,6 +145,7 @@ export function indoorAdj(isIndoor?: boolean): number {
 }
 
 export function project(input: ProjectionInput): ProjectionBreakdown {
+  const c = { ...DEFAULT_COURT_EDGE_CONFIG, ...(input.cfg ?? {}) };
   const w1 = weightedL3(input.p1_l3);
   const w2 = weightedL3(input.p2_l3);
   const base = (w1 + w2) / 2;
@@ -150,9 +164,9 @@ export function project(input: ProjectionInput): ProjectionBreakdown {
   const combined = prior.mu + delta_l3;
 
   const n_eff = Math.min((input.p1_l3?.length ?? 0) + (input.p2_l3?.length ?? 0), 6);
-  const shrunk = (n_eff * combined + SHRINK_K * prior.mu) / (n_eff + SHRINK_K);
+  const shrunk = (n_eff * combined + c.shrink_k * prior.mu) / (n_eff + c.shrink_k);
 
-  const sa_v2 = spreadAdjV2(input.ml_home, input.ml_away);
+  const sa_v2 = spreadAdjV2(input.ml_home, input.ml_away, c);
   // Keep legacy spread_adj field populated (now equals v2) so existing callers keep getting a number.
   const sa = sa_v2;
   const wa = weatherAdj(input.weather);
@@ -161,16 +175,16 @@ export function project(input: ProjectionInput): ProjectionBreakdown {
   const ra = Number.isFinite(input.role_adj_away as number) ? (input.role_adj_away as number) : 0;
 
   // Blowout-recency penalty.
-  const cutoff = sets === "bo5" ? BLOWOUT_CUTOFF_BO5 : BLOWOUT_CUTOFF_BO3;
+  const cutoff = sets === "bo5" ? c.blowout_cutoff_bo5 : c.blowout_cutoff_bo3;
   let blowout_adj = 0;
-  if (Array.isArray(input.p1_l3) && input.p1_l3.length > 0 && input.p1_l3[0] <= cutoff) blowout_adj -= BLOWOUT_PENALTY;
-  if (Array.isArray(input.p2_l3) && input.p2_l3.length > 0 && input.p2_l3[0] <= cutoff) blowout_adj -= BLOWOUT_PENALTY;
+  if (Array.isArray(input.p1_l3) && input.p1_l3.length > 0 && input.p1_l3[0] <= cutoff) blowout_adj -= c.blowout_penalty;
+  if (Array.isArray(input.p2_l3) && input.p2_l3.length > 0 && input.p2_l3[0] <= cutoff) blowout_adj -= c.blowout_penalty;
 
   let projection = shrunk + sa + wa + ia + rh + ra + blowout_adj;
 
   // Sanity clamp to prior ± Nσ.
-  const lo = prior.mu - SANITY_SIGMAS * prior.sd;
-  const hi = prior.mu + SANITY_SIGMAS * prior.sd;
+  const lo = prior.mu - c.sanity_sigmas * prior.sd;
+  const hi = prior.mu + c.sanity_sigmas * prior.sd;
   let clamped = false;
   if (projection < lo) { projection = lo; clamped = true; }
   else if (projection > hi) { projection = hi; clamped = true; }
@@ -211,10 +225,15 @@ import { thresholdsFor, type TournamentTier } from "./court-edge-tournament-tier
 const STRONG_PP = 0.04;
 const LEAN_PP = 0.02;
 
-export function verdictFromEdgePp(edgePp: number, tier?: TournamentTier): Verdict {
+export function verdictFromEdgePp(
+  edgePp: number,
+  tier?: TournamentTier,
+  cfg?: Partial<CourtEdgeConfig>,
+): Verdict {
+  const c = { ...DEFAULT_COURT_EDGE_CONFIG, ...(cfg ?? {}) };
   if (!Number.isFinite(edgePp)) return "PASS";
   const a = Math.abs(edgePp);
-  if (a > EDGE_HARD_CAP_PP) return "QUARANTINE";
+  if (a > c.edge_hard_cap_pp) return "QUARANTINE";
   if (tier) {
     const t = thresholdsFor(tier);
     if (t.auto_quarantine) return "QUARANTINE";
@@ -222,8 +241,8 @@ export function verdictFromEdgePp(edgePp: number, tier?: TournamentTier): Verdic
     if (a >= t.lean_pp) return edgePp > 0 ? "LEAN_OVER" : "LEAN_UNDER";
     return "PASS";
   }
-  if (a >= STRONG_PP) return edgePp > 0 ? "STRONG_OVER" : "STRONG_UNDER";
-  if (a >= LEAN_PP) return edgePp > 0 ? "LEAN_OVER" : "LEAN_UNDER";
+  if (a >= c.strong_pp) return edgePp > 0 ? "STRONG_OVER" : "STRONG_UNDER";
+  if (a >= c.lean_pp) return edgePp > 0 ? "LEAN_OVER" : "LEAN_UNDER";
   return "PASS";
 }
 
@@ -237,6 +256,7 @@ export interface EdgeOpts {
   sets_format?: SetsFormat;
   surface?: Surface;
   indoor?: boolean;
+  cfg?: Partial<CourtEdgeConfig>;
 }
 
 export interface EdgeResult {
@@ -262,6 +282,7 @@ export function edgeFor(
   line: number,
   opts: EdgeOpts,
 ): EdgeResult {
+  const c = { ...DEFAULT_COURT_EDGE_CONFIG, ...(opts.cfg ?? {}) };
   // For player_total_games, the projection (a MATCH total) is split in half.
   const reference = market === "player_total_games" ? projection / 2 : projection;
   const sigma = market === "player_total_games" ? Math.max(opts.sigma / 2, 0.5) : opts.sigma;
@@ -275,7 +296,7 @@ export function edgeFor(
   let outOfRangeReason: string | undefined;
   if (Number.isFinite(line)) {
     if (market === "match_total") {
-      if (Math.abs(line - prior.mu) > 2.5 * prior.sd) {
+      if (Math.abs(line - prior.mu) > c.line_band_sigmas * prior.sd) {
         outOfRange = true;
         outOfRangeReason = "line_outside_prior_band";
       }
@@ -332,9 +353,9 @@ export function edgeFor(
   if (edgeOver >= edgeUnder) { edge_pp = edgeOver; edge_side = "over"; }
   else { edge_pp = -edgeUnder; edge_side = "under"; } // sign convention: + over, − under
 
-  const verdict = verdictFromEdgePp(edge_pp, opts.tier);
+  const verdict = verdictFromEdgePp(edge_pp, opts.tier, c);
   const quarantine_reason = verdict === "QUARANTINE"
-    ? (Math.abs(edge_pp) > EDGE_HARD_CAP_PP ? "edge_above_hard_cap" : "tier_auto_quarantine")
+    ? (Math.abs(edge_pp) > c.edge_hard_cap_pp ? "edge_above_hard_cap" : "tier_auto_quarantine")
     : undefined;
 
   return {
