@@ -7362,6 +7362,270 @@ export type Database = {
         }
         Relationships: []
       }
+      live_ai_alerts: {
+        Row: {
+          acknowledged: boolean
+          alert_type: string
+          body: string
+          conversation_id: string | null
+          created_at: string
+          game_id: string | null
+          id: string
+          payload: Json | null
+          player_name: string | null
+          title: string
+          urgency: string
+          user_id: string
+        }
+        Insert: {
+          acknowledged?: boolean
+          alert_type: string
+          body: string
+          conversation_id?: string | null
+          created_at?: string
+          game_id?: string | null
+          id?: string
+          payload?: Json | null
+          player_name?: string | null
+          title: string
+          urgency?: string
+          user_id: string
+        }
+        Update: {
+          acknowledged?: boolean
+          alert_type?: string
+          body?: string
+          conversation_id?: string | null
+          created_at?: string
+          game_id?: string | null
+          id?: string
+          payload?: Json | null
+          player_name?: string | null
+          title?: string
+          urgency?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_ai_alerts_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "live_ai_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_ai_avatar_cache: {
+        Row: {
+          audio_url: string | null
+          avatar_video_url: string
+          created_at: string
+          duration_seconds: number | null
+          heygen_video_id: string | null
+          hit_count: number
+          id: string
+          text_hash: string
+          text_preview: string | null
+          voice_id: string
+        }
+        Insert: {
+          audio_url?: string | null
+          avatar_video_url: string
+          created_at?: string
+          duration_seconds?: number | null
+          heygen_video_id?: string | null
+          hit_count?: number
+          id?: string
+          text_hash: string
+          text_preview?: string | null
+          voice_id: string
+        }
+        Update: {
+          audio_url?: string | null
+          avatar_video_url?: string
+          created_at?: string
+          duration_seconds?: number | null
+          heygen_video_id?: string | null
+          hit_count?: number
+          id?: string
+          text_hash?: string
+          text_preview?: string | null
+          voice_id?: string
+        }
+        Relationships: []
+      }
+      live_ai_conversations: {
+        Row: {
+          created_at: string
+          id: string
+          live_mode: boolean
+          mode: string
+          title: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          live_mode?: boolean
+          mode?: string
+          title?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          live_mode?: boolean
+          mode?: string
+          title?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_ai_generated_parlays: {
+        Row: {
+          combined_odds: number | null
+          confidence: number | null
+          conversation_id: string | null
+          created_at: string
+          id: string
+          legs: Json
+          mode: string
+          rationale: string | null
+          status: string
+          user_id: string
+          whale_signal: string | null
+        }
+        Insert: {
+          combined_odds?: number | null
+          confidence?: number | null
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          legs: Json
+          mode: string
+          rationale?: string | null
+          status?: string
+          user_id: string
+          whale_signal?: string | null
+        }
+        Update: {
+          combined_odds?: number | null
+          confidence?: number | null
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          legs?: Json
+          mode?: string
+          rationale?: string | null
+          status?: string
+          user_id?: string
+          whale_signal?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_ai_generated_parlays_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "live_ai_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_ai_messages: {
+        Row: {
+          audio_url: string | null
+          avatar_video_url: string | null
+          content: string | null
+          conversation_id: string
+          created_at: string
+          id: string
+          role: string
+          tool_calls: Json | null
+          tool_name: string | null
+          tool_result: Json | null
+          user_id: string
+        }
+        Insert: {
+          audio_url?: string | null
+          avatar_video_url?: string | null
+          content?: string | null
+          conversation_id: string
+          created_at?: string
+          id?: string
+          role: string
+          tool_calls?: Json | null
+          tool_name?: string | null
+          tool_result?: Json | null
+          user_id: string
+        }
+        Update: {
+          audio_url?: string | null
+          avatar_video_url?: string | null
+          content?: string | null
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          role?: string
+          tool_calls?: Json | null
+          tool_name?: string | null
+          tool_result?: Json | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_ai_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "live_ai_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_ai_user_prefs: {
+        Row: {
+          created_at: string
+          default_mode: string
+          favorite_teams: string[]
+          free_parlays_reset_date: string
+          free_parlays_used_today: number
+          is_premium: boolean
+          ny_accent: boolean
+          push_enabled: boolean
+          updated_at: string
+          user_id: string
+          voice_id: string
+        }
+        Insert: {
+          created_at?: string
+          default_mode?: string
+          favorite_teams?: string[]
+          free_parlays_reset_date?: string
+          free_parlays_used_today?: number
+          is_premium?: boolean
+          ny_accent?: boolean
+          push_enabled?: boolean
+          updated_at?: string
+          user_id: string
+          voice_id?: string
+        }
+        Update: {
+          created_at?: string
+          default_mode?: string
+          favorite_teams?: string[]
+          free_parlays_reset_date?: string
+          free_parlays_used_today?: number
+          is_premium?: boolean
+          ny_accent?: boolean
+          push_enabled?: boolean
+          updated_at?: string
+          user_id?: string
+          voice_id?: string
+        }
+        Relationships: []
+      }
       live_game_scores: {
         Row: {
           away_score: number | null
