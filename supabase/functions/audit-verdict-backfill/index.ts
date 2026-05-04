@@ -160,6 +160,7 @@ Deno.serve(async (req) => {
         event_id: a.event_id,
         sport: (a.sport || 'NBA').toUpperCase(),
         juice_gap: ((a.metadata as Record<string, unknown> | null)?.juice_gap as number) ?? null,
+        signal_type: a.signal_type ?? null,
       });
     } catch (_e) { /* leave null */ }
 
