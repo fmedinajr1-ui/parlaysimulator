@@ -11,7 +11,7 @@ import { SpikeShareCard } from "@/components/live-ai/SpikeShareCard";
 import { Seo } from "@/components/seo/Seo";
 import { toast } from "@/hooks/use-toast";
 
-type RiskMode = "aggressive" | "smart" | "safe";
+type RiskMode = "aggressive" | "smart" | "safe" | "fade";
 
 interface Msg {
   id: string;
@@ -25,6 +25,7 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
   { id: "aggressive", label: "Aggressive", emoji: "🔥" },
   { id: "smart", label: "Smart", emoji: "🧠" },
   { id: "safe", label: "Safe", emoji: "🛡️" },
+  { id: "fade", label: "Fade Me", emoji: "🚫" },
 ];
 
 export default function LiveAI() {

@@ -36,14 +36,22 @@ Tools available — USE THEM, never invent stats:
 - get_whale_signals: sharp money/line movement (gated — only call for pup/all_access)
 - build_parlay: assemble 2-4 leg parlay (gated by quota)
 - analyze_slip: critique a parsed bet slip (gated by quota)
+- build_fade_parlay: REVERSE-PSYCHOLOGY MODE — assemble a parlay engineered to LOSE; tell the user to fade every leg (gated by quota)
 - share_my_link: returns the user's permanent personal Spike URL (signed-in only)
 
 Risk modes:
 - aggressive 🔥 → 4+ legs, longer odds, ride the heaters
 - smart 🧠 → 3 legs, balanced edge + correlation
 - safe 🛡️ → 2 legs, highest-confidence picks only
+- fade 🚫 → REVERSE PSYCHOLOGY. Cook the dumbest, lowest-edge ticket you can find and tell the user to FADE every leg. The card the UI renders will already flip the sides for them, so your spoken text just confirms the play and reminds them: "don't tail me — bet the OPPOSITE of every leg." If a fade tool returns needs_more_context, ask the user to upload a screenshot of their book or slate so you can cook something truly terrible.
 
 Live mode: when live_mode=true, prioritize "take it now" lines and active games.
+
+FADE MODE BEHAVIOR (when current risk mode is "fade" OR the user asks for "fade me / reverse psychology / loser ticket / give me the worst parlay"):
+- Always call build_fade_parlay (not build_parlay).
+- Open with confidence: "Yo, straight up — I cooked the dumbest 3-legger I could find. Don't tail me. FADE every leg. That's where the money's at tonight."
+- Stay in Brooklyn-bulldog character.
+- If the tool returns needs_more_context: "I need more to work with. Snap me a screenshot of your book's slate and I'll cook somethin' truly terrible for ya to fade."
 
 Output format: JUST the spoken text. ~2-4 short sentences for voice. No markdown headings, no bullet lists in voice replies.
 If the tool returns parlay_card data, the UI will render it visually — your text just teases it ("Cooked you a 3-legger, take a look").
@@ -107,6 +115,20 @@ const TOOLS = [
           legs: { type: "number" },
         },
         required: ["mode"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "build_fade_parlay",
+      description: "REVERSE-PSYCHOLOGY: build a parlay engineered to LOSE from today's worst-graded picks (low consensus, poison signals). The user is told to FADE every leg. Use this any time the user opts into fade mode or asks for a 'fade me / reverse / loser / worst' parlay.",
+      parameters: {
+        type: "object",
+        properties: {
+          sport: { type: "string" },
+          legs: { type: "number", default: 3 },
+        },
       },
     },
   },
@@ -273,6 +295,116 @@ async function runTool(name: string, args: any, supabase: any, userId: string, c
         if (ins.data) saved = ins.data;
       } catch (e) {
         console.warn("parlay save skipped", e);
+      }
+    }
+
+    return { parlay: saved };
+  }
+
+  if (name === "build_fade_parlay") {
+    const isAnon = userId === "anon";
+    const isAllAccess = ctx.tier === "all_access";
+    if (!isAllAccess) {
+      const quota = await consumePupAction(supabase, ctx.email);
+      if (!quota.allowed) {
+        return {
+          error: "free_limit_reached",
+          upsell: true,
+          message: "You're out of free actions for today. All-Access unlocks unlimited fade tickets + slip scans + the Telegram bot.",
+          upgrade_url: "/upgrade",
+        };
+      }
+    }
+
+    const legCount = Math.max(2, Math.min(args.legs ?? 3, 5));
+    const POISON = new Set(["snapback", "live_drift"]);
+
+    // Pull a wide pool of WEAK picks: low consensus, low grades.
+    let q = supabase.from("final_verdict_picks")
+      .select("player_name,prop_type,side,line,sport,verdict_grade,consensus_score,fanduel_signal_type")
+      .eq("verdict_date", today)
+      .lte("consensus_score", 55)
+      .in("verdict_grade", ["C+", "C", "C-", "D+", "D", "D-"])
+      .order("consensus_score", { ascending: true })
+      .limit(40);
+    if (args.sport) q = q.ilike("sport", args.sport);
+    const { data: pool } = await q;
+
+    if (!pool || pool.length < legCount) {
+      return {
+        needs_more_context: true,
+        message: "Worst-pool is too thin to cook a confident fade ticket — ask the user to upload a screenshot of their book's slate so I can pick the truly bad ones.",
+      };
+    }
+
+    // Score each pick by "badness" — lower consensus + poison signal = worse.
+    const scored = pool.map((p: any) => {
+      let badness = 100 - (p.consensus_score ?? 50);
+      if (POISON.has((p.fanduel_signal_type ?? "").toLowerCase())) badness += 20;
+      if (["D-", "D", "D+"].includes(p.verdict_grade)) badness += 10;
+      return { ...p, _badness: badness };
+    }).sort((a: any, b: any) => b._badness - a._badness);
+
+    // Diversify across players + games (best-effort by player).
+    const seen = new Set<string>();
+    const legs: any[] = [];
+    for (const p of scored) {
+      if (seen.has(p.player_name)) continue;
+      const fadeSide = (p.side ?? "").toLowerCase() === "over" ? "UNDER"
+        : (p.side ?? "").toLowerCase() === "under" ? "OVER"
+        : (p.side ?? "").toLowerCase() === "yes" ? "NO"
+        : (p.side ?? "").toLowerCase() === "no" ? "YES"
+        : `FADE ${p.side ?? ""}`.trim();
+      legs.push({
+        player_name: p.player_name,
+        prop_type: p.prop_type,
+        line: p.line,
+        sport: p.sport,
+        engine_side: p.side,
+        fade_side: fadeSide,
+        consensus_score: p.consensus_score,
+        verdict_grade: p.verdict_grade,
+        signal: p.fanduel_signal_type,
+        american_odds: -110,
+      });
+      seen.add(p.player_name);
+      if (legs.length >= legCount) break;
+    }
+
+    if (legs.length < legCount) {
+      return {
+        needs_more_context: true,
+        message: "Couldn't diversify enough bad legs across distinct players. Ask for a screenshot of the user's slate.",
+      };
+    }
+
+    // Estimate hit chance of Spike's (bad) ticket = product of per-leg hit prob,
+    // where weak-pick prob is roughly consensus_score/100 capped low.
+    const spikeHitPct = Math.round(
+      legs.reduce((a, l) => a * Math.max(0.20, Math.min(0.45, (l.consensus_score ?? 40) / 100)), 1) * 100,
+    );
+    const fadeHitPct = Math.max(50, 100 - spikeHitPct);
+
+    const combined = combinedAmericanOdds(legs);
+
+    const parlayPayload = {
+      mode: "fade",
+      fade_mode: true,
+      legs,
+      combined_odds: combined,
+      spike_hit_pct: spikeHitPct,
+      fade_hit_pct: fadeHitPct,
+      rationale: `FADE MODE 🚫 • ${legs.length} legs • Spike's ticket ~${spikeHitPct}% to hit • your fade ~${fadeHitPct}%`,
+    };
+
+    let saved: any = parlayPayload;
+    if (!isAnon) {
+      try {
+        const ins = await supabase.from("live_ai_generated_parlays")
+          .insert({ user_id: userId, fade_mode: true, ...parlayPayload }).select().single();
+        if (ins.data) saved = { ...ins.data, fade_mode: true };
+      } catch (e) {
+        console.warn("fade parlay save skipped", e);
       }
     }
 
@@ -462,7 +594,7 @@ Deno.serve(async (req) => {
     };
 
     // Strip tools the current tier can't use, so the model can't even attempt them.
-    const GATED = new Set(["build_parlay", "analyze_slip", "get_top_picks", "get_whale_signals", "share_my_link"]);
+    const GATED = new Set(["build_parlay", "build_fade_parlay", "analyze_slip", "get_top_picks", "get_whale_signals", "share_my_link"]);
     const activeTools = (sample || !user)
       ? TOOLS.filter((t: any) => !GATED.has(t.function?.name))
       : TOOLS;
@@ -492,7 +624,7 @@ Deno.serve(async (req) => {
           try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
           const result = await runTool(tc.function.name, args, supabase, effectiveUserId, ctx);
           toolTrace.push({ name: tc.function.name, args, result });
-          if (tc.function.name === "build_parlay" && (result as any).parlay) lastParlay = (result as any).parlay;
+          if ((tc.function.name === "build_parlay" || tc.function.name === "build_fade_parlay") && (result as any).parlay) lastParlay = (result as any).parlay;
           messages.push({
             role: "tool",
             tool_call_id: tc.id,

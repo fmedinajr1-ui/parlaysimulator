@@ -1,0 +1,1 @@
+ALTER TABLE public.live_ai_generated_parlays ADD COLUMN IF NOT EXISTS fade_mode boolean NOT NULL DEFAULT false;
