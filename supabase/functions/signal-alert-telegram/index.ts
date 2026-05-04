@@ -216,6 +216,13 @@ function formatAlert(a: Alert): string | string[] {
       out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more — see dashboard_`);
     }
 
+    // Verified-on-HRB footer (only when engine confirmed it)
+    const hrbVerified = (meta as any)?.hrb_verified === true || (meta as any)?.source_book === 'hardrockbet';
+    if (hrbVerified) {
+      out.push('');
+      out.push(`📘 _Lines verified on Hard Rock Bet_`);
+    }
+
     let single = out.join('\n');
     if (single.length > MAX_MESSAGE_CHARS) {
       single = single.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated_';
