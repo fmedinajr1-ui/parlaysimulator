@@ -89,6 +89,14 @@ interface Pick {
   role_adj_away?: number | null;
   role_reasons?: { home: string | null; away: string | null } | null;
   drilldown_text?: string | null;
+  // Phase 1 — devigged probability edge fields:
+  model_prob?: number | null;
+  vig_free_implied?: number | null;
+  edge_pp?: number | null;
+  edge_side?: "over" | "under" | "none" | null;
+  quarantine_reason?: string | null;
+  books_count?: number | null;
+  book_lines?: unknown;
 }
 
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
