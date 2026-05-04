@@ -231,6 +231,10 @@ Deno.serve(async (req) => {
     const tier: TournamentTier = tournamentTier(hint?.sport_key, tournament.name);
     push(`Tournament tier: ${tier}`);
 
+    // Load runtime-tunable config (court_edge_config) — falls back to defaults on miss.
+    const cfg = await loadCourtEdgeConfig(supabase);
+    push(`Config: shrink_k=${cfg.shrink_k} spread_cap=${cfg.spread_v2_max_penalty} hard_cap_pp=${cfg.edge_hard_cap_pp} band=${cfg.line_band_sigmas}σ`);
+
     // 3. Weather
     const wxRes = await callFunction("court-edge-fetch-weather", { city: tournament.city }).catch((e) => ({ ok: false, error: String(e) }));
     const weather = wxRes?.ok ? wxRes.weather : null;
@@ -353,6 +357,7 @@ Deno.serve(async (req) => {
       const evTour = tourFromKey(ev.sport_key);
       const { input: inp, reasons } = projectMatch(homeTotals, awayTotals, roleH, roleA, evTour);
       inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away;
+      inp.cfg = cfg;
       const proj = project(inp);
       const sigma = pickSigma(evTour, setsKey);
       const e = edgeFor("match_total", proj.projection, ev.total_point, {
@@ -364,6 +369,7 @@ Deno.serve(async (req) => {
         sets_format: tournament.sets_format,
         surface: tournament.surface,
         indoor: tournament.indoor,
+        cfg,
       });
       // Phase 4 promotion gates (replaces inline baseline cap).
       const median = medianBookLine(ev.book_lines as any);
@@ -441,6 +447,7 @@ Deno.serve(async (req) => {
       const evTour = tourFromKey(ev?.sport_key);
       const { input: inp, reasons } = projectMatch(me.totals, opponentTotals, roleH, roleA, evTour);
       if (ev) { inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away; }
+      inp.cfg = cfg;
       const proj = project(inp);
       const sigma = pickSigma(evTour, setsKey);
       const e = edgeFor("player_total_games", proj.projection, pp.line, {
@@ -453,6 +460,7 @@ Deno.serve(async (req) => {
         sets_format: tournament.sets_format,
         surface: tournament.surface,
         indoor: tournament.indoor,
+        cfg,
       });
       const ppMedian = medianBookLine(ev?.book_lines as any);
       const ppPromo = applyPromotionGates(e.verdict, {
