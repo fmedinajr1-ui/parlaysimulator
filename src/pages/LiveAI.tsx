@@ -384,21 +384,7 @@ export default function LiveAI() {
       </div>
       )}
 
-      {/* Sample-mode banner */}
-      {sampleMode && (
-        <div className="relative z-10 mx-3 -mt-8 mb-2 rounded-xl bg-primary/15 border border-primary/40 backdrop-blur px-3 py-2 text-xs text-white flex items-center gap-2 shadow-lg">
-          <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
-          <span className="flex-1">
-            <strong className="font-semibold">Sample Mode</strong> — {Math.max(0, SAMPLE_TURN_LIMIT - sampleTurns)} free message{SAMPLE_TURN_LIMIT - sampleTurns === 1 ? "" : "s"} left.
-          </span>
-          <Link
-            to="/"
-            className="px-2 py-1 rounded-md bg-primary text-primary-foreground font-semibold text-[11px] hover:opacity-90"
-          >
-            Sign Up Free
-          </Link>
-        </div>
-      )}
+      {/* Open access: no signup banner. Spike chats freely with anyone on the site. */}
 
       <div className="flex-1" />
 
