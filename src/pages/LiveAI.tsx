@@ -504,7 +504,6 @@ export default function LiveAI() {
                 : "Hold mic to talk · Tap upload for a slip"}
         </p>
         </>
-        )}
       </div>
 
       {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
@@ -525,14 +524,6 @@ export default function LiveAI() {
             <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">📚 Bet education</span>
             <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">🔒 Today's plays for members</span>
           </div>
-          {!user && (
-            <Link
-              to="/"
-              className="mt-6 text-xs text-white/70 underline underline-offset-4 hover:text-white"
-            >
-              Get a free Pup account → unlock the real plays
-            </Link>
-          )}
         </div>
       )}
     </div>
