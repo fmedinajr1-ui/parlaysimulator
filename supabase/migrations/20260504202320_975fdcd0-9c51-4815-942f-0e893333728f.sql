@@ -1,0 +1,1 @@
+ALTER TABLE public.court_edge_runs ADD COLUMN IF NOT EXISTS diagnostics jsonb;
