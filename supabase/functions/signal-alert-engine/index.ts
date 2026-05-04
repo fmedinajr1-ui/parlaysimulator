@@ -310,8 +310,11 @@ Deno.serve(async (req) => {
         : null;
 
       // Verdict roll-up so we can audit which cascades are "real"
-      const verdictCounts = { strong: 0, lean: 0, weak: 0 };
-      for (const r of validReasonings) verdictCounts[r.verdict.toLowerCase() as 'strong'|'lean'|'weak'] += 1;
+      const verdictCounts = { strong: 0, lean: 0, neutral: 0, weak: 0 };
+      for (const r of validReasonings) {
+        const k = r.verdict.toLowerCase() as 'strong'|'lean'|'neutral'|'weak';
+        if (k in verdictCounts) verdictCounts[k] += 1;
+      }
 
       const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
         player_name: `TEAM CASCADE (${distinctPlayers.slice(0, 3).join(', ')}${distinctPlayers.length > 3 ? '…' : ''})`,
