@@ -16,6 +16,8 @@
 // deno-lint-ignore no-explicit-any
 type Sb = any;
 
+import { getThresholds, type ThresholdSet } from './threshold-config.ts';
+
 export type Side = 'Over' | 'Under';
 export type Verdict = 'STRONG' | 'LEAN' | 'NEUTRAL' | 'WEAK';
 export type Alignment = 'aligned' | 'neutral' | 'against' | 'no_data';
