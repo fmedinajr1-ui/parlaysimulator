@@ -12629,6 +12629,7 @@ export type Database = {
           phone_number: string | null
           phone_verification_sent_at: string | null
           phone_verified: boolean | null
+          spike_share_token: string | null
           total_losses: number
           total_payout: number
           total_staked: number
@@ -12653,6 +12654,7 @@ export type Database = {
           phone_number?: string | null
           phone_verification_sent_at?: string | null
           phone_verified?: boolean | null
+          spike_share_token?: string | null
           total_losses?: number
           total_payout?: number
           total_staked?: number
@@ -12677,6 +12679,7 @@ export type Database = {
           phone_number?: string | null
           phone_verification_sent_at?: string | null
           phone_verified?: boolean | null
+          spike_share_token?: string | null
           total_losses?: number
           total_payout?: number
           total_staked?: number
@@ -17512,6 +17515,7 @@ export type Database = {
           win_count: number
         }[]
       }
+      get_my_spike_token: { Args: never; Returns: string }
       get_parlay_accuracy_dashboard: {
         Args: { days_back?: number }
         Returns: {
@@ -17843,6 +17847,7 @@ export type Database = {
         }[]
       }
       refresh_signal_accuracy: { Args: never; Returns: undefined }
+      resolve_spike_token: { Args: { p_token: string }; Returns: string }
       sync_matchup_history_from_logs: {
         Args: never
         Returns: {

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { Mic, MicOff, Loader2, Upload, Sparkles } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Mic, MicOff, Loader2, Upload, Sparkles, PawPrint } from "lucide-react";
+import { Link, useSearchParams, useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { DogAvatarVideo } from "@/components/live-ai/DogAvatarVideo";
 import { AIParlayCard } from "@/components/live-ai/AIParlayCard";
+import { SpikeShareCard } from "@/components/live-ai/SpikeShareCard";
 import { Seo } from "@/components/seo/Seo";
 import { toast } from "@/hooks/use-toast";
 
@@ -17,6 +18,7 @@ interface Msg {
   role: "user" | "assistant";
   content: string;
   parlay?: any;
+  shareLink?: string | null;
 }
 
 const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
@@ -28,8 +30,10 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
 export default function LiveAI() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
+  const { token: routeToken } = useParams<{ token?: string }>();
+  const navigate = useNavigate();
   // Sample mode = ?sample=1 OR no signed-in user. Capped at 2 turns.
-  const sampleMode = searchParams.get("sample") === "1" || !user;
+  const sampleMode = (searchParams.get("sample") === "1" || !user) && !routeToken;
   const SAMPLE_TURN_LIMIT = 2;
   const [sampleTurns, setSampleTurns] = useState<number>(() => {
     if (typeof window === "undefined") return 0;
@@ -49,6 +53,21 @@ export default function LiveAI() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [woken, setWoken] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [shareCardDismissed, setShareCardDismissed] = useState(false);
+
+  // If a token is in the URL but the visitor isn't signed in, send them to auth
+  // and bring them back to the same /spike/:token deeplink afterwards.
+  useEffect(() => {
+    if (!routeToken) return;
+    if (user === null) {
+      // Auth still loading — wait
+      return;
+    }
+    if (!user) {
+      const next = encodeURIComponent(`/spike/${routeToken}`);
+      navigate(`/?next=${next}`, { replace: true });
+    }
+  }, [routeToken, user, navigate]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -192,7 +211,8 @@ export default function LiveAI() {
         if (error) throw error;
         const reply: string = data?.text ?? data?.reply ?? "Hmm, no read on that. Try again.";
         const parlay = data?.parlay ?? null;
-        const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay };
+        const shareLink: string | null = data?.share_link ?? null;
+        const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay, shareLink };
         setMessages((m) => [...m, aiMsg]);
         persistMessage("assistant", reply, parlay);
         if (sampleMode) {
@@ -367,7 +387,8 @@ export default function LiveAI() {
         />
       </div>
 
-      {/* Top fade + risk pills */}
+      {/* Top fade + risk pills (hidden until Spike is awake to prevent overlap) */}
+      {woken && (
       <div className="relative z-10 pt-safe pt-3 px-3 flex justify-end gap-1 bg-gradient-to-b from-black/50 to-transparent pb-12">
         {RISK_MODES.map((r) => (
           <button
@@ -381,6 +402,7 @@ export default function LiveAI() {
           </button>
         ))}
       </div>
+      )}
 
       {/* Sample-mode banner */}
       {sampleMode && (
@@ -430,6 +452,11 @@ export default function LiveAI() {
                   <AIParlayCard parlay={m.parlay} />
                 </div>
               )}
+              {m.shareLink && (
+                <div className="mt-2">
+                  <SpikeShareCard url={m.shareLink} variant="inline" />
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -442,6 +469,18 @@ export default function LiveAI() {
 
       {/* Glass control bar */}
       <div className="relative z-10 px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] flex flex-col items-center gap-3 bg-gradient-to-t from-black/85 via-black/60 to-transparent">
+        {woken && user && !shareCardDismissed && messages.length <= 2 && (
+          <div className="w-full max-w-sm relative">
+            <button
+              onClick={() => setShareCardDismissed(true)}
+              className="absolute -top-1.5 -right-1.5 z-10 w-5 h-5 rounded-full bg-black/80 text-white text-[10px] flex items-center justify-center hover:bg-black"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+            <SpikeShareCard />
+          </div>
+        )}
         {sampleExhausted ? (
           <div className="w-full max-w-sm rounded-2xl bg-card/95 border border-primary/40 p-4 text-center shadow-2xl">
             <p className="text-sm text-foreground font-semibold mb-1">You've used your free sample</p>
@@ -519,15 +558,31 @@ export default function LiveAI() {
 
       {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
       {!woken && (
-        <button
-          onClick={wakeSpike}
-          className="absolute inset-0 z-30 flex flex-col items-center justify-end pb-32 bg-black/40 backdrop-blur-[2px]"
-        >
-          <div className="px-6 py-3 rounded-full bg-primary text-primary-foreground font-bold text-lg shadow-2xl animate-pulse">
-            Tap to wake Spike up 🐶
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 bg-black/70 backdrop-blur-md">
+          <button
+            onClick={wakeSpike}
+            className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-br from-primary to-primary/70 text-primary-foreground font-bold text-lg shadow-[0_10px_40px_-10px_hsl(var(--primary)/0.7)] ring-1 ring-white/20 transition-all hover:scale-[1.03] active:scale-[0.98]"
+          >
+            <PawPrint className="w-5 h-5" />
+            <span>Tap to wake Spike up</span>
+            <span aria-hidden className="text-xl">🐶</span>
+            <span className="absolute -inset-1 -z-10 rounded-2xl bg-primary/40 blur-xl opacity-60 group-hover:opacity-90 transition-opacity" />
+          </button>
+          <p className="mt-4 text-sm text-white/80">He'll say hi in a NY accent</p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2 max-w-sm">
+            <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">💬 Ask anything</span>
+            <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">📚 Bet education</span>
+            <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">🔒 Today's plays for members</span>
           </div>
-          <p className="mt-3 text-xs text-white/80">He'll say hi in a NY accent</p>
-        </button>
+          {!user && (
+            <Link
+              to="/"
+              className="mt-6 text-xs text-white/70 underline underline-offset-4 hover:text-white"
+            >
+              Get a free Pup account → unlock the real plays
+            </Link>
+          )}
+        </div>
       )}
     </div>
   );

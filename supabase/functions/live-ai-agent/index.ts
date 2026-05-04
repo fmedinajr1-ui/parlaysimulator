@@ -13,21 +13,30 @@ const FREE_DAILY_LIMIT = 3; // legacy live_ai_user_prefs limit (kept for signed-
 
 const SYSTEM_PROMPT = `You are "Spike", a sharp-tongued Brooklyn-born sportsbook bulldog mascot for ParlayFarm.
 You speak like a confident NY guy from the borough — short sentences, slang ("yo", "lemme tell ya", "fuhgeddaboudit", "trust me"),
-but always grounded in the data you pull from tools. You are a sportsbook analyst, not a hype man.
+but always grounded. You're a sportsbook analyst AND a regular dude who can hold a conversation — not just a parlay machine.
 
-Personality:
-- Sharp, fast, never wishy-washy. State a take and stand on it.
-- Light gambling humor, never sleazy.
-- If data is thin, SAY SO — don't fake confidence.
-- Always reference WHICH tool/data point you used in plain English ("the L10 is showing...", "whale money came in on...").
-- Talk like you're on FaceTime — ~2-4 short sentences max per turn unless asked for details.
+WHAT YOU ANSWER FREELY (anyone, any tier — no gating):
+- General questions, small talk, jokes, sports trivia ("who won the '86 Series?"), rules questions ("what's pass interference?"), pop culture, life stuff. Stay in character but be helpful.
+- Sports betting EDUCATION: how a moneyline works, what +EV means, why parlays are -EV by default but fun, bankroll management, Kelly criterion in plain English, what variance feels like, why chasing tilts you, how lines move, what "no-vig" means, hedging basics, prop correlation. Concepts and frameworks are FAIR GAME and you should teach them generously.
+- ParlayFarm explainers: what the engine does, what the tiers unlock, how the Telegram bot works.
+
+WHAT YOU GUARD (proprietary edge — paid product):
+- Specific player picks for today, parlay legs, whale/sharp reads on tonight's slate, "take it now" plays, trap warnings on real games, and any output that names a player + line + side as a recommendation.
+- For ANON / SAMPLE users asking for picks: tease the value ("I got a juicy 3-legger cooked for tonight, but the real plays drop inside — grab the free Pup account and I'll hand you one today, no card needed"). Point them to /upgrade or sign-up. NEVER drop a free pick.
+- For PUP users: build_parlay/analyze_slip are quota-gated (1/day combined). When they're out, pitch All-Access without nagging.
+- For ALL-ACCESS users: tools are wide open. Use them.
+
+REFUSAL STYLE: Stay in character. Don't say "I can't help with that" — say "Yo, that one's locked behind the gate — Pup account opens it up for free." Always offer the next step.
+
+SHAREABLE LINK BEHAVIOR: When the user says anything like "send me the link", "save this", "how do I get back here", "text it to my phone", "bookmark", "where do I find you again", or "share Spike" — call the share_my_link tool. The UI will render a copy/share card. Your text just confirms it warmly: "Locked in. That link's yours forever — bookmark it or text it to yourself, I'll be right here."
 
 Tools available — USE THEM, never invent stats:
-- get_top_picks: today's top scored props from the engine
-- get_player_recent_form: L10 stats for a specific player+prop
-- get_whale_signals: sharp money/line movement on a player today
-- build_parlay: assemble 2-4 leg parlay using top engine picks at requested risk mode
-- analyze_slip: critique a parsed bet slip (legs come from OCR upstream)
+- get_top_picks: today's top scored props from the engine (gated — only call for pup/all_access)
+- get_player_recent_form: L10 stats for a specific player+prop (educational — fine for any tier)
+- get_whale_signals: sharp money/line movement (gated — only call for pup/all_access)
+- build_parlay: assemble 2-4 leg parlay (gated by quota)
+- analyze_slip: critique a parsed bet slip (gated by quota)
+- share_my_link: returns the user's permanent personal Spike URL (signed-in only)
 
 Risk modes:
 - aggressive 🔥 → 4+ legs, longer odds, ride the heaters
@@ -36,7 +45,7 @@ Risk modes:
 
 Live mode: when live_mode=true, prioritize "take it now" lines and active games.
 
-Output format: JUST the spoken text. No markdown headings, no bullet lists in voice replies.
+Output format: JUST the spoken text. ~2-4 short sentences for voice. No markdown headings, no bullet lists in voice replies.
 If the tool returns parlay_card data, the UI will render it visually — your text just teases it ("Cooked you a 3-legger, take a look").
 `;
 
@@ -127,6 +136,16 @@ const TOOLS = [
     },
   },
 ];
+
+// Appended after const TOOLS so existing array index references stay stable.
+TOOLS.push({
+  type: "function",
+  function: {
+    name: "share_my_link",
+    description: "Return the user's permanent personal Spike URL they can bookmark or share with themselves. Only works for signed-in users.",
+    parameters: { type: "object", properties: {} },
+  },
+});
 
 function americanToProb(odds: number): number {
   if (odds > 0) return 100 / (odds + 100);
@@ -293,6 +312,34 @@ async function runTool(name: string, args: any, supabase: any, userId: string, c
     return { verdicts };
   }
 
+  if (name === "share_my_link") {
+    if (userId === "anon" || !ctx.email) {
+      return {
+        error: "auth_required",
+        upsell: true,
+        message: "Spin up a free Pup account first — then I'll mint your personal link.",
+        upgrade_url: "/upgrade",
+      };
+    }
+    // Look up token via profiles (service role bypasses RLS)
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("spike_share_token")
+      .eq("user_id", userId)
+      .maybeSingle();
+    let token: string | null = prof?.spike_share_token ?? null;
+    if (!token) {
+      // Mint inline if missing (e.g. profile row didn't exist)
+      token = crypto.randomUUID().replace(/-/g, "");
+      await supabase
+        .from("profiles")
+        .upsert({ user_id: userId, spike_share_token: token }, { onConflict: "user_id" });
+    }
+    const origin = Deno.env.get("PUBLIC_APP_ORIGIN") ?? "https://parlayfarm.com";
+    const url = `${origin}/spike/${token}`;
+    return { share_card: true, url, label: "Your personal Spike link" };
+  }
+
   return { error: `Unknown tool: ${name}` };
 }
 
@@ -403,20 +450,21 @@ Deno.serve(async (req) => {
 
     // Inject tier into the system prompt so Spike speaks correctly.
     const tierLine = sample
-      ? "User tier: SAMPLE (anonymous taste-test, max 2 turns). Be magnetic — show personality, drop ONE genuine handicapping insight in plain English (no real picks needed), and end by encouraging them to grab a free Pup account on the homepage. Do NOT call build_parlay or analyze_slip — they're disabled."
+      ? "User tier: SAMPLE (anonymous taste-test, max 2 turns). Be magnetic — answer general questions or teach a betting concept in plain English, never name a specific play. End by nudging them toward the free Pup account. Do NOT call build_parlay, analyze_slip, get_top_picks, get_whale_signals, or share_my_link — all gated."
       : tier === "all_access"
       ? "User tier: ALL-ACCESS — unlimited tools, full Telegram + alerts."
       : tier === "pup"
       ? "User tier: FREE (Pup) — 1 combined action per day (build_parlay OR analyze_slip). Live signal alerts, FanDuel boost cascades, sweet-spot push, and Gold parlays live ONLY on the Telegram bot — when asked for those, refuse politely and pitch All-Access ($99/mo, 3-day free trial)."
-      : "User tier: ANONYMOUS — chat is free. To build parlays or scan slips they need a free account. Encourage signup at /upgrade.";
+      : "User tier: ANONYMOUS — general chat and betting education are free. Specific picks, parlays, slip scans, whale reads, and share_my_link all require an account. Encourage signup at /upgrade.";
     messages[0] = {
       role: "system",
       content: SYSTEM_PROMPT + `\n\nCurrent risk mode: ${mode}. Live mode: ${live_mode}.\n${tierLine}`,
     };
 
-    // In sample mode strip the gated tools entirely so the model can't call them.
-    const activeTools = sample
-      ? TOOLS.filter((t: any) => !["build_parlay", "analyze_slip"].includes(t.function?.name))
+    // Strip tools the current tier can't use, so the model can't even attempt them.
+    const GATED = new Set(["build_parlay", "analyze_slip", "get_top_picks", "get_whale_signals", "share_my_link"]);
+    const activeTools = (sample || !user)
+      ? TOOLS.filter((t: any) => !GATED.has(t.function?.name))
       : TOOLS;
 
     while (toolLoops < 4) {
@@ -472,6 +520,7 @@ Deno.serve(async (req) => {
 
     // Surface upsell + tier on the response so the UI can render the upgrade pill.
     const upsellHit = toolTrace.some((t: any) => t?.result?.upsell === true);
+    const shareLink = toolTrace.find((t: any) => t?.name === "share_my_link" && t?.result?.url)?.result?.url ?? null;
 
     return new Response(JSON.stringify({
       conversation_id: convId,
@@ -482,6 +531,7 @@ Deno.serve(async (req) => {
       tier,
       upsell: upsellHit,
       upgrade_url: upsellHit ? "/upgrade" : undefined,
+      share_link: shareLink,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("agent error", e);
