@@ -190,8 +190,11 @@ async function runTool(name: string, args: any, supabase: any, userId: string) {
   }
 
   if (name === "build_parlay") {
-    // Free-tier limit
-    const { data: prefs } = await supabase.from("live_ai_user_prefs").select("*").eq("user_id", userId).maybeSingle();
+    const isAnon = userId === "anon";
+    // Free-tier limit (signed-in only)
+    const { data: prefs } = isAnon
+      ? { data: null as any }
+      : await supabase.from("live_ai_user_prefs").select("*").eq("user_id", userId).maybeSingle();
     if (prefs && !prefs.is_premium) {
       const today = new Date().toISOString().slice(0, 10);
       const used = prefs.free_parlays_reset_date === today ? prefs.free_parlays_used_today : 0;
@@ -230,16 +233,25 @@ async function runTool(name: string, args: any, supabase: any, userId: string) {
     const combined = combinedAmericanOdds(legs);
     const confidence = legs.reduce((a, l) => a * (l.consensus_score / 100), 1);
 
-    const { data: saved } = await supabase.from("live_ai_generated_parlays").insert({
-      user_id: userId,
+    const parlayPayload = {
       mode,
       legs,
       combined_odds: combined,
       confidence: Math.round(confidence * 100),
       rationale: `${mode.toUpperCase()} mode • ${legs.length} legs • avg consensus ${Math.round(legs.reduce((a, l) => a + l.consensus_score, 0) / legs.length)}`,
-    }).select().single();
+    };
+    let saved: any = parlayPayload;
+    if (!isAnon) {
+      try {
+        const ins = await supabase.from("live_ai_generated_parlays")
+          .insert({ user_id: userId, ...parlayPayload }).select().single();
+        if (ins.data) saved = ins.data;
+      } catch (e) {
+        console.warn("parlay save skipped", e);
+      }
+    }
 
-    if (prefs && !prefs.is_premium) {
+    if (!isAnon && prefs && !prefs.is_premium) {
       const today = new Date().toISOString().slice(0, 10);
       const newCount = prefs.free_parlays_reset_date === today ? prefs.free_parlays_used_today + 1 : 1;
       await supabase.from("live_ai_user_prefs").update({
