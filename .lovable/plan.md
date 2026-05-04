@@ -1,76 +1,128 @@
-## Phase 1 — Edge Calculation (devigged probability edge)
+## Phase 2 — Projection Model Fixes
 
-Scope is **Phase 1 only**. Phases 2–5 follow as separate plans.
+Scope is **Phase 2 only** (model + projection math). Phase 1's edge-calc layer stays untouched. Data ingestion (`court-edge-fetch-odds`, `scrape-l3`, `fetch-weather`) is also untouched per your rule.
 
-### What's wrong today
-`edgeFor()` in `_shared/court-edge-projection.ts` returns `(projection − line) / line × 100`. That's projection distance, not edge — which is why we're seeing +35% / +48% numbers. There's also no over/under price devigging anywhere; `court-edge-fetch-odds` throws away over/under prices and only keeps `total_point` from the first book.
+### What's wrong today (in `_shared/court-edge-projection.ts`)
 
-### Changes
+1. **Structural OVER bias.** `base * surfaceMult * setsMult` multiplies an L3 average that already includes those effects, then the additive blowout/weather/role adjustments are too small to pull it back. Result: projection systematically > line.
+2. **No blowout suppression.** A 6‑0 6‑1 (13 games) and a 7‑6 6‑4 (23 games) get equal weight in L3. Recent blowouts inflate the variance but the mean stays normal — except when the *next* match is also between mismatched players. We need an explicit favorite‑heaviness penalty on top of `spreadAdj`.
+3. **`spreadAdj` is too weak and one-sided.** `-2.5 * |nH − nA|` caps at ~‑2.5 games even for a 90/10 favorite, and never *adds* games for true coin flips. A 50/50 should bias slightly OVER (more competitive sets).
+4. **No hold-rate prior.** Two big servers on grass should pull projection UP independently of L3; two returners on clay should pull DOWN. Roles partially do this but only as a small additive — there's no Bayesian shrink to a surface/tour-specific prior, so noisy 3-match samples dominate.
+5. **No sanity bounds.** Output can be 11.5 or 35.0 games on a Bo3, which is physically impossible and silently passes through into edge-calc, which then trips QUARANTINE — masking the real bug.
 
-**1. `_shared/court-edge-edge.ts` (new)** — pure helpers:
-- `americanToImplied(odds)` and `devigPair(over, under)` (normalize so they sum to 1).
-- `modelProbOver(projection, line, sigma)` — uses Abramowitz normal CDF copied locally (no cross-package import from `src/lib`).
-- Sigma constants:
-  ```ts
-  export const SIGMA_GAMES = { wta_bo3: 3.5, atp_bo3: 4.0, wta_bo5: 4.5, atp_bo5: 5.5 };
-  export function pickSigma(tour: 'wta'|'atp'|'unknown', sets: 'bo3'|'bo5'): number;
-  ```
-- `EDGE_HARD_CAP_PP = 0.12`.
+### Changes (all in `_shared/court-edge-projection.ts` + new prior file)
 
-**2. Rewrite `edgeFor` in `_shared/court-edge-projection.ts`**
-New return shape:
+**1. New: `_shared/court-edge-prior.ts`** — pure data, no I/O.
 ```ts
-{
-  reference, model_prob_over, model_prob_under,
-  vig_free_implied_over, vig_free_implied_under,
-  edge_pp,             // signed: + = OVER, − = UNDER, in probability points
-  edge_side: 'over'|'under'|'none',
-  verdict,             // includes new 'QUARANTINE'
-  quarantine_reason?
+// Match-total game priors (mean + sd) by surface × sets × tour.
+// Derived from long-run pro-tour averages; same source family as baseline.ts.
+export const MATCH_TOTAL_PRIOR = {
+  bo3: {
+    atp: { hard: {mu: 22.0, sd: 3.6}, clay: {mu: 21.4, sd: 3.4}, grass: {mu: 22.6, sd: 4.0}, indoor: {mu: 21.8, sd: 3.6} },
+    wta: { hard: {mu: 20.8, sd: 3.4}, clay: {mu: 20.4, sd: 3.3}, grass: {mu: 21.0, sd: 3.8}, indoor: {mu: 20.6, sd: 3.4} },
+  },
+  bo5: {
+    atp: { hard: {mu: 35.0, sd: 5.5}, clay: {mu: 34.0, sd: 5.2}, grass: {mu: 36.0, sd: 6.0}, indoor: {mu: 34.6, sd: 5.4} },
+    wta: { hard: {mu: 35.0, sd: 5.5}, clay: {mu: 34.0, sd: 5.2}, grass: {mu: 36.0, sd: 6.0}, indoor: {mu: 34.6, sd: 5.4} },
+  },
+} as const;
+
+export function priorFor(tour, sets, surface): {mu:number; sd:number}; // unknown → wta/hard fallback
+```
+
+**2. Rewrite `project()` math** (same signature, new internals):
+
+a. **Drop the multiplicative `surfaceMult * setsMult` stack.** Surface and sets effects are now expressed *only* through the prior (`mu_prior`). The L3 average becomes a player-skill delta, not a re-multiplied base.
+```
+delta_l3   = ((w1 + w2) / 2)  −  prior.mu / 2     // each player's contribution vs prior half
+combined   = prior.mu + 2 * delta_l3              // recompose around prior mean
+```
+
+b. **Bayesian shrink toward the prior** (kills 3-match noise + the OVER-bias compounding):
+```
+n_eff = (count(p1_l3) + count(p2_l3))             // up to 6
+k     = 4                                          // shrink strength (4 "virtual matches")
+shrunk = (n_eff * combined + k * prior.mu) / (n_eff + k)
+```
+
+c. **New `spreadAdjV2`** — two-sided, capped harder, applied AFTER shrink:
+```
+diff = |nH − nA|                                  // 0..1
+if (diff < 0.10)  adj = +0.6                      // true coin flips → slight OVER
+else              adj = -3.0 * (diff - 0.10) / 0.40   // linear, capped at −3.0 by diff=0.50
+clamp adj to [-3.0, +0.8]
+```
+Replaces the existing `spreadAdj`. Old `spreadAdj` export kept as alias for tests but unused by `project()`.
+
+d. **Blowout-recency penalty.** If either player's most-recent match total is ≤ 14 games (Bo3) or ≤ 22 (Bo5), subtract 0.5 games — that's a recent blowout flagging a likely repeat in form mismatch.
+```
+blowout_adj = 0
+const cutoff = sets_format === 'bo5' ? 22 : 14;
+if (p1_l3[0] <= cutoff) blowout_adj -= 0.5;
+if (p2_l3[0] <= cutoff) blowout_adj -= 0.5;
+```
+
+e. **Weather/indoor stay as-is** (additive, already correctly signed).
+
+f. **Role adj stays as-is** (already pure additive).
+
+g. **Final sanity clamp** based on the prior's 3σ envelope:
+```
+const lo = prior.mu - 3 * prior.sd;
+const hi = prior.mu + 3 * prior.sd;
+if (projection < lo || projection > hi) {
+  breakdown.clamped = true;
+  projection = clamp(projection, lo, hi);
 }
 ```
-- Both prices present → devig → `edge_pp = model_prob_side − devigged_implied_side` for the favored side.
-- Either price missing → `edge_side: 'none'`, `verdict: 'PASS'` (no fake edges).
-- `|edge_pp| > 0.12` → `verdict: 'QUARANTINE'`, reason `edge_above_hard_cap`.
-- Otherwise (Phase 1 placeholder thresholds, Phase 4 will refine):
-  - `≥ 0.04` → STRONG_OVER / STRONG_UNDER
-  - `≥ 0.02` → LEAN_OVER / LEAN_UNDER
-  - else PASS
+Anything that needed clamping is flagged in the breakdown so Phase 5 diagnostics can count it.
 
-**3. Add `QUARANTINE` to the `Verdict` union** and update `court-edge-projection_test.ts` boundary asserts.
+**3. New return fields on `ProjectionBreakdown`** (additive, no removals):
+```ts
+prior_mu: number;
+prior_sd: number;
+delta_l3: number;
+shrunk: number;
+blowout_adj: number;
+spread_adj_v2: number;
+clamped: boolean;
+```
+Keep `surface_mult`/`sets_mult` in the return for backwards compat — set to 1.0 with a comment that they're deprecated. `projection` now means: post-shrink, post-adjustments, post-clamp.
 
-**4. `court-edge-fetch-odds/index.ts`** — capture both prices and book counts:
-- Add `total_over_price`, `total_under_price` to `NormalizedEvent`.
-- Per the user's call: collect **all bookmakers** with totals on each event into a `book_lines: Array<{book, point, over_price, under_price}>` and a `books_count`. The orchestrator continues to use the primary `total_point` for now; `book_lines` is captured for Phase 4 multi-book agreement.
+**4. `project()` needs `tour` to look up the prior.** Add an optional `tour?: 'atp'|'wta'|'unknown'` to `ProjectionInput`. `court-edge-run/index.ts` already derives `tour` for sigma — pass the same value into `project()`. Default `'unknown'` → `wta` row of the prior table (same convention as `pickSigma`).
 
-**5. `court-edge-run/index.ts`** — plumbing:
-- Pick `sigma` via `pickSigma(tour, sets)`; derive `tour` from `sport_key` prefix (`tennis_atp_*` vs `tennis_wta_*`), default `'unknown'` → `wta_bo3`.
-- Replace both `edgeFor(...)` call sites with the new signature, passing `over_price`, `under_price`, `sigma`.
-- Persist new fields on each Pick: `model_prob`, `vig_free_implied`, `edge_pp`, `edge_side`, `quarantine_reason`, `books_count`, `book_lines`. Keep legacy `edge`/`edge_pct` columns populated (`edge_pct = edge_pp * 100`) so existing dashboards don't break — values now mean **percentage points**, not relative %.
-- Picks with `verdict === 'QUARANTINE'` are inserted into `court_edge_picks` for audit but excluded from the Telegram digest.
+**5. `court-edge-run/index.ts` minimal touches** (model wiring only — no UI/threshold changes):
+- Pass `tour: tourFromKey(ev?.sport_key)` into `projectMatch()` so `project()` can look up the prior.
+- Persist new breakdown fields by virtue of `formula: { ...proj }` — no row-shape change.
+- One log line per run: `Clamped: X/Y · Blowout flags: Z` (count `proj.clamped` and non-zero `blowout_adj`).
 
-**6. Telegram label tweak** — one line in `buildDigest`: `edge {sign}{(edge_pp*100).toFixed(1)}pp` instead of `fmtPct(edge_pct)`. No other UI/styling changes.
-
-**7. Tests** (`_shared/court-edge-edge_test.ts`, 5 per testing-policy):
-1. `americanToImplied(-110)` ≈ 0.5238.
-2. `devigPair(-110, -110)` → `{ 0.5, 0.5 }`.
-3. `modelProbOver(22, 20, 3.5)` between 0.5 and 0.99.
-4. `edgeFor(projection=22, line=20.5, -110/-110, σ=3.5)` → `|edge_pp| < 0.12`, verdict LEAN_OVER or PASS.
-5. `edgeFor(projection=30, line=20, -110/-110)` → verdict `QUARANTINE`, reason `edge_above_hard_cap`.
+**6. Tests** (5 minimum per `mem://constraints/testing-policy`), in `_shared/court-edge-projection_test.ts`:
+1. `project` with two evenly-matched ATP-hard players (L3 = [22,22,22] each) → projection within ±0.5 of `prior.mu = 22.0` (no OVER drift).
+2. Same matchup but one player's L3 = [13, 13, 13] → projection drops by ≥ 1.0 game and `blowout_adj < 0`.
+3. ML 50/50 (-110/-110) → `spread_adj_v2 = +0.6`; ML 90/10 (-900/+700) → `spread_adj_v2 = -3.0`.
+4. Tiny sample (`p1_l3 = [22]`, `p2_l3 = []` → falls back to baseline upstream; we test directly with `p1_l3=[22], p2_l3=[22]`) → shrunk projection stays within 1 game of `prior.mu` (Bayesian shrink dominates).
+5. Pathological input (`p1_l3 = [40,40,40]`) → `clamped = true` and projection ≤ `prior.mu + 3*prior.sd`.
 
 ### Files Touched
-- `supabase/functions/_shared/court-edge-edge.ts` (new)
-- `supabase/functions/_shared/court-edge-edge_test.ts` (new)
-- `supabase/functions/_shared/court-edge-projection.ts` (rewrite `edgeFor`, add QUARANTINE)
-- `supabase/functions/_shared/court-edge-projection_test.ts` (update boundary tests)
-- `supabase/functions/court-edge-fetch-odds/index.ts` (capture all books + over/under prices)
-- `supabase/functions/court-edge-run/index.ts` (plumb new args + fields, gate digest)
+- `supabase/functions/_shared/court-edge-prior.ts` (new)
+- `supabase/functions/_shared/court-edge-prior_test.ts` (new — 2 prior-lookup tests)
+- `supabase/functions/_shared/court-edge-projection.ts` (rewrite math; add fields; deprecate `surfaceMult`/`setsMult` constants but keep exports)
+- `supabase/functions/_shared/court-edge-projection_test.ts` (the 5 tests above)
+- `supabase/functions/court-edge-run/index.ts` (pass `tour` into `project`, add one log line)
 
-### Out of scope (future phases)
-- Projection model fixes / blowout suppression / hold-rate priors / sanity bounds (Phase 2)
-- Tournament tagging + calibrated_tiers + line range filter (Phase 3)
-- Tier promotion rules: ≥2 books agree, weather present, etc. (Phase 4)
-- Diagnostics line + header counts + 20% quarantine warning (Phase 5)
+### Out of scope (later phases)
+- Tournament tagging refinements + calibrated tiers + line-range filter (Phase 3)
+- Multi-book agreement / weather-required STRONG promotion (Phase 4)
+- Diagnostics line + 20% quarantine warning + UI counters (Phase 5)
+- Edge-calc thresholds (Phase 1; `EDGE_HARD_CAP_PP` and STRONG/LEAN cutoffs unchanged)
+- Data ingestion code (off-limits per your rule)
 
 ### Deliverable after switching to default mode
-Diff for the 6 files, a one-paragraph summary, and a list of picks from the most recent `court_edge_runs` row that would now be QUARANTINEd or downgraded under the new math. Then I stop and wait before touching Phase 2.
+Diff for the 5 files, a one-paragraph summary of what changed and why the OVER bias now goes away, and a re-scored list of the most recent `court_edge_picks` showing which previous STRONG/LEAN picks **downgrade or flip** under the new projection (verdict deltas only — not a full backtest). Then I stop and wait for your sign-off before touching Phase 3.
+
+### Open question before I implement
+The blowout cutoff (≤14 Bo3 / ≤22 Bo5) and the shrink strength `k=4` are my best-guess starting values. Want me to:
+- **(a)** Ship those defaults and let you tune via a constants block, or
+- **(b)** Make them configurable from a `court_edge_config` row so you can A/B without redeploys?
+
+I'd default to (a) for Phase 2 and add the config row in Phase 5 with the rest of the diagnostics. Confirm or override.
