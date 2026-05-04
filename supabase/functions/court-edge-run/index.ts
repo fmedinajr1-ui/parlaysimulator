@@ -529,7 +529,29 @@ Deno.serve(async (req) => {
     // 7. Persist picks
     if (picks.length > 0) {
       try {
-        const rows = picks.map((p) => ({ ...p, run_id: runId }));
+        // Strip Phase-1 fields from the top level (no DB columns yet) and tuck
+        // them into the existing `formula` JSON so we can audit without a migration.
+        const rows = picks.map((p) => {
+          const {
+            model_prob, vig_free_implied, edge_pp, edge_side,
+            quarantine_reason, books_count, book_lines,
+            ...rest
+          } = p;
+          return {
+            ...rest,
+            run_id: runId,
+            formula: {
+              ...(rest.formula as Record<string, unknown>),
+              model_prob,
+              vig_free_implied,
+              edge_pp,
+              edge_side,
+              quarantine_reason,
+              books_count,
+              book_lines,
+            },
+          };
+        });
         const { error: pErr } = await supabase.from("court_edge_picks").insert(rows);
         if (pErr) errors.push({ step: "persist_picks", error: pErr.message });
       } catch (e) {
