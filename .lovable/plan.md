@@ -1,3 +1,24 @@
+## Phase 4 — STRONG Promotion Gates (DONE)
+
+New `_shared/court-edge-promotion.ts` exports `applyPromotionGates(verdict, ctx)`
+which demotes STRONG_* → LEAN_* unless ALL the following hold:
+- `baseline_used === false` (no L3 fallback on either side)
+- `books_count >= 2` AND median book line within 0.5 games of reference
+- if outdoor venue, `weather_present === true`
+- projection on the same side of the prior as the verdict (within ±0.5σ)
+
+Demotion reason recorded in `formula.promotion_blocked_reason`. `medianBookLine`
+helper picks the median across `book_lines[].point`.
+
+`court-edge-run/index.ts` calls the gate once per pick (both odds-API match
+totals and PrizePicks player totals), replacing the old inline baseline cap.
+Per-run log line tallies demotion reasons.
+
+Tests: 7 unit cases covering pass-through, each demotion reason, and median
+helper edge cases.
+
+---
+
 ## Phase 3 — Tournament Tier, Calibrated Tiers, Line-Range Filters (DONE)
 
 New `_shared/court-edge-tournament-tier.ts` classifies events into
