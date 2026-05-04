@@ -22,6 +22,7 @@ import {
 import { buildDrilldown } from "../_shared/court-edge-drilldown.ts";
 import { playerSlug } from "../_shared/court-edge-slug.ts";
 import { baselineL3, baselineFor, type Surface, type SetsFormat } from "../_shared/court-edge-baseline.ts";
+import { pickSigma, type Tour } from "../_shared/court-edge-edge.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +46,10 @@ interface OddsEvent {
   ml_home: number | null;
   ml_away: number | null;
   bookmaker: string | null;
+  total_over_price?: number | null;
+  total_under_price?: number | null;
+  books_count?: number;
+  book_lines?: Array<{ book: string; point: number; over_price: number | null; under_price: number | null }>;
 }
 
 interface PPProj {
@@ -123,9 +128,13 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   lines.push("");
 
   const grouped: Record<Verdict, Pick[]> = {
-    STRONG_OVER: [], STRONG_UNDER: [], LEAN_OVER: [], LEAN_UNDER: [], PASS: [],
+    STRONG_OVER: [], STRONG_UNDER: [], LEAN_OVER: [], LEAN_UNDER: [], PASS: [], QUARANTINE: [],
   };
-  for (const p of picks) grouped[p.verdict].push(p);
+  for (const p of picks) {
+    // QUARANTINE picks never appear in the user-facing digest; they're persisted for audit only.
+    if (p.verdict === "QUARANTINE") { grouped.QUARANTINE.push(p); continue; }
+    grouped[p.verdict].push(p);
+  }
 
   let printed = 0;
   for (const v of VERDICT_ORDER) {
@@ -138,7 +147,9 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
         ? `${p.matchup} — Match Total Games`
         : `${p.player} — Total Games Won`;
       const src = p.source === "odds_api" ? "OddsAPI" : "PrizePicks";
-      lines.push(`• ${label}\n   line ${p.line}  proj ${p.projection.toFixed(2)}  edge ${fmtPct(p.edge_pct)}  [${src}]`);
+      const ePp = (p.edge_pct ?? 0); // edge_pct now means probability points × 100
+      const sign = ePp >= 0 ? "+" : "";
+      lines.push(`• ${label}\n   line ${p.line}  proj ${p.projection.toFixed(2)}  edge ${sign}${ePp.toFixed(1)}pp  [${src}]`);
       printed += 1;
     }
     lines.push("");
@@ -146,8 +157,9 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
 
   const leans = grouped.LEAN_OVER.length + grouped.LEAN_UNDER.length;
   const passes = grouped.PASS.length;
+  const quarantined = grouped.QUARANTINE.length;
   if (printed === 0) lines.push("_No actionable edges right now. Try again after the next slate refresh._\n");
-  lines.push(`Leans ${leans}  ·  Pass ${passes}`);
+  lines.push(`Leans ${leans}  ·  Pass ${passes}  ·  Quarantine ${quarantined}`);
   lines.push(`Sources: Odds API ${meta.sources.odds}  ·  PrizePicks ${meta.sources.pp}  ·  TennisAbstract ${meta.sources.l3}  ·  Weather ${meta.sources.wx}`);
   lines.push(`Run \`${meta.runId.slice(0, 8)}\`  ·  picks ${picks.length}  ·  errors ${meta.errors}`);
   // "Why empty?" diagnostic footer — only when nothing actionable went out.
