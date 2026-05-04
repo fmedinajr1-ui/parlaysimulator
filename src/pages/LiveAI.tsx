@@ -281,7 +281,11 @@ export default function LiveAI() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <Seo title="Live AI — Spike" description="Talk live to ParlayFarm's AI bulldog." />
+      <Seo
+        title="Live AI — Spike"
+        description="Talk live to ParlayFarm's AI bulldog."
+        canonical="/live-ai"
+      />
 
       {/* Avatar */}
       <div className="relative w-full aspect-square sm:aspect-video max-h-[55vh] bg-black">
