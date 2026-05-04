@@ -146,6 +146,38 @@ export function formatCascadeSimLines(sim: CascadeSim, totalLegs: number): strin
   return lines;
 }
 
+// ─── Plain-English variant (Spike voice) ─────────────────────────────────
+// Used by the v3 cascade Telegram format. Drops EV / probability jargon and
+// frames each option in dollars + a one-line characterisation.
+
+function plainRow(label: string, line: SimLine, descriptor: string): string {
+  if (!line.available) return `  • ${label} → not enough strong legs`;
+  const pct = `${Math.round(line.prob * 100)}%`;
+  if (line.stake <= 0) return `  • ${label} → ${pct} chance, no edge`;
+  return `  • ${label} → ${pct} chance, pays $${line.payout.toFixed(0)} on $${line.stake.toFixed(0)} (${descriptor})`;
+}
+
+export function formatCascadeSimPlain(
+  sim: CascadeSim,
+  totalLegs: number,
+  actionKind: 'TAIL' | 'TAIL_SMALL' | 'REVIEW' | 'FADE' | 'SKIP',
+): string[] {
+  const lines: string[] = [];
+  lines.push(`💰 If you bet from a $${sim.bankroll} bankroll:`);
+  lines.push(plainRow(`All ${totalLegs} legs together`, sim.tailFull, 'long shot'));
+  lines.push(plainRow(`Just the top 3 strongest`, sim.tailSmall, 'realistic play'));
+  lines.push(plainRow(`Fade the whole group`, sim.fade, 'tiny edge'));
+  let best = '';
+  if (actionKind === 'TAIL') best = `Best play: top 3 strongest. Spike's call.`;
+  else if (actionKind === 'TAIL_SMALL') best = `Best play: top 3 only, half stake.`;
+  else if (actionKind === 'FADE') best = `Best play: fade the group.`;
+  else if (actionKind === 'SKIP') best = `Best play: skip — no edge worth chasing.`;
+  else best = `Best play: review the strong legs only.`;
+  lines.push('');
+  lines.push(best);
+  return lines;
+}
+
 function formatRow(label: string, line: SimLine): string {
   if (!line.available) {
     return `   • ${label}: n/a (need 3+ non-WEAK legs)`;
