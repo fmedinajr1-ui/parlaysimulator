@@ -322,14 +322,29 @@ Deno.serve(async (req) => {
     const user_text: string = body.user_text ?? body.message ?? "";
     const mode: string = body.mode ?? body.risk_mode ?? "smart";
     const live_mode: boolean = body.live_mode ?? false;
+    const sample: boolean = body.sample === true;
     const conversation_id: string | undefined = body.conversation_id;
     const clientHistory: any[] = Array.isArray(body.history) ? body.history : [];
     if (!user_text) return new Response(JSON.stringify({ error: "user_text required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    // Resolve conversation (only if user is signed in)
+    // Sample mode: anonymous taste-test, hard cap of 2 assistant turns from the
+    // client-supplied history. No persistence, no tools that require quota.
+    if (sample) {
+      const priorAssistantTurns = clientHistory.filter((m: any) => m?.role === "assistant").length;
+      if (priorAssistantTurns >= 2) {
+        return new Response(JSON.stringify({
+          text: "That's the free sample, my guy. Spin up a free Pup account and we keep cookin' — no cost.",
+          reply: "That's the free sample, my guy. Spin up a free Pup account and we keep cookin' — no cost.",
+          upsell: true,
+          upgrade_url: "/",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // Resolve conversation (only if user is signed in AND not sample)
     let convId = conversation_id;
     let dbHistory: any[] = [];
-    if (user) {
+    if (user && !sample) {
       try {
         if (!convId) {
           const { data: c } = await supabase.from("live_ai_conversations").insert({
@@ -387,7 +402,9 @@ Deno.serve(async (req) => {
     const ctx = { tier, email: callerEmail };
 
     // Inject tier into the system prompt so Spike speaks correctly.
-    const tierLine = tier === "all_access"
+    const tierLine = sample
+      ? "User tier: SAMPLE (anonymous taste-test, max 2 turns). Be magnetic — show personality, drop ONE genuine handicapping insight in plain English (no real picks needed), and end by encouraging them to grab a free Pup account on the homepage. Do NOT call build_parlay or analyze_slip — they're disabled."
+      : tier === "all_access"
       ? "User tier: ALL-ACCESS — unlimited tools, full Telegram + alerts."
       : tier === "pup"
       ? "User tier: FREE (Pup) — 1 combined action per day (build_parlay OR analyze_slip). Live signal alerts, FanDuel boost cascades, sweet-spot push, and Gold parlays live ONLY on the Telegram bot — when asked for those, refuse politely and pitch All-Access ($99/mo, 3-day free trial)."
@@ -397,6 +414,11 @@ Deno.serve(async (req) => {
       content: SYSTEM_PROMPT + `\n\nCurrent risk mode: ${mode}. Live mode: ${live_mode}.\n${tierLine}`,
     };
 
+    // In sample mode strip the gated tools entirely so the model can't call them.
+    const activeTools = sample
+      ? TOOLS.filter((t: any) => !["build_parlay", "analyze_slip"].includes(t.function?.name))
+      : TOOLS;
+
     while (toolLoops < 4) {
       toolLoops++;
       const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -405,7 +427,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           model: "google/gemini-3-flash-preview",
           messages,
-          tools: TOOLS,
+          tools: activeTools,
         }),
       });
       if (r.status === 429) return new Response(JSON.stringify({ error: "Rate limited, try again in a moment." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -437,7 +459,7 @@ Deno.serve(async (req) => {
     }
 
     // Save assistant message (only if we have a user)
-    if (user && convId) {
+    if (user && convId && !sample) {
       try {
         await supabase.from("live_ai_messages").insert({
           conversation_id: convId, user_id: user.id, role: "assistant",
