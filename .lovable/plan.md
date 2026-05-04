@@ -1,3 +1,14 @@
+## Phase 5 — Diagnostics, Quarantine Warning, Persisted Counters (DONE)
+
+- Migration: `court_edge_runs.diagnostics jsonb` column added.
+- New `_shared/court-edge-diagnostics.ts` exports `buildRunDiagnostics(picks, ctx)` and `diagnosticsFooter(d)`.
+  Aggregates: `by_verdict`, `by_tier`, `quarantine_reasons`, `promotion_demotions`, `clamped`, `blowout_flags`, `l3_hit_rate`, `quarantine_rate`, `actionable_count`.
+  Warnings emitted: `high_quarantine_rate` (≥20%), `no_actionable_picks`, `low_l3_coverage` (<50%), `weather_missing`, `prizepicks_blocked`, `pipeline_errors`.
+- `court-edge-run` builds the blob, persists it on the run row, logs warnings, and appends a single `⚠️` footer line to the Telegram digest when warnings fire.
+- 6 unit tests cover empty/healthy/quarantined/breakdown/stacked-warnings/all-quarantine.
+
+---
+
 ## Phase 4 — STRONG Promotion Gates (DONE)
 
 New `_shared/court-edge-promotion.ts` exports `applyPromotionGates(verdict, ctx)`
