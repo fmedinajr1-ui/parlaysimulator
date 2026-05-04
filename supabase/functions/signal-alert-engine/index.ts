@@ -110,9 +110,9 @@ Deno.serve(async (req) => {
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
-  const explain = async (p: ScoredProp, juiceGap: number | null): Promise<PlayerReasoning | null> => {
+  const explain = async (p: ScoredProp, juiceGap: number | null, signal_type?: string): Promise<PlayerReasoning | null> => {
     if (!p.player_name || !p.prop_type || !p.event_id) return null;
-    const key = `${p.event_id}|${p.player_name}|${p.prop_type}|${p.derived_side}|${p.current_line}`;
+    const key = `${p.event_id}|${p.player_name}|${p.prop_type}|${p.derived_side}|${p.current_line}|${signal_type ?? ''}`;
     let pending = explainerCache.get(key);
     if (!pending) {
       pending = buildPlayerReasoning(supabase, {
@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
         event_id: p.event_id,
         sport: normaliseSport(p.sport),
         juice_gap: juiceGap,
+        signal_type,
       }).catch((err) => {
         console.error('[signal-alert-engine] explainer failed for', p.player_name, err);
         return null as unknown as PlayerReasoning;
@@ -277,7 +278,7 @@ Deno.serve(async (req) => {
           const overP = Number(m.over_price ?? NaN);
           const underP = Number(m.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
-          return explain(m, gap);
+          return explain(m, gap, 'cascade');
         }),
       );
 
@@ -377,7 +378,7 @@ Deno.serve(async (req) => {
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
         if (!(await claimKey(dKey, 'take_it_now'))) continue;
 
-        const engine_reasoning = await explain(p, gap);
+        const engine_reasoning = await explain(p, gap, 'take_it_now');
 
         const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
           player_name: p.player_name,
@@ -440,7 +441,7 @@ Deno.serve(async (req) => {
           const overP = Number(p.over_price ?? NaN);
           const underP = Number(p.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
-          const engine_reasoning = await explain(p, gap);
+          const engine_reasoning = await explain(p, gap, 'velocity_spike');
 
           const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
             player_name: p.player_name,

@@ -16,11 +16,12 @@
 // deno-lint-ignore no-explicit-any
 type Sb = any;
 
-import { getThresholds, type ThresholdSet } from './threshold-config.ts';
+import { getThresholds, isSignalMuted, type ThresholdSet } from './threshold-config.ts';
 
 export type Side = 'Over' | 'Under';
 export type Verdict = 'STRONG' | 'LEAN' | 'NEUTRAL' | 'WEAK';
 export type Alignment = 'aligned' | 'neutral' | 'against' | 'no_data';
+export type Action = 'BACK' | 'FADE' | 'PASS';
 
 export interface ExplainerInput {
   player_name: string;
@@ -30,6 +31,7 @@ export interface ExplainerInput {
   event_id: string;
   sport: string;        // normalised: 'NBA' | 'MLB' | 'NHL' | 'NFL' | ...
   juice_gap?: number | null;
+  signal_type?: string | null;  // 'cascade' | 'velocity_spike' | 'take_it_now' | ...
 }
 
 export interface PlayerReasoning {
@@ -79,6 +81,8 @@ export interface PlayerReasoning {
   known_count: number;            // axes that are not 'no_data'
   model_edge_value: number | null; // (mean - line) / std, signed for the alerted side
   verdict: Verdict;
+  action: Action;                  // BACK = bet alerted side, FADE = bet opposite, PASS = skip
+  signal_muted?: boolean;
   headline: string;                  // one-line summary for telegram
   flags: string[];                   // short tags for UI ('volatile_minutes', 'soft_matchup', etc.)
 }
@@ -147,6 +151,21 @@ function computeVerdict(aligned_count: number, against_count: number, known_coun
   return 'NEUTRAL';
 }
 
+/**
+ * Map verdict + model_edge alignment into a clean BACK/FADE/PASS enum that
+ * downstream Telegram + UI can consume directly.
+ *  - BACK = bet the alerted side (verdict ≥ LEAN AND model doesn't disagree)
+ *  - FADE = bet the opposite side (WEAK AND model disagrees with alerted side)
+ *  - PASS = skip (NEUTRAL, signal-muted, or STRONG-but-model-against)
+ */
+export function computeAction(verdict: Verdict, modelEdge: Alignment): Action {
+  if (verdict === 'STRONG' || verdict === 'LEAN') {
+    return modelEdge === 'against' ? 'PASS' : 'BACK';
+  }
+  if (verdict === 'WEAK' && modelEdge === 'against') return 'FADE';
+  return 'PASS';
+}
+
 function side_emoji(side: Side): string {
   return side === 'Over' ? '⬆️' : '⬇️';
 }
@@ -177,6 +196,37 @@ export async function buildPlayerReasoning(
 ): Promise<PlayerReasoning> {
   const family = pickPropFamily(input.prop_type);
   const isOver = input.side === 'Over';
+
+  // Signal-mute kill switch. If the signal_type is muted, short-circuit to
+  // NEUTRAL/PASS without spending DB reads. Engines + Telegram skip these.
+  let muted = false;
+  let mute_reason: string | null = null;
+  if (input.signal_type) {
+    try {
+      const m = await isSignalMuted(supabase, input.signal_type);
+      muted = m.muted;
+      mute_reason = m.reason;
+    } catch (_e) { /* non-fatal */ }
+  }
+  if (muted) {
+    const empty: PlayerReasoning = {
+      version: 'v1',
+      matchup: { opponent_team: null, defense_rank: null, position_defense_rank: null, stat_allowed: null, game_script: null, blowout_risk: null, vegas_total: null },
+      form: { l10_hits: null, l10_total: null, hit_rate: null, last_value: null },
+      role: { minutes_score: null, minutes_flag: null },
+      pvs: { tier: null, matchup_score: null, pace_score: null },
+      juice: { gap: input.juice_gap ?? null, aligned_with_side: null },
+      injuries: { relevant_count: 0, headlines: [] },
+      alignment: { defense: 'no_data', form: 'no_data', pace: 'no_data', juice: 'no_data', role: 'no_data', model_edge: 'no_data' },
+      aligned_count: 0, against_count: 0, known_count: 0, model_edge_value: null,
+      verdict: 'NEUTRAL',
+      action: 'PASS',
+      signal_muted: true,
+      headline: `signal '${input.signal_type}' muted${mute_reason ? ' — ' + mute_reason : ''}`,
+      flags: ['signal_muted'],
+    };
+    return empty;
+  }
 
   // Load tunable thresholds for this sport (cached). Falls back to defaults on error.
   let T: ThresholdSet;
@@ -376,6 +426,7 @@ export async function buildPlayerReasoning(
   const against_count = Object.values(alignment).filter((a) => a === 'against').length;
   const known_count = Object.values(alignment).filter((a) => a !== 'no_data').length;
   const verdict = computeVerdict(aligned_count, against_count, known_count);
+  const action = computeAction(verdict, modelEdgeAlign);
 
   // Headline
   const headlineParts: string[] = [];
@@ -444,6 +495,7 @@ export async function buildPlayerReasoning(
     known_count,
     model_edge_value,
     verdict,
+    action,
     headline,
     flags,
   };

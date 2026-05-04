@@ -33,3 +33,15 @@ Telegram formatter (`signal-alert-telegram`) sorts cascade players STRONG → LE
 Failures in the explainer are non-fatal — alert still fires with `engine_reasoning: null`.
 
 When adding a new alert generator, call `buildPlayerReasoning(supabase, input)` and stash the result under the same key. Do not invent a new shape.
+
+**v2 additions (2026-05-04):**
+- `PlayerReasoning` carries `action: 'BACK' | 'FADE' | 'PASS'` derived from verdict + model_edge alignment. BACK = bet alerted side; FADE = bet opposite; PASS = skip. STRONG/LEAN with `model_edge: against` collapses to PASS (model overrides multi-axis vote).
+- `ExplainerInput.signal_type` is honored. If `alert_signal_config.muted=true` for that signal, explainer short-circuits to `verdict: NEUTRAL`, `action: PASS`, `signal_muted: true`, `flags: ['signal_muted']` and skips DB reads.
+- Default seed: `take_it_now` muted (audit: 2/14 = 14%). `cascade` + `velocity_spike` active.
+- Default `model_edge` thresholds retuned asymmetric per audit: `aligned ±0.3σ`, `against ±-1.0σ` (was symmetric ±0.5σ). FADE bar deliberately deeper than BACK bar.
+
+**Recalibration triggers (run audit-verdict-backfill weekly):**
+- BACK bucket hit% < 75% over n≥30 → raise `model_edge.aligned_*` to 0.5 via `/set ALL model_edge aligned_over 0.5`
+- FADE bucket fade-win% < 80% over n≥30 → lower `model_edge.against_*` to -1.5
+- `take_it_now` hit% > 55% over n≥30 → `/unmute take_it_now`
+- Cascade: needs settlement on cascade rows before re-tuning

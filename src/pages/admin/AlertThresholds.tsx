@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { SlidersHorizontal, RotateCcw, Save } from "lucide-react";
+import { SlidersHorizontal, RotateCcw, Save, Volume2, VolumeX } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 const SPORTS = ["ALL", "NBA", "MLB", "NFL", "NHL"] as const;
 const AXES = ["form", "defense", "pace", "juice", "model_edge"] as const;
@@ -74,6 +75,37 @@ export default function AlertThresholds() {
       return data ?? [];
     },
     enabled: isAdmin,
+  });
+
+  const { data: mutes, refetch: refetchMutes } = useQuery({
+    queryKey: ["alert_signal_config"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("alert_signal_config")
+        .select("signal_type, muted, reason, updated_by, updated_at")
+        .order("signal_type");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: isAdmin,
+  });
+
+  const [muteEdits, setMuteEdits] = useState<Record<string, string>>({});
+
+  const toggleMute = useMutation({
+    mutationFn: async ({ signal_type, muted, reason }: { signal_type: string; muted: boolean; reason: string | null }) => {
+      const { error } = await supabase.from("alert_signal_config").upsert({
+        signal_type, muted, reason: reason || null,
+        updated_by: `web:${user?.id ?? "unknown"}`,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "signal_type" });
+      if (error) throw error;
+    },
+    onSuccess: (_v, vars) => {
+      toast({ title: `${vars.muted ? "Muted" : "Unmuted"} ${vars.signal_type}` });
+      refetchMutes();
+    },
+    onError: (e: any) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
 
   // Local edit buffer keyed by `${sport}:${axis}:${field}`
@@ -168,6 +200,7 @@ export default function AlertThresholds() {
       <Tabs defaultValue="editor">
         <TabsList>
           <TabsTrigger value="editor">Editor</TabsTrigger>
+          <TabsTrigger value="mutes">Signal mutes</TabsTrigger>
           <TabsTrigger value="audit">Audit log</TabsTrigger>
         </TabsList>
 
@@ -215,6 +248,49 @@ export default function AlertThresholds() {
               </CardContent>
             </Card>
           ))}
+        </TabsContent>
+
+        <TabsContent value="mutes">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Signal kill-switch</CardTitle>
+              <CardDescription className="text-xs">Mute an alert engine without redeploying. Muted signals short-circuit to NEUTRAL/PASS within ~60s.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {(mutes ?? []).map((m: any) => {
+                const reasonKey = `reason:${m.signal_type}`;
+                const reason = reasonKey in muteEdits ? muteEdits[reasonKey] : (m.reason ?? "");
+                return (
+                  <div key={m.signal_type} className="border border-border/50 rounded-lg p-3 bg-muted/20">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        {m.muted ? <VolumeX className="w-4 h-4 text-destructive" /> : <Volume2 className="w-4 h-4 text-primary" />}
+                        <span className="font-mono text-sm">{m.signal_type}</span>
+                        <Badge variant={m.muted ? "destructive" : "outline"} className="text-[10px]">{m.muted ? "MUTED" : "ACTIVE"}</Badge>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={m.muted ? "default" : "destructive"}
+                        onClick={() => toggleMute.mutate({ signal_type: m.signal_type, muted: !m.muted, reason })}
+                      >
+                        {m.muted ? "Unmute" : "Mute"}
+                      </Button>
+                    </div>
+                    <Textarea
+                      placeholder="Reason (optional)"
+                      className="text-xs min-h-[40px]"
+                      value={reason}
+                      onChange={(e) => setMuteEdits((prev) => ({ ...prev, [reasonKey]: e.target.value }))}
+                    />
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      by {m.updated_by ?? "?"} · {new Date(m.updated_at).toLocaleString()}
+                    </div>
+                  </div>
+                );
+              })}
+              {(mutes?.length ?? 0) === 0 && <p className="text-sm text-muted-foreground">No signal config rows. Defaults active.</p>}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="audit">
