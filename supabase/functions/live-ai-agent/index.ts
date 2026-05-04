@@ -312,6 +312,34 @@ async function runTool(name: string, args: any, supabase: any, userId: string, c
     return { verdicts };
   }
 
+  if (name === "share_my_link") {
+    if (userId === "anon" || !ctx.email) {
+      return {
+        error: "auth_required",
+        upsell: true,
+        message: "Spin up a free Pup account first — then I'll mint your personal link.",
+        upgrade_url: "/upgrade",
+      };
+    }
+    // Look up token via profiles (service role bypasses RLS)
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("spike_share_token")
+      .eq("user_id", userId)
+      .maybeSingle();
+    let token: string | null = prof?.spike_share_token ?? null;
+    if (!token) {
+      // Mint inline if missing (e.g. profile row didn't exist)
+      token = crypto.randomUUID().replace(/-/g, "");
+      await supabase
+        .from("profiles")
+        .upsert({ user_id: userId, spike_share_token: token }, { onConflict: "user_id" });
+    }
+    const origin = Deno.env.get("PUBLIC_APP_ORIGIN") ?? "https://parlayfarm.com";
+    const url = `${origin}/spike/${token}`;
+    return { share_card: true, url, label: "Your personal Spike link" };
+  }
+
   return { error: `Unknown tool: ${name}` };
 }
 
@@ -422,20 +450,21 @@ Deno.serve(async (req) => {
 
     // Inject tier into the system prompt so Spike speaks correctly.
     const tierLine = sample
-      ? "User tier: SAMPLE (anonymous taste-test, max 2 turns). Be magnetic — show personality, drop ONE genuine handicapping insight in plain English (no real picks needed), and end by encouraging them to grab a free Pup account on the homepage. Do NOT call build_parlay or analyze_slip — they're disabled."
+      ? "User tier: SAMPLE (anonymous taste-test, max 2 turns). Be magnetic — answer general questions or teach a betting concept in plain English, never name a specific play. End by nudging them toward the free Pup account. Do NOT call build_parlay, analyze_slip, get_top_picks, get_whale_signals, or share_my_link — all gated."
       : tier === "all_access"
       ? "User tier: ALL-ACCESS — unlimited tools, full Telegram + alerts."
       : tier === "pup"
       ? "User tier: FREE (Pup) — 1 combined action per day (build_parlay OR analyze_slip). Live signal alerts, FanDuel boost cascades, sweet-spot push, and Gold parlays live ONLY on the Telegram bot — when asked for those, refuse politely and pitch All-Access ($99/mo, 3-day free trial)."
-      : "User tier: ANONYMOUS — chat is free. To build parlays or scan slips they need a free account. Encourage signup at /upgrade.";
+      : "User tier: ANONYMOUS — general chat and betting education are free. Specific picks, parlays, slip scans, whale reads, and share_my_link all require an account. Encourage signup at /upgrade.";
     messages[0] = {
       role: "system",
       content: SYSTEM_PROMPT + `\n\nCurrent risk mode: ${mode}. Live mode: ${live_mode}.\n${tierLine}`,
     };
 
-    // In sample mode strip the gated tools entirely so the model can't call them.
-    const activeTools = sample
-      ? TOOLS.filter((t: any) => !["build_parlay", "analyze_slip"].includes(t.function?.name))
+    // Strip tools the current tier can't use, so the model can't even attempt them.
+    const GATED = new Set(["build_parlay", "analyze_slip", "get_top_picks", "get_whale_signals", "share_my_link"]);
+    const activeTools = (sample || !user)
+      ? TOOLS.filter((t: any) => !GATED.has(t.function?.name))
       : TOOLS;
 
     while (toolLoops < 4) {
