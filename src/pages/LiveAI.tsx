@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
-import { Mic, MicOff, Loader2 } from "lucide-react";
-import { Upload } from "lucide-react";
+import { Mic, MicOff, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DogAvatarVideo } from "@/components/live-ai/DogAvatarVideo";
 import { AIParlayCard } from "@/components/live-ai/AIParlayCard";
@@ -28,14 +25,8 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
 ];
 
 export default function LiveAI() {
-  const { user, isLoading: authLoading } = useAuth();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([
-    {
-      id: "intro",
-      role: "assistant",
-      content:
-        "Yo, what's good? It's Spike. Tap the mic and tell me what you wanna build — parlay, prop, sharp money, whatever. I gotchu.",
-    },
   ]);
   const [riskMode, setRiskMode] = useState<RiskMode>("smart");
   const [isRecording, setIsRecording] = useState(false);
@@ -45,6 +36,8 @@ export default function LiveAI() {
   const [speakingVideoUrl, setSpeakingVideoUrl] = useState<string | null>(null);
   const [partialText, setPartialText] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [woken, setWoken] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -54,9 +47,8 @@ export default function LiveAI() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
 
-  // Init conversation row
+  // Init conversation row (signed-in only)
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -99,13 +91,17 @@ export default function LiveAI() {
 
   const playTTS = useCallback(async (text: string) => {
     try {
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess.session?.access_token;
-      if (!token) return;
       const supaUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+      const anonKey = (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token ?? anonKey;
       const r = await fetch(`${supaUrl}/functions/v1/live-ai-tts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          apikey: anonKey,
+        },
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error(await r.text());
@@ -115,6 +111,10 @@ export default function LiveAI() {
       // Setup analyser for volume-driven avatar pulse
       if (!audioCtxRef.current) {
         audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      // iOS: resume if suspended
+      if (audioCtxRef.current.state === "suspended") {
+        await audioCtxRef.current.resume();
       }
       const audio = new Audio(url);
       audioRef.current = audio;
@@ -171,21 +171,20 @@ export default function LiveAI() {
       try {
         const { data, error } = await supabase.functions.invoke("live-ai-agent", {
           body: {
-            message: userText,
-            risk_mode: riskMode,
+            user_text: userText,
+            mode: riskMode,
             conversation_id: conversationId,
             history: messages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
           },
         });
         if (error) throw error;
-        const reply: string = data?.reply ?? "Hmm, no read on that. Try again.";
+        const reply: string = data?.text ?? data?.reply ?? "Hmm, no read on that. Try again.";
         const parlay = data?.parlay ?? null;
         const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay };
         setMessages((m) => [...m, aiMsg]);
         persistMessage("assistant", reply, parlay);
-        // Fire TTS + avatar in parallel
+        // Fire TTS in parallel — skip avatar render path for now (HeyGen v2)
         playTTS(reply);
-        requestAvatarVideo(reply);
       } catch (e: any) {
         console.error("[LiveAI] agent error", e);
         toast({
@@ -197,7 +196,7 @@ export default function LiveAI() {
         setIsThinking(false);
       }
     },
-    [riskMode, conversationId, messages, persistMessage, playTTS, requestAvatarVideo],
+    [riskMode, conversationId, messages, persistMessage, playTTS],
   );
 
   const startRecording = useCallback(async () => {
@@ -217,12 +216,13 @@ export default function LiveAI() {
           setIsThinking(true);
           const fd = new FormData();
           fd.append("audio", blob, "clip.webm");
-          const { data: sess } = await supabase.auth.getSession();
-          const token = sess.session?.access_token;
           const supaUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+          const anonKey = (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY;
+          const { data: sess } = await supabase.auth.getSession();
+          const token = sess.session?.access_token ?? anonKey;
           const r = await fetch(`${supaUrl}/functions/v1/live-ai-stt-token`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${token}`, apikey: anonKey },
             body: fd,
           });
           const out = await r.json();
@@ -311,56 +311,86 @@ export default function LiveAI() {
     [sendToAgent],
   );
 
+  // Wake Spike — first user gesture unlocks audio + plays the greeting.
+  const wakeSpike = useCallback(async () => {
+    if (woken) return;
+    setWoken(true);
+    try {
+      // Pre-create AudioContext on the user gesture (iOS requirement)
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === "suspended") {
+        await audioCtxRef.current.resume();
+      }
+      const greeting =
+        "Yo, what's good? Spike here. Tap the mic, drop a slip, whatever you got — I'm ready.";
+      const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: greeting };
+      setMessages([aiMsg]);
+      await playTTS(greeting);
+    } catch (e) {
+      console.warn("[LiveAI] wake failed", e);
+    }
+  }, [woken, playTTS]);
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="fixed inset-0 bg-black overflow-hidden flex flex-col">
       <Seo
         title="Live AI — Spike"
         description="Talk live to ParlayFarm's AI bulldog."
         canonical="/live-ai"
       />
 
-      {/* Avatar */}
-      <div className="relative w-full aspect-square sm:aspect-video max-h-[55vh] bg-black">
+      {/* Full-screen avatar background */}
+      <div className="absolute inset-0">
         <DogAvatarVideo
           speakingVideoUrl={speakingVideoUrl}
           isSpeaking={isSpeaking}
           outputVolume={outputVolume}
         />
-        <div className="absolute top-3 right-3 flex gap-1">
-          {RISK_MODES.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => setRiskMode(r.id)}
-              className={`px-2 py-1 rounded-full text-xs font-mono backdrop-blur transition ${
-                riskMode === r.id ? "bg-primary text-primary-foreground" : "bg-black/60 text-white"
-              }`}
-            >
-              {r.emoji}
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Transcript */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+      {/* Top fade + risk pills */}
+      <div className="relative z-10 pt-safe pt-3 px-3 flex justify-end gap-1 bg-gradient-to-b from-black/50 to-transparent pb-12">
+        {RISK_MODES.map((r) => (
+          <button
+            key={r.id}
+            onClick={() => setRiskMode(r.id)}
+            className={`px-3 py-1.5 rounded-full text-xs font-mono backdrop-blur transition ${
+              riskMode === r.id ? "bg-primary text-primary-foreground shadow-lg" : "bg-black/60 text-white"
+            }`}
           >
+            {r.emoji} {r.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1" />
+
+      {/* Transcript overlay (bottom 45%) */}
+      <div
+        ref={scrollRef}
+        className="relative z-10 max-h-[42vh] overflow-y-auto px-4 pb-2 space-y-2"
+        style={{
+          maskImage: "linear-gradient(to bottom, transparent, black 14%)",
+          WebkitMaskImage: "linear-gradient(to bottom, transparent, black 14%)",
+        }}
+      >
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[85%] rounded-2xl px-4 py-2 ${
+              className={`max-w-[88%] rounded-2xl px-4 py-2 backdrop-blur shadow-lg ${
                 m.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-foreground"
+                  ? "bg-primary/85 text-primary-foreground"
+                  : "bg-zinc-900/75 text-white"
               }`}
             >
               {m.role === "assistant" ? (
-                <div className="prose prose-sm dark:prose-invert max-w-none">
+                <div className="prose prose-sm prose-invert max-w-none [&_p]:my-0">
                   <ReactMarkdown>{m.content}</ReactMarkdown>
                 </div>
               ) : (
-                <p className="text-sm">{m.content}</p>
+                <p className="text-sm leading-snug">{m.content}</p>
               )}
               {m.parlay && (
                 <div className="mt-2">
@@ -370,23 +400,16 @@ export default function LiveAI() {
             </div>
           </div>
         ))}
-        {partialText && (
-          <div className="flex justify-end">
-            <div className="max-w-[85%] rounded-2xl px-4 py-2 bg-primary/40 text-primary-foreground italic text-sm">
-              {partialText}…
-            </div>
-          </div>
-        )}
         {isThinking && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          <div className="flex items-center gap-2 text-white/80 text-sm pl-1">
             <Loader2 className="w-4 h-4 animate-spin" /> Spike's cookin'…
           </div>
         )}
       </div>
 
-      {/* Mic */}
-      <div className="p-6 flex flex-col items-center gap-2 border-t border-border bg-card/30 backdrop-blur">
-        <Badge variant="outline" className="text-xs">
+      {/* Glass control bar */}
+      <div className="relative z-10 px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] flex flex-col items-center gap-3 bg-gradient-to-t from-black/85 via-black/60 to-transparent">
+        <Badge variant="outline" className="text-xs bg-black/60 border-white/20 text-white">
           {RISK_MODES.find((r) => r.id === riskMode)?.emoji} {riskMode} mode
         </Badge>
         <div className="flex items-center gap-6">
@@ -404,13 +427,13 @@ export default function LiveAI() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isThinking || isScanning || isRecording}
-            className="w-14 h-14 rounded-full flex items-center justify-center bg-muted hover:bg-muted/80 transition disabled:opacity-50"
+            className="w-14 h-14 rounded-full flex items-center justify-center bg-white/10 backdrop-blur border border-white/20 hover:bg-white/20 transition disabled:opacity-50"
             aria-label="Upload slip"
           >
             {isScanning ? (
-              <Loader2 className="w-6 h-6 animate-spin text-foreground" />
+              <Loader2 className="w-6 h-6 animate-spin text-white" />
             ) : (
-              <Upload className="w-6 h-6 text-foreground" />
+              <Upload className="w-6 h-6 text-white" />
             )}
           </button>
           <button
@@ -432,7 +455,7 @@ export default function LiveAI() {
             )}
           </button>
         </div>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-white/70">
           {isScanning
             ? "Reading your slip…"
             : isRecording
@@ -440,6 +463,19 @@ export default function LiveAI() {
               : "Hold mic to talk · Tap upload for a slip"}
         </p>
       </div>
+
+      {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
+      {!woken && (
+        <button
+          onClick={wakeSpike}
+          className="absolute inset-0 z-30 flex flex-col items-center justify-end pb-32 bg-black/40 backdrop-blur-[2px]"
+        >
+          <div className="px-6 py-3 rounded-full bg-primary text-primary-foreground font-bold text-lg shadow-2xl animate-pulse">
+            Tap to wake Spike up 🐶
+          </div>
+          <p className="mt-3 text-xs text-white/80">He'll say hi in a NY accent</p>
+        </button>
+      )}
     </div>
   );
 }
