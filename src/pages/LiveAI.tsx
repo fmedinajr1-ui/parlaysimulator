@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { Mic, MicOff, Loader2, Upload, Sparkles, PawPrint } from "lucide-react";
-import { Link, useSearchParams, useParams, useNavigate } from "react-router-dom";
+import { Mic, MicOff, Loader2, Upload, PawPrint } from "lucide-react";
+import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -29,18 +29,13 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
 
 export default function LiveAI() {
   const { user } = useAuth();
-  const [searchParams] = useSearchParams();
   const { token: routeToken } = useParams<{ token?: string }>();
-  const navigate = useNavigate();
-  // Sample mode = ?sample=1 OR no signed-in user. Capped at 2 turns.
-  const sampleMode = (searchParams.get("sample") === "1" || !user) && !routeToken;
-  const SAMPLE_TURN_LIMIT = 2;
-  const [sampleTurns, setSampleTurns] = useState<number>(() => {
-    if (typeof window === "undefined") return 0;
-    const v = sessionStorage.getItem("spike_sample_turns");
-    return v ? parseInt(v, 10) || 0 : 0;
-  });
-  const sampleExhausted = sampleMode && sampleTurns >= SAMPLE_TURN_LIMIT;
+  // Open access: Spike is fully usable on the site without signing in.
+  // `sample` flag is kept for the agent so anonymous-only tools stay gated,
+  // but we no longer cap turns or push users to sign up.
+  const sampleMode = !user && !routeToken;
+  const sampleTurns = 0;
+  const sampleExhausted = false;
   const [messages, setMessages] = useState<Msg[]>([
   ]);
   const [riskMode, setRiskMode] = useState<RiskMode>("smart");
@@ -55,19 +50,7 @@ export default function LiveAI() {
   const [isScanning, setIsScanning] = useState(false);
   const [shareCardDismissed, setShareCardDismissed] = useState(false);
 
-  // If a token is in the URL but the visitor isn't signed in, send them to auth
-  // and bring them back to the same /spike/:token deeplink afterwards.
-  useEffect(() => {
-    if (!routeToken) return;
-    if (user === null) {
-      // Auth still loading — wait
-      return;
-    }
-    if (!user) {
-      const next = encodeURIComponent(`/spike/${routeToken}`);
-      navigate(`/?next=${next}`, { replace: true });
-    }
-  }, [routeToken, user, navigate]);
+  // /spike/:token deeplinks are open — anyone with the link can chat with Spike.
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -215,11 +198,6 @@ export default function LiveAI() {
         const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay, shareLink };
         setMessages((m) => [...m, aiMsg]);
         persistMessage("assistant", reply, parlay);
-        if (sampleMode) {
-          const next = sampleTurns + 1;
-          setSampleTurns(next);
-          try { sessionStorage.setItem("spike_sample_turns", String(next)); } catch {}
-        }
         // Fire TTS in parallel — skip avatar render path for now (HeyGen v2)
         playTTS(reply);
       } catch (e: any) {
@@ -404,21 +382,7 @@ export default function LiveAI() {
       </div>
       )}
 
-      {/* Sample-mode banner */}
-      {sampleMode && (
-        <div className="relative z-10 mx-3 -mt-8 mb-2 rounded-xl bg-primary/15 border border-primary/40 backdrop-blur px-3 py-2 text-xs text-white flex items-center gap-2 shadow-lg">
-          <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
-          <span className="flex-1">
-            <strong className="font-semibold">Sample Mode</strong> — {Math.max(0, SAMPLE_TURN_LIMIT - sampleTurns)} free message{SAMPLE_TURN_LIMIT - sampleTurns === 1 ? "" : "s"} left.
-          </span>
-          <Link
-            to="/"
-            className="px-2 py-1 rounded-md bg-primary text-primary-foreground font-semibold text-[11px] hover:opacity-90"
-          >
-            Sign Up Free
-          </Link>
-        </div>
-      )}
+      {/* Open access: no signup banner. Spike chats freely with anyone on the site. */}
 
       <div className="flex-1" />
 
@@ -481,20 +445,6 @@ export default function LiveAI() {
             <SpikeShareCard />
           </div>
         )}
-        {sampleExhausted ? (
-          <div className="w-full max-w-sm rounded-2xl bg-card/95 border border-primary/40 p-4 text-center shadow-2xl">
-            <p className="text-sm text-foreground font-semibold mb-1">You've used your free sample</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Create a free Pup account to keep chatting with Spike.
-            </p>
-            <Link
-              to="/"
-              className="inline-flex items-center justify-center w-full rounded-xl bg-primary text-primary-foreground font-semibold py-2.5 hover:opacity-90 transition"
-            >
-              Get Free Access
-            </Link>
-          </div>
-        ) : (
         <>
         <Badge variant="outline" className="text-xs bg-black/60 border-white/20 text-white">
           {RISK_MODES.find((r) => r.id === riskMode)?.emoji} {riskMode} mode
@@ -513,8 +463,7 @@ export default function LiveAI() {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isThinking || isScanning || isRecording || sampleMode}
-            title={sampleMode ? "Slip scanning needs a free account" : ""}
+            disabled={isThinking || isScanning || isRecording}
             className="w-14 h-14 rounded-full flex items-center justify-center bg-white/10 backdrop-blur border border-white/20 hover:bg-white/20 transition disabled:opacity-50"
             aria-label="Upload slip"
           >
@@ -553,7 +502,6 @@ export default function LiveAI() {
                 : "Hold mic to talk · Tap upload for a slip"}
         </p>
         </>
-        )}
       </div>
 
       {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
@@ -574,14 +522,6 @@ export default function LiveAI() {
             <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">📚 Bet education</span>
             <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">🔒 Today's plays for members</span>
           </div>
-          {!user && (
-            <Link
-              to="/"
-              className="mt-6 text-xs text-white/70 underline underline-offset-4 hover:text-white"
-            >
-              Get a free Pup account → unlock the real plays
-            </Link>
-          )}
         </div>
       )}
     </div>
