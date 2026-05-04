@@ -11,6 +11,7 @@ import {
 } from "../_shared/court-edge-projection.ts";
 import { detectTournament, type TournamentMeta } from "../_shared/court-edge-tournaments.ts";
 import { tournamentTier, type TournamentTier } from "../_shared/court-edge-tournament-tier.ts";
+import { applyPromotionGates, medianBookLine } from "../_shared/court-edge-promotion.ts";
 import {
   roleAdjustment,
   inferRoleFromL3,
@@ -362,12 +363,21 @@ Deno.serve(async (req) => {
         surface: tournament.surface,
         indoor: tournament.indoor,
       });
-      // Cap verdict to LEAN_* when one side is a baseline — never STRONG_*.
-      let verdict = e.verdict;
-      if (baselineUsed && verdict !== "QUARANTINE") {
-        if (verdict === "STRONG_OVER") verdict = "LEAN_OVER";
-        else if (verdict === "STRONG_UNDER") verdict = "LEAN_UNDER";
-      }
+      // Phase 4 promotion gates (replaces inline baseline cap).
+      const median = medianBookLine(ev.book_lines as any);
+      const promo = applyPromotionGates(e.verdict, {
+        books_count: ev.books_count ?? null,
+        reference_line: ev.total_point,
+        median_line: median,
+        indoor: tournament.indoor,
+        weather_present: !!weather,
+        baseline_used: baselineUsed,
+        projection: proj.projection,
+        prior_mu: proj.prior_mu,
+        prior_sd: proj.prior_sd,
+        edge_side: e.edge_side,
+      });
+      const verdict = promo.verdict;
       picks.push({
         source: "odds_api",
         matchup: `${ev.home_team} vs ${ev.away_team}`,
@@ -390,6 +400,8 @@ Deno.serve(async (req) => {
           sigma,
           tour: tourFromKey(ev.sport_key),
           tournament_tier: tier,
+          promotion_blocked_reason: promo.blocked_reason ?? null,
+          median_book_line: median,
         },
         tournament: tournament.name,
         surface: tournament.surface,
