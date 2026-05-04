@@ -452,6 +452,19 @@ Deno.serve(async (req) => {
         surface: tournament.surface,
         indoor: tournament.indoor,
       });
+      const ppMedian = medianBookLine(ev?.book_lines as any);
+      const ppPromo = applyPromotionGates(e.verdict, {
+        books_count: ev?.books_count ?? null,
+        reference_line: pp.line,
+        median_line: ppMedian,
+        indoor: tournament.indoor,
+        weather_present: !!weather,
+        baseline_used: false, // PrizePicks always uses real player L3 (gated above)
+        projection: proj.projection,
+        prior_mu: proj.prior_mu,
+        prior_sd: proj.prior_sd,
+        edge_side: e.edge_side,
+      });
       picks.push({
         source: "prizepicks",
         matchup: opp ? `${pp.player} vs ${opp}` : pp.player,
@@ -462,8 +475,8 @@ Deno.serve(async (req) => {
         projection: Number(e.reference.toFixed(2)),
         edge: Number((e.edge_pp ?? 0).toFixed(4)),
         edge_pct: Number(((e.edge_pp ?? 0) * 100).toFixed(2)),
-        verdict: e.verdict,
-        formula: { ...proj, stat_type: pp.stat_type, ml_home: inp.ml_home, ml_away: inp.ml_away, sigma, tour: tourFromKey(ev?.sport_key), tournament_tier: tier },
+        verdict: ppPromo.verdict,
+        formula: { ...proj, stat_type: pp.stat_type, ml_home: inp.ml_home, ml_away: inp.ml_away, sigma, tour: tourFromKey(ev?.sport_key), tournament_tier: tier, promotion_blocked_reason: ppPromo.blocked_reason ?? null, median_book_line: ppMedian },
         tournament: tournament.name,
         surface: tournament.surface,
         sets_format: tournament.sets_format,
@@ -535,6 +548,21 @@ Deno.serve(async (req) => {
         else if (r === "tier_auto_quarantine") qTier += 1;
       }
       push(`Tier ${tier} · Quarantine: line_band=${qLineBand} line_range=${qLineRange} hard_cap=${qHardCap} tier_auto=${qTier}`);
+    }
+
+    // Phase 4 diagnostic — promotion-gate demotion breakdown.
+    {
+      const reasons: Record<string, number> = {};
+      for (const p of picks) {
+        const r = (p.formula as any)?.promotion_blocked_reason;
+        if (!r) continue;
+        reasons[r] = (reasons[r] ?? 0) + 1;
+      }
+      const total = Object.values(reasons).reduce((a, b) => a + b, 0);
+      if (total > 0) {
+        const parts = Object.entries(reasons).map(([k, v]) => `${k}=${v}`).join(" ");
+        push(`Promotion demotions: ${total} · ${parts}`);
+      }
     }
 
     // 6b. Build drilldown text for the top non-PASS picks (cap 5)
