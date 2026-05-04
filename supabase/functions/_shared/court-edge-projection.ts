@@ -310,7 +310,24 @@ export function edgeFor(
     }
   }
 
-  const pOver = modelProbOver(reference, line, sigma);
+  // Phase 3b — near-prior guardrail. If the market line is anchored close to
+  // the historical prior (|line - prior_mu| <= near_prior_band_sigmas * sd),
+  // soft-clamp the projection so |proj - line| stays within
+  // near_prior_clamp_sigmas * sigma. Mitigates structural under-bias when
+  // small-sample L3 + spread/blowout adjustments push us off a fair line.
+  let guardedReference = reference;
+  if (
+    Number.isFinite(line) &&
+    !outOfRange &&
+    market === "match_total" &&
+    Math.abs(line - prior.mu) <= c.near_prior_band_sigmas * prior.sd
+  ) {
+    const maxGap = c.near_prior_clamp_sigmas * sigma;
+    if (reference > line + maxGap) guardedReference = line + maxGap;
+    else if (reference < line - maxGap) guardedReference = line - maxGap;
+  }
+
+  const pOver = modelProbOver(guardedReference, line, sigma);
   const pUnder = 1 - pOver;
   const fair = devigPair(opts.over_price, opts.under_price);
 
