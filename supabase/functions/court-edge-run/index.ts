@@ -12,6 +12,7 @@ import {
 import { detectTournament, type TournamentMeta } from "../_shared/court-edge-tournaments.ts";
 import { tournamentTier, type TournamentTier } from "../_shared/court-edge-tournament-tier.ts";
 import { applyPromotionGates, medianBookLine } from "../_shared/court-edge-promotion.ts";
+import { buildRunDiagnostics, diagnosticsFooter } from "../_shared/court-edge-diagnostics.ts";
 import {
   roleAdjustment,
   inferRoleFromL3,
@@ -565,6 +566,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Phase 5 — run diagnostics blob (persisted + optional digest footer).
+    const diagnosticsBlob = buildRunDiagnostics(picks as any, {
+      tier,
+      baseline_sides_used: baselineSidesUsed,
+      l3_hits: l3Got,
+      l3_total: players.length,
+      weather_present: !!weather,
+      pp_blocked: !!ppRes?.ok && (ppRes as any)?.blocked === true,
+      errors_count: errors.length,
+    });
+    const diagFooter = diagnosticsFooter(diagnosticsBlob);
+    if (diagnosticsBlob.warnings.length > 0) {
+      push(`Diagnostics warnings: ${diagnosticsBlob.warnings.join(", ")}`);
+    }
+
     // 6b. Build drilldown text for the top non-PASS picks (cap 5)
     const DRILLDOWN_CAP = 5;
     const topForDrilldown = picks.filter((p) => p.verdict !== "PASS").slice(0, DRILLDOWN_CAP);
@@ -650,7 +666,7 @@ Deno.serve(async (req) => {
     // 8. Telegram digest
     const ppBlocked = ppRes?.ok && (ppRes as any)?.blocked === true;
     const diagnostics = `odds_events=${oddsEvents.length} · pp_blocked=${ppBlocked} · l3_hits=${l3Got}/${players.length} · weather=${weather ? "ok" : "miss"} · baseline_sides=${baselineSidesUsed}`;
-    const digest = buildDigest(picks, {
+    let digest = buildDigest(picks, {
       date: easternDate(),
       tournament,
       weather,
@@ -665,6 +681,7 @@ Deno.serve(async (req) => {
       // Only buildDigest reads this; cast is safe — interface is structural.
       ...({ diagnostics } as any),
     } as any);
+    if (diagFooter) digest += `\n${diagFooter}`;
 
     let telegramSent = false;
     try {
@@ -701,6 +718,7 @@ Deno.serve(async (req) => {
         errors,
         duration_ms: Date.now() - startedAt,
         telegram_sent: telegramSent,
+        diagnostics: diagnosticsBlob,
       }).eq("id", runId);
     } catch (e) {
       console.error("[court-edge-run] failed updating run row", e);
