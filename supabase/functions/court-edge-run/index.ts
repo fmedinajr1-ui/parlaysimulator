@@ -286,7 +286,13 @@ Deno.serve(async (req) => {
     // 5. Project picks
     const picks: Pick[] = [];
 
-    const projectMatch = (homeTotals: number[], awayTotals: number[], roleH: PlayerRole, roleA: PlayerRole): { input: ProjectionInput; reasons: { home: string | null; away: string | null } } => {
+    const projectMatch = (
+      homeTotals: number[],
+      awayTotals: number[],
+      roleH: PlayerRole,
+      roleA: PlayerRole,
+      tour: Tour = "unknown",
+    ): { input: ProjectionInput; reasons: { home: string | null; away: string | null } } => {
       const ctx = {
         surface: tournament.surface,
         indoor: tournament.indoor,
@@ -305,6 +311,7 @@ Deno.serve(async (req) => {
           weather, indoor: tournament.indoor,
           role_adj_home: adjH.adj_games,
           role_adj_away: adjA.adj_games,
+          tour,
         },
         reasons: { home: adjH.reason, away: adjA.reason },
       };
@@ -337,10 +344,11 @@ Deno.serve(async (req) => {
       if (baselineUsed) baselineSidesUsed += 1;
       const roleH = roleMap[ev.home_team] ?? UNKNOWN_ROLE;
       const roleA = roleMap[ev.away_team] ?? UNKNOWN_ROLE;
-      const { input: inp, reasons } = projectMatch(homeTotals, awayTotals, roleH, roleA);
+      const evTour = tourFromKey(ev.sport_key);
+      const { input: inp, reasons } = projectMatch(homeTotals, awayTotals, roleH, roleA, evTour);
       inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away;
       const proj = project(inp);
-      const sigma = pickSigma(tourFromKey(ev.sport_key), setsKey);
+      const sigma = pickSigma(evTour, setsKey);
       const e = edgeFor("match_total", proj.projection, ev.total_point, {
         over_price: ev.total_over_price ?? null,
         under_price: ev.total_under_price ?? null,
@@ -407,10 +415,11 @@ Deno.serve(async (req) => {
       const opponentTotals = oppRow?.ok && oppRow.totals?.length ? oppRow.totals : me.totals;
       const roleH = roleMap[pp.player] ?? UNKNOWN_ROLE;
       const roleA = opp ? (roleMap[opp] ?? UNKNOWN_ROLE) : UNKNOWN_ROLE;
-      const { input: inp, reasons } = projectMatch(me.totals, opponentTotals, roleH, roleA);
+      const evTour = tourFromKey(ev?.sport_key);
+      const { input: inp, reasons } = projectMatch(me.totals, opponentTotals, roleH, roleA, evTour);
       if (ev) { inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away; }
       const proj = project(inp);
-      const sigma = pickSigma(tourFromKey(ev?.sport_key), setsKey);
+      const sigma = pickSigma(evTour, setsKey);
       const e = edgeFor("player_total_games", proj.projection, pp.line, {
         // PrizePicks-only paths have no two-sided book price → PASS unless we can borrow from odds event.
         over_price: ev?.total_over_price ?? null,
@@ -476,6 +485,17 @@ Deno.serve(async (req) => {
     }
     push(`Total picks: ${picks.length}`);
     if (baselineSidesUsed > 0) push(`Baseline-fallback sides used: ${baselineSidesUsed}`);
+
+    // Phase 2 diagnostic — count sanity-clamps and blowout flags from formula breakdowns.
+    {
+      let clamped = 0; let blow = 0;
+      for (const p of picks) {
+        const f = p.formula as any;
+        if (f?.clamped === true) clamped += 1;
+        if (typeof f?.blowout_adj === "number" && f.blowout_adj < 0) blow += 1;
+      }
+      push(`Clamped: ${clamped}/${picks.length} · Blowout flags: ${blow}`);
+    }
 
     // 6b. Build drilldown text for the top non-PASS picks (cap 5)
     const DRILLDOWN_CAP = 5;
