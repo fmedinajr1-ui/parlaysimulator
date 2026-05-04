@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,8 @@ export default function LiveAI() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
 
   // Init conversation row
   useEffect(() => {
@@ -255,6 +258,59 @@ export default function LiveAI() {
     setIsRecording(false);
   }, []);
 
+  const handleSlipUpload = useCallback(
+    async (file: File) => {
+      if (!file) return;
+      try {
+        setIsScanning(true);
+        // Convert to data URL
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        // Show user-side bubble immediately
+        const placeholderId = crypto.randomUUID();
+        setMessages((m) => [
+          ...m,
+          { id: placeholderId, role: "user", content: "📸 Uploaded a slip — score it Spike." },
+        ]);
+
+        const { data, error } = await supabase.functions.invoke("live-ai-slip-scan", {
+          body: { image_data_url: dataUrl },
+        });
+        if (error) throw error;
+        const legs: any[] = data?.legs ?? [];
+        if (!legs.length) {
+          toast({ title: "Couldn't read that slip", description: "Try a clearer screenshot.", variant: "destructive" });
+          return;
+        }
+        const summary = legs
+          .map(
+            (l, i) =>
+              `${i + 1}. ${l.player_name} ${l.side?.toUpperCase()} ${l.line} ${l.prop_type}${
+                l.american_odds ? ` (${l.american_odds > 0 ? "+" : ""}${l.american_odds})` : ""
+              }`,
+          )
+          .join("\n");
+        const prompt = `Here's my slip${data?.sportsbook ? ` from ${data.sportsbook}` : ""}:\n${summary}\n\nGrade it leg-by-leg, flag traps, and tell me what to swap.`;
+        await sendToAgent(prompt);
+      } catch (e: any) {
+        console.error("[LiveAI] slip scan error", e);
+        toast({
+          title: "Slip scan failed",
+          description: e?.message ?? "Try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsScanning(false);
+      }
+    },
+    [sendToAgent],
+  );
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Seo
@@ -333,26 +389,55 @@ export default function LiveAI() {
         <Badge variant="outline" className="text-xs">
           {RISK_MODES.find((r) => r.id === riskMode)?.emoji} {riskMode} mode
         </Badge>
-        <button
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          disabled={isThinking}
-          className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
-            isRecording
-              ? "bg-destructive scale-110 animate-pulse"
-              : "bg-primary hover:scale-105"
-          } ${isThinking ? "opacity-50 cursor-not-allowed" : ""}`}
-        >
-          {isRecording ? (
-            <MicOff className="w-8 h-8 text-white" />
-          ) : (
-            <Mic className="w-8 h-8 text-primary-foreground" />
-          )}
-        </button>
+        <div className="flex items-center gap-6">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleSlipUpload(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isThinking || isScanning || isRecording}
+            className="w-14 h-14 rounded-full flex items-center justify-center bg-muted hover:bg-muted/80 transition disabled:opacity-50"
+            aria-label="Upload slip"
+          >
+            {isScanning ? (
+              <Loader2 className="w-6 h-6 animate-spin text-foreground" />
+            ) : (
+              <Upload className="w-6 h-6 text-foreground" />
+            )}
+          </button>
+          <button
+            onMouseDown={startRecording}
+            onMouseUp={stopRecording}
+            onTouchStart={startRecording}
+            onTouchEnd={stopRecording}
+            disabled={isThinking || isScanning}
+            className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
+              isRecording
+                ? "bg-destructive scale-110 animate-pulse"
+                : "bg-primary hover:scale-105"
+            } ${isThinking || isScanning ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            {isRecording ? (
+              <MicOff className="w-8 h-8 text-white" />
+            ) : (
+              <Mic className="w-8 h-8 text-primary-foreground" />
+            )}
+          </button>
+        </div>
         <p className="text-xs text-muted-foreground">
-          {isRecording ? "Release to send" : "Hold to talk"}
+          {isScanning
+            ? "Reading your slip…"
+            : isRecording
+              ? "Release to send"
+              : "Hold mic to talk · Tap upload for a slip"}
         </p>
       </div>
     </div>
