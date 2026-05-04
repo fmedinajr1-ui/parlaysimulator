@@ -110,9 +110,9 @@ Deno.serve(async (req) => {
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
-  const explain = async (p: ScoredProp, juiceGap: number | null): Promise<PlayerReasoning | null> => {
+  const explain = async (p: ScoredProp, juiceGap: number | null, signal_type?: string): Promise<PlayerReasoning | null> => {
     if (!p.player_name || !p.prop_type || !p.event_id) return null;
-    const key = `${p.event_id}|${p.player_name}|${p.prop_type}|${p.derived_side}|${p.current_line}`;
+    const key = `${p.event_id}|${p.player_name}|${p.prop_type}|${p.derived_side}|${p.current_line}|${signal_type ?? ''}`;
     let pending = explainerCache.get(key);
     if (!pending) {
       pending = buildPlayerReasoning(supabase, {
@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
         event_id: p.event_id,
         sport: normaliseSport(p.sport),
         juice_gap: juiceGap,
+        signal_type,
       }).catch((err) => {
         console.error('[signal-alert-engine] explainer failed for', p.player_name, err);
         return null as unknown as PlayerReasoning;
