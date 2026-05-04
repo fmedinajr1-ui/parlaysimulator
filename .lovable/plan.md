@@ -1,102 +1,56 @@
-# Cascade Alert v3 — Split, Clean, Narrate
+## Problem
 
-## Problems in the current alert
+The current cascade alert (e.g. "Andre Drummond Over 2.5 Points", "Mitchell Robinson Over 5.5 Points") is built from `unified_props`, which only contains **DraftKings** and **FanDuel** rows. The user bets on **Hard Rock**, where those exact lines don't exist — so the alert is unactionable for them. We need to validate every cascade leg against an actual Hard Rock line before broadcasting.
 
-Looking at the example you pasted:
+## Solution
 
-1. **One giant wall of text.** 7 players + sim + counts + verdicts all crammed into one message. Hard to scan on phone.
-2. **Duplicates.** Josh Hart appears twice in the player list — same line, same conf. Engine isn't deduping `player_breakdown` on `player+side+line`.
-3. **`UNKNOWN` archetypes / blank labels.** When `player_archetypes` has no row, we render `👤 UNKNOWN · ROTATION` which looks broken. Same for `Game TBD` and missing tipoff.
-4. **Jargon.** `L10`, `σ`, `juice gap 232`, `conf 70%`, `U 19.5`, `STRETCH_BIG · ROTATION (27.8 mpg)` — nobody outside the dev knows what this means.
-5. **Sim math reads wrong.** "FADE (any miss): p=98% EV=+$2.59 Risk: $3.00 → win $2.73" — winning $2.73 on a 98% bet at $3 risk doesn't communicate value clearly. Likely correct math, terrible labels.
+Pull live Hard Rock prop lines on each `signal-alert-engine` run, then filter the cascade legs so only props with a matching Hard Rock line/side at acceptable juice are kept. If a cascade no longer has enough qualifying legs after the Hard Rock filter, it is dropped (not alerted). Alerts also get tagged with the actual Hard Rock line + price the user will see.
 
-## What we'll ship
+## Steps
 
-### 1. Split into 3 short Telegram messages per cascade
+1. **New helper `_shared/hardrock-lines.ts`**
+   - Fetches NBA player-prop lines from The Odds API filtered to `bookmakers=hardrockbet` (same pattern as `fetch-hardrock-longshots`).
+   - Returns a `Map<key, { line, overPrice, underPrice }>` keyed by `event_id|player|prop_type`.
+   - Caches result in-memory for the duration of the engine run.
+   - Markets: `player_points, player_rebounds, player_assists, player_threes, player_points_rebounds_assists, player_steals, player_blocks`.
 
-Instead of one 60-line wall, send a thread:
+2. **Filter cascades in `signal-alert-engine/index.ts`**
+   - Before inserting a cascade alert, look up each leg's `(event_id, player, prop_type)` in the Hard Rock map.
+   - Drop a leg if:
+     - No Hard Rock listing, OR
+     - HRB line differs from the alerted line by more than 0.5, OR
+     - The HRB price on the alerted side is worse than -200 (unbettable juice).
+   - Require ≥3 surviving legs to still emit a cascade. Otherwise skip and increment a `stats.dropped_no_hrb` counter.
+   - Replace each leg's `line`, `over_price`, `under_price`, `bookmaker` with the Hard Rock values so downstream Telegram/UI shows what the user will actually see.
 
-- **Message A — The Call** (≤ 12 lines): action + game + what to bet + Spike's plain-English take.
-- **Message B — The Math** (≤ 8 lines): bankroll sim with friendly labels.
-- **Message C — The Players** (≤ 25 lines): clean leg-by-leg list, deduped, jargon translated.
+3. **Tag the alert**
+   - Set `bookmaker: 'hardrockbet'` on the inserted `fanduel_prediction_alerts` row.
+   - Add `metadata.source_book: 'hardrockbet'` and `metadata.hrb_verified: true`.
 
-Telegram threads them under a single `reply_to_message_id` so the chat stays organized.
+4. **Telegram copy update (`signal-alert-telegram/index.ts`)**
+   - Add a small footer line: `📘 Lines verified on Hard Rock` so the user knows the numbers are tradable.
+   - No other layout changes — single-message format stays.
 
-### 2. Fix the data-quality bugs
+5. **Same gating for single-player signals**
+   - Apply the same HRB lookup to non-cascade signal types in `signal-alert-engine` (velocity, miss-by-1, etc.) so every alert the user receives is HRB-tradable. If no HRB line, drop the alert.
 
-- **Dedupe `player_breakdown`** in `signal-alert-engine` on `(player_name, side, line)` before insert — kills the "Josh Hart twice" issue.
-- **Skip role line entirely when archetype is UNKNOWN** — no more `👤 UNKNOWN`. If we have minutes but no archetype, render just the tier + mpg ("Starter, 28 mpg"). If we have nothing, omit the line.
-- **Friendly fallbacks** for missing game / tipoff: `"Tonight's slate"` instead of `"Game TBD"`; only show tipoff when it parses.
+6. **Tests (5, per testing-policy memory)**
+   - `_shared/hardrock-lines.test.ts`:
+     1. Map keying by event/player/prop is correct.
+     2. Missing HRB entry returns `null`.
+     3. Line tolerance: 5.5 vs HRB 5.5 passes; 5.5 vs HRB 6.5 fails.
+     4. Juice gate: HRB under -250 → rejected.
+     5. Cache hit on second call (no second fetch).
 
-### 3. Spike narrator — plain-English explainer
+## Files Touched
 
-Add a new shared helper `spikeNarrate(cascade)` that produces 2-3 sentences with personality. No LLM call (latency + cost), just templated phrasing driven by the verdict + model + counts.
+- `supabase/functions/_shared/hardrock-lines.ts` (new)
+- `supabase/functions/_shared/hardrock-lines.test.ts` (new)
+- `supabase/functions/signal-alert-engine/index.ts` (HRB gating in cascade + single-leg paths)
+- `supabase/functions/signal-alert-telegram/index.ts` (verified footer)
 
-Examples it would generate:
+## Notes
 
-> **Spike says:** "5 of 7 picks line up clean — book is paying like the Under is the cold side and our model agrees by a wide margin. This is one of the higher-conviction tails of the night. Take 3-pick, skip the 7-leg lottery."
-
-> **Spike says:** "Mixed bag here. Numbers say Under but only 1 leg is rock-solid. If you're playing, keep it small or wait for a sharper signal."
-
-The narrator has access to: `verdict_counts`, `model_agree`, `defense_against`, `actionKind`, `players.length`, and the alerted side. Returns a single string — drops cleanly into Message A.
-
-### 4. Translate the jargon in the player list
-
-Per-leg lines change from:
-
-```
-• Mikal Bridges  U 12.5  conf 90%
-   ↳ L10 Under 10/10
-   ↳ Juice gap 232 (book on this side) · ⚠️ volatile minutes
-   ↳ Verdict: ✅ STRONG — L10 Under 10/10 · juice +232 · volatile minutes ⬇️
-   ↳ 🎯 COMBO_GUARD · STARTER (30.3 mpg)
-```
-
-To:
-
-```
-• Mikal Bridges — Under 12.5 rebounds  ✅
-   Hit the Under in all 10 of his last 10 games.
-   Book is heavily on this side (gap +232).
-   Heads-up: his minutes have been bouncing around lately.
-```
-
-`STRONG/LEAN/WEAK` → ✅ / 👍 / ⚠️ emoji only (badge stays for scanability, label drops).
-`L10 U 10/10` → "Hit the Under in all 10 of his last 10 games."
-`juice gap NN (book on this side)` → "Book is heavily on this side (gap +NN)" or "Book is leaning this way (gap +NN)" by magnitude.
-`volatile minutes` → "Heads-up: his minutes have been bouncing around lately."
-Archetype/role → only when meaningful and known.
-
-### 5. Friendly sim labels
-
-Replace the raw `p= EV= Risk= win=` block with:
-
-```
-💰 If you bet $100:
-  • All 7 legs together → 2% chance, pays $60 (long shot)
-  • Just the top 3 strongest → 24% chance, pays $18 (the realistic play)
-  • Fade the whole group → 98% chance, pays $3 (tiny edge)
-
-Best play: top 3 strongest. Spike's call.
-```
-
-The sim object already has the numbers — we just relabel and add a one-line recommendation derived from the same actionKind.
-
-## Files we'll touch
-
-- `supabase/functions/signal-alert-telegram/index.ts` — split formatter into `formatCallMessage`, `formatSimMessage`, `formatPlayersMessage`; thread via `reply_to_message_id`; integrate Spike narrator + jargon translator.
-- `supabase/functions/_shared/alert-explainer.ts` — add `formatPlayerReasoningPlain()` (plain-English variant) alongside existing `formatPlayerReasoningLines()`. Keep old one for backward compat.
-- `supabase/functions/_shared/spike-narrator.ts` (new) — `spikeNarrate(input) → string`, pure function, no DB.
-- `supabase/functions/_shared/cascade-sim.ts` — add `formatCascadeSimPlain(sim, actionKind)` that returns the friendly sim block.
-- `supabase/functions/_shared/player-role-context.ts` — `formatRoleLine` returns `null` for UNKNOWN archetype + UNKNOWN tier; tightens "leak" surface.
-- `supabase/functions/signal-alert-engine/index.ts` — dedupe `playerBreakdown` on `(player|side|line)` before insert.
-- `supabase/functions/bot-send-telegram/index.ts` — accept optional `reply_to_message_id` and return `message_id` (likely already does) so we can thread.
-- Tests:
-  - `supabase/functions/_shared/spike-narrator_test.ts` (5 tests: STRONG-tail, mixed-review, fade, skip, edge-case all-neutral).
-  - `supabase/functions/_shared/alert-explainer_test.ts` — 5 new tests for `formatPlayerReasoningPlain`.
-
-## Out of scope (for this pass)
-
-- LLM-generated narration (templated only — keeps latency/cost predictable; can layer Lovable AI later if you want true personality).
-- Inline buttons ("Tail it" / "Skip"). Easy to add once Telegram bot routing is wired up.
-- Per-user formatting preferences. Everyone gets the new format.
+- Uses existing `THE_ODDS_API_KEY` secret — no new keys required.
+- Adds ~1 API call per active NBA event per engine run; mirrored on the longshots path so cost profile is known.
+- If The Odds API returns no Hard Rock data (sport off-hours), the engine logs and skips broadcasting rather than falling back to FD/DK.
