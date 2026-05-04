@@ -168,7 +168,7 @@ function AppContent() {
         <PWAUpdatePrompt />
         <AnimatedRoutes />
         <UniversalParlayBuilder />
-        {isMobile && location.pathname !== '/' && <MobileFloatingMenu />}
+        {isMobile && location.pathname !== '/' && location.pathname !== '/live-ai' && <MobileFloatingMenu />}
       </PilotRouteGuard>
     </EmailVerificationGuard>
   );

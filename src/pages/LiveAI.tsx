@@ -255,30 +255,6 @@ export default function LiveAI() {
     setIsRecording(false);
   }, []);
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-6">
-        <div className="max-w-sm text-center space-y-4">
-          <h1 className="text-2xl font-bold">Talk to Spike 🐶</h1>
-          <p className="text-muted-foreground">
-            Sign in to chat live with the ParlayFarm AI dog.
-          </p>
-          <Link to="/">
-            <Button className="w-full">Sign in</Button>
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Seo
