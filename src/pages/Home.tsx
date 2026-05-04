@@ -17,7 +17,7 @@ import { EmailCaptureModal, type FarmTier } from "@/components/farm/EmailCapture
 export default function Home() {
   const [modalTier, setModalTier] = useState<FarmTier | null>(null);
 
-  const openJoin = () => setModalTier("top_dog");
+  const openJoin = () => setModalTier("all_access");
   const openUpload = () => {
     document.getElementById("upload")?.scrollIntoView({ behavior: "smooth" });
   };
