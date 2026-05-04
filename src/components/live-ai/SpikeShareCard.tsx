@@ -59,13 +59,16 @@ export function SpikeShareCard({ url: urlProp, variant = "banner" }: Props) {
 
   const sms = `sms:?body=${encodeURIComponent(`Spike's always here: ${url}`)}`;
 
+  // Perf: drop backdrop-blur + gradients on the card itself — they force
+  // full-layer repaints on low-end mobile when the transcript scrolls behind it.
   return (
     <div
       className={
         variant === "inline"
-          ? "rounded-xl border border-primary/40 bg-zinc-900/85 backdrop-blur p-3 flex flex-col gap-2 shadow-lg"
-          : "rounded-2xl border border-primary/40 bg-gradient-to-br from-primary/15 to-zinc-900/80 backdrop-blur-md p-3 flex flex-col gap-2 shadow-lg"
+          ? "rounded-xl border border-primary/40 bg-zinc-900 p-3 flex flex-col gap-2 shadow-lg"
+          : "rounded-2xl border border-primary/40 bg-zinc-900 p-3 flex flex-col gap-2 shadow-lg animate-fade-in"
       }
+      style={{ contain: "layout paint" }}
     >
       <div className="flex items-center gap-2 text-white text-xs font-semibold">
         <Share2 className="w-3.5 h-3.5 text-primary" />
