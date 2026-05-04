@@ -1,4 +1,27 @@
-## Phase 2 — Projection Model Fixes
+## Phase 3 — Tournament Tier, Calibrated Tiers, Line-Range Filters (DONE)
+
+New `_shared/court-edge-tournament-tier.ts` classifies events into
+`grand_slam | masters_1000 | atp_500 | wta_1000 | wta_500 | atp_250 | wta_250 | challenger | itf | unknown`
+and exports per-tier `{strong_pp, lean_pp, auto_quarantine?}` thresholds.
+`unknown` is treated as the strict 250-tier bar (per user pref); `itf` auto-quarantines.
+
+`edgeFor()` now applies a **line-range quarantine** before measuring edge:
+- `match_total`: line outside `prior.mu ± 2.5σ` → `QUARANTINE` (`line_outside_prior_band`)
+- `player_total_games`: line < 6 or > 16 (Bo3) / 24 (Bo5) → `QUARANTINE` (`line_out_of_range`)
+
+`verdictFromEdgePp(edgePp, tier?)` honours tier thresholds. `edgeFor()` accepts
+tier + tour + sets + surface + indoor and routes them in.
+
+`court-edge-run/index.ts` computes `tier = tournamentTier(sport_key, name)` once,
+passes it into both match-total and player-total `edgeFor` calls, stores it under
+`formula.tournament_tier`, and logs a per-run quarantine breakdown.
+
+Tests added (5+ new): tier classification, ITF auto-quarantine, line-band/range
+quarantines, and tier-calibrated `verdictFromEdgePp` boundaries.
+
+---
+
+## Phase 2 — Projection Model Fixes (DONE)
 
 Scope is **Phase 2 only** (model + projection math). Phase 1's edge-calc layer stays untouched. Data ingestion (`court-edge-fetch-odds`, `scrape-l3`, `fetch-weather`) is also untouched per your rule.
 
