@@ -3,12 +3,11 @@ import { X, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-export type FarmTier = "pup" | "top_dog" | "kennel_club";
+export type FarmTier = "pup" | "all_access";
 
 const TIER_META: Record<FarmTier, { title: string; price: string; trial: string; cta: string }> = {
-  pup:          { title: "🐶 The Pup",        price: "Free",      trial: "Card on file — never charged unless you upgrade", cta: "Verify card & join" },
-  top_dog:      { title: "🐕 Top Dog",        price: "$29.99/mo", trial: "7-day free trial · $50 auth hold",                cta: "Start 7-day trial" },
-  kennel_club:  { title: "🏆 Kennel Club",    price: "$99/mo",    trial: "3-day free trial · $50 auth hold",                cta: "Start 3-day trial" },
+  pup:        { title: "🐶 The Pup",   price: "Free",   trial: "Card verification required to activate",      cta: "Verify card & join free" },
+  all_access: { title: "🏆 All-Access", price: "$99/mo", trial: "3-day free trial · cancel anytime",          cta: "Start 3-day free trial" },
 };
 
 interface Props {
