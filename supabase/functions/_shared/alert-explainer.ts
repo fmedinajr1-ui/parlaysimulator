@@ -484,11 +484,42 @@ export function buildGroupReasoning(
     } else {
       bullets.push(`vs ${opponent_team} — ${propLabel} D rank ${fmtRank(shared_position_defense_rank)} (neutral)`);
     }
+  } else if (opponent_team) {
+    bullets.push(`vs ${opponent_team} — defensive rank unavailable, leaning on form + price`);
   }
   if (vegas_total != null) {
     bullets.push(isOver
-      ? `Game total ${vegas_total} — ${vegas_total >= 225 ? 'pace tailwind' : vegas_total <= 215 ? 'pace headwind ⚠️' : 'neutral pace'}`
-      : `Game total ${vegas_total} — ${vegas_total <= 215 ? 'pace tailwind' : vegas_total >= 225 ? 'pace headwind ⚠️' : 'neutral pace'}`);
+      ? `Game total ${vegas_total} — ${vegas_total >= 220 ? 'pace tailwind' : vegas_total <= 213 ? 'pace headwind ⚠️' : 'neutral pace'}`
+      : `Game total ${vegas_total} — ${vegas_total <= 213 ? 'pace tailwind' : vegas_total >= 220 ? 'pace headwind ⚠️' : 'neutral pace'}`);
+  }
+
+  // Always-on model-edge summary so the message has SOMETHING directional even
+  // when matchup_intelligence is empty.
+  const edges = players
+    .map((p) => p.model_edge_value)
+    .filter((x): x is number => x != null && Number.isFinite(x));
+  if (edges.length > 0) {
+    const avg = edges.reduce((s, v) => s + v, 0) / edges.length;
+    const aligned = players.filter((p) => p.alignment.model_edge === 'aligned').length;
+    const against = players.filter((p) => p.alignment.model_edge === 'against').length;
+    if (avg >= 0.4) {
+      bullets.push(`L10 model agrees with ${side} on ${aligned}/${players.length} legs (avg edge +${avg.toFixed(2)}σ)`);
+    } else if (avg <= -0.4) {
+      bullets.push(`L10 model disagrees with ${side} on ${against}/${players.length} legs (avg edge ${avg.toFixed(2)}σ) — true fade candidate`);
+    } else {
+      bullets.push(`L10 model neutral (${aligned} agree / ${against} disagree) — let price decide`);
+    }
+  }
+
+  // Juice summary — was the book paying for the alerted side?
+  const juiceGaps = players
+    .map((p) => p.juice.gap)
+    .filter((x): x is number => x != null && Number.isFinite(x));
+  if (juiceGaps.length > 0) {
+    const avgGap = juiceGaps.reduce((s, v) => s + v, 0) / juiceGaps.length;
+    if (avgGap >= 20) {
+      bullets.push(`Book paying ~${Math.round(avgGap)} for ${side} across the group — heavy lean on this side`);
+    }
   }
   if (injury_headlines.length > 0) {
     bullets.push(`Opponent injuries: ${injury_headlines.join(', ')}`);
@@ -502,7 +533,7 @@ export function buildGroupReasoning(
     shared_defense_rank,
     shared_position_defense_rank,
     injury_headlines,
-    headline_bullets: bullets,
+    headline_bullets: bullets.slice(0, 5),
   };
 }
 
@@ -512,8 +543,34 @@ export function verdictBadge(v: Verdict): string {
   switch (v) {
     case 'STRONG': return '✅ STRONG';
     case 'LEAN':   return '⚠️ LEAN';
+    case 'NEUTRAL':return '🟡 NEUTRAL';
     case 'WEAK':   return '❌ WEAK';
   }
+}
+
+/**
+ * Counter-read line — when the engine recommends FADE/SKIP, this gives the
+ * user the opposite case in one sentence so they can override with conviction
+ * instead of getting flipped onto the wrong side.
+ */
+export function buildCounterRead(
+  players: PlayerReasoning[],
+  alertedSide: Side,
+): string | null {
+  if (players.length === 0) return null;
+  const total = players.length;
+  const modelAgree = players.filter((p) => p.alignment.model_edge === 'aligned').length;
+  const modelDisagree = players.filter((p) => p.alignment.model_edge === 'against').length;
+  const formAgree = players.filter((p) => p.alignment.form === 'aligned').length;
+  const flipSide: Side = alertedSide === 'Over' ? 'Under' : 'Over';
+
+  if (modelAgree >= Math.ceil(total / 2) || formAgree >= Math.ceil(total / 2)) {
+    return `Counter-read: ${modelAgree}/${total} players' L10 mean is on the ${alertedSide} side of the line — if you trust the form over the price, take *${alertedSide}* small.`;
+  }
+  if (modelDisagree >= Math.ceil(total / 2)) {
+    return `Counter-read confirmed: ${modelDisagree}/${total} players' L10 mean disagrees with ${alertedSide} — *${flipSide}* is the model-supported side.`;
+  }
+  return `Counter-read: data is split (${modelAgree} agree / ${modelDisagree} disagree) — no clear edge either way, prefer SKIP over FADE.`;
 }
 
 export function formatPlayerReasoningLines(
