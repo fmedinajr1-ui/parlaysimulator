@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { Mic, MicOff, Loader2, Upload } from "lucide-react";
+import { Mic, MicOff, Loader2, Upload, Sparkles } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,16 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
 
 export default function LiveAI() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  // Sample mode = ?sample=1 OR no signed-in user. Capped at 2 turns.
+  const sampleMode = searchParams.get("sample") === "1" || !user;
+  const SAMPLE_TURN_LIMIT = 2;
+  const [sampleTurns, setSampleTurns] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const v = sessionStorage.getItem("spike_sample_turns");
+    return v ? parseInt(v, 10) || 0 : 0;
+  });
+  const sampleExhausted = sampleMode && sampleTurns >= SAMPLE_TURN_LIMIT;
   const [messages, setMessages] = useState<Msg[]>([
   ]);
   const [riskMode, setRiskMode] = useState<RiskMode>("smart");
@@ -174,6 +185,7 @@ export default function LiveAI() {
             user_text: userText,
             mode: riskMode,
             conversation_id: conversationId,
+            sample: sampleMode,
             history: messages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
           },
         });
@@ -183,6 +195,11 @@ export default function LiveAI() {
         const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay };
         setMessages((m) => [...m, aiMsg]);
         persistMessage("assistant", reply, parlay);
+        if (sampleMode) {
+          const next = sampleTurns + 1;
+          setSampleTurns(next);
+          try { sessionStorage.setItem("spike_sample_turns", String(next)); } catch {}
+        }
         // Fire TTS in parallel — skip avatar render path for now (HeyGen v2)
         playTTS(reply);
       } catch (e: any) {
@@ -196,7 +213,7 @@ export default function LiveAI() {
         setIsThinking(false);
       }
     },
-    [riskMode, conversationId, messages, persistMessage, playTTS],
+    [riskMode, conversationId, messages, persistMessage, playTTS, sampleMode, sampleTurns],
   );
 
   const startRecording = useCallback(async () => {
