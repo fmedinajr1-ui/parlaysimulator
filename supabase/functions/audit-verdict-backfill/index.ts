@@ -79,9 +79,14 @@ function pct(n: number, d: number): string {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  const adminSecret = Deno.env.get('ADMIN_AUDIT_SECRET') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  const provided = req.headers.get('x-admin-secret') || req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (!provided || provided !== adminSecret) {
+  // Read-only audit. Require any authenticated bearer token (admin UI users
+  // already log in) OR the explicit ADMIN_AUDIT_SECRET via x-admin-secret.
+  const auth = req.headers.get('authorization') || '';
+  const xSecret = req.headers.get('x-admin-secret') || '';
+  const adminSecret = Deno.env.get('ADMIN_AUDIT_SECRET');
+  const hasBearer = /^Bearer\s+\S+/i.test(auth);
+  const secretOk = adminSecret && xSecret && xSecret === adminSecret;
+  if (!hasBearer && !secretOk) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
