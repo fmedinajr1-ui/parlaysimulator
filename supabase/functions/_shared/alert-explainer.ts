@@ -178,6 +178,14 @@ export async function buildPlayerReasoning(
   const family = pickPropFamily(input.prop_type);
   const isOver = input.side === 'Over';
 
+  // Load tunable thresholds for this sport (cached). Falls back to defaults on error.
+  let T: ThresholdSet;
+  try {
+    T = await getThresholds(supabase, input.sport);
+  } catch (_e) {
+    T = (await import('./threshold-config.ts')).DEFAULT_THRESHOLDS.ALL as ThresholdSet;
+  }
+
   // 1. Pull matchup_intelligence for this player+prop
   const todayIso = new Date().toISOString().slice(0, 10);
   const { data: mi } = await supabase
@@ -293,41 +301,44 @@ export async function buildPlayerReasoning(
 
   // 5. Alignments
   // Defense: low rank = strong defense. For Under, strong defense = aligned.
-  //          For Over, weak defense (high rank) = aligned. (Relaxed bands: 20/12.)
   const positionRank = mi?.position_defense_rank ?? mi?.opponent_defensive_rank ?? null;
   let defenseAlign: Alignment = 'no_data';
   if (positionRank != null) {
     if (isOver) {
-      defenseAlign = positionRank >= 20 ? 'aligned' : positionRank <= 12 ? 'against' : 'neutral';
+      defenseAlign = positionRank >= T.defense.aligned_over ? 'aligned'
+                   : positionRank <= T.defense.against_over ? 'against' : 'neutral';
     } else {
-      defenseAlign = positionRank <= 13 ? 'aligned' : positionRank >= 20 ? 'against' : 'neutral';
+      defenseAlign = positionRank <= T.defense.aligned_under ? 'aligned'
+                   : positionRank >= T.defense.against_under ? 'against' : 'neutral';
     }
   }
 
-  // Form: hit rate >= 0.55 = aligned, <= 0.25 = against (relaxed so coin-flip L10s aren't WEAK)
+  // Form: hit rate cutoffs (per-side configurable)
   const formAlign: Alignment = hit_rate == null
     ? 'no_data'
-    : hit_rate >= 0.55 ? 'aligned' : hit_rate <= 0.25 ? 'against' : 'neutral';
+    : hit_rate >= (isOver ? T.form.aligned_over : T.form.aligned_under) ? 'aligned'
+    : hit_rate <= (isOver ? T.form.against_over : T.form.against_under) ? 'against'
+    : 'neutral';
 
   // Pace: vegas_total directional. Over wants high totals, Under wants low.
-  // Relaxed: NBA modern slates routinely sit 218–224, so use 220/213. MLB stays 9 / 7.5.
   let paceAlign: Alignment = 'no_data';
   const total = mi?.vegas_total ?? null;
   if (total != null) {
-    const isMlb = input.sport === 'MLB';
-    const high = isMlb ? 9 : 220;
-    const low = isMlb ? 7.5 : 213;
     if (isOver) {
-      paceAlign = total >= high ? 'aligned' : total <= low ? 'against' : 'neutral';
+      paceAlign = total >= T.pace.aligned_over ? 'aligned'
+                : total <= T.pace.against_over ? 'against' : 'neutral';
     } else {
-      paceAlign = total <= low ? 'aligned' : total >= high ? 'against' : 'neutral';
+      paceAlign = total <= T.pace.aligned_under ? 'aligned'
+                : total >= T.pace.against_under ? 'against' : 'neutral';
     }
   }
 
-  // Juice: gap >= 20 = aligned (was 30); >=5 = neutral; otherwise against
+  // Juice: gap >= aligned_* = aligned; >= against_* = neutral; else against
   const juiceAlign: Alignment = input.juice_gap == null
     ? 'no_data'
-    : input.juice_gap >= 20 ? 'aligned' : input.juice_gap >= 5 ? 'neutral' : 'against';
+    : input.juice_gap >= (isOver ? T.juice.aligned_over : T.juice.aligned_under) ? 'aligned'
+    : input.juice_gap >= (isOver ? T.juice.against_over : T.juice.against_under) ? 'neutral'
+    : 'against';
 
   // Role / minutes (NBA-only really; MLB will be no_data)
   let roleAlign: Alignment = 'no_data';
@@ -346,8 +357,10 @@ export async function buildPlayerReasoning(
     const std = (l10_std != null && l10_std > 0.5) ? l10_std : 1; // floor to avoid divide-by-tiny
     const rawDelta = isOver ? l10_mean - input.line : input.line - l10_mean;
     model_edge_value = rawDelta / std;
-    if (model_edge_value >= 0.5) modelEdgeAlign = 'aligned';
-    else if (model_edge_value <= -0.5) modelEdgeAlign = 'against';
+    const alignedT = isOver ? T.model_edge.aligned_over : T.model_edge.aligned_under;
+    const againstT = isOver ? T.model_edge.against_over : T.model_edge.against_under;
+    if (model_edge_value >= alignedT) modelEdgeAlign = 'aligned';
+    else if (model_edge_value <= againstT) modelEdgeAlign = 'against';
     else modelEdgeAlign = 'neutral';
   }
 
