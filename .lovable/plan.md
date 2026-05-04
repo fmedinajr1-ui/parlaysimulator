@@ -1,97 +1,113 @@
-## Problem
+# Configurable Cascade Thresholds — Web + Telegram Admin Control
 
-Looking at the last 48h of NBA cascade alerts in `fanduel_prediction_alerts`, every single one came back with `verdict_counts: { strong: 0, lean: 0–2, weak: 3–6 }` and empty `group_reasoning.headline_bullets`. That's why you kept seeing "FADE" / "SKIP" recommendations, faded them with the Over, and won — the engine is mis-classifying real Over cascades as WEAK because:
+## Goal
+Move hardcoded cascade alignment cutoffs (form / defense / pace / juice / model_edge) into a DB table so they can be tuned **two ways** without redeploying:
+1. Admin web UI (`/admin/alert-thresholds`)
+2. Admin-only Telegram commands (so you can tune from your phone in seconds)
 
-1. **Verdict math punishes missing data.** In `alert-explainer.ts`, `computeVerdict` returns WEAK whenever `aligned_count <= 1`. Any leg missing matchup intel, juice gap, or PVS minutes (very common for NBA props) starts with 2–3 axes as `no_data`, which makes STRONG basically unreachable and pushes everything to WEAK by default.
-2. **Form threshold is too strict.** `hit_rate >= 0.6 = aligned`, `<= 0.3 = against`. A player going 5/10 (50% L10) registers as `neutral`, not aligned — even though that's a coin-flip Over with juice + cascade confirmation behind it.
-3. **Pace cutoffs are absolute (≥225 / ≤215).** Modern NBA totals routinely sit 218–224, which means almost every game lands `neutral` on the pace axis.
-4. **No "model agrees with the side" axis.** We never feed the player's own L10 mean vs. line into the alignment count, so a player whose L10 average is well above the Over line gets no credit.
-5. **FADE recommendation fires too easily.** It only requires "all WEAK + half the legs have big juice + 2 cold L10 OR 2 volatile minutes." With the broken WEAK math above, this trips on cascades that are actually live Overs.
-6. **`group_reasoning.headline_bullets` is empty** in production because `opponent_team` resolution from `matchup_intelligence` is missing — so the Telegram message has no "Why this side" context, only the misleading verdict and a FADE call.
+---
 
-## Fix
+## 1. Database — `alert_thresholds`
 
-### 1. Recalibrate the alignment thresholds (`supabase/functions/_shared/alert-explainer.ts`)
-
-- **Form axis**: lower the bar so real edges show up.
-  - `aligned` when `hit_rate >= 0.55` (was 0.6).
-  - `against` when `hit_rate <= 0.25` (was 0.3).
-- **Defense axis**: relax the bands.
-  - `aligned`: pos_def_rank ≥ 20 for Over, ≤ 13 for Under (was 22 / 10).
-  - `against`: pos_def_rank ≤ 12 for Over, ≥ 20 for Under.
-- **Pace axis**: switch to a relative band around the slate median (or fall back to ≥220 / ≤213 for NBA). Stop calling everything "neutral."
-- **Juice axis**: a positive juice gap on the alerted side should be `aligned` at ≥ +20 (was +30); `neutral` at +5..+19; `against` only when juice flat-out contradicts the side.
-- **Add a 6th axis: `model_edge`** — compare the player's L10 mean to the line:
-  - Over + `mean - line >= 0.5 * std` → `aligned`. Over + `mean - line <= -0.5 * std` → `against`.
-  - Under symmetric.
-  This is the single biggest signal we have and it's not currently in the verdict math.
-
-### 2. Rewrite `computeVerdict` so missing data doesn't auto-WEAK
+Per-sport, per-axis row. Seeded with current v2 defaults so day-1 behavior is unchanged.
 
 ```text
-Inputs: aligned, against, neutral, no_data (sum to 6 with the new axis)
-known = aligned + against + neutral
-STRONG  if aligned >= 3 AND against <= 1
-LEAN    if aligned >= 2 AND against <= 1
-WEAK    only when against >= 3 OR (known >= 4 AND aligned == 0)
-otherwise NEUTRAL (new verdict — "data thin, no fade signal")
+alert_thresholds
+  id uuid pk
+  sport text         -- 'NBA' | 'MLB' | 'NFL' | 'ALL'
+  axis text          -- 'form' | 'defense' | 'pace' | 'juice' | 'model_edge'
+  aligned_over numeric
+  aligned_under numeric
+  against_over numeric
+  against_under numeric
+  neutral_band numeric
+  notes text
+  updated_at timestamptz
+  updated_by text    -- 'web:<user_id>' or 'tg:<chat_id>'
+  unique (sport, axis)
+
+alert_thresholds_audit  -- insert-only history
+  id, sport, axis, old_values jsonb, new_values jsonb,
+  source text, actor text, changed_at timestamptz
 ```
 
-NEUTRAL legs render as "🟡 NEUTRAL — thin data, follow price" instead of being lumped into WEAK.
+RLS: read = authenticated; write = `has_role(auth.uid(),'admin')`. Telegram writes go through an edge function using the service role after verifying the chat_id is admin.
 
-### 3. Smarter recommended-action header (`signal-alert-telegram/index.ts`)
+## 2. Shared loader — `_shared/threshold-config.ts`
 
-Replace the current six-branch logic with:
+- `getThresholds(supabase, sport)` returns typed thresholds, cached 60s in module scope.
+- Falls back to hardcoded v2 defaults if table empty / query fails.
+- `invalidateThresholdCache()` for write paths.
 
-- **TAIL** — `strong >= 2` OR (`strong + lean >= total - 1` AND `weak == 0`).
-- **TAIL small** — `strong >= 1` AND `weak <= 1`.
-- **REVIEW (lean tail)** — `lean + neutral >= total - 1` AND `weak <= 1`. New default for thin-data cascades. Message: "Lean *side*, half stake — not enough context to FADE."
-- **FADE** — only when **all** of: `weak == total`, ≥⅔ legs flagged `cold_form` AND `model_edge: against`, juice gap ≥ +25 on alerted side, opponent defense aligned against the alerted side. (Today's bar lets juice + 2 cold L10s trigger a fade; we're raising it to require the model itself to disagree with the line.)
-- **SKIP** — everything else where verdict mix is mostly WEAK/NEUTRAL with no model agreement on either side.
+## 3. Refactor `alert-explainer.ts`
 
-This is the core change: today the engine fades whenever it's unsure. The new logic only fades when our own L10/defense math actively disagrees with the alerted side.
+Replace every magic number in the 6 axis classifiers with `thresholds.<axis>.<field>`. Load thresholds once per alert batch in callers (`signal-alert-engine`, `signal-alert-telegram`, `cascade-verdict-audit`).
 
-### 4. Always fill the "Why this side" block
+## 4. Telegram admin control — extend existing bot poller
 
-`buildGroupReasoning` currently emits no bullets when `opponent_team` is null on every leg (which is what's happening in prod). Fix:
+Add a command handler in the function that already processes `telegram_messages` (the bot router). Gated to admin chat IDs from `bot_authorized_users` where `authorized_by='admin_grant'` (or a new `is_threshold_admin` flag).
 
-- Fall back to `event_id` → `events`/`game_description` lookup so `opponent_team` is resolved even when `matchup_intelligence` is missing the row.
-- Always emit at least 2 bullets — model-edge summary ("avg L10 +1.8 over line across 4 legs"), juice summary ("book paying +28 on Over"), pace, injuries — pulling from per-player reasoning so the Telegram message always carries context, not just a verdict.
-
-### 5. Add a "Counter-read" line when the engine flips you
-
-When the action is FADE or SKIP, append one line explaining what would change the call:
-- "Counter-read: 3/5 players average above the line in L10 — if you trust the form over the price, take *Over* small."
-
-This is the "more context instead of suggesting fade" piece you asked for — the user always sees both sides and can override.
-
-### 6. Backfill audit script
-
-One-off script (`supabase/functions/cascade-verdict-audit/index.ts`) that re-scores yesterday's cascades with the new thresholds and writes the result to a temp table so we can compare old verdict mix vs. new vs. actual settled outcomes from `fanduel_prediction_alerts.outcome`. This validates the tuning before we let it broadcast.
-
-## Files to change
+Commands:
 
 ```text
-supabase/functions/_shared/alert-explainer.ts        thresholds, new model_edge axis, new computeVerdict, NEUTRAL verdict, fallback opponent lookup
-supabase/functions/signal-alert-telegram/index.ts    new action ladder, counter-read line, NEUTRAL badge rendering
-supabase/functions/_shared/cascade-sim.ts            handle NEUTRAL legs in the bankroll sim
-supabase/functions/cascade-verdict-audit/index.ts    new — backfill comparison
-mem/logic/alerts/explainer-contract.md               update verdict definitions + new axis
-mem/logic/betting/cascade-miss-by-1-guard.md         note interaction with new thresholds
+/thresholds                       -> show all sports + axes, current values
+/thresholds NBA                   -> show NBA only
+/thresholds NBA form              -> show one axis with all 5 fields
+/set NBA form aligned_over 0.50   -> update one field, log audit, invalidate cache
+/reset NBA form                   -> revert axis to v2 defaults
+/audit NBA 5                      -> last 5 changes for NBA
 ```
 
-## Tests
+Each write:
+- Validates sport ∈ allowed list, axis ∈ allowed list, field ∈ allowed list, value is numeric and within sane bounds (e.g. form 0–1, defense rank 1–32, juice -100..100).
+- Upserts row, inserts audit entry with `source='telegram'`, `actor='tg:<chat_id>'`.
+- Calls cache-invalidate (bumps `system_config.thresholds_version`).
+- Replies with confirmation showing old → new value.
 
-Per project rule (5 verifications before deploy):
+Reject non-admins with a single line; log attempt.
 
-1. Unit test in `_shared/alert-explainer_test.ts`: confirm STRONG/LEAN/NEUTRAL/WEAK transitions across the 6 axes.
-2. Unit test for `model_edge` axis with synthetic L10 + std data.
-3. Replay one of yesterday's faded NBA cascades through `cascade-verdict-audit` and confirm the new mix has ≥1 STRONG.
-4. Snapshot test on `signal-alert-telegram` output: TAIL, TAIL small, REVIEW, FADE, SKIP messages each render the counter-read line correctly.
-5. Backfill audit on the last 7 days of cascade alerts, compare predicted action vs. settled outcome — target: FADE precision improves, REVIEW (lean tail) win-rate ≥ 50%.
+## 5. Web admin UI — `src/pages/admin/AlertThresholds.tsx`
+
+- Gated by `useAdminRole`.
+- Card per sport, row per axis, paired number inputs + slider.
+- "Reset to defaults" per axis, "Save" per sport.
+- Live preview: re-score last 20 settled cascades under pending vs current thresholds (calls `cascade-verdict-audit` with overrides).
+- Audit log tab showing recent changes from both web and Telegram sources.
+
+Add route in `src/App.tsx`, link in admin nav.
+
+## 6. Cache invalidation
+
+Tiny `invalidate-threshold-cache` function (or inline in the writers) that bumps `system_config.thresholds_version`. Loader checks version on each call; if changed, refetches. Propagation across all warm edge instances within ~60s.
+
+## 7. Tests (5 per project rule)
+
+1. Loader returns defaults when table empty.
+2. Per-sport row overrides `'ALL'` row.
+3. Form axis flips neutral→aligned when threshold lowered 0.55→0.45.
+4. Telegram `/set` parser: valid command updates row + writes audit; invalid value rejected; non-admin rejected.
+5. `cascade-verdict-audit` produces different verdict mix under two threshold sets on same fixtures.
+
+## Files to create / change
+
+```text
+supabase/migrations/<ts>_alert_thresholds.sql
+supabase/functions/_shared/threshold-config.ts
+supabase/functions/_shared/threshold-config_test.ts
+supabase/functions/_shared/alert-explainer.ts
+supabase/functions/signal-alert-engine/index.ts
+supabase/functions/signal-alert-telegram/index.ts
+supabase/functions/cascade-verdict-audit/index.ts            (accept overrides)
+supabase/functions/telegram-bot-router/index.ts              (add /thresholds, /set, /reset, /audit)
+supabase/functions/invalidate-threshold-cache/index.ts
+src/pages/admin/AlertThresholds.tsx
+src/App.tsx
+mem/logic/alerts/explainer-contract.md                       (document config layer + TG commands)
+```
 
 ## Out of scope
+- No verdict-math changes (STRONG/LEAN/WEAK/NEUTRAL rules unchanged).
+- No auto-tuning loop; manual control only.
+- Cascade engine only; take_it_now / velocity_spike continue to use defaults.
 
-- No changes to which props enter the cascade pool (the miss-by-1 guard stays as is).
-- No new scoring weights inside `signal-alert-engine` itself — only the explainer + Telegram layer.
-- No UI changes; this is an alert-quality + reasoning fix.
+Approve and I'll implement.
