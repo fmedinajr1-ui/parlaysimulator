@@ -382,6 +382,22 @@ export default function LiveAI() {
         ))}
       </div>
 
+      {/* Sample-mode banner */}
+      {sampleMode && (
+        <div className="relative z-10 mx-3 -mt-8 mb-2 rounded-xl bg-primary/15 border border-primary/40 backdrop-blur px-3 py-2 text-xs text-white flex items-center gap-2 shadow-lg">
+          <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
+          <span className="flex-1">
+            <strong className="font-semibold">Sample Mode</strong> — {Math.max(0, SAMPLE_TURN_LIMIT - sampleTurns)} free message{SAMPLE_TURN_LIMIT - sampleTurns === 1 ? "" : "s"} left.
+          </span>
+          <Link
+            to="/"
+            className="px-2 py-1 rounded-md bg-primary text-primary-foreground font-semibold text-[11px] hover:opacity-90"
+          >
+            Sign Up Free
+          </Link>
+        </div>
+      )}
+
       <div className="flex-1" />
 
       {/* Transcript overlay (bottom 45%) */}
@@ -426,6 +442,21 @@ export default function LiveAI() {
 
       {/* Glass control bar */}
       <div className="relative z-10 px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] flex flex-col items-center gap-3 bg-gradient-to-t from-black/85 via-black/60 to-transparent">
+        {sampleExhausted ? (
+          <div className="w-full max-w-sm rounded-2xl bg-card/95 border border-primary/40 p-4 text-center shadow-2xl">
+            <p className="text-sm text-foreground font-semibold mb-1">You've used your free sample</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Create a free Pup account to keep chatting with Spike.
+            </p>
+            <Link
+              to="/"
+              className="inline-flex items-center justify-center w-full rounded-xl bg-primary text-primary-foreground font-semibold py-2.5 hover:opacity-90 transition"
+            >
+              Get Free Access
+            </Link>
+          </div>
+        ) : (
+        <>
         <Badge variant="outline" className="text-xs bg-black/60 border-white/20 text-white">
           {RISK_MODES.find((r) => r.id === riskMode)?.emoji} {riskMode} mode
         </Badge>
@@ -443,7 +474,8 @@ export default function LiveAI() {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isThinking || isScanning || isRecording}
+            disabled={isThinking || isScanning || isRecording || sampleMode}
+            title={sampleMode ? "Slip scanning needs a free account" : ""}
             className="w-14 h-14 rounded-full flex items-center justify-center bg-white/10 backdrop-blur border border-white/20 hover:bg-white/20 transition disabled:opacity-50"
             aria-label="Upload slip"
           >
@@ -477,8 +509,12 @@ export default function LiveAI() {
             ? "Reading your slip…"
             : isRecording
               ? "Release to send"
-              : "Hold mic to talk · Tap upload for a slip"}
+              : sampleMode
+                ? "Hold mic to talk · Sample mode (chat only)"
+                : "Hold mic to talk · Tap upload for a slip"}
         </p>
+        </>
+        )}
       </div>
 
       {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
