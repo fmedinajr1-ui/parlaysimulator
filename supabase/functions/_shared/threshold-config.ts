@@ -25,22 +25,25 @@ export const DEFAULT_THRESHOLDS: Record<string, ThresholdSet> = {
     defense:    { aligned_over: 20,   aligned_under: 13,   against_over: 12,   against_under: 20,   neutral_band: null },
     pace:       { aligned_over: 220,  aligned_under: 213,  against_over: 213,  against_under: 220,  neutral_band: null },
     juice:      { aligned_over: 20,   aligned_under: 20,   against_over: 5,    against_under: 5,    neutral_band: null },
-    model_edge: { aligned_over: 0.5,  aligned_under: 0.5,  against_over: -0.5, against_under: -0.5, neutral_band: null },
+    // Asymmetric per 2026-05-04 audit: easier BACK bar, deeper FADE bar.
+    model_edge: { aligned_over: 0.3,  aligned_under: 0.3,  against_over: -1.0, against_under: -1.0, neutral_band: null },
   },
   MLB: {
     form:       { aligned_over: 0.55, aligned_under: 0.55, against_over: 0.25, against_under: 0.25, neutral_band: null },
     defense:    { aligned_over: 20,   aligned_under: 13,   against_over: 12,   against_under: 20,   neutral_band: null },
     pace:       { aligned_over: 9,    aligned_under: 7.5,  against_over: 7.5,  against_under: 9,    neutral_band: null },
     juice:      { aligned_over: 20,   aligned_under: 20,   against_over: 5,    against_under: 5,    neutral_band: null },
-    model_edge: { aligned_over: 0.5,  aligned_under: 0.5,  against_over: -0.5, against_under: -0.5, neutral_band: null },
+    model_edge: { aligned_over: 0.3,  aligned_under: 0.3,  against_over: -1.0, against_under: -1.0, neutral_band: null },
   },
 };
 
 const TTL_MS = 60_000;
 let _cache: { rows: any[]; version: number; loadedAt: number } | null = null;
+let _muteCache: { map: Record<string, { muted: boolean; reason: string | null }>; loadedAt: number } | null = null;
 
 export function invalidateThresholdCache() {
   _cache = null;
+  _muteCache = null;
 }
 
 async function fetchAll(supabase: Sb): Promise<{ rows: any[]; version: number }> {
@@ -155,4 +158,39 @@ export function validateFieldValue(axis: AxisKey, value: number): { ok: boolean;
   if (!Number.isFinite(value)) return { ok: false, error: 'value not finite' };
   if (value < b.min || value > b.max) return { ok: false, error: `value out of bounds [${b.min}, ${b.max}]` };
   return { ok: true };
+}
+
+// ---------- Signal mute config (per signal_type kill-switch) ----------
+
+// Defaults if the table is unreachable. take_it_now muted per audit.
+export const DEFAULT_SIGNAL_MUTES: Record<string, { muted: boolean; reason: string | null }> = {
+  cascade:        { muted: false, reason: null },
+  velocity_spike: { muted: false, reason: null },
+  take_it_now:    { muted: true,  reason: '7d audit: 2/14 = 14% hit rate' },
+};
+
+export async function getSignalMutes(supabase: Sb): Promise<Record<string, { muted: boolean; reason: string | null }>> {
+  const now = Date.now();
+  if (_muteCache && (now - _muteCache.loadedAt) <= TTL_MS) return _muteCache.map;
+  let map: Record<string, { muted: boolean; reason: string | null }> = { ...DEFAULT_SIGNAL_MUTES };
+  try {
+    const { data } = await supabase
+      .from('alert_signal_config')
+      .select('signal_type, muted, reason');
+    if (Array.isArray(data)) {
+      for (const r of data) {
+        if (r?.signal_type) map[r.signal_type] = { muted: !!r.muted, reason: r.reason ?? null };
+      }
+    }
+  } catch (_e) {
+    // non-fatal — keep defaults
+  }
+  _muteCache = { map, loadedAt: now };
+  return map;
+}
+
+export async function isSignalMuted(supabase: Sb, signal_type: string | null | undefined): Promise<{ muted: boolean; reason: string | null }> {
+  if (!signal_type) return { muted: false, reason: null };
+  const mutes = await getSignalMutes(supabase);
+  return mutes[signal_type] ?? { muted: false, reason: null };
 }
