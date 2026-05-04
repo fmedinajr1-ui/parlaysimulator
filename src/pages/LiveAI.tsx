@@ -447,20 +447,6 @@ export default function LiveAI() {
             <SpikeShareCard />
           </div>
         )}
-        {sampleExhausted ? (
-          <div className="w-full max-w-sm rounded-2xl bg-card/95 border border-primary/40 p-4 text-center shadow-2xl">
-            <p className="text-sm text-foreground font-semibold mb-1">You've used your free sample</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Create a free Pup account to keep chatting with Spike.
-            </p>
-            <Link
-              to="/"
-              className="inline-flex items-center justify-center w-full rounded-xl bg-primary text-primary-foreground font-semibold py-2.5 hover:opacity-90 transition"
-            >
-              Get Free Access
-            </Link>
-          </div>
-        ) : (
         <>
         <Badge variant="outline" className="text-xs bg-black/60 border-white/20 text-white">
           {RISK_MODES.find((r) => r.id === riskMode)?.emoji} {riskMode} mode
@@ -479,8 +465,7 @@ export default function LiveAI() {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isThinking || isScanning || isRecording || sampleMode}
-            title={sampleMode ? "Slip scanning needs a free account" : ""}
+            disabled={isThinking || isScanning || isRecording}
             className="w-14 h-14 rounded-full flex items-center justify-center bg-white/10 backdrop-blur border border-white/20 hover:bg-white/20 transition disabled:opacity-50"
             aria-label="Upload slip"
           >
