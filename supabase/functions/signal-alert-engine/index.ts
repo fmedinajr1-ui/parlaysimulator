@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
           const overP = Number(m.over_price ?? NaN);
           const underP = Number(m.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
-          return explain(m, gap);
+          return explain(m, gap, 'cascade');
         }),
       );
 
@@ -378,7 +378,7 @@ Deno.serve(async (req) => {
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
         if (!(await claimKey(dKey, 'take_it_now'))) continue;
 
-        const engine_reasoning = await explain(p, gap);
+        const engine_reasoning = await explain(p, gap, 'take_it_now');
 
         const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
           player_name: p.player_name,
