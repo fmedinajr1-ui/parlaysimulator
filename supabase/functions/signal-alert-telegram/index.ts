@@ -105,85 +105,97 @@ function formatAlert(a: Alert): string | string[] {
     const defenseAgainst = validReasons.filter((r) => r.alignment.defense === 'against').length;
     const formAgree = validReasons.filter((r) => r.alignment.form === 'aligned').length;
 
-    let action = '';
+    // ─── Decide the action ───
     let actionKind: SpikeActionKind = 'REVIEW';
+    let verb = 'REVIEW'; let emoji = '🟡'; let betSide = side;
     if (total === 0) {
-      action = `🟡 *Action: REVIEW* — no verdict data, inspect manually.`;
-      actionKind = 'REVIEW';
+      verb = 'REVIEW'; emoji = '🟡'; actionKind = 'REVIEW';
     } else if (sN >= 2 || (sN >= 1 && (sN + lN) >= total - 1 && wN === 0)) {
-      action = `🟢 *Action: TAIL* — bet ${escapeMd(side)} as alerted. ${sN} STRONG / ${lN} LEAN.`;
-      actionKind = 'TAIL';
+      verb = 'TAIL'; emoji = '🟢'; actionKind = 'TAIL';
     } else if (sN >= 1 && wN <= 1) {
-      action = `🟢 *Action: TAIL (small)* — ${sN} STRONG / ${lN} LEAN. Reduce stake.`;
-      actionKind = 'TAIL_SMALL';
+      verb = 'TAIL (small stake)'; emoji = '🟢'; actionKind = 'TAIL_SMALL';
     } else if (modelDisagree >= Math.ceil(total * 0.66) && defenseAgainst >= Math.ceil(total / 2) && wN >= total - 1) {
-      // True fade: model AND defense both disagree, and verdict mix is mostly WEAK.
-      const fadeSide = /over|yes/i.test(side) ? 'Under' : 'Over';
-      action = `🔴 *Action: FADE* — bet *${fadeSide}*. ${modelDisagree}/${total} L10 means disagree + ${defenseAgainst}/${total} tough D matchups.`;
-      actionKind = 'FADE';
+      verb = 'FADE'; emoji = '🔴'; actionKind = 'FADE';
+      betSide = /over|yes/i.test(side) ? 'Under' : 'Over';
     } else if (modelAgree >= Math.ceil(total / 2) || formAgree >= Math.ceil(total / 2)) {
-      // Thin verdicts but our own model leans the alerted side — REVIEW (lean tail)
-      action = `🟡 *Action: REVIEW (lean ${escapeMd(side)})* — ${modelAgree}/${total} L10 means agree, but verdict mix is thin. Half stake max.`;
-      actionKind = 'REVIEW';
+      verb = 'TAIL (small stake)'; emoji = '🟡'; actionKind = 'REVIEW';
     } else if (wN >= total - 1 && sN === 0 && modelAgree === 0 && modelDisagree === 0) {
-      action = `⚪ *Action: SKIP* — ${wN} WEAK / ${lN} LEAN, 0 STRONG, no model signal. Don't fade — just skip.`;
-      actionKind = 'SKIP';
+      verb = 'SKIP'; emoji = '⚪'; actionKind = 'SKIP';
     } else {
-      action = `🟡 *Action: REVIEW* — mixed (${sN}S/${lN}L/${nN}N/${wN}W). Inspect legs before risking.`;
-      actionKind = 'REVIEW';
-    }
-    // ─── Spike narrator (plain English) ───
-    const narration = spikeNarrate({
-      actionKind, side, prop,
-      totalLegs: total || players.length,
-      strong: sN, lean: lN, neutral: nN, weak: wN,
-      modelAgree, modelDisagree, defenseAgainst,
-    });
-
-    // ─── MESSAGE A — The Call ───
-    const msgA: string[] = [];
-    msgA.push(`🌊 *CASCADE* — ${escapeMd(sport)}  ·  ${players.length} players, same side`);
-    msgA.push(`🎯 ${escapeMd(prop)} *${escapeMd(side)}*  •  avg conf ${Math.round(conf)}%`);
-    const venueLine = tipoff
-      ? `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`
-      : `🏟️ ${escapeMd(game)}`;
-    msgA.push(venueLine);
-    msgA.push('');
-    msgA.push(action);
-    msgA.push('');
-    msgA.push(`💬 *Spike says:* ${escapeMd(narration)}`);
-    if (actionKind !== 'TAIL' && validReasons.length > 0) {
-      const cr = buildCounterRead(validReasons, /over|yes/i.test(side) ? 'Over' : 'Under');
-      if (cr) {
-        msgA.push('');
-        msgA.push(`_${escapeMd(cr)}_`);
-      }
+      verb = 'REVIEW'; emoji = '🟡'; actionKind = 'REVIEW';
     }
 
-    // ─── MESSAGE B — The Math (sim) ───
-    let msgB = '';
-    try {
-      const simLegs = players.map((p) => ({ verdict: p?.engine_reasoning?.verdict ?? null }));
-      const sim = buildCascadeSim(counts, simLegs, 100);
-      if (sim) {
-        const lines = formatCascadeSimPlain(sim, players.length || total, actionKind);
-        msgB = lines.join('\n');
-      }
-    } catch (_e) { /* non-fatal */ }
-
-    // ─── MESSAGE C — The Players ───
+    // ─── Sort players by verdict strength ───
     const order = { STRONG: 0, LEAN: 1, NEUTRAL: 2, WEAK: 3 } as const;
     const sorted = [...players].sort((a, b) => {
       const av = order[(a.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
       const bv = order[(b.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
       return av - bv;
     });
-    const msgC: string[] = [];
-    msgC.push(`*Players in this cascade:*`);
-    if (counts && (counts.strong || counts.lean || counts.neutral || counts.weak)) {
-      msgC.push(`✅ ${counts.strong ?? 0} strong  ·  👍 ${counts.lean ?? 0} lean  ·  🟡 ${counts.neutral ?? 0} neutral  ·  ⚠️ ${counts.weak ?? 0} weak`);
+
+    // Build a quick "headline" list of player names + their lines for the lead.
+    const namedPicks = sorted.map((p) => {
+      const sideStr = String(p.side ?? side);
+      const lineNum = Number(p.line ?? 0);
+      return `${p.player ?? '?'} ${sideStr} ${lineNum}`;
+    });
+    const headlinePicks = namedPicks.slice(0, 3).join(', ');
+    const extraCount = Math.max(0, namedPicks.length - 3);
+    const extraSuffix = extraCount > 0 ? ` + ${extraCount} more` : '';
+
+    // ─── Single consolidated message ───
+    const out: string[] = [];
+
+    // Headline: one line. Action + side + count + game.
+    out.push(`${emoji} *${verb} — ${escapeMd(prop)} ${escapeMd(betSide)}* (${players.length} players agree)`);
+    out.push(`🏀 ${escapeMd(sport)}  •  ${escapeMd(game)}${tipoff ? `  •  ${escapeMd(tipoff)}` : ''}`);
+    out.push('');
+
+    // The bet, named directly.
+    if (actionKind === 'SKIP') {
+      out.push(`*Don't bet this one.* No strong legs and no clear edge either way.`);
+    } else if (actionKind === 'FADE') {
+      out.push(`*Bet ${escapeMd(betSide)} on these picks:*`);
+      out.push(escapeMd(`  ${headlinePicks}${extraSuffix}`));
+      out.push(`(Book is pushing the other way but our model + defense disagree.)`);
+    } else {
+      const stakeNote = actionKind === 'TAIL' ? '' : ' — keep the stake small';
+      out.push(`*Bet these picks${stakeNote}:*`);
+      out.push(escapeMd(`  ${headlinePicks}${extraSuffix}`));
     }
-    msgC.push('');
+    out.push('');
+
+    // Why — counts + plain narration in one block
+    out.push(`*Why:* ${sN} strong, ${lN} lean, ${nN} neutral, ${wN} weak  ·  ${modelAgree}/${total || players.length} of our L10 model picks agree`);
+    const narration = spikeNarrate({
+      actionKind, side, prop,
+      totalLegs: total || players.length,
+      strong: sN, lean: lN, neutral: nN, weak: wN,
+      modelAgree, modelDisagree, defenseAgainst,
+    });
+    out.push(`💬 ${escapeMd(narration)}`);
+
+    // Sim — one compact line
+    try {
+      const simLegs = players.map((p) => ({ verdict: p?.engine_reasoning?.verdict ?? null }));
+      const sim = buildCascadeSim(counts, simLegs, 100);
+      if (sim) {
+        out.push('');
+        const tFull = sim.tailFull;
+        const tSmall = sim.tailSmall;
+        out.push(`💰 *On a $100 bankroll:*`);
+        if (tSmall.available && tSmall.stake > 0) {
+          out.push(escapeMd(`  • Top 3 only → ${Math.round(tSmall.prob*100)}% chance, risk $${tSmall.stake.toFixed(0)} to win $${tSmall.payout.toFixed(0)}  ← recommended`));
+        }
+        if (tFull.stake > 0 || tFull.prob > 0) {
+          out.push(escapeMd(`  • All ${players.length} legs → ${Math.round(tFull.prob*100)}% chance, risk $${tFull.stake.toFixed(0)} to win $${tFull.payout.toFixed(0)}  (long shot)`));
+        }
+      }
+    } catch (_e) { /* non-fatal */ }
+
+    // Player detail (compact, only top picks)
+    out.push('');
+    out.push(`*The picks in detail:*`);
     const rendered = sorted.slice(0, MAX_PLAYERS_RENDERED);
     for (const p of rendered) {
       const r = p.engine_reasoning as PlayerReasoning | null | undefined;
@@ -193,37 +205,22 @@ function formatAlert(a: Alert): string | string[] {
       const sideTyped: 'Over' | 'Under' = sideStr === 'Over' ? 'Over' : 'Under';
       if (r) {
         const lines = formatPlayerReasoningPlain(p.player ?? '', sideTyped, lineNum, prop, r);
-        for (const ln of lines) msgC.push(escapeMd(ln));
+        for (const ln of lines) out.push(escapeMd(ln));
       } else {
-        msgC.push(escapeMd(`• ${p.player ?? ''} — ${sideTyped} ${lineNum}`));
+        out.push(escapeMd(`• ${p.player ?? ''} — ${sideTyped} ${lineNum}`));
       }
       const roleLine = formatRoleLine(roleCtx);
-      if (roleLine) msgC.push(escapeMd(`   ${roleLine}`));
-      msgC.push('');
+      if (roleLine) out.push(escapeMd(`   ${roleLine}`));
     }
     if (sorted.length > MAX_PLAYERS_RENDERED) {
-      msgC.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more players — see dashboard_`);
+      out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more — see dashboard_`);
     }
 
-    // Filtered legs (miss-by-1) — short footer in C
-    const droppedRaw = Array.isArray((meta as any).dropped_legs) ? (meta as any).dropped_legs as Array<{ player: string; reason: string }> : [];
-    const dropped = Array.from(new Map(droppedRaw.map((d) => [d.player, d])).values());
-    const DROPPED_RENDER_LIMIT = 4;
-    if (dropped.length > 0) {
-      msgC.push('');
-      msgC.push(`_Filtered ${dropped.length} miss-by-1 risk leg${dropped.length === 1 ? '' : 's'}:_`);
-      for (const d of dropped.slice(0, DROPPED_RENDER_LIMIT)) {
-        msgC.push(escapeMd(`   • ${d.player}`));
-      }
-      if (dropped.length > DROPPED_RENDER_LIMIT) msgC.push(escapeMd(`   +${dropped.length - DROPPED_RENDER_LIMIT} more`));
+    let single = out.join('\n');
+    if (single.length > MAX_MESSAGE_CHARS) {
+      single = single.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated_';
     }
-
-    const messages: string[] = [];
-    messages.push(msgA.join('\n'));
-    if (msgB) messages.push(msgB);
-    messages.push(msgC.join('\n'));
-    // Trim each chunk to safety limit
-    return messages.map((m) => m.length > MAX_MESSAGE_CHARS ? m.slice(0, MAX_MESSAGE_CHARS - 32) + '\n…_truncated_' : m);
+    return single;
   }
 
   if (a.signal_type === 'take_it_now') {
