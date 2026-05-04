@@ -355,25 +355,32 @@ Deno.serve(async (req) => {
         }
       }
 
-      const message = formatAlert(alert);
-      const { data: sendResult, error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
-        body: {
-          message,
-          parse_mode: 'Markdown',
-          type: 'signal_alert',
-          reference_key: alert.id,
-          format_version: 'v1',
-        },
-      });
+      const formatted = formatAlert(alert);
+      const parts: string[] = Array.isArray(formatted) ? formatted : [formatted];
 
-      if (sendErr || !sendResult?.success) {
-        console.error('[signal-alert-telegram] send failed:', sendErr ?? sendResult);
-        stats.errors += 1;
-        continue;
+      let firstMessageId: number | null = null;
+      let anyError = false;
+      for (let p = 0; p < parts.length; p++) {
+        const { data: sendResult, error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
+          body: {
+            message: parts[p],
+            parse_mode: 'Markdown',
+            type: 'signal_alert',
+            reference_key: `${alert.id}:${p}`,
+            format_version: 'v3',
+            reply_to_message_id: p > 0 ? firstMessageId : undefined,
+          },
+        });
+        if (sendErr || !sendResult?.success) {
+          console.error('[signal-alert-telegram] send failed:', sendErr ?? sendResult);
+          anyError = true;
+          break;
+        }
+        const mid = typeof sendResult?.message_id === 'number' ? sendResult.message_id : null;
+        if (p === 0) firstMessageId = mid;
       }
-
-      const messageId =
-        typeof sendResult?.message_id === 'number' ? sendResult.message_id : null;
+      if (anyError) { stats.errors += 1; continue; }
+      const messageId = firstMessageId;
 
       const { error: logErr } = await supabase.from('bot_signal_broadcasts').insert({
         alert_id: alert.id,
