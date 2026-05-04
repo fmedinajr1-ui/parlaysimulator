@@ -21,41 +21,30 @@ const TIERS: Array<{
     name: "The Pup",
     emoji: "🐶",
     price: "Free",
-    priceSuffix: "card on file",
-    trial: "Card verified, never charged unless you upgrade",
+    priceSuffix: "card verification",
+    trial: "Card verification required to activate",
     cta: "Verify card & join free",
-    features: ["1 free slip grade per day", "Basic sharp tracker (delayed)", "Community access", "Email verdicts"],
-  },
-  {
-    id: "top_dog",
-    name: "Top Dog",
-    emoji: "🐕",
-    price: "$29.99",
-    priceSuffix: "/mo",
-    trial: "7-day free trial",
-    cta: "Start 7-day free trial",
-    featured: true,
     features: [
-      "Unlimited slip grading",
-      "Live Sharp Tracker (real-time)",
-      "Trap & correlation alerts",
-      "Daily AI parlay picks",
-      "Telegram alerts",
+      "Free chat with Spike (web)",
+      "1 daily action: parlay build OR slip scan",
+      "Web-only — no Telegram bot",
+      "Upgrade anytime to unlock everything",
     ],
   },
   {
-    id: "kennel_club",
-    name: "Kennel Club",
+    id: "all_access",
+    name: "All-Access",
     emoji: "🏆",
     price: "$99",
     priceSuffix: "/mo",
-    trial: "3-day free trial",
+    trial: "3-day free trial · cancel anytime",
     cta: "Start 3-day free trial",
+    featured: true,
     features: [
-      "Everything in Top Dog",
-      "Full Parlay Bot access",
-      "Scout War Room (live games)",
-      "Premium AI parlays + locks",
+      "Unlimited Spike + unlimited slip grades",
+      "Telegram bot access",
+      "Live signal alerts + FanDuel boost cascades",
+      "Sweet-spot push + ParlayIQ Gold parlays",
       "Priority support",
     ],
   },
@@ -71,7 +60,7 @@ export function FarmPricing({ onSelect }: Props) {
           <p className="text-[hsl(var(--farm-muted))] mt-3">Card verified at signup. Cancel anytime, no hassle.</p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-5">
+        <div className="grid md:grid-cols-2 gap-5 max-w-3xl mx-auto">
           {TIERS.map((t) => (
             <div
               key={t.id}
