@@ -62,8 +62,6 @@ Deno.test('2d. parseLine plain regex fallback when only string given', () => {
   assertEquals(side, null); // strict /^over$/i fails on "Over 12.5"
   assertEquals(line, 12.5);
 });
-  assertEquals(line, 27.5);
-});
 
 Deno.test('3. settle Over wins when actual exceeds line', () => {
   assertEquals(settle('Over', 12.5, 14), true);
