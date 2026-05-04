@@ -122,19 +122,99 @@ export type Verdict =
   | "LEAN_OVER"
   | "PASS"
   | "LEAN_UNDER"
-  | "STRONG_UNDER";
+  | "STRONG_UNDER"
+  | "QUARANTINE";
 
-export function verdictFromEdgePct(edgePct: number): Verdict {
-  const a = Math.abs(edgePct);
-  if (a >= 6) return edgePct > 0 ? "STRONG_OVER" : "STRONG_UNDER";
-  if (a >= 3) return edgePct > 0 ? "LEAN_OVER" : "LEAN_UNDER";
+import { devigPair, modelProbOver, EDGE_HARD_CAP_PP } from "./court-edge-edge.ts";
+
+// Phase 1 placeholder thresholds in PROBABILITY POINTS. Phase 4 refines the
+// promotion rules (multi-book agreement, weather present, calibrated tier).
+const STRONG_PP = 0.04;
+const LEAN_PP = 0.02;
+
+export function verdictFromEdgePp(edgePp: number): Verdict {
+  if (!Number.isFinite(edgePp)) return "PASS";
+  const a = Math.abs(edgePp);
+  if (a > EDGE_HARD_CAP_PP) return "QUARANTINE";
+  if (a >= STRONG_PP) return edgePp > 0 ? "STRONG_OVER" : "STRONG_UNDER";
+  if (a >= LEAN_PP) return edgePp > 0 ? "LEAN_OVER" : "LEAN_UNDER";
   return "PASS";
 }
 
-export function edgeFor(market: "match_total" | "player_total_games", projection: number, line: number) {
-  // For player_total_games, the projection (which is a MATCH total) is split in half as a player's share.
+export interface EdgeOpts {
+  over_price?: number | null;
+  under_price?: number | null;
+  sigma: number;
+}
+
+export interface EdgeResult {
+  reference: number;
+  // Legacy fields kept so existing dashboards/columns keep populating.
+  // edge / edge_pct now mean PROBABILITY POINTS, not relative %.
+  edge: number;
+  edge_pct: number;
+  // New devigged-edge fields:
+  model_prob_over: number;
+  model_prob_under: number;
+  vig_free_implied_over: number | null;
+  vig_free_implied_under: number | null;
+  edge_pp: number;
+  edge_side: "over" | "under" | "none";
+  verdict: Verdict;
+  quarantine_reason?: string;
+}
+
+export function edgeFor(
+  market: "match_total" | "player_total_games",
+  projection: number,
+  line: number,
+  opts: EdgeOpts,
+): EdgeResult {
+  // For player_total_games, the projection (a MATCH total) is split in half.
   const reference = market === "player_total_games" ? projection / 2 : projection;
-  const edge = reference - line;
-  const edgePct = line > 0 ? (edge / line) * 100 : 0;
-  return { reference, edge, edge_pct: edgePct, verdict: verdictFromEdgePct(edgePct) };
+  const sigma = market === "player_total_games" ? Math.max(opts.sigma / 2, 0.5) : opts.sigma;
+
+  const pOver = modelProbOver(reference, line, sigma);
+  const pUnder = 1 - pOver;
+  const fair = devigPair(opts.over_price, opts.under_price);
+
+  // Without prices we can't compute an honest devigged edge → PASS, no fake edge.
+  if (!fair) {
+    return {
+      reference,
+      edge: 0,
+      edge_pct: 0,
+      model_prob_over: pOver,
+      model_prob_under: pUnder,
+      vig_free_implied_over: null,
+      vig_free_implied_under: null,
+      edge_pp: 0,
+      edge_side: "none",
+      verdict: "PASS",
+    };
+  }
+
+  const edgeOver = pOver - fair.p_over_fair;
+  const edgeUnder = pUnder - fair.p_under_fair;
+  let edge_pp: number;
+  let edge_side: "over" | "under";
+  if (edgeOver >= edgeUnder) { edge_pp = edgeOver; edge_side = "over"; }
+  else { edge_pp = -edgeUnder; edge_side = "under"; } // sign convention: + over, − under
+
+  const verdict = verdictFromEdgePp(edge_pp);
+  const quarantine_reason = verdict === "QUARANTINE" ? "edge_above_hard_cap" : undefined;
+
+  return {
+    reference,
+    edge: edge_pp,
+    edge_pct: edge_pp * 100, // legacy column — now reads as percentage points
+    model_prob_over: pOver,
+    model_prob_under: pUnder,
+    vig_free_implied_over: fair.p_over_fair,
+    vig_free_implied_under: fair.p_under_fair,
+    edge_pp,
+    edge_side,
+    verdict,
+    quarantine_reason,
+  };
 }
