@@ -117,6 +117,7 @@ function AnimatedRoutes() {
               <Route path="/scan" element={<PropScanner />} />
               <Route path="/manual" element={<ManualBuilder />} />
               <Route path="/live-ai" element={<LiveAI />} />
+              <Route path="/spike/:token" element={<LiveAI />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
@@ -170,7 +171,7 @@ function AppContent() {
         <PWAUpdatePrompt />
         <AnimatedRoutes />
         <UniversalParlayBuilder />
-        {isMobile && location.pathname !== '/' && location.pathname !== '/live-ai' && <MobileFloatingMenu />}
+        {isMobile && location.pathname !== '/' && location.pathname !== '/live-ai' && !location.pathname.startsWith('/spike/') && <MobileFloatingMenu />}
       </PilotRouteGuard>
     </EmailVerificationGuard>
   );
