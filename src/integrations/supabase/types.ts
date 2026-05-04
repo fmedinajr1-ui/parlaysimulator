@@ -3363,6 +3363,66 @@ export type Database = {
         }
         Relationships: []
       }
+      court_edge_config: {
+        Row: {
+          blowout_cutoff_bo3: number
+          blowout_cutoff_bo5: number
+          blowout_penalty: number
+          edge_hard_cap_pp: number
+          id: string
+          lean_pp: number
+          line_band_sigmas: number
+          notes: string | null
+          sanity_sigmas: number
+          shrink_k: number
+          spread_v2_coinflip_bias: number
+          spread_v2_coinflip_threshold: number
+          spread_v2_max_bias: number
+          spread_v2_max_penalty: number
+          strong_pp: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          blowout_cutoff_bo3?: number
+          blowout_cutoff_bo5?: number
+          blowout_penalty?: number
+          edge_hard_cap_pp?: number
+          id?: string
+          lean_pp?: number
+          line_band_sigmas?: number
+          notes?: string | null
+          sanity_sigmas?: number
+          shrink_k?: number
+          spread_v2_coinflip_bias?: number
+          spread_v2_coinflip_threshold?: number
+          spread_v2_max_bias?: number
+          spread_v2_max_penalty?: number
+          strong_pp?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          blowout_cutoff_bo3?: number
+          blowout_cutoff_bo5?: number
+          blowout_penalty?: number
+          edge_hard_cap_pp?: number
+          id?: string
+          lean_pp?: number
+          line_band_sigmas?: number
+          notes?: string | null
+          sanity_sigmas?: number
+          shrink_k?: number
+          spread_v2_coinflip_bias?: number
+          spread_v2_coinflip_threshold?: number
+          spread_v2_max_bias?: number
+          spread_v2_max_penalty?: number
+          strong_pp?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       court_edge_l3_cache: {
         Row: {
           fetched_at: string
