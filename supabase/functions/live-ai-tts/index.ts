@@ -1,6 +1,4 @@
 // Streams ElevenLabs TTS audio for the Live AI dog. Returns MP3 bytes.
-import { createClient } from "npm:@supabase/supabase-js@2";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
