@@ -1,74 +1,69 @@
-# Plan: 7-Day Verdict Audit Backfill
+# Plan: Surgical v2 upgrades to alert explainer
 
-## Goal
-Replay the new explainer logic (NEUTRAL verdict + model_edge axis) against the last 7 days of `fanduel_prediction_alerts` (cascade / take_it_now / velocity_spike) and score each verdict bucket against actual settled outcomes. This validates whether NEUTRAL is correctly carving out fadeable picks from non-fadeable ones, and whether `model_edge` is a leading indicator vs the other 5 axes.
+Keep the v1 multi-axis verdict system (it's tunable, multi-sport, and powers the admin UI). Layer 4 targeted changes derived from the v2 spec + 7-day audit.
 
-## Data reality check
-- Last 7d: 985 NBA alerts (697 cascade, plus take_it_now / velocity_spike)
-- `fanduel_prediction_alerts.was_correct` is currently **NULL for all 985 rows** — no settlement has run on this window
-- `settlement_records` has 0 rows in the same window
-- MLB / NHL / NFL: 0 alerts in window (NBA-only audit)
+## 1. Add per-signal-type mute list
 
-So the audit must do two things, not one:
-1. **Settle the alerts** by joining each alert's `(player_name, prop_type, event_id, prediction)` to the relevant `*_player_game_logs` row using `commence_time`. Compute `was_correct` locally without writing back to the table.
-2. **Re-run the explainer** against each historical alert using current thresholds, then bucket by verdict.
+- Extend `alert_thresholds` schema with a `signal_mutes` row type (or a new `alert_signal_config` table keyed by `signal_type`) storing `{ muted: bool, reason: text, updated_by, updated_at }`.
+- Default seed: `take_it_now` muted (audit: 2/14 = 14%). `cascade` and `velocity_spike` active.
+- `buildPlayerReasoning` accepts `signal_type` in `ExplainerInput` and forces `verdict = 'NEUTRAL'` + `action = 'PASS'` + `flags: ['signal_muted']` when muted.
+- Telegram admin commands: `/mute SIGNAL reason`, `/unmute SIGNAL`, `/mutes` (list).
+- Admin UI: new "Signal mutes" tab in `/admin/alert-thresholds` showing toggle + reason per signal type.
 
-## Deliverable
-A new edge function `audit-verdict-backfill` (POST, admin-only via shared secret header) that returns a JSON report and writes a CSV to `/mnt/documents/verdict_audit_<date>.csv`. Also exposed in the existing `/admin/alert-thresholds` page as a "Run 7-Day Audit" button.
+## 2. Asymmetric model_edge thresholds (default retune)
 
-## Output report shape
+- Current defaults: aligned ±0.5σ symmetric.
+- New defaults from audit: `aligned_over/under = 0.3`, `against_over/under = -1.0` (deeper FADE bar matches v2's BACK_EDGE_MIN=0.2 / FADE_EDGE_MAX=-1.0 in σ-normalized space).
+- Migration only updates the `ALL` default row; existing per-sport overrides are preserved.
+- Existing per-side fields already in `alert_thresholds` — no schema change.
+
+## 3. Add `action` enum to PlayerReasoning
+
+Map verdicts + model_edge alignment into a clean enum the Telegram layer + UI can consume directly:
+
 ```text
-Window: 2026-04-27 → 2026-05-04  (NBA, 985 alerts, X settleable)
-
-By verdict (alerted side hit %):
-  STRONG    n=___   hit=__%    edge vs baseline +__pp
-  LEAN      n=___   hit=__%    edge vs baseline +__pp
-  NEUTRAL   n=___   hit=__%    edge vs baseline +__pp   ← should be ~50%, NOT a fade
-  WEAK      n=___   hit=__%    flip-side hit=__%        ← flip should win
-
-By signal_type × verdict:
-  cascade / STRONG  n=__ hit=__%   ...
-
-Axis-isolated lift (alerts where ONLY this axis flipped the verdict):
-  model_edge → +__pp lift on STRONG, ___ pp on WEAK flip
-  defense    → ...
-  form       → ...
-  pace       → ...
-  juice      → ...
-  role       → ...
-
-Decisions to make:
-  - Is NEUTRAL hit% within [45%, 55%]?  (yes = correct carve-out; no = retune)
-  - Does WEAK flip-side beat 52%?       (yes = explainer fade is real)
-  - Does model_edge alone shift verdict on >5% of alerts?
+action = 'BACK' if verdict in {STRONG, LEAN} AND model_edge != 'against'
+action = 'FADE' if verdict == 'WEAK' AND model_edge == 'against'
+action = 'PASS' otherwise (NEUTRAL or signal-muted or model disagrees with a STRONG)
 ```
 
-## Algorithm
-1. Pull `fanduel_prediction_alerts` for the last 7 days where `signal_type IN ('cascade','take_it_now','velocity_spike')` and `commence_time < now()` (game must have started/finished).
-2. For each alert:
-   - Parse `prediction` → `(side, line)` (already split in `metadata.line` / `metadata.side` for newer rows; fall back to regex).
-   - Look up actual stat from `nba_player_game_logs` (or MLB equivalent) keyed by `player_name` + `commence_time::date`.
-   - Compute `was_correct` = `(actual > line) === (side === 'Over')`. Mark as `unsettleable` if no log row found.
-   - Re-run `buildPlayerReasoning(supabase, {...})` with current thresholds → get verdict + axis alignment.
-3. Aggregate into the report buckets above.
-4. Write CSV with one row per alert: `id, player, prop, side, line, actual, was_correct, verdict, aligned_count, against_count, model_edge_value, alignment_defense, ...`.
-5. Return JSON summary.
+- Adds `action: 'BACK' | 'FADE' | 'PASS'` to `PlayerReasoning` (non-breaking — additive field).
+- `signal-alert-telegram` action ladder collapses around this enum: TAIL = ≥2 BACK legs, FADE = ≥⅔ FADE legs, REVIEW = mixed, SKIP = mostly PASS.
+- Counter-read text already exists; keep it for transparency.
+
+## 4. Append v2 recalibration playbook to memory
+
+Add a "Recalibration triggers" section to `mem://logic/alerts/explainer-contract.md`:
+
+```text
+- BACK hit% < 75% over n≥30 → raise model_edge.aligned_* to 0.5
+- FADE win% < 80% over n≥30 → lower model_edge.against_* to -1.5
+- take_it_now hit% > 55% over n≥30 → unmute
+- Re-run audit-verdict-backfill weekly
+```
+
+## Tests (5 required per project rule)
+
+In `_shared/alert-explainer_test.ts`:
+1. Muted signal returns NEUTRAL + action=PASS regardless of inputs.
+2. STRONG verdict + model_edge aligned → action=BACK.
+3. WEAK verdict + model_edge against → action=FADE.
+4. STRONG verdict + model_edge against → action=PASS (model override).
+5. Asymmetric thresholds: model_edge=+0.35 aligned, model_edge=-0.6 neutral (was against under symmetric ±0.5).
 
 ## Files
-- `supabase/functions/audit-verdict-backfill/index.ts` — new edge function. Admin-gated via `x-admin-secret` header (matches existing pattern in `telegram-prop-scanner`). Reuses `buildPlayerReasoning` from `_shared/alert-explainer.ts`.
-- `supabase/functions/audit-verdict-backfill/index_test.ts` — Deno test with 5 fixtures: STRONG-hit, LEAN-hit, NEUTRAL-near-50, WEAK-flip-wins, unsettleable. Required by the project's 5-test rule.
-- `src/pages/admin/AlertThresholds.tsx` — add "Run 7-Day Audit" button + result panel rendering the report.
-- `mem/logic/alerts/explainer-contract.md` — append the audit's interpretation rules (NEUTRAL band, WEAK-flip threshold, model_edge isolation).
 
-## Technical details
-- Run synchronously; 985 alerts × ~4 supabase reads each ≈ 4k reads. Batch unified_props/matchup_intelligence lookups by `(event_id)` to keep it under 30s. If timeout becomes a concern, accept a `?days=N` query param and chunk.
-- Do NOT write back to `fanduel_prediction_alerts.was_correct` — the production settlement orchestrator owns that column; this audit is read-only.
-- Sport scope: NBA only based on current data; code generalises to MLB/NHL/NFL via the existing `pickPropFamily` switch so it works once those alerts return.
-- Eastern Time normalisation when matching `commence_time::date` to `game_date` (per Core memory rule).
-- Skip rows where `metadata` lacks both `line` and a parseable prediction string — count them as `unparseable` in the report.
+- `supabase/migrations/<ts>_signal_mutes.sql` — new `alert_signal_config` table + audit trigger + seed take_it_now muted; update ALL model_edge defaults.
+- `supabase/functions/_shared/threshold-config.ts` — load + cache mutes alongside thresholds.
+- `supabase/functions/_shared/alert-explainer.ts` — accept signal_type, apply mute, compute action, asymmetric edge cuts.
+- `supabase/functions/_shared/alert-explainer_test.ts` — append 5 new tests.
+- `supabase/functions/signal-alert-engine/index.ts` + `signal-alert-telegram/index.ts` — pass signal_type through; consume action enum.
+- `supabase/functions/telegram-prop-scanner/index.ts` — `/mute`, `/unmute`, `/mutes` commands.
+- `src/pages/admin/AlertThresholds.tsx` — "Signal mutes" tab.
+- `mem/logic/alerts/explainer-contract.md` — recalibration triggers + action enum doc.
 
 ## Out of scope
-- Backfilling `was_correct` into the production table.
-- Retuning thresholds automatically — the audit only reports; tuning stays manual via the existing `/set` Telegram command and admin UI.
 
-Ready to implement on approval.
+- Replacing v1 verdicts with BACK/FADE/NEUTRAL (keeps audit trail intact).
+- Cascade outcome grading (separate work — needs settlement on cascade rows first).
+- Re-running the audit (do after 7 more days to validate cascade + new asymmetric cuts).

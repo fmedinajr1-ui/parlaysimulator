@@ -548,6 +548,60 @@ export type Database = {
         }
         Relationships: []
       }
+      alert_signal_config: {
+        Row: {
+          muted: boolean
+          reason: string | null
+          signal_type: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          muted?: boolean
+          reason?: string | null
+          signal_type: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          muted?: boolean
+          reason?: string | null
+          signal_type?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      alert_signal_config_audit: {
+        Row: {
+          actor: string | null
+          changed_at: string
+          id: string
+          new_values: Json | null
+          old_values: Json | null
+          signal_type: string
+          source: string
+        }
+        Insert: {
+          actor?: string | null
+          changed_at?: string
+          id?: string
+          new_values?: Json | null
+          old_values?: Json | null
+          signal_type: string
+          source?: string
+        }
+        Update: {
+          actor?: string | null
+          changed_at?: string
+          id?: string
+          new_values?: Json | null
+          old_values?: Json | null
+          signal_type?: string
+          source?: string
+        }
+        Relationships: []
+      }
       alert_thresholds: {
         Row: {
           against_over: number | null
