@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { Mic, MicOff, Loader2, Upload, Sparkles, PawPrint } from "lucide-react";
-import { Link, useSearchParams, useParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,6 @@ export default function LiveAI() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const { token: routeToken } = useParams<{ token?: string }>();
-  const navigate = useNavigate();
   // Open access: Spike is fully usable on the site without signing in.
   // `sample` flag is kept for the agent so anonymous-only tools stay gated,
   // but we no longer cap turns or push users to sign up.
