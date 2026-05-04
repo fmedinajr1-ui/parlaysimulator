@@ -10,6 +10,7 @@ import {
   type ProjectionBreakdown,
 } from "../_shared/court-edge-projection.ts";
 import { detectTournament, type TournamentMeta } from "../_shared/court-edge-tournaments.ts";
+import { tournamentTier, type TournamentTier } from "../_shared/court-edge-tournament-tier.ts";
 import {
   roleAdjustment,
   inferRoleFromL3,
@@ -224,6 +225,8 @@ Deno.serve(async (req) => {
     const hint = oddsEvents[0];
     const tournament = detectTournament(hint?.sport_key, hint?.home_team, hint?.away_team);
     push(`Tournament: ${tournament.name} (${tournament.surface}, ${tournament.sets_format}, ${tournament.indoor ? "indoor" : "outdoor"}, ${tournament.city})`);
+    const tier: TournamentTier = tournamentTier(hint?.sport_key, tournament.name);
+    push(`Tournament tier: ${tier}`);
 
     // 3. Weather
     const wxRes = await callFunction("court-edge-fetch-weather", { city: tournament.city }).catch((e) => ({ ok: false, error: String(e) }));
@@ -353,6 +356,11 @@ Deno.serve(async (req) => {
         over_price: ev.total_over_price ?? null,
         under_price: ev.total_under_price ?? null,
         sigma,
+        tier,
+        tour: evTour,
+        sets_format: tournament.sets_format,
+        surface: tournament.surface,
+        indoor: tournament.indoor,
       });
       // Cap verdict to LEAN_* when one side is a baseline — never STRONG_*.
       let verdict = e.verdict;
@@ -425,6 +433,11 @@ Deno.serve(async (req) => {
         over_price: ev?.total_over_price ?? null,
         under_price: ev?.total_under_price ?? null,
         sigma,
+        tier,
+        tour: evTour,
+        sets_format: tournament.sets_format,
+        surface: tournament.surface,
+        indoor: tournament.indoor,
       });
       picks.push({
         source: "prizepicks",
