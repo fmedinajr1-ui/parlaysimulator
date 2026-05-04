@@ -680,3 +680,71 @@ export function formatPlayerReasoningLines(
   lines.push(`   ↳ Verdict: ${verdictBadge(reasoning.verdict)} — ${reasoning.headline} ${side_emoji(side)}`);
   return lines;
 }
+
+// ─── Plain-English variant (Spike voice) ─────────────────────────────────
+// Translates the same PlayerReasoning into 1 headline + 2-4 plain-English
+// bullets. No L10/σ/juice jargon. Used by the v3 cascade Telegram format.
+
+function prettyPropPlain(prop: string): string {
+  return prop
+    .replace(/^batter_/, '')
+    .replace(/^player_/, '')
+    .replace(/_/g, ' ')
+    .toLowerCase();
+}
+
+function juicePhrase(gap: number): string {
+  if (gap >= 100) return `Book is heavily on this side (gap +${Math.round(gap)})`;
+  if (gap >= 40) return `Book is leaning this way (gap +${Math.round(gap)})`;
+  return `Book is nudging this side (gap +${Math.round(gap)})`;
+}
+
+export function formatPlayerReasoningPlain(
+  player: string,
+  side: Side,
+  line: number,
+  prop: string,
+  reasoning: PlayerReasoning,
+): string[] {
+  const out: string[] = [];
+  const propPlain = prettyPropPlain(prop || '');
+  const badge = verdictBadge(reasoning.verdict);
+  out.push(`• ${player} — ${side} ${line} ${propPlain}  ${badge}`);
+
+  // Recent form, plain English
+  const f = reasoning.form;
+  if (f.l10_total && f.l10_hits != null) {
+    const allOrMost =
+      f.l10_hits === f.l10_total ? `all ${f.l10_total}`
+      : f.l10_hits >= Math.ceil(f.l10_total * 0.8) ? `${f.l10_hits} of his last ${f.l10_total}`
+      : `${f.l10_hits} of ${f.l10_total} recent`;
+    out.push(`   Hit the ${side} in ${allOrMost} games.`);
+  }
+
+  // Defense matchup
+  const m = reasoning.matchup;
+  const dr = m.position_defense_rank ?? m.defense_rank;
+  if (m.opponent_team && dr != null) {
+    const tough = dr <= 10;
+    const easy = dr >= 22;
+    const phrase = tough
+      ? `Tough matchup vs ${m.opponent_team} defense (rank #${dr}).`
+      : easy
+        ? `Soft matchup vs ${m.opponent_team} defense (rank #${dr}).`
+        : `Average matchup vs ${m.opponent_team} (D rank #${dr}).`;
+    out.push(`   ${phrase}`);
+  }
+
+  // Juice / book
+  const j = reasoning.juice;
+  if (j.gap && j.gap >= 20 && j.aligned_with_side) {
+    out.push(`   ${juicePhrase(j.gap)}.`);
+  }
+
+  // Volatile minutes warning
+  if (reasoning.role.minutes_flag === 'volatile') {
+    out.push(`   Heads-up: his minutes have been bouncing around lately.`);
+  }
+
+  return out;
+}
