@@ -268,9 +268,9 @@ export function edgeFor(
 
   // Phase 3 — line-range quarantine. Reject implausibly-priced lines BEFORE
   // measuring edge so a broken book line doesn't masquerade as a model edge.
-  const sets: PriorSets2 = opts.sets_format === "bo5" ? "bo5" : "bo3";
+  const sets: PriorSets = opts.sets_format === "bo5" ? "bo5" : "bo3";
   const surf = (opts.indoor ? "indoor" : (opts.surface ?? "unknown")) as any;
-  const prior = priorFor((opts.tour ?? "unknown") as PriorTour2, sets, surf);
+  const prior = priorFor((opts.tour ?? "unknown") as PriorTour, sets, surf);
   let outOfRange = false;
   let outOfRangeReason: string | undefined;
   if (Number.isFinite(line)) {
