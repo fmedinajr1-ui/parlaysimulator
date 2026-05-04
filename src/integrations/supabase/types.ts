@@ -3538,6 +3538,7 @@ export type Database = {
       }
       court_edge_runs: {
         Row: {
+          diagnostics: Json | null
           duration_ms: number | null
           errors: Json
           id: string
@@ -3548,6 +3549,7 @@ export type Database = {
           telegram_sent: boolean
         }
         Insert: {
+          diagnostics?: Json | null
           duration_ms?: number | null
           errors?: Json
           id?: string
@@ -3558,6 +3560,7 @@ export type Database = {
           telegram_sent?: boolean
         }
         Update: {
+          diagnostics?: Json | null
           duration_ms?: number | null
           errors?: Json
           id?: string
