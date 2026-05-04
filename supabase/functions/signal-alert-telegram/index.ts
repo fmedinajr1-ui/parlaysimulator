@@ -14,7 +14,7 @@ const MIN_CONFIDENCE = 60;
 const LOOKBACK_HOURS = 6;          // only consider recent alerts
 const PER_RUN_CAP = 25;            // hard cap on Telegram messages per run
 const MIN_MINUTES_TO_TIPOFF = 5;   // skip alerts whose game already started
-const MAX_PLAYERS_RENDERED = 5;    // cap per-cascade detail to keep messages under Telegram's 4096 cap
+const MAX_PLAYERS_RENDERED = 6;    // cap per-cascade detail to keep messages under Telegram's 4096 cap
 const MAX_MESSAGE_CHARS = 3500;    // safety margin under Telegram's 4096 limit
 
 function easternDate(d: Date = new Date()): string {
