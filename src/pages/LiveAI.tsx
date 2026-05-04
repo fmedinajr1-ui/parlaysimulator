@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { Mic, MicOff, Loader2, Upload, Sparkles } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Mic, MicOff, Loader2, Upload, Sparkles, PawPrint } from "lucide-react";
+import { Link, useSearchParams, useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { DogAvatarVideo } from "@/components/live-ai/DogAvatarVideo";
 import { AIParlayCard } from "@/components/live-ai/AIParlayCard";
+import { SpikeShareCard } from "@/components/live-ai/SpikeShareCard";
 import { Seo } from "@/components/seo/Seo";
 import { toast } from "@/hooks/use-toast";
 
@@ -17,6 +18,7 @@ interface Msg {
   role: "user" | "assistant";
   content: string;
   parlay?: any;
+  shareLink?: string | null;
 }
 
 const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
@@ -28,8 +30,10 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
 export default function LiveAI() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
+  const { token: routeToken } = useParams<{ token?: string }>();
+  const navigate = useNavigate();
   // Sample mode = ?sample=1 OR no signed-in user. Capped at 2 turns.
-  const sampleMode = searchParams.get("sample") === "1" || !user;
+  const sampleMode = (searchParams.get("sample") === "1" || !user) && !routeToken;
   const SAMPLE_TURN_LIMIT = 2;
   const [sampleTurns, setSampleTurns] = useState<number>(() => {
     if (typeof window === "undefined") return 0;
@@ -49,6 +53,21 @@ export default function LiveAI() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [woken, setWoken] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [shareCardDismissed, setShareCardDismissed] = useState(false);
+
+  // If a token is in the URL but the visitor isn't signed in, send them to auth
+  // and bring them back to the same /spike/:token deeplink afterwards.
+  useEffect(() => {
+    if (!routeToken) return;
+    if (user === null) {
+      // Auth still loading — wait
+      return;
+    }
+    if (!user) {
+      const next = encodeURIComponent(`/spike/${routeToken}`);
+      navigate(`/?next=${next}`, { replace: true });
+    }
+  }, [routeToken, user, navigate]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -192,7 +211,8 @@ export default function LiveAI() {
         if (error) throw error;
         const reply: string = data?.text ?? data?.reply ?? "Hmm, no read on that. Try again.";
         const parlay = data?.parlay ?? null;
-        const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay };
+        const shareLink: string | null = data?.share_link ?? null;
+        const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay, shareLink };
         setMessages((m) => [...m, aiMsg]);
         persistMessage("assistant", reply, parlay);
         if (sampleMode) {
