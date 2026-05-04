@@ -12782,6 +12782,27 @@ export type Database = {
         }
         Relationships: []
       }
+      pup_daily_quota: {
+        Row: {
+          actions_used: number
+          email: string
+          updated_at: string
+          ymd_et: string
+        }
+        Insert: {
+          actions_used?: number
+          email: string
+          updated_at?: string
+          ymd_et: string
+        }
+        Update: {
+          actions_used?: number
+          email?: string
+          updated_at?: string
+          ymd_et?: string
+        }
+        Relationships: []
+      }
       push_subscriptions: {
         Row: {
           auth_key: string
