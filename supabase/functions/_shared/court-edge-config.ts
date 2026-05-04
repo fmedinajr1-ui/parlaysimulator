@@ -15,6 +15,8 @@ export interface CourtEdgeConfig {
   strong_pp: number;
   lean_pp: number;
   line_band_sigmas: number;
+  near_prior_band_sigmas: number;   // if |line - prior.mu| within this, treat market as anchored
+  near_prior_clamp_sigmas: number;  // clamp projection to within this many σ of the line
 }
 
 export const DEFAULT_COURT_EDGE_CONFIG: CourtEdgeConfig = {
@@ -31,6 +33,8 @@ export const DEFAULT_COURT_EDGE_CONFIG: CourtEdgeConfig = {
   strong_pp: 0.04,
   lean_pp: 0.02,
   line_band_sigmas: 2.5,
+  near_prior_band_sigmas: 0.75,
+  near_prior_clamp_sigmas: 1.0,
 };
 
 function num(v: unknown, fallback: number): number {
@@ -55,6 +59,8 @@ export function mergeConfig(row: Partial<Record<keyof CourtEdgeConfig, unknown>>
     strong_pp: num(row.strong_pp, d.strong_pp),
     lean_pp: num(row.lean_pp, d.lean_pp),
     line_band_sigmas: num(row.line_band_sigmas, d.line_band_sigmas),
+    near_prior_band_sigmas: num(row.near_prior_band_sigmas, d.near_prior_band_sigmas),
+    near_prior_clamp_sigmas: num(row.near_prior_clamp_sigmas, d.near_prior_clamp_sigmas),
   };
 }
 
