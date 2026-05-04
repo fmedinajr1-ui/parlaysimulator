@@ -1,5 +1,7 @@
 // Court.Edge — pure projection engine. No I/O. Importable by edge functions and tests.
 
+import { priorFor, type Tour as PriorTour, type Sets as PriorSets, type Surface as PriorSurface } from "./court-edge-prior.ts";
+
 export type Surface = "clay" | "hard" | "grass";
 export type SetsFormat = "bo3" | "bo5";
 
@@ -21,11 +23,15 @@ export interface ProjectionInput {
   // Role-driven, player-specific game adjustments. Pure additives — never re-multiplied.
   role_adj_home?: number | null;
   role_adj_away?: number | null;
+  // Phase 2: tour drives prior lookup. Optional for back-compat; default 'unknown' → WTA row.
+  tour?: "atp" | "wta" | "unknown";
 }
 
 export interface ProjectionBreakdown {
   base_l3: number;
+  /** @deprecated Phase 2 — kept at 1.0 for back-compat. Surface/sets effect now lives in the prior. */
   surface_mult: number;
+  /** @deprecated Phase 2 — kept at 1.0 for back-compat. */
   sets_mult: number;
   spread_adj: number;
   weather_adj: number;
@@ -33,9 +39,23 @@ export interface ProjectionBreakdown {
   role_adj_home: number;
   role_adj_away: number;
   projection: number;
+  // Phase 2 additions:
+  prior_mu: number;
+  prior_sd: number;
+  delta_l3: number;
+  shrunk: number;
+  blowout_adj: number;
+  spread_adj_v2: number;
+  clamped: boolean;
 }
 
 const WEIGHTS = [0.5, 0.3, 0.2];
+// Phase 2 tunables — keep as a constants block for easy adjustment without a redeploy chain.
+const SHRINK_K = 4;                 // virtual matches pulling toward the prior
+const BLOWOUT_CUTOFF_BO3 = 14;      // Bo3 match total ≤ this → recent blowout flag
+const BLOWOUT_CUTOFF_BO5 = 22;
+const BLOWOUT_PENALTY = 0.5;        // games subtracted per flagged player
+const SANITY_SIGMAS = 3;            // ±Nσ around prior mean
 
 export function weightedL3(matches: number[]): number {
   if (!matches || matches.length === 0) return NaN;
@@ -76,6 +96,25 @@ export function spreadAdj(mlHome?: number | null, mlAway?: number | null): numbe
   return -2.5 * Math.abs(nH - nA);
 }
 
+// Phase 2 — two-sided spread adjustment with a coin-flip OVER bias and a
+// harder cap on lopsided favourites.
+export function spreadAdjV2(mlHome?: number | null, mlAway?: number | null): number {
+  if (mlHome == null || mlAway == null || !Number.isFinite(mlHome) || !Number.isFinite(mlAway)) return 0;
+  const pH = americanToProb(mlHome);
+  const pA = americanToProb(mlAway);
+  const sum = pH + pA;
+  if (sum <= 0) return 0;
+  const nH = pH / sum;
+  const nA = pA / sum;
+  const diff = Math.abs(nH - nA);
+  let adj: number;
+  if (diff < 0.10) adj = 0.6;
+  else adj = -3.0 * (diff - 0.10) / 0.40;
+  if (adj > 0.8) adj = 0.8;
+  if (adj < -3.0) adj = -3.0;
+  return adj;
+}
+
 export function weatherAdj(w?: WeatherInput | null): number {
   if (!w) return 0;
   let adj = 0;
@@ -96,24 +135,63 @@ export function project(input: ProjectionInput): ProjectionBreakdown {
   const w1 = weightedL3(input.p1_l3);
   const w2 = weightedL3(input.p2_l3);
   const base = (w1 + w2) / 2;
-  const sm = surfaceMult(input.surface);
-  const sf = setsMult(input.sets_format);
-  const sa = spreadAdj(input.ml_home, input.ml_away);
+
+  // Phase 2: prior-based recompose + Bayesian shrink toward prior mean.
+  const tour: PriorTour = (input.tour ?? "unknown") as PriorTour;
+  const sets: PriorSets = input.sets_format === "bo5" ? "bo5" : "bo3";
+  const surf: PriorSurface = (input.indoor ? "indoor" : (input.surface as PriorSurface));
+  const prior = priorFor(tour, sets, surf);
+
+  // Each player's L3-half contribution vs prior half → recompose around the prior mean.
+  const half = prior.mu / 2;
+  const halfP1 = Number.isFinite(w1) ? w1 / 2 : half;
+  const halfP2 = Number.isFinite(w2) ? w2 / 2 : half;
+  const delta_l3 = (halfP1 - half) + (halfP2 - half); // signed game delta
+  const combined = prior.mu + delta_l3;
+
+  const n_eff = Math.min((input.p1_l3?.length ?? 0) + (input.p2_l3?.length ?? 0), 6);
+  const shrunk = (n_eff * combined + SHRINK_K * prior.mu) / (n_eff + SHRINK_K);
+
+  const sa_v2 = spreadAdjV2(input.ml_home, input.ml_away);
+  // Keep legacy spread_adj field populated (now equals v2) so existing callers keep getting a number.
+  const sa = sa_v2;
   const wa = weatherAdj(input.weather);
   const ia = indoorAdj(input.indoor);
   const rh = Number.isFinite(input.role_adj_home as number) ? (input.role_adj_home as number) : 0;
   const ra = Number.isFinite(input.role_adj_away as number) ? (input.role_adj_away as number) : 0;
-  const projection = base * sm * sf + sa + wa + ia + rh + ra;
+
+  // Blowout-recency penalty.
+  const cutoff = sets === "bo5" ? BLOWOUT_CUTOFF_BO5 : BLOWOUT_CUTOFF_BO3;
+  let blowout_adj = 0;
+  if (Array.isArray(input.p1_l3) && input.p1_l3.length > 0 && input.p1_l3[0] <= cutoff) blowout_adj -= BLOWOUT_PENALTY;
+  if (Array.isArray(input.p2_l3) && input.p2_l3.length > 0 && input.p2_l3[0] <= cutoff) blowout_adj -= BLOWOUT_PENALTY;
+
+  let projection = shrunk + sa + wa + ia + rh + ra + blowout_adj;
+
+  // Sanity clamp to prior ± Nσ.
+  const lo = prior.mu - SANITY_SIGMAS * prior.sd;
+  const hi = prior.mu + SANITY_SIGMAS * prior.sd;
+  let clamped = false;
+  if (projection < lo) { projection = lo; clamped = true; }
+  else if (projection > hi) { projection = hi; clamped = true; }
+
   return {
     base_l3: base,
-    surface_mult: sm,
-    sets_mult: sf,
+    surface_mult: 1,
+    sets_mult: 1,
     spread_adj: sa,
     weather_adj: wa,
     indoor_adj: ia,
     role_adj_home: rh,
     role_adj_away: ra,
     projection,
+    prior_mu: prior.mu,
+    prior_sd: prior.sd,
+    delta_l3,
+    shrunk,
+    blowout_adj,
+    spread_adj_v2: sa_v2,
+    clamped,
   };
 }
 
