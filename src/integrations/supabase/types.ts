@@ -7688,6 +7688,7 @@ export type Database = {
           confidence: number | null
           conversation_id: string | null
           created_at: string
+          fade_mode: boolean
           id: string
           legs: Json
           mode: string
@@ -7701,6 +7702,7 @@ export type Database = {
           confidence?: number | null
           conversation_id?: string | null
           created_at?: string
+          fade_mode?: boolean
           id?: string
           legs: Json
           mode: string
@@ -7714,6 +7716,7 @@ export type Database = {
           confidence?: number | null
           conversation_id?: string | null
           created_at?: string
+          fade_mode?: boolean
           id?: string
           legs?: Json
           mode?: string
