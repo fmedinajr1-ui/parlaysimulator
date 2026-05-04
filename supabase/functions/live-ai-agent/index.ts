@@ -594,7 +594,7 @@ Deno.serve(async (req) => {
     };
 
     // Strip tools the current tier can't use, so the model can't even attempt them.
-    const GATED = new Set(["build_parlay", "analyze_slip", "get_top_picks", "get_whale_signals", "share_my_link"]);
+    const GATED = new Set(["build_parlay", "build_fade_parlay", "analyze_slip", "get_top_picks", "get_whale_signals", "share_my_link"]);
     const activeTools = (sample || !user)
       ? TOOLS.filter((t: any) => !GATED.has(t.function?.name))
       : TOOLS;
@@ -624,7 +624,7 @@ Deno.serve(async (req) => {
           try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
           const result = await runTool(tc.function.name, args, supabase, effectiveUserId, ctx);
           toolTrace.push({ name: tc.function.name, args, result });
-          if (tc.function.name === "build_parlay" && (result as any).parlay) lastParlay = (result as any).parlay;
+          if ((tc.function.name === "build_parlay" || tc.function.name === "build_fade_parlay") && (result as any).parlay) lastParlay = (result as any).parlay;
           messages.push({
             role: "tool",
             tool_call_id: tc.id,
