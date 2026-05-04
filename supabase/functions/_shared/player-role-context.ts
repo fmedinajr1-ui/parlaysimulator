@@ -210,8 +210,15 @@ export function archetypeEmoji(arch: string | null): string {
 
 export function formatRoleLine(ctx: PlayerRoleContext | null | undefined): string | null {
   if (!ctx) return null;
-  const arch = ctx.archetype ?? 'UNKNOWN';
   const tier = ctx.role_tier;
+  const hasArch = !!ctx.archetype && ctx.archetype !== 'UNKNOWN';
+  const hasTier = tier && tier !== 'UNKNOWN';
+  if (!hasArch && !hasTier) return null;
   const mpg = ctx.avg_minutes != null ? ` (${ctx.avg_minutes.toFixed(1)} mpg)` : '';
-  return `${archetypeEmoji(ctx.archetype)} ${arch} · ${tier}${mpg}`;
+  if (!hasArch) {
+    // Tier only — friendlier label
+    const tierLabel = tier.charAt(0) + tier.slice(1).toLowerCase();
+    return `${tierLabel}${mpg}`;
+  }
+  return `${archetypeEmoji(ctx.archetype)} ${ctx.archetype} · ${tier}${mpg}`;
 }
