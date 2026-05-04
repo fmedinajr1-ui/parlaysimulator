@@ -1,5 +1,6 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { buildCounterRead, verdictBadge, type PlayerReasoning } from "./alert-explainer.ts";
+import { buildCounterRead, verdictBadge, computeAction, buildPlayerReasoning, type PlayerReasoning } from "./alert-explainer.ts";
+import { invalidateThresholdCache } from "./threshold-config.ts";
 
 // ---- Pure helpers we re-test in isolation (mirrors of the private ones) ----
 function computeVerdict(aligned: number, against: number, known: number): 'STRONG'|'LEAN'|'NEUTRAL'|'WEAK' {
@@ -54,7 +55,7 @@ function fakePlayer(modelEdge: 'aligned'|'against'|'neutral'|'no_data', form: 'a
     injuries: { relevant_count: 0, headlines: [] },
     alignment: { defense: 'no_data', form, pace: 'no_data', juice: 'no_data', role: 'no_data', model_edge: modelEdge },
     aligned_count: 0, against_count: 0, known_count: 0, model_edge_value: null,
-    verdict: 'NEUTRAL', headline: '', flags: [],
+    verdict: 'NEUTRAL', action: 'PASS', headline: '', flags: [],
   };
 }
 
@@ -75,4 +76,72 @@ Deno.test("counter-read defaults to SKIP-not-FADE when split", () => {
   const players = [fakePlayer('neutral'), fakePlayer('neutral'), fakePlayer('no_data')];
   const cr = buildCounterRead(players, 'Over');
   if (!cr || !cr.includes('split')) throw new Error(`Expected split counter-read, got: ${cr}`);
+});
+
+// ---- v2: action enum + signal mute ----
+
+Deno.test("action: STRONG + model aligned → BACK", () => {
+  assertEquals(computeAction('STRONG', 'aligned'), 'BACK');
+});
+
+Deno.test("action: LEAN + model neutral → BACK", () => {
+  assertEquals(computeAction('LEAN', 'neutral'), 'BACK');
+});
+
+Deno.test("action: STRONG + model against → PASS (model override)", () => {
+  assertEquals(computeAction('STRONG', 'against'), 'PASS');
+});
+
+Deno.test("action: WEAK + model against → FADE", () => {
+  assertEquals(computeAction('WEAK', 'against'), 'FADE');
+});
+
+Deno.test("action: NEUTRAL → PASS regardless of model", () => {
+  assertEquals(computeAction('NEUTRAL', 'aligned'), 'PASS');
+  assertEquals(computeAction('NEUTRAL', 'against'), 'PASS');
+});
+
+// Stub supabase that reports take_it_now muted (mirrors prod default seed)
+function stubSupabase() {
+  return {
+    from(table: string) {
+      const result = { data: [] as any[], error: null };
+      if (table === 'alert_signal_config') {
+        result.data = [
+          { signal_type: 'cascade', muted: false, reason: null },
+          { signal_type: 'velocity_spike', muted: false, reason: null },
+          { signal_type: 'take_it_now', muted: true, reason: 'audit muted' },
+        ];
+      }
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        gte: () => builder,
+        order: () => builder,
+        limit: () => builder,
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        then: (cb: any) => Promise.resolve(cb(result)),
+      };
+      return builder;
+    },
+  };
+}
+
+Deno.test("muted signal short-circuits to NEUTRAL + PASS + signal_muted flag", async () => {
+  invalidateThresholdCache();
+  const r = await buildPlayerReasoning(stubSupabase() as any, {
+    player_name: 'Test Player',
+    prop_type: 'player_points',
+    side: 'Over',
+    line: 25.5,
+    event_id: 'evt-1',
+    sport: 'NBA',
+    juice_gap: 50, // would normally trigger juice alignment
+    signal_type: 'take_it_now',
+  });
+  assertEquals(r.verdict, 'NEUTRAL');
+  assertEquals(r.action, 'PASS');
+  assertEquals(r.signal_muted, true);
+  if (!r.flags.includes('signal_muted')) throw new Error('expected signal_muted flag');
+  invalidateThresholdCache();
 });
