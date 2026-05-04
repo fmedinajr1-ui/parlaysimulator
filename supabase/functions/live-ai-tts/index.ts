@@ -1,6 +1,4 @@
 // Streams ElevenLabs TTS audio for the Live AI dog. Returns MP3 bytes.
-import { createClient } from "npm:@supabase/supabase-js@2";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -15,17 +13,7 @@ async function sha256Hex(s: string): Promise<string> {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
-    );
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-
+    // Public endpoint — Spike talks to anyone visiting /live-ai.
     const { text, voice_id } = await req.json();
     if (!text || typeof text !== "string") {
       return new Response(JSON.stringify({ error: "text required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });

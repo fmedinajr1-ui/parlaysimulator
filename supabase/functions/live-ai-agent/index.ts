@@ -190,8 +190,11 @@ async function runTool(name: string, args: any, supabase: any, userId: string) {
   }
 
   if (name === "build_parlay") {
-    // Free-tier limit
-    const { data: prefs } = await supabase.from("live_ai_user_prefs").select("*").eq("user_id", userId).maybeSingle();
+    const isAnon = userId === "anon";
+    // Free-tier limit (signed-in only)
+    const { data: prefs } = isAnon
+      ? { data: null as any }
+      : await supabase.from("live_ai_user_prefs").select("*").eq("user_id", userId).maybeSingle();
     if (prefs && !prefs.is_premium) {
       const today = new Date().toISOString().slice(0, 10);
       const used = prefs.free_parlays_reset_date === today ? prefs.free_parlays_used_today : 0;
@@ -230,16 +233,25 @@ async function runTool(name: string, args: any, supabase: any, userId: string) {
     const combined = combinedAmericanOdds(legs);
     const confidence = legs.reduce((a, l) => a * (l.consensus_score / 100), 1);
 
-    const { data: saved } = await supabase.from("live_ai_generated_parlays").insert({
-      user_id: userId,
+    const parlayPayload = {
       mode,
       legs,
       combined_odds: combined,
       confidence: Math.round(confidence * 100),
       rationale: `${mode.toUpperCase()} mode • ${legs.length} legs • avg consensus ${Math.round(legs.reduce((a, l) => a + l.consensus_score, 0) / legs.length)}`,
-    }).select().single();
+    };
+    let saved: any = parlayPayload;
+    if (!isAnon) {
+      try {
+        const ins = await supabase.from("live_ai_generated_parlays")
+          .insert({ user_id: userId, ...parlayPayload }).select().single();
+        if (ins.data) saved = ins.data;
+      } catch (e) {
+        console.warn("parlay save skipped", e);
+      }
+    }
 
-    if (prefs && !prefs.is_premium) {
+    if (!isAnon && prefs && !prefs.is_premium) {
       const today = new Date().toISOString().slice(0, 10);
       const newCount = prefs.free_parlays_reset_date === today ? prefs.free_parlays_used_today + 1 : 1;
       await supabase.from("live_ai_user_prefs").update({
@@ -279,37 +291,57 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
+    // Use service role for tool data access (read-only queries against picks);
+    // user identity is optional — anonymous visitors can chat with Spike.
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY")!,
     );
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-    const { conversation_id, user_text, mode = "smart", live_mode = false } = await req.json();
-    if (!user_text) return new Response(JSON.stringify({ error: "user_text required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-    // Resolve conversation
-    let convId = conversation_id;
-    if (!convId) {
-      const { data: c } = await supabase.from("live_ai_conversations").insert({
-        user_id: user.id, mode, live_mode, title: user_text.slice(0, 60),
-      }).select().single();
-      convId = c?.id;
+    let user: any = null;
+    if (authHeader) {
+      const userClient = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } },
+      );
+      const { data } = await userClient.auth.getUser();
+      user = data?.user ?? null;
     }
 
-    // Save user message
-    await supabase.from("live_ai_messages").insert({
-      conversation_id: convId, user_id: user.id, role: "user", content: user_text,
-    });
+    const body = await req.json();
+    // Accept both new and legacy field names
+    const user_text: string = body.user_text ?? body.message ?? "";
+    const mode: string = body.mode ?? body.risk_mode ?? "smart";
+    const live_mode: boolean = body.live_mode ?? false;
+    const conversation_id: string | undefined = body.conversation_id;
+    const clientHistory: any[] = Array.isArray(body.history) ? body.history : [];
+    if (!user_text) return new Response(JSON.stringify({ error: "user_text required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    // Load history (last 12)
-    const { data: history } = await supabase.from("live_ai_messages")
-      .select("role,content,tool_name,tool_result,tool_calls")
-      .eq("conversation_id", convId).order("created_at", { ascending: true }).limit(12);
+    // Resolve conversation (only if user is signed in)
+    let convId = conversation_id;
+    let dbHistory: any[] = [];
+    if (user) {
+      try {
+        if (!convId) {
+          const { data: c } = await supabase.from("live_ai_conversations").insert({
+            user_id: user.id, mode, live_mode, title: user_text.slice(0, 60),
+          }).select().single();
+          convId = c?.id;
+        }
+        await supabase.from("live_ai_messages").insert({
+          conversation_id: convId, user_id: user.id, role: "user", content: user_text,
+        });
+        const { data: hist } = await supabase.from("live_ai_messages")
+          .select("role,content,tool_name,tool_result,tool_calls")
+          .eq("conversation_id", convId).order("created_at", { ascending: true }).limit(12);
+        dbHistory = hist ?? [];
+      } catch (e) {
+        console.warn("agent persistence skipped", e);
+      }
+    }
+    const history = dbHistory.length
+      ? dbHistory
+      : [...clientHistory, { role: "user", content: user_text }];
 
     const messages: any[] = [
       { role: "system", content: SYSTEM_PROMPT + `\n\nCurrent risk mode: ${mode}. Live mode: ${live_mode}.` },
@@ -328,6 +360,7 @@ Deno.serve(async (req) => {
     let lastParlay: any = null;
     let toolTrace: any[] = [];
 
+    const effectiveUserId = user?.id ?? "anon";
     while (toolLoops < 4) {
       toolLoops++;
       const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -351,7 +384,7 @@ Deno.serve(async (req) => {
         for (const tc of msg.tool_calls) {
           let args: any = {};
           try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
-          const result = await runTool(tc.function.name, args, supabase, user.id);
+          const result = await runTool(tc.function.name, args, supabase, effectiveUserId);
           toolTrace.push({ name: tc.function.name, args, result });
           if (tc.function.name === "build_parlay" && (result as any).parlay) lastParlay = (result as any).parlay;
           messages.push({
@@ -367,15 +400,22 @@ Deno.serve(async (req) => {
       break;
     }
 
-    // Save assistant message
-    await supabase.from("live_ai_messages").insert({
-      conversation_id: convId, user_id: user.id, role: "assistant",
-      content: assistantText, tool_calls: toolTrace,
-    });
+    // Save assistant message (only if we have a user)
+    if (user && convId) {
+      try {
+        await supabase.from("live_ai_messages").insert({
+          conversation_id: convId, user_id: user.id, role: "assistant",
+          content: assistantText, tool_calls: toolTrace,
+        });
+      } catch (e) {
+        console.warn("agent assistant persist failed", e);
+      }
+    }
 
     return new Response(JSON.stringify({
       conversation_id: convId,
       text: assistantText,
+      reply: assistantText,
       parlay: lastParlay,
       tool_trace: toolTrace,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
