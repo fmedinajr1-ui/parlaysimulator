@@ -218,6 +218,65 @@ async function handleThresholdCommand(supabase: any, chat_id: number, text: stri
   }
 }
 
+// =====================================================================
+// Admin-only: signal mute kill-switch.
+//   /mutes
+//   /mute SIGNAL [reason...]
+//   /unmute SIGNAL
+// =====================================================================
+const KNOWN_SIGNALS = ["cascade", "velocity_spike", "take_it_now"];
+
+async function handleSignalMuteCommand(supabase: any, chat_id: number, text: string) {
+  const tokens = text.trim().split(/\s+/);
+  const cmd = tokens[0];
+  try {
+    if (cmd === "/mutes") {
+      const { data, error } = await supabase
+        .from("alert_signal_config")
+        .select("signal_type, muted, reason, updated_by, updated_at")
+        .order("signal_type");
+      if (error) throw error;
+      if (!data || data.length === 0) { await sendMessage(chat_id, "No signal config rows. Defaults active."); return; }
+      const lines = data.map((r: any) =>
+        `${r.muted ? "🔇" : "🔊"} \`${r.signal_type}\`${r.reason ? ` — ${r.reason}` : ""}\n   _by ${r.updated_by ?? "?"} · ${new Date(r.updated_at).toISOString().slice(0, 19).replace("T", " ")}_`
+      );
+      await sendMessage(chat_id, `🎛️ *Signal Mutes*\n\n${lines.join("\n\n")}`);
+      return;
+    }
+
+    if (cmd === "/mute") {
+      if (tokens.length < 2) { await sendMessage(chat_id, "Usage: `/mute SIGNAL [reason...]`\nExample: `/mute take_it_now low hit rate`"); return; }
+      const signal = tokens[1].toLowerCase();
+      if (!KNOWN_SIGNALS.includes(signal)) { await sendMessage(chat_id, `❌ unknown signal. Try one of: ${KNOWN_SIGNALS.join(", ")}`); return; }
+      const reason = tokens.slice(2).join(" ").trim() || null;
+      const { error } = await supabase.from("alert_signal_config").upsert({
+        signal_type: signal, muted: true, reason,
+        updated_by: `tg:${chat_id}`, updated_at: new Date().toISOString(),
+      }, { onConflict: "signal_type" });
+      if (error) throw error;
+      invalidateThresholdCache();
+      await sendMessage(chat_id, `🔇 Muted *${signal}*${reason ? `\nReason: ${reason}` : ""}\nLive within ~60s.`);
+      return;
+    }
+
+    if (cmd === "/unmute") {
+      if (tokens.length < 2) { await sendMessage(chat_id, "Usage: `/unmute SIGNAL`"); return; }
+      const signal = tokens[1].toLowerCase();
+      if (!KNOWN_SIGNALS.includes(signal)) { await sendMessage(chat_id, `❌ unknown signal`); return; }
+      const { error } = await supabase.from("alert_signal_config").upsert({
+        signal_type: signal, muted: false, reason: null,
+        updated_by: `tg:${chat_id}`, updated_at: new Date().toISOString(),
+      }, { onConflict: "signal_type" });
+      if (error) throw error;
+      invalidateThresholdCache();
+      await sendMessage(chat_id, `🔊 Unmuted *${signal}*. Live within ~60s.`);
+      return;
+    }
+  } catch (e) {
+    await sendMessage(chat_id, `❌ Mute command failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 // Admin-only: invoke the Remotion render orchestrator and reply with status.
 async function triggerRender(chat_id: number, scriptId: string | null) {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -948,6 +1007,20 @@ Deno.serve(async (req) => {
         return new Response("ok");
       }
       await handleThresholdCommand(supabase, chat_id, text);
+      return new Response("ok");
+    }
+
+    // Admin-only: signal mute kill-switch.
+    if (
+      text === "/mutes" || text.startsWith("/mutes ") ||
+      text.startsWith("/mute ") ||
+      text.startsWith("/unmute ")
+    ) {
+      if (!ADMIN_CHAT_ID || String(chat_id) !== String(ADMIN_CHAT_ID)) {
+        await sendMessage(chat_id, "🚫 Admin only.");
+        return new Response("ok");
+      }
+      await handleSignalMuteCommand(supabase, chat_id, text);
       return new Response("ok");
     }
 
