@@ -4,6 +4,15 @@
 // and replies via the Telegram connector gateway (no bot token needed in code).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  AXIS_KEYS,
+  FIELD_KEYS,
+  DEFAULT_THRESHOLDS,
+  validateFieldValue,
+  invalidateThresholdCache,
+  type AxisKey,
+  type FieldKey,
+} from "../_shared/threshold-config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -785,6 +794,24 @@ Deno.serve(async (req) => {
       const parts = text.split(/\s+/).slice(1);
       const scriptId = parts[0] && parts[0].length > 8 ? parts[0] : null;
       await triggerRender(chat_id, scriptId);
+      return new Response("ok");
+    }
+
+    // Admin-only: tune cascade alert thresholds without redeploying.
+    //   /thresholds [SPORT] [axis]
+    //   /set SPORT axis field value
+    //   /reset SPORT axis
+    //   /audit [SPORT] [n]
+    if (
+      text === "/thresholds" || text.startsWith("/thresholds ") ||
+      text.startsWith("/set ") || text.startsWith("/reset ") ||
+      text === "/audit" || text.startsWith("/audit ")
+    ) {
+      if (!ADMIN_CHAT_ID || String(chat_id) !== String(ADMIN_CHAT_ID)) {
+        await sendMessage(chat_id, "🚫 Admin only.");
+        return new Response("ok");
+      }
+      await handleThresholdCommand(supabase, chat_id, text);
       return new Response("ok");
     }
 
