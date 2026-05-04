@@ -6,6 +6,7 @@ import {
   weatherAdj,
   project,
   verdictFromEdgePp,
+  edgeFor,
 } from "./court-edge-projection.ts";
 import { priorFor } from "./court-edge-prior.ts";
 
@@ -123,4 +124,40 @@ Deno.test("project (Phase 2): pathological L3 is clamped to prior ± 3σ", () =>
   });
   assertEquals(r.clamped, true);
   assertEquals(r.projection <= prior.mu + 3 * prior.sd + 1e-9, true);
+});
+
+Deno.test("Phase 3: match_total line outside ±2.5σ → QUARANTINE line_outside_prior_band", () => {
+  // ATP hard bo3 prior mu≈22, sd≈3.6 → 2.5σ ≈ 9.0. line=10 is > 12 from mu.
+  const r = edgeFor("match_total", 22, 10, {
+    over_price: -110, under_price: -110, sigma: 4.0,
+    tier: "grand_slam", tour: "atp", sets_format: "bo3", surface: "hard",
+  });
+  assertEquals(r.verdict, "QUARANTINE");
+  assertEquals(r.quarantine_reason, "line_outside_prior_band");
+});
+
+Deno.test("Phase 3: player_total_games line < 6 → QUARANTINE line_out_of_range", () => {
+  const r = edgeFor("player_total_games", 22, 4.5, {
+    over_price: -110, under_price: -110, sigma: 4.0,
+    tier: "grand_slam", tour: "atp", sets_format: "bo3", surface: "hard",
+  });
+  assertEquals(r.verdict, "QUARANTINE");
+  assertEquals(r.quarantine_reason, "line_out_of_range");
+});
+
+Deno.test("Phase 3: tier-calibrated thresholds — 0.028pp is LEAN on grand_slam, PASS on atp_250", () => {
+  assertEquals(verdictFromEdgePp(0.028, "grand_slam"), "LEAN_OVER");
+  assertEquals(verdictFromEdgePp(0.028, "atp_250"), "PASS");
+});
+
+Deno.test("Phase 3: ITF tier auto-quarantines via verdict helper", () => {
+  assertEquals(verdictFromEdgePp(0.10, "itf"), "QUARANTINE");
+  assertEquals(verdictFromEdgePp(0.005, "itf"), "QUARANTINE");
+});
+
+Deno.test("Phase 3: unknown tier behaves like atp_250 (strict)", () => {
+  // 0.045pp passes atp_250 LEAN (0.030) but is below STRONG (0.05)
+  assertEquals(verdictFromEdgePp(0.045, "unknown"), "LEAN_OVER");
+  assertEquals(verdictFromEdgePp(0.045, "atp_250"), "LEAN_OVER");
+  assertEquals(verdictFromEdgePp(0.020, "unknown"), "PASS");
 });
