@@ -3372,6 +3372,8 @@ export type Database = {
           id: string
           lean_pp: number
           line_band_sigmas: number
+          near_prior_band_sigmas: number
+          near_prior_clamp_sigmas: number
           notes: string | null
           sanity_sigmas: number
           shrink_k: number
@@ -3391,6 +3393,8 @@ export type Database = {
           id?: string
           lean_pp?: number
           line_band_sigmas?: number
+          near_prior_band_sigmas?: number
+          near_prior_clamp_sigmas?: number
           notes?: string | null
           sanity_sigmas?: number
           shrink_k?: number
@@ -3410,6 +3414,8 @@ export type Database = {
           id?: string
           lean_pp?: number
           line_band_sigmas?: number
+          near_prior_band_sigmas?: number
+          near_prior_clamp_sigmas?: number
           notes?: string | null
           sanity_sigmas?: number
           shrink_k?: number
