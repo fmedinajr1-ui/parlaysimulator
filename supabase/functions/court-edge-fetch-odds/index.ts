@@ -18,6 +18,10 @@ interface NormalizedEvent {
   ml_home: number | null;
   ml_away: number | null;
   bookmaker: string | null;
+  total_over_price: number | null;
+  total_under_price: number | null;
+  books_count: number;
+  book_lines: Array<{ book: string; point: number; over_price: number | null; under_price: number | null }>;
 }
 
 function pickKey(): string | null {
@@ -54,16 +58,29 @@ async function fetchSportEvents(apiKey: string, sportKey: string): Promise<Norma
     if (!Number.isFinite(commence) || commence > cutoff) continue;
 
     let totalPoint: number | null = null;
+    let totalOverPrice: number | null = null;
+    let totalUnderPrice: number | null = null;
     let mlHome: number | null = null;
     let mlAway: number | null = null;
     let bookmaker: string | null = null;
+    const bookLines: Array<{ book: string; point: number; over_price: number | null; under_price: number | null }> = [];
 
     for (const bk of ev.bookmakers || []) {
+      let bkPoint: number | null = null;
+      let bkOver: number | null = null;
+      let bkUnder: number | null = null;
       for (const mkt of bk.markets || []) {
-        if (mkt.key === "totals" && totalPoint == null) {
-          const out1 = mkt.outcomes?.[0];
-          if (typeof out1?.point === "number") {
-            totalPoint = out1.point;
+        if (mkt.key === "totals") {
+          for (const oc of mkt.outcomes || []) {
+            if (typeof oc.point === "number" && bkPoint == null) bkPoint = oc.point;
+            const nm = String(oc.name || "").toLowerCase();
+            if (nm === "over" && typeof oc.price === "number") bkOver = oc.price;
+            if (nm === "under" && typeof oc.price === "number") bkUnder = oc.price;
+          }
+          if (bkPoint != null && totalPoint == null) {
+            totalPoint = bkPoint;
+            totalOverPrice = bkOver;
+            totalUnderPrice = bkUnder;
             bookmaker = bookmaker || bk.title || bk.key;
           }
         }
@@ -75,7 +92,9 @@ async function fetchSportEvents(apiKey: string, sportKey: string): Promise<Norma
           bookmaker = bookmaker || bk.title || bk.key;
         }
       }
-      if (totalPoint != null && mlHome != null && mlAway != null) break;
+      if (bkPoint != null) {
+        bookLines.push({ book: bk.title || bk.key, point: bkPoint, over_price: bkOver, under_price: bkUnder });
+      }
     }
 
     out.push({
@@ -88,6 +107,10 @@ async function fetchSportEvents(apiKey: string, sportKey: string): Promise<Norma
       ml_home: mlHome,
       ml_away: mlAway,
       bookmaker,
+      total_over_price: totalOverPrice,
+      total_under_price: totalUnderPrice,
+      books_count: bookLines.length,
+      book_lines: bookLines,
     });
   }
   return out;
