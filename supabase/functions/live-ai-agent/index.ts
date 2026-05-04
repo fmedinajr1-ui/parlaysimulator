@@ -121,6 +121,20 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "build_fade_parlay",
+      description: "REVERSE-PSYCHOLOGY: build a parlay engineered to LOSE from today's worst-graded picks (low consensus, poison signals). The user is told to FADE every leg. Use this any time the user opts into fade mode or asks for a 'fade me / reverse / loser / worst' parlay.",
+      parameters: {
+        type: "object",
+        properties: {
+          sport: { type: "string" },
+          legs: { type: "number", default: 3 },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "analyze_slip",
       description: "Critique a list of bet legs the user already has on a slip. Returns per-leg verdict and swap suggestions.",
       parameters: {
