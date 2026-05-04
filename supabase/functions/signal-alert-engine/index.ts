@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { buildPlayerReasoning, buildGroupReasoning, type PlayerReasoning } from '../_shared/alert-explainer.ts';
 import { loadRoleContexts, dangerBandCheck, type PlayerRoleContext } from '../_shared/player-role-context.ts';
+import { loadHardRockLines, checkHrbLine, type HardRockLine } from '../_shared/hardrock-lines.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -104,9 +105,17 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   );
 
-  const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0 };
+  const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0, dropped_no_hrb: 0 };
   let dropped_legs_total = 0;
   const explainerCache = reasoningCache();
+
+  // Load Hard Rock prop lines once per run. Empty map = HRB has no coverage,
+  // in which case we skip broadcasting (better silent than untradable).
+  const hrbLines = await loadHardRockLines();
+  const hrbAvailable = hrbLines.size > 0;
+  if (!hrbAvailable) {
+    console.warn('[signal-alert-engine] HRB lines unavailable — all NBA alerts will be suppressed this run');
+  }
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
@@ -264,8 +273,42 @@ Deno.serve(async (req) => {
       const cascadeMembers = filteredMembers;
 
       const first = cascadeMembers[0];
+
+      // Hard Rock gate — drop legs that aren't tradable on HRB at the alerted line.
+      let hrbFilteredMembers = cascadeMembers;
+      const hrbDropped: Array<{ player: string; reason: string }> = [];
+      const hrbByPlayer = new Map<string, HardRockLine>();
+      if (normaliseSport(first.sport) === 'NBA') {
+        if (!hrbAvailable) {
+          stats.dropped_no_hrb += 1;
+          continue;
+        }
+        hrbFilteredMembers = cascadeMembers.filter((m) => {
+          if (!m.player_name || !m.prop_type || !m.event_id) return false;
+          const r = checkHrbLine(hrbLines, {
+            event_id: m.event_id,
+            player: m.player_name,
+            prop_type: m.prop_type,
+            side: m.derived_side,
+            line: Number(m.current_line ?? 0),
+          });
+          if (!r.ok) {
+            hrbDropped.push({ player: m.player_name, reason: r.reason ?? 'hrb_reject' });
+            return false;
+          }
+          if (r.hrb && m.player_name) hrbByPlayer.set(m.player_name.toLowerCase(), r.hrb);
+          return true;
+        });
+        const hrbDistinct = Array.from(new Set(hrbFilteredMembers.map((m) => m.player_name)));
+        if (hrbDistinct.length < CASCADE_MIN_PLAYERS) {
+          stats.dropped_no_hrb += 1;
+          console.log(`[signal-alert-engine] cascade suppressed by HRB gate (${groupKey}) — ${hrbDropped.length} legs dropped`);
+          continue;
+        }
+      }
+
       const avgConfidence = Math.round(
-        cascadeMembers.reduce((sum, m) => sum + m.derived_confidence, 0) / cascadeMembers.length,
+        hrbFilteredMembers.reduce((sum, m) => sum + m.derived_confidence, 0) / hrbFilteredMembers.length,
       );
       if (avgConfidence < MIN_CONFIDENCE) continue;
 
@@ -274,7 +317,7 @@ Deno.serve(async (req) => {
 
       // Build per-player reasoning in parallel (≤8 players typically)
       const reasonings = await Promise.all(
-        cascadeMembers.map((m) => {
+        hrbFilteredMembers.map((m) => {
           const overP = Number(m.over_price ?? NaN);
           const underP = Number(m.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
@@ -282,15 +325,21 @@ Deno.serve(async (req) => {
         }),
       );
 
-      const playerBreakdownRaw = cascadeMembers.map((m, i) => {
+      const playerBreakdownRaw = hrbFilteredMembers.map((m, i) => {
         const ctx = m.player_name ? roleCtxMap.get(m.player_name.toLowerCase()) ?? null : null;
+        const hrb = m.player_name ? hrbByPlayer.get(m.player_name.toLowerCase()) ?? null : null;
+        const hrbPriceForSide = hrb ? (m.derived_side === 'Over' ? hrb.over_price : hrb.under_price) : null;
         return {
           player: m.player_name,
           confidence: m.derived_confidence,
           composite: m.derived_score,
-          line: Number(m.current_line ?? 0),
+          // Prefer the actual HRB line when available so the alert shows what the user can book.
+          line: hrb ? hrb.line : Number(m.current_line ?? 0),
           side: m.derived_side,
           pvs_tier: m.pvs_tier,
+          hrb_line: hrb ? hrb.line : null,
+          hrb_price: hrbPriceForSide,
+          book: hrb ? 'hardrockbet' : (m.bookmaker ?? null),
           role_context: ctx
             ? {
                 archetype: ctx.archetype,
@@ -329,6 +378,7 @@ Deno.serve(async (req) => {
         if (k in verdictCounts) verdictCounts[k] += 1;
       }
 
+      const firstHrb = first.player_name ? hrbByPlayer.get(first.player_name.toLowerCase()) ?? null : null;
       const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
         player_name: `TEAM CASCADE (${distinctPlayers.slice(0, 3).join(', ')}${distinctPlayers.length > 3 ? '…' : ''})`,
         event_id: first.event_id,
@@ -337,21 +387,24 @@ Deno.serve(async (req) => {
         confidence: avgConfidence,
         prop_type: first.prop_type,
         sport: normaliseSport(first.sport),
-        bookmaker: first.bookmaker ?? 'unknown',
+        bookmaker: hrbByPlayer.size > 0 ? 'hardrockbet' : (first.bookmaker ?? 'unknown'),
         event_description: first.game_description,
         commence_time: first.commence_time,
         metadata: {
           players_involved: distinctPlayers.length,
           direction: first.derived_side,
-          line: first.current_line,
+          line: firstHrb ? firstHrb.line : first.current_line,
           alignment: 100,
           player_breakdown: playerBreakdown,
           group_reasoning: groupReasoning,
           verdict_counts: verdictCounts,
           dropped_legs: dedupedDropped,
+          hrb_dropped_legs: hrbDropped,
           danger_band_filtered: dedupedDropped.length,
           explainer_version: 'v1',
           source: 'unified_props_price_derived',
+          source_book: hrbByPlayer.size > 0 ? 'hardrockbet' : null,
+          hrb_verified: hrbByPlayer.size > 0,
         },
       });
       if (insErr) {
@@ -387,6 +440,19 @@ Deno.serve(async (req) => {
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
+        // HRB gate (NBA only — other sports not yet covered by HRB feed here)
+        let hrbInfo: HardRockLine | null = null;
+        if (normaliseSport(p.sport) === 'NBA') {
+          if (!hrbAvailable) { stats.dropped_no_hrb += 1; continue; }
+          if (!p.player_name || !p.prop_type) continue;
+          const r = checkHrbLine(hrbLines, {
+            event_id: p.event_id, player: p.player_name, prop_type: p.prop_type,
+            side: p.derived_side, line: Number(p.current_line ?? 0),
+          });
+          if (!r.ok) { stats.dropped_no_hrb += 1; continue; }
+          hrbInfo = r.hrb ?? null;
+        }
+
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
         if (!(await claimKey(dKey, 'take_it_now'))) continue;
 
@@ -400,15 +466,17 @@ Deno.serve(async (req) => {
           confidence: Math.round(conf),
           prop_type: p.prop_type,
           sport: normaliseSport(p.sport),
-          bookmaker: p.bookmaker ?? 'unknown',
+          bookmaker: hrbInfo ? 'hardrockbet' : (p.bookmaker ?? 'unknown'),
           event_description: p.game_description,
           commence_time: p.commence_time,
           metadata: {
             detector: 'sharpest_juice_gap',
             juice_gap: gap,
-            over_price: p.over_price,
-            under_price: p.under_price,
-            line: p.current_line,
+            over_price: hrbInfo ? hrbInfo.over_price : p.over_price,
+            under_price: hrbInfo ? hrbInfo.under_price : p.under_price,
+            line: hrbInfo ? hrbInfo.line : p.current_line,
+            source_book: hrbInfo ? 'hardrockbet' : null,
+            hrb_verified: !!hrbInfo,
             pvs_tier: p.pvs_tier,
             engine_reasoning,
             explainer_version: 'v1',
@@ -447,6 +515,19 @@ Deno.serve(async (req) => {
           if (p.derived_confidence < VELOCITY_MIN_CONFIDENCE) continue;
           if (!p.event_id || !p.player_name) continue;
 
+          // HRB gate
+          let hrbInfo: HardRockLine | null = null;
+          if (normaliseSport(p.sport) === 'NBA') {
+            if (!hrbAvailable) { stats.dropped_no_hrb += 1; continue; }
+            if (!p.prop_type) continue;
+            const r = checkHrbLine(hrbLines, {
+              event_id: p.event_id, player: p.player_name, prop_type: p.prop_type,
+              side: p.derived_side, line: Number(p.current_line ?? 0),
+            });
+            if (!r.ok) { stats.dropped_no_hrb += 1; continue; }
+            hrbInfo = r.hrb ?? null;
+          }
+
           const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
           if (!(await claimKey(dKey, 'velocity_spike'))) continue;
 
@@ -463,7 +544,7 @@ Deno.serve(async (req) => {
             confidence: Math.round(p.derived_confidence),
             prop_type: p.prop_type,
             sport: normaliseSport(p.sport),
-            bookmaker: p.bookmaker ?? 'unknown',
+            bookmaker: hrbInfo ? 'hardrockbet' : (p.bookmaker ?? 'unknown'),
             event_description: p.game_description,
             commence_time: p.commence_time,
             metadata: {
@@ -472,9 +553,11 @@ Deno.serve(async (req) => {
               cohort_size: members.length,
               cohort_avg_confidence: Math.round(cohortAvg * 10) / 10,
               percentile_rank: Math.round((1 - winners.indexOf(p) / sorted.length) * 1000) / 10,
-              over_price: p.over_price,
-              under_price: p.under_price,
-              line: p.current_line,
+              over_price: hrbInfo ? hrbInfo.over_price : p.over_price,
+              under_price: hrbInfo ? hrbInfo.under_price : p.under_price,
+              line: hrbInfo ? hrbInfo.line : p.current_line,
+              source_book: hrbInfo ? 'hardrockbet' : null,
+              hrb_verified: !!hrbInfo,
               engine_reasoning,
               explainer_version: 'v1',
               source: 'unified_props_price_derived',
