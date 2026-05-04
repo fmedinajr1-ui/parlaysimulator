@@ -4,7 +4,7 @@ import {
   spreadAdj,
   weatherAdj,
   project,
-  verdictFromEdgePct,
+  verdictFromEdgePp,
 } from "./court-edge-projection.ts";
 
 Deno.test("weightedL3: 0.5/0.3/0.2 weighted average", () => {
@@ -44,13 +44,16 @@ Deno.test("project: Madrid clay Bo3 golden case", () => {
   assertAlmostEquals(r.projection, 22.68, 0.0001);
 });
 
-Deno.test("verdictFromEdgePct: tier boundaries", () => {
-  assertEquals(verdictFromEdgePct(2.99), "PASS");
-  assertEquals(verdictFromEdgePct(3.01), "LEAN_OVER");
-  assertEquals(verdictFromEdgePct(-3.01), "LEAN_UNDER");
-  assertEquals(verdictFromEdgePct(5.99), "LEAN_OVER");
-  assertEquals(verdictFromEdgePct(6.01), "STRONG_OVER");
-  assertEquals(verdictFromEdgePct(-6.01), "STRONG_UNDER");
+Deno.test("verdictFromEdgePp: tier boundaries (probability points)", () => {
+  // Phase 1 thresholds: 2pp LEAN, 4pp STRONG, 12pp QUARANTINE.
+  assertEquals(verdictFromEdgePp(0.019), "PASS");
+  assertEquals(verdictFromEdgePp(0.021), "LEAN_OVER");
+  assertEquals(verdictFromEdgePp(-0.021), "LEAN_UNDER");
+  assertEquals(verdictFromEdgePp(0.039), "LEAN_OVER");
+  assertEquals(verdictFromEdgePp(0.041), "STRONG_OVER");
+  assertEquals(verdictFromEdgePp(-0.041), "STRONG_UNDER");
+  assertEquals(verdictFromEdgePp(0.13), "QUARANTINE");
+  assertEquals(verdictFromEdgePp(-0.13), "QUARANTINE");
 });
 
 Deno.test("project: role adjustments are pure additives, no double-counting", () => {

@@ -22,6 +22,7 @@ import {
 import { buildDrilldown } from "../_shared/court-edge-drilldown.ts";
 import { playerSlug } from "../_shared/court-edge-slug.ts";
 import { baselineL3, baselineFor, type Surface, type SetsFormat } from "../_shared/court-edge-baseline.ts";
+import { pickSigma, type Tour } from "../_shared/court-edge-edge.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +46,10 @@ interface OddsEvent {
   ml_home: number | null;
   ml_away: number | null;
   bookmaker: string | null;
+  total_over_price?: number | null;
+  total_under_price?: number | null;
+  books_count?: number;
+  book_lines?: Array<{ book: string; point: number; over_price: number | null; under_price: number | null }>;
 }
 
 interface PPProj {
@@ -84,6 +89,14 @@ interface Pick {
   role_adj_away?: number | null;
   role_reasons?: { home: string | null; away: string | null } | null;
   drilldown_text?: string | null;
+  // Phase 1 — devigged probability edge fields:
+  model_prob?: number | null;
+  vig_free_implied?: number | null;
+  edge_pp?: number | null;
+  edge_side?: "over" | "under" | "none" | null;
+  quarantine_reason?: string | null;
+  books_count?: number | null;
+  book_lines?: unknown;
 }
 
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
@@ -123,9 +136,13 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   lines.push("");
 
   const grouped: Record<Verdict, Pick[]> = {
-    STRONG_OVER: [], STRONG_UNDER: [], LEAN_OVER: [], LEAN_UNDER: [], PASS: [],
+    STRONG_OVER: [], STRONG_UNDER: [], LEAN_OVER: [], LEAN_UNDER: [], PASS: [], QUARANTINE: [],
   };
-  for (const p of picks) grouped[p.verdict].push(p);
+  for (const p of picks) {
+    // QUARANTINE picks never appear in the user-facing digest; they're persisted for audit only.
+    if (p.verdict === "QUARANTINE") { grouped.QUARANTINE.push(p); continue; }
+    grouped[p.verdict].push(p);
+  }
 
   let printed = 0;
   for (const v of VERDICT_ORDER) {
@@ -138,7 +155,9 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
         ? `${p.matchup} — Match Total Games`
         : `${p.player} — Total Games Won`;
       const src = p.source === "odds_api" ? "OddsAPI" : "PrizePicks";
-      lines.push(`• ${label}\n   line ${p.line}  proj ${p.projection.toFixed(2)}  edge ${fmtPct(p.edge_pct)}  [${src}]`);
+      const ePp = (p.edge_pct ?? 0); // edge_pct now means probability points × 100
+      const sign = ePp >= 0 ? "+" : "";
+      lines.push(`• ${label}\n   line ${p.line}  proj ${p.projection.toFixed(2)}  edge ${sign}${ePp.toFixed(1)}pp  [${src}]`);
       printed += 1;
     }
     lines.push("");
@@ -146,8 +165,9 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
 
   const leans = grouped.LEAN_OVER.length + grouped.LEAN_UNDER.length;
   const passes = grouped.PASS.length;
+  const quarantined = grouped.QUARANTINE.length;
   if (printed === 0) lines.push("_No actionable edges right now. Try again after the next slate refresh._\n");
-  lines.push(`Leans ${leans}  ·  Pass ${passes}`);
+  lines.push(`Leans ${leans}  ·  Pass ${passes}  ·  Quarantine ${quarantined}`);
   lines.push(`Sources: Odds API ${meta.sources.odds}  ·  PrizePicks ${meta.sources.pp}  ·  TennisAbstract ${meta.sources.l3}  ·  Weather ${meta.sources.wx}`);
   lines.push(`Run \`${meta.runId.slice(0, 8)}\`  ·  picks ${picks.length}  ·  errors ${meta.errors}`);
   // "Why empty?" diagnostic footer — only when nothing actionable went out.
@@ -294,6 +314,13 @@ Deno.serve(async (req) => {
     const breakdownByPick = new Map<number, { breakdown: ProjectionBreakdown; matchProjection: number }>();
     const baselineSurface: Surface = (tournament.surface as Surface) || "unknown";
     const baselineSets: SetsFormat = tournament.sets_format === "best_of_5" ? "best_of_5" : "best_of_3";
+    const setsKey: "bo3" | "bo5" = tournament.sets_format === "best_of_5" || (tournament.sets_format as string) === "bo5" ? "bo5" : "bo3";
+    const tourFromKey = (k: string | undefined): Tour => {
+      const s = (k || "").toLowerCase();
+      if (s.includes("atp")) return "atp";
+      if (s.includes("wta")) return "wta";
+      return "unknown";
+    };
     let baselineSidesUsed = 0;
     for (const ev of oddsEvents) {
       if (ev.total_point == null) continue;
@@ -313,10 +340,15 @@ Deno.serve(async (req) => {
       const { input: inp, reasons } = projectMatch(homeTotals, awayTotals, roleH, roleA);
       inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away;
       const proj = project(inp);
-      const e = edgeFor("match_total", proj.projection, ev.total_point);
+      const sigma = pickSigma(tourFromKey(ev.sport_key), setsKey);
+      const e = edgeFor("match_total", proj.projection, ev.total_point, {
+        over_price: ev.total_over_price ?? null,
+        under_price: ev.total_under_price ?? null,
+        sigma,
+      });
       // Cap verdict to LEAN_* when one side is a baseline — never STRONG_*.
       let verdict = e.verdict;
-      if (baselineUsed) {
+      if (baselineUsed && verdict !== "QUARANTINE") {
         if (verdict === "STRONG_OVER") verdict = "LEAN_OVER";
         else if (verdict === "STRONG_UNDER") verdict = "LEAN_UNDER";
       }
@@ -328,8 +360,8 @@ Deno.serve(async (req) => {
         market: "match_total",
         line: ev.total_point,
         projection: Number(proj.projection.toFixed(2)),
-        edge: Number(e.edge.toFixed(3)),
-        edge_pct: Number(e.edge_pct.toFixed(2)),
+        edge: Number((e.edge_pp ?? 0).toFixed(4)),
+        edge_pct: Number(((e.edge_pp ?? 0) * 100).toFixed(2)),
         verdict,
         formula: {
           ...proj,
@@ -339,6 +371,8 @@ Deno.serve(async (req) => {
           baseline_used: baselineUsed,
           baseline_side: baselineUsed ? (!hOk ? "home" : "away") : null,
           baseline_reason: baselineUsed ? baselineFor(baselineSurface, baselineSets).reason : null,
+          sigma,
+          tour: tourFromKey(ev.sport_key),
         },
         tournament: tournament.name,
         surface: tournament.surface,
@@ -351,6 +385,13 @@ Deno.serve(async (req) => {
         role_adj_home: proj.role_adj_home,
         role_adj_away: proj.role_adj_away,
         role_reasons: reasons,
+        model_prob: e.edge_side === "under" ? e.model_prob_under : e.model_prob_over,
+        vig_free_implied: e.edge_side === "under" ? e.vig_free_implied_under : e.vig_free_implied_over,
+        edge_pp: e.edge_pp,
+        edge_side: e.edge_side,
+        quarantine_reason: e.quarantine_reason ?? null,
+        books_count: ev.books_count ?? null,
+        book_lines: ev.book_lines ?? null,
       });
       breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
@@ -369,7 +410,13 @@ Deno.serve(async (req) => {
       const { input: inp, reasons } = projectMatch(me.totals, opponentTotals, roleH, roleA);
       if (ev) { inp.ml_home = ev.ml_home; inp.ml_away = ev.ml_away; }
       const proj = project(inp);
-      const e = edgeFor("player_total_games", proj.projection, pp.line);
+      const sigma = pickSigma(tourFromKey(ev?.sport_key), setsKey);
+      const e = edgeFor("player_total_games", proj.projection, pp.line, {
+        // PrizePicks-only paths have no two-sided book price → PASS unless we can borrow from odds event.
+        over_price: ev?.total_over_price ?? null,
+        under_price: ev?.total_under_price ?? null,
+        sigma,
+      });
       picks.push({
         source: "prizepicks",
         matchup: opp ? `${pp.player} vs ${opp}` : pp.player,
@@ -378,10 +425,10 @@ Deno.serve(async (req) => {
         market: "player_total_games",
         line: pp.line,
         projection: Number(e.reference.toFixed(2)),
-        edge: Number(e.edge.toFixed(3)),
-        edge_pct: Number(e.edge_pct.toFixed(2)),
+        edge: Number((e.edge_pp ?? 0).toFixed(4)),
+        edge_pct: Number(((e.edge_pp ?? 0) * 100).toFixed(2)),
         verdict: e.verdict,
-        formula: { ...proj, stat_type: pp.stat_type, ml_home: inp.ml_home, ml_away: inp.ml_away },
+        formula: { ...proj, stat_type: pp.stat_type, ml_home: inp.ml_home, ml_away: inp.ml_away, sigma, tour: tourFromKey(ev?.sport_key) },
         tournament: tournament.name,
         surface: tournament.surface,
         sets_format: tournament.sets_format,
@@ -393,6 +440,13 @@ Deno.serve(async (req) => {
         role_adj_home: proj.role_adj_home,
         role_adj_away: proj.role_adj_away,
         role_reasons: reasons,
+        model_prob: e.edge_side === "under" ? e.model_prob_under : e.model_prob_over,
+        vig_free_implied: e.edge_side === "under" ? e.vig_free_implied_under : e.vig_free_implied_over,
+        edge_pp: e.edge_pp,
+        edge_side: e.edge_side,
+        quarantine_reason: e.quarantine_reason ?? null,
+        books_count: ev?.books_count ?? null,
+        book_lines: ev?.book_lines ?? null,
       });
       breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
@@ -475,7 +529,29 @@ Deno.serve(async (req) => {
     // 7. Persist picks
     if (picks.length > 0) {
       try {
-        const rows = picks.map((p) => ({ ...p, run_id: runId }));
+        // Strip Phase-1 fields from the top level (no DB columns yet) and tuck
+        // them into the existing `formula` JSON so we can audit without a migration.
+        const rows = picks.map((p) => {
+          const {
+            model_prob, vig_free_implied, edge_pp, edge_side,
+            quarantine_reason, books_count, book_lines,
+            ...rest
+          } = p;
+          return {
+            ...rest,
+            run_id: runId,
+            formula: {
+              ...(rest.formula as Record<string, unknown>),
+              model_prob,
+              vig_free_implied,
+              edge_pp,
+              edge_side,
+              quarantine_reason,
+              books_count,
+              book_lines,
+            },
+          };
+        });
         const { error: pErr } = await supabase.from("court_edge_picks").insert(rows);
         if (pErr) errors.push({ step: "persist_picks", error: pErr.message });
       } catch (e) {
