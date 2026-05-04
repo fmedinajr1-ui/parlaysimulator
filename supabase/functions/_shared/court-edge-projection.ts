@@ -205,7 +205,6 @@ export type Verdict =
 
 import { devigPair, modelProbOver, EDGE_HARD_CAP_PP } from "./court-edge-edge.ts";
 import { thresholdsFor, type TournamentTier } from "./court-edge-tournament-tier.ts";
-import { priorFor, type Tour as PriorTour2, type Sets as PriorSets2 } from "./court-edge-prior.ts";
 
 // Phase 1 placeholder thresholds in PROBABILITY POINTS. Phase 4 refines the
 // promotion rules (multi-book agreement, weather present, calibrated tier).
