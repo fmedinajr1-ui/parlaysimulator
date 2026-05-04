@@ -504,17 +504,19 @@ export default function LiveAI() {
         </>
       </div>
 
-      {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
+      {/* Wake-up overlay (first tap unlocks audio + plays greeting).
+          Perf: avoid backdrop-blur and blurred glow — both repaint every frame
+          on low-end Android. Use a flat scrim + transform-only transitions. */}
       {!woken && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 bg-black/70 backdrop-blur-md">
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 bg-black/75">
           <button
             onClick={wakeSpike}
-            className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-br from-primary to-primary/70 text-primary-foreground font-bold text-lg shadow-[0_10px_40px_-10px_hsl(var(--primary)/0.7)] ring-1 ring-white/20 transition-all hover:scale-[1.03] active:scale-[0.98]"
+            style={{ willChange: "transform" }}
+            className="relative inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-lg shadow-lg ring-1 ring-white/20 transition-transform duration-150 active:scale-[0.98]"
           >
             <PawPrint className="w-5 h-5" />
             <span>Tap to wake Spike up</span>
             <span aria-hidden className="text-xl">🐶</span>
-            <span className="absolute -inset-1 -z-10 rounded-2xl bg-primary/40 blur-xl opacity-60 group-hover:opacity-90 transition-opacity" />
           </button>
           <p className="mt-4 text-sm text-white/80">He'll say hi in a NY accent</p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-2 max-w-sm">
