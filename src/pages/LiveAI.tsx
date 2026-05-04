@@ -27,7 +27,7 @@ const RISK_MODES: { id: RiskMode; label: string; emoji: string }[] = [
 ];
 
 export default function LiveAI() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([
     {
       id: "intro",
@@ -78,19 +78,20 @@ export default function LiveAI() {
 
   const persistMessage = useCallback(
     async (role: "user" | "assistant", content: string, parlay?: any) => {
-      if (!conversationId) return;
+      if (!conversationId || !user) return;
       try {
         await supabase.from("live_ai_messages").insert({
           conversation_id: conversationId,
+          user_id: user.id,
           role,
           content,
-          metadata: parlay ? { parlay } : null,
+          tool_result: parlay ? (parlay as any) : null,
         });
       } catch (e) {
         console.warn("[LiveAI] persist message failed", e);
       }
     },
-    [conversationId],
+    [conversationId, user],
   );
 
   const playTTS = useCallback(async (text: string) => {
