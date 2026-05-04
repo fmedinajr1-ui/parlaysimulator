@@ -469,6 +469,18 @@ export default function LiveAI() {
 
       {/* Glass control bar */}
       <div className="relative z-10 px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] flex flex-col items-center gap-3 bg-gradient-to-t from-black/85 via-black/60 to-transparent">
+        {woken && user && !shareCardDismissed && messages.length <= 2 && (
+          <div className="w-full max-w-sm relative">
+            <button
+              onClick={() => setShareCardDismissed(true)}
+              className="absolute -top-1.5 -right-1.5 z-10 w-5 h-5 rounded-full bg-black/80 text-white text-[10px] flex items-center justify-center hover:bg-black"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+            <SpikeShareCard />
+          </div>
+        )}
         {sampleExhausted ? (
           <div className="w-full max-w-sm rounded-2xl bg-card/95 border border-primary/40 p-4 text-center shadow-2xl">
             <p className="text-sm text-foreground font-semibold mb-1">You've used your free sample</p>
