@@ -520,6 +520,7 @@ Deno.serve(async (req) => {
 
     // Surface upsell + tier on the response so the UI can render the upgrade pill.
     const upsellHit = toolTrace.some((t: any) => t?.result?.upsell === true);
+    const shareLink = toolTrace.find((t: any) => t?.name === "share_my_link" && t?.result?.url)?.result?.url ?? null;
 
     return new Response(JSON.stringify({
       conversation_id: convId,
@@ -530,6 +531,7 @@ Deno.serve(async (req) => {
       tier,
       upsell: upsellHit,
       upgrade_url: upsellHit ? "/upgrade" : undefined,
+      share_link: shareLink,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("agent error", e);
