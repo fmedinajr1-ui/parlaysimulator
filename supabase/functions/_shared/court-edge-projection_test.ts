@@ -117,7 +117,7 @@ Deno.test("project (Phase 2): Bayesian shrink dominates with tiny sample", () =>
 Deno.test("project (Phase 2): pathological L3 is clamped to prior ± 3σ", () => {
   const prior = priorFor("atp", "bo3", "hard");
   const r = project({
-    p1_l3: [40, 40, 40], p2_l3: [40, 40, 40],
+    p1_l3: [50, 50, 50], p2_l3: [50, 50, 50],
     surface: "hard", sets_format: "bo3",
     ml_home: null, ml_away: null, weather: null, indoor: false, tour: "atp",
   });
