@@ -26,6 +26,7 @@ import { buildDrilldown } from "../_shared/court-edge-drilldown.ts";
 import { playerSlug } from "../_shared/court-edge-slug.ts";
 import { baselineL3, baselineFor, type Surface, type SetsFormat } from "../_shared/court-edge-baseline.ts";
 import { pickSigma, type Tour } from "../_shared/court-edge-edge.ts";
+import { loadCourtEdgeConfig } from "../_shared/court-edge-config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
