@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
           const overP = Number(p.over_price ?? NaN);
           const underP = Number(p.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
-          const engine_reasoning = await explain(p, gap);
+          const engine_reasoning = await explain(p, gap, 'velocity_spike');
 
           const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
             player_name: p.player_name,
