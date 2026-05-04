@@ -48,6 +48,7 @@ const GradeSlip = React.lazy(() => import("./pages/GradeSlip"));
 const AdminTikTok = React.lazy(() => import("./pages/admin/AdminTikTok"));
 const PropScanner = React.lazy(() => import("./pages/PropScanner"));
 const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
+const LiveAI = React.lazy(() => import("./pages/LiveAI"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -113,6 +114,7 @@ function AnimatedRoutes() {
               <Route path="/grade" element={<GradeSlip />} />
               <Route path="/scan" element={<PropScanner />} />
               <Route path="/manual" element={<ManualBuilder />} />
+              <Route path="/live-ai" element={<LiveAI />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
