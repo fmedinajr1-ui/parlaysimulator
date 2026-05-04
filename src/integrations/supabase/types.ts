@@ -548,6 +548,81 @@ export type Database = {
         }
         Relationships: []
       }
+      alert_thresholds: {
+        Row: {
+          against_over: number | null
+          against_under: number | null
+          aligned_over: number | null
+          aligned_under: number | null
+          axis: string
+          id: string
+          neutral_band: number | null
+          notes: string | null
+          sport: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          against_over?: number | null
+          against_under?: number | null
+          aligned_over?: number | null
+          aligned_under?: number | null
+          axis: string
+          id?: string
+          neutral_band?: number | null
+          notes?: string | null
+          sport: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          against_over?: number | null
+          against_under?: number | null
+          aligned_over?: number | null
+          aligned_under?: number | null
+          axis?: string
+          id?: string
+          neutral_band?: number | null
+          notes?: string | null
+          sport?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      alert_thresholds_audit: {
+        Row: {
+          actor: string | null
+          axis: string
+          changed_at: string
+          id: string
+          new_values: Json | null
+          old_values: Json | null
+          source: string
+          sport: string
+        }
+        Insert: {
+          actor?: string | null
+          axis: string
+          changed_at?: string
+          id?: string
+          new_values?: Json | null
+          old_values?: Json | null
+          source: string
+          sport: string
+        }
+        Update: {
+          actor?: string | null
+          axis?: string
+          changed_at?: string
+          id?: string
+          new_values?: Json | null
+          old_values?: Json | null
+          source?: string
+          sport?: string
+        }
+        Relationships: []
+      }
       alert_type_accuracy_cache: {
         Row: {
           alert_type: string
@@ -14678,6 +14753,27 @@ export type Database = {
           side?: string
           sweet_spot_reason?: string
           verified_at?: string | null
+        }
+        Relationships: []
+      }
+      system_config: {
+        Row: {
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
         }
         Relationships: []
       }
