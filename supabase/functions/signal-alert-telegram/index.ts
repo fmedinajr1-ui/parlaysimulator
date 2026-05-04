@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { formatPlayerReasoningLines, verdictBadge, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
+import { formatPlayerReasoningLines, verdictBadge, buildCounterRead, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 import { buildCascadeSim, formatCascadeSimLines } from '../_shared/cascade-sim.ts';
 
@@ -79,7 +79,7 @@ function formatAlert(a: Alert): string {
   if (a.signal_type === 'cascade') {
     const players: any[] = Array.isArray(meta.player_breakdown) ? meta.player_breakdown : [];
     const group = (meta.group_reasoning ?? null) as GroupReasoning | null;
-    const counts = (meta.verdict_counts ?? {}) as { strong?: number; lean?: number; weak?: number };
+    const counts = (meta.verdict_counts ?? {}) as { strong?: number; lean?: number; neutral?: number; weak?: number };
 
     const out: string[] = [];
     out.push(`🌊 *CASCADE ALERT* — ${escapeMd(sport)}`);
@@ -91,37 +91,53 @@ function formatAlert(a: Alert): string {
     // to interpret the WEAK/LEAN/STRONG mix themselves.
     const sN = Number(counts.strong ?? 0);
     const lN = Number(counts.lean ?? 0);
+    const nN = Number(counts.neutral ?? 0);
     const wN = Number(counts.weak ?? 0);
-    const total = sN + lN + wN;
-    // Detect "fade-bait" pattern: every leg WEAK + most legs have a large juice gap on the alerted side + cold L10
-    let bigJuiceCount = 0;
-    let coldL10Count = 0;
-    let volatileCount = 0;
-    for (const p of players) {
-      const r = (p?.engine_reasoning ?? null) as PlayerReasoning | null;
-      if (!r) continue;
-      const sigs: string[] = Array.isArray((r as any).signals) ? (r as any).signals : [];
-      const flatSigs = sigs.join(' ').toLowerCase();
-      if (/juice gap\s*[+]?\d{3,}/i.test(flatSigs)) bigJuiceCount += 1;
-      if (/cold l10|l10 (over|under)\s*[0-3]\/10/i.test(flatSigs)) coldL10Count += 1;
-      if (/volatile minutes/i.test(flatSigs)) volatileCount += 1;
-    }
+    const total = sN + lN + nN + wN;
+
+    // Tally the directional signals we actually trust
+    const validReasons: PlayerReasoning[] = players
+      .map((p) => (p?.engine_reasoning ?? null) as PlayerReasoning | null)
+      .filter((r): r is PlayerReasoning => !!r);
+    const modelAgree = validReasons.filter((r) => r.alignment.model_edge === 'aligned').length;
+    const modelDisagree = validReasons.filter((r) => r.alignment.model_edge === 'against').length;
+    const defenseAgainst = validReasons.filter((r) => r.alignment.defense === 'against').length;
+    const formAgree = validReasons.filter((r) => r.alignment.form === 'aligned').length;
+
     let action = '';
+    let actionKind: 'TAIL' | 'TAIL_SMALL' | 'REVIEW' | 'FADE' | 'SKIP' = 'REVIEW';
     if (total === 0) {
       action = `🟡 *Action: REVIEW* — no verdict data, inspect manually.`;
-    } else if (sN >= 3) {
-      action = `🟢 *Action: TAIL* — bet ${escapeMd(side)} as alerted. ${sN} STRONG verdicts.`;
+      actionKind = 'REVIEW';
+    } else if (sN >= 2 || (sN >= 1 && (sN + lN) >= total - 1 && wN === 0)) {
+      action = `🟢 *Action: TAIL* — bet ${escapeMd(side)} as alerted. ${sN} STRONG / ${lN} LEAN.`;
+      actionKind = 'TAIL';
     } else if (sN >= 1 && wN <= 1) {
       action = `🟢 *Action: TAIL (small)* — ${sN} STRONG / ${lN} LEAN. Reduce stake.`;
-    } else if (wN === total && bigJuiceCount >= Math.ceil(total / 2) && (coldL10Count >= 2 || volatileCount >= 2)) {
+      actionKind = 'TAIL_SMALL';
+    } else if (modelDisagree >= Math.ceil(total * 0.66) && defenseAgainst >= Math.ceil(total / 2) && wN >= total - 1) {
+      // True fade: model AND defense both disagree, and verdict mix is mostly WEAK.
       const fadeSide = /over|yes/i.test(side) ? 'Under' : 'Over';
-      action = `🔴 *Action: FADE* — bet *${fadeSide}* on these. All ${wN} WEAK + book paying for ${escapeMd(side)} (bait pattern).`;
-    } else if (wN >= total - 1 && sN === 0) {
-      action = `⚪ *Action: SKIP* — ${wN} WEAK / ${lN} LEAN, 0 STRONG. No edge confirmed.`;
+      action = `🔴 *Action: FADE* — bet *${fadeSide}*. ${modelDisagree}/${total} L10 means disagree + ${defenseAgainst}/${total} tough D matchups.`;
+      actionKind = 'FADE';
+    } else if (modelAgree >= Math.ceil(total / 2) || formAgree >= Math.ceil(total / 2)) {
+      // Thin verdicts but our own model leans the alerted side — REVIEW (lean tail)
+      action = `🟡 *Action: REVIEW (lean ${escapeMd(side)})* — ${modelAgree}/${total} L10 means agree, but verdict mix is thin. Half stake max.`;
+      actionKind = 'REVIEW';
+    } else if (wN >= total - 1 && sN === 0 && modelAgree === 0 && modelDisagree === 0) {
+      action = `⚪ *Action: SKIP* — ${wN} WEAK / ${lN} LEAN, 0 STRONG, no model signal. Don't fade — just skip.`;
+      actionKind = 'SKIP';
     } else {
-      action = `🟡 *Action: PASS or small fade* — mixed signals, ${sN} STRONG / ${lN} LEAN / ${wN} WEAK.`;
+      action = `🟡 *Action: REVIEW* — mixed (${sN}S/${lN}L/${nN}N/${wN}W). Inspect legs before risking.`;
+      actionKind = 'REVIEW';
     }
     out.push(action);
+
+    // Counter-read line — always include for FADE/SKIP/REVIEW so the user sees both sides.
+    if (actionKind !== 'TAIL' && validReasons.length > 0) {
+      const cr = buildCounterRead(validReasons, /over|yes/i.test(side) ? 'Over' : 'Under');
+      if (cr) out.push(`_${escapeMd(cr)}_`);
+    }
     out.push('');
 
     // ─── Bankroll simulation panel ($100 default) ───
@@ -147,16 +163,16 @@ function formatAlert(a: Alert): string {
       for (const b of group.headline_bullets.slice(0, 3)) out.push(`• ${escapeMd(b)}`);
     }
 
-    if (counts && (counts.strong || counts.lean || counts.weak)) {
+    if (counts && (counts.strong || counts.lean || counts.neutral || counts.weak)) {
       out.push('');
-      out.push(`*Verdict mix:* ✅ ${counts.strong ?? 0} strong  ·  ⚠️ ${counts.lean ?? 0} lean  ·  ❌ ${counts.weak ?? 0} weak`);
+      out.push(`*Verdict mix:* ✅ ${counts.strong ?? 0} strong  ·  ⚠️ ${counts.lean ?? 0} lean  ·  🟡 ${counts.neutral ?? 0} neutral  ·  ❌ ${counts.weak ?? 0} weak`);
     }
 
     out.push('');
     out.push(`*Players in the cascade:*`);
 
-    // Sort STRONG → LEAN → WEAK so the message leads with the highest-conviction legs
-    const order = { STRONG: 0, LEAN: 1, WEAK: 2 } as const;
+    // Sort STRONG → LEAN → NEUTRAL → WEAK so the message leads with the highest-conviction legs
+    const order = { STRONG: 0, LEAN: 1, NEUTRAL: 2, WEAK: 3 } as const;
     const sorted = [...players].sort((a, b) => {
       const av = order[(a.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];
       const bv = order[(b.engine_reasoning?.verdict as keyof typeof order) ?? 'LEAN'];

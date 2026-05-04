@@ -13,6 +13,7 @@
 const VERDICT_PROB: Record<string, number> = {
   STRONG: 0.62,
   LEAN: 0.52,
+  NEUTRAL: 0.50,
   WEAK: 0.42,
 };
 
@@ -83,12 +84,12 @@ function americanProfitFromDecimal(stake: number, decimalOdds: number): number {
 }
 
 export function buildCascadeSim(
-  verdictCounts: { strong?: number; lean?: number; weak?: number } | null | undefined,
+  verdictCounts: { strong?: number; lean?: number; neutral?: number; weak?: number } | null | undefined,
   legs: LegInput[] | null | undefined,
   bankroll: number = DEFAULT_BANKROLL,
 ): CascadeSim | null {
   const counts = verdictCounts ?? {};
-  const total = (counts.strong ?? 0) + (counts.lean ?? 0) + (counts.weak ?? 0);
+  const total = (counts.strong ?? 0) + (counts.lean ?? 0) + (counts.neutral ?? 0) + (counts.weak ?? 0);
   if (total === 0) return null;
 
   // Derive per-leg verdicts. If `legs` is missing, synthesise from counts.
@@ -99,6 +100,7 @@ export function buildCascadeSim(
     verdicts = [
       ...Array(counts.strong ?? 0).fill('STRONG'),
       ...Array(counts.lean ?? 0).fill('LEAN'),
+      ...Array(counts.neutral ?? 0).fill('NEUTRAL'),
       ...Array(counts.weak ?? 0).fill('WEAK'),
     ];
   }
