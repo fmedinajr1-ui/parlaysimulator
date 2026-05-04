@@ -32,15 +32,12 @@ export default function LiveAI() {
   const [searchParams] = useSearchParams();
   const { token: routeToken } = useParams<{ token?: string }>();
   const navigate = useNavigate();
-  // Sample mode = ?sample=1 OR no signed-in user. Capped at 2 turns.
-  const sampleMode = (searchParams.get("sample") === "1" || !user) && !routeToken;
-  const SAMPLE_TURN_LIMIT = 2;
-  const [sampleTurns, setSampleTurns] = useState<number>(() => {
-    if (typeof window === "undefined") return 0;
-    const v = sessionStorage.getItem("spike_sample_turns");
-    return v ? parseInt(v, 10) || 0 : 0;
-  });
-  const sampleExhausted = sampleMode && sampleTurns >= SAMPLE_TURN_LIMIT;
+  // Open access: Spike is fully usable on the site without signing in.
+  // `sample` flag is kept for the agent so anonymous-only tools stay gated,
+  // but we no longer cap turns or push users to sign up.
+  const sampleMode = !user && !routeToken;
+  const sampleTurns = 0;
+  const sampleExhausted = false;
   const [messages, setMessages] = useState<Msg[]>([
   ]);
   const [riskMode, setRiskMode] = useState<RiskMode>("smart");
@@ -55,19 +52,7 @@ export default function LiveAI() {
   const [isScanning, setIsScanning] = useState(false);
   const [shareCardDismissed, setShareCardDismissed] = useState(false);
 
-  // If a token is in the URL but the visitor isn't signed in, send them to auth
-  // and bring them back to the same /spike/:token deeplink afterwards.
-  useEffect(() => {
-    if (!routeToken) return;
-    if (user === null) {
-      // Auth still loading — wait
-      return;
-    }
-    if (!user) {
-      const next = encodeURIComponent(`/spike/${routeToken}`);
-      navigate(`/?next=${next}`, { replace: true });
-    }
-  }, [routeToken, user, navigate]);
+  // /spike/:token deeplinks are open — anyone with the link can chat with Spike.
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -215,11 +200,6 @@ export default function LiveAI() {
         const aiMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: reply, parlay, shareLink };
         setMessages((m) => [...m, aiMsg]);
         persistMessage("assistant", reply, parlay);
-        if (sampleMode) {
-          const next = sampleTurns + 1;
-          setSampleTurns(next);
-          try { sessionStorage.setItem("spike_sample_turns", String(next)); } catch {}
-        }
         // Fire TTS in parallel — skip avatar render path for now (HeyGen v2)
         playTTS(reply);
       } catch (e: any) {
