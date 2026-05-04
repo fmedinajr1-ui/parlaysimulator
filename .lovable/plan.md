@@ -1,56 +1,76 @@
-## Problem
+## Phase 1 — Edge Calculation (devigged probability edge)
 
-The current cascade alert (e.g. "Andre Drummond Over 2.5 Points", "Mitchell Robinson Over 5.5 Points") is built from `unified_props`, which only contains **DraftKings** and **FanDuel** rows. The user bets on **Hard Rock**, where those exact lines don't exist — so the alert is unactionable for them. We need to validate every cascade leg against an actual Hard Rock line before broadcasting.
+Scope is **Phase 1 only**. Phases 2–5 follow as separate plans.
 
-## Solution
+### What's wrong today
+`edgeFor()` in `_shared/court-edge-projection.ts` returns `(projection − line) / line × 100`. That's projection distance, not edge — which is why we're seeing +35% / +48% numbers. There's also no over/under price devigging anywhere; `court-edge-fetch-odds` throws away over/under prices and only keeps `total_point` from the first book.
 
-Pull live Hard Rock prop lines on each `signal-alert-engine` run, then filter the cascade legs so only props with a matching Hard Rock line/side at acceptable juice are kept. If a cascade no longer has enough qualifying legs after the Hard Rock filter, it is dropped (not alerted). Alerts also get tagged with the actual Hard Rock line + price the user will see.
+### Changes
 
-## Steps
+**1. `_shared/court-edge-edge.ts` (new)** — pure helpers:
+- `americanToImplied(odds)` and `devigPair(over, under)` (normalize so they sum to 1).
+- `modelProbOver(projection, line, sigma)` — uses Abramowitz normal CDF copied locally (no cross-package import from `src/lib`).
+- Sigma constants:
+  ```ts
+  export const SIGMA_GAMES = { wta_bo3: 3.5, atp_bo3: 4.0, wta_bo5: 4.5, atp_bo5: 5.5 };
+  export function pickSigma(tour: 'wta'|'atp'|'unknown', sets: 'bo3'|'bo5'): number;
+  ```
+- `EDGE_HARD_CAP_PP = 0.12`.
 
-1. **New helper `_shared/hardrock-lines.ts`**
-   - Fetches NBA player-prop lines from The Odds API filtered to `bookmakers=hardrockbet` (same pattern as `fetch-hardrock-longshots`).
-   - Returns a `Map<key, { line, overPrice, underPrice }>` keyed by `event_id|player|prop_type`.
-   - Caches result in-memory for the duration of the engine run.
-   - Markets: `player_points, player_rebounds, player_assists, player_threes, player_points_rebounds_assists, player_steals, player_blocks`.
+**2. Rewrite `edgeFor` in `_shared/court-edge-projection.ts`**
+New return shape:
+```ts
+{
+  reference, model_prob_over, model_prob_under,
+  vig_free_implied_over, vig_free_implied_under,
+  edge_pp,             // signed: + = OVER, − = UNDER, in probability points
+  edge_side: 'over'|'under'|'none',
+  verdict,             // includes new 'QUARANTINE'
+  quarantine_reason?
+}
+```
+- Both prices present → devig → `edge_pp = model_prob_side − devigged_implied_side` for the favored side.
+- Either price missing → `edge_side: 'none'`, `verdict: 'PASS'` (no fake edges).
+- `|edge_pp| > 0.12` → `verdict: 'QUARANTINE'`, reason `edge_above_hard_cap`.
+- Otherwise (Phase 1 placeholder thresholds, Phase 4 will refine):
+  - `≥ 0.04` → STRONG_OVER / STRONG_UNDER
+  - `≥ 0.02` → LEAN_OVER / LEAN_UNDER
+  - else PASS
 
-2. **Filter cascades in `signal-alert-engine/index.ts`**
-   - Before inserting a cascade alert, look up each leg's `(event_id, player, prop_type)` in the Hard Rock map.
-   - Drop a leg if:
-     - No Hard Rock listing, OR
-     - HRB line differs from the alerted line by more than 0.5, OR
-     - The HRB price on the alerted side is worse than -200 (unbettable juice).
-   - Require ≥3 surviving legs to still emit a cascade. Otherwise skip and increment a `stats.dropped_no_hrb` counter.
-   - Replace each leg's `line`, `over_price`, `under_price`, `bookmaker` with the Hard Rock values so downstream Telegram/UI shows what the user will actually see.
+**3. Add `QUARANTINE` to the `Verdict` union** and update `court-edge-projection_test.ts` boundary asserts.
 
-3. **Tag the alert**
-   - Set `bookmaker: 'hardrockbet'` on the inserted `fanduel_prediction_alerts` row.
-   - Add `metadata.source_book: 'hardrockbet'` and `metadata.hrb_verified: true`.
+**4. `court-edge-fetch-odds/index.ts`** — capture both prices and book counts:
+- Add `total_over_price`, `total_under_price` to `NormalizedEvent`.
+- Per the user's call: collect **all bookmakers** with totals on each event into a `book_lines: Array<{book, point, over_price, under_price}>` and a `books_count`. The orchestrator continues to use the primary `total_point` for now; `book_lines` is captured for Phase 4 multi-book agreement.
 
-4. **Telegram copy update (`signal-alert-telegram/index.ts`)**
-   - Add a small footer line: `📘 Lines verified on Hard Rock` so the user knows the numbers are tradable.
-   - No other layout changes — single-message format stays.
+**5. `court-edge-run/index.ts`** — plumbing:
+- Pick `sigma` via `pickSigma(tour, sets)`; derive `tour` from `sport_key` prefix (`tennis_atp_*` vs `tennis_wta_*`), default `'unknown'` → `wta_bo3`.
+- Replace both `edgeFor(...)` call sites with the new signature, passing `over_price`, `under_price`, `sigma`.
+- Persist new fields on each Pick: `model_prob`, `vig_free_implied`, `edge_pp`, `edge_side`, `quarantine_reason`, `books_count`, `book_lines`. Keep legacy `edge`/`edge_pct` columns populated (`edge_pct = edge_pp * 100`) so existing dashboards don't break — values now mean **percentage points**, not relative %.
+- Picks with `verdict === 'QUARANTINE'` are inserted into `court_edge_picks` for audit but excluded from the Telegram digest.
 
-5. **Same gating for single-player signals**
-   - Apply the same HRB lookup to non-cascade signal types in `signal-alert-engine` (velocity, miss-by-1, etc.) so every alert the user receives is HRB-tradable. If no HRB line, drop the alert.
+**6. Telegram label tweak** — one line in `buildDigest`: `edge {sign}{(edge_pp*100).toFixed(1)}pp` instead of `fmtPct(edge_pct)`. No other UI/styling changes.
 
-6. **Tests (5, per testing-policy memory)**
-   - `_shared/hardrock-lines.test.ts`:
-     1. Map keying by event/player/prop is correct.
-     2. Missing HRB entry returns `null`.
-     3. Line tolerance: 5.5 vs HRB 5.5 passes; 5.5 vs HRB 6.5 fails.
-     4. Juice gate: HRB under -250 → rejected.
-     5. Cache hit on second call (no second fetch).
+**7. Tests** (`_shared/court-edge-edge_test.ts`, 5 per testing-policy):
+1. `americanToImplied(-110)` ≈ 0.5238.
+2. `devigPair(-110, -110)` → `{ 0.5, 0.5 }`.
+3. `modelProbOver(22, 20, 3.5)` between 0.5 and 0.99.
+4. `edgeFor(projection=22, line=20.5, -110/-110, σ=3.5)` → `|edge_pp| < 0.12`, verdict LEAN_OVER or PASS.
+5. `edgeFor(projection=30, line=20, -110/-110)` → verdict `QUARANTINE`, reason `edge_above_hard_cap`.
 
-## Files Touched
+### Files Touched
+- `supabase/functions/_shared/court-edge-edge.ts` (new)
+- `supabase/functions/_shared/court-edge-edge_test.ts` (new)
+- `supabase/functions/_shared/court-edge-projection.ts` (rewrite `edgeFor`, add QUARANTINE)
+- `supabase/functions/_shared/court-edge-projection_test.ts` (update boundary tests)
+- `supabase/functions/court-edge-fetch-odds/index.ts` (capture all books + over/under prices)
+- `supabase/functions/court-edge-run/index.ts` (plumb new args + fields, gate digest)
 
-- `supabase/functions/_shared/hardrock-lines.ts` (new)
-- `supabase/functions/_shared/hardrock-lines.test.ts` (new)
-- `supabase/functions/signal-alert-engine/index.ts` (HRB gating in cascade + single-leg paths)
-- `supabase/functions/signal-alert-telegram/index.ts` (verified footer)
+### Out of scope (future phases)
+- Projection model fixes / blowout suppression / hold-rate priors / sanity bounds (Phase 2)
+- Tournament tagging + calibrated_tiers + line range filter (Phase 3)
+- Tier promotion rules: ≥2 books agree, weather present, etc. (Phase 4)
+- Diagnostics line + header counts + 20% quarantine warning (Phase 5)
 
-## Notes
-
-- Uses existing `THE_ODDS_API_KEY` secret — no new keys required.
-- Adds ~1 API call per active NBA event per engine run; mirrored on the longshots path so cost profile is known.
-- If The Odds API returns no Hard Rock data (sport off-hours), the engine logs and skips broadcasting rather than falling back to FD/DK.
+### Deliverable after switching to default mode
+Diff for the 6 files, a one-paragraph summary, and a list of picks from the most recent `court_edge_runs` row that would now be QUARANTINEd or downgraded under the new math. Then I stop and wait before touching Phase 2.
