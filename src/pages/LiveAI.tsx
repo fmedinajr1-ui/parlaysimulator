@@ -558,15 +558,31 @@ export default function LiveAI() {
 
       {/* Wake-up overlay (first tap unlocks audio + plays greeting) */}
       {!woken && (
-        <button
-          onClick={wakeSpike}
-          className="absolute inset-0 z-30 flex flex-col items-center justify-end pb-32 bg-black/40 backdrop-blur-[2px]"
-        >
-          <div className="px-6 py-3 rounded-full bg-primary text-primary-foreground font-bold text-lg shadow-2xl animate-pulse">
-            Tap to wake Spike up 🐶
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 bg-black/70 backdrop-blur-md">
+          <button
+            onClick={wakeSpike}
+            className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-br from-primary to-primary/70 text-primary-foreground font-bold text-lg shadow-[0_10px_40px_-10px_hsl(var(--primary)/0.7)] ring-1 ring-white/20 transition-all hover:scale-[1.03] active:scale-[0.98]"
+          >
+            <PawPrint className="w-5 h-5" />
+            <span>Tap to wake Spike up</span>
+            <span aria-hidden className="text-xl">🐶</span>
+            <span className="absolute -inset-1 -z-10 rounded-2xl bg-primary/40 blur-xl opacity-60 group-hover:opacity-90 transition-opacity" />
+          </button>
+          <p className="mt-4 text-sm text-white/80">He'll say hi in a NY accent</p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2 max-w-sm">
+            <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">💬 Ask anything</span>
+            <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">📚 Bet education</span>
+            <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/85">🔒 Today's plays for members</span>
           </div>
-          <p className="mt-3 text-xs text-white/80">He'll say hi in a NY accent</p>
-        </button>
+          {!user && (
+            <Link
+              to="/"
+              className="mt-6 text-xs text-white/70 underline underline-offset-4 hover:text-white"
+            >
+              Get a free Pup account → unlock the real plays
+            </Link>
+          )}
+        </div>
       )}
     </div>
   );
