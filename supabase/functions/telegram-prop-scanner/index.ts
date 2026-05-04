@@ -82,6 +82,142 @@ async function answerCallback(callback_query_id: string, text?: string) {
   await telegramRequest("answerCallbackQuery", { callback_query_id, text: text ?? "" });
 }
 
+// =====================================================================
+// Admin-only: alert threshold tuning commands.
+//   /thresholds [SPORT] [axis]
+//   /set SPORT axis field value
+//   /reset SPORT axis
+//   /audit [SPORT] [n]
+// =====================================================================
+const ALLOWED_SPORTS = ["ALL", "NBA", "MLB", "NFL", "NHL", "WNBA"];
+
+function fmtAxisRow(sport: string, axis: AxisKey, vals: any): string {
+  return [
+    `*${sport}* · \`${axis}\``,
+    `  aligned_over=${vals.aligned_over}  aligned_under=${vals.aligned_under}`,
+    `  against_over=${vals.against_over}  against_under=${vals.against_under}`,
+    vals.neutral_band != null ? `  neutral_band=${vals.neutral_band}` : null,
+  ].filter(Boolean).join("\n");
+}
+
+async function handleThresholdCommand(supabase: any, chat_id: number, text: string) {
+  const tokens = text.trim().split(/\s+/);
+  const cmd = tokens[0];
+
+  try {
+    if (cmd === "/thresholds") {
+      const sportArg = (tokens[1] ?? "").toUpperCase();
+      const axisArg = (tokens[2] ?? "").toLowerCase() as AxisKey;
+      let q = supabase.from("alert_thresholds").select("*").order("sport").order("axis");
+      if (sportArg) q = q.eq("sport", sportArg);
+      if (axisArg) q = q.eq("axis", axisArg);
+      const { data, error } = await q;
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        await sendMessage(chat_id, `No rows for ${sportArg || "ALL"} ${axisArg || ""}. Defaults are active.`);
+        return;
+      }
+      const lines = data.map((r: any) => fmtAxisRow(r.sport, r.axis as AxisKey, r));
+      await sendMessage(chat_id, `🎚️ *Cascade Thresholds*\n\n${lines.join("\n\n")}`);
+      return;
+    }
+
+    if (cmd === "/set") {
+      // /set SPORT axis field value
+      if (tokens.length < 5) {
+        await sendMessage(chat_id, "Usage: `/set SPORT axis field value`\nExample: `/set NBA form aligned_over 0.50`");
+        return;
+      }
+      const sport = tokens[1].toUpperCase();
+      const axis = tokens[2].toLowerCase() as AxisKey;
+      const field = tokens[3].toLowerCase() as FieldKey;
+      const value = Number(tokens[4]);
+      if (!ALLOWED_SPORTS.includes(sport)) { await sendMessage(chat_id, `❌ sport must be one of ${ALLOWED_SPORTS.join(", ")}`); return; }
+      if (!AXIS_KEYS.includes(axis)) { await sendMessage(chat_id, `❌ axis must be one of ${AXIS_KEYS.join(", ")}`); return; }
+      if (!FIELD_KEYS.includes(field)) { await sendMessage(chat_id, `❌ field must be one of ${FIELD_KEYS.join(", ")}`); return; }
+      const v = validateFieldValue(axis, value);
+      if (!v.ok) { await sendMessage(chat_id, `❌ ${v.error}`); return; }
+
+      // Read existing row (if any) to compute old value
+      const { data: existing } = await supabase
+        .from("alert_thresholds")
+        .select("*")
+        .eq("sport", sport).eq("axis", axis).maybeSingle();
+
+      const base = existing ?? {
+        sport, axis,
+        ...(DEFAULT_THRESHOLDS[sport]?.[axis] ?? DEFAULT_THRESHOLDS.ALL[axis]),
+      };
+      const oldVal = (base as any)[field];
+      const newRow: any = {
+        sport, axis,
+        aligned_over: base.aligned_over,
+        aligned_under: base.aligned_under,
+        against_over: base.against_over,
+        against_under: base.against_under,
+        neutral_band: base.neutral_band ?? null,
+        updated_by: `tg:${chat_id}`,
+        updated_at: new Date().toISOString(),
+      };
+      newRow[field] = value;
+
+      const { error } = await supabase
+        .from("alert_thresholds")
+        .upsert(newRow, { onConflict: "sport,axis" });
+      if (error) throw error;
+      invalidateThresholdCache();
+      await sendMessage(chat_id, `✅ *${sport}* \`${axis}.${field}\`: ${oldVal} → *${value}*\nCache invalidated. New value live within ~60s across all engines.`);
+      return;
+    }
+
+    if (cmd === "/reset") {
+      // /reset SPORT axis
+      if (tokens.length < 3) {
+        await sendMessage(chat_id, "Usage: `/reset SPORT axis`\nExample: `/reset NBA form`");
+        return;
+      }
+      const sport = tokens[1].toUpperCase();
+      const axis = tokens[2].toLowerCase() as AxisKey;
+      if (!ALLOWED_SPORTS.includes(sport)) { await sendMessage(chat_id, `❌ unknown sport`); return; }
+      if (!AXIS_KEYS.includes(axis)) { await sendMessage(chat_id, `❌ unknown axis`); return; }
+      const def = DEFAULT_THRESHOLDS[sport]?.[axis] ?? DEFAULT_THRESHOLDS.ALL[axis];
+      const { error } = await supabase
+        .from("alert_thresholds")
+        .upsert({
+          sport, axis,
+          ...def,
+          updated_by: `tg:${chat_id}`,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "sport,axis" });
+      if (error) throw error;
+      invalidateThresholdCache();
+      await sendMessage(chat_id, `♻️ Reset *${sport}* \`${axis}\` to defaults.\n\n${fmtAxisRow(sport, axis, def)}`);
+      return;
+    }
+
+    if (cmd === "/audit") {
+      const sportArg = (tokens[1] ?? "").toUpperCase();
+      const limit = Math.min(Number(tokens[2] ?? tokens[1] ?? 10) || 10, 25);
+      let q = supabase.from("alert_thresholds_audit")
+        .select("sport, axis, source, actor, changed_at, new_values")
+        .order("changed_at", { ascending: false })
+        .limit(limit);
+      if (sportArg && ALLOWED_SPORTS.includes(sportArg)) q = q.eq("sport", sportArg);
+      const { data, error } = await q;
+      if (error) throw error;
+      if (!data || data.length === 0) { await sendMessage(chat_id, "No audit entries."); return; }
+      const lines = data.map((r: any) => {
+        const when = new Date(r.changed_at).toISOString().replace("T", " ").slice(0, 19);
+        return `\`${when}\` ${r.sport}/${r.axis} via ${r.source} (${r.actor})`;
+      });
+      await sendMessage(chat_id, `📜 *Threshold Audit* (last ${data.length})\n\n${lines.join("\n")}`);
+      return;
+    }
+  } catch (e) {
+    await sendMessage(chat_id, `❌ Threshold command failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 // Admin-only: invoke the Remotion render orchestrator and reply with status.
 async function triggerRender(chat_id: number, scriptId: string | null) {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
