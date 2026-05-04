@@ -389,6 +389,7 @@ Deno.serve(async (req) => {
           baseline_reason: baselineUsed ? baselineFor(baselineSurface, baselineSets).reason : null,
           sigma,
           tour: tourFromKey(ev.sport_key),
+          tournament_tier: tier,
         },
         tournament: tournament.name,
         surface: tournament.surface,
@@ -450,7 +451,7 @@ Deno.serve(async (req) => {
         edge: Number((e.edge_pp ?? 0).toFixed(4)),
         edge_pct: Number(((e.edge_pp ?? 0) * 100).toFixed(2)),
         verdict: e.verdict,
-        formula: { ...proj, stat_type: pp.stat_type, ml_home: inp.ml_home, ml_away: inp.ml_away, sigma, tour: tourFromKey(ev?.sport_key) },
+        formula: { ...proj, stat_type: pp.stat_type, ml_home: inp.ml_home, ml_away: inp.ml_away, sigma, tour: tourFromKey(ev?.sport_key), tournament_tier: tier },
         tournament: tournament.name,
         surface: tournament.surface,
         sets_format: tournament.sets_format,
@@ -508,6 +509,20 @@ Deno.serve(async (req) => {
         if (typeof f?.blowout_adj === "number" && f.blowout_adj < 0) blow += 1;
       }
       push(`Clamped: ${clamped}/${picks.length} · Blowout flags: ${blow}`);
+    }
+
+    // Phase 3 diagnostic — tier + line-range quarantine breakdown.
+    {
+      let qLineBand = 0; let qLineRange = 0; let qHardCap = 0; let qTier = 0;
+      for (const p of picks) {
+        if (p.verdict !== "QUARANTINE") continue;
+        const r = (p.formula as any)?.quarantine_reason ?? p.quarantine_reason;
+        if (r === "line_outside_prior_band") qLineBand += 1;
+        else if (r === "line_out_of_range") qLineRange += 1;
+        else if (r === "edge_above_hard_cap") qHardCap += 1;
+        else if (r === "tier_auto_quarantine") qTier += 1;
+      }
+      push(`Tier ${tier} · Quarantine: line_band=${qLineBand} line_range=${qLineRange} hard_cap=${qHardCap} tier_auto=${qTier}`);
     }
 
     // 6b. Build drilldown text for the top non-PASS picks (cap 5)
