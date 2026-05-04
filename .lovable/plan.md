@@ -1,69 +1,57 @@
-# Plan: Surgical v2 upgrades to alert explainer
+## Goal
 
-Keep the v1 multi-axis verdict system (it's tunable, multi-sport, and powers the admin UI). Layer 4 targeted changes derived from the v2 spec + 7-day audit.
+Make Spike feel like a real assistant (not just a parlay tool), give every user a permanent shareable link to him, and fix the cluttered wake-up screen where the "Tap to wake" pill overlaps the mic + risk-mode chips.
 
-## 1. Add per-signal-type mute list
+## 1. Persona upgrade (`supabase/functions/live-ai-agent/index.ts`)
 
-- Extend `alert_thresholds` schema with a `signal_mutes` row type (or a new `alert_signal_config` table keyed by `signal_type`) storing `{ muted: bool, reason: text, updated_by, updated_at }`.
-- Default seed: `take_it_now` muted (audit: 2/14 = 14%). `cascade` and `velocity_spike` active.
-- `buildPlayerReasoning` accepts `signal_type` in `ExplainerInput` and forces `verdict = 'NEUTRAL'` + `action = 'PASS'` + `flags: ['signal_muted']` when muted.
-- Telegram admin commands: `/mute SIGNAL reason`, `/unmute SIGNAL`, `/mutes` (list).
-- Admin UI: new "Signal mutes" tab in `/admin/alert-thresholds` showing toggle + reason per signal type.
+Rewrite `SYSTEM_PROMPT` so Spike:
+- Answers **general questions** (small talk, sports trivia, rules explanations, "what's a moneyline", "who plays tonight", weather/jokes/etc.) in his Brooklyn voice, ~2-4 sentences.
+- Gives **sports-betting education** freely: bankroll basics, how parlays correlate, how to read a line, what variance means, why chasing tilts you. Concepts and frameworks are fair game.
+- **Withholds proprietary edge for free**: no specific player picks, no parlay legs, no whale/sharp reads, no "today's plays" unless the caller is `pup` (1/day) or `all_access`. When asked for a pick as anon/sample, he teases ("I got a juicy 3-legger cooked, but the real plays drop inside — grab a free Pup account and I'll hand you one today") and points to `/upgrade`.
+- Has a clear refusal pattern that stays in character instead of a flat "I can't".
+- Adds a `share_my_link` behavior: when the user says "send me the link", "how do I get back here", "save this", "text it to me", Spike replies with their personal Spike URL (see §2) and tells them to bookmark or DM it to themselves.
 
-## 2. Asymmetric model_edge thresholds (default retune)
+Add 5 unit tests in a new `_test.ts` covering: general-question answer, betting-education answer, anonymous pick refusal w/ upsell, "send me the link" trigger, all-access unrestricted path.
 
-- Current defaults: aligned ±0.5σ symmetric.
-- New defaults from audit: `aligned_over/under = 0.3`, `against_over/under = -1.0` (deeper FADE bar matches v2's BACK_EDGE_MIN=0.2 / FADE_EDGE_MAX=-1.0 in σ-normalized space).
-- Migration only updates the `ALL` default row; existing per-sport overrides are preserved.
-- Existing per-side fields already in `alert_thresholds` — no schema change.
+## 2. Persistent personal Spike link
 
-## 3. Add `action` enum to PlayerReasoning
+Goal: every signed-in user gets a stable URL like `/spike/u_<token>` they can bookmark or share with themselves; opening it auto-resumes their Spike conversation without re-login friction (still gated behind auth — token just identifies them, session still required).
 
-Map verdicts + model_edge alignment into a clean enum the Telegram layer + UI can consume directly:
+- **Migration**: new column `spike_share_token text unique` on `profiles` (or `pup_users` if that's the canonical table — verify in next step). Backfill with `gen_random_uuid()`. Trigger to auto-fill on insert.
+- **Route**: add `/spike/:token` in `src/App.tsx` mapping to `LiveAI`. `LiveAI` reads `useParams().token`, looks up `profiles` to confirm it matches the current `user.id`; if no session, redirect to `/auth?next=/spike/:token`; if mismatch, redirect to `/live-ai`.
+- **Shareable URL surfaced in two places**:
+  1. New `<SpikeShareCard />` rendered once after wake (signed-in only) with copy-to-clipboard + "Text to my phone" (uses existing Telegram bot link if `telegram_chat_id` present, otherwise SMS `sms:?body=`).
+  2. New `share_my_link` tool in the agent that returns `{ url }`; persona prompt instructs Spike to call it when asked. UI detects `tool_trace` entry and renders an inline link card under that message.
+- **Onboarding email/Telegram**: extend the existing `bot-access` transactional template + the Telegram welcome to include the personal Spike URL ("Spike lives here anytime: https://parlayfarm.com/spike/<token>").
 
-```text
-action = 'BACK' if verdict in {STRONG, LEAN} AND model_edge != 'against'
-action = 'FADE' if verdict == 'WEAK' AND model_edge == 'against'
-action = 'PASS' otherwise (NEUTRAL or signal-muted or model disagrees with a STRONG)
-```
+## 3. Wake-up UI cleanup (`src/pages/LiveAI.tsx`)
 
-- Adds `action: 'BACK' | 'FADE' | 'PASS'` to `PlayerReasoning` (non-breaking — additive field).
-- `signal-alert-telegram` action ladder collapses around this enum: TAIL = ≥2 BACK legs, FADE = ≥⅔ FADE legs, REVIEW = mixed, SKIP = mostly PASS.
-- Counter-read text already exists; keep it for transparency.
+Current issue (per screenshot): the blue "Tap to wake Spike up" pill sits directly on top of the mic button and the "smart mode" badge, which bleed through the backdrop blur.
 
-## 4. Append v2 recalibration playbook to memory
+Fixes:
+- Replace the bottom-pinned wake pill with a **centered card overlay** at ~40% from top: avatar visible above, button in dead-center, subtitle below. Use `items-center justify-center` (drop `pb-32`).
+- Stronger backdrop: `bg-black/70 backdrop-blur-md` (was `bg-black/40 backdrop-blur-[2px]`) so underlying chips/mic are fully muted.
+- Make the button more presentable:
+  - Larger: `px-8 py-4`, rounded-2xl (not full pill), bigger type, paw icon to the left of text.
+  - Subtle gradient (`bg-gradient-to-br from-primary to-primary/70`) + ring + soft outer glow instead of `animate-pulse`.
+  - Hover/active scale transitions; remove the constant pulse (it makes it look like an error).
+- Add a small "What can Spike do?" trio of pills under the subtitle (Ask anything · Bet education · Today's plays for members) so the value prop is immediate.
+- Risk-mode chips: hide them under the wake overlay (`{woken && ...}`) so they don't peek through.
 
-Add a "Recalibration triggers" section to `mem://logic/alerts/explainer-contract.md`:
+## Technical notes
 
-```text
-- BACK hit% < 75% over n≥30 → raise model_edge.aligned_* to 0.5
-- FADE win% < 80% over n≥30 → lower model_edge.against_* to -1.5
-- take_it_now hit% > 55% over n≥30 → unmute
-- Re-run audit-verdict-backfill weekly
-```
-
-## Tests (5 required per project rule)
-
-In `_shared/alert-explainer_test.ts`:
-1. Muted signal returns NEUTRAL + action=PASS regardless of inputs.
-2. STRONG verdict + model_edge aligned → action=BACK.
-3. WEAK verdict + model_edge against → action=FADE.
-4. STRONG verdict + model_edge against → action=PASS (model override).
-5. Asymmetric thresholds: model_edge=+0.35 aligned, model_edge=-0.6 neutral (was against under symmetric ±0.5).
+- All persona changes are server-side; no client prompt edits.
+- Token lookup uses an RPC `get_my_spike_token()` (security definer, returns `auth.uid()`'s row only) so RLS stays clean.
+- `share_my_link` tool refuses for anonymous/sample users with a "sign up first, then I'll mint your link" message.
+- No changes to TTS, slip-scan, or parlay-build pipelines.
 
 ## Files
 
-- `supabase/migrations/<ts>_signal_mutes.sql` — new `alert_signal_config` table + audit trigger + seed take_it_now muted; update ALL model_edge defaults.
-- `supabase/functions/_shared/threshold-config.ts` — load + cache mutes alongside thresholds.
-- `supabase/functions/_shared/alert-explainer.ts` — accept signal_type, apply mute, compute action, asymmetric edge cuts.
-- `supabase/functions/_shared/alert-explainer_test.ts` — append 5 new tests.
-- `supabase/functions/signal-alert-engine/index.ts` + `signal-alert-telegram/index.ts` — pass signal_type through; consume action enum.
-- `supabase/functions/telegram-prop-scanner/index.ts` — `/mute`, `/unmute`, `/mutes` commands.
-- `src/pages/admin/AlertThresholds.tsx` — "Signal mutes" tab.
-- `mem/logic/alerts/explainer-contract.md` — recalibration triggers + action enum doc.
-
-## Out of scope
-
-- Replacing v1 verdicts with BACK/FADE/NEUTRAL (keeps audit trail intact).
-- Cascade outcome grading (separate work — needs settlement on cascade rows first).
-- Re-running the audit (do after 7 more days to validate cascade + new asymmetric cuts).
+- `supabase/migrations/<ts>_spike_share_token.sql` (new)
+- `supabase/functions/live-ai-agent/index.ts` (edit: prompt + new tool)
+- `supabase/functions/live-ai-agent/index_test.ts` (new, 5 tests)
+- `supabase/functions/_shared/transactional-email-templates/bot-access.tsx` (edit: include link)
+- `src/App.tsx` (edit: add `/spike/:token` route)
+- `src/pages/LiveAI.tsx` (edit: token guard, wake overlay redesign, share card)
+- `src/components/live-ai/SpikeShareCard.tsx` (new)
+- `mem/features/spike/personal-link.md` (new memory)
