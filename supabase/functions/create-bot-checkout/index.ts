@@ -7,20 +7,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const DEFAULT_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
-const SCOUT_PRICE_ID = "price_1T2br19D6r1PTCBBfrDD4opY";
-const TOP_DOG_PRICE_ID = "price_1TOffv9D6r1PTCBBnKoRUEYs";    // ParlayFarm — Top Dog $29.99/mo
-const KENNEL_CLUB_PRICE_ID = "price_1TOg2P9D6r1PTCBBzjJHrNmg"; // ParlayFarm — Kennel Club $99/mo
+// All-Access — ParlayFarm $99/mo, 3-day free trial.
+// Legacy Top Dog / Kennel Club price IDs are kept so existing subs keep billing,
+// but new signups always go through ALL_ACCESS_PRICE_ID.
+const ALL_ACCESS_PRICE_ID = "price_1TOg2P9D6r1PTCBBzjJHrNmg"; // $99/mo
+const LEGACY_TOP_DOG_PRICE_ID = "price_1TOffv9D6r1PTCBBnKoRUEYs"; // existing $29.99/mo subs
+const LEGACY_KENNEL_PRICE_ID = "price_1TOg2P9D6r1PTCBBzjJHrNmg";  // existing $99/mo subs
+const LEGACY_DEFAULT_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
+const LEGACY_SCOUT_PRICE_ID = "price_1T2br19D6r1PTCBBfrDD4opY";
 
-const TIER_TO_PRICE: Record<string, string> = {
-  top_dog: TOP_DOG_PRICE_ID,
-  kennel_club: KENNEL_CLUB_PRICE_ID,
-};
-
-const TIER_TRIAL_DAYS: Record<string, number> = {
-  top_dog: 7,
-  kennel_club: 3,
-};
+const TRIAL_DAYS = 3;
 
 function generatePassword(length = 8): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -40,12 +36,17 @@ serve(async (req) => {
       throw new Error("A valid email is required");
     }
 
-    // Resolve price: explicit priceId wins, else map tier, else legacy default
-    const resolvedPriceId = priceId || (tier && TIER_TO_PRICE[tier]) || DEFAULT_PRICE_ID;
-    const isScoutTier = resolvedPriceId === SCOUT_PRICE_ID;
-    const isTopDogTier = resolvedPriceId === TOP_DOG_PRICE_ID;
-    const isKennelClubTier = resolvedPriceId === KENNEL_CLUB_PRICE_ID;
-    const trialDays = (tier && TIER_TRIAL_DAYS[tier]) || (isScoutTier ? 1 : 3);
+    // New signups always land on All-Access. priceId param kept for legacy callers
+    // (e.g. an existing customer-portal flow) but ignored unless it matches a known legacy price.
+    const knownLegacy =
+      priceId === LEGACY_TOP_DOG_PRICE_ID ||
+      priceId === LEGACY_KENNEL_PRICE_ID ||
+      priceId === LEGACY_DEFAULT_PRICE_ID ||
+      priceId === LEGACY_SCOUT_PRICE_ID;
+    const resolvedPriceId = knownLegacy ? priceId : ALL_ACCESS_PRICE_ID;
+    // Every paid signup is treated as all_access for tier gating downstream.
+    const resolvedTier = "all_access";
+    const trialDays = TRIAL_DAYS;
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2025-08-27.basil",
@@ -57,7 +58,8 @@ serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    // Generate a one-time password for ALL tiers (bot + scout)
+    // Generate a one-time password and tag it as all_access so the Telegram redeem
+    // step can propagate the tier into bot_authorized_users.
     const password = generatePassword();
     const { data, error } = await supabaseClient
       .from("bot_access_passwords")
@@ -67,6 +69,7 @@ serve(async (req) => {
         is_active: true,
         max_uses: 1,
         email: email,
+        tier: resolvedTier,
       })
       .select("id")
       .single();
@@ -104,9 +107,8 @@ serve(async (req) => {
       },
       custom_text: {
         terms_of_service_acceptance: {
-          message: isScoutTier
-            ? "By subscribing, you agree to a 1-day free trial. A $50 card authentication hold will be charged now. Your card will be charged after the trial unless you cancel."
-            : "By subscribing, you agree to a 3-day free trial. A $50 card authentication hold will be charged now. Your card will be charged after the trial unless you cancel.",
+          message:
+            "By subscribing you agree to a 3-day free trial. A $50 card authentication hold will be placed now. Your card will be charged $99/month after the trial unless you cancel.",
         },
       },
       subscription_data: {
@@ -117,7 +119,7 @@ serve(async (req) => {
           },
         },
       },
-      metadata: { password_id: passwordId, tier: tier || "legacy" },
+      metadata: { password_id: passwordId, tier: resolvedTier, requested_tier: tier || "all_access" },
       success_url: `${origin}/bot-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/`,
     });
