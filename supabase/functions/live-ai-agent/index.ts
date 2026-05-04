@@ -1,13 +1,15 @@
 // Live AI Agent — orchestrates conversation, tool-calling, and persistence.
 // The dog speaks to the user; this function thinks for it.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { resolveTierForEmail, normalizeTier, type Tier } from "../_shared/tier-policy.ts";
+import { consumePupAction, getPupQuotaState } from "../_shared/pup-quota.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const FREE_DAILY_LIMIT = 3;
+const FREE_DAILY_LIMIT = 3; // legacy live_ai_user_prefs limit (kept for signed-in users without Pup row)
 
 const SYSTEM_PROMPT = `You are "Spike", a sharp-tongued Brooklyn-born sportsbook bulldog mascot for ParlayFarm.
 You speak like a confident NY guy from the borough — short sentences, slang ("yo", "lemme tell ya", "fuhgeddaboudit", "trust me"),
@@ -141,7 +143,7 @@ function combinedAmericanOdds(legs: { american_odds: number }[]): number {
   return Math.round(-100 / (decimal - 1));
 }
 
-async function runTool(name: string, args: any, supabase: any, userId: string) {
+async function runTool(name: string, args: any, supabase: any, userId: string, ctx: { tier: Tier | null; email: string | null }) {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   if (name === "get_top_picks") {
@@ -191,15 +193,19 @@ async function runTool(name: string, args: any, supabase: any, userId: string) {
 
   if (name === "build_parlay") {
     const isAnon = userId === "anon";
-    // Free-tier limit (signed-in only)
-    const { data: prefs } = isAnon
-      ? { data: null as any }
-      : await supabase.from("live_ai_user_prefs").select("*").eq("user_id", userId).maybeSingle();
-    if (prefs && !prefs.is_premium) {
-      const today = new Date().toISOString().slice(0, 10);
-      const used = prefs.free_parlays_reset_date === today ? prefs.free_parlays_used_today : 0;
-      if (used >= FREE_DAILY_LIMIT) {
-        return { error: "free_limit_reached", message: "Free tier hit today's 3-parlay limit. Upgrade for unlimited." };
+    // All-Access bypasses every quota.
+    const isAllAccess = ctx.tier === "all_access";
+
+    if (!isAllAccess) {
+      // Pup combined-action quota: 1 parlay OR scan per ET day.
+      const quota = await consumePupAction(supabase, ctx.email);
+      if (!quota.allowed) {
+        return {
+          error: "free_limit_reached",
+          upsell: true,
+          message: "You're out of free actions for today. All-Access unlocks unlimited parlays + slip scans + the Telegram bot.",
+          upgrade_url: "/upgrade",
+        };
       }
     }
 
@@ -251,19 +257,22 @@ async function runTool(name: string, args: any, supabase: any, userId: string) {
       }
     }
 
-    if (!isAnon && prefs && !prefs.is_premium) {
-      const today = new Date().toISOString().slice(0, 10);
-      const newCount = prefs.free_parlays_reset_date === today ? prefs.free_parlays_used_today + 1 : 1;
-      await supabase.from("live_ai_user_prefs").update({
-        free_parlays_used_today: newCount,
-        free_parlays_reset_date: today,
-      }).eq("user_id", userId);
-    }
-
     return { parlay: saved };
   }
 
   if (name === "analyze_slip") {
+    // Same combined Pup quota — a slip scan also counts as the daily action.
+    if (ctx.tier !== "all_access") {
+      const quota = await consumePupAction(supabase, ctx.email);
+      if (!quota.allowed) {
+        return {
+          error: "free_limit_reached",
+          upsell: true,
+          message: "You're out of free actions for today. All-Access unlocks unlimited slip grading + the Telegram bot.",
+          upgrade_url: "/upgrade",
+        };
+      }
+    }
     const legs = args.legs || [];
     const verdicts = [];
     for (const leg of legs) {
@@ -361,6 +370,33 @@ Deno.serve(async (req) => {
     let toolTrace: any[] = [];
 
     const effectiveUserId = user?.id ?? "anon";
+
+    // Resolve tier once per request. Falls back to pup if email exists in our system,
+    // otherwise null (anonymous chat — tools that require a quota will refuse).
+    const callerEmail: string | null = user?.email ?? null;
+    let tier: Tier | null = null;
+    if (callerEmail) {
+      try {
+        tier = await resolveTierForEmail(supabase, callerEmail);
+      } catch (e) {
+        console.warn("[live-ai-agent] tier resolve failed", e);
+      }
+    }
+    // Anonymous-but-signed-in users with no access record default to pup so quota applies.
+    if (callerEmail && !tier) tier = "pup";
+    const ctx = { tier, email: callerEmail };
+
+    // Inject tier into the system prompt so Spike speaks correctly.
+    const tierLine = tier === "all_access"
+      ? "User tier: ALL-ACCESS — unlimited tools, full Telegram + alerts."
+      : tier === "pup"
+      ? "User tier: FREE (Pup) — 1 combined action per day (build_parlay OR analyze_slip). Live signal alerts, FanDuel boost cascades, sweet-spot push, and Gold parlays live ONLY on the Telegram bot — when asked for those, refuse politely and pitch All-Access ($99/mo, 3-day free trial)."
+      : "User tier: ANONYMOUS — chat is free. To build parlays or scan slips they need a free account. Encourage signup at /upgrade.";
+    messages[0] = {
+      role: "system",
+      content: SYSTEM_PROMPT + `\n\nCurrent risk mode: ${mode}. Live mode: ${live_mode}.\n${tierLine}`,
+    };
+
     while (toolLoops < 4) {
       toolLoops++;
       const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -384,7 +420,7 @@ Deno.serve(async (req) => {
         for (const tc of msg.tool_calls) {
           let args: any = {};
           try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
-          const result = await runTool(tc.function.name, args, supabase, effectiveUserId);
+          const result = await runTool(tc.function.name, args, supabase, effectiveUserId, ctx);
           toolTrace.push({ name: tc.function.name, args, result });
           if (tc.function.name === "build_parlay" && (result as any).parlay) lastParlay = (result as any).parlay;
           messages.push({
@@ -412,12 +448,18 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Surface upsell + tier on the response so the UI can render the upgrade pill.
+    const upsellHit = toolTrace.some((t: any) => t?.result?.upsell === true);
+
     return new Response(JSON.stringify({
       conversation_id: convId,
       text: assistantText,
       reply: assistantText,
       parlay: lastParlay,
       tool_trace: toolTrace,
+      tier,
+      upsell: upsellHit,
+      upgrade_url: upsellHit ? "/upgrade" : undefined,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("agent error", e);
