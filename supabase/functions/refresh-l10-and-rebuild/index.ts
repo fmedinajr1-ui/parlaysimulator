@@ -656,9 +656,7 @@ Deno.serve(async (req) => {
 
         const uploadedCount = await getUploadedPipelinePickCount(supabase, targetDate);
         if ((uploadedCount || 0) === 0) {
-          await sendPipelineAlert(
-            `⚠️ *Zero Output Warning*\n\nUploaded pipeline generation completed but produced *0 uploaded-pipeline picks* for ${targetDate}.\n\nCheck: multi-book coverage in unified_props, historical prop_candidates, and manual override alignment.`,
-          );
+          log(`⚠ Zero uploaded-pipeline picks for ${targetDate} (telegram alert suppressed)`);
         } else {
           results["uploaded-pipeline-generator"] = `ok:${uploadedCount}`;
         }
@@ -692,9 +690,7 @@ Deno.serve(async (req) => {
         const todayP = todayET();
         const parlayCount = await getParlayCount(supabase, todayP);
         if ((parlayCount || 0) === 0) {
-          sendPipelineAlert(
-            `⚠️ *Zero Output Warning*\n\nParlay generation completed but produced *0 parlays* for ${todayP}.\n\nCheck: odds freshness, FanDuel line availability, injury gates.`
-          );
+          log(`⚠ Zero parlays for ${todayP} (telegram alert suppressed)`);
         }
       },
     },
@@ -740,9 +736,7 @@ Deno.serve(async (req) => {
           .eq("parlay_date", todayL)
           .eq("tier", "lottery");
         if ((lotteryCount || 0) === 0) {
-          sendPipelineAlert(
-            `⚠️ *Zero Output Warning*\n\nLottery scanner completed but produced *0 lottery tickets* for ${todayL}.\n\nCheck: mega-parlay scanner, FanDuel lines, minimum leg requirements.`
-          );
+          log(`⚠ Zero lottery tickets for ${todayL} (telegram alert suppressed)`);
         }
       },
     },
@@ -818,9 +812,7 @@ Deno.serve(async (req) => {
 
         const straightCount = await getStraightCount(supabase, todayS);
         if ((straightCount || 0) === 0) {
-          sendPipelineAlert(
-            `⚠️ *Zero Output Warning*\n\nStraight bet generation completed but produced *0 straight bets* for ${todayS}.\n\nCheck: FanDuel line matching, unified_props freshness.`,
-          );
+          log(`⚠ Zero straight bets for ${todayS} (telegram alert suppressed)`);
         }
       },
     },
