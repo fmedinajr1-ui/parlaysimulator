@@ -204,16 +204,25 @@ export type Verdict =
   | "QUARANTINE";
 
 import { devigPair, modelProbOver, EDGE_HARD_CAP_PP } from "./court-edge-edge.ts";
+import { thresholdsFor, type TournamentTier } from "./court-edge-tournament-tier.ts";
+import { priorFor, type Tour as PriorTour2, type Sets as PriorSets2 } from "./court-edge-prior.ts";
 
 // Phase 1 placeholder thresholds in PROBABILITY POINTS. Phase 4 refines the
 // promotion rules (multi-book agreement, weather present, calibrated tier).
 const STRONG_PP = 0.04;
 const LEAN_PP = 0.02;
 
-export function verdictFromEdgePp(edgePp: number): Verdict {
+export function verdictFromEdgePp(edgePp: number, tier?: TournamentTier): Verdict {
   if (!Number.isFinite(edgePp)) return "PASS";
   const a = Math.abs(edgePp);
   if (a > EDGE_HARD_CAP_PP) return "QUARANTINE";
+  if (tier) {
+    const t = thresholdsFor(tier);
+    if (t.auto_quarantine) return "QUARANTINE";
+    if (a >= t.strong_pp) return edgePp > 0 ? "STRONG_OVER" : "STRONG_UNDER";
+    if (a >= t.lean_pp) return edgePp > 0 ? "LEAN_OVER" : "LEAN_UNDER";
+    return "PASS";
+  }
   if (a >= STRONG_PP) return edgePp > 0 ? "STRONG_OVER" : "STRONG_UNDER";
   if (a >= LEAN_PP) return edgePp > 0 ? "LEAN_OVER" : "LEAN_UNDER";
   return "PASS";
@@ -223,6 +232,12 @@ export interface EdgeOpts {
   over_price?: number | null;
   under_price?: number | null;
   sigma: number;
+  // Phase 3: optional context for tier-calibrated tiers and line-range gating.
+  tier?: TournamentTier;
+  tour?: "atp" | "wta" | "unknown";
+  sets_format?: SetsFormat;
+  surface?: Surface;
+  indoor?: boolean;
 }
 
 export interface EdgeResult {
@@ -252,9 +267,48 @@ export function edgeFor(
   const reference = market === "player_total_games" ? projection / 2 : projection;
   const sigma = market === "player_total_games" ? Math.max(opts.sigma / 2, 0.5) : opts.sigma;
 
+  // Phase 3 — line-range quarantine. Reject implausibly-priced lines BEFORE
+  // measuring edge so a broken book line doesn't masquerade as a model edge.
+  const sets: PriorSets2 = opts.sets_format === "bo5" ? "bo5" : "bo3";
+  const surf = (opts.indoor ? "indoor" : (opts.surface ?? "unknown")) as any;
+  const prior = priorFor((opts.tour ?? "unknown") as PriorTour2, sets, surf);
+  let outOfRange = false;
+  let outOfRangeReason: string | undefined;
+  if (Number.isFinite(line)) {
+    if (market === "match_total") {
+      if (Math.abs(line - prior.mu) > 2.5 * prior.sd) {
+        outOfRange = true;
+        outOfRangeReason = "line_outside_prior_band";
+      }
+    } else {
+      const lo = 6;
+      const hi = sets === "bo5" ? 24 : 16;
+      if (line < lo || line > hi) {
+        outOfRange = true;
+        outOfRangeReason = "line_out_of_range";
+      }
+    }
+  }
+
   const pOver = modelProbOver(reference, line, sigma);
   const pUnder = 1 - pOver;
   const fair = devigPair(opts.over_price, opts.under_price);
+
+  if (outOfRange) {
+    return {
+      reference,
+      edge: 0,
+      edge_pct: 0,
+      model_prob_over: pOver,
+      model_prob_under: pUnder,
+      vig_free_implied_over: fair?.p_over_fair ?? null,
+      vig_free_implied_under: fair?.p_under_fair ?? null,
+      edge_pp: 0,
+      edge_side: "none",
+      verdict: "QUARANTINE",
+      quarantine_reason: outOfRangeReason,
+    };
+  }
 
   // Without prices we can't compute an honest devigged edge → PASS, no fake edge.
   if (!fair) {
@@ -279,8 +333,10 @@ export function edgeFor(
   if (edgeOver >= edgeUnder) { edge_pp = edgeOver; edge_side = "over"; }
   else { edge_pp = -edgeUnder; edge_side = "under"; } // sign convention: + over, − under
 
-  const verdict = verdictFromEdgePp(edge_pp);
-  const quarantine_reason = verdict === "QUARANTINE" ? "edge_above_hard_cap" : undefined;
+  const verdict = verdictFromEdgePp(edge_pp, opts.tier);
+  const quarantine_reason = verdict === "QUARANTINE"
+    ? (Math.abs(edge_pp) > EDGE_HARD_CAP_PP ? "edge_above_hard_cap" : "tier_auto_quarantine")
+    : undefined;
 
   return {
     reference,
