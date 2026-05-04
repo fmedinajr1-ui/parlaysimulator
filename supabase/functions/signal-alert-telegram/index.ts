@@ -1,7 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { formatPlayerReasoningLines, verdictBadge, buildCounterRead, type PlayerReasoning, type GroupReasoning } from '../_shared/alert-explainer.ts';
+import { formatPlayerReasoningPlain } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
-import { buildCascadeSim, formatCascadeSimLines } from '../_shared/cascade-sim.ts';
+import { buildCascadeSim, formatCascadeSimLines, formatCascadeSimPlain } from '../_shared/cascade-sim.ts';
+import { spikeNarrate, type SpikeActionKind } from '../_shared/spike-narrator.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
