@@ -387,7 +387,8 @@ export default function LiveAI() {
         />
       </div>
 
-      {/* Top fade + risk pills */}
+      {/* Top fade + risk pills (hidden until Spike is awake to prevent overlap) */}
+      {woken && (
       <div className="relative z-10 pt-safe pt-3 px-3 flex justify-end gap-1 bg-gradient-to-b from-black/50 to-transparent pb-12">
         {RISK_MODES.map((r) => (
           <button
@@ -401,6 +402,7 @@ export default function LiveAI() {
           </button>
         ))}
       </div>
+      )}
 
       {/* Sample-mode banner */}
       {sampleMode && (
@@ -448,6 +450,11 @@ export default function LiveAI() {
               {m.parlay && (
                 <div className="mt-2">
                   <AIParlayCard parlay={m.parlay} />
+                </div>
+              )}
+              {m.shareLink && (
+                <div className="mt-2">
+                  <SpikeShareCard url={m.shareLink} variant="inline" />
                 </div>
               )}
             </div>
