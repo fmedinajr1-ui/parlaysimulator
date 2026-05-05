@@ -10,6 +10,7 @@ import { AIParlayCard } from "@/components/live-ai/AIParlayCard";
 import { SpikeShareCard } from "@/components/live-ai/SpikeShareCard";
 import { Seo } from "@/components/seo/Seo";
 import { toast } from "@/hooks/use-toast";
+import { preprocessForOCR } from "@/lib/image-preprocessing";
 
 type RiskMode = "aggressive" | "smart" | "safe" | "fade";
 
@@ -275,43 +276,101 @@ export default function LiveAI() {
   }, []);
 
   const handleSlipUpload = useCallback(
-    async (file: File) => {
-      if (!file) return;
+    async (files: File | File[]) => {
+      const fileList = Array.isArray(files) ? files : [files];
+      if (!fileList.length) return;
       try {
         setIsScanning(true);
-        // Convert to data URL
-        const dataUrl: string = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
+        // Preprocess each image: contrast + sharpen + auto-level so Gemini reads
+        // odds and small line text reliably from phone screenshots.
+        const dataUrls: string[] = await Promise.all(
+          fileList.slice(0, 6).map(
+            (file) =>
+              new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = async () => {
+                  const raw = reader.result as string;
+                  try {
+                    const img = new Image();
+                    img.onload = async () => {
+                      try {
+                        const enhanced = await preprocessForOCR(img, {
+                          contrast: 1.25,
+                          sharpen: true,
+                          autoLevel: true,
+                        });
+                        resolve(enhanced);
+                      } catch {
+                        resolve(raw);
+                      }
+                    };
+                    img.onerror = () => resolve(raw);
+                    img.src = raw;
+                  } catch {
+                    resolve(raw);
+                  }
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+              }),
+          ),
+        );
 
         // Show user-side bubble immediately
         const placeholderId = crypto.randomUUID();
+        const label =
+          fileList.length === 1
+            ? "📸 Uploaded a slate — read it Spike."
+            : `📸 Uploaded ${fileList.length} screenshots — read 'em all Spike.`;
         setMessages((m) => [
           ...m,
-          { id: placeholderId, role: "user", content: "📸 Uploaded a slip — score it Spike." },
+          { id: placeholderId, role: "user", content: label },
         ]);
 
         const { data, error } = await supabase.functions.invoke("live-ai-slip-scan", {
-          body: { image_data_url: dataUrl },
+          body: { image_data_urls: dataUrls },
         });
         if (error) throw error;
-        const legs: any[] = data?.legs ?? [];
-        if (!legs.length) {
-          toast({ title: "Couldn't read that slip", description: "Try a clearer screenshot.", variant: "destructive" });
+        const playerLegs: any[] = data?.player_legs ?? data?.legs ?? [];
+        const teamLegs: any[] = data?.team_legs ?? [];
+        const totalLegs = playerLegs.length + teamLegs.length;
+        if (totalLegs === 0) {
+          toast({
+            title: "Couldn't read that slate",
+            description: "Try a sharper, full-screen screenshot. Crop tight on the lines.",
+            variant: "destructive",
+          });
           return;
         }
-        const summary = legs
+        const fmtOdds = (o: any) =>
+          typeof o === "number" ? ` (${o > 0 ? "+" : ""}${o})` : "";
+        const playerSummary = playerLegs
           .map(
             (l, i) =>
-              `${i + 1}. ${l.player_name} ${l.side?.toUpperCase()} ${l.line} ${l.prop_type}${
-                l.american_odds ? ` (${l.american_odds > 0 ? "+" : ""}${l.american_odds})` : ""
-              }`,
+              `${i + 1}. ${l.player_name}${l.team ? ` (${l.team})` : ""} ${String(l.side ?? "").toUpperCase()} ${l.line} ${l.prop_type}${fmtOdds(l.american_odds)}`,
           )
           .join("\n");
-        const prompt = `Here's my slip${data?.sportsbook ? ` from ${data.sportsbook}` : ""}:\n${summary}\n\nGrade it leg-by-leg, flag traps, and tell me what to swap.`;
+        const teamSummary = teamLegs
+          .map((l, i) => {
+            if (l.market === "moneyline") return `${i + 1}. ${l.team} ML${fmtOdds(l.american_odds)}`;
+            if (l.market === "spread")
+              return `${i + 1}. ${l.team} ${l.line > 0 ? "+" : ""}${l.line}${fmtOdds(l.american_odds)}`;
+            if (l.market === "total")
+              return `${i + 1}. ${l.team} ${String(l.side ?? "").toUpperCase()} ${l.line}${fmtOdds(l.american_odds)}`;
+            return `${i + 1}. ${l.team}`;
+          })
+          .join("\n");
+        const sportLine = data?.sport ? ` (${data.sport})` : "";
+        const bookLine = data?.sportsbook ? ` from ${data.sportsbook}` : "";
+        const isFade = riskMode === "fade";
+        const ask = isFade
+          ? "Build me the WORST 3-leg fade parlay from this — I'll bet the opposite. Use real odds where shown."
+          : "Grade it leg-by-leg, flag traps, and tell me what to swap.";
+        const prompt = `Here's my slate${bookLine}${sportLine}:\n${
+          playerSummary ? `\nPlayer props:\n${playerSummary}` : ""
+        }${teamSummary ? `\n\nTeam lines:\n${teamSummary}` : ""}${
+          data?.notes ? `\n\nOCR notes: ${data.notes}` : ""
+        }\n\n${ask}`;
         await sendToAgent(prompt);
       } catch (e: any) {
         console.error("[LiveAI] slip scan error", e);
@@ -324,7 +383,7 @@ export default function LiveAI() {
         setIsScanning(false);
       }
     },
-    [sendToAgent],
+    [sendToAgent, riskMode],
   );
 
   // Wake Spike — first user gesture unlocks audio + plays the greeting.
@@ -455,10 +514,11 @@ export default function LiveAI() {
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleSlipUpload(f);
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) handleSlipUpload(files);
               e.target.value = "";
             }}
           />
