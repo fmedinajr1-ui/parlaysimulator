@@ -133,6 +133,10 @@ Deno.serve(async (req) => {
   const runName: string = body.run_name ?? `replay_${dateStart}_${dateEnd}`;
   const notifyAdmin: boolean = body.notify_admin !== false; // default true
   const thresholds: TierThresholds = { ...DEFAULT_THRESHOLDS, ...(body.thresholds ?? {}) };
+  const minOdds: number = body.min_odds ?? 1000;
+  const maxOdds: number = body.max_odds ?? 3000;
+  const debug: boolean = body.debug === true;
+  const debugRows: any[] = [];
 
   if (!dateStart || !dateEnd) {
     return new Response(JSON.stringify({ ok: false, error: "date_start and date_end required" }), {
@@ -295,7 +299,16 @@ Deno.serve(async (req) => {
         fav_ml: favML, total: total ?? null,
       };
 
-      const built = buildParlays(script, builderProps);
+      const built = buildParlays(script, builderProps, { minOdds, maxOdds });
+      if (debug) {
+        debugRows.push({
+          game: `${g.away}@${g.home}`, date: g.game_date, sport,
+          tier, score, absSpread, favML, gap,
+          builder_props: builderProps.length,
+          parlays_built: built.length,
+          parlay_odds: built.map(b => b.combined_odds_american),
+        });
+      }
 
       const sStat = stats[sport] ??= { games: 0, parlays: 0, won: 0, lost: 0, dnp: 0, profit: 0 };
       sStat.games++;
@@ -413,6 +426,8 @@ Deno.serve(async (req) => {
     parlays_written: parlaysWritten,
     per_sport_replay: stats,
     thresholds,
+    min_odds: minOdds, max_odds: maxOdds,
+    debug: debug ? debugRows.slice(0, 50) : undefined,
     report,
     telegram,
   }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
