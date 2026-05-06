@@ -178,15 +178,24 @@ Deno.serve(async (req) => {
     const ids = allGames.map(g => g.id);
     let propsByGame = new Map<string, HistProp[]>();
     if (ids.length) {
-      // chunk to stay under URL length
-      for (let i = 0; i < ids.length; i += 200) {
-        const chunk = ids.slice(i, i + 200);
-        const { data: pr, error: pErr } = await sb
-          .from("nuke_historical_props").select("*").in("game_id", chunk);
-        if (pErr) continue;
-        for (const p of (pr ?? []) as HistProp[]) {
-          if (!propsByGame.has(p.game_id)) propsByGame.set(p.game_id, []);
-          propsByGame.get(p.game_id)!.push(p);
+      // Chunk by game_id AND paginate (Supabase default cap = 1000 rows/query).
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        let from = 0;
+        const PAGE = 1000;
+        for (;;) {
+          const { data: pr, error: pErr } = await sb
+            .from("nuke_historical_props").select("*")
+            .in("game_id", chunk)
+            .range(from, from + PAGE - 1);
+          if (pErr) break;
+          const rows = (pr ?? []) as HistProp[];
+          for (const p of rows) {
+            if (!propsByGame.has(p.game_id)) propsByGame.set(p.game_id, []);
+            propsByGame.get(p.game_id)!.push(p);
+          }
+          if (rows.length < PAGE) break;
+          from += PAGE;
         }
       }
     }
