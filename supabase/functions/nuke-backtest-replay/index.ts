@@ -302,10 +302,14 @@ Deno.serve(async (req) => {
 
       const built = buildParlays(script, builderProps, { minOdds, maxOdds, relaxJuice });
       if (debug) {
+        const role17 = builderProps.filter(p => (p.prop_type==='player_points'||p.prop_type==='player_points_rebounds_assists') && p.current_line>=17.5 && p.current_line<=28.5 && p.over_price!=null && p.over_price>=-140).length;
+        const teamed = builderProps.filter(p => p.team).length;
         debugRows.push({
           game: `${g.away}@${g.home}`, date: g.game_date, sport,
           tier, score, absSpread, favML, gap,
           builder_props: builderProps.length,
+          role_eligible: role17,
+          props_with_team: teamed,
           parlays_built: built.length,
           parlay_odds: built.map(b => b.combined_odds_american),
         });
