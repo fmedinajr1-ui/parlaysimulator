@@ -10929,6 +10929,92 @@ export type Database = {
         }
         Relationships: []
       }
+      nuke_backtest_parlays: {
+        Row: {
+          combined_odds: number | null
+          created_at: string
+          game_ref: string | null
+          id: string
+          in_window: boolean
+          legs: Json
+          outcome: string
+          parlay_date: string
+          profit_units: number
+          run_id: string | null
+          sport: string
+          template: string
+          tier: string
+        }
+        Insert: {
+          combined_odds?: number | null
+          created_at?: string
+          game_ref?: string | null
+          id?: string
+          in_window?: boolean
+          legs: Json
+          outcome?: string
+          parlay_date: string
+          profit_units?: number
+          run_id?: string | null
+          sport: string
+          template: string
+          tier: string
+        }
+        Update: {
+          combined_odds?: number | null
+          created_at?: string
+          game_ref?: string | null
+          id?: string
+          in_window?: boolean
+          legs?: Json
+          outcome?: string
+          parlay_date?: string
+          profit_units?: number
+          run_id?: string | null
+          sport?: string
+          template?: string
+          tier?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nuke_backtest_parlays_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "nuke_backtest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      nuke_backtest_runs: {
+        Row: {
+          created_at: string
+          id: string
+          run_name: string
+          sports: string[]
+          summary: Json
+          window_end: string
+          window_start: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          run_name: string
+          sports: string[]
+          summary?: Json
+          window_end: string
+          window_start: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          run_name?: string
+          sports?: string[]
+          summary?: Json
+          window_end?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       nuke_game_scores: {
         Row: {
           away_ml: number | null
@@ -11003,6 +11089,113 @@ export type Database = {
           total?: number | null
         }
         Relationships: []
+      }
+      nuke_historical_games: {
+        Row: {
+          actual_away_score: number | null
+          actual_home_score: number | null
+          away: string
+          closing_snapshot_ts: string | null
+          created_at: string
+          external_id: string | null
+          game_date: string
+          home: string
+          id: string
+          ml_away: number | null
+          ml_home: number | null
+          settled: boolean
+          sport: string
+          spread: number | null
+          total: number | null
+        }
+        Insert: {
+          actual_away_score?: number | null
+          actual_home_score?: number | null
+          away: string
+          closing_snapshot_ts?: string | null
+          created_at?: string
+          external_id?: string | null
+          game_date: string
+          home: string
+          id?: string
+          ml_away?: number | null
+          ml_home?: number | null
+          settled?: boolean
+          sport: string
+          spread?: number | null
+          total?: number | null
+        }
+        Update: {
+          actual_away_score?: number | null
+          actual_home_score?: number | null
+          away?: string
+          closing_snapshot_ts?: string | null
+          created_at?: string
+          external_id?: string | null
+          game_date?: string
+          home?: string
+          id?: string
+          ml_away?: number | null
+          ml_home?: number | null
+          settled?: boolean
+          sport?: string
+          spread?: number | null
+          total?: number | null
+        }
+        Relationships: []
+      }
+      nuke_historical_props: {
+        Row: {
+          actual_value: number | null
+          book: string
+          created_at: string
+          game_id: string
+          id: string
+          line: number
+          player: string
+          price: number
+          prop_type: string
+          result: string | null
+          side: string
+          snapshot_ts: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          book?: string
+          created_at?: string
+          game_id: string
+          id?: string
+          line: number
+          player: string
+          price: number
+          prop_type: string
+          result?: string | null
+          side: string
+          snapshot_ts?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          book?: string
+          created_at?: string
+          game_id?: string
+          id?: string
+          line?: number
+          player?: string
+          price?: number
+          prop_type?: string
+          result?: string | null
+          side?: string
+          snapshot_ts?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nuke_historical_props_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "nuke_historical_games"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       nuke_parlays: {
         Row: {
