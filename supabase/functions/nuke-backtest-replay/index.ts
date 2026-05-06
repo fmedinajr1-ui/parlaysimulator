@@ -135,6 +135,7 @@ Deno.serve(async (req) => {
   const thresholds: TierThresholds = { ...DEFAULT_THRESHOLDS, ...(body.thresholds ?? {}) };
   const minOdds: number = body.min_odds ?? 1000;
   const maxOdds: number = body.max_odds ?? 3000;
+  const relaxJuice: boolean = body.relax_juice !== false; // default true for backtest
   const debug: boolean = body.debug === true;
   const debugRows: any[] = [];
 
@@ -299,7 +300,7 @@ Deno.serve(async (req) => {
         fav_ml: favML, total: total ?? null,
       };
 
-      const built = buildParlays(script, builderProps, { minOdds, maxOdds });
+      const built = buildParlays(script, builderProps, { minOdds, maxOdds, relaxJuice });
       if (debug) {
         debugRows.push({
           game: `${g.away}@${g.home}`, date: g.game_date, sport,
