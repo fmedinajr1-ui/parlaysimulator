@@ -248,7 +248,7 @@ Deno.serve(async (req) => {
 
   // Trigger builder for qualifying games.
   let buildResp: any = null;
-  if (triggerGames.length > 0) {
+  if (triggerGames.length > 0 && !dryRun) {
     try {
       const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/nuke-build-parlays`, {
         method: "POST",
