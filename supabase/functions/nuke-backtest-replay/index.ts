@@ -21,6 +21,47 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function notifyTelegram(text: string): Promise<{ ok: boolean; error?: string }> {
+  const token = Deno.env.get("TELEGRAM_BOT_TOKEN");
+  const chatId = Deno.env.get("TELEGRAM_CHAT_ID");
+  if (!token || !chatId) return { ok: false, error: "telegram secrets missing" };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    if (!r.ok) return { ok: false, error: `tg ${r.status}: ${await r.text()}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+function fmtBacktestReport(runName: string, dateStart: string, dateEnd: string, report: any, stats: Record<string, any>): string {
+  const lines: string[] = [];
+  lines.push(`<b>🧪 Backtest: ${runName}</b>`);
+  lines.push(`<i>${dateStart} → ${dateEnd}</i>`);
+  lines.push(`Total parlays: <b>${report.total_parlays}</b>`);
+  lines.push(`Max drawdown: <b>${report.max_drawdown_units}u</b>  •  Longest losing streak: <b>${report.longest_losing_streak}</b>`);
+  const overall = report.groups?.overall;
+  if (overall) {
+    lines.push(`\n<b>Overall</b>: ${overall.won}-${overall.lost} (DNP ${overall.dnp})  •  Hit ${overall.hit_rate ?? "—"}  •  ROI <b>${overall.roi_pct ?? "—"}%</b>`);
+  }
+  lines.push(`\n<b>By sport / tier</b>`);
+  for (const [k, g] of Object.entries(report.groups ?? {}) as [string, any][]) {
+    if (!k.startsWith("sport_tier:")) continue;
+    const verdict = g.roi_pct == null ? "—" : g.roi_pct >= 0 ? "✅" : g.roi_pct >= -10 ? "⚠️" : "❌";
+    lines.push(`${verdict} <code>${k.replace("sport_tier:", "")}</code>: n=${g.n}, ${g.won}-${g.lost}, hit ${g.hit_rate ?? "—"}, ROI ${g.roi_pct ?? "—"}%`);
+  }
+  lines.push(`\n<b>Per-sport replay</b>`);
+  for (const [sport, s] of Object.entries(stats)) {
+    const ss = s as any;
+    lines.push(`• ${sport}: games ${ss.games}, parlays ${ss.parlays}, profit ${ss.profit.toFixed(2)}u`);
+  }
+  return lines.join("\n");
+}
+
 // ── Inline copy of the scoring rubric from nuke-score-games (we don't import
 // because that file ships an HTTP handler, not a pure scorer).
 function spreadPts(s: number) { return s>=14?40:s>=10?35:s>=7.5?25:s>=5?10:0; }
@@ -81,6 +122,7 @@ Deno.serve(async (req) => {
   const dateEnd: string = body.date_end;
   const sports: SportKey[] = (body.sports ?? ["nba","mlb","soccer","tennis"]) as SportKey[];
   const runName: string = body.run_name ?? `replay_${dateStart}_${dateEnd}`;
+  const notifyAdmin: boolean = body.notify_admin !== false; // default true
 
   if (!dateStart || !dateEnd) {
     return new Response(JSON.stringify({ ok: false, error: "date_start and date_end required" }), {
@@ -349,6 +391,11 @@ Deno.serve(async (req) => {
     await sb.from("nuke_backtest_runs").update({ summary: report }).eq("id", runId);
   }
 
+  let telegram: { ok: boolean; error?: string } | null = null;
+  if (notifyAdmin && report) {
+    telegram = await notifyTelegram(fmtBacktestReport(runName, dateStart, dateEnd, report, stats));
+  }
+
   return new Response(JSON.stringify({
     ok: true,
     run_id: runId,
@@ -356,5 +403,6 @@ Deno.serve(async (req) => {
     parlays_written: parlaysWritten,
     per_sport_replay: stats,
     report,
+    telegram,
   }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
