@@ -63,6 +63,10 @@ export interface BuilderOptions {
   injuries?: Set<string>;
   minOdds?: number;
   maxOdds?: number;
+  // Backtest knobs: when true, drop the tight-juice gate inside templates so
+  // historical slates (which often lack the live -110/-105 juice signature)
+  // can still produce parlay candidates.
+  relaxJuice?: boolean;
 }
 
 // ─── Odds math ──────────────────────────────────────────────────────────────
@@ -226,7 +230,7 @@ function tplRolePlayerOverCarnage(props: PropForBuilder[], script: ScriptForBuil
   const candidates = props
     .filter((p) => p.prop_type === "player_points_rebounds_assists" || p.prop_type === "player_points")
     .filter((p) => Number(p.current_line) >= 17.5 && Number(p.current_line) <= 28.5)
-    .filter((p) => p.over_price != null && Number(p.over_price) >= -140 && Number(p.over_price) <= -100)
+    .filter((p) => __relaxJuice ? juiceOk(p.over_price) : (p.over_price != null && Number(p.over_price) >= -140 && Number(p.over_price) <= -100))
     .sort((a, b) => Number(a.over_price) - Number(b.over_price)); // most-juiced first
 
   const favSide = candidates.filter((p) => (p.team ?? "").toLowerCase() === fav.toLowerCase());
@@ -268,14 +272,14 @@ function tplMixedChaos(props: PropForBuilder[], script: ScriptForBuilder): Parla
 
   // 1. fav star UNDER
   for (const p of favTop) {
-    if (!tightJuice(p.under_price)) continue;
+    if (!tj(p.under_price)) continue;
     const l = makeLeg(p, "under");
     if (!l) continue;
     legs.push(l); used.add(normalizeName(p.player_name)); break;
   }
   // 2. dog star OVER
   for (const p of dogTop) {
-    if (!tightJuice(p.over_price)) continue;
+    if (!tj(p.over_price)) continue;
     const l = makeLeg(p, "over");
     if (!l || used.has(normalizeName(p.player_name))) continue;
     legs.push(l); used.add(normalizeName(p.player_name)); break;
@@ -283,7 +287,7 @@ function tplMixedChaos(props: PropForBuilder[], script: ScriptForBuilder): Parla
   // 3. dog star #2 UNDER
   for (const p of dogTop) {
     if (used.has(normalizeName(p.player_name))) continue;
-    if (!tightJuice(p.under_price)) continue;
+    if (!tj(p.under_price)) continue;
     const l = makeLeg(p, "under");
     if (!l) continue;
     legs.push(l); used.add(normalizeName(p.player_name)); break;
@@ -292,7 +296,7 @@ function tplMixedChaos(props: PropForBuilder[], script: ScriptForBuilder): Parla
   for (const p of favTop) {
     if (used.has(normalizeName(p.player_name))) continue;
     if (Number(p.current_line) < 17.5 || Number(p.current_line) > 28.5) continue;
-    if (!tightJuice(p.over_price)) continue;
+    if (!tj(p.over_price)) continue;
     const l = makeLeg(p, "over");
     if (!l) continue;
     legs.push(l); used.add(normalizeName(p.player_name)); break;
@@ -301,7 +305,7 @@ function tplMixedChaos(props: PropForBuilder[], script: ScriptForBuilder): Parla
   for (const p of dogTop) {
     if (used.has(normalizeName(p.player_name))) continue;
     if (Number(p.current_line) < 17.5 || Number(p.current_line) > 28.5) continue;
-    if (!tightJuice(p.over_price)) continue;
+    if (!tj(p.over_price)) continue;
     const l = makeLeg(p, "over");
     if (!l) continue;
     legs.push(l); used.add(normalizeName(p.player_name)); break;
@@ -478,6 +482,12 @@ const TEMPLATE_FNS: Record<string, (props: PropForBuilder[], script: ScriptForBu
   total_games_under:        tplTotalGamesUnder,
 };
 
+let __relaxJuice = false;
+function tj(price: number | null | undefined): boolean {
+  if (__relaxJuice) return juiceOk(price);
+  return tightJuice(price);
+}
+
 export function buildParlays(
   script: ScriptForBuilder,
   rawProps: PropForBuilder[],
@@ -485,6 +495,7 @@ export function buildParlays(
 ): BuiltParlay[] {
   const minOdds = options.minOdds ?? 1000;
   const maxOdds = options.maxOdds ?? 3000;
+  __relaxJuice = options.relaxJuice === true;
   const props = dropInjured(rawProps, options.injuries);
   if (!props.length) return [];
 
