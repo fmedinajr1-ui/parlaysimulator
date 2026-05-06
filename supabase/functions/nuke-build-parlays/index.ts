@@ -95,8 +95,34 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const gameDate: string = body.game_date || easternDate();
   const dryRun: boolean = body.dryRun === true || body.dry_run === true;
+  const forceLive: boolean = body.force_live === true;
   const errors: unknown[] = [];
   const lookupsFailedBySport: Record<string, number> = {};
+
+  // ── Backtest evidence gate ────────────────────────────────────────────────
+  // Live posting requires a recent backtest run with >=100 STRONG parlays
+  // per sport at ROI >= -10%. Override with `force_live: true`.
+  let cleared: Set<string> = new Set();
+  if (!dryRun && !forceLive) {
+    try {
+      const { data: recent } = await supabase
+        .from("nuke_backtest_runs")
+        .select("summary, sports, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      for (const r of (recent ?? []) as any[]) {
+        const groups = r?.summary?.groups ?? {};
+        for (const sport of (r.sports ?? [])) {
+          const g = groups[`sport_tier:${sport}/strong`];
+          if (!g) continue;
+          const settled = (g.won ?? 0) + (g.lost ?? 0);
+          if (settled >= 100 && (g.roi_pct ?? -999) >= -10) cleared.add(sport);
+        }
+      }
+    } catch (e) {
+      errors.push({ stage: "backtest_gate", message: String(e) });
+    }
+  }
 
   // Pull qualifying games for the date
   let games: any[] = [];
