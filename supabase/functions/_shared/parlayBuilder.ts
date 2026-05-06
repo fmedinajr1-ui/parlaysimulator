@@ -63,6 +63,10 @@ export interface BuilderOptions {
   injuries?: Set<string>;
   minOdds?: number;
   maxOdds?: number;
+  // Backtest knobs: when true, drop the tight-juice gate inside templates so
+  // historical slates (which often lack the live -110/-105 juice signature)
+  // can still produce parlay candidates.
+  relaxJuice?: boolean;
 }
 
 // ─── Odds math ──────────────────────────────────────────────────────────────
@@ -478,6 +482,12 @@ const TEMPLATE_FNS: Record<string, (props: PropForBuilder[], script: ScriptForBu
   total_games_under:        tplTotalGamesUnder,
 };
 
+let __relaxJuice = false;
+function tj(price: number | null | undefined): boolean {
+  if (__relaxJuice) return juiceOk(price);
+  return tightJuice(price);
+}
+
 export function buildParlays(
   script: ScriptForBuilder,
   rawProps: PropForBuilder[],
@@ -485,6 +495,7 @@ export function buildParlays(
 ): BuiltParlay[] {
   const minOdds = options.minOdds ?? 1000;
   const maxOdds = options.maxOdds ?? 3000;
+  __relaxJuice = options.relaxJuice === true;
   const props = dropInjured(rawProps, options.injuries);
   if (!props.length) return [];
 
