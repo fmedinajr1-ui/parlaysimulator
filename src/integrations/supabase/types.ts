@@ -11015,6 +11015,7 @@ export type Database = {
           legs: Json
           posted_to_telegram: boolean
           script_tier: string
+          sport: string
           telegram_message_id: number | null
           template: string
         }
@@ -11028,6 +11029,7 @@ export type Database = {
           legs?: Json
           posted_to_telegram?: boolean
           script_tier: string
+          sport?: string
           telegram_message_id?: number | null
           template: string
         }
@@ -11041,6 +11043,7 @@ export type Database = {
           legs?: Json
           posted_to_telegram?: boolean
           script_tier?: string
+          sport?: string
           telegram_message_id?: number | null
           template?: string
         }
