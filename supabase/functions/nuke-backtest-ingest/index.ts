@@ -25,6 +25,23 @@ const SPORT_KEY_MAP: Record<string, { apiKey: string; sport: "nba" | "mlb" | "so
 const ODDS_BASE = "https://api.the-odds-api.com/v4";
 const BOOK = "fanduel";
 
+async function notifyTelegram(text: string): Promise<{ ok: boolean; error?: string }> {
+  const token = Deno.env.get("TELEGRAM_BOT_TOKEN");
+  const chatId = Deno.env.get("TELEGRAM_CHAT_ID");
+  if (!token || !chatId) return { ok: false, error: "telegram secrets missing" };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    if (!r.ok) return { ok: false, error: `tg ${r.status}: ${await r.text()}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 function isoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -59,6 +76,7 @@ Deno.serve(async (req) => {
     : ["nba", "mlb", "soccer_epl", "tennis_atp"];
   const settleOnly: boolean = body.settle_only === true;
   const maxCredits: number = Number(body.max_credits ?? 1500);
+  const notifyAdmin: boolean = body.notify_admin !== false;
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -192,6 +210,18 @@ Deno.serve(async (req) => {
     }
 
     summary[key] = { ...stat, credits_spent_so_far: creditsSpent };
+  }
+
+  if (notifyAdmin) {
+    const lines: string[] = [];
+    lines.push(`<b>📥 Backtest Ingest Complete</b>`);
+    lines.push(`days_back=${daysBack}  •  credits ~${creditsSpent}${initialRemaining ? ` / remaining ${initialRemaining}` : ""}`);
+    for (const [k, s] of Object.entries(summary)) {
+      const ss = s as any;
+      if (ss.error) { lines.push(`❌ <code>${k}</code>: ${ss.error}`); continue; }
+      lines.push(`• <code>${k}</code>: games ${ss.games_inserted ?? 0}, props ${ss.props_inserted ?? 0}${ss.errors?.length ? `, errs ${ss.errors.length}` : ""}`);
+    }
+    await notifyTelegram(lines.join("\n"));
   }
 
   return new Response(JSON.stringify({
