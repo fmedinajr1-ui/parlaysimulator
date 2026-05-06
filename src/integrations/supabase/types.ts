@@ -10929,6 +10929,224 @@ export type Database = {
         }
         Relationships: []
       }
+      nuke_game_scores: {
+        Row: {
+          away_ml: number | null
+          away_spread: number | null
+          away_team: string
+          commence_time: string
+          computed_at: string
+          dog_team: string | null
+          favorite_team: string | null
+          game_date: string
+          game_id: string
+          gap_pts: number
+          home_ml: number | null
+          home_spread: number | null
+          home_team: string
+          id: string
+          juice_pts: number
+          juice_signal_count: number
+          ml_pts: number
+          script_score: number
+          script_tier: string
+          sport: string
+          spread_pts: number
+          total: number | null
+        }
+        Insert: {
+          away_ml?: number | null
+          away_spread?: number | null
+          away_team: string
+          commence_time: string
+          computed_at?: string
+          dog_team?: string | null
+          favorite_team?: string | null
+          game_date: string
+          game_id: string
+          gap_pts?: number
+          home_ml?: number | null
+          home_spread?: number | null
+          home_team: string
+          id?: string
+          juice_pts?: number
+          juice_signal_count?: number
+          ml_pts?: number
+          script_score?: number
+          script_tier?: string
+          sport?: string
+          spread_pts?: number
+          total?: number | null
+        }
+        Update: {
+          away_ml?: number | null
+          away_spread?: number | null
+          away_team?: string
+          commence_time?: string
+          computed_at?: string
+          dog_team?: string | null
+          favorite_team?: string | null
+          game_date?: string
+          game_id?: string
+          gap_pts?: number
+          home_ml?: number | null
+          home_spread?: number | null
+          home_team?: string
+          id?: string
+          juice_pts?: number
+          juice_signal_count?: number
+          ml_pts?: number
+          script_score?: number
+          script_tier?: string
+          sport?: string
+          spread_pts?: number
+          total?: number | null
+        }
+        Relationships: []
+      }
+      nuke_parlays: {
+        Row: {
+          combined_odds_american: number
+          combined_odds_decimal: number
+          created_at: string
+          game_date: string
+          game_id: string
+          id: string
+          legs: Json
+          posted_to_telegram: boolean
+          script_tier: string
+          telegram_message_id: number | null
+          template: string
+        }
+        Insert: {
+          combined_odds_american: number
+          combined_odds_decimal: number
+          created_at?: string
+          game_date: string
+          game_id: string
+          id?: string
+          legs?: Json
+          posted_to_telegram?: boolean
+          script_tier: string
+          telegram_message_id?: number | null
+          template: string
+        }
+        Update: {
+          combined_odds_american?: number
+          combined_odds_decimal?: number
+          created_at?: string
+          game_date?: string
+          game_id?: string
+          id?: string
+          legs?: Json
+          posted_to_telegram?: boolean
+          script_tier?: string
+          telegram_message_id?: number | null
+          template?: string
+        }
+        Relationships: []
+      }
+      nuke_results: {
+        Row: {
+          created_at: string
+          final_score_away: number | null
+          final_score_home: number | null
+          graded_at: string | null
+          id: string
+          legs_hit: number
+          legs_total: number
+          margin: number | null
+          notes: string | null
+          outcome: string
+          parlay_id: string
+          was_blowout: boolean | null
+        }
+        Insert: {
+          created_at?: string
+          final_score_away?: number | null
+          final_score_home?: number | null
+          graded_at?: string | null
+          id?: string
+          legs_hit?: number
+          legs_total?: number
+          margin?: number | null
+          notes?: string | null
+          outcome?: string
+          parlay_id: string
+          was_blowout?: boolean | null
+        }
+        Update: {
+          created_at?: string
+          final_score_away?: number | null
+          final_score_home?: number | null
+          graded_at?: string | null
+          id?: string
+          legs_hit?: number
+          legs_total?: number
+          margin?: number | null
+          notes?: string | null
+          outcome?: string
+          parlay_id?: string
+          was_blowout?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nuke_results_parlay_id_fkey"
+            columns: ["parlay_id"]
+            isOneToOne: true
+            referencedRelation: "nuke_parlays"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      nuke_run_log: {
+        Row: {
+          errors: Json
+          game_date: string
+          games_scanned: number
+          id: string
+          medium_count: number
+          notes: string | null
+          parlays_built: number
+          parlays_graded: number
+          parlays_posted: number
+          phase: string
+          run_at: string
+          strong_count: number
+          weak_count: number
+        }
+        Insert: {
+          errors?: Json
+          game_date: string
+          games_scanned?: number
+          id?: string
+          medium_count?: number
+          notes?: string | null
+          parlays_built?: number
+          parlays_graded?: number
+          parlays_posted?: number
+          phase: string
+          run_at?: string
+          strong_count?: number
+          weak_count?: number
+        }
+        Update: {
+          errors?: Json
+          game_date?: string
+          games_scanned?: number
+          id?: string
+          medium_count?: number
+          notes?: string | null
+          parlays_built?: number
+          parlays_graded?: number
+          parlays_posted?: number
+          phase?: string
+          run_at?: string
+          strong_count?: number
+          weak_count?: number
+        }
+        Relationships: []
+      }
       ocr_scan_sessions: {
         Row: {
           book: string
