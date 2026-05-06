@@ -11015,6 +11015,7 @@ export type Database = {
           legs: Json
           posted_to_telegram: boolean
           script_tier: string
+          sport: string
           telegram_message_id: number | null
           template: string
         }
@@ -11028,6 +11029,7 @@ export type Database = {
           legs?: Json
           posted_to_telegram?: boolean
           script_tier: string
+          sport?: string
           telegram_message_id?: number | null
           template: string
         }
@@ -11041,6 +11043,7 @@ export type Database = {
           legs?: Json
           posted_to_telegram?: boolean
           script_tier?: string
+          sport?: string
           telegram_message_id?: number | null
           template?: string
         }
@@ -13444,6 +13447,36 @@ export type Database = {
           today_line?: number | null
           yesterday_actual?: number | null
           yesterday_line?: number | null
+        }
+        Relationships: []
+      }
+      rosters: {
+        Row: {
+          id: string
+          last_synced_at: string
+          player_name: string
+          player_name_normalized: string
+          position: string | null
+          sport: string
+          team: string
+        }
+        Insert: {
+          id?: string
+          last_synced_at?: string
+          player_name: string
+          player_name_normalized: string
+          position?: string | null
+          sport: string
+          team: string
+        }
+        Update: {
+          id?: string
+          last_synced_at?: string
+          player_name?: string
+          player_name_normalized?: string
+          position?: string | null
+          sport?: string
+          team?: string
         }
         Relationships: []
       }
