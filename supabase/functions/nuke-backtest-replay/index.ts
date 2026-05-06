@@ -68,10 +68,19 @@ function spreadPts(s: number) { return s>=14?40:s>=10?35:s>=7.5?25:s>=5?10:0; }
 function mlPts(m: number) { const v=Math.abs(m); if(m>=-150)return 0; return v>=700?30:v>=400?25:v>=250?20:v>=150?10:0; }
 function gapPts(g: number) { return g>=15?20:g>=12?15:g>=8?10:g>=5?5:0; }
 function juicePts(c: number) { return c>=4?10:c>=2?5:0; }
-function tierFor(score: number, abs: number, fav: number, gap: number): ScriptTier {
-  if (score>=80 && abs>=10 && fav<=-400 && gap>=12) return "strong";
-  if (score>=60) return "medium";
-  if (score>=40) return "weak";
+interface TierThresholds {
+  strong_score: number; strong_spread: number; strong_fav_ml: number; strong_gap: number;
+  medium_score: number; weak_score: number;
+}
+const DEFAULT_THRESHOLDS: TierThresholds = {
+  // Loosened defaults — old values were 80/10/-400/12 (too strict, only 2 STRONG / 30 days NBA)
+  strong_score: 70, strong_spread: 8, strong_fav_ml: -275, strong_gap: 8,
+  medium_score: 50, weak_score: 35,
+};
+function tierForT(score: number, abs: number, fav: number, gap: number, t: TierThresholds): ScriptTier {
+  if (score>=t.strong_score && abs>=t.strong_spread && fav<=t.strong_fav_ml && gap>=t.strong_gap) return "strong";
+  if (score>=t.medium_score) return "medium";
+  if (score>=t.weak_score) return "weak";
   return "skip";
 }
 
@@ -123,6 +132,7 @@ Deno.serve(async (req) => {
   const sports: SportKey[] = (body.sports ?? ["nba","mlb","soccer","tennis"]) as SportKey[];
   const runName: string = body.run_name ?? `replay_${dateStart}_${dateEnd}`;
   const notifyAdmin: boolean = body.notify_admin !== false; // default true
+  const thresholds: TierThresholds = { ...DEFAULT_THRESHOLDS, ...(body.thresholds ?? {}) };
 
   if (!dateStart || !dateEnd) {
     return new Response(JSON.stringify({ ok: false, error: "date_start and date_end required" }), {
@@ -234,7 +244,7 @@ Deno.serve(async (req) => {
       }
 
       const score = spreadPts(absSpread) + mlPts(favML) + gapPts(gap) + juicePts(juiceCount);
-      const tier = tierFor(score, absSpread, favML, gap);
+      const tier = tierForT(score, absSpread, favML, gap, thresholds);
       if (tier !== "strong" && tier !== "medium") continue;
 
       // Pivot props: combine over/under rows into one PropForBuilder per (player,prop_type,line)
@@ -402,6 +412,7 @@ Deno.serve(async (req) => {
     run_name: runName,
     parlays_written: parlaysWritten,
     per_sport_replay: stats,
+    thresholds,
     report,
     telegram,
   }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
