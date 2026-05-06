@@ -1,145 +1,66 @@
-# Nuke Parlay Scout — Phase 2: Rosters + Real Builder + 4-Sport Rollout
+# Nuke Scout — Historical Backtest (60–90 days)
 
-Active sports for posting this phase: **NBA (Finals), MLB, Soccer, Tennis.** Phase 1 NBA-only scorer/builder stays as the base; Phase 2 adds the missing roster lookup, swaps the placeholder builder for the full template engine, and turns on the other three sports.
+Goal: prove the script-scoring + parlay-builder system has real edge **before** flipping on live auto-post. Pull historical games + closing prop lines, replay them through the exact same `scoreGame()` and `buildParlays()` code that runs live, grade against actual results, and report hit rate / ROI / drawdown by tier and template.
 
-Tennis is the odd one out — it has no "favorite team blowout" script. We adapt it to a tennis-native pattern (heavy ML favorite vs. dog → games-handicap + total-games + service-hold templates) rather than forcing the team-sport templates onto it. Spec'd below.
+## What we'll build
 
-## Sanity check first (read-only)
+1. **Historical odds ingest** — `nuke-backtest-ingest` edge function
+   - Pulls from The Odds API `/historical/sports/{sport}/events` and `/historical/sports/{sport}/events/{id}/odds` for NBA, MLB, soccer (EPL/UCL/MLS), tennis (ATP/WTA)
+   - Window: last 90 days, configurable via `{ days_back, sports }`
+   - Snapshot timestamp = **closing line** (1 hour before tip-off) — that's the line we'd realistically have bet
+   - Stores raw events into a new `nuke_historical_games` table (game spread/ML/total) and prop lines into `nuke_historical_props` (player, market, line, price, book = FanDuel)
+   - Throttled (Odds API historical = 10 credits/request) — function reports credits burned per run
 
-Before writing code, planner runs:
+2. **Historical results ingest**
+   - Game finals from existing `game_results` table where available; gap-fill via Odds API `/scores` historical and ESPN scoreboard for the dates we don't have
+   - Player prop results: hit existing `prop_results` first, then ESPN box-score fallback for missing rows
+   - Stored on the same `nuke_historical_games` / `nuke_historical_props` rows (`actual_*` columns + `result` enum: `over | under | push | dnp`)
 
-```sql
--- NBA Finals slate
-select count(*) from game_bets where sport='basketball_nba' and is_active=true and commence_time > now();
--- MLB
-select count(*) from game_bets where sport='baseball_mlb' and is_active=true and commence_time > now();
--- Soccer (any league key starting with soccer_)
-select sport, count(*) from game_bets where sport like 'soccer_%' and is_active=true and commence_time > now() group by sport;
--- Tennis
-select sport, count(*) from game_bets where sport like 'tennis_%' and is_active=true and commence_time > now() group by sport;
--- Player props per sport
-select sport, count(*) from unified_props where sport in ('basketball_nba','baseball_mlb') or sport like 'soccer_%' or sport like 'tennis_%' group by sport;
-```
+3. **Replay runner** — `nuke-backtest-replay` edge function
+   - Iterates each historical date in the window
+   - Calls the **live** `scoreGame()` from `_shared/parlayBuilder.ts` (no fork — we're testing the actual production logic) → STRONG / MEDIUM / SKIP
+   - For STRONG-tier games, calls the live `buildParlays()` with that day's historical props
+   - Grades each generated parlay leg-by-leg → parlay outcome (`won | lost | push | dnp`)
+   - Persists every replayed parlay into a new `nuke_backtest_parlays` table with: date, sport, game, tier, template, legs (jsonb), combined_odds, in_window flag, outcome, profit_units
 
-If any sport returns 0 we tell you before turning that sport on. Tennis specifically: existing memory `mem://logic/stats/tennis-data-sync` warns the Odds API only carries top-tier ATP/WTA — we surface that ceiling.
+4. **Report generator** — same edge function, `mode: "report"`
+   - Aggregates `nuke_backtest_parlays`:
+     - Hit rate, ROI, sample size **by tier** (STRONG / MEDIUM)
+     - Same breakdown **by template** (`role_player_over_carnage`, `mixed_chaos`, etc.)
+     - Same breakdown **by sport**
+     - Max drawdown (running P/L) — flag any 10+ parlay losing streak
+     - In-window rate (% of parlays that landed inside +1000…+3000)
+   - Returns JSON + writes a row to `nuke_backtest_runs` (run_name, window, summary jsonb)
 
-## Database — one new migration
+5. **Decision gates wired into the existing dry-run flag**
+   - `nuke-build-parlays` already reads `dryRun`. Add a hard guard: if no `nuke_backtest_runs` row exists for the active sport showing **≥100 STRONG parlays and ROI ≥ -10%**, the live path refuses to post and logs `blocked: insufficient_backtest_evidence`. Override only via explicit `force_live: true` in the cron payload.
 
-Migration: `rosters` table per Phase 2 spec (cross-sport, no unique constraint, `(sport, player_name_normalized)` and `(sport, team)` indexes, RLS service-role full + admin read). MLB/Soccer/Tennis rows are populated even though tennis "team" is just the player's country/tour — we store it so the builder has a consistent contract.
+## How we'll run it
 
-For tennis we treat each player as their own "team" — the builder pivots on favorite/dog from `nuke_game_scores` instead of star/role.
+1. Deploy the two new functions + migrations
+2. Curl `nuke-backtest-ingest` with `{ days_back: 90, sports: ["nba","mlb","soccer_epl","tennis_atp"] }` — expect ~30–60 min runtime, will report credit usage. **Stop and confirm with you before burning all 90 days of credits if cost looks high.**
+3. Curl `nuke-backtest-replay` with `{ mode: "replay", date_start, date_end }`
+4. Curl same function with `{ mode: "report" }` — get the verdict per sport/tier
+5. Share the report. Decision tree:
+   - **ROI ≥ +0%** at 100+ STRONG parlays per sport → cleared for live
+   - **ROI -10% to 0%** → break-even / small edge, ship at half stake and keep monitoring
+   - **ROI < -10%** → strategy is broken, do not go live; iterate on `scoreGame` or template logic before re-running
 
-## Shared module: `supabase/functions/_shared/rosters.ts`
+## Technical details
 
-Per your spec — `normalizeName`, `EspnRosterSource`, `RosterClient` with `sync` / `lookupTeam` / `lookupTeamsBatch` / `clearCache`, three-tier matching, 24h cache, delete-then-insert chunks of 500, throws on 0-row source.
+- New tables (migration):
+  - `nuke_historical_games(id, sport, game_date, home, away, spread, ml_home, ml_away, total, closing_snapshot_ts, actual_home_score, actual_away_score, settled)`
+  - `nuke_historical_props(id, game_id fk, player, prop_type, line, price, side, snapshot_ts, actual_value, result)`
+  - `nuke_backtest_parlays(id, run_id fk, parlay_date, sport, game_ref, tier, template, legs jsonb, combined_odds, in_window bool, outcome, profit_units)`
+  - `nuke_backtest_runs(id, run_name, window_start, window_end, sports text[], summary jsonb, created_at)`
+  - All RLS: service-role write, admin-read only (these are internal eval tables)
+- Reuse `RosterClient` + `fetchEspnInjuries` from `_shared/rosters.ts` for historical roster lookups (ESPN history goes back ~3 yrs, fine for 90 days)
+- Replay uses the **same** `_shared/parlayBuilder.ts` — zero duplication. If we tweak scoring later, re-running the backtest is one curl
+- Odds API historical caveats: only FanDuel + DraftKings have full prop history; we'll pin to FanDuel to match our live source. Some early-MLB-season props will be missing — those games get `result: dnp` and excluded from ROI math
+- Tennis prop coverage on Odds API historical is thin → expect smaller sample, may need to fall back to game-line-only parlays for tennis
 
-Sport map for ESPN: `nba|wnba|ncaab|nfl|ncaaf|nhl|mlb|soccer`. Tennis has no ESPN roster equivalent — `RosterClient.sync('tennis')` short-circuits to a no-op, and the builder uses player names directly from `unified_props.player_name`.
+## Out of scope (for this phase)
 
-Soccer rosters: ESPN soccer endpoint requires a league key (e.g. `eng.1`, `usa.1`). We sync the leagues we actually post — defaulted to a curated list; configurable via env `NUKE_SOCCER_LEAGUES`.
-
-## Shared module: `supabase/functions/_shared/parlayBuilder.ts`
-
-Exports `buildParlays(game, props, script, options)`, `combinedOdds(legOdds[])`, `fetchEspnInjuries(sport)`.
-
-### Template matrix (Phase 2 active subset)
-
-| sport  | STRONG                                     | MEDIUM                       |
-|--------|--------------------------------------------|------------------------------|
-| nba    | role_player_over_carnage, mixed_chaos      | role_player_over_carnage     |
-| mlb    | ace_domination                             | —                            |
-| soccer | possession_dominance                       | —                            |
-| tennis | dominant_hold_squad, fav_handicap_combo    | total_games_under            |
-
-NBA / MLB / Soccer templates implemented exactly per your Phase 2 spec. The tennis templates are new and live alongside.
-
-### Tennis templates (new — tennis-specific, since blowout-script doesn't apply)
-
-Inputs come from `unified_props` markets like `player_aces`, `player_double_faults`, `player_total_games_won`, plus `game_bets` rows for set/match handicap and totals.
-
-- **`dominant_hold_squad`** (STRONG only — heavy ML favorite ≤ -350 on bo3, ≤ -500 on bo5):
-  1. Favorite OVER aces (top alt with juice in [-140, -100]) — favorites serving more, finish quicker.
-  2. Favorite OVER total games won (line ≥ favorite's L3 surface mean from `court-edge-prior`).
-  3. Dog UNDER aces (less serving time when getting broken).
-  4. Match total games UNDER (priors from `_shared/court-edge-prior.ts`).
-  5. Favorite -3.5 / -4.5 game handicap OVER (whichever lands juice in [-140, -100]).
-- **`fav_handicap_combo`** (STRONG): same as above but legs 1+2 swapped for two different handicap rungs (-2.5 + -4.5) when only one set of player props is available — common on Odds API tennis where player markets are thin.
-- **`total_games_under`** (MEDIUM, single-parlay): five legs across two-three matches on the slate where total < surface prior by ≥ 1.5 games — pairs UNDER total games legs across matches with tight juice, so it's a cross-game build and the 5-unique-leg dedupe is by `(eventId, market)` instead of player.
-
-Tennis uses tournament tier from `_shared/court-edge-tournament-tier.ts` to gate STRONG: ITF/Challenger never produce STRONG (`auto_quarantine`).
-
-### Hard rules (apply across all sports)
-
-- Reject any leg with juice worse than -140 on the picked side.
-- 5 legs, unique key per template (player for team sports, `eventId|market` for tennis MEDIUM).
-- Combined American odds in [+1000, +3000].
-- Cross-template dedupe via leg-set signature.
-- Drop snapback / live_drift signals (project core blacklist).
-- `has_real_line` validated on every leg.
-- Telegram property names: full English (Points, Rebounds, Total Bases, Aces, Total Games Won) — never abbreviations.
-
-## Wiring into existing functions
-
-### `nuke-score-games` — generalize from NBA-only to multi-sport
-
-- Loop over a sport list: `['basketball_nba', 'baseball_mlb', 'soccer_*', 'tennis_*']`. Soccer/tennis expanded by reading distinct active `sport` values from `game_bets`.
-- Per-sport scoring rubric (kept simple — same 0–100 surface, different inputs):
-  - **NBA**: unchanged (spread / favML / gap / juice).
-  - **MLB**: favorite ML pts (heavier weight — MLB blowouts driven by pitcher mismatch), team-total gap pts, juice from pitcher K/outs OVER and dog hitter total-bases UNDER.
-  - **Soccer**: favorite ML pts, draw-no-bet handicap pts, total-goals OVER juice as gap proxy.
-  - **Tennis**: ML pts (heavy bar — ≤ -350 bo3 / ≤ -500 bo5 = STRONG eligible), tournament-tier gate, surface-prior gap (book total vs prior).
-- Uses `RosterClient.lookupTeam` only for NBA (team-sport role/star bucketing). Other sports score off market data only.
-
-### `nuke-build-parlays` — swap inline loop for shared builder
-
-- Calls `fetchEspnInjuries(sport)` once per sport (skipped for tennis — ESPN has no tennis injury feed; tennis withdrawals come from Odds API event status).
-- For NBA props missing a team, calls `rosterClient.lookupTeamsBatch(...)` and drops props that still can't be team-matched (count logged to `nuke_run_log.errors.lookups_failed`).
-- Calls `buildParlays(game, props, script, { injuries })` and posts via existing `bot-send-telegram` (admin chat, Markdown, dedupe via `posted_to_telegram`).
-
-### New function: `nuke-sync-rosters`
-
-Iterates `['nba', 'mlb', 'soccer:<league>']` (tennis short-circuits) and calls `rosterClient.sync(sport)`. Logs to `nuke_run_log` with `phase='sync_rosters'`. Errors per sport are non-fatal.
-
-### `nuke-grade-results` — grader extensions
-
-- NBA: unchanged (uses `nba_player_game_logs` + `live_game_scores`).
-- MLB: pulls per-player batting/pitching from existing MLB stat tables; final score from `live_game_scores`.
-- Soccer / Tennis: graded via Odds API event-results endpoint (cheap, single call per finished match) since we don't have detailed per-player stat tables for these sports yet. If results unavailable at grade time, leg stays `pending` and re-grades next run.
-
-## Cron additions (via `supabase--insert`, NOT migration — per project rule)
-
-- `nuke-sync-rosters` daily at **08:00 UTC (4:00 AM ET)**.
-- Existing `nuke-score-games` 21:00 UTC stays — but now scans all 4 sports.
-- Existing `nuke-grade-results` 16:00 UTC stays.
-- Add a second `nuke-grade-results` pass at **04:00 UTC** to catch late soccer/tennis matches that finish after 11 AM ET (Europe-evening soccer, Asian-swing tennis).
-
-## Acceptance verification (project's 5-test rule)
-
-1. `nuke-sync-rosters` populates rosters for NBA (~500), MLB (~1200), 1+ soccer league (~500). Tennis short-circuits cleanly. Re-run idempotent; forced-empty source does NOT wipe.
-2. NBA Finals scorer run → STRONG game produces 2 parlays (role + chaos), 5 unique players each, combined odds in band, ESPN injuries excluded.
-3. MLB scorer run → STRONG ace-mismatch game produces 1 ace_domination parlay, pitcher K/outs OVER + 3 hitter total-bases UNDER, combined odds in band.
-4. Soccer scorer run on a heavy fav (e.g. PSG -400) → 1 possession_dominance parlay, posts to Telegram with full English market names.
-5. Tennis scorer run on a STRONG match (Sinner -500 vs qualifier) → 1 dominant_hold_squad parlay, ITF auto-quarantine path verified by injecting a fake ITF event and confirming no parlay built.
-
-## Files to be created / edited
-
-- new `supabase/migrations/<ts>_rosters_table.sql`
-- new `supabase/functions/_shared/rosters.ts`
-- new `supabase/functions/_shared/parlayBuilder.ts`
-- new `supabase/functions/_shared/parlayBuilder.tennis.ts` — keeps tennis templates isolated from team-sport builder
-- new `supabase/functions/nuke-sync-rosters/index.ts`
-- edit `supabase/functions/nuke-score-games/index.ts` — multi-sport loop + per-sport scoring rubric
-- edit `supabase/functions/nuke-build-parlays/index.ts` — call shared builder, fetch injuries, roster lookups
-- edit `supabase/functions/nuke-grade-results/index.ts` — MLB / soccer / tennis grading paths
-- edit `mem/logic/parlay/nuke-scout.md` — Phase 2 scope (4 sports, templates, tennis adaptation)
-- edit `mem/index.md` — bump Nuke Scout entry
-- `supabase--insert` — register `nuke-sync-rosters` 08:00 UTC + second grader pass 04:00 UTC
-
-## Explicitly NOT in this build
-
-- WNBA / NFL / NCAAF / NCAAB / NHL templates (coded but disabled — no posting).
-- Paid-provider fallback for ESPN downtime.
-- Official NBA injury report scrape (Phase 3).
-- Per-player stat tables for soccer / tennis grading (using Odds API results endpoint instead this phase).
-- Backtest engine, admin tuning UI, dedicated Telegram group.
-
-Approve and I'll switch to build mode, starting with the 4-sport slate sanity check.
+- Live posting toggle UI — already gated by `dryRun` + the new `force_live` flag
+- Backfilling pre-2026 data — 90 days is the agreed window
+- Auto-reruns — first pass is manual curls; we'll cron a weekly re-backtest only after the first run looks healthy
