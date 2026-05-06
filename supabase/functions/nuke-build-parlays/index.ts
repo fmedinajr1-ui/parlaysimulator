@@ -94,6 +94,7 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({}));
   const gameDate: string = body.game_date || easternDate();
+  const dryRun: boolean = body.dryRun === true || body.dry_run === true;
   const errors: unknown[] = [];
   const lookupsFailedBySport: Record<string, number> = {};
 
@@ -113,6 +114,7 @@ Deno.serve(async (req) => {
   }
 
   let built = 0, posted = 0;
+  const dryPreview: any[] = [];
   // Per-sport ESPN injury cache (one fetch per sport per run).
   const injuryCache = new Map<SportKey, Set<string>>();
   async function getInjuries(key: SportKey): Promise<Set<string>> {
@@ -220,6 +222,30 @@ Deno.serve(async (req) => {
     }
 
     const successful: Array<{ template: string; legs: ParlayLeg[]; combined: number }> = [];
+    if (dryRun) {
+      dryPreview.push({
+        game_id: g.game_id,
+        sport: g.sport,
+        matchup: `${g.away_team} @ ${g.home_team}`,
+        tier: g.script_tier,
+        score: g.script_score,
+        spread: g.home_spread,
+        fav_ml: script.fav_ml,
+        gap: g.gap_pts,
+        juice: g.juice_signal_count,
+        props_in: rawProps.length,
+        props_after_lookup: props.length,
+        lookups_failed: lookupsFailed,
+        parlays: builtParlays.map((p) => ({
+          template: p.template,
+          combined: p.combined_odds_american,
+          in_window: p.combined_odds_american >= 1000 && p.combined_odds_american <= 3000,
+          legs: p.legs.map((l) => `${l.player_name} ${l.side.toUpperCase()} ${l.line} ${l.prop_label} ${l.odds > 0 ? "+" : ""}${l.odds}`),
+        })),
+      });
+      built += builtParlays.length;
+      continue;
+    }
     for (const par of builtParlays) {
       try {
         const { data: ins, error } = await supabase
@@ -302,6 +328,8 @@ Deno.serve(async (req) => {
   return new Response(JSON.stringify({
     ok: true,
     game_date: gameDate,
+    dryRun,
+    dryPreview: dryRun ? dryPreview : undefined,
     games: games.length,
     parlays_built: built,
     parlays_posted: posted,

@@ -98,20 +98,23 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  const gameDate = easternDate();
+  const body = await req.json().catch(() => ({}));
+  const gameDate: string = body.game_date || easternDate();
+  const dryRun: boolean = body.dryRun === true || body.dry_run === true;
   const { startUTC, endUTC } = easternDateRangeUTC(gameDate);
   const errors: unknown[] = [];
 
   // Pull NBA market lines for today (commence between ET 00:00 and 24:00).
   let bets: any[] = [];
   try {
-    const { data, error } = await supabase
+    let q = supabase
       .from("game_bets")
       .select("game_id, bet_type, line, home_odds, away_odds, over_odds, under_odds, bookmaker, commence_time, home_team, away_team")
       .eq("sport", SPORT)
-      .eq("is_active", true)
       .gte("commence_time", startUTC)
       .lt("commence_time", endUTC);
+    if (!dryRun) q = q.eq("is_active", true);
+    const { data, error } = await q;
     if (error) throw error;
     bets = data || [];
   } catch (e) {
@@ -246,7 +249,7 @@ Deno.serve(async (req) => {
 
   // Trigger builder for qualifying games.
   let buildResp: any = null;
-  if (triggerGames.length > 0) {
+  if (triggerGames.length > 0 && !dryRun) {
     try {
       const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/nuke-build-parlays`, {
         method: "POST",
