@@ -247,6 +247,17 @@ Deno.serve(async (req) => {
       continue;
     }
 
+    // Backtest gate: block live posting per-sport unless cleared (or forced).
+    if (!dryRun && !forceLive && !cleared.has(sportKey)) {
+      errors.push({
+        stage: "blocked_insufficient_backtest_evidence",
+        game_id: g.game_id,
+        sport: sportKey,
+        note: "no nuke_backtest_runs row shows >=100 STRONG parlays at ROI >= -10% for this sport. Pass force_live:true to override.",
+      });
+      continue;
+    }
+
     const successful: Array<{ template: string; legs: ParlayLeg[]; combined: number }> = [];
     if (dryRun) {
       dryPreview.push({
