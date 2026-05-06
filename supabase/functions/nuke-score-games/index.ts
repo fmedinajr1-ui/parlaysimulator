@@ -107,13 +107,14 @@ Deno.serve(async (req) => {
   // Pull NBA market lines for today (commence between ET 00:00 and 24:00).
   let bets: any[] = [];
   try {
-    const { data, error } = await supabase
+    let q = supabase
       .from("game_bets")
       .select("game_id, bet_type, line, home_odds, away_odds, over_odds, under_odds, bookmaker, commence_time, home_team, away_team")
       .eq("sport", SPORT)
-      .eq("is_active", true)
       .gte("commence_time", startUTC)
       .lt("commence_time", endUTC);
+    if (!dryRun) q = q.eq("is_active", true);
+    const { data, error } = await q;
     if (error) throw error;
     bets = data || [];
   } catch (e) {
