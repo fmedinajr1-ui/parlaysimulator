@@ -98,7 +98,9 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  const gameDate = easternDate();
+  const body = await req.json().catch(() => ({}));
+  const gameDate: string = body.game_date || easternDate();
+  const dryRun: boolean = body.dryRun === true || body.dry_run === true;
   const { startUTC, endUTC } = easternDateRangeUTC(gameDate);
   const errors: unknown[] = [];
 
