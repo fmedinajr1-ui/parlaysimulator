@@ -13447,6 +13447,36 @@ export type Database = {
         }
         Relationships: []
       }
+      rosters: {
+        Row: {
+          id: string
+          last_synced_at: string
+          player_name: string
+          player_name_normalized: string
+          position: string | null
+          sport: string
+          team: string
+        }
+        Insert: {
+          id?: string
+          last_synced_at?: string
+          player_name: string
+          player_name_normalized: string
+          position?: string | null
+          sport: string
+          team: string
+        }
+        Update: {
+          id?: string
+          last_synced_at?: string
+          player_name?: string
+          player_name_normalized?: string
+          position?: string | null
+          sport?: string
+          team?: string
+        }
+        Relationships: []
+      }
       scale_in_tracker: {
         Row: {
           avg_entry_line: number | null
