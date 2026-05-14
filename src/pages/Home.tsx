@@ -14,6 +14,7 @@ import { FarmFooter } from "@/components/farm/FarmFooter";
 import { StickyMobileBar } from "@/components/farm/StickyMobileBar";
 import { EmailCaptureModal, type FarmTier } from "@/components/farm/EmailCaptureModal";
 import { SpikePromoPopover } from "@/components/farm/SpikePromoPopover";
+import { Seo } from "@/components/seo/Seo";
 
 export default function Home() {
   const [modalTier, setModalTier] = useState<FarmTier | null>(null);
@@ -25,6 +26,24 @@ export default function Home() {
 
   return (
     <div className="farm-theme min-h-screen pb-24 md:pb-0">
+      <Seo
+        title="Parlay Farm - AI Sports Betting Analysis & Parlay Optimizer"
+        description="Upload your parlay slip for AI analysis, track sharp money movement, and discover data-driven betting strategies. Free parlay calculator and real-time odds tracking."
+        canonical="https://parlayfarm.com/"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: "Parlay Farm - AI Sports Betting Analysis",
+          description: "AI-powered parlay analysis, sharp money tracking, and betting strategy optimization.",
+          url: "https://parlayfarm.com/",
+          mainEntity: {
+            "@type": "SoftwareApplication",
+            name: "Parlay Farm",
+            applicationCategory: "SportsApplication",
+            operatingSystem: "Web"
+          }
+        }}
+      />
       <FarmNav onCtaClick={openJoin} />
       <FarmHero onJoin={openJoin} onUpload={openUpload} />
       <Steps />

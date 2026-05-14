@@ -22,6 +22,14 @@ Deno.serve(async () => {
     "/scout",
     "/sweet-spots",
     "/profit-plan",
+    "/dashboard",
+    "/team-bets",
+    "/grade",
+    "/scan",
+    "/manual",
+    "/live-ai",
+    "/bot-success",
+    "/bot-pipeline",
   ];
   const categories = Array.from(new Set((posts || []).map((p) => p.category)));
 
