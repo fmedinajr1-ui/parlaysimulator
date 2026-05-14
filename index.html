@@ -95,6 +95,61 @@
     
     <!-- Splash screens for iOS -->
     <meta name="apple-mobile-web-app-orientations" content="portrait" />
+    
+    <!-- JSON-LD Structured Data: Organization -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Parlay Farm",
+      "url": "https://parlayfarm.com",
+      "logo": "https://parlayfarm.com/parlay-farm-logo.png",
+      "sameAs": [
+        "https://twitter.com/parlayfarm",
+        "https://instagram.com/parlayfarm"
+      ],
+      "description": "AI-powered sports betting analysis, sharp money tracking, and parlay optimization tools."
+    }
+    </script>
+    
+    <!-- JSON-LD Structured Data: WebSite + SearchAction -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Parlay Farm",
+      "url": "https://parlayfarm.com",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://parlayfarm.com/blog?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+    
+    <!-- JSON-LD Structured Data: SoftwareApplication -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Parlay Farm",
+      "applicationCategory": "SportsApplication",
+      "operatingSystem": "Web, iOS, Android",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.8",
+        "ratingCount": "1200"
+      }
+    }
+    </script>
   </head>
 
   <body style="background-color: #0a0c10;">
