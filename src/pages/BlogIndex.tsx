@@ -108,9 +108,15 @@ export default function BlogIndex() {
               <Link key={post.id} to={`/blog/${post.slug}`} className="group">
                 <Card className="h-full hover:border-primary/60 transition-all hover:shadow-lg hover:shadow-primary/10">
                   <CardContent className="p-6">
-                    <Badge variant="secondary" className="mb-3">
-                      {post.category}
-                    </Badge>
+                    <Link
+                      to={`/blog/category/${post.category.toLowerCase().replace(/\s+/g, "-")}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-block mb-3"
+                    >
+                      <Badge variant="secondary" className="hover:bg-secondary/80">
+                        {post.category}
+                      </Badge>
+                    </Link>
                     <h2 className="text-xl font-bold leading-tight mb-2 group-hover:text-primary transition-colors line-clamp-3">
                       {post.title}
                     </h2>
