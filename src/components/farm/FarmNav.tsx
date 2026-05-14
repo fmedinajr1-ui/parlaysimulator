@@ -26,6 +26,7 @@ export function FarmNav({ onCtaClick }: Props) {
         <div className="hidden md:flex items-center gap-7 text-sm">
           <a href="#sharp-tracker" className="text-[hsl(var(--farm-muted))] hover:text-[hsl(var(--farm-text))]">Sharp Tracker</a>
           <a href="/dashboard" className="text-[hsl(var(--farm-muted))] hover:text-[hsl(var(--farm-text))]">The Farm</a>
+          <a href="/blog" className="text-[hsl(var(--farm-muted))] hover:text-[hsl(var(--farm-text))]">Blog</a>
           <a href="#pricing" className="text-[hsl(var(--farm-muted))] hover:text-[hsl(var(--farm-text))]">Pricing</a>
         </div>
         <button onClick={onCtaClick} className="farm-btn-primary text-sm py-2 px-4">
