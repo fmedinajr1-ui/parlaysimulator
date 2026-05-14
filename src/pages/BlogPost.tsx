@@ -30,11 +30,19 @@ interface BlogPost {
   faq: FaqItem[];
 }
 
+interface RelatedPost {
+  id: string;
+  slug: string;
+  title: string;
+  meta_description: string;
+}
+
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
   const [post, setPost] = useState<BlogPost | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [related, setRelated] = useState<RelatedPost[]>([]);
 
   useEffect(() => {
     if (!slug) return;
@@ -51,6 +59,19 @@ export default function BlogPost() {
       });
   }, [slug]);
 
+  useEffect(() => {
+    if (!post) return;
+    supabase
+      .from("blog_posts")
+      .select("id, slug, title, meta_description")
+      .eq("status", "published")
+      .eq("category", post.category)
+      .neq("id", post.id)
+      .order("published_at", { ascending: false })
+      .limit(3)
+      .then(({ data }) => setRelated((data || []) as RelatedPost[]));
+  }, [post]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
@@ -59,6 +80,7 @@ export default function BlogPost() {
     );
   }
   if (notFound || !post) return <Navigate to="/blog" replace />;
+  const categorySlug = post.category.toLowerCase().replace(/\s+/g, "-");
 
   const canonical = `https://parlayfarm.com/blog/${post.slug}`;
   const articleLd = {
@@ -124,9 +146,11 @@ export default function BlogPost() {
           <ArrowLeft className="w-4 h-4" /> All Articles
         </Link>
 
-        <Badge variant="secondary" className="mb-4">
-          {post.category}
-        </Badge>
+        <Link to={`/blog/category/${categorySlug}`} className="inline-block mb-4">
+          <Badge variant="secondary" className="hover:bg-secondary/80">
+            {post.category}
+          </Badge>
+        </Link>
         <h1 className="text-3xl md:text-5xl font-bold leading-tight tracking-tight">
           {post.title}
         </h1>
@@ -172,6 +196,36 @@ export default function BlogPost() {
             </Button>
           </CardContent>
         </Card>
+
+        {related.length > 0 && (
+          <section className="mt-12 pt-8 border-t border-border/40">
+            <div className="flex items-end justify-between mb-6 flex-wrap gap-2">
+              <h2 className="text-2xl font-bold">More in {post.category}</h2>
+              <Link
+                to={`/blog/category/${categorySlug}`}
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
+                Browse all {post.category} →
+              </Link>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              {related.map((r) => (
+                <Card key={r.id} className="h-full hover:border-primary/60 transition-all">
+                  <CardContent className="p-5">
+                    <h3 className="font-semibold leading-snug mb-2 line-clamp-3">
+                      <Link to={`/blog/${r.slug}`} className="hover:text-primary">
+                        {r.title}
+                      </Link>
+                    </h3>
+                    <p className="text-xs text-muted-foreground line-clamp-3">
+                      {r.meta_description}
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </section>
+        )}
 
         {post.tags && post.tags.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-8">

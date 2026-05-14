@@ -11,6 +11,7 @@ import { UploadForm } from "@/components/farm/UploadForm";
 import { FarmPricing } from "@/components/farm/FarmPricing";
 import { FinalCTA } from "@/components/farm/FinalCTA";
 import { FarmFooter } from "@/components/farm/FarmFooter";
+import { LatestBlogPosts } from "@/components/farm/LatestBlogPosts";
 import { StickyMobileBar } from "@/components/farm/StickyMobileBar";
 import { EmailCaptureModal, type FarmTier } from "@/components/farm/EmailCaptureModal";
 import { SpikePromoPopover } from "@/components/farm/SpikePromoPopover";
@@ -53,6 +54,7 @@ export default function Home() {
       <TopDogReel />
       <UploadForm />
       <FarmPricing onSelect={setModalTier} />
+      <LatestBlogPosts />
       <FinalCTA onJoin={openJoin} />
       <FarmFooter />
       <StickyMobileBar onJoin={openJoin} onUpload={openUpload} />
