@@ -105,34 +105,35 @@ export default function BlogIndex() {
         ) : (
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {posts.map((post) => (
-              <Link key={post.id} to={`/blog/${post.slug}`} className="group">
-                <Card className="h-full hover:border-primary/60 transition-all hover:shadow-lg hover:shadow-primary/10">
-                  <CardContent className="p-6">
-                    <Link
-                      to={`/blog/category/${post.category.toLowerCase().replace(/\s+/g, "-")}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-block mb-3"
-                    >
-                      <Badge variant="secondary" className="hover:bg-secondary/80">
-                        {post.category}
-                      </Badge>
-                    </Link>
-                    <h2 className="text-xl font-bold leading-tight mb-2 group-hover:text-primary transition-colors line-clamp-3">
+              <Card key={post.id} className="h-full group hover:border-primary/60 transition-all hover:shadow-lg hover:shadow-primary/10">
+                <CardContent className="p-6">
+                  <Link
+                    to={`/blog/category/${post.category.toLowerCase().replace(/\s+/g, "-")}`}
+                    className="inline-block mb-3"
+                  >
+                    <Badge variant="secondary" className="hover:bg-secondary/80">
+                      {post.category}
+                    </Badge>
+                  </Link>
+                  <h2 className="text-xl font-bold leading-tight mb-2 line-clamp-3">
+                    <Link to={`/blog/${post.slug}`} className="hover:text-primary transition-colors">
                       {post.title}
-                    </h2>
-                    <p className="text-sm text-muted-foreground line-clamp-3 mb-4">
-                      {post.meta_description}
-                    </p>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {format(new Date(post.published_at), "MMM d, yyyy")}
-                      </span>
+                    </Link>
+                  </h2>
+                  <p className="text-sm text-muted-foreground line-clamp-3 mb-4">
+                    {post.meta_description}
+                  </p>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {format(new Date(post.published_at), "MMM d, yyyy")}
+                    </span>
+                    <Link to={`/blog/${post.slug}`} aria-label={`Read ${post.title}`}>
                       <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+                    </Link>
+                  </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}

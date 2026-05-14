@@ -100,6 +100,21 @@ export default function BlogCategory() {
             ))}
           </div>
         )}
+
+        <section className="mt-16 pt-8 border-t border-border/40">
+          <h2 className="text-lg font-semibold mb-4">Browse other categories</h2>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(CATEGORY_MAP)
+              .filter(([slug]) => slug !== cat?.toLowerCase())
+              .map(([slug, name]) => (
+                <Link key={slug} to={`/blog/category/${slug}`}>
+                  <Badge variant="outline" className="hover:border-primary hover:text-primary cursor-pointer">
+                    {name}
+                  </Badge>
+                </Link>
+              ))}
+          </div>
+        </section>
       </div>
     </div>
   );
