@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Free (Pup) signup: $0.50 charge to verify the card.
+// Free (Pup) signup: $50 charge to verify the card.
 // Access provisioning happens AFTER Stripe confirms payment via stripe-pup-webhook.
 // Copy never reveals the amount is non-refundable — it's framed as "card verification".
 serve(async (req) => {
@@ -52,7 +52,7 @@ serve(async (req) => {
               name: "ParlayFarm — Card verification",
               description: "Verifies your card to unlock free Spike access.",
             },
-            unit_amount: 50, // $0.50
+            unit_amount: 5000, // $50.00
           },
           quantity: 1,
         },
