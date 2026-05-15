@@ -27,5 +27,9 @@ Required on tiktok_accounts row before real posting:
 
 Other personas stay disabled until pilot proves loop.
 
-## Content source dependency
-`buildBriefs()` pulls from `bot_daily_picks` (today, status='locked') and `bot_daily_parlays` (yesterday, outcome won/lost). If both are empty the generator returns `briefs:0` — that's not a bug, the upstream pipelines simply haven't written content. Verify those tables before debugging the generator.
+## Content sources (priority order)
+1. **`pick_reveal`** — uses today's `bot_daily_picks` (status='locked'). Currently empty long-term; engine that should populate it isn't wired.
+2. **`results_recap`** — uses yesterday's `bot_daily_parlays` (outcome won/lost). Currently dry because settlement of parlays is stalled.
+3. **`streamer_promo`** (always-on fallback) — UGC streamer-style ParlayFarm promo. No data dependency. `buildBriefs()` always emits one per persona per day if neither pick_reveal nor results_recap fired. Angles rotate from a hard-coded list inside `buildBriefs()`. Hooks live in `tiktok_hook_performance` (style='data_nerd', template='streamer_promo'). Compliance lint applies.
+
+The template CHECK constraints on `tiktok_hook_performance.template` and `tiktok_video_scripts.template` were extended to include `streamer_promo` in 2026-05-15.
