@@ -110,6 +110,35 @@ STRUCTURE: 25-32s total. Acknowledge the miss honestly.
 
 Output STRICT JSON same shape as pick_reveal.`;
   }
+  if (template === "streamer_promo") {
+    const angle = payload?.angle || "found a free tool that builds parlays for me";
+    return `You are writing a TikTok promo video for "${persona.display_name}".
+
+The vibe is a STREAMER (Twitch/Kick energy) doing a casual, off-the-cuff aside about ParlayFarm — a free site that helps build sports parlays. Talk like a real bettor in their bedroom setup, NOT a marketer. No hype, no hard sell. Sound like you're putting your friends on to a cheat.
+
+ANGLE FOR THIS VIDEO: ${angle}
+
+RULES:
+- Mention "ParlayFarm" by name at least once.
+- It is FREE — say so plainly, no asterisks.
+- Do NOT promise wins, profits, guaranteed picks, or specific dollar amounts.
+- Do NOT say "lock", "guaranteed", "easy money", or anything a sportsbook compliance team would flag.
+- Tone: conversational, slightly amused, "why is nobody talking about this".
+- Reference one concrete pain point (juggling 5 apps, math is annoying, reading stat sheets, getting tilted on bad legs, etc).
+
+HOOK (use this EXACT line as the hook): "${hookText}"
+
+${softAnglePromptAddendum()}
+
+STRUCTURE: 22-28 seconds total, 3 beats + CTA.
+- Beat 1 PROBLEM 5-6s, visual=avatar — the pain point you used to have
+- Beat 2 DISCOVERY 7-9s, visual=avatar_with_lower_third (lower third = "ParlayFarm.com — Free") — what changed when you found ParlayFarm
+- Beat 3 PROOF 5-6s, visual=broll (broll_query="phone screen sports betting app" or similar) — what your routine looks like now
+- CTA 2-3s, visual=avatar — "ParlayFarm dot com, it's free, go look"
+
+Output STRICT JSON, no markdown:
+{"hook":{"vo_text":"<hook>","visual_style":"high_energy"},"beats":[{"index":1,"vo_text":"...","duration_est_sec":5.5,"visual":"avatar","on_screen_text":"MAX 40 CHARS"},{"index":2,"vo_text":"...","duration_est_sec":8,"visual":"avatar_with_lower_third","on_screen_text":"ParlayFarm.com — Free"},{"index":3,"vo_text":"...","duration_est_sec":5.5,"visual":"broll","broll_query":"phone sports betting"}],"cta":{"vo_text":"ParlayFarm dot com. It's free. Go look.","on_screen_text":"\u2192 ParlayFarm.com"},"caption_seed":"...","hashtag_seed":["#sportsbetting","#parlay","#nba"]}`;
+  }
   // data_insight
   const facts: string[] = payload.facts || [];
   return `You are writing a TikTok data-insight video for "${persona.display_name}" — ${persona.tone_description}
@@ -311,6 +340,21 @@ async function buildBriefs(): Promise<Array<{ template: VideoTemplate; payload: 
       const won = yesterdayParlays.filter(p => p.outcome === "won").length;
       const lost = yesterdayParlays.filter(p => p.outcome === "lost").length;
       briefs.push({ template: "results_recap", payload: { date: yesterday, total: won + lost, won, lost }, persona });
+    } else if (!done.has("streamer_promo")) {
+      // Fallback / always-on: streamer-style ParlayFarm promo. Picks one angle at random
+      // so the LLM has a fresh hook each run.
+      const angles = [
+        "stopped scrolling 8 apps just to compare lines",
+        "the AI builds my parlay legs in like 30 seconds",
+        "I used to math out hit rates on a notepad like a psycho",
+        "found a free site that does what paid tools charge for",
+        "I'm not getting paid to say this, it's just actually free",
+        "no more guessing if a player's been hot or cold",
+        "built a 4-leg this morning before my coffee was done",
+        "the part nobody talks about is how fast it is",
+      ];
+      const angle = angles[Math.floor(Math.random() * angles.length)];
+      briefs.push({ template: "streamer_promo", payload: { angle }, persona });
     }
   }
   return briefs;
