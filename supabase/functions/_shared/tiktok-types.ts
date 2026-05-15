@@ -1,6 +1,6 @@
 // Shared TikTok pipeline types — ported from external repo, adapted for Lovable Cloud.
 
-export type VideoTemplate = 'pick_reveal' | 'results_recap' | 'data_insight';
+export type VideoTemplate = 'pick_reveal' | 'results_recap' | 'data_insight' | 'streamer_promo';
 export type HookStyle = 'data_nerd' | 'streetwise' | 'confident_calm';
 
 export interface ScriptBeat {
