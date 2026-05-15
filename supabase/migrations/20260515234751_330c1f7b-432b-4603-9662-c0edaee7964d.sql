@@ -1,0 +1,2 @@
+ALTER TABLE public.tiktok_video_renders DROP CONSTRAINT tiktok_video_renders_status_check;
+ALTER TABLE public.tiktok_video_renders ADD CONSTRAINT tiktok_video_renders_status_check CHECK (status = ANY (ARRAY['queued','rendering','tts_running','avatar_running','broll_running','composing','safety_review','ready','completed','failed','published']));
