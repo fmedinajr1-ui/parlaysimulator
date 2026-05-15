@@ -340,6 +340,21 @@ async function buildBriefs(): Promise<Array<{ template: VideoTemplate; payload: 
       const won = yesterdayParlays.filter(p => p.outcome === "won").length;
       const lost = yesterdayParlays.filter(p => p.outcome === "lost").length;
       briefs.push({ template: "results_recap", payload: { date: yesterday, total: won + lost, won, lost }, persona });
+    } else if (!done.has("streamer_promo")) {
+      // Fallback / always-on: streamer-style ParlayFarm promo. Picks one angle at random
+      // so the LLM has a fresh hook each run.
+      const angles = [
+        "stopped scrolling 8 apps just to compare lines",
+        "the AI builds my parlay legs in like 30 seconds",
+        "I used to math out hit rates on a notepad like a psycho",
+        "found a free site that does what paid tools charge for",
+        "I'm not getting paid to say this, it's just actually free",
+        "no more guessing if a player's been hot or cold",
+        "built a 4-leg this morning before my coffee was done",
+        "the part nobody talks about is how fast it is",
+      ];
+      const angle = angles[Math.floor(Math.random() * angles.length)];
+      briefs.push({ template: "streamer_promo", payload: { angle }, persona });
     }
   }
   return briefs;
