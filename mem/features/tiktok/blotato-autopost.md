@@ -6,9 +6,11 @@ type: feature
 # TikTok Pipeline — Daily Autonomous Generation
 
 ## Cron schedule (UTC)
-- `tiktok-daily-generator-the-analyst` — `0 12,20 * * *` (8am & 4pm ET). Body: `{persona_key:"the_analyst", auto_approve:true}`.
-- `tiktok-render-pickup-every-10min` — `*/10 * * * *` → renders next approved script.
-- `tiktok-blotato-cron-every-minute` — posts queued videos.
+- `tiktok-daily-generator-the-analyst` (pg_cron jobid 157) — `0 12,20 * * *` (8am & 4pm ET).
+  Direct net.http_post to `tiktok-script-generator` with body `{"persona_key":"the_analyst","auto_approve":true}`.
+  No wrapper edge function — pg_cron calls the generator directly.
+- `tiktok-render-cron` — `*/10 * * * *` → renders next approved script.
+- `tiktok-blotato-cron` — every minute, posts queued videos.
 - `tiktok-metrics-sync-6h` and `tiktok-ab-resolver-daily` already existed.
 
 ## Auto-approve gate
@@ -24,3 +26,6 @@ Required on tiktok_accounts row before real posting:
 - Flip `posting_active=true`, `auto_post_enabled=true`, `status='active'`
 
 Other personas stay disabled until pilot proves loop.
+
+## Content source dependency
+`buildBriefs()` pulls from `bot_daily_picks` (today, status='locked') and `bot_daily_parlays` (yesterday, outcome won/lost). If both are empty the generator returns `briefs:0` — that's not a bug, the upstream pipelines simply haven't written content. Verify those tables before debugging the generator.
