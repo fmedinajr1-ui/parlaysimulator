@@ -16357,6 +16357,7 @@ export type Database = {
       }
       tiktok_video_renders: {
         Row: {
+          account_id: string | null
           artifacts: Json
           audio_duration_sec: number | null
           audio_timings: Json | null
@@ -16384,6 +16385,7 @@ export type Database = {
           worker_job_id: string | null
         }
         Insert: {
+          account_id?: string | null
           artifacts?: Json
           audio_duration_sec?: number | null
           audio_timings?: Json | null
@@ -16411,6 +16413,7 @@ export type Database = {
           worker_job_id?: string | null
         }
         Update: {
+          account_id?: string | null
           artifacts?: Json
           audio_duration_sec?: number | null
           audio_timings?: Json | null

@@ -1,0 +1,1 @@
+ALTER TABLE public.tiktok_video_renders ADD COLUMN IF NOT EXISTS account_id UUID;
