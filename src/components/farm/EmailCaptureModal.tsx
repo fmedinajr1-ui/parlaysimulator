@@ -36,14 +36,15 @@ export function EmailCaptureModal({ open, tier, onClose }: Props) {
       const { data, error } = await supabase.functions.invoke(fnName, { body });
       if (error) throw error;
       if (data?.url) {
-        window.open(data.url, "_blank");
-        onClose();
+        // Redirect current tab — window.open after await is blocked by Safari/mobile popup blockers,
+        // which caused users to land back on the previous page instead of Stripe checkout.
+        window.location.href = data.url;
+        return;
       } else {
         throw new Error("Checkout did not return a URL");
       }
     } catch (err: any) {
       toast.error(err.message || "Failed to start checkout");
-    } finally {
       setLoading(false);
     }
   };
