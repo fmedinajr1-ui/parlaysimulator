@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { redirectToExternalCheckout } from '@/utils/routePersistence';
 
 interface SubscriptionState {
   isLoading: boolean;
@@ -104,7 +105,7 @@ export function useSubscription() {
       }
 
       if (data?.url) {
-        window.location.href = data.url;
+        redirectToExternalCheckout(data.url);
       }
     } catch (err) {
       console.error('Error starting checkout:', err);
@@ -132,7 +133,7 @@ export function useSubscription() {
       }
 
       if (data?.url) {
-        window.location.href = data.url;
+        redirectToExternalCheckout(data.url);
       }
     } catch (err) {
       console.error('Error starting bot checkout:', err);

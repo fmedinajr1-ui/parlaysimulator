@@ -21,6 +21,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
 import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot, Film, Lock, Check, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { redirectToExternalCheckout } from "@/utils/routePersistence";
 
 import type { PreGameBaseline, TeamFatigueData } from '@/types/pre-game-baselines';
 
@@ -128,10 +129,13 @@ function ScoutUpgradeGate() {
         body: { email: targetEmail, priceId: SCOUT_PRICE_ID },
       });
       if (error) throw error;
-      if (data?.url) window.location.href = data.url;
+      if (data?.url) {
+        redirectToExternalCheckout(data.url);
+        return;
+      }
+      throw new Error('Checkout did not return a URL');
     } catch (err) {
       console.error('Error starting scout checkout:', err);
-    } finally {
       setIsLoading(false);
     }
   };

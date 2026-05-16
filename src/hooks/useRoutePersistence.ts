@@ -4,6 +4,7 @@ import {
   ROUTE_STORAGE_KEY, 
   SCROLL_STORAGE_KEY, 
   MAX_AGE_MS, 
+  consumeCheckoutRedirectFlag,
   type PersistedRoute 
 } from '@/utils/routePersistence';
 
@@ -30,10 +31,32 @@ export function useRoutePersistence() {
     hasRestoredRef.current = true;
 
     try {
+      if (consumeCheckoutRedirectFlag()) return;
+
       const stored = sessionStorage.getItem(ROUTE_STORAGE_KEY);
       if (!stored) return;
 
       const persisted: PersistedRoute = JSON.parse(stored);
+      const currentPath = window.location.pathname + window.location.search;
+      const storedPath = persisted.pathname + persisted.search;
+
+      const externalReferrer = (() => {
+        try {
+          return document.referrer ? new URL(document.referrer).origin !== window.location.origin : false;
+        } catch {
+          return false;
+        }
+      })();
+
+      // Do not let stale mobile route persistence hijack checkout returns or invalid legacy paths.
+      if (
+        persisted.pathname === '/index' ||
+        (window.location.pathname === '/' && (externalReferrer || persisted.pathname === '/dashboard'))
+      ) {
+        sessionStorage.removeItem(ROUTE_STORAGE_KEY);
+        sessionStorage.removeItem(SCROLL_STORAGE_KEY);
+        return;
+      }
       
       // Check if the stored route is still fresh
       if (Date.now() - persisted.timestamp > MAX_AGE_MS) {
@@ -43,9 +66,6 @@ export function useRoutePersistence() {
       }
 
       // Only restore if we're on the root path (indicates a fresh load)
-      const currentPath = window.location.pathname + window.location.search;
-      const storedPath = persisted.pathname + persisted.search;
-      
       if (currentPath !== storedPath && window.location.pathname === '/') {
         // Navigate to the stored route
         navigate(storedPath, { replace: true });

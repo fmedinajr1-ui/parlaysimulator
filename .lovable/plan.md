@@ -23,13 +23,17 @@ Every other checkout entry point in the app (`useSubscription.startBotCheckout`,
 
 ## Change
 
-Single file: `src/components/farm/EmailCaptureModal.tsx`
+Primary file: `src/components/farm/EmailCaptureModal.tsx`
 
 - Replace `window.open(data.url, "_blank"); onClose();` with `window.location.href = data.url;` (do not call `onClose()` — the navigation replaces the page).
 - Keep the loading state on so the button stays disabled while the redirect kicks in.
 - Leave error handling and toast behavior unchanged.
 
-That's the entire fix. No backend, edge function, Stripe, or DB changes needed — `create-bot-checkout` and `create-free-signup` are already returning a valid `url`.
+Follow-up hardening: dashboard/inline checkout paths also had async `window.open(data.url, "_blank")` calls, so `src/pages/Index.tsx` and `src/components/home/HomepageAnalyzer.tsx` now use same-tab redirects too.
+
+Safari mobile bounce-back fix: checkout redirects now clear the saved mobile route and set a checkout-in-progress flag before leaving the app. `useRoutePersistence` and `usePageLifecycle` respect that flag so iOS does not save/restore `/dashboard` while Stripe is opening or returning.
+
+No backend, edge function, Stripe, or DB changes needed — the checkout functions are already returning a valid `url`.
 
 ## Verification
 

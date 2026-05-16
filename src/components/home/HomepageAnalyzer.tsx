@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Upload, Camera, Type, Lock, Zap, TrendingUp, AlertTriangle, ChevronDown, ChevronUp, X, Check, Shield } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { redirectToExternalCheckout } from "@/utils/routePersistence";
 
 const PRICE_ID = "price_1T2fxS9D6r1PTCBBa2p8P3wY";
 
@@ -174,10 +175,13 @@ export function HomepageAnalyzer() {
         body: { priceId: PRICE_ID, legs: extractedLegs },
       });
       if (error) throw error;
-      if (data?.url) window.open(data.url, "_blank");
+      if (data?.url) {
+        redirectToExternalCheckout(data.url);
+        return;
+      }
+      throw new Error("Checkout did not return a URL");
     } catch (err: any) {
       toast.error(err.message || "Checkout failed");
-    } finally {
       setState("results");
     }
   };
