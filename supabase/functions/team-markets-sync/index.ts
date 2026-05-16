@@ -16,7 +16,6 @@ const SPORTS = [
   "basketball_nba",
   "baseball_mlb",
   "icehockey_nhl",
-  "americanfootball_nfl",
 ];
 const PREFERRED_BOOKS = ["fanduel", "hardrockbet", "draftkings", "betmgm", "caesars"];
 const MARKETS = "h2h,spreads,totals";
