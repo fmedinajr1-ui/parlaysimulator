@@ -107,7 +107,11 @@ Deno.serve(async (req) => {
       .from('tiktok_video_renders')
       .select('id', { count: 'exact', head: true })
       .eq('script_id', script.id)
-      .eq('status', 'failed');
+      .eq('status', 'failed')
+      // Only count failures since the script's most recent (re)approval.
+      // Otherwise historical failures auto-draft the script immediately on every
+      // re-approval and the user can never render it again.
+      .gte('created_at', script.updated_at);
     if ((failureCount ?? 0) >= MAX_FAILURES) {
       const reason = `Auto-drafted after ${failureCount} failed render attempts. Review the render logs, fix the upstream issue, then re-approve.`;
       await sb.from('tiktok_video_scripts').update({
@@ -145,6 +149,33 @@ Deno.serve(async (req) => {
         }
         // If the endpoint errors, proceed silently — HeyGen submission will surface the real error later.
       } catch (_) { /* non-fatal pre-flight */ }
+    }
+
+    // ── 1e. HeyGen avatar pre-flight (validate avatar_id BEFORE spending TTS) ─
+    // The big TTS credit burn happens because we used to call ElevenLabs first,
+    // then HeyGen would reject the avatar_id 404, and the cron would retry
+    // forever — each retry costing 542 chars. Validate the avatar exists first.
+    const preflightAccount = await sb.from('tiktok_accounts')
+      .select('id, heygen_avatar_id, persona_key')
+      .eq('persona_key', script.target_persona_key).maybeSingle();
+    const preflightAvatarId = (preflightAccount.data?.heygen_avatar_id as string) || FALLBACK_HEYGEN_AVATAR;
+    if (heygenKey && preflightAvatarId) {
+      try {
+        const r = await fetch(`https://api.heygen.com/v2/avatars`, { headers: { 'X-Api-Key': heygenKey } });
+        if (r.ok) {
+          const j = await r.json();
+          const list: any[] = j?.data?.avatars || j?.avatars || [];
+          const exists = list.some((a: any) => a.avatar_id === preflightAvatarId || a.id === preflightAvatarId);
+          if (list.length > 0 && !exists) {
+            const reason = `HeyGen avatar "${preflightAvatarId}" not found on this account. Update tiktok_accounts.heygen_avatar_id (persona=${script.target_persona_key}) to a valid avatar_id, then re-approve. No ElevenLabs credits were spent.`;
+            await sb.from('tiktok_video_scripts').update({
+              status: 'draft', rejection_reason: reason, render_started_at: null,
+            }).eq('id', script.id);
+            await logRun(sb, 'render', 'skipped', startedAt, scriptId, reason);
+            return jsonResp({ success: false, skipped: true, reason: 'invalid_heygen_avatar', avatar_id: preflightAvatarId }, 402);
+          }
+        }
+      } catch (_) { /* non-fatal */ }
     }
 
     // ── 2. Create render row + mark script as rendering ──────────────────
