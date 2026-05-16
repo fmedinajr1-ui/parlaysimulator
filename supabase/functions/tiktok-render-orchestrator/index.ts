@@ -107,7 +107,11 @@ Deno.serve(async (req) => {
       .from('tiktok_video_renders')
       .select('id', { count: 'exact', head: true })
       .eq('script_id', script.id)
-      .eq('status', 'failed');
+      .eq('status', 'failed')
+      // Only count failures since the script's most recent (re)approval.
+      // Otherwise historical failures auto-draft the script immediately on every
+      // re-approval and the user can never render it again.
+      .gte('created_at', script.updated_at);
     if ((failureCount ?? 0) >= MAX_FAILURES) {
       const reason = `Auto-drafted after ${failureCount} failed render attempts. Review the render logs, fix the upstream issue, then re-approve.`;
       await sb.from('tiktok_video_scripts').update({
