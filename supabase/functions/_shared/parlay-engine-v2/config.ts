@@ -117,6 +117,28 @@ export const SIGNAL_WATCHLIST: Set<string> = new Set([
   "ML_FAVORITE",
 ]);
 
+// MLB + team-market signal sources — provisionally watchlisted until we
+// accumulate enough settled outcomes to promote/demote them.
+for (const s of [
+  "MLB_BATTER_HR",
+  "MLB_BATTER_TB",
+  "MLB_BATTER_HITS",
+  "MLB_BATTER_RBIS",
+  "MLB_BATTER_SB",
+  "MLB_PITCHER_OUTS",
+  "MLB_PITCHER_HITS_ALLOWED",
+  "MLB_PITCHER_WALKS",
+  "MLB_PITCHER_ER",
+  "TEAM_ML_FAV",
+  "TEAM_ML_DOG",
+  "TEAM_SPREAD_FAV",
+  "TEAM_SPREAD_DOG",
+  "GAME_TOTAL_OVER",
+  "GAME_TOTAL_UNDER",
+]) {
+  SIGNAL_WATCHLIST.add(s);
+}
+
 export const SIGNAL_BLACKLIST: Set<string> = new Set([
   "THREES",
 ]);
@@ -137,6 +159,27 @@ export const PROP_WHITELIST: Record<string, number> = {
   "Blocks|OVER":   0.581,
   "3PM|OVER":      0.549,
   "Rebounds|OVER": 0.535,
+  // ---- MLB (conservative starting weights, calibrate after settlement data) ----
+  "Pitcher Ks|OVER":   0.620,
+  "Pitcher Ks|UNDER":  0.560,
+  "Pitcher Outs|OVER": 0.565,
+  "Home Runs|OVER":    0.550,
+  "Total Bases|OVER":  0.580,
+  "Total Bases|UNDER": 0.540,
+  "Hits|OVER":         0.560,
+  "Hits|UNDER":        0.535,
+  "RBIs|UNDER":        0.555,
+  "Runs|OVER":         0.540,
+  "Stolen Bases|OVER": 0.550,
+  "Hits Allowed|UNDER":0.560,
+  "Earned Runs|UNDER": 0.555,
+  // ---- Team markets (cross-sport) ----
+  "Moneyline|HOME":    0.580,
+  "Moneyline|AWAY":    0.530,
+  "Spread|OVER":       0.550,
+  "Spread|UNDER":      0.535,
+  "Total|OVER":        0.550,
+  "Total|UNDER":       0.560,
 };
 
 export const PROP_BLACKLIST: Set<string> = new Set([
