@@ -98,6 +98,55 @@ Deno.serve(async (req) => {
       return jsonResp({ success: true, skipped: true, reason: 'daily_cap_hit', persona: script.target_persona_key, today_count: todayCount });
     }
 
+    // ── 1c. Failure-count guard (auto-draft after 3 failed renders) ──────
+    // Prevents the cron from re-picking the same approved script forever and
+    // burning ElevenLabs credits on every loop. After MAX_FAILURES failed
+    // render rows for this script, we move it back to draft.
+    const MAX_FAILURES = 3;
+    const { count: failureCount } = await sb
+      .from('tiktok_video_renders')
+      .select('id', { count: 'exact', head: true })
+      .eq('script_id', script.id)
+      .eq('status', 'failed');
+    if ((failureCount ?? 0) >= MAX_FAILURES) {
+      const reason = `Auto-drafted after ${failureCount} failed render attempts. Review the render logs, fix the upstream issue, then re-approve.`;
+      await sb.from('tiktok_video_scripts').update({
+        status: 'draft', rejection_reason: reason, render_started_at: null,
+      }).eq('id', script.id);
+      await sb.from('tiktok_pipeline_logs').insert({
+        run_type: 'render_orchestrator',
+        status: 'skipped',
+        message: `auto_drafted_after_failures script=${script.id} failures=${failureCount}`,
+        metadata: { script_id: script.id, failures: failureCount },
+      });
+      return jsonResp({ success: true, skipped: true, reason: 'too_many_failures', failures: failureCount });
+    }
+
+    // ── 1d. HeyGen pre-flight (before we spend ElevenLabs credits) ───────
+    // If HeyGen is configured, verify the account has remaining quota first.
+    // Skipping HeyGen (no key) is fine — the worker can still composite audio-only.
+    const heygenKey = Deno.env.get('HEYGEN_API_KEY');
+    if (heygenKey) {
+      try {
+        const quotaResp = await fetch('https://api.heygen.com/v2/user/remaining_quota', {
+          headers: { 'X-Api-Key': heygenKey },
+        });
+        if (quotaResp.ok) {
+          const q = await quotaResp.json();
+          const remaining = q?.data?.remaining_quota ?? q?.remaining_quota ?? null;
+          if (typeof remaining === 'number' && remaining <= 0) {
+            const reason = `HeyGen quota exhausted (${remaining} remaining). Script moved to Draft to stop the retry loop.`;
+            await sb.from('tiktok_video_scripts').update({
+              status: 'draft', rejection_reason: reason, render_started_at: null,
+            }).eq('id', script.id);
+            await logRun(sb, 'render', 'skipped', startedAt, scriptId, reason);
+            return jsonResp({ success: false, skipped: true, reason: 'heygen_quota', remaining }, 402);
+          }
+        }
+        // If the endpoint errors, proceed silently — HeyGen submission will surface the real error later.
+      } catch (_) { /* non-fatal pre-flight */ }
+    }
+
     // ── 2. Create render row + mark script as rendering ──────────────────
     const { data: account } = await sb.from('tiktok_accounts')
       .select('*').eq('persona_key', script.target_persona_key).maybeSingle();
