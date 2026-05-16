@@ -18,7 +18,7 @@ const SPORTS = [
   "icehockey_nhl",
   "americanfootball_nfl",
 ];
-const PREFERRED_BOOKS = ["hardrockbet", "fanduel", "draftkings", "betmgm", "caesars"];
+const PREFERRED_BOOKS = ["fanduel", "hardrockbet", "draftkings", "betmgm", "caesars"];
 const MARKETS = "h2h,spreads,totals";
 
 interface UnifiedRow {
