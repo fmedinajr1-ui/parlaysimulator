@@ -29,7 +29,9 @@ Primary file: `src/components/farm/EmailCaptureModal.tsx`
 - Keep the loading state on so the button stays disabled while the redirect kicks in.
 - Leave error handling and toast behavior unchanged.
 
-Follow-up hardening: dashboard/inline checkout paths also had async `window.open(data.url, "_blank")` calls, so `src/pages/Index.tsx` and `src/components/home/HomepageAnalyzer.tsx` now use same-tab `window.location.href = data.url` redirects too.
+Follow-up hardening: dashboard/inline checkout paths also had async `window.open(data.url, "_blank")` calls, so `src/pages/Index.tsx` and `src/components/home/HomepageAnalyzer.tsx` now use same-tab redirects too.
+
+Safari mobile bounce-back fix: checkout redirects now clear the saved mobile route and set a checkout-in-progress flag before leaving the app. `useRoutePersistence` and `usePageLifecycle` respect that flag so iOS does not save/restore `/dashboard` while Stripe is opening or returning.
 
 No backend, edge function, Stripe, or DB changes needed — the checkout functions are already returning a valid `url`.
 
