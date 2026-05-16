@@ -4,6 +4,7 @@ import {
   ROUTE_STORAGE_KEY, 
   SCROLL_STORAGE_KEY, 
   MAX_AGE_MS, 
+  consumeCheckoutRedirectFlag,
   type PersistedRoute 
 } from '@/utils/routePersistence';
 
@@ -30,6 +31,8 @@ export function useRoutePersistence() {
     hasRestoredRef.current = true;
 
     try {
+      if (consumeCheckoutRedirectFlag()) return;
+
       const stored = sessionStorage.getItem(ROUTE_STORAGE_KEY);
       if (!stored) return;
 
