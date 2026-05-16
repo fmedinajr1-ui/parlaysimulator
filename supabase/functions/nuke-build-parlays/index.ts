@@ -70,8 +70,18 @@ function formatTelegramMessage(game: any, parlays: Array<{ template: string; leg
     lines.push(`Combined: ${par.combined > 0 ? "+" : ""}${par.combined}`);
     lines.push("```");
     par.legs.forEach((l, i) => {
-      const sideLabel = l.side === "over" ? "OVER" : "UNDER";
-      lines.push(`${i + 1}. ${l.player_name} ${sideLabel} ${l.line} (${l.prop_label}) ${l.odds > 0 ? "+" : ""}${l.odds}`);
+     const sideLabel = (l.side ?? "").toString().toUpperCase();
+     const isTeam = l.prop_label === "Moneyline" || l.prop_label === "Spread" || l.prop_label === "Total";
+     if (isTeam) {
+       const label = l.prop_label === "Moneyline"
+         ? `${l.player_name} Moneyline (${sideLabel})`
+         : l.prop_label === "Spread"
+           ? `${l.player_name} Spread ${l.line}`
+           : `${l.player_name} Total ${sideLabel} ${l.line}`;
+       lines.push(`${i + 1}. 📈 ${label} ${l.odds > 0 ? "+" : ""}${l.odds}`);
+     } else {
+       lines.push(`${i + 1}. ${l.player_name} ${sideLabel} ${l.line} (${l.prop_label}) ${l.odds > 0 ? "+" : ""}${l.odds}`);
+     }
     });
     lines.push("```");
     lines.push("────────────────");

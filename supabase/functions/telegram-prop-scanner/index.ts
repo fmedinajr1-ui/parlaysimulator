@@ -541,10 +541,36 @@ async function handleParlay(supabase: any, chat_id: number, args: string[]) {
   }
   const blocks = j.parlays.map((p: any, i: number) => {
     const legs = p.legs.map((l: any, idx: number) =>
-      `  ${idx + 1}. ${l.player_name} ${l.prop_type} ${l.side.toUpperCase()} ${l.line} (${l.odds > 0 ? "+" : ""}${l.odds})\n     _${l.reasoning}_`).join("\n");
+      `  ${idx + 1}. ${formatLegLabel(l)}\n     _${l.reasoning}_`).join("\n");
     return `*Ticket ${i + 1}* — ${p.american_odds > 0 ? "+" : ""}${p.american_odds} · composite ${p.composite_score} · ${p.distinct_games} games\n${legs}`;
   }).join("\n\n────────\n\n");
   await sendMessage(chat_id, `🎯 *Auto-parlays*\n\n${blocks}`);
+}
+
+/** Render a leg label that handles team-market legs (Moneyline / Spread / Total) cleanly. */
+function formatLegLabel(l: any): string {
+  const prop = String(l.prop_type ?? "");
+  const side = String(l.side ?? "").toUpperCase();
+  const odds = l.odds ?? l.american_odds;
+  const oddsStr = odds == null ? "" : ` (${odds > 0 ? "+" : ""}${odds})`;
+  if (prop === "Moneyline") {
+    const team = l.team ?? l.player_name ?? "";
+    return `📈 ${team} Moneyline${oddsStr}`;
+  }
+  if (prop === "Spread") {
+    const team = l.team ?? l.player_name ?? "";
+    const lineStr = l.line != null ? ` ${Number(l.line) > 0 ? "+" : ""}${l.line}` : "";
+    return `📈 ${team} Spread${lineStr}${oddsStr}`;
+  }
+  if (prop === "Total") {
+    const game = l.player_name ?? "Total";
+    return `📈 ${game} ${side} ${l.line}${oddsStr}`;
+  }
+  const sportEmoji = (l.sport ?? "").toUpperCase() === "MLB" ? "⚾"
+                   : (l.sport ?? "").toUpperCase() === "NHL" ? "🏒"
+                   : (l.sport ?? "").toUpperCase() === "NFL" ? "🏈"
+                   : "🏀";
+  return `${sportEmoji} ${l.player_name} ${prop} ${side} ${l.line}${oddsStr}`;
 }
 
 async function handleEnd(supabase: any, chat_id: number) {
