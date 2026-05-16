@@ -15,6 +15,7 @@ import { Link } from "react-router-dom";
 import { RecentWinsFeed } from "@/components/bot-landing/RecentWinsFeed";
 import { StickySubscribeCTA } from "@/components/bot-landing/StickySubscribeCTA";
 import { InlineSlipGraderPromo } from "@/components/grade/InlineSlipGraderPromo";
+import { redirectToExternalCheckout } from "@/utils/routePersistence";
 
 interface PublicStats {
   days: Array<{
@@ -80,11 +81,11 @@ export default function BotLanding() {
       });
       if (error) throw error;
       if (data?.url) {
-        window.location.href = data.url;
+        redirectToExternalCheckout(data.url);
+        return;
       }
     } catch (err) {
       console.error('Error starting checkout:', err);
-    } finally {
       setCheckoutLoading(false);
       setLoadingPriceId(undefined);
     }
