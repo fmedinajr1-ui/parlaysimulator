@@ -249,6 +249,128 @@ function buildCandidates(
   return { candidates, mappingNotes: notes, rejections };
 }
 
+// ----------------------------------------------------------------------------
+// Direct-from-unified_props candidate loader for non-pool sources:
+//   * team markets (moneyline / spread / total)
+//   * any MLB player prop that isn't in pick_pool yet
+// These rows aren't gated through pick_pool because they originate directly
+// from Odds API syncs and carry their own line + price.
+// ----------------------------------------------------------------------------
+interface ExtraPropRow extends PropRow {
+  market_type: string | null;
+  category: string | null;
+}
+
+function americanFromDecimal(price: number | null | undefined): number | null {
+  if (price == null) return null;
+  // unified_props already stores American odds; just round defensively.
+  return Math.round(Number(price));
+}
+
+function teamMarketSignal(propType: string, side: string): string {
+  if (propType === "Moneyline") return side === "HOME" ? "TEAM_ML_FAV" : "TEAM_ML_DOG";
+  if (propType === "Spread")    return side === "OVER" ? "TEAM_SPREAD_FAV" : "TEAM_SPREAD_DOG";
+  if (propType === "Total")     return side === "OVER" ? "GAME_TOTAL_OVER" : "GAME_TOTAL_UNDER";
+  return "TEAM_MARKET";
+}
+
+function mlbPlayerSignal(propType: string, side: string): string {
+  const p = propType.toLowerCase();
+  if (p === "home runs") return "MLB_BATTER_HR";
+  if (p === "total bases") return "MLB_BATTER_TB";
+  if (p === "hits") return "MLB_BATTER_HITS";
+  if (p === "rbis") return "MLB_BATTER_RBIS";
+  if (p === "stolen bases") return "MLB_BATTER_SB";
+  if (p === "pitcher ks") return side === "OVER" ? "MLB_PITCHER_K_OVER" : "MLB_PITCHER_K_UNDER";
+  if (p === "pitcher outs") return "MLB_PITCHER_OUTS";
+  if (p === "hits allowed") return "MLB_PITCHER_HITS_ALLOWED";
+  if (p === "pitcher walks") return "MLB_PITCHER_WALKS";
+  if (p === "earned runs") return "MLB_PITCHER_ER";
+  return "MLB_PLAYER";
+}
+
+function buildExtraCandidates(
+  rows: ExtraPropRow[],
+  now: Date,
+  existing: CandidateLeg[],
+): { added: CandidateLeg[]; rejections: Record<string, number> } {
+  const seen = new Set<string>();
+  for (const l of existing) {
+    seen.add(`${(l.player_name ?? l.team).toLowerCase()}|${l.prop_type}|${l.side}|${l.line}`);
+  }
+  const added: CandidateLeg[] = [];
+  const rejections: Record<string, number> = {};
+  const bump = (k: string) => { rejections[k] = (rejections[k] ?? 0) + 1; };
+
+  for (const r of rows) {
+    if (r.is_active === false) { bump("extra:inactive"); continue; }
+    const oddsTs = r.odds_updated_at ?? r.updated_at;
+    if (!oddsTs) { bump("extra:stale"); continue; }
+    const ageMin = (now.getTime() - new Date(oddsTs).getTime()) / 60_000;
+    if (ageMin > MAX_BOOK_LINE_AGE_MIN) { bump("extra:stale"); continue; }
+
+    const propType = canonicalPropType(r.prop_type);
+    const marketType = (r.market_type ?? "player").toLowerCase();
+    const isTeam = marketType !== "player";
+
+    // Build both sides as separate candidates when both prices exist.
+    const sides: Array<{ side: string; american: number | null }> = [];
+    if (isTeam && propType === "Moneyline") {
+      sides.push({ side: "HOME", american: americanFromDecimal(r.over_price) });
+      sides.push({ side: "AWAY", american: americanFromDecimal(r.under_price) });
+    } else {
+      sides.push({ side: "OVER",  american: americanFromDecimal(r.over_price) });
+      sides.push({ side: "UNDER", american: americanFromDecimal(r.under_price) });
+    }
+
+    const sport = (r.sport ?? "MLB").toUpperCase();
+    const sportNorm = sport === "BASKETBALL_NBA" ? "NBA"
+                    : sport === "BASEBALL_MLB"   ? "MLB"
+                    : sport === "ICEHOCKEY_NHL"  ? "NHL"
+                    : sport === "AMERICANFOOTBALL_NFL" ? "NFL"
+                    : sport;
+    const { team, opponent } = parseTeams(r.game_description ?? null);
+    const tipoff = r.commence_time ? new Date(r.commence_time)
+                                   : new Date(now.getTime() + 6 * 60 * 60 * 1000);
+
+    for (const { side, american } of sides) {
+      if (american == null) { bump("extra:no_price_for_side"); continue; }
+      const key = `${(r.player_name ?? team).toLowerCase()}|${propType}|${side}|${r.current_line ?? 0}`;
+      if (seen.has(key)) { bump("extra:duplicate"); continue; }
+      seen.add(key);
+
+      const line = Number(r.current_line ?? 0);
+      const signal = isTeam ? teamMarketSignal(propType, side) : mlbPlayerSignal(propType, side);
+      // Conservative defaults — these candidates have no pick-pool projection,
+      // so we lean on the engine's prop-whitelist hit-rate gating.
+      const confidence = 0.66;
+
+      added.push({
+        sport: sportNorm,
+        player_name: isTeam ? null : (r.player_name ?? null),
+        team: isTeam ? (side === "AWAY" ? opponent : team) : team,
+        opponent: isTeam ? (side === "AWAY" ? team : opponent) : opponent,
+        prop_type: propType,
+        side,
+        line,
+        american_odds: american,
+        projected: line,
+        confidence,
+        edge: 0,
+        signal_source: signal,
+        tipoff,
+        projection_updated_at: new Date(oddsTs),
+        line_confirmed_on_book: true,
+        player_active: true,
+        defensive_context_updated_at: null,
+        selected_book: (r.bookmaker ?? "").toLowerCase() || null,
+        source_origin: isTeam ? "team_market" : "raw_props",
+      });
+    }
+  }
+  return { added, rejections };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -281,6 +403,26 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const { candidates, mappingNotes, rejections } = buildCandidates(pool ?? [], props, now);
+
+    // ----- Phase B: pull team-market + raw MLB rows directly from unified_props -----
+    const startOfDay = new Date(`${targetDate}T00:00:00-04:00`).toISOString();
+    const endOfDay   = new Date(`${targetDate}T23:59:59-04:00`).toISOString();
+    const { data: extraRows, error: extraErr } = await sb
+      .from("unified_props")
+      .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at, market_type, category")
+      .gte("commence_time", startOfDay)
+      .lte("commence_time", endOfDay)
+      .or("market_type.neq.player,sport.eq.baseball_mlb");
+    if (extraErr) {
+      console.warn("[parlay-engine-v2] extra-rows fetch warning:", extraErr.message);
+    }
+    const { added: extraCandidates, rejections: extraRejections } =
+      buildExtraCandidates((extraRows ?? []) as ExtraPropRow[], now, candidates);
+    candidates.push(...extraCandidates);
+    for (const [k, v] of Object.entries(extraRejections)) {
+      rejections[k] = (rejections[k] ?? 0) + v;
+    }
+    mappingNotes.push(`extra candidates loaded: ${extraCandidates.length} (team_market + raw MLB)`);
 
     // Per-source candidate mix so the UI can surface where the slate is coming from.
     const sourceMix = candidates.reduce<Record<string, number>>((acc, l) => {
