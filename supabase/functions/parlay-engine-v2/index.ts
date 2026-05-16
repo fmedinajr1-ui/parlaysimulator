@@ -51,6 +51,31 @@ const PROP_TYPE_CANONICAL: Record<string, string> = {
   // Lower-case bare names used in some legacy refresh paths
   points: "Points", rebounds: "Rebounds", assists: "Assists", threes: "3PM",
   steals: "Steals", blocks: "Blocks",
+  // ---- MLB player markets ----
+  pitcher_strikeouts: "Pitcher Ks",
+  pitcher_outs: "Pitcher Outs",
+  pitcher_hits_allowed: "Hits Allowed",
+  pitcher_walks: "Pitcher Walks",
+  pitcher_earned_runs: "Earned Runs",
+  pitcher_record_a_win: "Pitcher Win",
+  batter_hits: "Hits",
+  batter_total_bases: "Total Bases",
+  batter_home_runs: "Home Runs",
+  batter_rbis: "RBIs",
+  batter_runs_scored: "Runs",
+  batter_stolen_bases: "Stolen Bases",
+  batter_singles: "Singles",
+  batter_doubles: "Doubles",
+  batter_walks: "Walks",
+  batter_strikeouts: "Batter Ks",
+  batter_hits_runs_rbis: "H+R+RBI",
+  // ---- Team markets ----
+  h2h: "Moneyline",
+  moneyline: "Moneyline",
+  spreads: "Spread",
+  spread: "Spread",
+  totals: "Total",
+  total: "Total",
 };
 function canonicalPropType(raw: string | null | undefined): string {
   if (!raw) return "Unknown";
@@ -71,7 +96,12 @@ function parseTeams(gameDescription: string | null): { team: string; opponent: s
 function inferSport(propType: string | null): string {
   if (!propType) return "NBA";
   const p = propType.toLowerCase();
-  if (p.includes("pitcher") || p.includes("batter") || p.includes("hits") || p.includes("rbi")) return "MLB";
+  if (
+    p.includes("pitcher") || p.includes("batter") ||
+    p === "hits" || p === "rbis" || p === "runs" || p === "home runs" ||
+    p === "total bases" || p === "stolen bases" || p === "singles" ||
+    p === "doubles" || p === "walks"
+  ) return "MLB";
   if (p.includes("sog") || p.includes("saves") || p.includes("hockey")) return "NHL";
   return "NBA";
 }
