@@ -269,7 +269,7 @@ function americanFromDecimal(price: number | null | undefined): number | null {
 
 function teamMarketSignal(propType: string, side: string): string {
   if (propType === "Moneyline") return side === "HOME" ? "TEAM_ML_FAV" : "TEAM_ML_DOG";
-  if (propType === "Spread")    return side === "OVER" ? "TEAM_SPREAD_FAV" : "TEAM_SPREAD_DOG";
+  if (propType === "Spread")    return side === "HOME" ? "TEAM_SPREAD_FAV" : "TEAM_SPREAD_DOG";
   if (propType === "Total")     return side === "OVER" ? "GAME_TOTAL_OVER" : "GAME_TOTAL_UNDER";
   return "TEAM_MARKET";
 }
@@ -315,7 +315,7 @@ function buildExtraCandidates(
 
     // Build both sides as separate candidates when both prices exist.
     const sides: Array<{ side: string; american: number | null }> = [];
-    if (isTeam && propType === "Moneyline") {
+    if (isTeam && (propType === "Moneyline" || propType === "Spread")) {
       sides.push({ side: "HOME", american: americanFromDecimal(r.over_price) });
       sides.push({ side: "AWAY", american: americanFromDecimal(r.under_price) });
     } else {
@@ -335,11 +335,14 @@ function buildExtraCandidates(
 
     for (const { side, american } of sides) {
       if (american == null) { bump("extra:no_price_for_side"); continue; }
-      const key = `${(r.player_name ?? team).toLowerCase()}|${propType}|${side}|${r.current_line ?? 0}`;
+      const baseLine = Number(r.current_line ?? 0);
+      // For spreads, the away side takes the inverse line (e.g. home -6.5 ⇒ away +6.5).
+      const sideLine = (isTeam && propType === "Spread" && side === "AWAY") ? -baseLine : baseLine;
+      const key = `${(r.player_name ?? team).toLowerCase()}|${propType}|${side}|${sideLine}`;
       if (seen.has(key)) { bump("extra:duplicate"); continue; }
       seen.add(key);
 
-      const line = Number(r.current_line ?? 0);
+      const line = sideLine;
       const signal = isTeam ? teamMarketSignal(propType, side) : mlbPlayerSignal(propType, side);
       // Conservative defaults — these candidates have no pick-pool projection,
       // so we lean on the engine's prop-whitelist hit-rate gating.
