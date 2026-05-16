@@ -84,6 +84,7 @@ export default function BotLanding() {
         redirectToExternalCheckout(data.url);
         return;
       }
+      throw new Error('Checkout did not return a URL');
     } catch (err) {
       console.error('Error starting checkout:', err);
       setCheckoutLoading(false);
