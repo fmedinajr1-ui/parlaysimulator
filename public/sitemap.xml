@@ -2,13 +2,23 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://parlayfarm.com/</loc><lastmod>2026-05-16</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>
   <url><loc>https://parlayfarm.com/blog</loc><lastmod>2026-05-16</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/mlb</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/nba</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://parlayfarm.com/blog/category/prop-analysis</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://parlayfarm.com/blog/category/ai-picks</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://parlayfarm.com/blog/category/strategy</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/nba</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://parlayfarm.com/blog/category/mma</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://parlayfarm.com/blog/category/tennis</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/mlb</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/data-driven-dominance-how-ai-and-advanced-stats-predict-the-cy-young-race</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/decoding-the-mlb-cy-young-race-the-advanced-stats-that-truly-matter</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/predicting-2025-s-mlb-stolen-base-leaders-the-players-ai-is-targeting</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/ai-tuned-mlb-pitching-rankings-finding-value-beyond-season-long-eras</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/cracking-the-code-of-coors-field-betting-how-ai-conquers-altitude</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/unlocking-value-how-to-crush-nba-rebound-props-against-position-less-defenses</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/draining-your-bankroll-nba-point-guard-assists-are-your-edge</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/deconstructing-nba-home-court-advantage-data-myths-and-how-ai-finds-the-edge</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/is-nba-home-court-advantage-just-a-myth-what-the-data-really-says</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/cracking-the-code-of-pitcher-strikeout-props-elite-arms-vs-weak-bats</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://parlayfarm.com/blog/the-ultimate-guide-to-winning-first-inning-hr-props</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://parlayfarm.com/blog/beyond-the-box-score-how-ai-unlocks-profit-in-stolen-base-props-mlb</loc><lastmod>2026-05-16</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://parlayfarm.com/blog/unlocking-profit-why-soccer-prop-betting-ai-dominates-goalscorer-markets</loc><lastmod>2026-05-15</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>

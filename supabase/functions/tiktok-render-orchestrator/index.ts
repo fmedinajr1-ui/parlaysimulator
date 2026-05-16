@@ -230,16 +230,23 @@ Deno.serve(async (req) => {
 
   } catch (err: any) {
     console.error('[render-orchestrator] error:', err);
+    const rawError = String(err?.message || err);
+    const friendlyError = formatRenderError(rawError);
+    const pauseScript = shouldPauseRenderRetry(rawError);
     if (renderId) {
       await sb.from('tiktok_video_renders').update({
-        status: 'failed', step: 'error', error_message: String(err?.message || err),
+        status: 'failed', step: 'error', error_message: friendlyError,
       }).eq('id', renderId);
     }
     if (scriptId) {
-      await sb.from('tiktok_video_scripts').update({ status: 'approved' }).eq('id', scriptId);
+      await sb.from('tiktok_video_scripts').update(
+        pauseScript
+          ? { status: 'draft', rejection_reason: friendlyError, render_started_at: null }
+          : { status: 'approved' },
+      ).eq('id', scriptId);
     }
-    await logRun(sb, 'render', 'failed', startedAt, scriptId, String(err?.message || err));
-    return jsonResp({ success: false, error: String(err?.message || err) }, 500);
+    await logRun(sb, 'render', 'failed', startedAt, scriptId, friendlyError);
+    return jsonResp({ success: false, error: friendlyError, paused: pauseScript }, pauseScript ? 402 : 500);
   }
 });
 
@@ -261,6 +268,20 @@ function buildVoiceoverText(script: any): string {
   for (const b of (script.beats || [])) if (b.vo_text) parts.push(b.vo_text);
   if (script.cta?.vo_text) parts.push(script.cta.vo_text);
   return parts.join(' ');
+}
+
+function shouldPauseRenderRetry(error: string): boolean {
+  return /quota_exceeded|exceeds your quota/i.test(error);
+}
+
+function formatRenderError(error: string): string {
+  if (shouldPauseRenderRetry(error)) {
+    const remaining = error.match(/You have (\d+) credits remaining/i)?.[1];
+    const required = error.match(/while (\d+) credits are required/i)?.[1];
+    const detail = remaining && required ? ` (${remaining} remaining, ${required} required)` : '';
+    return `ElevenLabs quota exceeded${detail}. Script moved back to Draft so the cron will stop retrying. Add credits, then approve/render again.`;
+  }
+  return error;
 }
 
 async function markStep(sb: any, renderId: string, step: string) {
