@@ -74,6 +74,29 @@ Deno.serve(async (req) => {
     }
 
     // ── 1b. Daily cap guard (max 2 posts per persona per day, ET) ────────
+    // ── 1a. In-flight guard ──────────────────────────────────────────────
+    // Prevents the cron from spawning a new HeyGen / ElevenLabs render every
+    // tick when one is already in progress for this script. Root cause of
+    // the runaway loop that burned credits.
+    {
+      const { data: inflight } = await sb.from('tiktok_video_renders')
+        .select('id, status, step, created_at')
+        .eq('script_id', script.id)
+        .in('status', ['rendering', 'queued'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (inflight) {
+        await sb.from('tiktok_pipeline_logs').insert({
+          run_type: 'render_orchestrator',
+          status: 'skipped',
+          message: `inflight_render_exists script=${script.id} render=${inflight.id} step=${inflight.step}`,
+          metadata: { script_id: script.id, render_id: inflight.id, step: inflight.step },
+        });
+        return jsonResp({ success: true, skipped: true, reason: 'inflight_render_exists', render_id: inflight.id, step: inflight.step });
+      }
+    }
+
     // Counts anything created today regardless of final status: rendering / queued /
     // posted all count. Prevents runaway loops from spamming a persona.
     const DAILY_CAP = 2;
