@@ -178,6 +178,28 @@ Deno.serve(async (req) => {
       } catch (_) { /* non-fatal */ }
     }
 
+    // ── 1f. Remotion worker reachability pre-flight ──────────────────────
+    // If REMOTION_WORKER_URL is set but the worker is unreachable / returns
+    // non-2xx on /health, auto-draft the script BEFORE we spend ElevenLabs +
+    // HeyGen credits. Without this guard the orchestrator burns ~542 TTS chars
+    // and a HeyGen render every cron tick until the worker is deployed.
+    const workerUrlPreflight = Deno.env.get('REMOTION_WORKER_URL');
+    if (workerUrlPreflight) {
+      try {
+        const u = new URL(workerUrlPreflight);
+        const healthUrl = `${u.protocol}//${u.host}/health`;
+        const r = await fetch(healthUrl, { method: 'GET' });
+        if (!r.ok) throw new Error(`worker /health returned ${r.status}`);
+      } catch (e: any) {
+        const reason = `Remotion worker not reachable (${String(e?.message || e)}). REMOTION_WORKER_URL is set but the worker isn't responding on /health. Deploy worker/ (see worker/DEPLOY.md) then re-approve. No ElevenLabs or HeyGen credits were spent.`;
+        await sb.from('tiktok_video_scripts').update({
+          status: 'draft', rejection_reason: reason, render_started_at: null,
+        }).eq('id', script.id);
+        await logRun(sb, 'render', 'skipped', startedAt, scriptId, reason);
+        return jsonResp({ success: false, skipped: true, reason: 'worker_unreachable' }, 402);
+      }
+    }
+
     // ── 2. Create render row + mark script as rendering ──────────────────
     const { data: account } = await sb.from('tiktok_accounts')
       .select('*').eq('persona_key', script.target_persona_key).maybeSingle();
