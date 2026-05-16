@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { saveCurrentRoute } from '@/utils/routePersistence';
+import { CHECKOUT_REDIRECT_STORAGE_KEY, saveCurrentRoute } from '@/utils/routePersistence';
 
 /**
  * Hook that handles page lifecycle events for mobile PWA optimization.
@@ -8,8 +8,17 @@ import { saveCurrentRoute } from '@/utils/routePersistence';
 export function usePageLifecycle() {
   useEffect(() => {
     // Handle visibility change (works on all browsers)
+    const shouldSkipRouteSave = () => {
+      try {
+        return sessionStorage.getItem(CHECKOUT_REDIRECT_STORAGE_KEY) === 'true';
+      } catch {
+        return false;
+      }
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        if (shouldSkipRouteSave()) return;
         // Save state immediately when going to background
         saveCurrentRoute();
       }
@@ -17,6 +26,8 @@ export function usePageLifecycle() {
 
     // Handle pagehide (Safari iOS - fires before page is killed)
     const handlePageHide = (event: PageTransitionEvent) => {
+      if (shouldSkipRouteSave()) return;
+
       // Always save state on pagehide
       saveCurrentRoute();
       
@@ -51,6 +62,7 @@ export function usePageLifecycle() {
 
     // Handle freeze event (Chrome - page is being frozen)
     const handleFreeze = () => {
+      if (shouldSkipRouteSave()) return;
       saveCurrentRoute();
     };
 
@@ -67,6 +79,7 @@ export function usePageLifecycle() {
 
     // Handle beforeunload as last resort
     const handleBeforeUnload = () => {
+      if (shouldSkipRouteSave()) return;
       saveCurrentRoute();
     };
 
