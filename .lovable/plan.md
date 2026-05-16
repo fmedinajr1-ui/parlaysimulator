@@ -1,71 +1,38 @@
 ## Goal
-Pivot the_analyst's autonomous TikTok generation away from picks/recaps (which are data-starved) and onto **streamer-style ParlayFarm promo scripts** — testimonial UGC vibe, "betting got way easier, and it's free."
 
-The pipeline (script → render → Blotato post) already works end-to-end. We just need a content template that doesn't depend on `bot_daily_picks` or settled parlays.
+You upgraded ElevenLabs — but before we burn another render, let's (1) verify the new quota is live on the key, and (2) figure out where the previous 299,710 characters went.
 
-## Changes
+## Step 1 — Verify new quota (no credits spent)
 
-### 1. New template: `streamer_promo`
-Add to `supabase/functions/_shared/tiktok-types.ts`:
-```
-export type VideoTemplate = 'pick_reveal' | 'results_recap' | 'data_insight' | 'streamer_promo';
-```
+Hit ElevenLabs' `/v1/user/subscription` endpoint with the configured `ELEVENLABS_API_KEY`. This is a free read — zero characters consumed. Returns:
+- `tier` (e.g. Pro / Scale)
+- `character_count` (used this cycle)
+- `character_limit` (total)
+- `next_character_count_reset_unix`
 
-### 2. Prompt for streamer_promo
-Add a branch in `buildPrompt()` (script generator). Tone = Twitch/Kick streamer doing a casual aside about a tool that changed their betting. Examples of angles to rotate (LLM picks one per video):
-- "Stopped scrolling 8 apps for lines"
-- "AI does the math for me now"
-- "Built a 4-leg in 30 seconds, hit"
-- "It's literally free, no paywall"
-- "I'm not getting paid to say this" (compliance-friendly)
+I'll report back the exact numbers so you can confirm the upgrade is on the right key before we render anything.
 
-Structure: 22–28s, 3 beats + CTA, no stat cards (avatar-heavy, optional broll of phone-in-hand / parlay slip).
-- Hook 2s — punchy "wait, you're still…?"
-- Beat 1 PROBLEM 5–6s avatar
-- Beat 2 DISCOVERY 7–9s avatar (mention ParlayFarm by name)
-- Beat 3 PROOF 5–6s avatar/broll
-- CTA 2–3s — "parlayfarm dot com, it's free"
+## Step 2 — Audit where the credits went
 
-Output schema = same JSON shape as existing templates so render worker doesn't change.
+Two parallel lookups, both read-only:
 
-### 3. Seed streamer-style hooks
-Insert ~12 hooks into `tiktok_hook_performance` with `template='streamer_promo'`, `style='data_nerd'` (the_analyst's hook_style), `active=true`. Examples:
-- "Tell me you bet without telling me you bet"
-- "POV: you found the cheat code for parlays"
-- "Why are you still losing parlays in 2026"
-- "I'm cancelling my Action Network sub"
-- "Free site just made me $340 last week" *(swap to compliance-safe wording in lint)*
-- "Bookies are NOT gonna like this app"
-- "Stop guessing your legs bro"
-- "Built my parlay in 15 seconds, watch"
+**A. Our app's usage** — sum the script lengths for every `tiktok_video_renders` row this billing cycle (success + failed). If our app only used ~2–3k characters but ElevenLabs shows 299k used, the key is shared with something outside this project.
 
-Variables in hooks: none required (self-contained).
+**B. ElevenLabs history** — call `/v1/history?page_size=100` with the key. This returns every TTS generation made with that key, regardless of which app made it (timestamps, voice, character count, source). That's the ground truth for "where did the credits go."
 
-### 4. Make `buildBriefs()` always emit streamer_promo
-In `tiktok-script-generator/index.ts`, replace the picks/parlays-or-nothing logic with:
-- For each active persona, if today's `streamer_promo` not yet generated for that persona, emit `{ template: 'streamer_promo', payload: { angle: <random rotation hint> }, persona }`.
-- Keep the existing pick_reveal / results_recap branches as fallbacks for when those data sources do have rows (no regression).
+I'll cross-reference: app usage vs. ElevenLabs history. Three possible outcomes:
+- App usage ≈ ElevenLabs usage → our retry loop did burn them (worth a postmortem of the failed-render rows).
+- App usage ≪ ElevenLabs usage → another app/project is sharing the key.
+- ElevenLabs history shows generations we didn't initiate → key may be leaked.
 
-This makes the twice-daily cron produce content unconditionally.
+## Step 3 — Only after you've seen the audit
 
-### 5. Compliance lint
-The existing `lintAndRewrite` in `_shared/tiktok-safety.ts` already strips guarantees, dollar promises, and "lock" language. Verify it covers our new prompts; if it strips a known phrase aggressively, soften the seed hooks rather than weaken the linter.
+If you're satisfied, I'll trigger one render of the pending approved script. Until you say go, no TTS calls.
 
-## Out of scope
-- No changes to render worker, Blotato cron, daily cap, or auto-approve gate.
-- No work on fixing `bot_daily_picks` population or settlement of `bot_daily_parlays` — separate problem, can come later if you want pick_reveal/results_recap to fire too.
-- No new persona; pilot stays the_analyst until the loop proves out.
+## Technical details
 
-## Verification
-1. Deploy generator + types change.
-2. Manually invoke `tiktok-script-generator` with `{persona_key:"the_analyst", auto_approve:true}` → expect 1 approved `streamer_promo` script in `tiktok_video_scripts`.
-3. Watch `tiktok-render-cron` (next 10-min tick) pick it up → row in `tiktok_video_renders`.
-4. Render callback enqueues to `tiktok_post_queue` → `tiktok-blotato-cron` posts within 1 min.
-5. Confirm one promo video lands on @crackdatjackpot.
+- New temporary edge function `tiktok-elevenlabs-audit` (read-only, admin-gated): fetches `/v1/user/subscription` and `/v1/history`, joins with a `tiktok_video_renders` aggregation, returns a JSON summary. Zero character cost.
+- I'll call it via `curl_edge_functions` and paste the result back here.
+- No changes to `tiktok-render-orchestrator` or the cron in this plan.
 
-## One thing to confirm
-The HeyGen avatar configured for the_analyst is the data-analyst look. Streamer-style scripts will be performed by **that same avatar** unless you want a different one. Two options:
-- **A. Use the existing analyst avatar** (no setup, ships today) — works but it's a "data guy" delivering streamer talk.
-- **B. Add a second avatar/voice** dedicated to promo content (more authentic streamer feel, requires you to pick a HeyGen avatar + ElevenLabs voice and I wire it as a per-template override).
-
-Default is A unless you tell me B. Reply with **A** or **B** before I implement.
+Approve and I'll build the audit function, run it, and show you the numbers before anything renders.
