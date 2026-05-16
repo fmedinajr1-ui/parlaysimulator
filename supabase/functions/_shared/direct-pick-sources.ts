@@ -296,9 +296,12 @@ export async function loadDirectPickRows(
     const freshWindow = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
     const rawRes = await sb
       .from("unified_props")
-      .select("player_name, prop_type, current_line, recommended_side, recommendation, confidence, composite_score, category, over_price, under_price, odds_updated_at, updated_at, created_at, sport, is_active")
+      .select("player_name, prop_type, current_line, recommended_side, recommendation, confidence, composite_score, category, over_price, under_price, odds_updated_at, updated_at, created_at, sport, is_active, market_type")
       .eq("sport", "basketball_nba")
       .eq("is_active", true)
+      // Skip team markets (h2h/spread/total) — those are loaded directly via
+      // parlay-engine-v2's buildExtraCandidates with proper HOME/AWAY sides.
+      .or("market_type.is.null,market_type.eq.player")
       .or(`odds_updated_at.gte.${freshWindow},updated_at.gte.${freshWindow},created_at.gte.${freshWindow}`)
       .order("composite_score", { ascending: false, nullsFirst: false })
       .limit(rawPropsLimit * 3);

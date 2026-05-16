@@ -99,7 +99,18 @@ export function parlayEdgeSufficient(p: Parlay): GateResult {
 export function parlayNoConflictingLegs(p: Parlay): GateResult {
   const seen = new Set<string>();
   for (const leg of p.legs) {
-    const key = `${leg.player_name ?? `TEAM:${leg.team}`}|${leg.prop_type}`;
+    // Player props key on player+prop. Team markets (Moneyline/Spread/Total)
+    // key on the unordered matchup + prop_type so a parlay can never contain
+    // both HOME and AWAY (or OVER and UNDER) of the same game market.
+    let key: string;
+    if (leg.player_name) {
+      key = `${leg.player_name}|${leg.prop_type}`;
+    } else {
+      const game = (leg.team ?? "") < (leg.opponent ?? "")
+        ? `${leg.team}|${leg.opponent}`
+        : `${leg.opponent}|${leg.team}`;
+      key = `GAME:${game}|${leg.prop_type}`;
+    }
     if (seen.has(key)) return [false, `conflicting_leg:${key}`];
     seen.add(key);
   }
