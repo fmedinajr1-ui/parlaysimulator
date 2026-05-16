@@ -88,7 +88,8 @@ function canonicalPropType(raw: string | null | undefined): string {
 // joined from unified_props.game_description as a best-effort.
 function parseTeams(gameDescription: string | null): { team: string; opponent: string } {
   if (!gameDescription) return { team: "UNK", opponent: "UNK" };
-  const m = gameDescription.match(/^(.+?)\s*(?:@|vs\.?|v\.?)\s*(.+?)$/i);
+  // Supports "Home @ Away", "Home vs Away", or team-markets-sync's "Home / Away".
+  const m = gameDescription.match(/^(.+?)\s*(?:@|vs\.?|v\.?|\/)\s*(.+?)$/i);
   if (!m) return { team: gameDescription, opponent: "UNK" };
   return { team: m[1].trim(), opponent: m[2].trim() };
 }
