@@ -22,6 +22,7 @@ import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { redirectToExternalCheckout } from "@/utils/routePersistence";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: {
   to: string; 
@@ -61,7 +62,7 @@ const Index = () => {
       });
       if (error) throw error;
       if (data?.url) {
-        window.location.href = data.url;
+        redirectToExternalCheckout(data.url);
         return;
       }
       throw new Error('Checkout did not return a URL');

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Upload, Camera, Type, Lock, Zap, TrendingUp, AlertTriangle, ChevronDown, ChevronUp, X, Check, Shield } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { redirectToExternalCheckout } from "@/utils/routePersistence";
 
 const PRICE_ID = "price_1T2fxS9D6r1PTCBBa2p8P3wY";
 
@@ -175,7 +176,7 @@ export function HomepageAnalyzer() {
       });
       if (error) throw error;
       if (data?.url) {
-        window.location.href = data.url;
+        redirectToExternalCheckout(data.url);
         return;
       }
       throw new Error("Checkout did not return a URL");

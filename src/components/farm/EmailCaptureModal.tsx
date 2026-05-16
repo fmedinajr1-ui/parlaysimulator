@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { redirectToExternalCheckout } from "@/utils/routePersistence";
 
 export type FarmTier = "pup" | "all_access";
 
@@ -36,9 +37,7 @@ export function EmailCaptureModal({ open, tier, onClose }: Props) {
       const { data, error } = await supabase.functions.invoke(fnName, { body });
       if (error) throw error;
       if (data?.url) {
-        // Redirect current tab — window.open after await is blocked by Safari/mobile popup blockers,
-        // which caused users to land back on the previous page instead of Stripe checkout.
-        window.location.href = data.url;
+        redirectToExternalCheckout(data.url);
         return;
       } else {
         throw new Error("Checkout did not return a URL");
