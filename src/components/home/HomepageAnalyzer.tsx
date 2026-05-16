@@ -174,10 +174,13 @@ export function HomepageAnalyzer() {
         body: { priceId: PRICE_ID, legs: extractedLegs },
       });
       if (error) throw error;
-      if (data?.url) window.open(data.url, "_blank");
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+      throw new Error("Checkout did not return a URL");
     } catch (err: any) {
       toast.error(err.message || "Checkout failed");
-    } finally {
       setState("results");
     }
   };
