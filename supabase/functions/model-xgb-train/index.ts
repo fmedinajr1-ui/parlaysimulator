@@ -12,7 +12,8 @@ const corsHeaders = {
 };
 
 const MIN_SAMPLES = 60;
-const SPORTS = ["nba", "mlb", "nhl"];
+const SPORTS = ["nba", "mlb", "nhl", "NBA", "MLB", "NHL"];
+const OUTCOMES = ["win", "loss", "hit", "miss", "won", "lost"];
 
 function toFeatures(row: any): number[] | null {
   const line = Number(row.line);
@@ -25,8 +26,8 @@ function toFeatures(row: any): number[] | null {
 
 function toLabel(row: any): number | null {
   const o = String(row.outcome ?? "").toLowerCase();
-  if (o === "win" || o === "hit") return 1;
-  if (o === "loss" || o === "miss") return 0;
+  if (o === "win" || o === "won" || o === "hit") return 1;
+  if (o === "loss" || o === "lost" || o === "miss") return 0;
   return null;
 }
 
@@ -35,7 +36,7 @@ async function trainOne(supabase: any, sport: string, prop_type: string) {
     .from("prop_results_archive")
     .select("line, edge, confidence_score, side, outcome")
     .eq("sport", sport).eq("prop_type", prop_type)
-    .in("outcome", ["win", "loss", "hit", "miss"])
+    .in("outcome", OUTCOMES)
     .limit(4000);
   if (error) return { sport, prop_type, sample_size: 0, skipped: "fetch_error" };
 
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
       .from("prop_results_archive")
       .select("sport, prop_type")
       .in("sport", SPORTS)
-      .in("outcome", ["win", "loss", "hit", "miss"])
+      .in("outcome", OUTCOMES)
       .limit(20000);
     if (error) throw new Error(`pairs: ${error.message}`);
 
