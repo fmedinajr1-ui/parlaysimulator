@@ -12,7 +12,10 @@ const corsHeaders = {
 };
 
 const HOME_ADV: Record<string, number> = { nba: 65, mlb: 25, nhl: 35 };
-const MIN_EDGE_PCT = 2; // only persist >=2% edge picks
+const MIN_EDGE_PCT = 2;       // only persist >=2% edge picks
+const MAX_EDGE_PCT = 15;      // sanity clamp — anything higher is the model being too confident
+const MIN_POISSON_GAMES = 8;  // require team sample size before trusting Poisson params
+const VIG_MARKET_PROB = 0.524; // implied prob of a -110 totals line
 
 async function predictH2HSpread(supabase: any, dateKey: string): Promise<number> {
   // Use nuke_historical_games as a "today" slate when unsettled rows exist.
@@ -50,7 +53,7 @@ async function predictH2HSpread(supabase: any, dateKey: string): Promise<number>
       const market = americanToProb(ml);
       if (market === null) continue;
       const edgePct = (prob - market) * 100;
-      if (edgePct < MIN_EDGE_PCT) continue;
+      if (edgePct < MIN_EDGE_PCT || edgePct > MAX_EDGE_PCT) continue;
       rows.push({
         sport, game_date_et: dateKey, event_id: g.external_id,
         model: "elo", market_type: "h2h", side,
@@ -79,7 +82,7 @@ async function predictTotals(supabase: any, dateKey: string): Promise<number> {
 
   const { data: params } = await supabase
     .from("model_totals_params")
-    .select("sport, team, attack, defense, home_adv");
+    .select("sport, team, attack, defense, home_adv, games_used");
 
   const pMap = new Map<string, any>();
   for (const r of params ?? []) pMap.set(`${r.sport}::${r.team}`, r);
@@ -93,16 +96,17 @@ async function predictTotals(supabase: any, dateKey: string): Promise<number> {
     const ph = pMap.get(`${sport}::${g.home}`);
     const pa = pMap.get(`${sport}::${g.away}`);
     if (!ph || !pa) continue;
+    if (Number(ph.games_used ?? 0) < MIN_POISSON_GAMES || Number(pa.games_used ?? 0) < MIN_POISSON_GAMES) continue;
     const base = leagueAvg[sport] ?? 4;
     const lamHome = base * Number(ph.attack) * Number(pa.defense) * (1 + Number(ph.home_adv));
     const lamAway = base * Number(pa.attack) * Number(ph.defense);
     const line = Number(g.total);
     if (!Number.isFinite(line)) continue;
     const pOver = poissonOverProb(lamHome, lamAway, line);
-    const market = 0.5; // book offers ~-110/-110; treat as ~52.4% with vig
+    const market = VIG_MARKET_PROB;
     for (const [side, prob] of [["over", pOver], ["under", 1 - pOver]] as const) {
       const edgePct = (prob - market) * 100;
-      if (edgePct < MIN_EDGE_PCT) continue;
+      if (edgePct < MIN_EDGE_PCT || edgePct > MAX_EDGE_PCT) continue;
       rows.push({
         sport, game_date_et: dateKey, event_id: g.external_id,
         model: "poisson", market_type: "total", side,
@@ -147,7 +151,7 @@ async function predictProps(supabase: any, dateKey: string): Promise<number> {
     const prob = predictGbm(art.model_blob, x);
     const market = americanToProb(recSide === "over" ? p.over_price : p.under_price) ?? 0.5;
     const edgePct = (prob - market) * 100;
-    if (edgePct < MIN_EDGE_PCT) continue;
+    if (edgePct < MIN_EDGE_PCT || edgePct > MAX_EDGE_PCT) continue;
     rows.push({
       sport: p.sport, game_date_et: dateKey, event_id: p.event_id,
       player_name: p.player_name, prop_type: p.prop_type,
