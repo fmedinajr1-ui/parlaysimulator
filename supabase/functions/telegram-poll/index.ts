@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
 
     let updates: any[] = [];
     try {
-      const res = await fetch(`${GATEWAY_URL}/getUpdates`, {
+      const doGetUpdates = () => fetch(`${GATEWAY_URL}/getUpdates`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -99,7 +99,14 @@ Deno.serve(async (req) => {
           allowed_updates: ["message", "edited_message", "callback_query"],
         }),
       });
-      const data = await res.json();
+      let res = await doGetUpdates();
+      // Connector gateway sometimes returns a transient 502/503. Retry once after a short backoff.
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        console.warn(`[telegram-poll] gateway ${res.status} — retrying once`);
+        await new Promise((r) => setTimeout(r, 750));
+        res = await doGetUpdates();
+      }
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.ok === false) {
         const desc = String(data?.description ?? "");
         // 409 Conflict: a webhook is set; remove it and retry once.
@@ -109,10 +116,9 @@ Deno.serve(async (req) => {
           continue;
         }
         console.error("[telegram-poll] getUpdates failed", res.status, data);
-        return new Response(
-          JSON.stringify({ ok: false, error: "getUpdates_failed", status: res.status, data }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
+        // Don't fail the whole cron tick on a transient upstream error — break and let
+        // the next minute's invocation pick up where we left off.
+        break;
       }
       updates = Array.isArray(data.result) ? data.result : [];
     } catch (e) {

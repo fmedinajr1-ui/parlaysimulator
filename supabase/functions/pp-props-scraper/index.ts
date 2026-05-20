@@ -283,6 +283,52 @@ async function fetchViaScrapingBee(): Promise<any> {
   throw new Error(`ScrapingBee got response (${body.length} chars) but could not extract JSON:API data`);
 }
 
+// ── ScrapingAnt: Secondary provider — different IP pool, separate quota ──
+async function fetchViaScrapingAnt(): Promise<any> {
+  const saKey = Deno.env.get('SCRAPINGANT_API_KEY');
+  if (!saKey) throw new Error('SCRAPINGANT_API_KEY not configured');
+
+  const ppUrl = 'https://api.prizepicks.com/projections?single_stat=true&per_page=250';
+  console.log(`[PP Scraper] ScrapingAnt: ${ppUrl}`);
+
+  const params = new URLSearchParams({
+    'x-api-key': saKey,
+    url: ppUrl,
+    browser: 'false',
+    proxy_type: 'residential',
+    proxy_country: 'US',
+  });
+
+  const res = await fetch(`https://api.scrapingant.com/v2/general?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    console.log(`[PP Scraper] ScrapingAnt ${res.status}: ${txt.slice(0, 300)}`);
+    throw new Error(`ScrapingAnt ${res.status}`);
+  }
+
+  const body = await res.text();
+  console.log(`[PP Scraper] ScrapingAnt response length: ${body.length}`);
+
+  let jsonStr = body.trim();
+  const preMatch = jsonStr.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+  if (preMatch) jsonStr = preMatch[1];
+  const bodyMatch = jsonStr.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch) jsonStr = bodyMatch[1];
+  jsonStr = jsonStr.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
+
+  if (jsonStr.startsWith('{')) {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed.data?.length > 0) {
+      console.log(`[PP Scraper] ✅ ScrapingAnt got ${parsed.data.length} projections`);
+      return parsed;
+    }
+  }
+  throw new Error('ScrapingAnt could not extract JSON:API data');
+}
+
 async function fetchDirectAPI(retries = 2): Promise<any> {
   const endpoints = [
     'https://api.prizepicks.com/projections?single_stat=true&per_page=250',
@@ -340,6 +386,13 @@ async function fetchPrizePicksAPI(): Promise<any> {
     console.warn(`[PP Scraper] ScrapingBee failed: ${sbErr instanceof Error ? sbErr.message : sbErr}`);
   }
 
+  // Secondary: ScrapingAnt (separate provider — survives ScrapingBee quota/key issues)
+  try {
+    return await fetchViaScrapingAnt();
+  } catch (saErr) {
+    console.warn(`[PP Scraper] ScrapingAnt failed: ${saErr instanceof Error ? saErr.message : saErr}`);
+  }
+
   // Fallback: direct API (may work if Cloudflare relaxes)
   try {
     return await fetchDirectAPI();
@@ -347,7 +400,7 @@ async function fetchPrizePicksAPI(): Promise<any> {
     console.warn(`[PP Scraper] Direct API also failed: ${directErr instanceof Error ? directErr.message : directErr}`);
   }
 
-  throw new Error('All PrizePicks fetch methods failed (ScrapingBee + direct API)');
+  throw new Error('All PrizePicks fetch methods failed (ScrapingBee + ScrapingAnt + direct API)');
 }
 
 function parsePrizePicksResponse(apiData: any): ExtractedProjection[] {
