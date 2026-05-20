@@ -134,11 +134,11 @@ async function predictProps(supabase: any, dateKey: string): Promise<number> {
     .select("sport, prop_type, model_blob, calibration");
 
   const aMap = new Map<string, any>();
-  for (const a of artifacts ?? []) aMap.set(`${a.sport}::${a.prop_type}`, a);
+  for (const a of artifacts ?? []) aMap.set(`${String(a.sport).toLowerCase()}::${a.prop_type}`, a);
 
   const rows: any[] = [];
   for (const p of props) {
-    const art = aMap.get(`${p.sport}::${p.prop_type}`);
+    const art = aMap.get(`${String(p.sport).toLowerCase()}::${p.prop_type}`);
     if (!art) continue;
     const recSide = String(p.recommended_side ?? "over").toLowerCase().startsWith("u") ? "under" : "over";
     const sideNum = recSide === "over" ? 1 : 0;
