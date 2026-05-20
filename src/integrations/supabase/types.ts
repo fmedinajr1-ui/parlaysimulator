@@ -9296,6 +9296,242 @@ export type Database = {
         }
         Relationships: []
       }
+      model_intel_results: {
+        Row: {
+          current_line: number | null
+          edge_pct: number | null
+          game_date_et: string
+          id: string
+          market_type: string
+          model: string
+          prediction_id: string | null
+          prob: number | null
+          result: string
+          settled_at: string
+          side: string | null
+          sport: string
+        }
+        Insert: {
+          current_line?: number | null
+          edge_pct?: number | null
+          game_date_et: string
+          id?: string
+          market_type: string
+          model: string
+          prediction_id?: string | null
+          prob?: number | null
+          result: string
+          settled_at?: string
+          side?: string | null
+          sport: string
+        }
+        Update: {
+          current_line?: number | null
+          edge_pct?: number | null
+          game_date_et?: string
+          id?: string
+          market_type?: string
+          model?: string
+          prediction_id?: string | null
+          prob?: number | null
+          result?: string
+          settled_at?: string
+          side?: string | null
+          sport?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_intel_results_prediction_id_fkey"
+            columns: ["prediction_id"]
+            isOneToOne: false
+            referencedRelation: "model_predictions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      model_intel_telegram_log: {
+        Row: {
+          channel: string
+          created_at: string
+          date_et: string
+          error: string | null
+          id: string
+          message_text: string | null
+          predictions_included: number
+          status: string
+          telegram_message_id: number | null
+        }
+        Insert: {
+          channel?: string
+          created_at?: string
+          date_et: string
+          error?: string | null
+          id?: string
+          message_text?: string | null
+          predictions_included?: number
+          status?: string
+          telegram_message_id?: number | null
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          date_et?: string
+          error?: string | null
+          id?: string
+          message_text?: string | null
+          predictions_included?: number
+          status?: string
+          telegram_message_id?: number | null
+        }
+        Relationships: []
+      }
+      model_predictions: {
+        Row: {
+          created_at: string
+          current_line: number | null
+          edge_pct: number
+          event_id: string | null
+          game_date_et: string
+          game_description: string | null
+          has_real_line: boolean
+          id: string
+          market_type: string
+          model: string
+          player_name: string | null
+          prob: number
+          prop_type: string | null
+          side: string
+          sport: string
+        }
+        Insert: {
+          created_at?: string
+          current_line?: number | null
+          edge_pct: number
+          event_id?: string | null
+          game_date_et: string
+          game_description?: string | null
+          has_real_line?: boolean
+          id?: string
+          market_type: string
+          model: string
+          player_name?: string | null
+          prob: number
+          prop_type?: string | null
+          side: string
+          sport: string
+        }
+        Update: {
+          created_at?: string
+          current_line?: number | null
+          edge_pct?: number
+          event_id?: string | null
+          game_date_et?: string
+          game_description?: string | null
+          has_real_line?: boolean
+          id?: string
+          market_type?: string
+          model?: string
+          player_name?: string | null
+          prob?: number
+          prop_type?: string | null
+          side?: string
+          sport?: string
+        }
+        Relationships: []
+      }
+      model_prop_artifacts: {
+        Row: {
+          calibration: Json | null
+          feature_spec: Json
+          id: string
+          model_blob: Json
+          prop_type: string
+          sample_size: number
+          sport: string
+          trained_at: string
+        }
+        Insert: {
+          calibration?: Json | null
+          feature_spec: Json
+          id?: string
+          model_blob: Json
+          prop_type: string
+          sample_size?: number
+          sport: string
+          trained_at?: string
+        }
+        Update: {
+          calibration?: Json | null
+          feature_spec?: Json
+          id?: string
+          model_blob?: Json
+          prop_type?: string
+          sample_size?: number
+          sport?: string
+          trained_at?: string
+        }
+        Relationships: []
+      }
+      model_team_elo: {
+        Row: {
+          games_played: number
+          id: string
+          last_updated_at: string
+          rating: number
+          sport: string
+          team: string
+        }
+        Insert: {
+          games_played?: number
+          id?: string
+          last_updated_at?: string
+          rating?: number
+          sport: string
+          team: string
+        }
+        Update: {
+          games_played?: number
+          id?: string
+          last_updated_at?: string
+          rating?: number
+          sport?: string
+          team?: string
+        }
+        Relationships: []
+      }
+      model_totals_params: {
+        Row: {
+          attack: number
+          defense: number
+          games_used: number
+          home_adv: number
+          id: string
+          sport: string
+          team: string
+          updated_at: string
+        }
+        Insert: {
+          attack?: number
+          defense?: number
+          games_used?: number
+          home_adv?: number
+          id?: string
+          sport: string
+          team: string
+          updated_at?: string
+        }
+        Update: {
+          attack?: number
+          defense?: number
+          games_used?: number
+          home_adv?: number
+          id?: string
+          sport?: string
+          team?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       monthly_accuracy_snapshot: {
         Row: {
           created_at: string | null
