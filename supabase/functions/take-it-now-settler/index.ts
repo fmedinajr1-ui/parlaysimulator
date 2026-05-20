@@ -142,6 +142,7 @@ Deno.serve(async (req) => {
     .select("id, player_name, event_id, prop_type, sport, prediction, confidence, commence_time, created_at, metadata")
     .eq("signal_type", "take_it_now")
     .is("was_correct", null)
+    .is("settlement_method", null)
     .lt("commence_time", cutoffIso)
     .order("commence_time", { ascending: true })
     .limit(batchSize);
@@ -161,19 +162,20 @@ Deno.serve(async (req) => {
   let skippedTeam = 0;
   const accuracyRows: any[] = [];
   const updates: { id: string; was_correct: boolean | null; actual_outcome: string }[] = [];
+  const ungradeable: string[] = [];
 
   for (const a of (alerts ?? []) as Alert[]) {
     const sportRaw = (a.sport ?? "").toUpperCase() as Sport;
-    if (!SPORT_TO_TABLE[sportRaw]) { skippedTeam++; continue; }
-    if (!a.prop_type) { skippedTeam++; continue; }
-    if (a.player_name && /game total|\//i.test(a.player_name)) { skippedTeam++; continue; }
+    if (!SPORT_TO_TABLE[sportRaw]) { skippedTeam++; ungradeable.push(a.id); continue; }
+    if (!a.prop_type) { skippedTeam++; ungradeable.push(a.id); continue; }
+    if (a.player_name && /game total|\//i.test(a.player_name)) { skippedTeam++; ungradeable.push(a.id); continue; }
 
     const resolve = resolver(sportRaw, a.prop_type);
-    if (!resolve) { skippedNoStat++; continue; }
+    if (!resolve) { skippedNoStat++; ungradeable.push(a.id); continue; }
 
     const lineRaw = a.metadata?.["line"];
     const line = typeof lineRaw === "number" ? lineRaw : Number(lineRaw);
-    if (!Number.isFinite(line)) { skippedNoStat++; continue; }
+    if (!Number.isFinite(line)) { skippedNoStat++; ungradeable.push(a.id); continue; }
 
     const gameDate = etDate(a.commence_time);
     if (!gameDate) { skippedNoLog++; continue; }
@@ -193,7 +195,7 @@ Deno.serve(async (req) => {
     if (!logs || logs.length === 0) { skippedNoLog++; continue; }
 
     const actual = resolve(logs[0]);
-    if (actual === null || !Number.isFinite(actual)) { skippedNoStat++; continue; }
+    if (actual === null || !Number.isFinite(actual)) { skippedNoStat++; ungradeable.push(a.id); continue; }
 
     const { was_correct, outcome } = gradeOverUnder(actual, line, a.prediction);
 
@@ -248,6 +250,15 @@ Deno.serve(async (req) => {
   );
   for (let i = 0; i < updTasks.length; i += 25) {
     await Promise.all(updTasks.slice(i, i + 25));
+  }
+
+  // Tombstone ungradeable rows so they stop being rescanned
+  if (ungradeable.length > 0) {
+    for (let i = 0; i < ungradeable.length; i += 500) {
+      await supabase.from("fanduel_prediction_alerts")
+        .update({ settlement_method: "ungradeable_v1", settled_at: nowIso })
+        .in("id", ungradeable.slice(i, i + 500));
+    }
   }
 
   return new Response(JSON.stringify({
