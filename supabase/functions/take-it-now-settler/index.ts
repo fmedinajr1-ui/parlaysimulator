@@ -223,24 +223,31 @@ Deno.serve(async (req) => {
     settled++;
   }
 
-  // Persist updates in batches
-  for (const u of updates) {
-    await supabase.from("fanduel_prediction_alerts")
+  // Persist accuracy rows first (the recap depends on these)
+  if (accuracyRows.length > 0) {
+    for (let i = 0; i < accuracyRows.length; i += 200) {
+      const chunk = accuracyRows.slice(i, i + 200);
+      const { error: upErr } = await supabase
+        .from("fanduel_prediction_accuracy")
+        .upsert(chunk, { onConflict: "event_id,player_name,prop_type,signal_type" });
+      if (upErr) console.error("accuracy upsert error", upErr.message);
+    }
+  }
+
+  // Then persist alert grading in parallel chunks
+  const nowIso = new Date().toISOString();
+  const updTasks = updates.map((u) =>
+    supabase.from("fanduel_prediction_alerts")
       .update({
         was_correct: u.was_correct,
         actual_outcome: u.actual_outcome,
-        settled_at: new Date().toISOString(),
+        settled_at: nowIso,
         settlement_method: "game_log_v1",
       })
-      .eq("id", u.id);
-  }
-
-  if (accuracyRows.length > 0) {
-    // unique on (event_id, player_name, prop_type, signal_type) per existing index
-    const { error: upErr } = await supabase
-      .from("fanduel_prediction_accuracy")
-      .upsert(accuracyRows, { onConflict: "event_id,player_name,prop_type,signal_type" });
-    if (upErr) console.error("accuracy upsert error", upErr.message);
+      .eq("id", u.id)
+  );
+  for (let i = 0; i < updTasks.length; i += 25) {
+    await Promise.all(updTasks.slice(i, i + 25));
   }
 
   return new Response(JSON.stringify({
