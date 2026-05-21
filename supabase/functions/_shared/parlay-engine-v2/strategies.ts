@@ -258,6 +258,10 @@ export const megaLotteryScanner: StrategyFn = (candidates, slot) => {
   );
   const combo = bestComboToBand(eligible, slot.target_leg_count, slot.odds_band);
   if (!combo) return null;
+  // Lottery tickets must include at least one real player edge — otherwise the
+  // combo collapses into "three correlated team-market lines on one game".
+  const playerLegs = combo.filter(l => l.player_name != null).length;
+  if (playerLegs < config.MIN_PLAYER_LEGS_IN_LOTTERY) return null;
   return build(slot, combo, "mega_lottery: 4-leg UPSIDE (2500–5000)");
 };
 

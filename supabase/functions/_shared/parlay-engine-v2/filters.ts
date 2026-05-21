@@ -152,11 +152,33 @@ export function parlayMinDistinctGames(p: Parlay, min = 2): GateResult {
   return [true, "ok"];
 }
 
+// At most N team-market legs (Spread / Moneyline / Total — anything with
+// player_name == null) may share the same game inside a parlay. Prevents
+// "Spread HOME -1.5 + Spread HOME -6.5 + Total OVER 8.5" all on the same MLB
+// matchup. Player props on that game are still allowed, governed by the
+// same-game concentration gate.
+export function parlayTeamLegsPerGame(
+  p: Parlay,
+  max = config.MAX_TEAM_LEGS_PER_GAME_IN_PARLAY,
+): GateResult {
+  const counts = new Map<string, number>();
+  for (const l of p.legs) {
+    if (l.player_name) continue; // player props don't count
+    const k = l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  for (const [game, n] of counts.entries()) {
+    if (n > max) return [false, `team_legs_per_game:${game}:${n}`];
+  }
+  return [true, "ok"];
+}
+
 export function validateParlay(p: Parlay): GateResult {
   const gates: Array<(p: Parlay) => GateResult> = [
     parlayLegCountValid,
     parlayWithinOddsBand,
     parlayNoConflictingLegs,
+    parlayTeamLegsPerGame,
     parlayMinDistinctGames,
     parlaySameGameConcentration,
     parlayEdgeSufficient,
