@@ -22,6 +22,27 @@ const VELOCITY_TOP_PERCENTILE = 0.05; // top 5% of derived confidence per (sport
 const VELOCITY_MIN_CONFIDENCE = 70;   // raise the floor for "rare on slate"
 const VELOCITY_MIN_GROUP_SIZE = 20;   // don't compute percentile on tiny pools
 
+// ─── POISON-SIGNAL BLACKLIST (Phase 1 kill switch) ───────────────────────────
+// Last 21d audit: batter_walks Over @ 28.5%, batter_stolen_bases Over @ ~0%.
+// We hard-suppress these directions and auto-flip the strongest gaps to Under
+// candidates via the accuracy_flip signal type.
+const BLACKLISTED_OVER_PROPS: ReadonlySet<string> = new Set([
+  'batter_walks',
+  'batter_stolen_bases',
+]);
+
+// Slate-blowout guard: if a (sport, prop_type, side) cohort has the same
+// direction firing on >= this fraction of the slate's distinct players, kill
+// the whole batch and log a signal_blowout row.
+const SLATE_BLOWOUT_THRESHOLD = 0.20; // 20% of distinct players
+const SLATE_BLOWOUT_MIN_PLAYERS = 8;  // need a real sample first
+const ACCURACY_FLIP_TOP_N = 5;        // per-prop_type Under candidates we emit
+
+function isBlacklistedDirection(propType: string | null, side: 'Over' | 'Under'): boolean {
+  if (!propType || side !== 'Over') return false;
+  return BLACKLISTED_OVER_PROPS.has(propType);
+}
+
 type UnifiedProp = {
   id: string;
   event_id: string;
@@ -107,6 +128,9 @@ Deno.serve(async (req) => {
 
   const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0, dropped_no_hrb: 0 };
   let dropped_legs_total = 0;
+  // Phase 1 telemetry
+  const phase1 = { poison_suppressed: 0, slate_blowout_suppressed: 0, accuracy_flip_emitted: 0 };
+  const slateBlowoutCohorts = new Set<string>(); // `${sport}|${propType}|${side}`
   const explainerCache = reasoningCache();
 
   // Load Hard Rock prop lines once per run. Empty map = HRB has no coverage,
@@ -173,6 +197,69 @@ Deno.serve(async (req) => {
     }
     console.log(`[signal-alert-engine] active props: ${rawProps.length} raw, ${activeProps.length} after scoring`);
 
+    // 2.5) SLATE-BLOWOUT GUARD ─ detect cohorts where the whole roster fires same side.
+    //      If so, the cohort is flagged; downstream detectors skip it and we emit a
+    //      capped accuracy_flip Under batch instead.
+    {
+      type CohortKey = string;
+      const cohortPlayers = new Map<CohortKey, Set<string>>();
+      const slatePlayersBySport = new Map<string, Set<string>>(); // (sport|propType) → all distinct players seen
+      for (const p of activeProps) {
+        if (!p.player_name || !p.prop_type) continue;
+        const sport = normaliseSport(p.sport);
+        const slateKey = `${sport}|${p.prop_type}`;
+        const slateSet = slatePlayersBySport.get(slateKey) ?? new Set<string>();
+        slateSet.add(p.player_name);
+        slatePlayersBySport.set(slateKey, slateSet);
+
+        const cohortKey = `${slateKey}|${p.derived_side}`;
+        const cohortSet = cohortPlayers.get(cohortKey) ?? new Set<string>();
+        cohortSet.add(p.player_name);
+        cohortPlayers.set(cohortKey, cohortSet);
+      }
+      for (const [cohortKey, players] of cohortPlayers) {
+        const [sport, propType] = cohortKey.split('|');
+        const slateKey = `${sport}|${propType}`;
+        const totalPlayers = slatePlayersBySport.get(slateKey)?.size ?? 0;
+        if (totalPlayers < SLATE_BLOWOUT_MIN_PLAYERS) continue;
+        const ratio = players.size / totalPlayers;
+        if (ratio >= SLATE_BLOWOUT_THRESHOLD) {
+          slateBlowoutCohorts.add(cohortKey);
+          console.warn(`[signal-alert-engine] SLATE BLOWOUT — ${cohortKey} fires on ${players.size}/${totalPlayers} (${Math.round(ratio*100)}%) — suppressing`);
+        }
+      }
+      if (slateBlowoutCohorts.size > 0) {
+        // Best-effort telemetry write — non-fatal if table missing.
+        try {
+          const rows = Array.from(slateBlowoutCohorts).map((cohortKey) => {
+            const [sport, propType, side] = cohortKey.split('|');
+            return {
+              engine_name: 'signal-alert-engine',
+              sport,
+              pick_description: `SIGNAL BLOWOUT: ${propType} ${side} firing on ≥${Math.round(SLATE_BLOWOUT_THRESHOLD*100)}% of slate`,
+              prop_type: propType,
+              side,
+              status: 'suppressed',
+              signals: [{
+                type: 'signal_blowout',
+                threshold: SLATE_BLOWOUT_THRESHOLD,
+                detected_at: new Date().toISOString(),
+              }],
+            };
+          });
+          await supabase.from('engine_live_tracker').insert(rows);
+        } catch (e) {
+          console.warn('[signal-alert-engine] engine_live_tracker insert failed (non-fatal):', e);
+        }
+      }
+    }
+    const isBlowoutOrPoison = (p: ScoredProp): boolean => {
+      if (isBlacklistedDirection(p.prop_type, p.derived_side)) return true;
+      const sport = normaliseSport(p.sport);
+      const cohortKey = `${sport}|${p.prop_type}|${p.derived_side}`;
+      return slateBlowoutCohorts.has(cohortKey);
+    };
+
     // 3) Snapshot every active prop (for future change detection)
     if (activeProps.length > 0) {
       const snapRows = activeProps.map((p) => ({
@@ -223,6 +310,12 @@ Deno.serve(async (req) => {
     }
 
     for (const [groupKey, members] of groups) {
+      // Phase 1: suppress poison/blowout cohorts
+      const sampleMember = members[0];
+      if (sampleMember && isBlowoutOrPoison(sampleMember)) {
+        phase1.poison_suppressed += 1;
+        continue;
+      }
       const initialDistinct = Array.from(new Set(members.map((m) => m.player_name)));
       if (initialDistinct.length < CASCADE_MIN_PLAYERS) continue;
 
@@ -440,6 +533,12 @@ Deno.serve(async (req) => {
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
+        // Phase 1: suppress poison/blowout
+        if (isBlowoutOrPoison(p)) {
+          phase1.poison_suppressed += 1;
+          continue;
+        }
+
         // HRB gate (NBA only — other sports not yet covered by HRB feed here)
         let hrbInfo: HardRockLine | null = null;
         if (normaliseSport(p.sport) === 'NBA') {
@@ -515,6 +614,12 @@ Deno.serve(async (req) => {
           if (p.derived_confidence < VELOCITY_MIN_CONFIDENCE) continue;
           if (!p.event_id || !p.player_name) continue;
 
+          // Phase 1: suppress poison/blowout
+          if (isBlowoutOrPoison(p)) {
+            phase1.poison_suppressed += 1;
+            continue;
+          }
+
           // HRB gate
           let hrbInfo: HardRockLine | null = null;
           if (normaliseSport(p.sport) === 'NBA') {
@@ -571,7 +676,67 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total } }), {
+    // 7) ACCURACY-FLIP — for blacklisted Over prop types, emit top-N Under candidates
+    //    by widest juice gap. These are the props the book is hammering Over on; the
+    //    inverse Under is the value side per 21d audit.
+    {
+      const flipCandidates = new Map<string, ScoredProp[]>(); // prop_type → props (Over-direction passes)
+      for (const p of activeProps) {
+        if (!p.prop_type || !p.player_name || !p.event_id) continue;
+        if (!BLACKLISTED_OVER_PROPS.has(p.prop_type)) continue;
+        if (p.derived_side !== 'Over') continue; // only flip the Over-juice side
+        const arr = flipCandidates.get(p.prop_type) ?? [];
+        arr.push(p);
+        flipCandidates.set(p.prop_type, arr);
+      }
+      for (const [propType, props] of flipCandidates) {
+        const ranked = [...props].sort((a, b) => {
+          const ga = Math.abs(Number(a.over_price ?? 0) - Number(a.under_price ?? 0));
+          const gb = Math.abs(Number(b.over_price ?? 0) - Number(b.under_price ?? 0));
+          return gb - ga;
+        }).slice(0, ACCURACY_FLIP_TOP_N);
+        for (const p of ranked) {
+          const dKey = dedupeKey(['accuracy_flip', p.event_id, p.player_name, p.prop_type, 'Under']);
+          if (!(await claimKey(dKey, 'accuracy_flip'))) continue;
+          const overP = Number(p.over_price ?? NaN);
+          const underP = Number(p.under_price ?? NaN);
+          const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
+          const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
+            player_name: p.player_name,
+            event_id: p.event_id,
+            signal_type: 'accuracy_flip',
+            prediction: 'Under', // flipped
+            confidence: Math.min(85, Math.max(MIN_CONFIDENCE, p.derived_confidence - 5)),
+            prop_type: p.prop_type,
+            sport: normaliseSport(p.sport),
+            bookmaker: p.bookmaker ?? 'unknown',
+            event_description: p.game_description,
+            commence_time: p.commence_time,
+            contrarian_flip_applied: true,
+            metadata: {
+              detector: 'phase1_accuracy_flip',
+              flipped_from: 'Over',
+              flip_reason: 'blacklisted_over_prop',
+              audit_basis: '21d_hit_rate_below_breakeven',
+              juice_gap: gap,
+              original_over_price: p.over_price,
+              original_under_price: p.under_price,
+              line: p.current_line,
+              source: 'unified_props_price_derived',
+            },
+          });
+          if (insErr) {
+            console.error('[signal-alert-engine] accuracy_flip insert failed:', insErr);
+            stats.errors += 1;
+          } else {
+            phase1.accuracy_flip_emitted += 1;
+          }
+        }
+      }
+    }
+
+    phase1.slate_blowout_suppressed = slateBlowoutCohorts.size;
+    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total, phase1 } }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
