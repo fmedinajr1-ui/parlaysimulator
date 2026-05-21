@@ -1,70 +1,57 @@
-## What's actually wrong in the screenshot
+## Problem
 
-The 4-leg `mega_lottery_scanner` parlay you saw has three independent bugs that combine into "Unknown player … conf 0.66 … conf 0.66 … conf 0.66":
+The Ladder Challenge cron (`daily-ladder-challenge`, runs 14:30 ET) is still firing, but the `nba-ladder-challenge` function only scans **NBA** sweet spots. The NBA regular season ended — last successful lock was **May 7**, and every run since hits the "no candidates" branch and exits silently. Result: no daily Lock has gone to Telegram in two weeks.
 
-1. **Broadcast labels team/game legs as "Unknown player"**
-   `parlay-engine-v2-broadcast/index.ts` → `pickLegPlayer()` falls back to `"Unknown player"` when `player_name` is null. Team and game legs *do* have `team`/`opponent` populated upstream, but the broadcaster never reads them.
+Today's data confirms the gap:
+- NBA sweet spots ≥70% on 2026-05-21: **0**
+- MLB sweet spots ≥70% on 2026-05-21: **3** (RBI Under), plus 70+ active MLB pitcher-K / RBI sweet spots in the all-time pool
+- Active props in `unified_props`: NBA 217, **MLB 1,987**, NHL 9
 
-2. **No intelligence is applied to team/game legs**
-   In `parlay-engine-v2/index.ts` → `buildExtraCandidates()` every team market (Spread / Total / Moneyline) and every raw MLB row is pushed with:
-   - `confidence = 0.66` (hard-coded constant)
-   - `edge = 0`
-   - `projected = line` (no model output)
-   That's why every team leg in your screenshot reads `conf 0.66` — there is literally no scoring path. The "model" for team legs is currently a constant.
+The function also short-circuits hard on its 90% hit-rate + floor-above-line gates — in-season that's fine, off-season it guarantees zero output.
 
-3. **Mega lottery is stacking the same game's spread twice**
-   Legs 2 (`Spread HOME -1.5`) and 4 (`Spread HOME -6.5`) are both home-side spreads on the same game with two different alt lines. Same-game-concentration only caps at ≤0.75 of legs and dedup only keys on `(team, prop_type, side, line)` — different lines pass through, so you get two correlated HOME spreads in one ticket. The memory rule "Drop all 10+ spreads, restrict to fade-heavy outcomes" is also not being enforced for raw team-spread candidates.
+## Goal
+
+Send **one Lock of the Day to Telegram every day**, sourced from whichever in-season sport has the strongest safety-scored single pick. Never silently skip — if the top tier is empty, drop to a clearly labeled lower tier rather than send nothing.
 
 ## Plan
 
-### 1. Broadcast: real labels for team/game legs
-File: `supabase/functions/parlay-engine-v2-broadcast/index.ts`
+### 1. Rename + generalize the function
+Rename behavior (keep the route `nba-ladder-challenge` to avoid breaking the cron) to a **multi-sport** "Ladder Lock of the Day" engine. Internally drive off a `SPORT_ADAPTERS` list executed in priority order based on what's in season:
 
-- Extend the `Leg` type to include optional `team`, `opponent`, `game_description`.
-- Replace `pickLegPlayer()` with a `pickLegLabel()` that returns:
-  - player leg → `player_name`
-  - team leg (Spread/Moneyline) → `"<team> Spread"` / `"<team> ML"` with `(vs <opponent>)` suffix
-  - game leg (Total) → `"<away> @ <home> Total"` (or `game_description` when teams are missing)
-- Update `buildMessage()` to use the new label and to include the game line under each team/game leg.
+- **MLB** (primary right now): pull from `category_sweet_spots` where `category LIKE 'MLB_%'`, join `mlb_player_game_logs` for L10 floor/median/hit-rate, match against active `unified_props` (`sport='baseball_mlb'`) for the live line. Reuse the existing RBI-Under / Pitcher-K under/over categories already populated.
+- **NBA**: existing path, only runs if NBA sweet spots return ≥1 row.
+- **NHL**: pull `NHL_POINTS / NHL_GOALS_SCORER / NHL_ASSISTS` sweet spots, match against `unified_props` (`sport='icehockey_nhl'`).
 
-### 2. Pass team metadata into the broadcast payload
-File: `supabase/functions/parlay-engine-v2/index.ts` (the writer that persists `legs` into the `parlays` row consumed by the broadcaster)
+Each adapter returns `LockCandidate[]` with the same shape and safety-score breakdown the current function uses.
 
-- Persist `team`, `opponent`, `game_description` on every leg JSON so the broadcaster has what it needs without changing the model.
+### 2. Tiered safety gates (never return empty)
+Run candidates through three tiers in order; first tier with ≥1 pick wins, and the pick is labeled accordingly in Telegram:
 
-### 3. Real (lightweight) intelligence for team/game legs
-File: `supabase/functions/parlay-engine-v2/index.ts` → `buildExtraCandidates()`
+| Tier | Hit rate | Floor margin | Median clearance | Label |
+|------|----------|--------------|------------------|-------|
+| Lock | ≥90% | floor > line | median ≥ line + 1 | "🔒 Lock of the Day" |
+| Strong | ≥80% | floor ≥ line | median ≥ line | "💪 Strong Play of the Day" |
+| Lean | ≥70% | — | avg ≥ line | "📈 Lean of the Day" |
 
-Replace the constant `confidence = 0.66` / `edge = 0` block with a model-aware scorer:
+Always pick `candidates[0]` after sorting by safety score within the highest non-empty tier.
 
-- For **spreads**: compute implied win prob from the American price, blend with a 7-day team SU/ATS hit rate (already in `team_results` / `mlb_team_form`), and a market-vs-projection delta from `unified_props_snapshot` opener-vs-current. Output `confidence ∈ [0.55, 0.78]` and `edge = (model_prob − implied_prob)`.
-- For **game totals**: blend pitcher quality (MLB) / pace (NBA) when present in `pitcher_form_l5` / `team_pace_l10`, fall back to the opener-vs-current drift. Same confidence/edge ranges.
-- For **MLB player raw_props** rows: read from existing `mlb_player_form_l10` (already used elsewhere) to score `confidence` instead of stamping 0.66.
-- Apply the existing memory rule "no spreads ≥10, only fade-heavy" by dropping spread candidates with `|line| ≥ 10` and dropping FAV spreads when the team's 10-game ATS hit rate is < 0.45.
+### 3. Pick selection across sports
+Build one merged candidate list across all adapters, sort by `(tier_rank, safety_score)`. The single highest pick wins. Telegram header shows the sport (`⚾ MLB`, `🏀 NBA`, `🏒 NHL`).
 
-If the supporting feature table is missing for a row, leave the candidate out rather than synthesizing a 0.66 — better to ship fewer legs than fake confidence.
+### 4. Dedup + persistence
+Keep the existing one-per-day dedup on `bot_daily_parlays.parlay_date + strategy_name='ladder_challenge'`. Tier name goes into `tier` column (`lock` / `strong` / `lean`). Sport recorded in `selection_rationale` and a new `sport` key inside the `legs[0]` JSON.
 
-### 4. Stop same-game spread stacking
-Files: `supabase/functions/_shared/parlay-engine-v2/dedup.ts` and `config.ts`
+### 5. Telegram delivery
+Always send via `bot-send-telegram` with `type: 'ladder_challenge'`. Message format keeps the current safety-score block but the header reflects tier + sport, and we add an `⚠️ Lean Tier — best available today` footer when we fall below Lock. If no candidate exists in any tier (very rare — e.g. all leagues dark), send a one-line "No Lock today — markets thin" admin-only note so we never go silent without explanation.
 
-- Add a `team_side_exposure` map keyed by `${sport}|${team}|${prop_type}|${side}` capped at **1** so two HOME spreads on the same team can never co-occur regardless of alt line.
-- Add a `MAX_TEAM_LEGS_PER_GAME = 1` rule: at most one of {Spread, Moneyline, Total} per `event_id` per parlay (player props on that game are still allowed under the existing 0.75 concentration cap).
-- Tighten `megaLotteryScanner` in `strategies.ts` to require at least one player leg in the combo so the lottery doesn't reduce to "three team-market lines on one game".
+### 6. Backfill verification
+After deploy, manually invoke `nba-ladder-challenge` once via `supabase--curl_edge_functions` and confirm:
+- A row lands in `bot_daily_parlays` for 2026-05-21
+- Telegram message arrives with MLB-tagged lock and proper tier label
 
-### 5. Memory update
-- Append a Core rule: "Team/game legs require a real model score; never default to constant confidence; spread legs ≥10 are dropped."
-- New file `mem://logic/parlay/team-leg-intelligence` with the scoring contract above.
-- Update `mem://logic/parlay/same-game-concentration` to record the new `MAX_TEAM_LEGS_PER_GAME=1` and `team_side_exposure=1` caps.
+### Technical notes
 
-### 6. Verification
-- Unit test in `supabase/functions/_shared/parlay-engine-v2/__tests__/`:
-  - reject combo with two HOME spreads same team (different lines).
-  - reject combo with Spread + Total on same `event_id`.
-  - mega_lottery requires ≥1 player leg.
-- Broadcast test: team-leg payload renders `Cleveland Guardians Spread −1.5 (+140) (vs Detroit Tigers)` instead of `Unknown player — Spread HOME −1.5`.
-- Hit `parlay-engine-v2` in dry-run and confirm at least one team leg now carries a non-0.66 confidence and a non-zero edge.
-
-### Out of scope
-- No changes to the existing player-prop scoring path.
-- No schema migrations beyond persisting extra leg metadata (stored inside the `legs` JSON, no DDL).
-- No touching the whale engine — separate workstream.
+- Files touched: `supabase/functions/nba-ladder-challenge/index.ts` (refactor in place, no new function), `mem/index.md` (+ new memory `mem://logic/betting/ladder-challenge-multisport`).
+- Cron and `bot-send-telegram` payload shape are unchanged — no schema migration, no frontend changes.
+- `mlb_player_game_logs` already exposes `hits`, `rbis`, `total_bases`, `strikeouts` etc.; adapter maps each MLB category to the right field analogous to the existing `PROP_GAME_LOG_FIELD` map.
+- The 90% / floor>line gates remain the **Lock** tier definition, preserving the existing edge-protection memory rule. Tiers Strong/Lean are explicitly labeled so the user can see when we relaxed.
