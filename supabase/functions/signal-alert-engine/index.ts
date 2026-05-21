@@ -197,6 +197,61 @@ Deno.serve(async (req) => {
     }
     console.log(`[signal-alert-engine] active props: ${rawProps.length} raw, ${activeProps.length} after scoring`);
 
+    // 2.5) SLATE-BLOWOUT GUARD ─ detect cohorts where the whole roster fires same side.
+    //      If so, the cohort is flagged; downstream detectors skip it and we emit a
+    //      capped accuracy_flip Under batch instead.
+    {
+      type CohortKey = string;
+      const cohortPlayers = new Map<CohortKey, Set<string>>();
+      const slatePlayersBySport = new Map<string, Set<string>>(); // (sport|propType) → all distinct players seen
+      for (const p of activeProps) {
+        if (!p.player_name || !p.prop_type) continue;
+        const sport = normaliseSport(p.sport);
+        const slateKey = `${sport}|${p.prop_type}`;
+        const slateSet = slatePlayersBySport.get(slateKey) ?? new Set<string>();
+        slateSet.add(p.player_name);
+        slatePlayersBySport.set(slateKey, slateSet);
+
+        const cohortKey = `${slateKey}|${p.derived_side}`;
+        const cohortSet = cohortPlayers.get(cohortKey) ?? new Set<string>();
+        cohortSet.add(p.player_name);
+        cohortPlayers.set(cohortKey, cohortSet);
+      }
+      for (const [cohortKey, players] of cohortPlayers) {
+        const [sport, propType] = cohortKey.split('|');
+        const slateKey = `${sport}|${propType}`;
+        const totalPlayers = slatePlayersBySport.get(slateKey)?.size ?? 0;
+        if (totalPlayers < SLATE_BLOWOUT_MIN_PLAYERS) continue;
+        const ratio = players.size / totalPlayers;
+        if (ratio >= SLATE_BLOWOUT_THRESHOLD) {
+          slateBlowoutCohorts.add(cohortKey);
+          console.warn(`[signal-alert-engine] SLATE BLOWOUT — ${cohortKey} fires on ${players.size}/${totalPlayers} (${Math.round(ratio*100)}%) — suppressing`);
+        }
+      }
+      if (slateBlowoutCohorts.size > 0) {
+        // Best-effort telemetry write — non-fatal if table missing.
+        try {
+          await supabase.from('engine_live_tracker').insert({
+            engine_name: 'signal-alert-engine',
+            event_type: 'signal_blowout',
+            payload: {
+              cohorts: Array.from(slateBlowoutCohorts),
+              threshold: SLATE_BLOWOUT_THRESHOLD,
+              detected_at: new Date().toISOString(),
+            },
+          });
+        } catch (e) {
+          console.warn('[signal-alert-engine] engine_live_tracker insert failed (non-fatal):', e);
+        }
+      }
+    }
+    const isBlowoutOrPoison = (p: ScoredProp): boolean => {
+      if (isBlacklistedDirection(p.prop_type, p.derived_side)) return true;
+      const sport = normaliseSport(p.sport);
+      const cohortKey = `${sport}|${p.prop_type}|${p.derived_side}`;
+      return slateBlowoutCohorts.has(cohortKey);
+    };
+
     // 3) Snapshot every active prop (for future change detection)
     if (activeProps.length > 0) {
       const snapRows = activeProps.map((p) => ({
