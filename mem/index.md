@@ -21,3 +21,4 @@ Team/game legs in parlay-engine-v2 require a real model score; never default to 
 - [Nuke Parlay Scout (NBA)](mem://logic/parlay/nuke-scout) — Blowout-script engine: scoring weights, hard floors, role-player OVER template, +1000/+3000 odds band, daily 21:00/16:00 UTC crons
 - [Team leg intelligence](mem://logic/parlay/team-leg-intelligence) — Real scoring for team/MLB-raw legs, fat-spread drop, 1 team-market per game, lottery requires ≥1 player
 - [Ladder Challenge multi-sport](mem://logic/betting/ladder-challenge-multisport) — Daily Lock/Strong/Lean across NBA+MLB with odds floor and always-on Telegram
+- [Cross-sport bulk parlay generator](mem://logic/parlay/cross-sport-generator) — Perplexity-fed multi-sport sweet spots + 25-ticket bulk assembler (8 Lock / 8 Strong / 6 Stretch / 3 Lottery), player-primary, team legs ≤40%
