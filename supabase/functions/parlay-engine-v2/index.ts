@@ -19,6 +19,8 @@ import {
   BOOKMAKER_PRIORITY,
   MAX_BOOK_LINE_AGE_MIN,
   MAX_LINE_DRIFT,
+  MAX_TEAM_SPREAD_ABS,
+  PROP_WHITELIST,
 } from "../_shared/parlay-engine-v2/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
@@ -240,6 +242,7 @@ function buildCandidates(
       defensive_context_updated_at: null, // gate skipped this phase
       selected_book: selectedBook,
       source_origin: row.source_origin ?? null,
+      game_description: matchedProp.game_description ?? null,
     });
   }
 
