@@ -405,14 +405,15 @@ Deno.serve(async (req) => {
             ? (s.side === "OVER" ? "over" : "under")
             : (s.side === "HOME" ? "home" : "away"));
           const rb = lookupResearchBoost(research, p.sport, p.market_type, sideKey, s.team ?? undefined);
-          // Rebalanced team-leg safety: rewards real favorites + structural edge so
-          // fair-priced ML/spread/total favorites can clear the 0.60 lean threshold.
-          const edge = conf - implied;
+          // Rebalanced team-leg safety: anchor to conf, add a small favorite bonus
+          // and research weight so fair-priced ML/spread/total favorites can clear
+          // the 0.60 lean threshold (e.g. -150 → ~0.67, -200 → ~0.74) while
+          // underdogs/pick'ems stay below 0.60.
           const safety = clamp01(
-            0.55 * conf
-            + 0.20 * clamp01(edge * 4 + 0.5)
-            + 0.15 * clamp01((conf - 0.50) * 2)
-            + W_RESEARCH * (0.5 + rb.boost * 5)
+            0.95 * conf
+            + 0.05
+            + 0.10 * Math.max(0, conf - 0.50)
+            + W_RESEARCH * rb.boost * 2.5
           );
           const tier = tierOf(safety);
           if (!tier) continue;
