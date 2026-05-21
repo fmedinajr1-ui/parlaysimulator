@@ -102,13 +102,9 @@ function teamSafety(price: number, sideKind: "home_ml" | "home_spread" | "under_
   else if (sideKind === "home_spread") bump = 0.03;
   else if (sideKind === "under_total") bump = 0.02;
   const conf = Math.min(0.85, implied + bump);
-  const edge = conf - implied;
   const W_RESEARCH = 0.10;
   return clamp01(
-    0.55 * conf
-    + 0.20 * clamp01(edge * 4 + 0.5)
-    + 0.15 * clamp01((conf - 0.50) * 2)
-    + W_RESEARCH * (0.5 + researchBoost * 5)
+    0.95 * conf + 0.05 + 0.10 * Math.max(0, conf - 0.50) + W_RESEARCH * researchBoost * 2.5
   );
 }
 
