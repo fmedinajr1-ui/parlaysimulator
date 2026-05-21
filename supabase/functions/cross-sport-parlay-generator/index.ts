@@ -132,8 +132,20 @@ function buildSlot(pool: Leg[], slot: typeof SLOTS[number], used: Set<string>): 
     const picked: Leg[] = [];
     const gamesUsed = new Set<string>();
     const sportsUsed = new Set<string>();
+    // Seed one team leg first when the floor is enforced, so greedy player-sort
+    // doesn't crowd out the team requirement. Rotate seed across attempts.
+    if (enforceTeamFloor) {
+      const teamCands = filtered.filter(l => l.market_type !== "player");
+      if (teamCands.length > 0) {
+        const seed = teamCands[attempt % teamCands.length];
+        picked.push(seed);
+        gamesUsed.add(gameKey(seed));
+        sportsUsed.add(seed.sport);
+      }
+    }
     for (const cand of filtered) {
       if (picked.length >= slot.legs) break;
+      if (picked.some(p => legFp(p) === legFp(cand))) continue;
       if (gamesUsed.has(gameKey(cand)) && cand.market_type !== "player") continue;
       // allow up to 2 player legs same game, but stop after 2
       if (cand.market_type === "player") {
