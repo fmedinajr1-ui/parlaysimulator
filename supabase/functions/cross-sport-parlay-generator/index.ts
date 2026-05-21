@@ -35,10 +35,10 @@ type Leg = {
 };
 
 const SLOTS = [
-  { name: "lock_2", count: 8, legs: 2, tiers: ["lock"], minSports: 1 },
-  { name: "strong_3", count: 8, legs: 3, tiers: ["lock", "strong"], minSports: 2 },
-  { name: "stretch_4", count: 6, legs: 4, tiers: ["lock", "strong"], minSports: 2 },
-  { name: "lottery_5", count: 3, legs: 5, tiers: ["lock", "strong", "lean"], minSports: 2 },
+  { name: "lock_2", count: 8, legs: 2, tiers: ["lock"], minSports: 1, requireTeamLeg: false },
+  { name: "strong_3", count: 8, legs: 3, tiers: ["lock", "strong"], minSports: 2, requireTeamLeg: false },
+  { name: "stretch_4", count: 6, legs: 4, tiers: ["lock", "strong"], minSports: 2, requireTeamLeg: true },
+  { name: "lottery_5", count: 3, legs: 5, tiers: ["lock", "strong", "lean"], minSports: 2, requireTeamLeg: true },
 ];
 
 function decimal(american: number): number {
@@ -122,6 +122,10 @@ function buildSlot(pool: Leg[], slot: typeof SLOTS[number], used: Set<string>): 
   // candidates ranked by safety desc
   const filtered = pool.filter(l => slot.tiers.includes(l.tier))
     .sort((a, b) => b.safety_score - a.safety_score);
+  const teamPoolSize = filtered.filter(l => l.market_type !== "player").length;
+  // Soft floor: only enforce the team-leg requirement when the pool actually has
+  // ≥3 team candidates. Otherwise (rare slates) fall back to player-only.
+  const enforceTeamFloor = slot.requireTeamLeg && teamPoolSize >= 3;
   // greedy diversified selection
   const tried = new Set<string>();
   for (let attempt = 0; attempt < 80; attempt++) {
@@ -144,6 +148,7 @@ function buildSlot(pool: Leg[], slot: typeof SLOTS[number], used: Set<string>): 
     }
     if (picked.length < slot.legs) continue;
     if (sportsUsed.size < slot.minSports) continue;
+    if (enforceTeamFloor && picked.every(l => l.market_type === "player")) continue;
     const reason = violates(picked);
     if (reason) continue;
     const hash = comboHash(picked);
