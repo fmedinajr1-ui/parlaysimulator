@@ -20,3 +20,4 @@ Team/game legs in parlay-engine-v2 require a real model score; never default to 
 - [Hard Rock line gating](mem://logic/betting/hardrock-line-gating) — signal-alert-engine drops cascade/single legs not tradable on hardrockbet via The Odds API; metadata.hrb_verified drives Telegram footer
 - [Nuke Parlay Scout (NBA)](mem://logic/parlay/nuke-scout) — Blowout-script engine: scoring weights, hard floors, role-player OVER template, +1000/+3000 odds band, daily 21:00/16:00 UTC crons
 - [Team leg intelligence](mem://logic/parlay/team-leg-intelligence) — Real scoring for team/MLB-raw legs, fat-spread drop, 1 team-market per game, lottery requires ≥1 player
+- [Ladder Challenge multi-sport](mem://logic/betting/ladder-challenge-multisport) — Daily Lock/Strong/Lean across NBA+MLB with odds floor and always-on Telegram
