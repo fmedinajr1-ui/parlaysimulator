@@ -65,3 +65,31 @@ Deno.test("test 5: parlay diversity gate accepts 3-leg with 2 player + 1 team", 
   const dec = legs.reduce((a, l) => a * decimal(l.price), 1);
   assert(dec > 1);
 });
+
+function isStale(commenceISO: string, bufferMin = 15): boolean {
+  return new Date(commenceISO).getTime() < Date.now() + bufferMin * 60_000;
+}
+function tierAfterSampleCap(rawTier: string | null, sampleSize: number): string | null {
+  if (!rawTier) return null;
+  if (sampleSize < 5 && (rawTier === "lock" || rawTier === "strong")) return "lean";
+  return rawTier;
+}
+
+Deno.test("test 6: stale-game filter rejects games already started", () => {
+  const past = new Date(Date.now() - 60 * 60_000).toISOString(); // 1h ago
+  const future = new Date(Date.now() + 60 * 60_000).toISOString(); // 1h ahead
+  assert(isStale(past));
+  assertEquals(isStale(future), false);
+});
+
+Deno.test("test 7: 15-min pregame buffer treats game starting in 5min as stale", () => {
+  const soon = new Date(Date.now() + 5 * 60_000).toISOString();
+  assert(isStale(soon));
+});
+
+Deno.test("test 8: thin sample (<5 games) caps lock down to lean", () => {
+  assertEquals(tierAfterSampleCap("lock", 3), "lean");
+  assertEquals(tierAfterSampleCap("strong", 4), "lean");
+  assertEquals(tierAfterSampleCap("lock", 7), "lock");
+  assertEquals(tierAfterSampleCap("lean", 2), "lean");
+});
