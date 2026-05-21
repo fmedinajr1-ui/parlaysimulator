@@ -34,6 +34,9 @@ interface Leg {
   signal_source?: string | null;
   projected?: number | null;
   selected_book?: string | null;
+  team?: string | null;
+  opponent?: string | null;
+  game_description?: string | null;
 }
 
 interface ParlayRow {
@@ -99,8 +102,36 @@ function legNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function pickLegPlayer(l: Leg): string {
-  return (l.player_name ?? l.player ?? "Unknown player") as string;
+function pickLegLabel(l: Leg): string {
+  // Player props: just the name.
+  if (l.player_name || l.player) return (l.player_name ?? l.player) as string;
+
+  // Team / game props: build a readable label from team + opponent metadata
+  // that the engine now persists with every leg.
+  const team = (l.team ?? "").toString().trim();
+  const opponent = (l.opponent ?? "").toString().trim();
+  const propRaw = (l.prop_type ?? l.prop ?? "").toString();
+  const propLower = propRaw.toLowerCase();
+  const isTotal = propLower === "total" || propLower === "totals" || propLower === "game_total";
+  const isSpread = propLower === "spread" || propLower === "spreads";
+  const isML = propLower === "moneyline" || propLower === "h2h" || propLower === "ml";
+
+  if (isTotal) {
+    if (team && opponent && team !== "UNK" && opponent !== "UNK") {
+      return `${team} vs ${opponent}`;
+    }
+    if (l.game_description) return l.game_description as string;
+    return "Game Total";
+  }
+
+  if ((isSpread || isML) && team && team !== "UNK") {
+    const tag = isSpread ? "Spread" : "ML";
+    if (opponent && opponent !== "UNK") return `${team} ${tag} (vs ${opponent})`;
+    return `${team} ${tag}`;
+  }
+
+  if (l.game_description) return l.game_description as string;
+  return "Team market";
 }
 function pickLegProp(l: Leg): string {
   return fullPropName(l.prop_type ?? l.prop);
@@ -241,7 +272,7 @@ export function buildMessage(p: ParlayRow): string {
     (ev != null ? ` · EV ${ev >= 0 ? "+" : ""}${ev.toFixed(2)}u` : "");
 
   const legLines = (p.legs ?? []).map((l, i) => {
-    const player = escapeHtml(pickLegPlayer(l));
+    const player = escapeHtml(pickLegLabel(l));
     const prop = escapeHtml(pickLegProp(l));
     const side = (l.side ?? "").toString().toUpperCase();
     const line = pickLegLine(l);
