@@ -13,3 +13,9 @@ Returns null if the filtered candidate subset spans fewer than `min_distinct_gam
 2. **`parlaySameGameConcentration(p, max_share=0.75)`** — TEMP loosened from 0.6 on 2026-04-21 while pool coverage was thin. Revert default to 0.6 once morning prep pipeline reliably restores full slate coverage across multiple consecutive days. Rejection: `same_game_share_<share>`.
 
 **Pool-coverage backfill (2026-04-21 one-off):** Inserted 60 picks into `bot_daily_pick_pool` for 5 NBA games missing from the 4 AM ET build (category=`pool_backfill_2026_04_21`). Does NOT auto-repeat — tomorrow's 10 AM morning pipeline rebuilds from scratch.
+
+**Layer 3 — Team-market cap (added 2026-05-21):**
+`parlayTeamLegsPerGame(p, max=1)` rejects parlays that pack >1 team-market
+leg (Spread / Moneyline / Total) onto the same game. Player props on the
+same game don't count toward this cap. Rejection:
+`team_legs_per_game:<game>:<n>`. See `mem://logic/parlay/team-leg-intelligence`.
