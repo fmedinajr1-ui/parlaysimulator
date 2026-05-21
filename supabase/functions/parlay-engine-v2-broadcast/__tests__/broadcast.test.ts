@@ -140,3 +140,46 @@ Deno.test('buildMessage preserves long content for downstream chunking', () => {
   assert(text.includes('Why this hits'), 'expected rationale header');
   assert(text.length > 4000, 'expected long message to be preserved for chunk splitting');
 });
+
+// 10. Team / game legs render team-aware labels instead of "Unknown player"
+Deno.test("buildMessage labels team spread legs with team name + opponent", () => {
+  const text = buildMessage(makeRow({
+    strategy_name: "mega_lottery_scanner",
+    tier: "LOTTERY",
+    leg_count: 1,
+    legs: [{
+      player_name: null,
+      team: "Cleveland Guardians",
+      opponent: "Detroit Tigers",
+      prop_type: "Spread",
+      side: "HOME",
+      line: -1.5,
+      american_odds: 140,
+      game_description: "Cleveland Guardians @ Detroit Tigers",
+    } as any],
+  }));
+  assert(!text.includes("Unknown player"), `should not say Unknown player: ${text}`);
+  assert(text.includes("Cleveland Guardians Spread"),
+    `expected team-aware spread label: ${text}`);
+  assert(text.includes("vs Detroit Tigers"), `expected opponent: ${text}`);
+});
+
+Deno.test("buildMessage labels game total legs with the matchup", () => {
+  const text = buildMessage(makeRow({
+    strategy_name: "mega_lottery_scanner",
+    tier: "LOTTERY",
+    leg_count: 1,
+    legs: [{
+      player_name: null,
+      team: "Cleveland Guardians",
+      opponent: "Detroit Tigers",
+      prop_type: "Total",
+      side: "OVER",
+      line: 8.5,
+      american_odds: 100,
+    } as any],
+  }));
+  assert(!text.includes("Unknown player"), `should not say Unknown player: ${text}`);
+  assert(text.includes("Cleveland Guardians vs Detroit Tigers"),
+    `expected matchup label: ${text}`);
+});
