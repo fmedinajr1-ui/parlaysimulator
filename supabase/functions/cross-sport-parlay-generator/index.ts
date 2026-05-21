@@ -31,6 +31,7 @@ type Leg = {
   tier: string;
   l10_hit_rate: number | null;
   research_notes: string | null;
+  commence_time: string | null;
 };
 
 const SLOTS = [
@@ -208,11 +209,26 @@ Deno.serve(async (req) => {
       .eq("analysis_date", date)
       .eq("is_active", true);
     if (error) throw error;
-    const pool = (data ?? []) as Leg[];
+    const rawPool = (data ?? []) as Leg[];
+    // Belt-and-suspenders: drop any leg whose game has started (or starts within 15 min)
+    const cutoffMs = Date.now() + 15 * 60_000;
+    const staleDrops: Leg[] = [];
+    const pool = rawPool.filter(l => {
+      if (!l.commence_time) return true;
+      if (new Date(l.commence_time).getTime() < cutoffMs) { staleDrops.push(l); return false; }
+      return true;
+    });
+    if (staleDrops.length > 0) {
+      console.warn(`[cross-sport-generator] dropped ${staleDrops.length} stale legs at runtime`);
+      await supabase.functions.invoke("bot-send-telegram", {
+        body: { type: "cross_sport_parlay", admin_only: true,
+          message: `⚠️ Cross-Sport Generator: ${staleDrops.length} stale legs filtered at runtime (sweet-spots SQL filter should have caught these). Investigate upstream.` },
+      });
+    }
     if (pool.length === 0) {
       await supabase.functions.invoke("bot-send-telegram", {
         body: { type: "cross_sport_parlay", admin_only: true,
-          message: `⚠️ Cross-Sport Parlay Generator: 0 candidates for ${date}. Check upstream sync.` },
+          message: `⚠️ Cross-Sport Parlay Generator: 0 candidates for ${date} (after stale filter: ${staleDrops.length} dropped). Check upstream sync.` },
       });
       return new Response(JSON.stringify({ ok: true, date, generated: 0, reason: "empty_pool" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
