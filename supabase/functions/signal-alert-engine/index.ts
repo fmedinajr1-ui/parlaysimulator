@@ -302,6 +302,12 @@ Deno.serve(async (req) => {
     }
 
     for (const [groupKey, members] of groups) {
+      // Phase 1: suppress poison/blowout cohorts
+      const sampleMember = members[0];
+      if (sampleMember && isBlowoutOrPoison(sampleMember)) {
+        phase1.poison_suppressed += 1;
+        continue;
+      }
       const initialDistinct = Array.from(new Set(members.map((m) => m.player_name)));
       if (initialDistinct.length < CASCADE_MIN_PLAYERS) continue;
 
@@ -519,6 +525,12 @@ Deno.serve(async (req) => {
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
+        // Phase 1: suppress poison/blowout
+        if (isBlowoutOrPoison(p)) {
+          phase1.poison_suppressed += 1;
+          continue;
+        }
+
         // HRB gate (NBA only — other sports not yet covered by HRB feed here)
         let hrbInfo: HardRockLine | null = null;
         if (normaliseSport(p.sport) === 'NBA') {
@@ -593,6 +605,12 @@ Deno.serve(async (req) => {
         for (const p of winners) {
           if (p.derived_confidence < VELOCITY_MIN_CONFIDENCE) continue;
           if (!p.event_id || !p.player_name) continue;
+
+          // Phase 1: suppress poison/blowout
+          if (isBlowoutOrPoison(p)) {
+            phase1.poison_suppressed += 1;
+            continue;
+          }
 
           // HRB gate
           let hrbInfo: HardRockLine | null = null;
