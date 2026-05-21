@@ -1,57 +1,98 @@
-## Problem
-
-The Ladder Challenge cron (`daily-ladder-challenge`, runs 14:30 ET) is still firing, but the `nba-ladder-challenge` function only scans **NBA** sweet spots. The NBA regular season ended — last successful lock was **May 7**, and every run since hits the "no candidates" branch and exits silently. Result: no daily Lock has gone to Telegram in two weeks.
-
-Today's data confirms the gap:
-- NBA sweet spots ≥70% on 2026-05-21: **0**
-- MLB sweet spots ≥70% on 2026-05-21: **3** (RBI Under), plus 70+ active MLB pitcher-K / RBI sweet spots in the all-time pool
-- Active props in `unified_props`: NBA 217, **MLB 1,987**, NHL 9
-
-The function also short-circuits hard on its 90% hit-rate + floor-above-line gates — in-season that's fine, off-season it guarantees zero output.
-
 ## Goal
 
-Send **one Lock of the Day to Telegram every day**, sourced from whichever in-season sport has the strongest safety-scored single pick. Never silently skip — if the top tier is empty, drop to a clearly labeled lower tier rather than send nothing.
+Build a **Cross-Sport Bulk Parlay Generator** that uses the proven Sweet Spot formula (L10 hit rate + floor/median + line edge) but extends it across MLB, NHL, NCAAB, NCAAF, and team-market plays (ML / Spread / Total) — not just NBA player props. Use Perplexity as a research layer to gather the cross-sport intelligence (pitching matchups, weather, sharp money, injuries, pace) that the formula then folds into scoring.
+
+NBA volume is dying (211 active player props vs 2,339 MLB), so the engine needs to pivot to MLB as primary, NHL second, with team markets as full first-class citizens.
+
+## The Formula (extended Sweet Spot v2)
+
+Per leg:
+
+```text
+Safety       = 0.45 * L10_hit_rate
+             + 0.20 * floor_margin       (how far floor sits vs line)
+             + 0.15 * median_margin
+             + 0.10 * line_value_edge    (model_prob - de-juiced implied)
+             + 0.10 * research_boost     (Perplexity-derived signal, -0.1..+0.1)
+
+Tier         = Lock (>=0.80)  |  Strong (0.70-0.79)  |  Lean (0.60-0.69)
+HardDrops    = odds worse than -250, all-zero L10 Unders, spreads |line|>=9.5,
+               poison signals (snapback/live drift), miss-by-1 leaks
+```
+
+Per parlay:
+
+```text
+ParlayScore  = geomean(leg.Safety) * combo_odds_band_bonus * diversity_bonus
+Hard gates   = >=2 distinct games, <=1 team-market leg per game,
+               >=1 player leg in any 3+ leg ticket, no conflicting sides
+```
 
 ## Plan
 
-### 1. Rename + generalize the function
-Rename behavior (keep the route `nba-ladder-challenge` to avoid breaking the cron) to a **multi-sport** "Ladder Lock of the Day" engine. Internally drive off a `SPORT_ADAPTERS` list executed in priority order based on what's in season:
+### 1. Research layer — `cross-sport-parlay-research` (new edge function)
 
-- **MLB** (primary right now): pull from `category_sweet_spots` where `category LIKE 'MLB_%'`, join `mlb_player_game_logs` for L10 floor/median/hit-rate, match against active `unified_props` (`sport='baseball_mlb'`) for the live line. Reuse the existing RBI-Under / Pitcher-K under/over categories already populated.
-- **NBA**: existing path, only runs if NBA sweet spots return ≥1 row.
-- **NHL**: pull `NHL_POINTS / NHL_GOALS_SCORER / NHL_ASSISTS` sweet spots, match against `unified_props` (`sport='icehockey_nhl'`).
+- Perplexity `sonar-pro` queries, one per sport in season today (MLB / NHL / NCAAB / NCAAF / NBA if any). Each call is structured-output (tool calling) so we get JSON, not prose.
+- Pulls: probable pitchers + ERA/WHIP, weather + park factor, injury/lineup news, sharp/whale movement, pace mismatches, revenge/letdown spots.
+- Writes to `bot_research_findings` keyed by `(sport, date, category)` and emits a normalized `research_boost` lookup keyed by team and player name.
 
-Each adapter returns `LockCandidate[]` with the same shape and safety-score breakdown the current function uses.
+### 2. Candidate builder — `cross-sport-sweet-spots` (new edge function)
 
-### 2. Tiered safety gates (never return empty)
-Run candidates through three tiers in order; first tier with ≥1 pick wins, and the pick is labeled accordingly in Telegram:
+Runs after `unified_props` and game logs are fresh:
 
-| Tier | Hit rate | Floor margin | Median clearance | Label |
-|------|----------|--------------|------------------|-------|
-| Lock | ≥90% | floor > line | median ≥ line + 1 | "🔒 Lock of the Day" |
-| Strong | ≥80% | floor ≥ line | median ≥ line | "💪 Strong Play of the Day" |
-| Lean | ≥70% | — | avg ≥ line | "📈 Lean of the Day" |
+- **Player legs**: pull from `unified_props` (`market_type='player'`) across all in-season sports. Join to sport-specific game logs (`mlb_player_game_logs`, future NHL/NCAA logs) to compute L10 hit rate, floor, median, std, bounce-back. Reuse the exact column shape of `category_sweet_spots`.
+- **Team legs**: pull ML / Spread / Total from `unified_props`. Confidence = de-juiced implied prob + structural bumps (HOME ML +0.04, HOME Spread +0.03, UNDER +0.02), cap 0.85 — already implemented for parlay-engine-v2, lifted here.
+- Apply hard drops (odds, fat spread, all-zero, poison signal) at this stage.
+- Apply `research_boost` from step 1 (e.g. ace pitcher on short rest → opposing UNDER gets +0.05; wind blowing out → game OVER gets +0.04).
+- Persist into a new table `cross_sport_sweet_spots` mirroring `category_sweet_spots` plus a `market_type` and `sport` column and `research_boost` audit field.
 
-Always pick `candidates[0]` after sorting by safety score within the highest non-empty tier.
+### 3. Bulk parlay assembler — `cross-sport-parlay-generator` (new edge function)
 
-### 3. Pick selection across sports
-Build one merged candidate list across all adapters, sort by `(tier_rank, safety_score)`. The single highest pick wins. Telegram header shows the sport (`⚾ MLB`, `🏀 NBA`, `🏒 NHL`).
+Per run, produces a configurable batch (default 25 tickets) across tiers:
 
-### 4. Dedup + persistence
-Keep the existing one-per-day dedup on `bot_daily_parlays.parlay_date + strategy_name='ladder_challenge'`. Tier name goes into `tier` column (`lock` / `strong` / `lean`). Sport recorded in `selection_rationale` and a new `sport` key inside the `legs[0]` JSON.
+```text
+- 8 x 2-leg Lock combos        (band -250 .. +150)
+- 8 x 3-leg Strong combos      (band +150 .. +500)
+- 6 x 4-leg Stretch combos     (band +500 .. +1500)
+- 3 x 5-leg Lottery            (band +1500 .. +5000)
+```
 
-### 5. Telegram delivery
-Always send via `bot-send-telegram` with `type: 'ladder_challenge'`. Message format keeps the current safety-score block but the header reflects tier + sport, and we add an `⚠️ Lean Tier — best available today` footer when we fall below Lock. If no candidate exists in any tier (very rare — e.g. all leagues dark), send a one-line "No Lock today — markets thin" admin-only note so we never go silent without explanation.
+For each slot:
+- Pull tier-eligible legs from `cross_sport_sweet_spots`.
+- Enforce: ≥2 distinct games; ≤1 team leg per game; ≥1 player leg when legs≥3; no same-game ML+Spread+Total stacking; cross-sport bonus if ≥2 sports.
+- Rank by `ParlayScore`, dedupe by leg-set hash, persist to `bot_daily_parlays` with `tier`, `sport_mix`, and full leg metadata.
 
-### 6. Backfill verification
-After deploy, manually invoke `nba-ladder-challenge` once via `supabase--curl_edge_functions` and confirm:
-- A row lands in `bot_daily_parlays` for 2026-05-21
-- Telegram message arrives with MLB-tagged lock and proper tier label
+### 4. Broadcast + bot integration
 
-### Technical notes
+- Reuse `parlay-engine-v2-broadcast` label resolver so team legs render as `"<Team> Spread (vs <Opp>)"` and player legs use full property names (per `mem://telegram/ui-standardization`).
+- Send via `bot-send-telegram` with `type: 'cross_sport_parlay'`. Lock/Strong tickets always broadcast; Lean tickets only when no Lock exists that day (admin-only fallback note otherwise).
+- Add a "Cross-Sport Parlay of the Day" pinned card analogous to `WhaleParlayOfTheDayCard`.
 
-- Files touched: `supabase/functions/nba-ladder-challenge/index.ts` (refactor in place, no new function), `mem/index.md` (+ new memory `mem://logic/betting/ladder-challenge-multisport`).
-- Cron and `bot-send-telegram` payload shape are unchanged — no schema migration, no frontend changes.
-- `mlb_player_game_logs` already exposes `hits`, `rbis`, `total_bases`, `strikeouts` etc.; adapter maps each MLB category to the right field analogous to the existing `PROP_GAME_LOG_FIELD` map.
-- The 90% / floor>line gates remain the **Lock** tier definition, preserving the existing edge-protection memory rule. Tiers Strong/Lean are explicitly labeled so the user can see when we relaxed.
+### 5. Scheduling
+
+- 09:30 ET: `cross-sport-parlay-research`
+- 09:45 ET: `cross-sport-sweet-spots`
+- 10:00 ET: `cross-sport-parlay-generator` (bulk batch, broadcast top 5 per tier)
+- 14:30 ET: re-run after lineups lock; replace any ticket whose leg is now DNP/scratched
+
+All gated by `cloud_status === ACTIVE_HEALTHY` and the standard non-fatal failure pattern in `mem://infrastructure/pipeline/morning-prep-pipeline-unified`.
+
+### 6. Memory + validation
+
+- New memory: `mem://logic/parlay/cross-sport-generator` documenting the formula, weights, tier thresholds, and hard gates.
+- 5 Deno tests per the project testing rule: (a) Perplexity JSON parser, (b) research_boost merge, (c) hard-drop gate (fat spread + all-zero Under), (d) parlay assembly diversity gate, (e) end-to-end fixture producing ≥1 ticket per tier from a frozen slate.
+
+### Technical details
+
+- **Tables**: new `cross_sport_sweet_spots` (mirrors `category_sweet_spots` + `sport`, `market_type`, `research_boost`); reuse `bot_daily_parlays` for output and `bot_research_findings` for raw Perplexity output.
+- **Edge functions**: `cross-sport-parlay-research`, `cross-sport-sweet-spots`, `cross-sport-parlay-generator`.
+- **Perplexity**: `sonar-pro` with `response_format: json_schema` for deterministic parsing; `search_recency_filter: 'day'`; secret `PERPLEXITY_API_KEY` already present.
+- **Sport adapters**: MLB uses `mlb_player_game_logs`; NHL/NCAAB use existing log tables where available, fall back to season-avg + research-only scoring when L10 absent (Lean tier max).
+- **Shared lib**: extract `_shared/cross-sport/{formula.ts, gates.ts, research.ts}` so the bulk generator and any per-sport one-offs share scoring.
+
+## Open question before I build
+
+Two choices change scope materially — please confirm:
+
+1. **Sports included on day one**: MLB + NHL + NCAAB + NCAAF, or start MLB-only and add the others in a second pass?
+2. **Bulk volume**: the 25-ticket-per-run default above, or a different mix (e.g., 10 Lock-only, or 50 spanning more lottery tickets)?
