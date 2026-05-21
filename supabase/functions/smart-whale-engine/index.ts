@@ -333,17 +333,19 @@ Deno.serve(async (req) => {
       .gte('updated_at', sinceProps)
       .not('over_price', 'is', null)
       .not('under_price', 'is', null)
-      .not('current_line', 'is', null);
+      .not('current_line', 'is', null)
+      .limit(5000);
     if (pErr) throw pErr;
     const props = (rawProps ?? []) as UnifiedProp[];
     stats.props_scanned = props.length;
 
     // 2) Pull recent snapshots — earliest-per-prop becomes our "opening"
     const sinceSnap = new Date(Date.now() - SNAPSHOT_LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
-    const propIds = props.map((p) => p.id);
+    // Only need snapshots for FanDuel props (the ones we actually score)
+    const propIds = props.filter((p) => (p.bookmaker ?? '').toLowerCase() === 'fanduel').map((p) => p.id);
     const openingByProp = new Map<string, Snapshot>();
     if (propIds.length > 0) {
-      const chunkSize = 500;
+      const chunkSize = 100;
       for (let i = 0; i < propIds.length; i += chunkSize) {
         const chunk = propIds.slice(i, i + chunkSize);
         const { data: snaps } = await supabase
@@ -351,7 +353,8 @@ Deno.serve(async (req) => {
           .select('unified_prop_id,current_line,over_price,under_price,snapshot_at')
           .in('unified_prop_id', chunk)
           .gte('snapshot_at', sinceSnap)
-          .order('snapshot_at', { ascending: true });
+          .order('snapshot_at', { ascending: true })
+          .limit(5000);
         for (const s of (snaps ?? []) as Snapshot[]) {
           if (!openingByProp.has(s.unified_prop_id)) openingByProp.set(s.unified_prop_id, s);
         }
