@@ -668,7 +668,67 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total } }), {
+    // 7) ACCURACY-FLIP — for blacklisted Over prop types, emit top-N Under candidates
+    //    by widest juice gap. These are the props the book is hammering Over on; the
+    //    inverse Under is the value side per 21d audit.
+    {
+      const flipCandidates = new Map<string, ScoredProp[]>(); // prop_type → props (Over-direction passes)
+      for (const p of activeProps) {
+        if (!p.prop_type || !p.player_name || !p.event_id) continue;
+        if (!BLACKLISTED_OVER_PROPS.has(p.prop_type)) continue;
+        if (p.derived_side !== 'Over') continue; // only flip the Over-juice side
+        const arr = flipCandidates.get(p.prop_type) ?? [];
+        arr.push(p);
+        flipCandidates.set(p.prop_type, arr);
+      }
+      for (const [propType, props] of flipCandidates) {
+        const ranked = [...props].sort((a, b) => {
+          const ga = Math.abs(Number(a.over_price ?? 0) - Number(a.under_price ?? 0));
+          const gb = Math.abs(Number(b.over_price ?? 0) - Number(b.under_price ?? 0));
+          return gb - ga;
+        }).slice(0, ACCURACY_FLIP_TOP_N);
+        for (const p of ranked) {
+          const dKey = dedupeKey(['accuracy_flip', p.event_id, p.player_name, p.prop_type, 'Under']);
+          if (!(await claimKey(dKey, 'accuracy_flip'))) continue;
+          const overP = Number(p.over_price ?? NaN);
+          const underP = Number(p.under_price ?? NaN);
+          const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
+          const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
+            player_name: p.player_name,
+            event_id: p.event_id,
+            signal_type: 'accuracy_flip',
+            prediction: 'Under', // flipped
+            confidence: Math.min(85, Math.max(MIN_CONFIDENCE, p.derived_confidence - 5)),
+            prop_type: p.prop_type,
+            sport: normaliseSport(p.sport),
+            bookmaker: p.bookmaker ?? 'unknown',
+            event_description: p.game_description,
+            commence_time: p.commence_time,
+            contrarian_flip_applied: true,
+            metadata: {
+              detector: 'phase1_accuracy_flip',
+              flipped_from: 'Over',
+              flip_reason: 'blacklisted_over_prop',
+              audit_basis: '21d_hit_rate_below_breakeven',
+              juice_gap: gap,
+              original_over_price: p.over_price,
+              original_under_price: p.under_price,
+              line: p.current_line,
+              source: 'unified_props_price_derived',
+            },
+          });
+          if (insErr) {
+            console.error('[signal-alert-engine] accuracy_flip insert failed:', insErr);
+            stats.errors += 1;
+          } else {
+            phase1.accuracy_flip_emitted += 1;
+          }
+        }
+      }
+    }
+
+    phase1.slate_blowout_suppressed = slateBlowoutCohorts.size;
+    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total, phase1 } }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
