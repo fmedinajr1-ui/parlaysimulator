@@ -597,6 +597,9 @@ Deno.serve(async (req) => {
       tier: p.tier,
       legs: p.legs.map(l => ({
         player_name: l.player_name,
+        team: l.team ?? null,
+        opponent: l.opponent ?? null,
+        game_description: l.game_description ?? null,
         prop_type: l.prop_type,
         line: l.line,
         side: l.side,
