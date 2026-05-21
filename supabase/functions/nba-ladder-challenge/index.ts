@@ -120,6 +120,16 @@ function assignTier(side: 'OVER' | 'UNDER', s: ReturnType<typeof scoreSafety>, l
   return null;
 }
 
+// Quality gate applied across all sports/sides
+// - reject odds worse than -400 (terrible payout, often hidden risk)
+// - reject when history has no signal at all (e.g. all zeros for an UNDER on a 0.5 line — usually means DNP / inactive)
+function passesQualityGates(values: number[], odds: number): boolean {
+  if (!isFinite(odds) || odds <= -400) return false;
+  const nonzero = values.filter(v => v !== 0).length;
+  if (nonzero < 2) return false; // need at least 2 games of real activity
+  return true;
+}
+
 // ===== NBA adapter =====
 async function collectNbaCandidates(supabase: any, today: string, apiKey: string | undefined): Promise<LockCandidate[]> {
   if (!apiKey) { console.log('[NBA] THE_ODDS_API_KEY missing, skipping NBA'); return []; }
@@ -239,6 +249,7 @@ async function collectNbaCandidates(supabase: any, today: string, apiKey: string
       const s = scoreSafety(data.values, ln.line, 'OVER');
       const tier = assignTier('OVER', s, ln.line);
       if (!tier) continue;
+      if (!passesQualityGates(data.values, ln.over_odds)) continue;
       const pteam = teamMap.get(nName) || '';
       let opp = '', myTeam = '';
       const ht = ln.home_team.toLowerCase(), at = ln.away_team.toLowerCase(), pt = pteam.toLowerCase();
@@ -372,6 +383,7 @@ async function collectMlbCandidates(supabase: any, today: string): Promise<LockC
     const s = scoreSafety(values, line, side);
     const tier = assignTier(side, s, line);
     if (!tier) continue;
+    if (!passesQualityGates(values, odds)) continue;
 
     const game = best.game_description || '';
     const opp = logs[0]?.opponent || '';
@@ -450,7 +462,10 @@ Deno.serve(async (req) => {
     all.sort((a, b) => {
       const t = TIER_RANK[b.tier] - TIER_RANK[a.tier];
       if (t !== 0) return t;
-      return b.safety_score - a.safety_score;
+      const ss = b.safety_score - a.safety_score;
+      if (Math.abs(ss) > 0.5) return ss;
+      // Tiebreaker: prefer less-juiced odds (closer to even money)
+      return Math.abs(a.odds) - Math.abs(b.odds);
     });
 
     if (all.length === 0) {
