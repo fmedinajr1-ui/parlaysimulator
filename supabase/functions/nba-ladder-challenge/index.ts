@@ -122,11 +122,13 @@ function assignTier(side: 'OVER' | 'UNDER', s: ReturnType<typeof scoreSafety>, l
 
 // Quality gate applied across all sports/sides
 // - reject odds worse than -400 (terrible payout, often hidden risk)
-// - reject when history has no signal at all (e.g. all zeros for an UNDER on a 0.5 line — usually means DNP / inactive)
-function passesQualityGates(values: number[], odds: number): boolean {
+// - for OVER plays require ≥2 nonzero games (signal of activity)
+// - for UNDER plays zeros are wins, so we only reject when ALL values are 0 (likely DNP / dead data)
+function passesQualityGates(values: number[], odds: number, side: 'OVER' | 'UNDER'): boolean {
   if (!isFinite(odds) || odds <= -400) return false;
   const nonzero = values.filter(v => v !== 0).length;
-  if (nonzero < 2) return false; // need at least 2 games of real activity
+  if (side === 'OVER' && nonzero < 2) return false;
+  if (side === 'UNDER' && nonzero === 0 && values.length < 10) return false;
   return true;
 }
 
@@ -249,7 +251,7 @@ async function collectNbaCandidates(supabase: any, today: string, apiKey: string
       const s = scoreSafety(data.values, ln.line, 'OVER');
       const tier = assignTier('OVER', s, ln.line);
       if (!tier) continue;
-      if (!passesQualityGates(data.values, ln.over_odds)) continue;
+      if (!passesQualityGates(data.values, ln.over_odds, 'OVER')) continue;
       const pteam = teamMap.get(nName) || '';
       let opp = '', myTeam = '';
       const ht = ln.home_team.toLowerCase(), at = ln.away_team.toLowerCase(), pt = pteam.toLowerCase();
@@ -383,7 +385,7 @@ async function collectMlbCandidates(supabase: any, today: string): Promise<LockC
     const s = scoreSafety(values, line, side);
     const tier = assignTier(side, s, line);
     if (!tier) continue;
-    if (!passesQualityGates(values, odds)) continue;
+    if (!passesQualityGates(values, odds, side)) continue;
 
     const game = best.game_description || '';
     const opp = logs[0]?.opponent || '';
