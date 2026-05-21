@@ -93,6 +93,12 @@ export const SIGNAL_TIER_S: Set<string> = new Set([
   "ASSISTS",
   "STEALS",
   "STAR_FLOOR_OVER",
+  // Smart Whale Engine — Tier S signal sources
+  "whale_line_gap",
+  "whale_steam",
+  "whale_cross_book",
+  "whale_rlm",
+  "whale_juice_gap",
 ]);
 
 export const SIGNAL_TIER_A: Set<string> = new Set([
