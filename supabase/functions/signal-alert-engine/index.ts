@@ -128,6 +128,9 @@ Deno.serve(async (req) => {
 
   const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0, dropped_no_hrb: 0 };
   let dropped_legs_total = 0;
+  // Phase 1 telemetry
+  const phase1 = { poison_suppressed: 0, slate_blowout_suppressed: 0, accuracy_flip_emitted: 0 };
+  const slateBlowoutCohorts = new Set<string>(); // `${sport}|${propType}|${side}`
   const explainerCache = reasoningCache();
 
   // Load Hard Rock prop lines once per run. Empty map = HRB has no coverage,
