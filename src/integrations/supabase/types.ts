@@ -17676,97 +17676,151 @@ export type Database = {
       }
       whale_picks: {
         Row: {
+          actual_outcome: string | null
           actual_value: number | null
           board_behavior_pts: number | null
           book_consensus: number | null
-          confidence: string
+          bookmaker: string | null
+          commence_time: string | null
+          confidence: string | null
           confidence_grade: string | null
           confirmation_pts: number | null
           created_at: string
+          current_line: number | null
+          current_over_price: number | null
+          current_under_price: number | null
           divergence_pts: number | null
+          event_id: string | null
           expires_at: string | null
+          game_description: string | null
           id: string
           is_expired: boolean | null
           market_key: string
           matchup: string | null
+          metadata: Json | null
           move_speed_pts: number | null
+          opening_line: number | null
           outcome: string | null
           period: string | null
-          pick_side: string
+          pick_side: string | null
           player_name: string
-          pp_line: number
+          pp_line: number | null
+          prop_type: string | null
           recommended_side: string | null
           settled_at: string | null
-          sharp_score: number
-          signal_type: string
+          sharp_score: number | null
+          side: string | null
+          signal_type: string | null
+          signal_types: string[] | null
           sport: string
           start_time: string | null
-          stat_type: string
+          stat_type: string | null
+          sub_scores: Json | null
+          tier: string | null
           updated_at: string | null
           verified_source: string | null
+          was_correct: boolean | null
+          whale_score: number | null
           why_short: string[] | null
+          why_short_text: string | null
         }
         Insert: {
+          actual_outcome?: string | null
           actual_value?: number | null
           board_behavior_pts?: number | null
           book_consensus?: number | null
-          confidence: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          confidence?: string | null
           confidence_grade?: string | null
           confirmation_pts?: number | null
           created_at?: string
+          current_line?: number | null
+          current_over_price?: number | null
+          current_under_price?: number | null
           divergence_pts?: number | null
+          event_id?: string | null
           expires_at?: string | null
+          game_description?: string | null
           id?: string
           is_expired?: boolean | null
           market_key: string
           matchup?: string | null
+          metadata?: Json | null
           move_speed_pts?: number | null
+          opening_line?: number | null
           outcome?: string | null
           period?: string | null
-          pick_side: string
+          pick_side?: string | null
           player_name: string
-          pp_line: number
+          pp_line?: number | null
+          prop_type?: string | null
           recommended_side?: string | null
           settled_at?: string | null
-          sharp_score: number
-          signal_type: string
+          sharp_score?: number | null
+          side?: string | null
+          signal_type?: string | null
+          signal_types?: string[] | null
           sport: string
           start_time?: string | null
-          stat_type: string
+          stat_type?: string | null
+          sub_scores?: Json | null
+          tier?: string | null
           updated_at?: string | null
           verified_source?: string | null
+          was_correct?: boolean | null
+          whale_score?: number | null
           why_short?: string[] | null
+          why_short_text?: string | null
         }
         Update: {
+          actual_outcome?: string | null
           actual_value?: number | null
           board_behavior_pts?: number | null
           book_consensus?: number | null
-          confidence?: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          confidence?: string | null
           confidence_grade?: string | null
           confirmation_pts?: number | null
           created_at?: string
+          current_line?: number | null
+          current_over_price?: number | null
+          current_under_price?: number | null
           divergence_pts?: number | null
+          event_id?: string | null
           expires_at?: string | null
+          game_description?: string | null
           id?: string
           is_expired?: boolean | null
           market_key?: string
           matchup?: string | null
+          metadata?: Json | null
           move_speed_pts?: number | null
+          opening_line?: number | null
           outcome?: string | null
           period?: string | null
-          pick_side?: string
+          pick_side?: string | null
           player_name?: string
-          pp_line?: number
+          pp_line?: number | null
+          prop_type?: string | null
           recommended_side?: string | null
           settled_at?: string | null
-          sharp_score?: number
-          signal_type?: string
+          sharp_score?: number | null
+          side?: string | null
+          signal_type?: string | null
+          signal_types?: string[] | null
           sport?: string
           start_time?: string | null
-          stat_type?: string
+          stat_type?: string | null
+          sub_scores?: Json | null
+          tier?: string | null
           updated_at?: string | null
           verified_source?: string | null
+          was_correct?: boolean | null
+          whale_score?: number | null
           why_short?: string[] | null
+          why_short_text?: string | null
         }
         Relationships: []
       }
