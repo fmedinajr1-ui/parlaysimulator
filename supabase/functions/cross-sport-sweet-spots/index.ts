@@ -454,6 +454,7 @@ Deno.serve(async (req) => {
       by_tier: tally(candidates, "tier"),
       by_sport: tally(candidates, "sport"),
       by_market: tally(candidates, "market_type"),
+      dropped,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("cross-sport-sweet-spots error", e);
