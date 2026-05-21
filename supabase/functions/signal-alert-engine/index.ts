@@ -231,15 +231,23 @@ Deno.serve(async (req) => {
       if (slateBlowoutCohorts.size > 0) {
         // Best-effort telemetry write — non-fatal if table missing.
         try {
-          await supabase.from('engine_live_tracker').insert({
-            engine_name: 'signal-alert-engine',
-            event_type: 'signal_blowout',
-            payload: {
-              cohorts: Array.from(slateBlowoutCohorts),
-              threshold: SLATE_BLOWOUT_THRESHOLD,
-              detected_at: new Date().toISOString(),
-            },
+          const rows = Array.from(slateBlowoutCohorts).map((cohortKey) => {
+            const [sport, propType, side] = cohortKey.split('|');
+            return {
+              engine_name: 'signal-alert-engine',
+              sport,
+              pick_description: `SIGNAL BLOWOUT: ${propType} ${side} firing on ≥${Math.round(SLATE_BLOWOUT_THRESHOLD*100)}% of slate`,
+              prop_type: propType,
+              side,
+              status: 'suppressed',
+              signals: [{
+                type: 'signal_blowout',
+                threshold: SLATE_BLOWOUT_THRESHOLD,
+                detected_at: new Date().toISOString(),
+              }],
+            };
           });
+          await supabase.from('engine_live_tracker').insert(rows);
         } catch (e) {
           console.warn('[signal-alert-engine] engine_live_tracker insert failed (non-fatal):', e);
         }
