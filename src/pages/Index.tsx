@@ -9,6 +9,7 @@ import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { Elite3PTFixedParlay } from "@/components/market/Elite3PTFixedParlay";
 import { WhenWeWinBig } from "@/components/WhenWeWinBig";
+import { WhaleParlayOfTheDayCard } from "@/components/whale/WhaleParlayOfTheDayCard";
 import { PricingSection } from "@/components/bot-landing/PricingSection";
 import { InlineSlipGraderPromo } from "@/components/grade/InlineSlipGraderPromo";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -178,6 +179,11 @@ const Index = () => {
         {/* ★ ELITE 3PT FIXED PARLAY - Today's 100% L10 Picks ★ */}
         <div className="mb-4">
           <Elite3PTFixedParlay />
+        </div>
+
+        {/* 🐋 Whale Parlay of the Day */}
+        <div className="mb-4">
+          <WhaleParlayOfTheDayCard />
         </div>
 
 
