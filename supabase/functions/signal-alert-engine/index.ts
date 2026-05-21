@@ -22,6 +22,27 @@ const VELOCITY_TOP_PERCENTILE = 0.05; // top 5% of derived confidence per (sport
 const VELOCITY_MIN_CONFIDENCE = 70;   // raise the floor for "rare on slate"
 const VELOCITY_MIN_GROUP_SIZE = 20;   // don't compute percentile on tiny pools
 
+// ─── POISON-SIGNAL BLACKLIST (Phase 1 kill switch) ───────────────────────────
+// Last 21d audit: batter_walks Over @ 28.5%, batter_stolen_bases Over @ ~0%.
+// We hard-suppress these directions and auto-flip the strongest gaps to Under
+// candidates via the accuracy_flip signal type.
+const BLACKLISTED_OVER_PROPS: ReadonlySet<string> = new Set([
+  'batter_walks',
+  'batter_stolen_bases',
+]);
+
+// Slate-blowout guard: if a (sport, prop_type, side) cohort has the same
+// direction firing on >= this fraction of the slate's distinct players, kill
+// the whole batch and log a signal_blowout row.
+const SLATE_BLOWOUT_THRESHOLD = 0.20; // 20% of distinct players
+const SLATE_BLOWOUT_MIN_PLAYERS = 8;  // need a real sample first
+const ACCURACY_FLIP_TOP_N = 5;        // per-prop_type Under candidates we emit
+
+function isBlacklistedDirection(propType: string | null, side: 'Over' | 'Under'): boolean {
+  if (!propType || side !== 'Over') return false;
+  return BLACKLISTED_OVER_PROPS.has(propType);
+}
+
 type UnifiedProp = {
   id: string;
   event_id: string;
