@@ -3695,6 +3695,102 @@ export type Database = {
         }
         Relationships: []
       }
+      cross_sport_sweet_spots: {
+        Row: {
+          analysis_date: string
+          bookmaker: string | null
+          commence_time: string | null
+          created_at: string | null
+          event_id: string | null
+          game_description: string | null
+          games_played: number | null
+          id: string
+          implied_prob: number | null
+          is_active: boolean | null
+          l10_avg: number | null
+          l10_hit_rate: number | null
+          l10_max: number | null
+          l10_median: number | null
+          l10_min: number | null
+          market_type: string
+          model_confidence: number
+          opponent: string | null
+          player_name: string | null
+          price: number | null
+          prop_type: string
+          recommended_line: number | null
+          recommended_side: string
+          research_boost: number | null
+          research_notes: string | null
+          safety_score: number
+          sport: string
+          team: string | null
+          tier: string
+        }
+        Insert: {
+          analysis_date: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          created_at?: string | null
+          event_id?: string | null
+          game_description?: string | null
+          games_played?: number | null
+          id?: string
+          implied_prob?: number | null
+          is_active?: boolean | null
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          l10_max?: number | null
+          l10_median?: number | null
+          l10_min?: number | null
+          market_type: string
+          model_confidence: number
+          opponent?: string | null
+          player_name?: string | null
+          price?: number | null
+          prop_type: string
+          recommended_line?: number | null
+          recommended_side: string
+          research_boost?: number | null
+          research_notes?: string | null
+          safety_score: number
+          sport: string
+          team?: string | null
+          tier: string
+        }
+        Update: {
+          analysis_date?: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          created_at?: string | null
+          event_id?: string | null
+          game_description?: string | null
+          games_played?: number | null
+          id?: string
+          implied_prob?: number | null
+          is_active?: boolean | null
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          l10_max?: number | null
+          l10_median?: number | null
+          l10_min?: number | null
+          market_type?: string
+          model_confidence?: number
+          opponent?: string | null
+          player_name?: string | null
+          price?: number | null
+          prop_type?: string
+          recommended_line?: number | null
+          recommended_side?: string
+          research_boost?: number | null
+          research_notes?: string | null
+          safety_score?: number
+          sport?: string
+          team?: string | null
+          tier?: string
+        }
+        Relationships: []
+      }
       customer_daily_pnl: {
         Row: {
           bankroll: number | null
