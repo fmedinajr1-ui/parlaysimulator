@@ -431,11 +431,14 @@ Deno.serve(async (req) => {
     const today = getEasternDate();
     console.log(`[Ladder] Starting multi-sport scan for ${today}`);
 
+    const url = new URL(req.url);
+    const force = url.searchParams.get('force') === '1';
+
     // Dedup
     const { data: existing } = await supabase
       .from('bot_daily_parlays').select('id')
       .eq('parlay_date', today).eq('strategy_name', 'ladder_challenge').neq('outcome', 'void');
-    if (existing && existing.length >= 1) {
+    if (!force && existing && existing.length >= 1) {
       console.log('[Ladder] already have today\'s pick, skipping');
       return new Response(JSON.stringify({ success: true, skipped: true, reason: 'already_exists' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
