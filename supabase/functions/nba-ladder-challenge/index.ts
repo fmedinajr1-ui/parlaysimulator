@@ -125,10 +125,12 @@ function assignTier(side: 'OVER' | 'UNDER', s: ReturnType<typeof scoreSafety>, l
 // - for OVER plays require ≥2 nonzero games (signal of activity)
 // - for UNDER plays zeros are wins, so we only reject when ALL values are 0 (likely DNP / dead data)
 function passesQualityGates(values: number[], odds: number, side: 'OVER' | 'UNDER'): boolean {
-  if (!isFinite(odds) || odds <= -400) return false;
+  if (!isFinite(odds) || odds <= -250) return false;
   const nonzero = values.filter(v => v !== 0).length;
   if (side === 'OVER' && nonzero < 2) return false;
-  if (side === 'UNDER' && nonzero === 0 && values.length < 10) return false;
+  // For UNDERs: at least 1 game of activity in the recent window. All-zero history
+  // usually means the data layer is missing this player's appearances.
+  if (side === 'UNDER' && nonzero === 0) return false;
   return true;
 }
 
