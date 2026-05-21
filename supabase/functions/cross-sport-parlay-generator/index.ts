@@ -221,9 +221,12 @@ Deno.serve(async (req) => {
 
     const used = new Set<string>();
     const built: Array<{ slotName: string; legs: Leg[]; score: number; american: number }> = [];
+    const sportsInPool = new Set(pool.map(l => l.sport)).size;
     for (const slot of SLOTS) {
+      const effectiveMinSports = Math.min(slot.minSports, sportsInPool);
+      const slotEff = { ...slot, minSports: effectiveMinSports };
       for (let i = 0; i < slot.count; i++) {
-        const r = buildSlot(pool, slot, used);
+        const r = buildSlot(pool, slotEff, used);
         if (!r) break;
         const dec = r.legs.reduce((a, l) => a * decimal(l.price), 1);
         built.push({ slotName: slot.name, legs: r.legs, score: r.score, american: americanFromDecimal(dec) });
