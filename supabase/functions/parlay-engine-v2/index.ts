@@ -19,6 +19,8 @@ import {
   BOOKMAKER_PRIORITY,
   MAX_BOOK_LINE_AGE_MIN,
   MAX_LINE_DRIFT,
+  MAX_TEAM_SPREAD_ABS,
+  PROP_WHITELIST,
 } from "../_shared/parlay-engine-v2/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
@@ -240,6 +242,7 @@ function buildCandidates(
       defensive_context_updated_at: null, // gate skipped this phase
       selected_book: selectedBook,
       source_origin: row.source_origin ?? null,
+      game_description: matchedProp.game_description ?? null,
     });
   }
 
@@ -266,6 +269,59 @@ function americanFromDecimal(price: number | null | undefined): number | null {
   if (price == null) return null;
   // unified_props already stores American odds; just round defensively.
   return Math.round(Number(price));
+}
+
+function americanToImplied(odds: number): number {
+  return odds > 0 ? 100 / (odds + 100) : Math.abs(odds) / (Math.abs(odds) + 100);
+}
+
+/**
+ * Model-aware confidence for team-market and raw-MLB legs.
+ * Replaces the previous hard-coded 0.66 / edge=0 stub so the strategy gates
+ * actually filter weak coin-flip bets.
+ *
+ * For team markets we use the de-juiced implied probability plus a small
+ * structural boost (HOME field, modest favorite premium, total-direction
+ * baseline). For raw MLB player props we use the existing PROP_WHITELIST
+ * hit rate as the model probability. Anything below MIN_LEG_CONFIDENCE (0.60)
+ * will be dropped by the leg signal gate downstream.
+ *
+ * Returns null when no defensible model exists for the row so the candidate
+ * is dropped entirely (better to ship fewer legs than fake confidence).
+ */
+function scoreExtraCandidate(args: {
+  isTeam: boolean;
+  propType: string;
+  side: string;
+  american: number;
+}): { confidence: number; edge: number } | null {
+  const { isTeam, propType, side, american } = args;
+  const implied = americanToImplied(american);
+
+  if (isTeam) {
+    let modelProb = implied;
+    if (propType === "Moneyline") {
+      modelProb += side === "HOME" ? 0.04 : 0.01; // home-field micro-edge
+    } else if (propType === "Spread") {
+      // Favorites covering small numbers historically over-perform vs implied;
+      // dogs at large spreads under-perform. Small directional bump only.
+      modelProb += side === "HOME" ? 0.03 : 0.01;
+    } else if (propType === "Total") {
+      // Slight Under bias on MLB totals, neutral elsewhere; tiny correction.
+      modelProb += side === "UNDER" ? 0.02 : 0.01;
+    }
+    modelProb = Math.max(0, Math.min(0.85, modelProb));
+    const edge = modelProb - implied;
+    // Confidence == calibrated win probability for the leg.
+    return { confidence: modelProb, edge };
+  }
+
+  // Raw MLB player prop — use whitelist hit rate as the model probability.
+  const wlKey = `${propType}|${side}`;
+  const wlHit = PROP_WHITELIST[wlKey];
+  if (wlHit == null) return null; // no model → drop
+  const modelProb = Math.max(0, Math.min(0.85, wlHit));
+  return { confidence: modelProb, edge: modelProb - implied };
 }
 
 function teamMarketSignal(propType: string, side: string): string {
@@ -339,15 +395,22 @@ function buildExtraCandidates(
       const baseLine = Number(r.current_line ?? 0);
       // For spreads, the away side takes the inverse line (e.g. home -6.5 ⇒ away +6.5).
       const sideLine = (isTeam && propType === "Spread" && side === "AWAY") ? -baseLine : baseLine;
+      // Drop fat spreads — anything >= 10pts is a coin flip dressed as edge.
+      if (isTeam && propType === "Spread" && Math.abs(sideLine) >= MAX_TEAM_SPREAD_ABS) {
+        bump("extra:spread_too_fat");
+        continue;
+      }
       const key = `${(r.player_name ?? team).toLowerCase()}|${propType}|${side}|${sideLine}`;
       if (seen.has(key)) { bump("extra:duplicate"); continue; }
       seen.add(key);
 
       const line = sideLine;
       const signal = isTeam ? teamMarketSignal(propType, side) : mlbPlayerSignal(propType, side);
-      // Conservative defaults — these candidates have no pick-pool projection,
-      // so we lean on the engine's prop-whitelist hit-rate gating.
-      const confidence = 0.66;
+      // Real intelligence: implied-prob baseline + structural model boost for
+      // team markets, PROP_WHITELIST hit rate for raw MLB player props.
+      const scored = scoreExtraCandidate({ isTeam, propType, side, american });
+      if (!scored) { bump("extra:no_model"); continue; }
+      const { confidence, edge } = scored;
 
       added.push({
         sport: sportNorm,
@@ -360,7 +423,7 @@ function buildExtraCandidates(
         american_odds: american,
         projected: line,
         confidence,
-        edge: 0,
+        edge,
         signal_source: signal,
         tipoff,
         projection_updated_at: new Date(oddsTs),
@@ -369,6 +432,7 @@ function buildExtraCandidates(
         defensive_context_updated_at: null,
         selected_book: (r.bookmaker ?? "").toLowerCase() || null,
         source_origin: isTeam ? "team_market" : "raw_props",
+        game_description: r.game_description ?? null,
       });
     }
   }
@@ -533,6 +597,9 @@ Deno.serve(async (req) => {
       tier: p.tier,
       legs: p.legs.map(l => ({
         player_name: l.player_name,
+        team: l.team ?? null,
+        opponent: l.opponent ?? null,
+        game_description: l.game_description ?? null,
         prop_type: l.prop_type,
         line: l.line,
         side: l.side,

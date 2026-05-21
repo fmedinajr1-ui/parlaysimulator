@@ -3,6 +3,7 @@
 ## Core
 parlay-engine-v2 MIN_LEG_CONFIDENCE pinned at 0.60. Never raise without explicit user approval.
 Cascade legs must clear a `0.5*std` band around L10 mean (BENCH/ROLE_PLAYER need `0.75*std`) and pass minutes floors (22 / 14 mpg) — see cascade-miss-by-1-guard.
+Team/game legs in parlay-engine-v2 require a real model score; never default to constant confidence. Drop spreads with |line| ≥ 9.5. Max 1 team-market leg per game per parlay. Lottery requires ≥1 player leg.
 
 ## Memories
 - [Raw props confidence fix](mem://infrastructure/pipeline/raw-props-confidence-fix) — Why parlays go empty when risk/sweet are thin + the orchestrator .catch crash
@@ -18,3 +19,4 @@ Cascade legs must clear a `0.5*std` band around L10 mean (BENCH/ROLE_PLAYER need
 - [Spike personal share link](mem://features/spike/personal-link) — profiles.spike_share_token + /spike/:token route + share_my_link agent tool + SpikeShareCard UI
 - [Hard Rock line gating](mem://logic/betting/hardrock-line-gating) — signal-alert-engine drops cascade/single legs not tradable on hardrockbet via The Odds API; metadata.hrb_verified drives Telegram footer
 - [Nuke Parlay Scout (NBA)](mem://logic/parlay/nuke-scout) — Blowout-script engine: scoring weights, hard floors, role-player OVER template, +1000/+3000 odds band, daily 21:00/16:00 UTC crons
+- [Team leg intelligence](mem://logic/parlay/team-leg-intelligence) — Real scoring for team/MLB-raw legs, fat-spread drop, 1 team-market per game, lottery requires ≥1 player

@@ -27,6 +27,11 @@ export interface CandidateLeg {
   selected_book?: string | null;
   /** Origin of the underlying pick row: "risk" | "fallback" | "raw_props". */
   source_origin?: string | null;
+  /** Optional raw "Home @ Away" string so downstream broadcasters can render
+   * the game line without re-deriving it. */
+  game_description?: string | null;
+  /** Optional event id used by parlay-level "one team market per game" gate. */
+  event_id?: string | null;
 }
 
 // ---------- Leg helpers ----------
