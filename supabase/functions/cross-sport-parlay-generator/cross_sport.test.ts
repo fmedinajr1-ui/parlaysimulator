@@ -93,3 +93,80 @@ Deno.test("test 8: thin sample (<5 games) caps lock down to lean", () => {
   assertEquals(tierAfterSampleCap("lock", 7), "lock");
   assertEquals(tierAfterSampleCap("lean", 2), "lean");
 });
+
+// ----- Team-leg safety formula (mirrors cross-sport-sweet-spots) -----
+function teamSafety(price: number, sideKind: "home_ml" | "home_spread" | "under_total" | "other", researchBoost = 0): number {
+  const implied = impliedProb(price);
+  let bump = 0.01;
+  if (sideKind === "home_ml") bump = 0.04;
+  else if (sideKind === "home_spread") bump = 0.03;
+  else if (sideKind === "under_total") bump = 0.02;
+  const conf = Math.min(0.85, implied + bump);
+  const edge = conf - implied;
+  const W_RESEARCH = 0.10;
+  return clamp01(
+    0.55 * conf
+    + 0.20 * clamp01(edge * 4 + 0.5)
+    + 0.15 * clamp01((conf - 0.50) * 2)
+    + W_RESEARCH * (0.5 + researchBoost * 5)
+  );
+}
+
+Deno.test("test 9: -200 ML home favorite reaches strong tier (>=0.70)", () => {
+  const s = teamSafety(-200, "home_ml", 0);
+  assert(s >= 0.70, `expected >=0.70, got ${s}`);
+});
+
+Deno.test("test 10: -110 home dog stays below lean threshold", () => {
+  const s = teamSafety(-110, "other", 0);
+  assert(s < 0.60, `expected <0.60, got ${s}`);
+});
+
+Deno.test("test 11: +120 underdog with research boost still rejected (no dog inflation)", () => {
+  const s = teamSafety(120, "other", 0.05);
+  assert(s < 0.60, `expected <0.60, got ${s}`);
+});
+
+// ----- Team-leg floor in generator -----
+type GLeg = { event_id: string; market_type: string; player_name: string | null; sport: string; safety_score: number; tier: string };
+function pickWithFloor(pool: GLeg[], legs: number, requireTeam: boolean): GLeg[] | null {
+  const filtered = [...pool].sort((a, b) => b.safety_score - a.safety_score);
+  const teamCands = filtered.filter(l => l.market_type !== "player");
+  const enforce = requireTeam && teamCands.length >= 3;
+  const picked: GLeg[] = [];
+  const games = new Set<string>();
+  if (enforce && teamCands.length > 0) {
+    picked.push(teamCands[0]);
+    games.add(teamCands[0].event_id);
+  }
+  for (const c of filtered) {
+    if (picked.length >= legs) break;
+    if (picked.includes(c)) continue;
+    if (games.has(c.event_id) && c.market_type !== "player") continue;
+    picked.push(c);
+    games.add(c.event_id);
+  }
+  if (picked.length < legs) return null;
+  if (enforce && picked.every(l => l.market_type === "player")) return null;
+  return picked;
+}
+
+Deno.test("test 12: stretch_4 with team pool >=3 includes a team leg", () => {
+  const pool: GLeg[] = [
+    ...Array.from({ length: 6 }, (_, i) => ({ event_id: `g${i}`, market_type: "player", player_name: `P${i}`, sport: "mlb", safety_score: 0.80 - i * 0.01, tier: "strong" })),
+    { event_id: "g7", market_type: "moneyline", player_name: null, sport: "mlb", safety_score: 0.71, tier: "strong" },
+    { event_id: "g8", market_type: "total", player_name: null, sport: "nhl", safety_score: 0.68, tier: "lean" },
+    { event_id: "g9", market_type: "spread", player_name: null, sport: "nba", safety_score: 0.66, tier: "lean" },
+  ];
+  const res = pickWithFloor(pool, 4, true);
+  assert(res !== null);
+  assert(res!.some(l => l.market_type !== "player"), "expected at least one team leg");
+});
+
+Deno.test("test 13: stretch_4 with zero team candidates falls back to all-player", () => {
+  const pool: GLeg[] = Array.from({ length: 6 }, (_, i) =>
+    ({ event_id: `g${i}`, market_type: "player", player_name: `P${i}`, sport: "mlb", safety_score: 0.80 - i * 0.01, tier: "strong" }));
+  const res = pickWithFloor(pool, 4, true);
+  assert(res !== null, "should not crash on empty team pool");
+  assertEquals(res!.length, 4);
+});
