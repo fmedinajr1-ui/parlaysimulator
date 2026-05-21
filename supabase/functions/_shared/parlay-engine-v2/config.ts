@@ -219,6 +219,24 @@ export const MAX_SAME_GAME_EXPOSURE = 8;
 export const MAX_SAME_COMBO_HASH_REPEATS = 1;
 
 // ---------------------------------------------------------------------------
+// TEAM-MARKET DISCIPLINE (added 2026-05-21)
+// ---------------------------------------------------------------------------
+
+/** Any spread with |line| >= this many points is dropped at candidate build
+ *  time — those bets are coin flips dressed up as edges. Implements
+ *  mem://logic/betting/spread-filters. */
+export const MAX_TEAM_SPREAD_ABS = 9.5;
+
+/** Inside a single parlay, at most this many team-market legs may share the
+ *  same game (Spread + Moneyline + Total combined). Blocks the Cleveland
+ *  spread-stack pattern seen in the 4-leg lottery. */
+export const MAX_TEAM_LEGS_PER_GAME_IN_PARLAY = 1;
+
+/** Lottery (mega_lottery_scanner) must contain at least this many player
+ *  legs so it can't collapse into a same-game team-market stack. */
+export const MIN_PLAYER_LEGS_IN_LOTTERY = 1;
+
+// ---------------------------------------------------------------------------
 // VOID GUARDS
 // ---------------------------------------------------------------------------
 
