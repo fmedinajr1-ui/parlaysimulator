@@ -14,6 +14,13 @@ type: feature
 - Bulk mix per run: 8 × 2-leg Lock, 8 × 3-leg Strong, 6 × 4-leg Stretch, 3 × 5-leg Lottery.
 - Player-primary: any ticket with `legs>=3` requires ≥1 player leg; team-market legs capped
   at 40% of the ticket; ≤1 team leg per game; ≥2 distinct games.
+- Pregame gating (hard): `cross-sport-sweet-spots` only ingests `unified_props` rows where
+  `commence_time > now() + 15min`; generator re-checks at runtime and admin-pings if any
+  stale leg slips through. Prevents live/finished-game props from entering pre-game drops.
+- MLB pitcher props require confirmed starter status: player must appear in
+  `mlb_pitcher_k_analysis` for today's `game_date`, else the leg is dropped (`not_starter`).
+- Thin-sample cap: player legs with `<5` qualifying L10 games can never earn `lock` or
+  `strong` tier — auto-downgraded to `lean` and scored from de-juiced implied prob only.
 - Persists into `cross_sport_sweet_spots` and `bot_daily_parlays` (strategy_name
   `cross_sport_<slot>`); broadcasts top 5 via `bot-send-telegram` type
   `cross_sport_parlay`.
