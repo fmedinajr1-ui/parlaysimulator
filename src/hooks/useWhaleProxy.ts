@@ -57,6 +57,13 @@ const SPORT_MAP: Record<string, Sport> = {
   'hockey_nhl': 'NHL',
   'tennis_atp': 'TENNIS',
   'tennis_wta': 'TENNIS',
+  'baseball_mlb': 'MLB',
+  // smart-whale-engine writes normalised uppercase keys directly
+  'NBA': 'NBA',
+  'WNBA': 'WNBA',
+  'NHL': 'NHL',
+  'MLB': 'MLB',
+  'TENNIS': 'TENNIS',
 };
 
 // Map signal type from database
@@ -354,7 +361,7 @@ export function useWhaleProxy() {
     try {
       setIsRefreshing(true);
       
-      const { data, error } = await supabase.functions.invoke('whale-signal-detector', {
+      const { data, error } = await supabase.functions.invoke('smart-whale-engine', {
         method: 'POST',
       });
       
@@ -364,11 +371,13 @@ export function useWhaleProxy() {
         return;
       }
       
-      console.log('Whale detector result:', data);
+      console.log('Smart whale engine result:', data);
       
       await fetchRealPicks();
       
-      toast.success(`Refreshed: ${data?.signalsGenerated || 0} signals found`);
+      const written = data?.stats?.written ?? 0;
+      const tierS = data?.stats?.tier_s ?? 0;
+      toast.success(`Whale engine: ${written} new picks (${tierS} Tier-S)`);
     } catch (err) {
       console.error('Error in triggerRefresh:', err);
       toast.error('Failed to refresh signals');
