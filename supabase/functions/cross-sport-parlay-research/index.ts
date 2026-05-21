@@ -36,11 +36,8 @@ const SPORT_PROMPTS: Record<string, { query: string; system: string }> = {
 };
 
 const BOOST_SCHEMA = {
-  type: "function",
-  function: {
-    name: "emit_boosts",
-    description: "Emit normalized research boosts for teams and players.",
-    parameters: {
+  name: "boosts",
+  schema: {
       type: "object",
       properties: {
         summary: { type: "string" },
@@ -74,7 +71,6 @@ const BOOST_SCHEMA = {
         },
       },
       required: ["summary","team_boosts","player_boosts"],
-    },
   },
 };
 
@@ -85,12 +81,11 @@ async function runPerplexity(systemPrompt: string, query: string, apiKey: string
     body: JSON.stringify({
       model: "sonar-pro",
       messages: [
-        { role: "system", content: `${systemPrompt} Respond ONLY by calling the emit_boosts function. Cap each boost at +/- 0.10.` },
+        { role: "system", content: `${systemPrompt} Respond ONLY with strict JSON matching the schema. Cap each boost at +/- 0.10.` },
         { role: "user", content: query },
       ],
       search_recency_filter: "day",
-      tools: [BOOST_SCHEMA],
-      tool_choice: { type: "function", function: { name: "emit_boosts" } },
+      response_format: { type: "json_schema", json_schema: BOOST_SCHEMA },
     }),
   });
   if (!resp.ok) {
@@ -99,10 +94,8 @@ async function runPerplexity(systemPrompt: string, query: string, apiKey: string
   }
   const data = await resp.json();
   const choice = data.choices?.[0]?.message;
-  // sonar-pro may return tool_calls OR plain content; handle both
-  const tc = choice?.tool_calls?.[0]?.function?.arguments;
-  if (tc) { try { return JSON.parse(tc); } catch { /* fallthrough */ } }
   const content = choice?.content ?? "";
+  try { return JSON.parse(content); } catch { /* fallthrough */ }
   // Best-effort JSON extraction
   const m = content.match(/\{[\s\S]*\}/);
   if (m) { try { return JSON.parse(m[0]); } catch { /* ignore */ } }
