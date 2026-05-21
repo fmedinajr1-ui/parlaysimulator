@@ -19,6 +19,8 @@ const W_HIT = 0.45, W_FLOOR = 0.20, W_MEDIAN = 0.15, W_EDGE = 0.10, W_RESEARCH =
 const TIER_LOCK = 0.80, TIER_STRONG = 0.70, TIER_LEAN = 0.60;
 const MAX_SPREAD_ABS = 9.5;
 const MIN_PRICE = -250; // worse than -250 dropped
+const PREGAME_BUFFER_MIN = 15; // game must start at least 15 min from now
+const MIN_PLAYER_SAMPLE = 5;   // below this, cap tier at "lean" and use implied only
 
 // ----- prop -> stat key map per sport -----
 const PROP_STAT_MAP: Record<string, Record<string, (g: Record<string, unknown>) => number | null>> = {
@@ -220,13 +222,30 @@ Deno.serve(async (req) => {
     const date = todayET();
     const research = await loadResearch(supabase, date);
 
-    // Pull all active props
+    // Pull all active props that haven't started yet (+15min buffer)
+    const cutoff = new Date(Date.now() + PREGAME_BUFFER_MIN * 60_000).toISOString();
     const { data: props, error } = await supabase
       .from("unified_props")
       .select("event_id, sport, game_description, commence_time, player_name, prop_type, bookmaker, current_line, over_price, under_price, market_type")
       .eq("is_active", true)
+      .gte("commence_time", cutoff)
       .limit(10000);
     if (error) throw error;
+
+    // Load today's confirmed MLB probable pitchers — pitcher props are dropped
+    // unless the player is listed as today's starter.
+    const mlbStarters = new Set<string>();
+    {
+      const { data: starters } = await supabase
+        .from("mlb_pitcher_k_analysis")
+        .select("pitcher_name")
+        .eq("game_date", date);
+      for (const s of starters ?? []) {
+        const n = (s as { pitcher_name: string | null }).pitcher_name;
+        if (n) mlbStarters.add(n.toLowerCase());
+      }
+    }
+    const dropped = { stale: 0, not_starter: 0, thin_sample_blocked: 0 } as Record<string, number>;
 
     // Group player props by (sport, player_name) for log batching
     const sportPlayers = new Map<string, Set<string>>();
@@ -275,6 +294,19 @@ Deno.serve(async (req) => {
         bookmaker: string | null; current_line: number | null; over_price: number | null;
         under_price: number | null; market_type: string;
       };
+      // belt-and-suspenders: filter ran in SQL, re-check in JS
+      if (p.commence_time && new Date(p.commence_time).getTime() < Date.now() + PREGAME_BUFFER_MIN * 60_000) {
+        dropped.stale++;
+        continue;
+      }
+      // MLB pitcher props require confirmed starter status
+      if (p.market_type === "player" && p.sport === "baseball_mlb"
+        && p.prop_type?.startsWith("pitcher_")
+        && p.player_name
+        && !mlbStarters.has(p.player_name.toLowerCase())) {
+        dropped.not_starter++;
+        continue;
+      }
       const teams = parseTeams(p.game_description ?? "");
       if (p.market_type === "player") {
         const mapper = PROP_STAT_MAP[p.sport]?.[p.prop_type];
@@ -292,14 +324,15 @@ Deno.serve(async (req) => {
           if (price < MIN_PRICE) continue; // worse than -250
           // all-zero Under guard
           if (side === "under" && values.length >= 3 && values.every(v => v === 0)) continue;
-          const hitForSide = stats.hit == null ? null :
+          const thinSample = values.length < MIN_PLAYER_SAMPLE;
+          const hitForSide = stats.hit == null || thinSample ? null :
             (side === "over" ? stats.hit : 1 - stats.hit);
           const implied = dejuice(p.over_price, p.under_price, side);
           const modelProb = hitForSide ?? implied;
-          const floorMargin = stats.min == null ? 0 :
+          const floorMargin = stats.min == null || thinSample ? 0 :
             side === "over" ? clamp01((stats.min - line) / Math.max(1, line)) :
               clamp01((line - stats.max!) / Math.max(1, line));
-          const medianMargin = stats.median == null ? 0 :
+          const medianMargin = stats.median == null || thinSample ? 0 :
             side === "over" ? clamp01((stats.median - line) / Math.max(1, line + 1)) :
               clamp01((line - stats.median) / Math.max(1, line + 1));
           const edge = clamp01(modelProb - implied + 0.5);
@@ -311,7 +344,12 @@ Deno.serve(async (req) => {
             W_EDGE * edge +
             W_RESEARCH * (0.5 + rb.boost * 5) // map -0.10..+0.10 -> 0..1 centered 0.5
           );
-          const tier = tierOf(safety);
+          let tier = tierOf(safety);
+          // Thin-sample cap: can't earn lock or strong without enough history
+          if (thinSample && (tier === "lock" || tier === "strong")) {
+            tier = "lean";
+            dropped.thin_sample_blocked++;
+          }
           if (!tier) continue;
           candidates.push({
             analysis_date: date,
