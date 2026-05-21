@@ -324,19 +324,28 @@ Deno.serve(async (req) => {
   };
 
   try {
-    // 1) Pull active props
+    // 1) Pull active props — paginate to bypass PostgREST 1000-row cap.
+    //    We need FanDuel for scoring AND other books for consensus medians.
     const sinceProps = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-    const { data: rawProps, error: pErr } = await supabase
-      .from('unified_props')
-      .select('id,event_id,sport,game_description,commence_time,player_name,prop_type,bookmaker,current_line,over_price,under_price,updated_at')
-      .eq('is_active', true)
-      .gte('updated_at', sinceProps)
-      .not('over_price', 'is', null)
-      .not('under_price', 'is', null)
-      .not('current_line', 'is', null)
-      .limit(5000);
-    if (pErr) throw pErr;
-    const props = (rawProps ?? []) as UnifiedProp[];
+    const props: UnifiedProp[] = [];
+    const PAGE = 1000;
+    for (let offset = 0; ; offset += PAGE) {
+      const { data: page, error: pErr } = await supabase
+        .from('unified_props')
+        .select('id,event_id,sport,game_description,commence_time,player_name,prop_type,bookmaker,current_line,over_price,under_price,updated_at')
+        .eq('is_active', true)
+        .gte('updated_at', sinceProps)
+        .not('over_price', 'is', null)
+        .not('under_price', 'is', null)
+        .not('current_line', 'is', null)
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+      if (pErr) throw pErr;
+      const rows = (page ?? []) as UnifiedProp[];
+      props.push(...rows);
+      if (rows.length < PAGE) break;
+      if (offset > 20000) break; // hard safety
+    }
     stats.props_scanned = props.length;
 
     // 2) Pull recent snapshots — earliest-per-prop becomes our "opening"
