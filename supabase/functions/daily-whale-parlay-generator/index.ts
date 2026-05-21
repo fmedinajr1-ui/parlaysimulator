@@ -171,6 +171,32 @@ Deno.serve(async (req) => {
       .single();
     if (insErr) throw insErr;
 
+    // Broadcast to Telegram (admin channel) — this is what makes it real.
+    let telegram: any = null;
+    try {
+      const lines: string[] = [];
+      lines.push(`🐋 *Whale Parlay of the Day* — ${legs.length} legs`);
+      lines.push(`Combined odds: *${totalOdds.toFixed(2)}x* · Confidence ${confidence}`);
+      lines.push('');
+      legs.forEach((l, i) => {
+        lines.push(`${i + 1}. *${l.player_name}* — ${l.side} ${l.line} ${l.prop_type} _(Tier ${l.tier}, score ${l.whale_score})_`);
+        if (l.game) lines.push(`   _${l.game}_`);
+        if (l.why) lines.push(`   💡 ${l.why}`);
+      });
+      if (signals.length) {
+        lines.push('');
+        lines.push(`_Signals: ${signals.join(', ')}_`);
+      }
+      const message = lines.join('\n');
+      const { data: sendResp, error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
+        body: { message, parse_mode: 'Markdown', admin_only: true, type: 'whale_parlay_of_the_day' },
+      });
+      if (sendErr) console.warn('[whale-parlay] telegram send error:', sendErr);
+      telegram = sendResp ?? null;
+    } catch (tErr) {
+      console.warn('[whale-parlay] telegram broadcast failed:', tErr);
+    }
+
     return new Response(JSON.stringify({
       success: true,
       parlay_id: inserted?.id,
@@ -178,6 +204,7 @@ Deno.serve(async (req) => {
       total_odds: Number(totalOdds.toFixed(2)),
       confidence,
       pool_size: pool.length,
+      telegram,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err) {
     console.error('[daily-whale-parlay-generator] error:', err);
