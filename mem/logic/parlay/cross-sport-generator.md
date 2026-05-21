@@ -9,11 +9,18 @@ type: feature
 - Leg formula: `safety = 0.45*l10_hit + 0.20*floor_margin + 0.15*median_margin
   + 0.10*line_edge + 0.10*research_boost`. Tier cuts: lock 0.80 / strong 0.70 / lean 0.60.
 - Team legs use dejuiced implied prob + structural bump (HOME ML +0.04, HOME spread +0.03,
-  UNDER total +0.02), capped 0.85. Spreads with `|line|>=9.5` dropped. Prices worse than
-  -250 dropped. All-zero L10 Unders dropped.
+  UNDER total +0.02), capped 0.85. Team safety formula:
+  `0.95*conf + 0.05 + 0.10*max(0, conf-0.50) + 0.25*research_boost` (clamped 0–1).
+  Calibration: -150 ML home → ~0.67 (lean), -200 → ~0.74 (strong), -110 dog → ~0.56
+  (rejected). Spreads with `|line|>=9.5` dropped. Prices worse than -250 dropped.
+  All-zero L10 Unders dropped.
 - Bulk mix per run: 8 × 2-leg Lock, 8 × 3-leg Strong, 6 × 4-leg Stretch, 3 × 5-leg Lottery.
 - Player-primary: any ticket with `legs>=3` requires ≥1 player leg; team-market legs capped
   at 40% of the ticket; ≤1 team leg per game; ≥2 distinct games.
+- Team-leg floor: `stretch_4` and `lottery_5` tickets require ≥1 team leg when the team
+  candidate pool has ≥3 entries (soft floor — falls back to all-player on rare slates
+  where the team pool is empty). Implemented by seeding one team leg before the greedy
+  player-safety sort in `buildSlot()`.
 - Pregame gating (hard): `cross-sport-sweet-spots` only ingests `unified_props` rows where
   `commence_time > now() + 15min`; generator re-checks at runtime and admin-pings if any
   stale leg slips through. Prevents live/finished-game props from entering pre-game drops.

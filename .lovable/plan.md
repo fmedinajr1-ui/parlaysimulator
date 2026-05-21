@@ -1,58 +1,65 @@
-## Full Report: Stale-Game Legs in Cross-Sport Parlays
+## Why no team parlays today
 
-### What the user saw
+`cross-sport-sweet-spots` ingests team props (16 MLB ML/spread/total, 2 NBA, 3 NHL future-game rows are active right now) but the **team-leg safety formula is mathematically capped below the 0.60 `lean` threshold**. Even a -250 favorite scores ~0.58, so every team candidate is rejected before reaching the generator. That's why today's 9 parlays are 100% player legs.
 
-Casey Mize (Detroit Tigers SP) appears in 4 of the 9 cross-sport parlays broadcast today, with picks like "Earned Runs UNDER 1.5", "Hits Allowed UNDER 5.5", "Strikeouts OVER 2.5". User says Detroit isn't playing today.
+Current formula (sweet-spots lines 397–411):
+```
+conf   = min(0.85, implied + structural_bump)   # bump 0.02–0.04
+safety = 0.55*conf + 0.25*clamp(conf - implied + 0.5) + 0.10*(0.5 + 5*research_boost)
+```
+With zero research boost the max possible safety is ~0.59. Player legs clear because their formula includes `0.45 * l10_hit_rate` (worth up to +0.45). Team legs have no equivalent term.
 
-### What the data shows
+## Fix plan
 
-`unified_props` does have rows for `Cleveland Guardians @ Detroit Tigers`, event `427339d86…`, with `commence_time = 2026-05-21 17:11:00 UTC` (1:11 PM ET). The generator ran at **19:54 UTC (3:54 PM ET)** — the game's first pitch was **2h43m before the parlay was built**. The game is either live or already final. Either way it has no business being in a pre-game parlay drop.
+### 1. Rebalance team-leg safety scoring
+Replace the team-leg block in `cross-sport-sweet-spots/index.ts` so a fair-priced favorite can actually reach `lean`/`strong`:
 
-Scaled view of the same bug:
-- **2,420** active MLB rows in `unified_props`
-- **776 (32%)** have `commence_time < now()` — i.e. already started
-- After sweet-spots ran, **44 of 56** active legs (79%) came from games that have already started
-- Cross-sport generator has no `commence_time` filter, so it freely combined those stale legs
+```
+edge        = conf - implied                       # how much the structural bump beat the book
+safety_team = 0.55*conf
+            + 0.20*clamp01(edge*4 + 0.5)           # was 0.25 of a tiny delta — now meaningful
+            + 0.15*clamp01((conf - 0.50)*2)        # "favorite weight" — rewards real favorites
+            + 0.10*(0.5 + 5*research_boost)        # unchanged
+```
+With this, -150 ML home → ~0.66 (lean), -200 → ~0.71 (strong), -110 dog → ~0.55 (still rejected). Caps at 0.85 stay.
 
-### Root causes
+### 2. Quota team legs into every multi-leg ticket
+Today's generator only *allows* team legs (≤40% cap). Flip it to a soft *floor* for tickets with `legs ≥ 3`:
+- `stretch_4` and `lottery_5`: require ≥1 team leg when team pool ≥ 3 candidates that slate.
+- If team pool is empty (rare slates), log `team_pool_empty` and fall back to all-player (current behavior).
+- `lock_2` and `strong_3`: unchanged (player-primary, team optional).
 
-1. `unified_props.is_active` is not flipped to `false` when a game starts. The odds-feed worker keeps the row "active" because the book still lists settled props for in-progress games.
-2. `cross-sport-sweet-spots` selects `is_active=true` with **no time filter**, so live + finished games leak in.
-3. `cross-sport-parlay-generator` trusts the candidate pool — same gap.
-4. Pitcher legs additionally need a confirmed-starter check. Today's Mize legs survived even though we have no signal he was actually the starter.
-5. L10 hit rate of 1.0 on every Mize line is suspicious — pitchers with <10 starts in the log table get auto-perfect scores because the floor/median math treats small `values.length` as gospel. (Secondary issue, but worth fixing in the same pass.)
+This makes the "player-primary, team-as-filler" rule from the memory actually visible to the user instead of silently degrading to player-only.
 
-### Plan to fix
+### 3. Per-game team cap unchanged
+Keep the existing `≤1 team leg per game` and `|spread| < 9.5` filters — those are working.
 
-**1. Hard cutoff on `commence_time`** (the actual user-visible bug)
-   - In `cross-sport-sweet-spots`: only pull props where `commence_time > now() + INTERVAL '15 minutes'` (15-min buffer so we don't include a game about to start during the run). Log dropped count per sport.
-   - In `cross-sport-parlay-generator`: belt-and-suspenders — re-check `commence_time` on every leg pulled from `cross_sport_sweet_spots`, drop and warn on any stale one.
+### 4. Re-run today
+- Mark today's 9 `cross_sport_*` rows in `bot_daily_parlays` as `outcome='void'`, reason `team_leg_starvation`.
+- Re-run sweet-spots → generator. Expected: ~6–10 team candidates qualify (MLB favorites + a couple NHL/NBA), 2–3 tickets will carry a team leg.
+- Broadcast top 5 with `"Replaces earlier drop — team legs restored"` header via `bot-send-telegram`.
 
-**2. Confirmed-starter gate for MLB pitcher props**
-   - Add a join against `mlb_probable_pitchers` (or whatever table the existing MLB pipeline uses — confirm during implementation). If the player isn't today's listed starter for either team, drop the leg.
-   - Same pattern, looser, for NHL goalie props (use `nhl_starting_goalies`).
+### 5. Tests (5 new, per project rule)
+Append to `cross_sport.test.ts`:
+1. Team safety: -200 ML home with zero research → safety ≥ 0.70 (`strong`).
+2. Team safety: -110 dog → safety < 0.60 (rejected).
+3. Team safety: +120 underdog with research_boost 0.05 → safety < 0.60 (rejected, no dog inflation).
+4. Generator: stretch_4 with ≥3 team candidates must include ≥1 team leg.
+5. Generator: stretch_4 with 0 team candidates falls back to all-player without crashing.
 
-**3. Min-sample-size gate**
-   - Require `values.length >= 5` for player legs before trusting L10-derived `safety`. Below 5, fall back to de-juiced implied probability only and cap `tier` at `lean` (no locks/strongs from thin data).
+### 6. Memory update
+Update `mem/logic/parlay/cross-sport-generator.md`:
+- Replace "team legs capped at 40%" with "team legs capped at 40% AND required ≥1 in 4-leg/5-leg tickets when pool ≥ 3".
+- Document the new team safety formula.
 
-**4. Stale-row hygiene at the source**
-   - Add a 5-min cron job that flips `unified_props.is_active = false` when `commence_time < now() - INTERVAL '5 minutes'`. This stops every downstream engine (not just cross-sport) from inheriting the same bug.
+## Out of scope
+- Upstream odds-feed pulling more NHL/NBA games (today's slate is genuinely small — 2 NBA, 3 NHL).
+- Spreads ≥9.5 stay banned.
+- Research boost weighting unchanged.
 
-**5. Post-broadcast audit**
-   - In `cross-sport-parlay-generator`, after persisting tickets, re-query each leg's `commence_time` and write a row to `bot_audit_log` with `kind='cross_sport_stale_check'` plus counts. If any stale leg slipped through, send admin-only Telegram alert.
-
-**6. Re-run today**
-   - Mark today's 9 `cross_sport_*` rows in `bot_daily_parlays` as voided (`status='voided'`, `void_reason='stale_pregame_data'`).
-   - Re-run research → sweet-spots → generator with the fixes in place, broadcast a corrected drop with a "Replaces earlier drop — stale game data filtered" header.
-
-**7. Tests** (5, per project rule)
-   - sweet-spots: rejects rows with `commence_time < now()+15m`
-   - sweet-spots: rejects pitcher leg when player not in probable starters
-   - sweet-spots: caps tier at `lean` when L10 sample < 5
-   - generator: re-filters stale legs from candidate pool
-   - cron: `is_active` flip leaves future games untouched
-
-### Out of scope for this pass
-
-- Fixing the upstream odds-feed worker to mark `is_active=false` proactively (the 5-min cron in step 4 is the safety net; rewiring the worker is a separate ticket).
-- Reworking team-leg pool (NHL/NBA still empty because of game-log joins — already in the backlog from the previous run).
+## Files to touch
+- `supabase/functions/cross-sport-sweet-spots/index.ts` (team safety formula)
+- `supabase/functions/cross-sport-parlay-generator/index.ts` (team-leg floor)
+- `supabase/functions/cross-sport-parlay-generator/cross_sport.test.ts` (5 new tests)
+- `mem/logic/parlay/cross-sport-generator.md` (rules update)
+- DB: void today's 9 `cross_sport_*` rows, then re-run pipeline
