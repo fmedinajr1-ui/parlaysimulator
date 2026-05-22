@@ -32,15 +32,11 @@ const PROP_STAT_MAP: Record<string, Record<string, (g: Record<string, unknown>) 
     batter_home_runs: g => num(g.home_runs),
     batter_walks: g => num(g.walks),
     batter_stolen_bases: g => num(g.stolen_bases),
-    batter_singles: g => num(g.hits), // approx; singles often missing
-    batter_doubles: g => null,
     batter_hits_runs_rbis: g => add(num(g.hits), num(g.runs), num(g.rbis)),
     pitcher_strikeouts: g => num(g.pitcher_strikeouts),
     pitcher_earned_runs: g => num(g.earned_runs),
     pitcher_hits_allowed: g => num(g.pitcher_hits_allowed),
     pitcher_outs: g => mul(num(g.innings_pitched), 3),
-    pitcher_walks: g => null,
-    pitcher_record_a_win: g => null,
   },
   basketball_nba: {
     player_points: g => num(g.points),
