@@ -74,6 +74,16 @@ function violates(legs: Leg[]): string | null {
     }
   }
   for (const c of teamLegsByGame.values()) if (c > 1) return "multiple_team_legs_same_game";
+  // ≤1 prop per player per ticket — prevents redundant correlated misses
+  // (e.g. same batter Hits + Singles + Total Bases all riding on one at-bat).
+  const playerCounts = new Map<string, number>();
+  for (const l of legs) {
+    if (l.market_type === "player" && l.player_name) {
+      const k = l.player_name.toLowerCase();
+      playerCounts.set(k, (playerCounts.get(k) ?? 0) + 1);
+    }
+  }
+  for (const c of playerCounts.values()) if (c > 1) return "multiple_props_same_player";
   // player-primary: legs>=3 needs >=1 player
   const playerLegs = legs.filter(l => l.market_type === "player").length;
   if (legs.length >= 3 && playerLegs < 1) return "no_player_leg";
