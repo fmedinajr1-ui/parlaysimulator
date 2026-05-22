@@ -38,11 +38,23 @@ type: feature
   (`multiple_props_same_player`). Prevents redundant correlated misses from stacking
   e.g. batter Hits + Total Bases + Singles all riding on one at-bat.
 - Settlement: `cross-sport-parlay-settler` (cron `15 * * * *`) grades pending
-  `cross_sport_*` rows in `bot_daily_parlays`. Only grades when ALL legs' games show
-  `final` in `live_game_scores`. Player legs use per-sport game_logs via the same
-  PROP_STAT_MAP; team legs (ML/spread/total) use final scores. DNPs (no log row but
-  game is final) ⇒ `legs_voided`; parlay still hits if remaining legs hit. Writes
-  `outcome/legs_hit/legs_missed/legs_voided/settled_at/lesson_learned`.
+  `cross_sport_*`, `ladder_challenge`, and `mega_lottery_scanner` rows in
+  `bot_daily_parlays`. v2 drops the `event_id` requirement: player legs are matched
+  by `(canonSport, lower(player_name), parlay_date)` against per-sport
+  `*_player_game_logs`; team legs are matched by team-name substring against
+  `live_game_scores` filtered to `parlay_date` (UTC window widened through the
+  next day 08:00Z so ET evening games are covered). Sport + prop labels are
+  normalized via `SPORT_ALIASES` / `PROP_ALIASES` (accepts both `MLB`/`baseball_mlb`
+  and `RBIs`/`batter_rbis`). "No log + ingest complete" ⇒ DNP-void; "no log +
+  ingest incomplete" keeps the parlay pending (no false-loss). Legs lacking any
+  game context (e.g. mega_lottery team legs with no `team`/`opponent`/`game`)
+  are graded as `void` with `reason: ungradable_missing_context`.
+- Backfill helpers: `mlb-data-ingestion` accepts `{days_back, fetch_all:true}` to
+  re-pull a date's box scores for ALL players (not just today's prop targets);
+  `live_game_scores` can be upserted from ESPN scoreboard with `?dates=YYYYMMDD`.
+- TODO: normalize `mega_lottery_scanner` generator to write `team`, `opponent`,
+  `game_description`, `market_type` on team legs so they stop landing as
+  `ungradable_missing_context`.
 - Learning: each graded leg is appended to `cross_sport_leg_feedback` with
   sport/prop_type/side/tier/safety/l10_hit/result/actual so we can aggregate which
   prop types leak. Service-role-only (deny-all SELECT policy).
