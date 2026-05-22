@@ -195,11 +195,14 @@ Deno.serve(async (req) => {
     type ScoreRow = { home_team: string; away_team: string; home_score: number; away_score: number; status: string };
     const scoresByDate = new Map<string, ScoreRow[]>();
     for (const d of dates) {
+      // Widen the window to cover ET-evening games whose UTC start crosses midnight.
+      const nextDay = new Date(`${d}T00:00:00Z`); nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const endIso = nextDay.toISOString().slice(0, 10) + "T08:00:00";
       const { data: rows } = await supabase
         .from("live_game_scores")
         .select("home_team, away_team, home_score, away_score, game_status, start_time")
         .gte("start_time", `${d}T00:00:00`)
-        .lte("start_time", `${d}T23:59:59`);
+        .lte("start_time", endIso);
       scoresByDate.set(d, (rows ?? []).map(r => {
         const o = r as Record<string, unknown>;
         return {
