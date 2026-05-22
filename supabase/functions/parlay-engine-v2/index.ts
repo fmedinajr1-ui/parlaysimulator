@@ -391,6 +391,25 @@ function buildExtraCandidates(
     const tipoff = r.commence_time ? new Date(r.commence_time)
                                    : new Date(now.getTime() + 6 * 60 * 60 * 1000);
 
+    // Team-market rows MUST carry a resolvable game so the settler can grade
+    // them. Without team/opponent the leg lands in bot_daily_parlays with
+    // null game context and the settler falls back to ungradable_missing_context.
+    if (isTeam && (team === "UNK" || opponent === "UNK")) {
+      bump("extra:missing_game_context");
+      continue;
+    }
+
+    const persistedMarketType: "moneyline" | "spread" | "total" | "player" =
+      isTeam
+        ? (propType === "Moneyline" ? "moneyline"
+         : propType === "Spread"    ? "spread"
+         :                            "total")
+        : "player";
+
+    const stableEventId =
+      r.event_id ??
+      `${(r.commence_time ?? "").slice(0, 10)}|${team}|${opponent}|${persistedMarketType}`;
+
     for (const { side, american } of sides) {
       if (american == null) { bump("extra:no_price_for_side"); continue; }
       const baseLine = Number(r.current_line ?? 0);
@@ -434,6 +453,8 @@ function buildExtraCandidates(
         selected_book: (r.bookmaker ?? "").toLowerCase() || null,
         source_origin: isTeam ? "team_market" : "raw_props",
         game_description: r.game_description ?? null,
+        event_id: stableEventId,
+        market_type: persistedMarketType,
       });
     }
   }
