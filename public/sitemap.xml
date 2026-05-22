@@ -1,14 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://parlayfarm.com/</loc><lastmod>2026-05-21</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>
-  <url><loc>https://parlayfarm.com/blog</loc><lastmod>2026-05-21</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/strategy</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/mma</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/tennis</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/mlb</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/nba</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/prop-analysis</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://parlayfarm.com/blog/category/ai-picks</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/</loc><lastmod>2026-05-22</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>https://parlayfarm.com/blog</loc><lastmod>2026-05-22</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/nba</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/strategy</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/mma</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/tennis</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/mlb</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/prop-analysis</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/category/ai-picks</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://parlayfarm.com/blog/beyond-the-box-score-how-ai-crushes-pace-adjusted-props</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/the-sharp-s-guide-to-nba-rest-advantage-exploiting-the-schedule-for-profit</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/the-data-doesn-t-lie-unlocking-the-real-edge-with-nba-rest-advantage-betting</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/decoding-the-nba-defensive-rating-why-weekly-ai-adjustments-give-you-an-edge</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/beyond-the-stars-a-bettor-s-guide-to-decoding-betting-confidence-scores</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/decoding-the-house-sportsbook-limits-explained-for-sharps</loc><lastmod>2026-05-22</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/cracking-the-code-your-ai-edge-for-hard-rock-bet-props</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/decoding-the-chaos-your-edge-in-nba-coaching-change-betting</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/recalibrating-futures-analyzing-the-nba-trade-deadline-impact-with-ai</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/the-dust-settles-quantifying-nba-trade-deadline-impact-with-ai</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://parlayfarm.com/blog/why-a-monte-carlo-parlay-simulation-beats-your-gut-feeling-every-time</loc><lastmod>2026-05-21</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://parlayfarm.com/blog/the-art-of-the-update-mastering-bayesian-sports-betting-like-an-ai</loc><lastmod>2026-05-17</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://parlayfarm.com/blog/bayesian-sports-betting-how-ai-thinks-and-why-it-beats-your-gut</loc><lastmod>2026-05-17</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://parlayfarm.com/blog/unlocking-poisson-sports-betting-how-ai-makes-goal-scorer-predictions-simple</loc><lastmod>2026-05-17</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
