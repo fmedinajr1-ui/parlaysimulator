@@ -61,9 +61,9 @@ const slot: StrategySlot = {
   name: "mega_lottery_scanner",
   tier: "LOTTERY",
   target_leg_count: 4,
-  odds_band: "MEGA",
-  enabled: true,
-} as unknown as StrategySlot;
+  odds_band: "UPSIDE",
+  daily_share: 0.04,
+};
 
 Deno.test("mega_lottery: rejects combo containing UNK team leg even with player leg present", () => {
   const candidates = [
