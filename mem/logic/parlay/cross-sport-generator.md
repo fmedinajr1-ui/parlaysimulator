@@ -28,6 +28,24 @@ type: feature
   `mlb_pitcher_k_analysis` for today's `game_date`, else the leg is dropped (`not_starter`).
 - Thin-sample cap: player legs with `<5` qualifying L10 games can never earn `lock` or
   `strong` tier — auto-downgraded to `lean` and scored from de-juiced implied prob only.
+- Hard prop blacklist in `cross-sport-sweet-spots`: any player prop without a real L10
+  mapper is dropped (`unmapped_prop` counter). Removed inflated approximations:
+  `batter_singles` (was counted as any hit → false hits), `batter_doubles`,
+  `pitcher_walks`, `pitcher_record_a_win` — none had real game-log columns.
+- Over-side hitter hit-rate floor: any Over-side player leg with `l10_hit_rate < 0.55`
+  is dropped (`weak_over_hit_rate`). Stops miss-by-1 leaks on lines sitting at the mean.
+- Generator dedupe: `violates()` rejects any ticket with `>1 prop on the same player`
+  (`multiple_props_same_player`). Prevents redundant correlated misses from stacking
+  e.g. batter Hits + Total Bases + Singles all riding on one at-bat.
+- Settlement: `cross-sport-parlay-settler` (cron `15 * * * *`) grades pending
+  `cross_sport_*` rows in `bot_daily_parlays`. Only grades when ALL legs' games show
+  `final` in `live_game_scores`. Player legs use per-sport game_logs via the same
+  PROP_STAT_MAP; team legs (ML/spread/total) use final scores. DNPs (no log row but
+  game is final) ⇒ `legs_voided`; parlay still hits if remaining legs hit. Writes
+  `outcome/legs_hit/legs_missed/legs_voided/settled_at/lesson_learned`.
+- Learning: each graded leg is appended to `cross_sport_leg_feedback` with
+  sport/prop_type/side/tier/safety/l10_hit/result/actual so we can aggregate which
+  prop types leak. Service-role-only (deny-all SELECT policy).
 - Persists into `cross_sport_sweet_spots` and `bot_daily_parlays` (strategy_name
   `cross_sport_<slot>`); broadcasts top 5 via `bot-send-telegram` type
   `cross_sport_parlay`.
