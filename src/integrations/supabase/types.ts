@@ -3695,6 +3695,69 @@ export type Database = {
         }
         Relationships: []
       }
+      cross_sport_leg_feedback: {
+        Row: {
+          actual_text: string | null
+          actual_value: number | null
+          created_at: string
+          id: string
+          l10_hit_rate: number | null
+          line: number | null
+          market_type: string | null
+          parlay_date: string
+          parlay_id: string
+          player_name: string | null
+          prop_type: string | null
+          result: string
+          safety_score: number | null
+          side: string | null
+          sport: string | null
+          strategy_name: string
+          team: string | null
+          tier: string | null
+        }
+        Insert: {
+          actual_text?: string | null
+          actual_value?: number | null
+          created_at?: string
+          id?: string
+          l10_hit_rate?: number | null
+          line?: number | null
+          market_type?: string | null
+          parlay_date: string
+          parlay_id: string
+          player_name?: string | null
+          prop_type?: string | null
+          result: string
+          safety_score?: number | null
+          side?: string | null
+          sport?: string | null
+          strategy_name: string
+          team?: string | null
+          tier?: string | null
+        }
+        Update: {
+          actual_text?: string | null
+          actual_value?: number | null
+          created_at?: string
+          id?: string
+          l10_hit_rate?: number | null
+          line?: number | null
+          market_type?: string | null
+          parlay_date?: string
+          parlay_id?: string
+          player_name?: string | null
+          prop_type?: string | null
+          result?: string
+          safety_score?: number | null
+          side?: string | null
+          sport?: string | null
+          strategy_name?: string
+          team?: string | null
+          tier?: string | null
+        }
+        Relationships: []
+      }
       cross_sport_sweet_spots: {
         Row: {
           analysis_date: string

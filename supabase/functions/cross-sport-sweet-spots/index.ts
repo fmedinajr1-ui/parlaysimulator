@@ -32,15 +32,11 @@ const PROP_STAT_MAP: Record<string, Record<string, (g: Record<string, unknown>) 
     batter_home_runs: g => num(g.home_runs),
     batter_walks: g => num(g.walks),
     batter_stolen_bases: g => num(g.stolen_bases),
-    batter_singles: g => num(g.hits), // approx; singles often missing
-    batter_doubles: g => null,
     batter_hits_runs_rbis: g => add(num(g.hits), num(g.runs), num(g.rbis)),
     pitcher_strikeouts: g => num(g.pitcher_strikeouts),
     pitcher_earned_runs: g => num(g.earned_runs),
     pitcher_hits_allowed: g => num(g.pitcher_hits_allowed),
     pitcher_outs: g => mul(num(g.innings_pitched), 3),
-    pitcher_walks: g => null,
-    pitcher_record_a_win: g => null,
   },
   basketball_nba: {
     player_points: g => num(g.points),
@@ -310,12 +306,15 @@ Deno.serve(async (req) => {
       const teams = parseTeams(p.game_description ?? "");
       if (p.market_type === "player") {
         const mapper = PROP_STAT_MAP[p.sport]?.[p.prop_type];
+        // Hard drop: no L10 mapper means we can't validate — never include.
+        if (!mapper) {
+          dropped.unmapped_prop = (dropped.unmapped_prop ?? 0) + 1;
+          continue;
+        }
         const logs = logsCache.get(p.sport)?.get(p.player_name ?? "") ?? [];
         const line = p.current_line ?? 0;
         let values: number[] = [];
-        if (mapper) {
-          values = logs.slice(0, 10).map(mapper).filter((v): v is number => v !== null);
-        }
+        values = logs.slice(0, 10).map(mapper).filter((v): v is number => v !== null);
         const stats = l10Stats(values, line);
         // try both sides; only emit the better
         for (const side of ["over", "under"] as const) {
@@ -327,6 +326,13 @@ Deno.serve(async (req) => {
           const thinSample = values.length < MIN_PLAYER_SAMPLE;
           const hitForSide = stats.hit == null || thinSample ? null :
             (side === "over" ? stats.hit : 1 - stats.hit);
+          // Tightening: Over-side hitter props with L10 hit-rate < 0.55 are
+          // dropped (e.g. Over 0.5 Hits/Singles where player only hit it 4/10).
+          // Prevents miss-by-1 leg leaks where mean is right at the line.
+          if (side === "over" && hitForSide != null && hitForSide < 0.55) {
+            dropped.weak_over_hit_rate = (dropped.weak_over_hit_rate ?? 0) + 1;
+            continue;
+          }
           const implied = dejuice(p.over_price, p.under_price, side);
           const modelProb = hitForSide ?? implied;
           const floorMargin = stats.min == null || thinSample ? 0 :
