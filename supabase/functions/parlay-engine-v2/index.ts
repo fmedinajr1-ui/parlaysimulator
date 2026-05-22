@@ -499,7 +499,7 @@ Deno.serve(async (req) => {
     const endOfDay   = new Date(`${targetDate}T23:59:59-04:00`).toISOString();
     const { data: extraRows, error: extraErr } = await sb
       .from("unified_props")
-      .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at, market_type, category")
+      .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at, market_type, category, event_id")
       .gte("commence_time", startOfDay)
       .lte("commence_time", endOfDay)
       .or("market_type.neq.player,sport.eq.baseball_mlb");
