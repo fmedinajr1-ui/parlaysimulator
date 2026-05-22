@@ -11,6 +11,7 @@
  * reason `ungradable_missing_context`.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { bayesianHitRate, evPerUnit, breakevenDecimal, priorForLegCount } from "../_shared/staking/kelly.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -352,6 +353,77 @@ Deno.serve(async (req) => {
     if (feedbackRows.length > 0) {
       const { error: ferr } = await supabase.from("cross_sport_leg_feedback").insert(feedbackRows);
       if (ferr) console.error("feedback insert err", ferr);
+    }
+
+    // -------------------------------------------------------------------------
+    // Refresh strategy_pnl_rolling (7d + 30d windows). Pulls settled tickets,
+    // computes empirical hit rate, smoothed p, avg decimal odds, EV/unit and
+    // ROI per strategy. Generators read this on the next run to gate emission.
+    // -------------------------------------------------------------------------
+    try {
+      const today = new Date();
+      const isoSlice = (d: Date) => d.toISOString().slice(0, 10);
+      for (const windowDays of [7, 30]) {
+        const start = new Date(today.getTime() - windowDays * 24 * 3600_000);
+        const { data: rows } = await supabase
+          .from("bot_daily_parlays")
+          .select("strategy_name, outcome, expected_odds, leg_count")
+          .gte("parlay_date", isoSlice(start))
+          .in("outcome", ["won", "lost", "void"]);
+        const byStrat = new Map<string, { wins: number; losses: number; voids: number; decOdds: number[]; legSum: number; n: number }>();
+        for (const r of (rows ?? []) as Array<{ strategy_name: string; outcome: string; expected_odds: number | null; leg_count: number | null }>) {
+          const k = r.strategy_name;
+          if (!byStrat.has(k)) byStrat.set(k, { wins: 0, losses: 0, voids: 0, decOdds: [], legSum: 0, n: 0 });
+          const s = byStrat.get(k)!;
+          if (r.outcome === "won") s.wins++;
+          else if (r.outcome === "lost") s.losses++;
+          else s.voids++;
+          const amer = Number(r.expected_odds ?? 0);
+          if (Number.isFinite(amer) && amer !== 0) {
+            const dec = amer > 0 ? 1 + amer / 100 : 1 + 100 / Math.abs(amer);
+            s.decOdds.push(dec);
+          }
+          s.legSum += Number(r.leg_count ?? 0);
+          s.n++;
+        }
+        const upserts: Record<string, unknown>[] = [];
+        for (const [strategy, s] of byStrat) {
+          const graded = s.wins + s.losses; // voids don't count toward hit rate
+          const hitRate = graded > 0 ? s.wins / graded : 0;
+          const avgLegCount = s.n > 0 ? s.legSum / s.n : 0;
+          const prior = priorForLegCount(Math.round(avgLegCount || 3));
+          const pSmoothed = bayesianHitRate(s.wins, graded, prior, 10);
+          const avgDec = s.decOdds.length > 0
+            ? s.decOdds.reduce((a, b) => a + b, 0) / s.decOdds.length
+            : 0;
+          const ev = avgDec > 1 ? evPerUnit(pSmoothed, avgDec) : 0;
+          const roi = graded > 0 ? (s.wins * (avgDec - 1) - s.losses) / graded : 0;
+          upserts.push({
+            strategy_name: strategy,
+            window_days: windowDays,
+            n: s.n,
+            wins: s.wins,
+            losses: s.losses,
+            voids: s.voids,
+            hit_rate: Number(hitRate.toFixed(4)),
+            p_smoothed: Number(pSmoothed.toFixed(4)),
+            avg_decimal_odds: Number(avgDec.toFixed(4)),
+            avg_leg_count: Number(avgLegCount.toFixed(2)),
+            rolling_ev_per_unit: Number(ev.toFixed(4)),
+            rolling_roi: Number(roi.toFixed(4)),
+            breakeven_min_decimal: Number(breakevenDecimal(Math.max(pSmoothed, 0.0001)).toFixed(4)),
+            updated_at: new Date().toISOString(),
+          });
+        }
+        if (upserts.length > 0) {
+          const { error: uerr } = await supabase
+            .from("strategy_pnl_rolling")
+            .upsert(upserts, { onConflict: "strategy_name,window_days" });
+          if (uerr) console.error("strategy_pnl_rolling upsert err", uerr);
+        }
+      }
+    } catch (e) {
+      console.error("strategy_pnl_rolling refresh failed (non-fatal):", e);
     }
 
     return new Response(JSON.stringify({
