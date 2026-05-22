@@ -630,6 +630,8 @@ Deno.serve(async (req) => {
         confidence: l.confidence,
         signal_source: l.signal_source,
         source_origin: l.source_origin ?? null,
+        event_id: l.event_id ?? null,
+        market_type: l.market_type ?? (l.player_name ? "player" : null),
       })),
       leg_count: p.legs.length,
       combined_probability: combinedProbability(p),
