@@ -533,6 +533,17 @@ Deno.serve(async (req) => {
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
+        // Profitability gate (7d audit 2026-05-22):
+        //   take_it_now overall = 24.9% (185/744). Only the under-snapback on
+        //   hits / hits+runs+rbis is profitable (~42–59%). Block everything else.
+        {
+          const pt = (p.prop_type ?? '').toLowerCase();
+          const side = (p.derived_side ?? '').toLowerCase();
+          const profitablePair =
+            side === 'under' && (pt === 'batter_hits' || pt === 'batter_hits_runs_rbis');
+          if (!profitablePair) continue;
+        }
+
         // Phase 1: suppress poison/blowout
         if (isBlowoutOrPoison(p)) {
           phase1.poison_suppressed += 1;
