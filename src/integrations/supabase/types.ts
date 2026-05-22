@@ -15319,6 +15319,57 @@ export type Database = {
         }
         Relationships: []
       }
+      strategy_pnl_rolling: {
+        Row: {
+          avg_decimal_odds: number
+          avg_leg_count: number
+          breakeven_min_decimal: number
+          hit_rate: number
+          losses: number
+          n: number
+          p_smoothed: number
+          rolling_ev_per_unit: number
+          rolling_roi: number
+          strategy_name: string
+          updated_at: string
+          voids: number
+          window_days: number
+          wins: number
+        }
+        Insert: {
+          avg_decimal_odds?: number
+          avg_leg_count?: number
+          breakeven_min_decimal?: number
+          hit_rate?: number
+          losses?: number
+          n?: number
+          p_smoothed?: number
+          rolling_ev_per_unit?: number
+          rolling_roi?: number
+          strategy_name: string
+          updated_at?: string
+          voids?: number
+          window_days: number
+          wins?: number
+        }
+        Update: {
+          avg_decimal_odds?: number
+          avg_leg_count?: number
+          breakeven_min_decimal?: number
+          hit_rate?: number
+          losses?: number
+          n?: number
+          p_smoothed?: number
+          rolling_ev_per_unit?: number
+          rolling_roi?: number
+          strategy_name?: string
+          updated_at?: string
+          voids?: number
+          window_days?: number
+          wins?: number
+        }
+        Relationships: []
+      }
       subscriptions: {
         Row: {
           created_at: string | null
