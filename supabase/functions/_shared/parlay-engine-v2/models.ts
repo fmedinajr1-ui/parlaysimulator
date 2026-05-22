@@ -32,6 +32,9 @@ export interface CandidateLeg {
   game_description?: string | null;
   /** Optional event id used by parlay-level "one team market per game" gate. */
   event_id?: string | null;
+  /** "player" | "moneyline" | "spread" | "total" — preserved end-to-end so
+   * the settler can grade without re-inferring from signal_source. */
+  market_type?: string | null;
 }
 
 // ---------- Leg helpers ----------
