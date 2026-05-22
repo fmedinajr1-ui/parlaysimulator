@@ -253,9 +253,18 @@ export const roleStackedLongshot: StrategyFn = (candidates, slot) => {
 };
 
 export const megaLotteryScanner: StrategyFn = (candidates, slot) => {
-  const eligible = candidates.filter(l =>
-    l.confidence >= 0.66 && !config.SIGNAL_BLACKLIST.has(signalNorm(l))
-  );
+  const eligible = candidates.filter(l => {
+    if (l.confidence < 0.66) return false;
+    if (config.SIGNAL_BLACKLIST.has(signalNorm(l))) return false;
+    // Team-market legs MUST carry a usable game context, otherwise the
+    // settler can't grade them and the ticket lands as ungradable_missing_context.
+    if (l.player_name == null) {
+      const t = (l.team ?? "").trim();
+      const o = (l.opponent ?? "").trim();
+      if (!t || !o || t === "UNK" || o === "UNK" || !l.game_description) return false;
+    }
+    return true;
+  });
   const combo = bestComboToBand(eligible, slot.target_leg_count, slot.odds_band);
   if (!combo) return null;
   // Lottery tickets must include at least one real player edge — otherwise the
