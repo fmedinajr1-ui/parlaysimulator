@@ -263,6 +263,7 @@ function buildCandidates(
 interface ExtraPropRow extends PropRow {
   market_type: string | null;
   category: string | null;
+  event_id?: string | null;
 }
 
 function americanFromDecimal(price: number | null | undefined): number | null {
