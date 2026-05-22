@@ -23,6 +23,7 @@ import {
   PROP_WHITELIST,
 } from "../_shared/parlay-engine-v2/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
+import { bayesianHitRate, quarterKellyStake, requiredDecimal, evPerUnit, priorForLegCount } from "../_shared/staking/kelly.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -614,7 +615,72 @@ Deno.serve(async (req) => {
     }
 
     // Live insert into bot_daily_parlays
-    const rows = slate.parlays.map(p => ({
+    // ---------------------------------------------------------------------------
+    // BANKROLL_MATH_V1 — per-strategy EV gates + ¼-Kelly stake sizing.
+    // Behind a feature flag so we can ship Part 1 immediately and dial Part 2
+    // on after a confirmed backtest. Default OFF.
+    // ---------------------------------------------------------------------------
+    const mathEnabled = (Deno.env.get("BANKROLL_MATH_V1") ?? "false").toLowerCase() === "true";
+    const bankrollUnits = Number(Deno.env.get("BANKROLL_UNITS") ?? "1000");
+    const dailyEnvelopeFrac = Number(Deno.env.get("BANKROLL_DAILY_FRAC") ?? "0.20");
+    const cushion = Number(Deno.env.get("BANKROLL_ODDS_CUSHION") ?? "0.10");
+
+    let pnlByStrategy = new Map<string, { p_smoothed: number; rolling_ev_per_unit: number; n: number }>();
+    if (mathEnabled) {
+      const { data: pnl } = await sb
+        .from("strategy_pnl_rolling")
+        .select("strategy_name, window_days, p_smoothed, rolling_ev_per_unit, n")
+        .eq("window_days", 7);
+      for (const r of (pnl ?? []) as Array<{ strategy_name: string; p_smoothed: number; rolling_ev_per_unit: number; n: number }>) {
+        pnlByStrategy.set(r.strategy_name, {
+          p_smoothed: Number(r.p_smoothed ?? 0),
+          rolling_ev_per_unit: Number(r.rolling_ev_per_unit ?? 0),
+          n: Number(r.n ?? 0),
+        });
+      }
+    }
+
+    type SizedParlay = { p: typeof slate.parlays[number]; stake: number; pHat: number; decOdds: number };
+    let sized: SizedParlay[] = slate.parlays.map(p => {
+      const decOdds = combinedDecimalOdds(p);
+      const claimed = combinedProbability(p);
+      const pnl = pnlByStrategy.get(p.strategy);
+      const prior = priorForLegCount(p.legs.length);
+      // Empirical p̂: blend rolling-smoothed strategy hit rate (if we have ≥5
+      // graded samples) with the engine's claimed combined probability.
+      const pHat = (mathEnabled && pnl && pnl.n >= 5)
+        ? bayesianHitRate(Math.round(pnl.p_smoothed * pnl.n), pnl.n, prior, 10)
+        : claimed;
+      const stake = mathEnabled
+        ? quarterKellyStake(pHat, decOdds, bankrollUnits, 0.25).stakeUnits
+        : p.stake_units;
+      return { p, stake, pHat, decOdds };
+    });
+
+    let skippedByMath = 0;
+    if (mathEnabled) {
+      sized = sized.filter(({ p, stake, pHat, decOdds }) => {
+        const pnl = pnlByStrategy.get(p.strategy);
+        // Strategy suspension: 7d EV/unit < 0 with ≥5 graded samples.
+        if (pnl && pnl.n >= 5 && pnl.rolling_ev_per_unit < 0) { skippedByMath++; return false; }
+        // Odds cushion: must clear breakeven by at least cushion (default 10%).
+        const minDec = requiredDecimal(pHat, cushion);
+        if (!(decOdds >= minDec)) { skippedByMath++; return false; }
+        // Tiny stake floor — skip if Kelly says <0.2% of bankroll.
+        if (stake < bankrollUnits * 0.002) { skippedByMath++; return false; }
+        return true;
+      });
+
+      // Daily envelope: cap Σstake at bankroll × dailyEnvelopeFrac.
+      const envelope = bankrollUnits * dailyEnvelopeFrac;
+      const total = sized.reduce((s, x) => s + x.stake, 0);
+      if (total > envelope && total > 0) {
+        const scale = envelope / total;
+        sized = sized.map(x => ({ ...x, stake: Math.round(x.stake * scale * 1000) / 1000 }));
+      }
+    }
+
+    const rows = sized.map(({ p, stake, pHat, decOdds }) => ({
       strategy_name: p.strategy,
       tier: p.tier,
       legs: p.legs.map(l => ({
@@ -634,13 +700,15 @@ Deno.serve(async (req) => {
         market_type: l.market_type ?? (l.player_name ? "player" : null),
       })),
       leg_count: p.legs.length,
-      combined_probability: combinedProbability(p),
+      combined_probability: mathEnabled ? pHat : combinedProbability(p),
       expected_odds: combinedAmericanOdds(p),
-      simulated_stake: p.stake_units,
-      simulated_edge: combinedProbability(p) / (1.0 / combinedDecimalOdds(p)) - 1.0,
-      simulated_payout: p.stake_units * (combinedDecimalOdds(p) - 1.0),
-      simulated_win_rate: combinedProbability(p),
-      selection_rationale: p.rationale,
+      simulated_stake: stake,
+      simulated_edge: pHat / (1.0 / decOdds) - 1.0,
+      simulated_payout: stake * (decOdds - 1.0),
+      simulated_win_rate: pHat,
+      selection_rationale: mathEnabled
+        ? `${p.rationale} | math: p̂=${pHat.toFixed(3)} D=${decOdds.toFixed(2)} ¼K=${stake.toFixed(2)}u`
+        : p.rationale,
       outcome: "pending",
       is_simulated: true,
       parlay_date: targetDate,
