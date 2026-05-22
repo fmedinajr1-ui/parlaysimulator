@@ -235,13 +235,13 @@ Deno.serve(async (req) => {
       const m = new Map<string, Record<string, unknown>>();
       for (const log of logs ?? []) {
         const r = log as Record<string, unknown>;
-        m.set(`${String(r.player_name).toLowerCase()}|${r.game_date}`, r);
+        const gd = String(r.game_date ?? "").slice(0, 10); // YYYY-MM-DD
+        m.set(`${String(r.player_name).toLowerCase()}|${gd}`, r);
       }
       logMap.set(sport, m);
       // Heuristic: ingest complete for sport+date if ANY log row exists for that date.
-      // (Cheap proxy that prevents false-losses when ingest hasn't run yet.)
       for (const d of dates) {
-        const any = [...m.values()].some(r => String(r.game_date) === d);
+        const any = [...m.values()].some(r => String(r.game_date ?? "").slice(0, 10) === d);
         ingestComplete.set(`${sport}|${d}`, any);
       }
     }
