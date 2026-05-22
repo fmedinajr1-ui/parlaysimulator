@@ -52,9 +52,18 @@ type: feature
 - Backfill helpers: `mlb-data-ingestion` accepts `{days_back, fetch_all:true}` to
   re-pull a date's box scores for ALL players (not just today's prop targets);
   `live_game_scores` can be upserted from ESPN scoreboard with `?dates=YYYYMMDD`.
-- TODO: normalize `mega_lottery_scanner` generator to write `team`, `opponent`,
-  `game_description`, `market_type` on team legs so they stop landing as
-  `ungradable_missing_context`.
+- `mega_lottery_scanner` team legs are now gradable: `parlay-engine-v2`
+  `buildExtraCandidates` drops team-market rows whose `game_description`
+  doesn't parse into real teams (`extra:missing_game_context`), always
+  persists `event_id` + `market_type` on every leg, and `megaLotteryScanner`
+  rejects combos containing UNK / no-context team legs.
+- Profitability math (BANKROLL_MATH_V1, default OFF): per-strategy ¼-Kelly
+  staking with Bayesian-smoothed hit rate vs leg-count priors. Settler
+  refreshes `strategy_pnl_rolling` (7d + 30d windows) after each grading run;
+  generators read window=7d to (1) suppress strategies whose `rolling_ev_per_unit
+  < 0` after ≥5 graded samples, (2) require combined decimal odds ≥ `1/p̂ ×
+  1.10`, (3) cap Σstake at 20 % of bankroll per day. See
+  `mem://logic/betting/profitability-math`.
 - Learning: each graded leg is appended to `cross_sport_leg_feedback` with
   sport/prop_type/side/tier/safety/l10_hit/result/actual so we can aggregate which
   prop types leak. Service-role-only (deny-all SELECT policy).

@@ -280,7 +280,63 @@ Deno.serve(async (req) => {
 
     let persisted = 0;
     if (!dryRun) {
-      for (const p of built) {
+      // BANKROLL_MATH_V1 — same gates + ¼-Kelly sizing as parlay-engine-v2.
+      const { bayesianHitRate, quarterKellyStake, requiredDecimal, priorForLegCount } =
+        await import("../_shared/staking/kelly.ts");
+      const mathEnabled = (Deno.env.get("BANKROLL_MATH_V1") ?? "false").toLowerCase() === "true";
+      const bankrollUnits = Number(Deno.env.get("BANKROLL_UNITS") ?? "1000");
+      const cushion = Number(Deno.env.get("BANKROLL_ODDS_CUSHION") ?? "0.10");
+      const dailyEnvelopeFrac = Number(Deno.env.get("BANKROLL_DAILY_FRAC") ?? "0.20");
+      const envelope = bankrollUnits * dailyEnvelopeFrac;
+
+      const pnlByStrategy = new Map<string, { p_smoothed: number; rolling_ev_per_unit: number; n: number }>();
+      if (mathEnabled) {
+        const { data: pnl } = await supabase
+          .from("strategy_pnl_rolling")
+          .select("strategy_name, p_smoothed, rolling_ev_per_unit, n")
+          .eq("window_days", 7);
+        for (const r of (pnl ?? []) as Array<{ strategy_name: string; p_smoothed: number; rolling_ev_per_unit: number; n: number }>) {
+          pnlByStrategy.set(r.strategy_name, {
+            p_smoothed: Number(r.p_smoothed ?? 0),
+            rolling_ev_per_unit: Number(r.rolling_ev_per_unit ?? 0),
+            n: Number(r.n ?? 0),
+          });
+        }
+      }
+
+      type Sized = { p: typeof built[number]; stake: number; pHat: number; decOdds: number };
+      let sized: Sized[] = built.map(p => {
+        const amer = p.american;
+        const decOdds = amer > 0 ? 1 + amer / 100 : 1 + 100 / Math.abs(amer);
+        const strategy = `cross_sport_${p.slotName}`;
+        const pnl = pnlByStrategy.get(strategy);
+        const prior = priorForLegCount(p.legs.length);
+        const pHat = (mathEnabled && pnl && pnl.n >= 5)
+          ? bayesianHitRate(Math.round(pnl.p_smoothed * pnl.n), pnl.n, prior, 10)
+          : p.score;
+        const stake = mathEnabled
+          ? quarterKellyStake(pHat, decOdds, bankrollUnits, 0.25).stakeUnits
+          : 50; // legacy flat stake
+        return { p, stake, pHat, decOdds };
+      });
+
+      if (mathEnabled) {
+        sized = sized.filter(({ p, stake, pHat, decOdds }) => {
+          const strategy = `cross_sport_${p.slotName}`;
+          const pnl = pnlByStrategy.get(strategy);
+          if (pnl && pnl.n >= 5 && pnl.rolling_ev_per_unit < 0) return false;
+          if (!(decOdds >= requiredDecimal(pHat, cushion))) return false;
+          if (stake < bankrollUnits * 0.002) return false;
+          return true;
+        });
+        const total = sized.reduce((s, x) => s + x.stake, 0);
+        if (total > envelope && total > 0) {
+          const scale = envelope / total;
+          sized = sized.map(x => ({ ...x, stake: Math.round(x.stake * scale * 1000) / 1000 }));
+        }
+      }
+
+      for (const { p, stake, pHat, decOdds } of sized) {
         const legsJson = p.legs.map(l => ({
           sport: l.sport,
           market_type: l.market_type,
@@ -302,16 +358,23 @@ Deno.serve(async (req) => {
           parlay_date: date,
           legs: legsJson,
           leg_count: p.legs.length,
-          combined_probability: p.score,
+          combined_probability: mathEnabled ? pHat : p.score,
           expected_odds: p.american,
+          simulated_stake: stake,
+          simulated_payout: stake * (decOdds - 1.0),
+          simulated_win_rate: mathEnabled ? pHat : p.score,
+          simulated_edge: (mathEnabled ? pHat : p.score) / (1.0 / decOdds) - 1.0,
+          is_simulated: true,
           strategy_name: `cross_sport_${p.slotName}`,
           strategy_version: 1,
           tier: p.slotName.startsWith("lock") ? "lock" : p.slotName.startsWith("strong") ? "strong" : p.slotName.startsWith("stretch") ? "stretch" : "lottery",
-          selection_rationale: `cross-sport: ${[...new Set(p.legs.map(l => l.sport))].join(",")} | safety=${p.score.toFixed(3)}`,
+          selection_rationale: mathEnabled
+            ? `cross-sport: ${[...new Set(p.legs.map(l => l.sport))].join(",")} | safety=${p.score.toFixed(3)} | math: p̂=${pHat.toFixed(3)} D=${decOdds.toFixed(2)} ¼K=${stake.toFixed(2)}u`
+            : `cross-sport: ${[...new Set(p.legs.map(l => l.sport))].join(",")} | safety=${p.score.toFixed(3)}`,
         });
         if (!ierr) persisted++;
       }
-      await broadcast(supabase, built);
+      await broadcast(supabase, sized.map(s => s.p));
     }
 
     return new Response(JSON.stringify({
