@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
     }
 
     const { data: sendResp, error: sendErr } = await supabase.functions.invoke("bot-send-telegram", {
-      body: { message, parse_mode: "Markdown", admin_only: true, type: "ai_models_intelligence" },
+      body: { message, parse_mode: "Markdown", admin_only: false, type: "ai_models_intelligence" },
     });
     if (sendErr) throw new Error(`telegram send: ${sendErr.message}`);
 
