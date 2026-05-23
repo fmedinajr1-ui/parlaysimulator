@@ -108,9 +108,8 @@ Deno.serve(async (req) => {
 
   try {
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
-    const adminChatId = Deno.env.get("TELEGRAM_CHAT_ID");
 
-    if (!botToken || !adminChatId) {
+    if (!botToken) {
       return new Response(JSON.stringify({ success: false, error: "Telegram is not configured" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -130,63 +129,86 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (body.admin_only === false) {
-      return new Response(JSON.stringify({ success: false, skipped: true, reason: "Only admin chat delivery is configured" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const chunks = splitTelegramMessage(message).map((chunk, index, arr) =>
       arr.length > 1 ? `(${index + 1}/${arr.length})\n${chunk}` : chunk,
     );
-
-    const messageIds: number[] = [];
-
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index];
+    for (const chunk of chunks) {
       if (chunk.length > TELEGRAM_LIMIT) {
         return new Response(JSON.stringify({ success: false, error: "Message exceeds Telegram size limit" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+    }
 
-      const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: adminChatId,
-          text: chunk,
-          parse_mode: parseMode,
-          disable_web_page_preview: true,
-          reply_markup: index === 0 ? body.reply_markup : undefined,
-          reply_to_message_id: index === 0 && body.reply_to_message_id ? body.reply_to_message_id : undefined,
-        }),
-      });
-
-      const telegramData = await telegramResponse.json().catch(() => null);
-
-      if (!telegramResponse.ok || !telegramData?.ok) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: telegramData?.description || `Telegram send failed (${telegramResponse.status})`,
-        }), {
-          status: 502,
+    if (body.admin_only === false) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supabaseUrl || !serviceRole) {
+        return new Response(JSON.stringify({ success: false, error: "Recipient fanout is not configured" }), {
+          status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      if (telegramData.result?.message_id) {
-        messageIds.push(telegramData.result.message_id);
-      }
+      const supabase = createClient(supabaseUrl, serviceRole);
+      const recipients = await getRecipientsForTier(supabase, "all_access");
+      const fanout = await broadcastToRecipients(recipients, async (chatId) => {
+        const sent = await sendChunksToChat({
+          botToken,
+          chatId,
+          chunks,
+          parseMode,
+          replyMarkup: body.reply_markup,
+          replyToMessageId: body.reply_to_message_id,
+        });
+        return { ok: sent.ok, error: sent.error, message_id: sent.message_id };
+      });
+
+      return new Response(JSON.stringify({
+        success: fanout.delivered > 0,
+        delivered: fanout.delivered,
+        failed: fanout.failed,
+        recipients: recipients.length,
+        results: fanout.results,
+        chunks: chunks.length,
+        reference_key: body.reference_key ?? null,
+        narrative_phase: body.narrative_phase ?? null,
+      }), {
+        status: fanout.delivered > 0 ? 200 : 502,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const adminChatId = Deno.env.get("TELEGRAM_CHAT_ID");
+    if (!adminChatId) {
+      return new Response(JSON.stringify({ success: false, error: "Admin Telegram chat is not configured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const adminSend = await sendChunksToChat({
+      botToken,
+      chatId: adminChatId,
+      chunks,
+      parseMode,
+      replyMarkup: body.reply_markup,
+      replyToMessageId: body.reply_to_message_id,
+    });
+
+    if (!adminSend.ok) {
+      return new Response(JSON.stringify({ success: false, error: adminSend.error }), {
+        status: 502,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     return new Response(JSON.stringify({
       success: true,
-      message_id: messageIds[0] ?? null,
-      message_ids: messageIds,
-      chunks: messageIds.length,
+      message_id: adminSend.message_id ?? null,
+      message_ids: adminSend.message_ids ?? [],
+      chunks: chunks.length,
       reference_key: body.reference_key ?? null,
       narrative_phase: body.narrative_phase ?? null,
     }), {
