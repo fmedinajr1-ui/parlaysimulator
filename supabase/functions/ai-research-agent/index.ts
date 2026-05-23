@@ -103,8 +103,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'whale_money_steam_moves',
-    query: "What are today's biggest steam moves and whale-sized wagers on player props across NBA, NHL, NCAAB, tennis, and table tennis? Specifically: 1) Which player prop lines have moved 1+ points since open? 2) Which props have books pulled, frozen, or re-posted at significantly different numbers? 3) Where is the heaviest professional/whale money landing on specific player props? 4) Any reverse line movement on props — line moving opposite the ticket count? Provide PLAYER NAME | PROP TYPE | DIRECTION (OVER/UNDER) | line movement details for each signal.",
-    systemPrompt: 'You are an elite sharp money tracker specializing in whale bets and steam moves on player props. Format each signal as: "PLAYER | PROP_TYPE | DIRECTION | line movement details". For example: "LeBron James | PTS | UNDER | opened 25.5 now 27.5, 70% sharp money on UNDER". Be specific about opening vs current lines, money percentages, and which books moved first. Focus on props with the most significant professional action today.',
+    query: "What are today's biggest steam moves and whale-sized wagers on player props across NBA, NHL, NCAAB, tennis, and table tennis? Specifically: 1) Which player prop lines have moved 1+ points since open? 2) Which props have books pulled, frozen, or re-posted at significantly different numbers? 3) Where is the heaviest professional/whale money landing on specific player props? 4) Any reverse line movement on props — line moving opposite the ticket count? For each signal you MUST cite a real player by their actual name (e.g. LeBron James, Connor McDavid), a real prop type (points, rebounds, assists, shots, saves, total games, etc.), the real opening number and current number, and which book / source reported it. Do NOT invent examples. If you cannot find any verified steam move or whale signal reported today, reply with exactly the single line: NO_VERIFIED_SIGNALS_TODAY and nothing else.",
+    systemPrompt: 'You are an elite sharp money tracker. Only report signals that are actually documented in today\'s public reporting (VSiN, Action Network, Pregame, Unabated, OddsTrader, sportsbook social posts, etc.) within the last 24 hours. Every signal must include a real player full name, real prop type, real opening and current numbers, and the source. NEVER output placeholder tokens like "PLAYER NAME", "PROP TYPE", "PROP_TYPE", "STAT", "DIRECTION", "TEAM", "BOOK NAME", or any all-caps schema label — those are forbidden. NEVER fabricate or hypothesize a signal to fill the format. If you have zero verified signals to report, respond with exactly: NO_VERIFIED_SIGNALS_TODAY (one line, nothing else). Otherwise list each verified signal as a bullet with the real player and numbers inline.',
   },
 ];
 
@@ -144,17 +144,39 @@ async function queryPerplexity(
 function extractInsights(content: string): string[] {
   const lines = content.split('\n').filter(l => l.trim());
   const insights: string[] = [];
-  
+
+  // Placeholder/template tokens that mean the model echoed the schema instead of returning real data.
+  // Any line containing one of these is a fabricated/template row and must be discarded so it never
+  // surfaces as a "whale money signal" in the UI.
+  const PLACEHOLDER_PATTERNS: RegExp[] = [
+    /\bPLAYER\s*NAME\b/i,
+    /\bPLAYER_NAME\b/i,
+    /\bPROP\s*TYPE\b/i,
+    /\bPROP_TYPE\b/i,
+    /\bTEAM\s*NAME\b/i,
+    /\bBOOK\s*NAME\b/i,
+    /\bSTAT\s*\|/i,
+    /\bDIRECTION\s*\|/i,
+    /\bSIDE\s*\|/i,
+    /\bOVER\s*\/\s*UNDER\s*\)/i,
+    /\bNO_VERIFIED_SIGNALS_TODAY\b/i,
+    /\bN\/A\s*\|\s*N\/A\b/i,
+    /\bexample[:\s]/i,
+  ];
+
   for (const line of lines) {
     const trimmed = line.trim();
     if (/^[-•*]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed) || /^\*\*/.test(trimmed)) {
       const clean = trimmed.replace(/^[-•*\d.)]+\s*/, '').replace(/\*\*/g, '').trim();
-      if (clean.length > 20 && clean.length < 500) {
-        insights.push(clean);
+      if (clean.length <= 20 || clean.length >= 500) continue;
+      if (PLACEHOLDER_PATTERNS.some(rx => rx.test(clean))) {
+        console.log(`[Research Agent] Dropped placeholder insight: ${clean.slice(0, 120)}`);
+        continue;
       }
+      insights.push(clean);
     }
   }
-  
+
   return insights.slice(0, 10);
 }
 
