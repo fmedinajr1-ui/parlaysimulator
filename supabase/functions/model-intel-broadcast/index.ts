@@ -34,10 +34,11 @@ Deno.serve(async (req) => {
     );
     const body = await req.json().catch(() => ({}));
     const dryRun = body?.dry_run === true;
+    const forceSend = body?.force_send === true;
     const dateKey = etDateKey();
 
     // idempotency: skip if already broadcast today (unless dry run)
-    if (!dryRun) {
+    if (!dryRun && !forceSend) {
       const { data: existing } = await supabase
         .from("model_intel_telegram_log")
         .select("id, status")
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
       error: sendResp?.success ? null : (sendResp?.error ?? "unknown"),
     }], { onConflict: "date_et,channel" });
 
-    return new Response(JSON.stringify({ success: true, predictions_included: totalIncluded, telegram: sendResp }), {
+    return new Response(JSON.stringify({ success: true, forced: forceSend, predictions_included: totalIncluded, telegram: sendResp }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
