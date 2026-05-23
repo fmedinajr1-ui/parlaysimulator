@@ -144,17 +144,39 @@ async function queryPerplexity(
 function extractInsights(content: string): string[] {
   const lines = content.split('\n').filter(l => l.trim());
   const insights: string[] = [];
-  
+
+  // Placeholder/template tokens that mean the model echoed the schema instead of returning real data.
+  // Any line containing one of these is a fabricated/template row and must be discarded so it never
+  // surfaces as a "whale money signal" in the UI.
+  const PLACEHOLDER_PATTERNS: RegExp[] = [
+    /\bPLAYER\s*NAME\b/i,
+    /\bPLAYER_NAME\b/i,
+    /\bPROP\s*TYPE\b/i,
+    /\bPROP_TYPE\b/i,
+    /\bTEAM\s*NAME\b/i,
+    /\bBOOK\s*NAME\b/i,
+    /\bSTAT\s*\|/i,
+    /\bDIRECTION\s*\|/i,
+    /\bSIDE\s*\|/i,
+    /\bOVER\s*\/\s*UNDER\s*\)/i,
+    /\bNO_VERIFIED_SIGNALS_TODAY\b/i,
+    /\bN\/A\s*\|\s*N\/A\b/i,
+    /\bexample[:\s]/i,
+  ];
+
   for (const line of lines) {
     const trimmed = line.trim();
     if (/^[-•*]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed) || /^\*\*/.test(trimmed)) {
       const clean = trimmed.replace(/^[-•*\d.)]+\s*/, '').replace(/\*\*/g, '').trim();
-      if (clean.length > 20 && clean.length < 500) {
-        insights.push(clean);
+      if (clean.length <= 20 || clean.length >= 500) continue;
+      if (PLACEHOLDER_PATTERNS.some(rx => rx.test(clean))) {
+        console.log(`[Research Agent] Dropped placeholder insight: ${clean.slice(0, 120)}`);
+        continue;
       }
+      insights.push(clean);
     }
   }
-  
+
   return insights.slice(0, 10);
 }
 
