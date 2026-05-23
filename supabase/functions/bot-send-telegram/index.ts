@@ -1,3 +1,6 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { broadcastToRecipients, getRecipientsForTier } from "../_shared/telegram-recipients.ts";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -53,6 +56,49 @@ function splitTelegramMessage(text: string, limit: number = TELEGRAM_SOFT_LIMIT)
 
   if (remaining) chunks.push(remaining);
   return chunks;
+}
+
+async function sendChunksToChat(params: {
+  botToken: string;
+  chatId: string;
+  chunks: string[];
+  parseMode: ParseMode;
+  replyMarkup?: Record<string, unknown>;
+  replyToMessageId?: number | null;
+}) {
+  const messageIds: number[] = [];
+
+  for (let index = 0; index < params.chunks.length; index += 1) {
+    const chunk = params.chunks[index];
+    const telegramResponse = await fetch(`https://api.telegram.org/bot${params.botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: params.chatId,
+        text: chunk,
+        parse_mode: params.parseMode,
+        disable_web_page_preview: true,
+        reply_markup: index === 0 ? params.replyMarkup : undefined,
+        reply_to_message_id: index === 0 && params.replyToMessageId ? params.replyToMessageId : undefined,
+      }),
+    });
+
+    const telegramData = await telegramResponse.json().catch(() => null);
+
+    if (!telegramResponse.ok || !telegramData?.ok) {
+      return {
+        ok: false,
+        error: telegramData?.description || `Telegram send failed (${telegramResponse.status})`,
+        message_ids: messageIds,
+      };
+    }
+
+    if (telegramData.result?.message_id) {
+      messageIds.push(telegramData.result.message_id);
+    }
+  }
+
+  return { ok: true, message_id: messageIds[0] ?? null, message_ids: messageIds };
 }
 
 Deno.serve(async (req) => {
