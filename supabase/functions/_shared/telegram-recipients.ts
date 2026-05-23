@@ -48,8 +48,8 @@ export async function getRecipientsForTier(
 export async function broadcastToRecipients(
   recipients: TelegramRecipient[],
   send: (chat_id: string) => Promise<{ ok: boolean; error?: string; message_id?: number }>,
-): Promise<{ delivered: number; failed: number; results: Array<{ chat_id: string; ok: boolean; error?: string }> }> {
-  const results: Array<{ chat_id: string; ok: boolean; error?: string }> = [];
+): Promise<{ delivered: number; failed: number; results: Array<{ chat_id: string; ok: boolean; error?: string; message_id?: number }> }> {
+  const results: Array<{ chat_id: string; ok: boolean; error?: string; message_id?: number }> = [];
   let delivered = 0;
   let failed = 0;
 
@@ -58,7 +58,7 @@ export async function broadcastToRecipients(
       const res = await send(r.chat_id);
       if (res.ok) {
         delivered++;
-        results.push({ chat_id: r.chat_id, ok: true });
+        results.push({ chat_id: r.chat_id, ok: true, message_id: res.message_id });
       } else {
         failed++;
         results.push({ chat_id: r.chat_id, ok: false, error: res.error });
