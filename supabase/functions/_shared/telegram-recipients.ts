@@ -28,7 +28,10 @@ export async function getRecipientsForTier(
 
   const out: TelegramRecipient[] = [];
   for (const row of data ?? []) {
-    const tier = normalizeTier(row.tier);
+    // Legacy authorized bot users were created before tier backfill; treat
+    // active blank-tier rows as paid recipients so existing Telegram users
+    // keep receiving broadcast alerts.
+    const tier = normalizeTier(row.tier) ?? "all_access";
     if (!tier) continue;
     if (!tierAtLeast(tier, minTier)) continue;
     if (!row.chat_id) continue;
