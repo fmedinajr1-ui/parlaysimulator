@@ -1,16 +1,8 @@
-## Diagnosis
+I’ll redeploy the backend delivery functions and force-send today’s AI Models Intelligence digest once, because today’s earlier log is already marked `sent` and the normal cron will skip it.
 
-The AI Models Intelligence job is running and writing `status: sent` with a Telegram message id, but it is not reaching the active Telegram audience because:
-
-- `model-intel-broadcast` sends through `bot-send-telegram` with `admin_only: true`.
-- `bot-send-telegram` only sends to the single configured admin chat id, not the `bot_authorized_users` recipients.
-- There are 8 active Telegram users in `bot_authorized_users`, all with chat ids.
-- Their `tier` values are currently blank, so the existing `getRecipientsForTier(..., 'all_access')` helper would exclude them unless we handle legacy blank tiers.
-
-## Plan
-
-1. Update the shared Telegram recipient resolver so active users with a blank tier are treated as legacy `all_access` recipients for paid alert fanout.
-2. Update `bot-send-telegram` so when `admin_only: false`, it broadcasts the message to every active eligible Telegram recipient instead of skipping with “Only admin chat delivery is configured”.
-3. Update `model-intel-broadcast` to call `bot-send-telegram` with `admin_only: false`, so AI Models Intelligence reaches the same active Telegram users as the bot audience.
-4. Preserve admin-only behavior for test/admin alerts so existing admin notifications do not accidentally fan out.
-5. Deploy the changed edge functions and run a dry/forced verification call to confirm the response reports recipient delivery counts instead of only a single admin message id.
+Steps:
+1. Redeploy `bot-send-telegram` so the Telegram fanout path is definitely live.
+2. Redeploy `model-intel-broadcast` so it uses `admin_only: false` and supports `force_send`.
+3. Call `model-intel-broadcast` with `force_send: true` for today.
+4. Verify the response shows Telegram delivery counts for active recipients.
+5. Check the latest AI Models Intelligence log after the force-send.
