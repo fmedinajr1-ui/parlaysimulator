@@ -4,6 +4,12 @@
 // Output: { ok, parlays: [{ legs, american_odds, decimal_odds, composite, reasoning }] }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  buildValidationContext,
+  validateLeg as verifierValidateLeg,
+  validateTicket as verifierValidateTicket,
+  type ValidationLeg,
+} from "../_shared/leg-validator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -152,23 +158,83 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ── Leg-Verifier: filter pool & enforce no-same-game on tickets ───────
+    const todayET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }))
+      .toISOString().slice(0, 10);
+    const verifierCtx = await buildValidationContext({ supabase, dateET: todayET }).catch(() => null);
+    const verifierRejects: Record<string, number> = {};
+
+    function gameIdFromTags(tags: string[] | null): string | null {
+      if (!tags) return null;
+      const t = tags.find((x) => x.startsWith("game:"));
+      return t ? t.slice(5) : null;
+    }
+    function toVerifierLeg(p: any): ValidationLeg {
+      const odds = p.side === "over" ? p.over_price : p.under_price;
+      return {
+        sport: p.sport ?? null,
+        market_type: "player",
+        event_id: gameIdFromTags(p.correlation_tags),
+        team: null, opponent: null,
+        player_name: p.player_name,
+        american_odds: odds ?? null,
+        commence_time: p.commence_time ?? null,
+        home_away: null, spread: null, tag: null,
+      };
+    }
+
+    let workingPool = pool;
+    if (verifierCtx) {
+      workingPool = pool.filter((p) => {
+        const v = verifierValidateLeg(toVerifierLeg(p), verifierCtx);
+        if (v.hardFails.length) {
+          const k = v.hardFails[0].split(":")[0];
+          verifierRejects[k] = (verifierRejects[k] ?? 0) + 1;
+          return false;
+        }
+        return true;
+      });
+    }
+    if (workingPool.length < 2) {
+      return new Response(
+        JSON.stringify({ ok: true, parlays: [], reason: "verifier_too_strict",
+          pool_size: pool.length, after_verifier: workingPool.length, verifier_rejects: verifierRejects }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const parlays: any[] = [];
     if (mode === "manual") {
-      const single = buildParlay(pool, Math.min(pool.length, target_legs));
+      const single = buildParlay(workingPool, Math.min(workingPool.length, target_legs));
       if (single) parlays.push(single);
     } else {
       const sizes = Array.from(
         new Set([target_legs, target_legs + 1, Math.max(2, target_legs - 1)]),
       );
       for (const size of sizes) {
-        const p = buildParlay(pool, size);
+        const p = buildParlay(workingPool, size);
         if (p) parlays.push(p);
         if (parlays.length >= 3) break;
       }
     }
 
+    // Final cross-leg ticket check — drop tickets with two legs in the same game.
+    const acceptedParlays = verifierCtx
+      ? parlays.filter((par) => {
+          const vlegs: ValidationLeg[] = par.legs.map((l: any) => ({
+            sport: null, market_type: "player",
+            event_id: workingPool.find((p: any) => p.id === l.id)?.correlation_tags
+              ? gameIdFromTags(workingPool.find((p: any) => p.id === l.id).correlation_tags) : null,
+            team: null, opponent: null, player_name: l.player_name,
+            american_odds: l.odds, commence_time: null, home_away: null, spread: null, tag: null,
+          }));
+          return verifierValidateTicket(vlegs).hardFails.length === 0;
+        })
+      : parlays;
+
     return new Response(
-      JSON.stringify({ ok: true, parlays, pool_size: pool.length }),
+      JSON.stringify({ ok: true, parlays: acceptedParlays, pool_size: pool.length,
+        after_verifier: workingPool.length, verifier_rejects: verifierRejects }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
