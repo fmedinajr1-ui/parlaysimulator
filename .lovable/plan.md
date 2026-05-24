@@ -1,74 +1,95 @@
+## Leg Verification Layer
 
-## What's broken
+Add a shared `validate_leg` / `validate_ticket` gate that runs on every candidate before it enters a parlay. Hard fails reject, soft fails apply a confidence haircut.
 
-The digest is rendering 🟢 ("actionable") for categories that contain no actionable info. Three root causes:
+### 1. New shared module: `supabase/functions/_shared/leg-validator.ts`
 
-1. **Prompts are open-ended and ask Perplexity to "list" things.** Sonar often responds with "Here's how I can help — paste your slate" or framework descriptions ("a projection model for the player stat, a probability model…"). Those are instructions, not intel.
-2. **The insight extractor grabs any bullet >20 chars.** It pulls in meta-lines like "Analyze a slate you paste in", "Identify relevant elite players", "Status: Not available", "Source: OddsIndex snippet", "What we can say from the snippet…".
-3. **Relevance score = count of bullets only.** 6 garbage bullets = 0.85 score = 🟢. There is no quality gate.
-
-Result: the "Table Tennis Signals" category gets a 🟢 from three "Identify / Explain / Flag" bullets, and "NCAA Baseball" gets a 🟢 from "Analyze a slate you paste in".
-
-## Fix plan
-
-### 1. Rewrite the 16 prompts to force concrete output
-
-Each prompt becomes a strict template:
-
-- Date stamp the prompt: `For games on {ET date} only.`
-- Demand structured rows: `Return up to 5 bullets. Each bullet MUST contain a team or player name, a side/line, and a one-sentence reason. If you cannot find real intel, reply with exactly: NO_INTEL.`
-- Forbid framework talk: `Do NOT describe methodology, do NOT ask for input, do NOT say "paste your slate". Only return real intel you can cite from web search.`
-- Keep `search_recency_filter: "day"` and lower `temperature` to 0.1.
-
-System message also hardened: "You are reporting real, current betting intel. If none exists, return NO_INTEL. Never describe what you would do — only what is true today."
-
-### 2. Harden `extractInsights`
-
-Reject a bullet if any of:
-
-- Matches `/^(identify|analyze|explain|flag|provide|paste|list out|determine|consider)/i` (instruction verbs).
-- Contains `not available`, `no match stats`, `not shown in the snippet`, `from the snippet`, `placeholder`, `n/a`, `unavailable`, `here's how`, `i can help`, `share your`, `paste your`.
-- Starts with `Source:`, `Status:`, `Event/surface:`, `Recent form`, `Surface win rate`, `Opening line vs current line` (label-only lines with no value).
-- Has no digit AND no capitalized proper-noun token (real picks always have a team/player or a number).
-- Is `NO_INTEL` (whole category gets marked empty).
-
-Also collapse Markdown bullets cleanly and drop any bullet that's just a sub-bullet of a meta line (track indentation).
-
-### 3. Rework relevance score to measure quality, not count
+Single source of truth, used by all generators.
 
 ```text
-qualityScore =
-  0.5 * (kept_insights / 5, capped at 1)
-+ 0.3 * (fraction of insights mentioning a real number/line)
-+ 0.2 * (fraction mentioning a known team/player token)
+validateLeg(leg, ctx) -> { hardFails: string[], softFails: string[], haircut: number }
+validateTicket(legs)  -> { hardFails: string[] }
 ```
 
-Thresholds:
+Where `ctx` carries the day's schedule, rosters, lineups, and team records, fetched once per run and passed in.
 
-- `>= 0.65` → 🟢 actionable
-- `>= 0.40` → 🟡 thin
-- `<  0.40` OR insights empty OR NO_INTEL → 🔴 and the category is dropped from the digest entirely (not rendered as a 🔴 stub).
+**Hard checks (reject leg):**
+1. `team` ∈ canonical whitelist (30 MLB / 32 NHL / 30 NBA / 30 NCAAF subset / etc). Reject partial/truncated names like `"Colorado A…alanche"`.
+2. Venue alignment: `schedule[game_id].home_team === leg.team` when `home_away==="HOME"`, mirror for AWAY.
+3. `game.start_time > now() + 5min`.
+4. Player on active roster (props only): reuse existing `_shared/rosters.ts` lookup; `rosterTeam(player) === leg.team`.
+5. Spread direction matches Fav/Dog tag: `tag==="Fav"` ⇒ `spread < 0`.
 
-### 4. Broadcast changes
+**Cross-leg hard check (validateTicket):**
+6. No two legs share `game_id`.
 
-- Skip any category that ends up empty after filtering instead of printing a 🟢 with junk.
-- Summary line becomes `X/16 categories with verified intel` based on the new gate.
-- If fewer than 4 categories survive, the broadcaster sends a short admin-only note ("Low-signal day — research digest skipped") and does **not** spam the channel.
+**Soft checks (record reason, apply haircut to `safety` / `model_edge`):**
+7. Price-vs-strength: `team.win_pct < 0.450 && american_odds < -150` → 25% haircut, flag `weak_team_heavy_fav`.
+8. Lineup not confirmed within T-120min → 30% haircut; at T-30min still missing → reject.
 
-### 5. Whale cross-reference unchanged
+### 2. Canonical team whitelist: `supabase/functions/_shared/canonical-teams.ts`
 
-Still scans surviving insights for player/team mentions and applies the `research_boost`. With cleaner insights this stops boosting on noise like "Source: OddsIndex snippet".
+Hardcoded arrays per sport plus a `matchCanonicalTeam(sport, raw)` helper that normalizes (lowercase, strip punctuation, collapse whitespace) and requires an exact match — no substring/prefix matching. Returns `null` on truncated strings, which trips hard check #1.
 
-## Files touched
+### 3. Schedule + lineup context loaders
 
-- `supabase/functions/ai-research-agent/index.ts` — new `CATEGORIES` prompts, new `extractInsights`, new `qualityScore`, `temperature: 0.1`.
-- `supabase/functions/ai-research-broadcast/index.ts` — drop empty categories, low-signal short-circuit, updated summary line.
-- No schema changes. `bot_research_findings.relevance_score` keeps the same column, just populated by the new formula.
+- `loadDailySchedule(sport, dateET)` → reuses ESPN scoreboard already used by `cross-sport-parlay-settler` (`?dates=YYYYMMDD`). Returns `Map<game_id, {home_team, away_team, start_time_utc}>`.
+- `loadConfirmedLineups(sport, dateET)` → MLB/NHL only; queries existing lineup tables if present, otherwise stub returning empty set (soft check #8 then just haircuts).
+- `loadTeamRecords(sport)` → existing standings table or ESPN standings API.
 
-## Verification (per project testing policy: 5 independent checks)
+Loaders are cached per invocation, passed to validator via `ctx`.
 
-1. Dry-run `ai-research-agent` and inspect raw Perplexity output vs. kept insights for 3 categories that were 🟢-with-junk (table tennis, NCAA baseball, statistical models).
-2. Dry-run `ai-research-broadcast` with `dry_run: true` and confirm those 3 categories are now dropped or downgraded.
-3. Force a `NO_INTEL` reply on one category (temporarily inject) and confirm it's filtered out, not rendered.
-4. Confirm whale `research_boost` only fires on insights containing a real player/team token.
-5. Compare today's vs. yesterday's stored `relevance_score` distribution in `bot_research_findings` to confirm the new scale is meaningfully different (fewer 0.85 across the board).
+### 4. Wire into generators
+
+Insert validation between candidate prep and ticket assembly in:
+- `cross-sport-parlay-generator/index.ts` — before `buildSlot()` greedy loop
+- `parlay-engine-v2/index.ts` (and `_shared/parlay-engine-v2/generator.ts` filter step)
+- `nuke-build-parlays/index.ts`
+- `daily-whale-parlay-generator/index.ts`
+- `ocr-pool-build-parlays/index.ts`
+
+Pattern in each:
+```text
+const ctx = await buildValidationContext(sports, dateET);
+const survivors = [];
+for (const leg of candidates) {
+  const v = validateLeg(leg, ctx);
+  if (v.hardFails.length) { bump(rejection, v.hardFails[0]); continue; }
+  if (v.softFails.length) leg.safety *= (1 - v.haircut);
+  survivors.push(leg);
+}
+// ...build tickets from survivors...
+const tv = validateTicket(ticket.legs);
+if (tv.hardFails.length) { reject; regenerate; }
+```
+
+Regenerate up to existing `max_attempts`; if under minimum legs, skip the ticket.
+
+### 5. Tests: `supabase/functions/_shared/leg-validator_test.ts`
+
+5 deterministic tests covering:
+- Truncated team name rejected (`"Colorado A…alanche"`).
+- Rangers labeled HOME when schedule says AWAY → hard fail.
+- Started game rejected.
+- Two legs same game → ticket hard fail.
+- Weak team -198 fav → soft fail with 25% haircut applied.
+
+Per project rule (5 manual verifications before deploy), I'll also run `supabase--test_edge_functions` and dry-run one generator after wiring.
+
+### 6. Upstream join audit (the real bug)
+
+Before/after the validator lands I'll grep how generators join odds rows to schedule rows. If the join key is team-name based rather than `event_id`/`game_id`, that's the actual source of "Rangers-Angels" mismatches. I'll patch the join to `event_id` where the column exists (`unified_props.event_id` already does) and flag any generator still doing name-based joins as a follow-up. The validator stays in either way as defense-in-depth.
+
+### Memory updates
+
+Add `mem://logic/parlay/leg-validation-gate.md` with the hard/soft check list and link it from `mem://index.md` Core.
+
+### Files touched
+
+- new: `supabase/functions/_shared/leg-validator.ts`
+- new: `supabase/functions/_shared/canonical-teams.ts`
+- new: `supabase/functions/_shared/leg-validator_test.ts`
+- edited: 5 generator `index.ts` files above
+- new: `mem://logic/parlay/leg-validation-gate.md`, updated `mem://index.md`
+
+No DB migrations needed — validator is pure logic over existing tables.

@@ -8,6 +8,12 @@
  * and broadcasts top picks via bot-send-telegram (type: cross_sport_parlay).
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildValidationContext,
+  validateLeg,
+  validateTicket,
+  type ValidationLeg,
+} from "../_shared/leg-validator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -97,7 +103,26 @@ function violates(legs: Leg[]): string | null {
     if (seen.has(k)) return "duplicate_leg";
     seen.add(k);
   }
+  // Verification layer cross-leg check (multiple legs same game_id, etc).
+  const vt = validateTicket(legs.map(legToValidation));
+  if (vt.hardFails.length) return `verifier:${vt.hardFails[0]}`;
   return null;
+}
+
+function legToValidation(l: Leg): ValidationLeg {
+  return {
+    sport: l.sport,
+    market_type: l.market_type,
+    event_id: l.event_id,
+    team: l.team,
+    opponent: l.opponent,
+    player_name: l.player_name,
+    american_odds: l.price,
+    commence_time: l.commence_time,
+    home_away: null,
+    spread: l.market_type === "spread" ? l.recommended_line : null,
+    tag: null,
+  };
 }
 
 function pickLabel(l: Leg): string {
@@ -252,10 +277,42 @@ Deno.serve(async (req) => {
           message: `⚠️ Cross-Sport Generator: ${staleDrops.length} stale legs filtered at runtime (sweet-spots SQL filter should have caught these). Investigate upstream.` },
       });
     }
-    if (pool.length === 0) {
+
+    // ── Leg-Verification Layer ──────────────────────────────────────────────
+    // Hard checks reject the leg outright; soft checks apply a safety haircut.
+    // Context is loaded once per run (schedule from live_game_scores).
+    const validationCtx = await buildValidationContext({
+      supabase, dateET: date, now: new Date(),
+    });
+    const verifierRejects: Record<string, number> = {};
+    const verifierSofts: Record<string, number> = {};
+    const verifiedPool: Leg[] = [];
+    for (const leg of pool) {
+      const v = validateLeg(legToValidation(leg), validationCtx);
+      if (v.hardFails.length) {
+        const reason = v.hardFails[0].split(":")[0];
+        verifierRejects[reason] = (verifierRejects[reason] ?? 0) + 1;
+        continue;
+      }
+      if (v.haircut > 0) {
+        leg.safety_score = leg.safety_score * (1 - v.haircut);
+        for (const sf of v.softFails) {
+          const k = sf.split(":")[0];
+          verifierSofts[k] = (verifierSofts[k] ?? 0) + 1;
+        }
+      }
+      verifiedPool.push(leg);
+    }
+    const totalRejected = Object.values(verifierRejects).reduce((a, b) => a + b, 0);
+    if (totalRejected > 0) {
+      console.warn(`[cross-sport-generator] verifier rejected ${totalRejected} legs`, verifierRejects);
+    }
+    const pool2 = verifiedPool;
+
+    if (pool2.length === 0) {
       await supabase.functions.invoke("bot-send-telegram", {
         body: { type: "cross_sport_parlay", admin_only: true,
-          message: `⚠️ Cross-Sport Parlay Generator: 0 candidates for ${date} (after stale filter: ${staleDrops.length} dropped). Check upstream sync.` },
+          message: `⚠️ Cross-Sport Parlay Generator: 0 candidates for ${date} (stale: ${staleDrops.length}, verifier rejects: ${totalRejected} ${JSON.stringify(verifierRejects)}). Check upstream sync.` },
       });
       return new Response(JSON.stringify({ ok: true, date, generated: 0, reason: "empty_pool" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -264,12 +321,12 @@ Deno.serve(async (req) => {
 
     const used = new Set<string>();
     const built: Array<{ slotName: string; legs: Leg[]; score: number; american: number }> = [];
-    const sportsInPool = new Set(pool.map(l => l.sport)).size;
+    const sportsInPool = new Set(pool2.map(l => l.sport)).size;
     for (const slot of SLOTS) {
       const effectiveMinSports = Math.min(slot.minSports, sportsInPool);
       const slotEff = { ...slot, minSports: effectiveMinSports };
       for (let i = 0; i < slot.count; i++) {
-        const r = buildSlot(pool, slotEff, used);
+        const r = buildSlot(pool2, slotEff, used);
         if (!r) break;
         const dec = r.legs.reduce((a, l) => a * decimal(l.price), 1);
         built.push({ slotName: slot.name, legs: r.legs, score: r.score, american: americanFromDecimal(dec) });
@@ -379,6 +436,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: true, date, generated: built.length, persisted, dryRun,
+      verifier: { rejects: verifierRejects, softs: verifierSofts, pool_in: pool.length, pool_out: pool2.length },
       by_slot: built.reduce((a, p) => ({ ...a, [p.slotName]: (a[p.slotName] ?? 0) + 1 }), {} as Record<string, number>),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {

@@ -23,3 +23,4 @@ Team/game legs in parlay-engine-v2 require a real model score; never default to 
 - [Ladder Challenge multi-sport](mem://logic/betting/ladder-challenge-multisport) — Daily Lock/Strong/Lean across NBA+MLB with odds floor and always-on Telegram
 - [Cross-sport bulk parlay generator](mem://logic/parlay/cross-sport-generator) — Perplexity-fed multi-sport sweet spots + 25-ticket bulk assembler (8 Lock / 8 Strong / 6 Stretch / 3 Lottery), player-primary, team legs ≤40%
 - [Profitability math (BANKROLL_MATH_V1)](mem://logic/betting/profitability-math) — Bayesian-smoothed p̂, ¼-Kelly stake, 7d EV gates, daily envelope
+- [Leg validation gate](mem://logic/parlay/leg-validation-gate) — Shared hard/soft verifier (canonical team, venue alignment, no-same-game, weak-fav haircut) wired into cross-sport-parlay-generator
