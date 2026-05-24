@@ -16,6 +16,28 @@ import {
   adjustedCombinedProbability,
   warningsFor,
 } from "./correlation.ts";
+import {
+  validateLeg as verifierValidateLeg,
+  validateTicket as verifierValidateTicket,
+  type ValidationContext,
+  type ValidationLeg,
+} from "../leg-validator.ts";
+
+function toVerifierLeg(l: CandidateLeg): ValidationLeg {
+  return {
+    sport: l.sport,
+    market_type: l.market_type ?? (l.player_name ? "player" : null),
+    event_id: l.event_id ?? null,
+    team: l.team ?? null,
+    opponent: l.opponent ?? null,
+    player_name: l.player_name,
+    american_odds: l.american_odds,
+    commence_time: l.tipoff,
+    home_away: null,
+    spread: null,
+    tag: null,
+  };
+}
 
 export interface SlateResult {
   parlays: Parlay[];
@@ -33,6 +55,7 @@ export class ParlayEngine {
   correlation_model: CorrelationModel | null;
   reject_negative_correlation: boolean;
   config_override?: config.ConfigOverride;
+  verifier_ctx?: ValidationContext | null;
 
   constructor(opts: {
     target_total?: number;
@@ -41,6 +64,7 @@ export class ParlayEngine {
     correlation_model?: CorrelationModel | null;
     reject_negative_correlation?: boolean;
     config_override?: config.ConfigOverride;
+    verifier_ctx?: ValidationContext | null;
   } = {}) {
     const resolved = config.resolveConfig(opts.config_override);
     this.target_total = opts.target_total ?? resolved.TARGET_PARLAYS_PER_DAY;
@@ -49,6 +73,7 @@ export class ParlayEngine {
     this.correlation_model = opts.correlation_model ?? null;
     this.reject_negative_correlation = opts.reject_negative_correlation ?? false;
     this.config_override = opts.config_override;
+    this.verifier_ctx = opts.verifier_ctx ?? null;
   }
 
   generateSlate(candidates: CandidateLeg[], now: Date): SlateResult {
@@ -65,6 +90,29 @@ export class ParlayEngine {
       const [ok, reason] = validateLeg(leg, now);
       if (ok) kept.push(leg);
       else bump(rejection_reasons, `leg:${reason}`);
+    }
+
+    // 1b. Shared leg-verifier pass (no-op when verifier_ctx is null).
+    if (this.verifier_ctx) {
+      const ctx = this.verifier_ctx;
+      const survivors: CandidateLeg[] = [];
+      for (const leg of kept) {
+        const v = verifierValidateLeg(toVerifierLeg(leg), ctx);
+        if (v.hardFails.length) {
+          bump(rejection_reasons, `verifier:${v.hardFails[0].split(":")[0]}`);
+          continue;
+        }
+        if (v.haircut > 0) {
+          leg.confidence = leg.confidence * (1 - v.haircut);
+          leg.edge = leg.edge * (1 - v.haircut);
+          for (const sf of v.softFails) {
+            bump(rejection_reasons, `verifier_soft:${sf.split(":")[0]}`);
+          }
+        }
+        survivors.push(leg);
+      }
+      kept.length = 0;
+      kept.push(...survivors);
     }
 
     // 2. Daily plan
@@ -104,6 +152,16 @@ export class ParlayEngine {
           parlay_filter_rejects += 1;
           bump(rejection_reasons, `parlay:${reasonV}`);
           continue;
+        }
+
+        // Cross-leg verifier (no two legs from same event_id).
+        if (this.verifier_ctx) {
+          const vt = verifierValidateTicket(parlay.legs.map(toVerifierLeg));
+          if (vt.hardFails.length) {
+            parlay_filter_rejects += 1;
+            bump(rejection_reasons, `parlay:verifier:${vt.hardFails[0].split(":")[0]}`);
+            continue;
+          }
         }
 
         const [okA, reasonA] = exposure.canAccept(parlay);
