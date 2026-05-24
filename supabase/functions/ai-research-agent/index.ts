@@ -142,42 +142,87 @@ async function queryPerplexity(
 }
 
 function extractInsights(content: string): string[] {
+  // NO_INTEL short-circuit — model explicitly said it has nothing.
+  if (/\bNO_INTEL\b|\bNO_VERIFIED_SIGNALS_TODAY\b/i.test(content)) return [];
+
   const lines = content.split('\n').filter(l => l.trim());
   const insights: string[] = [];
 
-  // Placeholder/template tokens that mean the model echoed the schema instead of returning real data.
-  // Any line containing one of these is a fabricated/template row and must be discarded so it never
-  // surfaces as a "whale money signal" in the UI.
+  // Schema placeholder / fabricated row patterns.
   const PLACEHOLDER_PATTERNS: RegExp[] = [
-    /\bPLAYER\s*NAME\b/i,
-    /\bPLAYER_NAME\b/i,
-    /\bPROP\s*TYPE\b/i,
-    /\bPROP_TYPE\b/i,
-    /\bTEAM\s*NAME\b/i,
-    /\bBOOK\s*NAME\b/i,
-    /\bSTAT\s*\|/i,
-    /\bDIRECTION\s*\|/i,
-    /\bSIDE\s*\|/i,
+    /\bPLAYER\s*NAME\b/i, /\bPLAYER_NAME\b/i,
+    /\bPROP\s*TYPE\b/i, /\bPROP_TYPE\b/i,
+    /\bTEAM\s*NAME\b/i, /\bBOOK\s*NAME\b/i,
+    /\bSTAT\s*\|/i, /\bDIRECTION\s*\|/i, /\bSIDE\s*\|/i,
     /\bOVER\s*\/\s*UNDER\s*\)/i,
-    /\bNO_VERIFIED_SIGNALS_TODAY\b/i,
     /\bN\/A\s*\|\s*N\/A\b/i,
     /\bexample[:\s]/i,
   ];
 
+  // Meta / instruction verbs that mean the model is describing methodology, not reporting intel.
+  const INSTRUCTION_VERB = /^(identify|analyze|explain|flag|provide|paste|list out|determine|consider|compare|review|track|focus|share|build|calculate|estimate|profile|monitor|use|note that|then,|next,)\b/i;
+
+  // Phrases that signal "I have no real data" or "I'm describing capabilities".
+  const META_PHRASES = [
+    /not\s+(yet\s+)?available/i,
+    /no\s+match\s+stats/i,
+    /from\s+the\s+snippet/i,
+    /in\s+the\s+snippet/i,
+    /not\s+shown/i,
+    /placeholder/i,
+    /unavailable/i,
+    /here'?s\s+how/i,
+    /i\s+can\s+help/i,
+    /share\s+your/i,
+    /paste\s+your/i,
+    /you\s+can\s+(paste|share|provide)/i,
+    /a\s+(projection|probability|bet[\s-]sizing)\s+(model|layer)/i,
+    /what\s+we\s+can\s+say/i,
+    /reportedly\s+selected/i,
+    /partner(ship)?/i,
+    /world\s+cup\s+2026\s+prediction\s+market/i,
+  ];
+
+  // Label-only lines (e.g. "Source: OddsIndex snippet", "Status: Not available", "Opening line vs current line")
+  const LABEL_ONLY_PREFIX = /^(source|status|event\/?surface|recent form|surface win rate|opening line vs current line|ticket\s*%|signal|market signal|impact|game impact|injury)\s*[:\-]/i;
+
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^[-•*]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed) || /^\*\*/.test(trimmed)) {
-      const clean = trimmed.replace(/^[-•*\d.)]+\s*/, '').replace(/\*\*/g, '').trim();
-      if (clean.length <= 20 || clean.length >= 500) continue;
-      if (PLACEHOLDER_PATTERNS.some(rx => rx.test(clean))) {
-        console.log(`[Research Agent] Dropped placeholder insight: ${clean.slice(0, 120)}`);
-        continue;
-      }
-      insights.push(clean);
+    if (!(/^[-•*]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed) || /^\*\*/.test(trimmed))) continue;
+
+    const clean = trimmed.replace(/^[-•*\d.)]+\s*/, '').replace(/\*\*/g, '').trim();
+    if (clean.length <= 25 || clean.length >= 500) continue;
+
+    if (PLACEHOLDER_PATTERNS.some(rx => rx.test(clean))) continue;
+    if (INSTRUCTION_VERB.test(clean)) continue;
+    if (META_PHRASES.some(rx => rx.test(clean))) continue;
+    if (LABEL_ONLY_PREFIX.test(clean)) {
+      // Allow label lines only if they contain a real number after the colon.
+      const afterColon = clean.split(':').slice(1).join(':').trim();
+      if (!/\d/.test(afterColon) || afterColon.length < 6) continue;
     }
+
+    // Real intel almost always contains a digit OR a capitalized proper-noun token (2+ chars).
+    const hasDigit = /\d/.test(clean);
+    const hasProperNoun = /\b[A-Z][a-z]{2,}\b/.test(clean);
+    if (!hasDigit && !hasProperNoun) continue;
+
+    insights.push(clean);
   }
 
   return insights.slice(0, 10);
+}
+
+/**
+ * Quality-based relevance score: rewards count, real numbers, and proper-noun mentions.
+ * Returns 0.0–1.0. <0.40 = unusable, 0.40–0.65 = thin, >=0.65 = actionable.
+ */
+function qualityScore(insights: string[]): number {
+  if (!insights.length) return 0;
+  const countScore = Math.min(1, insights.length / 5);
+  const withNumber = insights.filter(i => /\d/.test(i)).length / insights.length;
+  const withProperNoun = insights.filter(i => /\b[A-Z][a-z]{2,}\b/.test(i)).length / insights.length;
+  return Math.round((0.5 * countScore + 0.3 * withNumber + 0.2 * withProperNoun) * 100) / 100;
 }
 
 /** Cross-reference today's whale_picks against Perplexity research findings */
