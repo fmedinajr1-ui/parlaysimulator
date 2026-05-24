@@ -126,6 +126,7 @@ async function queryPerplexity(
         { role: 'user', content: query },
       ],
       search_recency_filter: 'day',
+      temperature: 0.1,
     }),
   });
 
@@ -422,7 +423,7 @@ Deno.serve(async (req) => {
           summary: result.content.slice(0, 2000),
           key_insights: insights,
           sources: result.citations.slice(0, 5),
-          relevance_score: insights.length > 5 ? 0.85 : insights.length > 2 ? 0.65 : 0.40,
+          relevance_score: qualityScore(insights),
         });
       } catch (err) {
         console.error(`[Research Agent] Error on ${rq.category}:`, err);
@@ -549,27 +550,31 @@ Deno.serve(async (req) => {
       return chunks;
     };
 
-    for (const f of findings) {
+    // Only render categories with at least 1 surviving insight AND a non-zero quality score.
+    const rendered = findings.filter(f => f.key_insights.length > 0 && f.relevance_score > 0);
+
+    // Low-signal short-circuit: if fewer than 4 categories survived, don't spam the channel.
+    const LOW_SIGNAL_THRESHOLD = 4;
+    const lowSignal = rendered.length < LOW_SIGNAL_THRESHOLD;
+
+    for (const f of rendered) {
       const emoji = emojiMap[f.category] || '📋';
-      const score = f.relevance_score >= 0.65 ? '🟢' : f.relevance_score >= 0.40 ? '🟡' : '🔴';
-
+      const score = f.relevance_score >= 0.65 ? '🟢' : '🟡';
       digestMessage += `${emoji} <b>${escapeHtml(f.title)}</b> ${score}\n`;
-
-      const topInsights = f.key_insights.slice(0, 3);
-      if (topInsights.length > 0) {
-        for (const insight of topInsights) {
-          const truncated = insight.length > 120 ? insight.slice(0, 117) + '...' : insight;
-          digestMessage += `  • ${escapeHtml(truncated)}\n`;
-        }
-      } else {
-        digestMessage += `  <i>No actionable insights found</i>\n`;
+      for (const insight of f.key_insights.slice(0, 3)) {
+        const truncated = insight.length > 140 ? insight.slice(0, 137) + '...' : insight;
+        digestMessage += `  • ${escapeHtml(truncated)}\n`;
       }
       digestMessage += '\n';
-
     }
 
-    const actionableCount = findings.filter(f => f.relevance_score >= 0.65).length;
-    digestMessage += `📈 <b>Summary:</b> ${actionableCount}/${findings.length} categories with actionable intel\n`;
+    const actionableCount = rendered.filter(f => f.relevance_score >= 0.65).length;
+    if (lowSignal) {
+      digestMessage = `🔬 <b>AI Research Digest — ${escapeHtml(dateStr)}</b>\n\n` +
+        `<i>Low-signal day — only ${rendered.length}/${findings.length} categories returned verified intel. Digest suppressed; findings still stored for tuning.</i>`;
+    } else {
+      digestMessage += `📈 <b>Summary:</b> ${actionableCount}/${rendered.length} categories with verified intel (of ${findings.length} scanned)\n`;
+    }
     if (whaleCrossRef.matched > 0) {
       digestMessage += `🐳 <b>Whale Cross-Ref:</b> ${whaleCrossRef.matched}/${whaleCrossRef.totalPicks} picks confirmed by Perplexity (${whaleCrossRef.boosted} boosted)\n`;
     }
