@@ -6,6 +6,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildParlays, fetchEspnInjuries, type ParlayLeg, type ScriptForBuilder, type SportKey, type PropForBuilder } from "../_shared/parlayBuilder.ts";
 import { RosterClient, normalizeName } from "../_shared/rosters.ts";
+import {
+  buildValidationContext,
+  validateLeg as verifierValidateLeg,
+  type ValidationContext,
+  type ValidationLeg,
+} from "../_shared/leg-validator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -108,6 +114,14 @@ Deno.serve(async (req) => {
   const forceLive: boolean = body.force_live === true;
   const errors: unknown[] = [];
   const lookupsFailedBySport: Record<string, number> = {};
+  // Shared verifier context (schedule from live_game_scores). Loaded once.
+  let verifierCtx: ValidationContext | null = null;
+  try {
+    verifierCtx = await buildValidationContext({ supabase, dateET: gameDate });
+  } catch (e) {
+    errors.push({ stage: "verifier_ctx", message: String(e) });
+  }
+  const verifierRejects: Record<string, number> = {};
 
   // ── Backtest evidence gate ────────────────────────────────────────────────
   // Live posting requires a recent backtest run with >=100 STRONG parlays
@@ -257,6 +271,41 @@ Deno.serve(async (req) => {
       continue;
     }
 
+    // ── Leg-Verifier pass ──────────────────────────────────────────────────
+    // Drop any parlay whose legs hard-fail (truncated team, started game,
+    // venue mismatch, etc). Defense-in-depth on top of buildParlays gates.
+    const verifiedParlays = builtParlays.filter((par) => {
+      if (!verifierCtx) return true;
+      for (const l of par.legs) {
+        const vleg: ValidationLeg = {
+          sport: g.sport,
+          market_type: (l.prop_label === "Moneyline" || l.prop_label === "Spread" || l.prop_label === "Total")
+            ? (l.prop_label === "Moneyline" ? "moneyline" : l.prop_label === "Spread" ? "spread" : "total")
+            : "player",
+          event_id: l.event_id ?? null,
+          team: l.team || null,
+          opponent: null,
+          player_name: l.player_name,
+          american_odds: l.odds,
+          commence_time: g.commence_time ?? null,
+          home_away: null,
+          spread: null,
+          tag: null,
+        };
+        const v = verifierValidateLeg(vleg, verifierCtx);
+        if (v.hardFails.length) {
+          const reason = v.hardFails[0].split(":")[0];
+          verifierRejects[reason] = (verifierRejects[reason] ?? 0) + 1;
+          return false;
+        }
+      }
+      return true;
+    });
+    if (verifiedParlays.length === 0) {
+      errors.push({ stage: "verifier_rejected_all", game_id: g.game_id, built: builtParlays.length });
+      continue;
+    }
+
     // Backtest gate: block live posting per-sport unless cleared (or forced).
     if (!dryRun && !forceLive && !cleared.has(sportKey)) {
       errors.push({
@@ -283,17 +332,17 @@ Deno.serve(async (req) => {
         props_in: rawProps.length,
         props_after_lookup: props.length,
         lookups_failed: lookupsFailed,
-        parlays: builtParlays.map((p) => ({
+        parlays: verifiedParlays.map((p) => ({
           template: p.template,
           combined: p.combined_odds_american,
           in_window: p.combined_odds_american >= 1000 && p.combined_odds_american <= 3000,
           legs: p.legs.map((l) => `${l.player_name} ${l.side.toUpperCase()} ${l.line} ${l.prop_label} ${l.odds > 0 ? "+" : ""}${l.odds}`),
         })),
       });
-      built += builtParlays.length;
+      built += verifiedParlays.length;
       continue;
     }
-    for (const par of builtParlays) {
+    for (const par of verifiedParlays) {
       try {
         const { data: ins, error } = await supabase
           .from("nuke_parlays")
@@ -381,6 +430,7 @@ Deno.serve(async (req) => {
     parlays_built: built,
     parlays_posted: posted,
     lookups_failed: lookupsFailedBySport,
+    verifier_rejects: verifierRejects,
     errors,
   }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
