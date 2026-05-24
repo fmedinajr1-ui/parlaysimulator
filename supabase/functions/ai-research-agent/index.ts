@@ -28,83 +28,83 @@ const corsHeaders = {
 const RESEARCH_QUERIES = [
   {
     category: 'competing_ai',
-    query: 'What are the latest AI sports betting prediction systems and models being used in 2026? What strategies and accuracy rates are they reporting? Include any public leaderboards or tracked records.',
-    systemPrompt: 'You are a sports analytics researcher. Focus on AI/ML betting systems, their claimed accuracy, methodologies, and any verifiable track records. Be specific about models, accuracy percentages, and strategies.',
+    query: "List up to 5 specific AI / quant sports-betting picks reported in the last 24 hours for tonight's NBA, NHL, or MLB slate. Each bullet MUST name the system (e.g. Unabated, BetLabs, Action Network PRO, OddsJam), the team or player, the side and line, and a one-sentence reason. Do NOT describe methodology or capabilities. Do NOT mention partnerships, sponsorships, or product launches. If you cannot find any real picks reported today, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report real, current betting picks from named AI/quant systems. Never describe what a system does — only the actual picks it published today. If none exist, return NO_INTEL. Never list features, partnerships, or capabilities.',
   },
   {
     category: 'statistical_models',
-    query: 'What are the most effective statistical approaches for NBA and NHL player prop predictions in 2026? Include Bayesian methods, Kelly criterion applications, sharp money detection, and any new quantitative edges discovered recently.',
-    systemPrompt: 'You are a quantitative sports analyst. Focus on actionable statistical methods, calibration techniques, and mathematical edges. Include specific formulas or thresholds when available.',
+    query: "List up to 5 specific statistical-model picks (FiveThirtyEight, Inpredictable, Dratings, numberFire, Sagarin, KenPom) published in the last 24 hours where the model projection disagrees with the current sportsbook line for tonight's NBA, NHL, or MLB games. Each bullet MUST include: model name, team or player, model projection, current book line, and the gap. Do NOT describe what models do. If no concrete disagreements are reported today, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report specific model-vs-market disagreements published today, with real numbers. Never describe methodology. If you cannot cite a real projection vs a real line, return NO_INTEL.',
   },
   {
     category: 'injury_intel',
-    query: 'What are today\'s latest NBA and NHL injury reports, lineup changes, rest days, and load management decisions? Include any surprise scratches or returns from injury.',
-    systemPrompt: 'You are a sports injury analyst. Provide the most current injury updates with specific player names, teams, and expected impact on games. Focus on information that would affect player props.',
+    query: "List up to 5 confirmed NBA or NHL injury / lineup updates reported in the last 24 hours that affect tonight's games. Each bullet MUST contain the player full name, team, status (OUT / QUESTIONABLE / GTD / IN), and one-sentence prop or line impact. Do NOT include speculation. If no real updates are reported, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report confirmed injury/lineup news from the last 24 hours only, with player full names and statuses. Never speculate. If none exist, return NO_INTEL.',
   },
   {
     category: 'ncaa_baseball_pitching',
-    query: "What are today's NCAA college baseball probable starting pitchers for the major conferences (SEC, ACC, Big 12, Big Ten, Pac-12)? Include each starter's season ERA, WHIP, last 3 game logs, and any pitch count or injury concerns. Also note any bullpen arms that are unavailable due to recent heavy usage.",
-    systemPrompt: 'You are a college baseball pitching analyst. Provide specific pitcher names, teams, ERAs, WHIPs, and recent performance trends. Flag any starters on short rest or with declining velocity. Focus on data that would affect game totals and run lines.',
+    query: "List up to 5 specific NCAA baseball probable starters for today's games. Each bullet MUST contain pitcher name, team, opponent, season ERA, and WHIP. If no NCAA baseball games today or you cannot find real starters, reply with exactly: NO_INTEL. Never ask the user to paste a slate. Never describe what you would analyze.",
+    systemPrompt: 'You report named NCAA baseball probable starters with real ERA/WHIP. Never ask for input. Never describe methodology. If nothing concrete, return NO_INTEL.',
   },
   {
     category: 'weather_totals_impact',
-    query: "What is today's weather forecast for major NCAA college baseball games? Include temperature, wind speed and direction relative to the field, humidity, and any rain delays expected. Which ballparks are known as hitter-friendly or pitcher-friendly? How does today's weather historically affect over/under totals?",
-    systemPrompt: 'You are a sports weather analyst specializing in baseball. Quantify how weather conditions affect run scoring. Cite specific thresholds (e.g., wind >10mph blowing out adds ~1.5 runs). Include park factors and altitude effects. Be specific about which games are most impacted.',
+    query: "List up to 5 specific MLB or NCAA baseball games today with weather that materially impacts the total. Each bullet MUST contain: matchup (Team A @ Team B), ballpark, wind direction and speed, temperature, and over/under lean with one-sentence reason. Do NOT explain how weather works in general. If no real impactful weather today, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report named games with real weather conditions affecting the total. Never explain general weather theory. If none, return NO_INTEL.',
   },
   {
     category: 'ncaab_team_scoring_trends',
-    query: "For each NCAA college basketball game today, provide: 1) Each team's last 5 game scores and results (wins/losses with exact scores), 2) Average points scored and allowed per game over their last 5 games, 3) Whether the game pace is fast or slow based on recent games, 4) Whether the total is likely to go OVER or UNDER based on recent scoring trends. Focus on today's key matchups including: Indiana vs Illinois, South Florida vs Florida Atlantic, Utah vs Cincinnati, Bradley vs Southern Illinois, Iona vs Niagara, Rutgers vs Maryland, Charlotte vs UTSA.",
-    systemPrompt: 'You are a college basketball scoring trends analyst. For EACH team in today\'s games, provide their exact scores from their last 5 games (e.g., "Indiana: W 78-65, L 62-70, W 85-72..."). Calculate the combined scoring average for each matchup. Compare to posted totals. Flag games where recent scoring suggests the total is too high or too low. Be specific with numbers — no vague statements. This data will be used to validate over/under picks.',
+    query: "List up to 5 specific NCAAB games today where recent scoring trends point clearly OVER or UNDER the posted total. Each bullet MUST contain: matchup, posted total, combined recent PPG average, and OVER/UNDER lean. If you cannot cite real numbers, reply with exactly: NO_INTEL. Never ask the user to paste data.",
+    systemPrompt: 'You report named NCAAB games with real totals and real recent scoring numbers. Never ask for input. If nothing concrete, return NO_INTEL.',
   },
   {
     category: 'ncaab_scoring_validation',
-    query: "For these specific NCAAB games today: Indiana vs Illinois, South Florida vs Florida Atlantic, Utah vs Cincinnati, Bradley vs Southern Illinois, Iona vs Niagara, Rutgers vs Maryland. For each team, what were their exact scores in their last 3 games? What is the combined scoring average for each matchup? Which games are trending OVER based on high-scoring recent games? Which games are trending UNDER based on defensive battles? Flag any game where the posted total seems inflated compared to recent performance.",
-    systemPrompt: 'You are a sports data analyst validating over/under totals. For each team provide: 1) Last 3 game scores (exact), 2) Points per game average last 3, 3) Points allowed per game last 3, 4) Combined matchup projected total based on recent scoring. Be precise with numbers. Flag any total that seems 8+ points too high or too low vs recent performance. This data prevents blind OVER picks.',
+    query: "List up to 5 specific NCAAB totals today that look mispriced based on recent team performance. Each bullet MUST contain: matchup, posted total, last-3 combined average points, and whether the total is inflated or deflated by how many points. Cite real numbers only. If none found, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report specific mispriced NCAAB totals with real recent scoring numbers. If nothing concrete, return NO_INTEL.',
   },
   {
     category: 'ncaab_injury_lineups',
-    query: "What are today's latest NCAA college basketball injury reports, suspensions, and starting lineup changes for major conference games (Big 12, SEC, ACC, Big Ten, Big East, AAC)? Include any surprise DNPs, players returning from injury, and key rotation changes. Which games are most impacted by missing starters?",
-    systemPrompt: 'You are an NCAAB injury and lineup analyst. Provide specific player names, their statistical impact (PPG, RPG, APG), and how their absence or return affects spread and total projections. Flag games where a missing starter shifts the line by 2+ points.',
+    query: "List up to 5 confirmed NCAAB injury or lineup updates reported in the last 24 hours affecting today's games. Each bullet MUST contain player full name, team, status, and one-sentence line/total impact. If no real updates, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report confirmed NCAAB injury news only, with player names and statuses. If none, return NO_INTEL.',
   },
   {
     category: 'ncaab_sharp_signals',
-    query: "What are today's sharpest NCAA college basketball betting signals? Include significant line movements (3+ points), reverse line movement, steam moves, and where professional bettors are loading. Which NCAAB spreads and totals have the most lopsided sharp action? Are there any contrarian plays where the public is heavily on one side but sharps are on the other?",
-    systemPrompt: 'You are a sports betting market analyst specializing in college basketball. Focus on quantifiable sharp signals: opening vs current lines, handle percentages, ticket splits, and steam move timestamps. Distinguish between sharp money and public money. Cite specific line movements and percentages.',
+    query: "List up to 5 NCAAB games today with documented sharp money signals reported in the last 24 hours. Each bullet MUST contain: matchup, market (spread/total/ML), opening line, current line, and ticket% vs money% if known. Generic labels like 'Opening line vs current line' are NOT acceptable — give the real numbers. If no real signals, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report specific NCAAB sharp signals with real opening and current line numbers from the last 24 hours. Never list generic categories or headers. If nothing concrete, return NO_INTEL.',
   },
   {
     category: 'nba_nhl_sharp_signals',
-    query: "What are today's sharpest NBA and NHL betting signals? Include: 1) Significant line movements (1.5+ points for spreads, 3+ for totals), 2) Reverse line movement where the line moves opposite of ticket percentages, 3) Steam moves on specific player props (points, assists, rebounds, shots, saves), 4) Where professional/whale bettors are loading heaviest, 5) Any props where books have moved the line 1+ point since open. Focus on tonight's games only.",
-    systemPrompt: 'You are an elite sports betting market analyst who tracks whale money and sharp action in NBA and NHL. Provide specific: player names, prop types, opening vs current lines, direction of movement, and ticket vs money splits. Quantify everything — e.g., "LeBron PTS opened at 25.5, now 27.5 with 70% money on UNDER despite 60% tickets on OVER." Flag steam moves with timestamps when available. Distinguish between sharp syndicate action and public squares.',
+    query: "List up to 5 NBA or NHL sharp signals reported in the last 24 hours for tonight's games. Each bullet MUST contain: team or player full name, market, opening number, current number, and direction. Example format: 'Knicks @ Cavs total: opened 218.5, now 215.5, 72% money on Under.' If no real reported signals, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report NBA/NHL sharp signals with real opening and current numbers from the last 24 hours. No general commentary. If nothing concrete, return NO_INTEL.',
   },
   {
     category: 'value_line_discrepancies',
-    query: "Which NBA, NHL, and NCAAB games today have the biggest discrepancies between consensus model projections (ESPN BPI, KenPom, FiveThirtyEight, Sagarin, Massey, numberFire) and current sportsbook lines? Look for: 1) Spreads where models disagree with books by 3+ points, 2) Totals where projections differ by 5+ points from the posted line, 3) Moneyline odds where implied probability diverges 10%+ from model predictions. Include specific numbers for each discrepancy.",
-    systemPrompt: 'You are a quantitative betting analyst who compares public consensus models against sportsbook lines. For each discrepancy: cite the model name, its projection, the current book line, and the gap. Rank discrepancies by magnitude. E.g., "KenPom projects Duke 78 vs UNC 72 (Duke -6), but books have Duke -2.5 = 3.5-point value on Duke." Focus on actionable value plays with the highest edge.',
+    query: "List up to 5 games today with documented model-vs-book value gaps (NBA, NHL, NCAAB, or MLB). Each bullet MUST contain: matchup, model name, model projection, current book line, and edge in points or %. Example: 'KenPom projects Duke -6, book has Duke -2.5, 3.5-pt edge on Duke.' If no concrete gaps, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report real model-vs-book gaps with both numbers cited. Never describe models. If none, return NO_INTEL.',
   },
   {
     category: 'situational_spots',
-    query: "What are today's strongest situational betting angles for NBA, NHL, and NCAAB? Look for: 1) LETDOWN spots — teams coming off big emotional wins (rivalries, buzzer beaters, upsets) now facing lesser opponents, 2) REVENGE games — teams facing an opponent that beat them earlier this season, especially by a large margin, 3) TRAVEL/FATIGUE — teams on 3+ game road trips, back-to-backs, or 3-in-4-nights, especially crossing time zones, 4) LOOKAHEAD — teams with a marquee matchup in 2 days who may overlook tonight's opponent, 5) SCHEDULING — any team playing their 4th game in 6 days.",
-    systemPrompt: 'You are a sports betting situational analyst. For each spot: name the teams, cite the specific situation (e.g., "Lakers won a buzzer-beater vs Celtics last night, now face Hornets"), quantify the historical ATS record for that situation type (e.g., "NBA teams in letdown spots are 42-58 ATS historically"), and recommend spread/total/ML direction. Focus on spots with the strongest historical edge. Be specific about game times and whether the team is home or away.',
+    query: "List up to 5 specific situational angles for tonight's NBA, NHL, or NCAAB games. Each bullet MUST contain: matchup, situation type (letdown / revenge / B2B / fatigue / lookahead), and ATS lean with one-sentence reason. If no concrete spots found, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report named matchups with real situational angles tonight. Never list angle categories generically. If none, return NO_INTEL.',
   },
   {
     category: 'tennis_sharp_signals',
-    query: "Today's sharpest ATP/WTA tennis betting signals — line movements on match winners, set totals, game spreads. Where is professional money loading? Any steam moves on specific matches? Include surface-specific edges (hard court, clay, grass). Which matches have the biggest line moves since open?",
-    systemPrompt: 'You are a tennis betting market analyst. Extract specific player names, match odds movements, surface factors, and sharp/public money splits. For each signal provide: player name, opponent, direction (favorite/underdog, over/under on games), and magnitude of line movement. Be specific about which surface the match is on.',
+    query: "List up to 5 ATP/WTA matches today with sharp signals reported in the last 24 hours. Each bullet MUST contain: player A vs player B, surface, market (ML/total games/set spread), opening number, current number. If none, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report tennis sharp signals with real opening/current numbers from the last 24 hours. If none, return NO_INTEL.',
   },
   {
     category: 'tennis_form_matchups',
-    query: "Today's ATP/WTA tennis matches — player recent form (last 5-10 matches), head-to-head records, surface win rates, fatigue from recent tournaments, any injury concerns or withdrawals. Which favorites are vulnerable? Which underdogs have strong surface-specific records? Flag any player playing their 3rd+ match in 5 days.",
-    systemPrompt: 'You are a tennis matchup analyst. Provide win/loss records, surface-specific stats, H2H records, and flag players on fatigue (3+ matches in last 5 days) or returning from injury. For each player mention: name, recent form (W/L last 5), surface win rate if relevant, and any fatigue/injury flags. Clearly label hot streaks (4+ wins) and cold streaks (3+ losses).',
+    query: "List up to 5 ATP/WTA matchups today with notable form or fatigue edges. Each bullet MUST contain: player A vs player B, surface, recent form line (e.g. 4-1 last 5), surface win rate, and lean. Lines like 'Status: not available' or 'Recent form: not available' are NOT acceptable. If you cannot cite real form numbers, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report tennis matchups with real recent form numbers. Never output empty labels. If you cannot find data, return NO_INTEL.',
   },
   {
     category: 'table_tennis_signals',
-    query: "Today's international table tennis matches and betting signals. Include ITTF events, WTT events, and major league matches. For each player in upcoming matches provide: 1) Recent match totals (total points scored in last 5-10 best-of-5 matches, typical range 70-95 points), 2) Average points per set, 3) How often matches go 3, 4, or 5 sets (set distribution), 4) Recent over/under track record against posted totals, 5) Sharp line movements on totals, 6) Players in strong form or dealing with fatigue from back-to-back tournaments. Flag players on 3+ match days as fatigued.",
-    systemPrompt: 'You are a table tennis betting and statistics analyst. Focus on quantitative stats needed for over/under total points modeling: average match totals, per-set averages, set distribution percentages (3/4/5 sets), and recent over rates. Also track player form, head-to-head records, and sharp money signals. Provide specific player names, their recent match total points, and directional bias for over/under totals.',
+    query: "List up to 5 specific table tennis (WTT, ITTF, TT Cup, Setka Cup) matches today with a quantitative edge. Each bullet MUST contain: player A vs player B, event, posted total points (if available), recent match total average, and over/under lean. Never describe what you would analyze. If no real matches with numbers, reply with exactly: NO_INTEL",
+    systemPrompt: 'You report named table tennis matches with real recent total-points numbers. Never describe methodology or ask for input. If nothing concrete, return NO_INTEL.',
   },
   {
     category: 'whale_money_steam_moves',
-    query: "What are today's biggest steam moves and whale-sized wagers on player props across NBA, NHL, NCAAB, tennis, and table tennis? Specifically: 1) Which player prop lines have moved 1+ points since open? 2) Which props have books pulled, frozen, or re-posted at significantly different numbers? 3) Where is the heaviest professional/whale money landing on specific player props? 4) Any reverse line movement on props — line moving opposite the ticket count? For each signal you MUST cite a real player by their actual name (e.g. LeBron James, Connor McDavid), a real prop type (points, rebounds, assists, shots, saves, total games, etc.), the real opening number and current number, and which book / source reported it. Do NOT invent examples. If you cannot find any verified steam move or whale signal reported today, reply with exactly the single line: NO_VERIFIED_SIGNALS_TODAY and nothing else.",
-    systemPrompt: 'You are an elite sharp money tracker. Only report signals that are actually documented in today\'s public reporting (VSiN, Action Network, Pregame, Unabated, OddsTrader, sportsbook social posts, etc.) within the last 24 hours. Every signal must include a real player full name, real prop type, real opening and current numbers, and the source. NEVER output placeholder tokens like "PLAYER NAME", "PROP TYPE", "PROP_TYPE", "STAT", "DIRECTION", "TEAM", "BOOK NAME", or any all-caps schema label — those are forbidden. NEVER fabricate or hypothesize a signal to fill the format. If you have zero verified signals to report, respond with exactly: NO_VERIFIED_SIGNALS_TODAY (one line, nothing else). Otherwise list each verified signal as a bullet with the real player and numbers inline.',
+    query: "List up to 5 documented whale-sized prop bets or steam moves reported in the last 24 hours. Each bullet MUST contain: real player full name, real prop type, opening number, current number, and source. Do NOT invent examples. If zero verified signals, reply with exactly: NO_INTEL",
+    systemPrompt: 'You are an elite sharp money tracker. Only report signals documented in the last 24 hours from VSiN, Action Network, Pregame, Unabated, OddsTrader, or sportsbook social posts. Every signal must include real player full name, real prop type, real opening and current numbers, and the source. NEVER output placeholder tokens. NEVER fabricate. If zero verified signals, respond with exactly: NO_INTEL',
   },
 ];
 
@@ -126,6 +126,7 @@ async function queryPerplexity(
         { role: 'user', content: query },
       ],
       search_recency_filter: 'day',
+      temperature: 0.1,
     }),
   });
 
@@ -142,42 +143,87 @@ async function queryPerplexity(
 }
 
 function extractInsights(content: string): string[] {
+  // NO_INTEL short-circuit — model explicitly said it has nothing.
+  if (/\bNO_INTEL\b|\bNO_VERIFIED_SIGNALS_TODAY\b/i.test(content)) return [];
+
   const lines = content.split('\n').filter(l => l.trim());
   const insights: string[] = [];
 
-  // Placeholder/template tokens that mean the model echoed the schema instead of returning real data.
-  // Any line containing one of these is a fabricated/template row and must be discarded so it never
-  // surfaces as a "whale money signal" in the UI.
+  // Schema placeholder / fabricated row patterns.
   const PLACEHOLDER_PATTERNS: RegExp[] = [
-    /\bPLAYER\s*NAME\b/i,
-    /\bPLAYER_NAME\b/i,
-    /\bPROP\s*TYPE\b/i,
-    /\bPROP_TYPE\b/i,
-    /\bTEAM\s*NAME\b/i,
-    /\bBOOK\s*NAME\b/i,
-    /\bSTAT\s*\|/i,
-    /\bDIRECTION\s*\|/i,
-    /\bSIDE\s*\|/i,
+    /\bPLAYER\s*NAME\b/i, /\bPLAYER_NAME\b/i,
+    /\bPROP\s*TYPE\b/i, /\bPROP_TYPE\b/i,
+    /\bTEAM\s*NAME\b/i, /\bBOOK\s*NAME\b/i,
+    /\bSTAT\s*\|/i, /\bDIRECTION\s*\|/i, /\bSIDE\s*\|/i,
     /\bOVER\s*\/\s*UNDER\s*\)/i,
-    /\bNO_VERIFIED_SIGNALS_TODAY\b/i,
     /\bN\/A\s*\|\s*N\/A\b/i,
     /\bexample[:\s]/i,
   ];
 
+  // Meta / instruction verbs that mean the model is describing methodology, not reporting intel.
+  const INSTRUCTION_VERB = /^(identify|analyze|explain|flag|provide|paste|list out|determine|consider|compare|review|track|focus|share|build|calculate|estimate|profile|monitor|use|note that|then,|next,)\b/i;
+
+  // Phrases that signal "I have no real data" or "I'm describing capabilities".
+  const META_PHRASES = [
+    /not\s+(yet\s+)?available/i,
+    /no\s+match\s+stats/i,
+    /from\s+the\s+snippet/i,
+    /in\s+the\s+snippet/i,
+    /not\s+shown/i,
+    /placeholder/i,
+    /unavailable/i,
+    /here'?s\s+how/i,
+    /i\s+can\s+help/i,
+    /share\s+your/i,
+    /paste\s+your/i,
+    /you\s+can\s+(paste|share|provide)/i,
+    /a\s+(projection|probability|bet[\s-]sizing)\s+(model|layer)/i,
+    /what\s+we\s+can\s+say/i,
+    /reportedly\s+selected/i,
+    /partner(ship)?/i,
+    /world\s+cup\s+2026\s+prediction\s+market/i,
+  ];
+
+  // Label-only lines (e.g. "Source: OddsIndex snippet", "Status: Not available", "Opening line vs current line")
+  const LABEL_ONLY_PREFIX = /^(source|status|event\/?surface|recent form|surface win rate|opening line vs current line|ticket\s*%|signal|market signal|impact|game impact|injury)\s*[:\-]/i;
+
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^[-•*]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed) || /^\*\*/.test(trimmed)) {
-      const clean = trimmed.replace(/^[-•*\d.)]+\s*/, '').replace(/\*\*/g, '').trim();
-      if (clean.length <= 20 || clean.length >= 500) continue;
-      if (PLACEHOLDER_PATTERNS.some(rx => rx.test(clean))) {
-        console.log(`[Research Agent] Dropped placeholder insight: ${clean.slice(0, 120)}`);
-        continue;
-      }
-      insights.push(clean);
+    if (!(/^[-•*]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed) || /^\*\*/.test(trimmed))) continue;
+
+    const clean = trimmed.replace(/^[-•*\d.)]+\s*/, '').replace(/\*\*/g, '').trim();
+    if (clean.length <= 25 || clean.length >= 500) continue;
+
+    if (PLACEHOLDER_PATTERNS.some(rx => rx.test(clean))) continue;
+    if (INSTRUCTION_VERB.test(clean)) continue;
+    if (META_PHRASES.some(rx => rx.test(clean))) continue;
+    if (LABEL_ONLY_PREFIX.test(clean)) {
+      // Allow label lines only if they contain a real number after the colon.
+      const afterColon = clean.split(':').slice(1).join(':').trim();
+      if (!/\d/.test(afterColon) || afterColon.length < 6) continue;
     }
+
+    // Real intel almost always contains a digit OR a capitalized proper-noun token (2+ chars).
+    const hasDigit = /\d/.test(clean);
+    const hasProperNoun = /\b[A-Z][a-z]{2,}\b/.test(clean);
+    if (!hasDigit && !hasProperNoun) continue;
+
+    insights.push(clean);
   }
 
   return insights.slice(0, 10);
+}
+
+/**
+ * Quality-based relevance score: rewards count, real numbers, and proper-noun mentions.
+ * Returns 0.0–1.0. <0.40 = unusable, 0.40–0.65 = thin, >=0.65 = actionable.
+ */
+function qualityScore(insights: string[]): number {
+  if (!insights.length) return 0;
+  const countScore = Math.min(1, insights.length / 5);
+  const withNumber = insights.filter(i => /\d/.test(i)).length / insights.length;
+  const withProperNoun = insights.filter(i => /\b[A-Z][a-z]{2,}\b/.test(i)).length / insights.length;
+  return Math.round((0.5 * countScore + 0.3 * withNumber + 0.2 * withProperNoun) * 100) / 100;
 }
 
 /** Cross-reference today's whale_picks against Perplexity research findings */
@@ -377,7 +423,7 @@ Deno.serve(async (req) => {
           summary: result.content.slice(0, 2000),
           key_insights: insights,
           sources: result.citations.slice(0, 5),
-          relevance_score: insights.length > 5 ? 0.85 : insights.length > 2 ? 0.65 : 0.40,
+          relevance_score: qualityScore(insights),
         });
       } catch (err) {
         console.error(`[Research Agent] Error on ${rq.category}:`, err);
@@ -504,27 +550,31 @@ Deno.serve(async (req) => {
       return chunks;
     };
 
-    for (const f of findings) {
+    // Only render categories with at least 1 surviving insight AND a non-zero quality score.
+    const rendered = findings.filter(f => f.key_insights.length > 0 && f.relevance_score > 0);
+
+    // Low-signal short-circuit: if fewer than 4 categories survived, don't spam the channel.
+    const LOW_SIGNAL_THRESHOLD = 4;
+    const lowSignal = rendered.length < LOW_SIGNAL_THRESHOLD;
+
+    for (const f of rendered) {
       const emoji = emojiMap[f.category] || '📋';
-      const score = f.relevance_score >= 0.65 ? '🟢' : f.relevance_score >= 0.40 ? '🟡' : '🔴';
-
+      const score = f.relevance_score >= 0.65 ? '🟢' : '🟡';
       digestMessage += `${emoji} <b>${escapeHtml(f.title)}</b> ${score}\n`;
-
-      const topInsights = f.key_insights.slice(0, 3);
-      if (topInsights.length > 0) {
-        for (const insight of topInsights) {
-          const truncated = insight.length > 120 ? insight.slice(0, 117) + '...' : insight;
-          digestMessage += `  • ${escapeHtml(truncated)}\n`;
-        }
-      } else {
-        digestMessage += `  <i>No actionable insights found</i>\n`;
+      for (const insight of f.key_insights.slice(0, 3)) {
+        const truncated = insight.length > 140 ? insight.slice(0, 137) + '...' : insight;
+        digestMessage += `  • ${escapeHtml(truncated)}\n`;
       }
       digestMessage += '\n';
-
     }
 
-    const actionableCount = findings.filter(f => f.relevance_score >= 0.65).length;
-    digestMessage += `📈 <b>Summary:</b> ${actionableCount}/${findings.length} categories with actionable intel\n`;
+    const actionableCount = rendered.filter(f => f.relevance_score >= 0.65).length;
+    if (lowSignal) {
+      digestMessage = `🔬 <b>AI Research Digest — ${escapeHtml(dateStr)}</b>\n\n` +
+        `<i>Low-signal day — only ${rendered.length}/${findings.length} categories returned verified intel. Digest suppressed; findings still stored for tuning.</i>`;
+    } else {
+      digestMessage += `📈 <b>Summary:</b> ${actionableCount}/${rendered.length} categories with verified intel (of ${findings.length} scanned)\n`;
+    }
     if (whaleCrossRef.matched > 0) {
       digestMessage += `🐳 <b>Whale Cross-Ref:</b> ${whaleCrossRef.matched}/${whaleCrossRef.totalPicks} picks confirmed by Perplexity (${whaleCrossRef.boosted} boosted)\n`;
     }
