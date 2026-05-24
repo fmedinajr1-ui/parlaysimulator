@@ -103,7 +103,7 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'whale_money_steam_moves',
-    query: "What are today's biggest steam moves and whale-sized wagers on player props across NBA, NHL, NCAAB, tennis, and table tennis? Specifically: 1) Which player prop lines have moved 1+ points since open? 2) Which props have books pulled, frozen, or re-posted at significantly different numbers? 3) Where is the heaviest professional/whale money landing on specific player props? 4) Any reverse line movement on props — line moving opposite the ticket count? For each signal you MUST cite a real player by their actual name (e.g. LeBron James, Connor McDavid), a real prop type (points, rebounds, assists, shots, saves, total games, etc.), the real opening number and current number, and which book / source reported it. Do NOT invent examples. If you cannot find any verified steam move or whale signal reported today, reply with exactly the single line: NO_VERIFIED_SIGNALS_TODAY and nothing else.",
+    query: "List up to 5 documented whale-sized prop bets or steam moves reported in the last 24 hours. Each bullet MUST contain: real player full name, real prop type, opening number, current number, and source. Do NOT invent examples. If zero verified signals, reply with exactly: NO_INTEL",
     systemPrompt: 'You are an elite sharp money tracker. Only report signals documented in the last 24 hours from VSiN, Action Network, Pregame, Unabated, OddsTrader, or sportsbook social posts. Every signal must include real player full name, real prop type, real opening and current numbers, and the source. NEVER output placeholder tokens. NEVER fabricate. If zero verified signals, respond with exactly: NO_INTEL',
   },
 ];
