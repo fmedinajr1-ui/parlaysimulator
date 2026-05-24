@@ -7,6 +7,12 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  buildValidationContext,
+  validateLeg as verifierValidateLeg,
+  validateTicket as verifierValidateTicket,
+  type ValidationLeg,
+} from '../_shared/leg-validator.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -77,11 +83,51 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── Leg-Verifier context (today, ET) ──────────────────────────────────
+    const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+      .toISOString().slice(0, 10);
+    const verifierCtx = await buildValidationContext({ supabase, dateET: todayET }).catch(() => null);
+    const verifierRejects: Record<string, number> = {};
+
+    function toVerifierLeg(p: WhalePick): ValidationLeg {
+      const oddsForSide = p.side === 'Over' ? p.current_over_price : p.current_under_price;
+      return {
+        sport: p.sport,
+        market_type: 'player',
+        event_id: p.event_id,
+        team: null,
+        opponent: null,
+        player_name: p.player_name,
+        american_odds: oddsForSide ?? null,
+        commence_time: p.commence_time,
+        home_away: null,
+        spread: null,
+        tag: null,
+      };
+    }
+
+    const verifiedPool: WhalePick[] = [];
+    for (const p of pool) {
+      if (!verifierCtx) { verifiedPool.push(p); continue; }
+      const v = verifierValidateLeg(toVerifierLeg(p), verifierCtx);
+      if (v.hardFails.length) {
+        const k = v.hardFails[0].split(':')[0];
+        verifierRejects[k] = (verifierRejects[k] ?? 0) + 1;
+        continue;
+      }
+      verifiedPool.push(p);
+    }
+    if (verifiedPool.length < MIN_LEGS) {
+      return new Response(JSON.stringify({ success: true, skipped: true, reason: 'verifier_too_strict', pool: pool.length, verifier_rejects: verifierRejects }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Build cross-sport 3-leg: greedy pick top score per sport, no two legs same game
     const usedSports = new Set<string>();
     const usedEvents = new Set<string>();
     const selected: WhalePick[] = [];
-    for (const p of pool) {
+    for (const p of verifiedPool) {
       if (selected.length >= MAX_LEGS) break;
       const sk = sportKey(p.sport);
       const ek = p.event_id ?? '';
@@ -96,7 +142,7 @@ Deno.serve(async (req) => {
     if (selected.length < MIN_LEGS) {
       usedEvents.clear();
       selected.length = 0;
-      for (const p of pool) {
+      for (const p of verifiedPool) {
         if (selected.length >= MAX_LEGS) break;
         const ek = p.event_id ?? '';
         if (ek && usedEvents.has(ek)) continue;
@@ -109,6 +155,16 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: true, skipped: true, reason: 'no_valid_combo', pool: pool.length }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // Cross-leg ticket check (no two legs same event_id).
+    if (verifierCtx) {
+      const vt = verifierValidateTicket(selected.map(toVerifierLeg));
+      if (vt.hardFails.length) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: 'verifier_ticket_fail', detail: vt.hardFails }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // Dedupe against today's existing whale parlay
@@ -204,6 +260,7 @@ Deno.serve(async (req) => {
       total_odds: Number(totalOdds.toFixed(2)),
       confidence,
       pool_size: pool.length,
+      verifier_rejects: verifierRejects,
       telegram,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err) {
