@@ -3459,6 +3459,9 @@ export type Database = {
       court_edge_picks: {
         Row: {
           actual_total_games: number | null
+          close_captured_at: string | null
+          close_line: number | null
+          clv_games: number | null
           commence_at: string | null
           created_at: string
           drilldown_text: string | null
@@ -3494,6 +3497,9 @@ export type Database = {
         }
         Insert: {
           actual_total_games?: number | null
+          close_captured_at?: string | null
+          close_line?: number | null
+          clv_games?: number | null
           commence_at?: string | null
           created_at?: string
           drilldown_text?: string | null
@@ -3529,6 +3535,9 @@ export type Database = {
         }
         Update: {
           actual_total_games?: number | null
+          close_captured_at?: string | null
+          close_line?: number | null
+          clv_games?: number | null
           commence_at?: string | null
           created_at?: string
           drilldown_text?: string | null
@@ -18465,7 +18474,9 @@ export type Database = {
       projection_bias_audit: {
         Row: {
           bucket: string | null
+          clv_n: number | null
           dimension: string | null
+          mean_clv: number | null
           mean_residual: number | null
           n: number | null
           win_rate: number | null

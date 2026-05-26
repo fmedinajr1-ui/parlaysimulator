@@ -40,3 +40,11 @@ Why: bias audit showed projection − actual = +2.55 games on STRONG_OVER (n=27,
 Parser diff (`court-edge-parser-diff`) confirmed the score parser is NOT the bug — 0/30 picks change under a candidate parser that strips `(N)` tiebreak parens and treats super-tiebreaks as 1 game. The current regex `^(\d{1,2})-(\d{1,2})` already anchors past parens.
 
 Pass 2 (gated on ≥14 days of bias audit data): review `surface_mult` clay, `role_adj` for favorites, and `spread_adj` weight using `projection_bias_audit`. Bias view groups by surface / verdict / sets_format / role_combo / edge_band / tier with mean_residual and win_rate.
+
+## CLV capture (pass 2)
+
+Closing line is captured every 5 min via cron `court-edge-close-line-5min` calling `court-edge-close-line`. Window: picks whose `commence_at` falls within [now-30min, now+15min] AND `close_line IS NULL` AND `market='match_total'`. Calls The Odds API totals, matches event by sorted normalized player-pair name key, writes `close_line`, `close_captured_at`, `clv_games`.
+
+`clv_games` is signed in our favor: `(close - bet)` for OVERs, `(bet - close)` for UNDERs. Positive = market closed toward our side = real edge. Surfaced in `projection_bias_audit` view as `mean_clv` / `clv_n` and on the admin dashboard alongside hit rate.
+
+Multiplier review stays gated: do NOT touch `surface_mult`, `role_adj`, or `spread_adj` until bias audit has ≥14 days AND a bucket has `n ≥ 30 AND |mean_residual| ≥ 0.4 AND mean_clv` directionally consistent.
