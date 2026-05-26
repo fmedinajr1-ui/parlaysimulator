@@ -15,6 +15,6 @@ Phase-0 heuristic engine in `supabase/functions/scout-live-edge` + `market-snaps
 - Ingest HMAC: `X-Webhook-Signature: sha256=<hex>` verified against `LIVE_EVENT_WEBHOOK_SECRET` / `ODDS_FEED_WEBHOOK_SECRET`. Missing secret → skip (dev only).
 - `{"ping": true}` short-circuit on `scout-live-edge` is unauthenticated (used by minute warm-keeper cron).
 - Admin UI: `/admin/scout-speed` — active edges + last 30 fired, realtime sub on `lag_edges`.
-- Cron: `scout-speed-edge-resolver` (every minute, expires + captures actual_move) and `scout-live-edge-warmer` (every minute, pings).
+- Cron: `scout-speed-edge-resolver` (every minute, expires + captures actual_move), `scout-live-edge-warmer` (every minute, pings), and `scout-speed-closing-line-resolver` (every 15 min — backfills `closing_line` once a game's market is quiet ≥90 min and `fired_at` is ≥4h old; also fills `actual_move` if still null; flips active→expired).
 - 5 Deno tests in `_shared/scout-speed/scout-speed_test.ts` (relevance map, scoreEdge monotonicity, EV/Kelly floors, HMAC accept/reject, Telegram formatter).
 - Out of scope Phase 0: full 3-column Scout Live page, Chess Alerts views, closing-line / outcome population, vision/OCR ingest, auto-hedge, live SGP builder.
