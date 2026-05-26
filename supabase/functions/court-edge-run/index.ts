@@ -146,9 +146,13 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   const grouped: Record<Verdict, Pick[]> = {
     STRONG_OVER: [], STRONG_UNDER: [], LEAN_OVER: [], LEAN_UNDER: [], PASS: [], QUARANTINE: [],
   };
+  let suppressedCount = 0;
   for (const p of picks) {
     // QUARANTINE picks never appear in the user-facing digest; they're persisted for audit only.
     if (p.verdict === "QUARANTINE") { grouped.QUARANTINE.push(p); continue; }
+    // Pass-1: suppressed picks (e.g. STRONG_OVER) are persisted+graded but
+    // never appear in the user-facing digest. Count them separately.
+    if (p.suppressed) { suppressedCount += 1; continue; }
     grouped[p.verdict].push(p);
   }
 
@@ -175,7 +179,7 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   const passes = grouped.PASS.length;
   const quarantined = grouped.QUARANTINE.length;
   if (printed === 0) lines.push("_No actionable edges right now. Try again after the next slate refresh._\n");
-  lines.push(`Leans ${leans}  ·  Pass ${passes}  ·  Quarantine ${quarantined}`);
+  lines.push(`Leans ${leans}  ·  Pass ${passes}  ·  Quarantine ${quarantined}  ·  Suppressed ${suppressedCount}`);
   lines.push(`Sources: Odds API ${meta.sources.odds}  ·  PrizePicks ${meta.sources.pp}  ·  TennisAbstract ${meta.sources.l3}  ·  Weather ${meta.sources.wx}`);
   lines.push(`Run \`${meta.runId.slice(0, 8)}\`  ·  picks ${picks.length}  ·  errors ${meta.errors}`);
   // "Why empty?" diagnostic footer — only when nothing actionable went out.
