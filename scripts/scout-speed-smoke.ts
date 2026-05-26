@@ -124,8 +124,6 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
-
 // ────────────────────────────────────────────────────────────────────────────
 // Scenario suite — strict assertions for fire / no-fire cases.
 // ────────────────────────────────────────────────────────────────────────────
@@ -290,3 +288,5 @@ async function runScenarios() {
   }
   console.log("✅ All scenarios passed.");
 }
+
+main().catch((e) => { console.error(e); process.exit(1); });
