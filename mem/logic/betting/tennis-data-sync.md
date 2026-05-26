@@ -30,3 +30,13 @@ TennisAbstract serves recent-results from `/jsfrags/<Slug>.js`, not the HTML pag
 The Odds API only carries top-tier ATP/WTA events. WTA 125Ks, ITFs, and most qualifiers are NOT priced — they appear on PrizePicks but never on `tennis_*` sport keys (sport listed but `events=[]`). Broadening sport-key filters does NOT recover them; the lines simply don't exist on US/EU sportsbooks.
 
 For PrizePicks-only matches, project against TennisAbstract L3 + clay/grass/hard surface baseline and cap verdicts to STRONG only when both players have TA profiles. One-side missing → LEAN cap (already enforced). Insert with `source='prizepicks_seed'` so dashboard can distinguish from `odds_api` runs.
+
+## STRONG_OVER suppressed (pass 1 model fix)
+
+STRONG_OVER picks are tagged `suppressed=true` with `suppressed_reason='strong_over_disabled_v1'` in `court_edge_picks`. They are still persisted and graded, but never broadcast to Telegram, never get a drilldown, and are excluded from headline ROI on `/admin/court-edge-accuracy` (v2 view).
+
+Why: bias audit showed projection − actual = +2.55 games on STRONG_OVER (n=27, 33% win) while every other verdict has a negative residual. The model systematically over-projects total games on the picks it's most confident about for the OVER side.
+
+Parser diff (`court-edge-parser-diff`) confirmed the score parser is NOT the bug — 0/30 picks change under a candidate parser that strips `(N)` tiebreak parens and treats super-tiebreaks as 1 game. The current regex `^(\d{1,2})-(\d{1,2})` already anchors past parens.
+
+Pass 2 (gated on ≥14 days of bias audit data): review `surface_mult` clay, `role_adj` for favorites, and `spread_adj` weight using `projection_bias_audit`. Bias view groups by surface / verdict / sets_format / role_combo / edge_band / tier with mean_residual and win_rate.
