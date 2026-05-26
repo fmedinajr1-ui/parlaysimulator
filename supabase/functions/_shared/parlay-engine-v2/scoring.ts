@@ -16,6 +16,14 @@ import {
 export function legQualityScore(leg: CandidateLeg): number {
   let score = leg.confidence;
 
+  // Verifier Agent soft-tag (prop-alert-verifier). Reads metadata.verifier.multiplier
+  // attached by the deep-research second-opinion agent. Default 1.0 when absent.
+  const verifier = (leg as unknown as { metadata?: { verifier?: { multiplier?: number } } })?.metadata?.verifier;
+  const verifierMult = typeof verifier?.multiplier === "number" && isFinite(verifier.multiplier)
+    ? Math.max(0.3, Math.min(1.2, verifier.multiplier))
+    : 1.0;
+  score *= verifierMult;
+
   const sig = signalNorm(leg);
   if (config.SIGNAL_TIER_S.has(sig)) {
     score *= 1.25;
