@@ -17,11 +17,13 @@ interface Row {
   suppressed?: boolean | null;
   suppressed_reason?: string | null;
   projection?: number | null;
+  close_line?: number | null;
+  clv_games?: number | null;
 }
 
 interface Bucket { label: string; wins: number; losses: number; pushes: number }
 
-interface BiasRow { dimension: string; bucket: string; n: number; mean_residual: number | null; win_rate: number | null }
+interface BiasRow { dimension: string; bucket: string; n: number; mean_residual: number | null; win_rate: number | null; clv_n: number | null; mean_clv: number | null }
 
 function rate(b: Bucket): string {
   const decided = b.wins + b.losses;
@@ -82,7 +84,7 @@ export default function CourtEdgeAccuracy() {
     const [{ data, error }, biasRes] = await Promise.all([
       supabase
       .from("court_edge_picks")
-      .select("verdict,surface,tournament,edge_pct,line,actual_total_games,result,matchup,commence_at,suppressed,suppressed_reason,projection")
+      .select("verdict,surface,tournament,edge_pct,line,actual_total_games,result,matchup,commence_at,suppressed,suppressed_reason,projection,close_line,clv_games")
       .eq("graded", true)
       .in("verdict", ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER"])
       .order("commence_at", { ascending: false })
@@ -242,6 +244,8 @@ export default function CourtEdgeAccuracy() {
               <th className="text-right">n</th>
               <th className="text-right">Mean residual</th>
               <th className="text-right">Win rate</th>
+              <th className="text-right">CLV n</th>
+              <th className="text-right">Mean CLV</th>
             </tr>
           </thead>
           <tbody>
@@ -250,6 +254,12 @@ export default function CourtEdgeAccuracy() {
               const flag = r > 0.4 && b.n >= 30 ? "text-red-500 font-semibold"
                 : r < -0.4 && b.n >= 30 ? "text-green-500 font-semibold"
                 : "";
+              const clv = Number(b.mean_clv ?? 0);
+              const clvN = Number(b.clv_n ?? 0);
+              const clvCls = clvN < 10 ? "text-muted-foreground"
+                : clv > 0.2 ? "text-green-500 font-semibold"
+                : clv < -0.2 ? "text-red-500 font-semibold"
+                : "";
               return (
                 <tr key={i} className="border-t border-border/40">
                   <td className="py-1 font-mono text-xs">{b.dimension}</td>
@@ -257,11 +267,13 @@ export default function CourtEdgeAccuracy() {
                   <td className="text-right">{b.n}</td>
                   <td className={`text-right ${flag}`}>{r > 0 ? "+" : ""}{r.toFixed(2)}</td>
                   <td className="text-right">{b.win_rate == null ? "—" : `${b.win_rate}%`}</td>
+                  <td className="text-right text-muted-foreground">{b.clv_n ?? 0}</td>
+                  <td className={`text-right ${clvCls}`}>{b.mean_clv == null ? "—" : `${clv > 0 ? "+" : ""}${clv.toFixed(2)}`}</td>
                 </tr>
               );
             })}
             {bias.length === 0 && (
-              <tr><td colSpan={5} className="text-center text-muted-foreground py-4 text-xs">No bias data yet.</td></tr>
+              <tr><td colSpan={7} className="text-center text-muted-foreground py-4 text-xs">No bias data yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -315,6 +327,7 @@ export default function CourtEdgeAccuracy() {
               <th>Line</th>
               <th>Actual</th>
               <th>Edge</th>
+              <th>CLV</th>
               <th>Result</th>
             </tr>
           </thead>
@@ -326,6 +339,9 @@ export default function CourtEdgeAccuracy() {
                 <td className="text-center">{r.line}</td>
                 <td className="text-center">{r.actual_total_games ?? "—"}</td>
                 <td className="text-center">{Number(r.edge_pct).toFixed(1)}</td>
+                <td className={`text-center ${r.clv_games == null ? "text-muted-foreground" : Number(r.clv_games) > 0 ? "text-green-500" : Number(r.clv_games) < 0 ? "text-red-500" : ""}`}>
+                  {r.clv_games == null ? "—" : `${Number(r.clv_games) > 0 ? "+" : ""}${Number(r.clv_games).toFixed(1)}`}
+                </td>
                 <td className="text-center">
                   <Badge className={r.result === "WIN" ? "bg-green-600" : r.result === "LOSS" ? "bg-red-600" : "bg-muted"}>
                     {r.result}
