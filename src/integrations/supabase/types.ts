@@ -3458,6 +3458,7 @@ export type Database = {
       }
       court_edge_picks: {
         Row: {
+          actual_total_games: number | null
           commence_at: string | null
           created_at: string
           drilldown_text: string | null
@@ -3481,6 +3482,8 @@ export type Database = {
           role_reasons: Json | null
           run_id: string
           sets_format: string | null
+          settle_source: string | null
+          settled_at: string | null
           source: string
           surface: string | null
           tournament: string | null
@@ -3488,6 +3491,7 @@ export type Database = {
           weather: Json | null
         }
         Insert: {
+          actual_total_games?: number | null
           commence_at?: string | null
           created_at?: string
           drilldown_text?: string | null
@@ -3511,6 +3515,8 @@ export type Database = {
           role_reasons?: Json | null
           run_id: string
           sets_format?: string | null
+          settle_source?: string | null
+          settled_at?: string | null
           source: string
           surface?: string | null
           tournament?: string | null
@@ -3518,6 +3524,7 @@ export type Database = {
           weather?: Json | null
         }
         Update: {
+          actual_total_games?: number | null
           commence_at?: string | null
           created_at?: string
           drilldown_text?: string | null
@@ -3541,6 +3548,8 @@ export type Database = {
           role_reasons?: Json | null
           run_id?: string
           sets_format?: string | null
+          settle_source?: string | null
+          settled_at?: string | null
           source?: string
           surface?: string | null
           tournament?: string | null
