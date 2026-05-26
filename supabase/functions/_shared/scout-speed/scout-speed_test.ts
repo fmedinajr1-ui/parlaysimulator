@@ -1,8 +1,8 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { isRelevant, EVENT_MARKET_MAP } from "./relevance.ts";
-import { scoreEdge, evPerUnit, halfKellyStake, impactScore } from "./scoring.ts";
+import { scoreEdge, evPerUnit, halfKellyStake, impactScore, eventDirection, reverseDelta } from "./scoring.ts";
 import { verifyHmac } from "./hmac.ts";
-import { tierFor, formatSpeedEdgeAlert } from "./telegram-format.ts";
+import { tierFor, formatSpeedEdgeAlert, formatHedgeAlert } from "./telegram-format.ts";
 import {
   fitLogistic,
   fitLinear,
