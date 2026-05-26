@@ -59,6 +59,8 @@ function log(label: string, obj: unknown) {
 }
 
 async function main() {
+  if (args.has("--scenarios")) return runScenarios();
+
   if (!ODDS_SECRET) console.warn("⚠️  ODDS_FEED_WEBHOOK_SECRET not set — request will be rejected if secret is configured on server");
   if (!EVENT_SECRET) console.warn("⚠️  LIVE_EVENT_WEBHOOK_SECRET not set — request will be rejected if secret is configured on server");
 
