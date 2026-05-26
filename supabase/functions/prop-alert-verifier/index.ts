@@ -83,7 +83,35 @@ function escapeMd(s: string): string {
   return String(s ?? "").replace(/([_*`\[\]()])/g, "\\$1");
 }
 
+const APPROVE_COOLDOWN_MS = 15 * 60 * 1000;
+
+async function shouldNotifyApprove(
+  supa: ReturnType<typeof getSupabase>,
+  multiplier: number,
+  flags: string[],
+): Promise<boolean> {
+  // Interesting multiplier or notable flags always break through
+  if (multiplier < 0.90 || multiplier > 1.10) return true;
+  const notableFlags = flags.filter(f => f !== "DEGRADED");
+  if (notableFlags.length > 0) return true;
+
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const { data } = await supa.from("prop_alert_verifier_daily_cost")
+    .select("last_approve_notify_at")
+    .eq("cost_date", today)
+    .maybeSingle();
+  const last = data?.last_approve_notify_at ? new Date(data.last_approve_notify_at).getTime() : 0;
+  if (Date.now() - last > APPROVE_COOLDOWN_MS) {
+    await supa.from("prop_alert_verifier_daily_cost")
+      .update({ last_approve_notify_at: new Date().toISOString() })
+      .eq("cost_date", today);
+    return true;
+  }
+  return false;
+}
+
 async function notifyAdminTelegram(
+  supa: ReturnType<typeof getSupabase>,
   alert: AlertCtx,
   verdict: Verdict,
   confidence: number,
@@ -93,9 +121,11 @@ async function notifyAdminTelegram(
   degraded: boolean,
 ) {
   try {
-    // Only notify on actionable verdicts (CAUTION / REJECT) or degraded runs.
-    const notify = verdict !== "APPROVE" || degraded;
-    if (!notify) return;
+    // Always notify on CAUTION / REJECT / degraded. Throttle APPROVEs.
+    if (verdict === "APPROVE" && !degraded) {
+      const ok = await shouldNotifyApprove(supa, multiplier, flags);
+      if (!ok) return;
+    }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
