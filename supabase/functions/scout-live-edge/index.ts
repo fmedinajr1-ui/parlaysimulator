@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
           stake_units: stake,
           status: "active",
           expires_at: expiresAt,
-          intended_direction: eventDirection(event.event_type),
+          intended_direction: eventDirection(event.event_type, market.market_type),
           source_event_id: storedEvent.id,
           source_snapshot_id: market.id,
         })
