@@ -15,6 +15,27 @@ export function impactScore(eventType: string): number {
   return IMPACT_HEURISTICS[eventType] ?? 0.5;
 }
 
+// Direction the speed edge expects the market line to move after the event.
+// "up"   = line should rise (over-side becomes more valuable to grab now)
+// "down" = line should fall (under-side becomes more valuable)
+const DOWN_EVENTS = new Set(["INJURY", "FOUL", "SUBSTITUTION", "TIMEOUT"]);
+export function eventDirection(eventType: string): "up" | "down" {
+  return DOWN_EVENTS.has(eventType) ? "down" : "up";
+}
+
+// A "reverse" is a market move OPPOSITE to the intended direction by at least
+// `threshold` line units. Returns the signed delta against the intended dir
+// (positive number = how far the market moved AGAINST us); 0 if not a reverse.
+export function reverseDelta(
+  intended: "up" | "down",
+  firedLine: number,
+  currentLine: number,
+): number {
+  const move = currentLine - firedLine;
+  const against = intended === "up" ? -move : move;
+  return against > 0 ? against : 0;
+}
+
 export interface ScoreFeatures {
   excess_lag: number;
   event_impact: number;

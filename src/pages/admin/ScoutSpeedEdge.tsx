@@ -28,6 +28,9 @@ type LagEdge = {
   actual_move: number | null;
   outcome: string | null;
   created_at: string;
+  hedge_fired_at?: string | null;
+  hedge_reverse_line?: number | null;
+  hedge_reverse_delta?: number | null;
 };
 
 const LABELS: Record<string, string> = {
@@ -299,6 +302,7 @@ export default function ScoutSpeedEdge() {
                     <TableHead className="text-right">EV</TableHead>
                     <TableHead className="text-right">Actual move</TableHead>
                     <TableHead className="text-right">Status</TableHead>
+                    <TableHead className="text-right">Hedge</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -318,6 +322,15 @@ export default function ScoutSpeedEdge() {
                         <Badge variant="outline" className={outcomeColor(e.outcome ?? e.status)}>
                           {e.outcome ?? e.status}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {e.hedge_fired_at ? (
+                          <Badge variant="outline" className="bg-amber-500/15 text-amber-400 border-amber-500/30">
+                            🛡️ {e.hedge_reverse_delta != null ? Number(e.hedge_reverse_delta).toFixed(2) : "✓"}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

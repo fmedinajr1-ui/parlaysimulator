@@ -66,3 +66,28 @@ export function formatSpeedEdgeAlert(
     `Action: ${direction} ${lineStr}`.trim(),
   ].join("\n");
 }
+
+export interface HedgeForFormat {
+  player_name: string | null;
+  edge_type: string;
+  intended_direction: "up" | "down";
+  fired_line: number | null;
+  reverse_line: number;
+  reverse_delta: number;
+}
+
+export function formatHedgeAlert(h: HedgeForFormat): string {
+  const opposite = h.intended_direction === "up" ? "UNDER" : "OVER";
+  const original = h.intended_direction === "up" ? "OVER" : "UNDER";
+  return [
+    `🛡️ *HEDGE TRIGGER — Speed Edge Reversed*`,
+    ``,
+    `Player: ${h.player_name ?? "—"}`,
+    `Market: ${marketLabel(h.edge_type)}`,
+    `Original side: ${original}${h.fired_line != null ? " " + h.fired_line : ""}`,
+    `Market now: ${h.reverse_line}`,
+    `Reverse: ${h.reverse_delta.toFixed(2)} against original direction`,
+    ``,
+    `Action: HEDGE → ${opposite} ${h.reverse_line}`,
+  ].join("\n");
+}

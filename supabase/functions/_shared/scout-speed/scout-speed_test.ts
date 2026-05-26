@@ -1,8 +1,8 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { isRelevant, EVENT_MARKET_MAP } from "./relevance.ts";
-import { scoreEdge, evPerUnit, halfKellyStake, impactScore } from "./scoring.ts";
+import { scoreEdge, evPerUnit, halfKellyStake, impactScore, eventDirection, reverseDelta } from "./scoring.ts";
 import { verifyHmac } from "./hmac.ts";
-import { tierFor, formatSpeedEdgeAlert } from "./telegram-format.ts";
+import { tierFor, formatSpeedEdgeAlert, formatHedgeAlert } from "./telegram-format.ts";
 import {
   fitLogistic,
   fitLinear,
@@ -162,4 +162,50 @@ Deno.test("EV/Kelly downstream math is unchanged by model path", () => {
   const c = scoreEdge(f, cold);
   assert(evPerUnit(c.prob, c.expectedMove) < 0);
   assertEquals(halfKellyStake(c.prob, c.expectedMove), 0);
+});
+
+// ───────── Phase 2: hedge logic ─────────
+
+Deno.test("eventDirection maps fade events to down, scoring events to up", () => {
+  assertEquals(eventDirection("SHOT_MADE"), "up");
+  assertEquals(eventDirection("ASSIST"), "up");
+  assertEquals(eventDirection("GOAL"), "up");
+  assertEquals(eventDirection("INJURY"), "down");
+  assertEquals(eventDirection("FOUL"), "down");
+  assertEquals(eventDirection("UNKNOWN_EVENT"), "up"); // default to up
+});
+
+Deno.test("reverseDelta fires when market moves against intended direction", () => {
+  // Predicted up, line dropped from 24.5 → 23.0 → reverse of 1.5
+  assertEquals(reverseDelta("up", 24.5, 23.0), 1.5);
+  // Predicted down, line rose from 8.5 → 9.5 → reverse of 1.0
+  assertEquals(reverseDelta("down", 8.5, 9.5), 1.0);
+});
+
+Deno.test("reverseDelta returns 0 on confirming move", () => {
+  // Predicted up, line rose → confirming, no hedge
+  assertEquals(reverseDelta("up", 24.5, 26.0), 0);
+  // Predicted down, line fell → confirming
+  assertEquals(reverseDelta("down", 8.5, 7.5), 0);
+});
+
+Deno.test("reverseDelta returns 0 when line is unchanged", () => {
+  assertEquals(reverseDelta("up", 24.5, 24.5), 0);
+  assertEquals(reverseDelta("down", 8.5, 8.5), 0);
+});
+
+Deno.test("formatHedgeAlert renders English action with opposite side", () => {
+  const msg = formatHedgeAlert({
+    player_name: "Luka Doncic",
+    edge_type: "player_pts",
+    intended_direction: "up",
+    fired_line: 32.5,
+    reverse_line: 31.0,
+    reverse_delta: 1.5,
+  });
+  assert(msg.includes("HEDGE TRIGGER"));
+  assert(msg.includes("Luka Doncic"));
+  assert(msg.includes("Points"));
+  assert(msg.includes("UNDER 31")); // hedge is opposite of original (over)
+  assert(!/PTS\b/.test(msg)); // no abbreviations
 });

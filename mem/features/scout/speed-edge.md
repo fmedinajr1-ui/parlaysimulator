@@ -6,6 +6,7 @@ type: feature
 
 Phase-0 heuristic engine in `supabase/functions/scout-live-edge` + `market-snapshot-ingest` + `edge-resolver`.
 Phase-1 learning loop adds `scout_speed_models` table + `scout-speed-model-trainer` function. Engine loads active model per request via `loadActiveModel` and passes coefficients to `scoreEdge`; falls back to heuristic when no active row exists.
+Phase-2 auto-hedge: `scout-speed-hedge-monitor` (cron 1m) scans `lag_edges` fired in last 20m where `hedge_fired_at IS NULL`, compares latest `market_snapshot` line vs fired snapshot line, fires hedge Telegram + stamps `hedge_*` columns when reverse ≥ `HEDGE_REVERSE_THRESHOLD` (0.5 line units) against `intended_direction`. Direction set on fire via `eventDirection(event_type)` — DOWN events: INJURY/FOUL/SUBSTITUTION/TIMEOUT; everything else UP. Idempotent via `.is("hedge_fired_at", null)` guard on update.
 
 - Tables: `live_events`, `market_snapshot`, `lag_edges`, `market_baselines` (admin-read RLS).
 - Defaults: `EV_FLOOR = 0.03`, edge window = 15s, snapshot lookback = 30s. Excess-lag floor = 2s above per-market baseline.
