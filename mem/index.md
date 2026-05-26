@@ -26,3 +26,4 @@ Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_m
 - [Profitability math (BANKROLL_MATH_V1)](mem://logic/betting/profitability-math) — Bayesian-smoothed p̂, ¼-Kelly stake, 7d EV gates, daily envelope
 - [Leg validation gate](mem://logic/parlay/leg-validation-gate) — Shared hard/soft verifier (canonical team, venue alignment, no-same-game, weak-fav haircut) wired into cross-sport-parlay-generator
 - [Scout Speed Edge](mem://features/scout/speed-edge) — Phase-0 lag hunter (live_events + market_snapshot + lag_edges), EV_FLOOR 0.03, 15s window, ½-Kelly, admin Telegram + /admin/scout-speed UI
+- [Prop alert verifier](mem://logic/betting/prop-alert-verifier) — Deep-research second-opinion agent: Perplexity sonar-deep-research + GPT-5 judge, soft-tags every alert with APPROVE/CAUTION/REJECT + multiplier, realtime trigger + 5-min sweep, 300/day cap with Gemini fallback
