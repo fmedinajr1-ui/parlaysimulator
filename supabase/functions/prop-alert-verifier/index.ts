@@ -253,7 +253,6 @@ async function checkDailyCap(supa: ReturnType<typeof getSupabase>): Promise<{ ov
 
 async function bumpDailyCount(supa: ReturnType<typeof getSupabase>, costUsd: number) {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-  await supa.rpc("touch_prop_alert_verdicts").catch(() => {});
   // upsert via insert + on conflict using a manual select/update so we don't need a custom rpc
   const { data: existing } = await supa.from("prop_alert_verifier_daily_cost").select("*").eq("cost_date", today).maybeSingle();
   if (existing) {
