@@ -1,76 +1,59 @@
-## Scout Speed Edge Engine — Phase 0 Build Plan
+## Goal
 
-Backend-only first pass. Real feeds POST to our webhooks. Telegram routes to admin chat. Defaults from spec (EV_FLOOR=0.03, 15s window, unique (source_event_id, edge_type) dedupe). UI = minimal admin Edge Terminal table for now.
+Run `scripts/scout-speed-smoke.ts --scenarios` automatically on pull requests so we catch breakage in the ingest → edge → DB → Telegram pipeline before merge. Skip cleanly when secrets aren't available (fork PRs) so we don't false-fail.
 
-### 1. Database migration
+## Files
 
-Single migration creating:
-- `live_events` (sport, game_id, event_time, event_type, player_name, team, raw_data jsonb) + indexes on `(game_id, event_time desc)` and `(event_type, created_at desc)`.
-- `market_snapshot` (sportsbook, game_id, market_type, player_name, line, odds, captured_at) + indexes for game/market/time lookups.
-- `lag_edges` with detection signals, model outputs, lifecycle, backtest fields, FK to `live_events` and `market_snapshot`, partial index `(status, expires_at) where status='active'`, and unique `(source_event_id, edge_type)` for dedupe.
-- `market_baselines` seeded with the 7 default lag rows.
-- RLS: all four tables service-role-only writes; `lag_edges` readable by admins via existing `has_role(auth.uid(),'admin')` for the Edge Terminal UI.
-- ET-standardized timestamps (`timestamptz default now()`), matching core memory rules.
+**New: `.github/workflows/scout-speed-smoke.yml`**
 
-### 2. Edge functions
+Triggers
+- `pull_request` against `main` — only when scout-speed surface area changes:
+  - `supabase/functions/scout-live-edge/**`
+  - `supabase/functions/market-snapshot-ingest/**`
+  - `supabase/functions/edge-resolver/**`
+  - `supabase/functions/closing-line-resolver/**`
+  - `supabase/functions/_shared/scout-speed/**`
+  - `scripts/scout-speed-smoke.ts`
+  - `.github/workflows/scout-speed-smoke.yml`
+- `workflow_dispatch` for manual runs.
 
-Three new functions, all `verify_jwt = false`, HMAC verification on the two ingest endpoints.
+Concurrency
+- Group by ref so back-to-back PR pushes cancel earlier runs.
 
-**`market-snapshot-ingest`** — Accepts single object or `{snapshots:[...]}`, validates with Zod, bulk-inserts into `market_snapshot`. Verifies `ODDS_FEED_WEBHOOK_SECRET` HMAC header.
+Job: `smoke` (runs on `ubuntu-latest`)
+1. `actions/checkout@v4`
+2. `oven-sh/setup-bun@v2` (bun ≥ 1.1)
+3. **Preflight step** — check if `ODDS_FEED_WEBHOOK_SECRET` is non-empty. If empty, emit a notice (`echo "::notice ::Webhook secrets unavailable — likely a fork PR; skipping smoke."`), set an output `has_secrets=false`, and `exit 0`. This is how we gate fork PRs without failing the check.
+4. Subsequent steps `if: steps.preflight.outputs.has_secrets == 'true'`:
+   - Run `bun scripts/scout-speed-smoke.ts --scenarios` with env:
+     - `ODDS_FEED_WEBHOOK_SECRET`
+     - `LIVE_EVENT_WEBHOOK_SECRET`
+     - `SUPABASE_SERVICE_ROLE_KEY`
+   - Timeout 5 min.
+5. On failure, the script already exits non-zero with per-scenario detail, which becomes the failing check.
 
-**`scout-live-edge`** — Event webhook. Flow:
-1. `{ping:true}` short-circuit for warm-keeper.
-2. Verify `LIVE_EVENT_WEBHOOK_SECRET`.
-3. Insert into `live_events`.
-4. Load `market_baselines` into a Map.
-5. Pull last 30s of `market_snapshot` for the game.
-6. For each snapshot: relevance map gate → player-name filter for `player_*` markets → compute `lag = event_time - captured_at` → require `excess_lag ≥ 2s` → score via heuristic `scoreEdge()` + `impactScore()` → require `EV ≥ 0.03` → compute half-Kelly stake → insert `lag_edges` row with `expires_at = now()+15s` → on success (23505 = silent skip) fire Telegram → stamp `fired_at`.
-7. Telegram message uses spec format with FIRE/STRONG/WATCH tiers and full property labels ("Assists", "Points", etc.) per core memory rule, sent through existing `bot-send-telegram` with `admin_only: true` so we reuse chunking/rate logic instead of calling Telegram API directly.
+Permissions: `contents: read` only.
 
-**`edge-resolver`** — Minute-cron. Selects active edges past `expires_at`, joins latest snapshot vs origin snapshot to compute `actual_move`, marks `status='expired'`. Scheduled via `pg_cron` + `pg_net` (separate `supabase--insert` call, not migration, so it isn't replayed on remixes).
+## Required GitHub repo secrets
 
-A warm-keeper cron also pings `scout-live-edge` every 60s.
-
-### 3. Shared utilities
-
-`supabase/functions/_shared/scout-speed/` with:
-- `relevance.ts` — event↔market type map.
-- `scoring.ts` — `impactScore`, `scoreEdge` (heuristic, clearly marked PHASE-0), `halfKellyStake`, EV calc.
-- `hmac.ts` — shared HMAC verifier for both ingest endpoints.
-- `telegram-format.ts` — alert formatter with tier emoji + full property labels.
-
-Five Deno tests per memory rule (`constraints/testing-policy`): relevance map, scoreEdge monotonicity in excess_lag, EV floor gate, half-Kelly non-negativity, dedupe (23505) skip behavior.
-
-### 4. Minimal admin UI
-
-New route `/admin/scout-speed` (gated by `useAdminRole`):
-- Polls `lag_edges` (status=active, ordered by `model_edge desc`) every 5s + realtime subscription on insert/update.
-- Table columns: Player • Market+Line • Book • Confidence% • EV% • Lag (s) • Countdown • Status.
-- Color band: red ≥10% EV, orange 6–10%, gray 3–6%.
-- Bottom strip: last 30 fired edges with W/L/expired/void chip.
-- Link added under existing admin nav. No Live Field, no Chess Alerts in this pass (deferred to Phase 1 UI).
-
-### 5. Secrets & config
-
-Request via `add_secret` if not already present:
+User adds these once in **Settings → Secrets and variables → Actions**:
 - `ODDS_FEED_WEBHOOK_SECRET`
 - `LIVE_EVENT_WEBHOOK_SECRET`
+- `SUPABASE_SERVICE_ROLE_KEY`
 
-`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` already configured (used by other bot functions).
+(They already exist as Lovable Cloud runtime secrets — they need to be copied into the GitHub repo for Actions.)
 
-### 6. Memory
+## Fork-PR safety
 
-Add `mem://features/scout/speed-edge` describing: Phase-0 heuristic in place, EV_FLOOR=0.03, 15s window, dedupe rule, calibration plan (export → logistic regression → hardcode coefficients → raise floor). Add a Core line: *"Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_move data — do not tune by hand."*
+GitHub doesn't expose secrets to PRs from forks. The preflight step detects the empty secret and exits 0 with a notice, so the workflow is green but obviously a no-op. Branch-protection rules can keep allowing merges; for fork contributions, a maintainer pushes to a branch in the main repo to actually execute the smoke run.
 
-### Out of scope this pass
+## Out of scope
 
-Full 3-column Scout Live page, Chess Alerts views, closing-line resolver, vision/OCR ingest, auto-hedge, live SGP builder. All called out in spec Phase 2 and will be separate plans.
+- Running the full Deno test suite (`supabase/functions/_shared/scout-speed/scout-speed_test.ts`) — separate workflow if/when wanted; this plan stays focused on the live end-to-end harness as requested.
+- Posting alert results back to the PR as a comment.
+- Scheduled nightly runs against production endpoints.
 
-### Sequence
+## After approval
 
-1. Migration (await approval).
-2. Shared utils + 3 edge functions + tests.
-3. Deploy + curl smoke tests via `supabase--curl_edge_functions` (ping, snapshot insert, synthetic event → expect lag_edge row + Telegram).
-4. Cron schedule via `supabase--insert`.
-5. Admin UI page + nav link.
-6. Memory write.
+1. Create `.github/workflows/scout-speed-smoke.yml`.
+2. Tell the user exactly which three secrets to add in GitHub repo settings, with a one-line description of each.

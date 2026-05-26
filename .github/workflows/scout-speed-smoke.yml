@@ -1,0 +1,62 @@
+name: Scout Speed Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/functions/scout-live-edge/**"
+      - "supabase/functions/market-snapshot-ingest/**"
+      - "supabase/functions/edge-resolver/**"
+      - "supabase/functions/closing-line-resolver/**"
+      - "supabase/functions/_shared/scout-speed/**"
+      - "scripts/scout-speed-smoke.ts"
+      - ".github/workflows/scout-speed-smoke.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: scout-speed-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Scenario suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ">=1.1.0"
+
+      - name: Preflight - verify webhook secrets present
+        id: preflight
+        env:
+          ODDS_FEED_WEBHOOK_SECRET: ${{ secrets.ODDS_FEED_WEBHOOK_SECRET }}
+          LIVE_EVENT_WEBHOOK_SECRET: ${{ secrets.LIVE_EVENT_WEBHOOK_SECRET }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$ODDS_FEED_WEBHOOK_SECRET" ] || [ -z "$LIVE_EVENT_WEBHOOK_SECRET" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::notice::Webhook secrets unavailable (likely a fork PR) — skipping smoke run."
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.preflight.outputs.has_secrets == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Run scenario suite
+        if: steps.preflight.outputs.has_secrets == 'true'
+        timeout-minutes: 5
+        env:
+          ODDS_FEED_WEBHOOK_SECRET: ${{ secrets.ODDS_FEED_WEBHOOK_SECRET }}
+          LIVE_EVENT_WEBHOOK_SECRET: ${{ secrets.LIVE_EVENT_WEBHOOK_SECRET }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: bun scripts/scout-speed-smoke.ts --scenarios
