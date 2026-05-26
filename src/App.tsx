@@ -49,6 +49,7 @@ const AdminTikTok = React.lazy(() => import("./pages/admin/AdminTikTok"));
 const AdminAlertThresholds = React.lazy(() => import("./pages/admin/AlertThresholds"));
 const ScoutSpeedEdge = React.lazy(() => import("./pages/admin/ScoutSpeedEdge"));
 const PropAlertVerifier = React.lazy(() => import("./pages/admin/PropAlertVerifier"));
+const CourtEdgeAccuracy = React.lazy(() => import("./pages/admin/CourtEdgeAccuracy"));
 const PropScanner = React.lazy(() => import("./pages/PropScanner"));
 const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 const LiveAI = React.lazy(() => import("./pages/LiveAI"));
@@ -116,6 +117,7 @@ function AnimatedRoutes() {
               <Route path="/admin/alert-thresholds" element={<AdminAlertThresholds />} />
               <Route path="/admin/scout-speed" element={<ScoutSpeedEdge />} />
               <Route path="/admin/verifier" element={<PropAlertVerifier />} />
+              <Route path="/admin/court-edge-accuracy" element={<CourtEdgeAccuracy />} />
               <Route path="/unsubscribe" element={<Unsubscribe />} />
               <Route path="/grade" element={<GradeSlip />} />
               <Route path="/scan" element={<PropScanner />} />
