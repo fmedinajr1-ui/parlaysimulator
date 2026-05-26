@@ -13814,6 +13814,108 @@ export type Database = {
         }
         Relationships: []
       }
+      prop_alert_verdicts: {
+        Row: {
+          alert_id: string
+          confidence_multiplier: number
+          cost_usd: number | null
+          created_at: string
+          error_message: string | null
+          event_id: string | null
+          evidence: Json
+          flags: string[]
+          id: string
+          judge_model: string | null
+          line: number | null
+          player_name: string | null
+          prop_type: string | null
+          reasoning: string | null
+          research_model: string | null
+          research_ms: number | null
+          side: string | null
+          source_table: string
+          sport: string | null
+          status: string
+          tokens_used: number | null
+          updated_at: string
+          verdict: Database["public"]["Enums"]["prop_verifier_verdict"]
+          verdict_confidence: number | null
+        }
+        Insert: {
+          alert_id: string
+          confidence_multiplier?: number
+          cost_usd?: number | null
+          created_at?: string
+          error_message?: string | null
+          event_id?: string | null
+          evidence?: Json
+          flags?: string[]
+          id?: string
+          judge_model?: string | null
+          line?: number | null
+          player_name?: string | null
+          prop_type?: string | null
+          reasoning?: string | null
+          research_model?: string | null
+          research_ms?: number | null
+          side?: string | null
+          source_table: string
+          sport?: string | null
+          status?: string
+          tokens_used?: number | null
+          updated_at?: string
+          verdict: Database["public"]["Enums"]["prop_verifier_verdict"]
+          verdict_confidence?: number | null
+        }
+        Update: {
+          alert_id?: string
+          confidence_multiplier?: number
+          cost_usd?: number | null
+          created_at?: string
+          error_message?: string | null
+          event_id?: string | null
+          evidence?: Json
+          flags?: string[]
+          id?: string
+          judge_model?: string | null
+          line?: number | null
+          player_name?: string | null
+          prop_type?: string | null
+          reasoning?: string | null
+          research_model?: string | null
+          research_ms?: number | null
+          side?: string | null
+          source_table?: string
+          sport?: string | null
+          status?: string
+          tokens_used?: number | null
+          updated_at?: string
+          verdict?: Database["public"]["Enums"]["prop_verifier_verdict"]
+          verdict_confidence?: number | null
+        }
+        Relationships: []
+      }
+      prop_alert_verifier_daily_cost: {
+        Row: {
+          cost_date: string
+          cost_usd: number
+          updated_at: string
+          verdicts_count: number
+        }
+        Insert: {
+          cost_date?: string
+          cost_usd?: number
+          updated_at?: string
+          verdicts_count?: number
+        }
+        Update: {
+          cost_date?: string
+          cost_usd?: number
+          updated_at?: string
+          verdicts_count?: number
+        }
+        Relationships: []
+      }
       prop_engine_v2_picks: {
         Row: {
           auto_fail_reason: string | null
@@ -19133,6 +19235,7 @@ export type Database = {
         | "full_access"
         | "elite_access"
         | "odds_tracker_access"
+      prop_verifier_verdict: "APPROVE" | "CAUTION" | "REJECT"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -19270,6 +19373,7 @@ export const Constants = {
         "elite_access",
         "odds_tracker_access",
       ],
+      prop_verifier_verdict: ["APPROVE", "CAUTION", "REJECT"],
     },
   },
 } as const
