@@ -13899,18 +13899,21 @@ export type Database = {
         Row: {
           cost_date: string
           cost_usd: number
+          last_approve_notify_at: string | null
           updated_at: string
           verdicts_count: number
         }
         Insert: {
           cost_date?: string
           cost_usd?: number
+          last_approve_notify_at?: string | null
           updated_at?: string
           verdicts_count?: number
         }
         Update: {
           cost_date?: string
           cost_usd?: number
+          last_approve_notify_at?: string | null
           updated_at?: string
           verdicts_count?: number
         }
