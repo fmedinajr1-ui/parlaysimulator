@@ -3,6 +3,7 @@ import { isRelevant } from "../_shared/scout-speed/relevance.ts";
 import { impactScore, scoreEdge, evPerUnit, halfKellyStake } from "../_shared/scout-speed/scoring.ts";
 import { verifyHmac } from "../_shared/scout-speed/hmac.ts";
 import { formatSpeedEdgeAlert } from "../_shared/scout-speed/telegram-format.ts";
+import { loadActiveModel } from "../_shared/scout-speed/model.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -94,6 +95,9 @@ Deno.serve(async (req) => {
     console.error("[scout-live-edge] baseline load failed", e);
   }
 
+  // 2b) active learned model (null → heuristic fallback in scoreEdge)
+  const activeModel = await loadActiveModel(supabase);
+
   // 3) recent snapshots
   let markets: any[] = [];
   try {
@@ -126,7 +130,7 @@ Deno.serve(async (req) => {
       event_impact: impactScore(event.event_type),
       time_remaining: event?.raw_data?.minutes_remaining ?? 24,
     };
-    const { prob, expectedMove } = scoreEdge(features);
+    const { prob, expectedMove } = scoreEdge(features, activeModel?.coefficients ?? null);
     const ev = evPerUnit(prob, expectedMove);
     if (ev < EV_FLOOR) continue;
 

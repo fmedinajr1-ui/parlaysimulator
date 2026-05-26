@@ -14524,6 +14524,54 @@ export type Database = {
         }
         Relationships: []
       }
+      scout_speed_models: {
+        Row: {
+          active: boolean
+          brier: number | null
+          coefficients: Json
+          created_at: string
+          fit_at: string
+          id: string
+          log_loss: number | null
+          mse_move: number | null
+          n_samples: number
+          notes: string | null
+          training_window_end: string | null
+          training_window_start: string | null
+          version: number
+        }
+        Insert: {
+          active?: boolean
+          brier?: number | null
+          coefficients: Json
+          created_at?: string
+          fit_at?: string
+          id?: string
+          log_loss?: number | null
+          mse_move?: number | null
+          n_samples?: number
+          notes?: string | null
+          training_window_end?: string | null
+          training_window_start?: string | null
+          version: number
+        }
+        Update: {
+          active?: boolean
+          brier?: number | null
+          coefficients?: Json
+          created_at?: string
+          fit_at?: string
+          id?: string
+          log_loss?: number | null
+          mse_move?: number | null
+          n_samples?: number
+          notes?: string | null
+          training_window_end?: string | null
+          training_window_start?: string | null
+          version?: number
+        }
+        Relationships: []
+      }
       settlement_records: {
         Row: {
           created_at: string

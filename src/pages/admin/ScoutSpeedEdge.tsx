@@ -6,8 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Zap, Activity } from "lucide-react";
+import { Zap, Activity, Brain } from "lucide-react";
 import { MobileHeader } from "@/components/layout/MobileHeader";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
 type LagEdge = {
   id: string;
@@ -73,10 +75,13 @@ export default function ScoutSpeedEdge() {
   const [active, setActive] = useState<LagEdge[]>([]);
   const [recent, setRecent] = useState<LagEdge[]>([]);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+  const [model, setModel] = useState<any>(null);
+  const [training, setTraining] = useState(false);
 
   async function load() {
     try {
-      const [a, r] = await Promise.all([
+      const [a, r, m] = await Promise.all([
         supabase
           .from("lag_edges")
           .select("*")
@@ -90,13 +95,39 @@ export default function ScoutSpeedEdge() {
           .not("fired_at", "is", null)
           .order("fired_at", { ascending: false })
           .limit(30),
+        supabase
+          .from("scout_speed_models")
+          .select("version, n_samples, log_loss, brier, mse_move, active, fit_at")
+          .order("fit_at", { ascending: false })
+          .limit(5),
       ]);
       if (!a.error) setActive((a.data as LagEdge[]) ?? []);
       if (!r.error) setRecent((r.data as LagEdge[]) ?? []);
+      if (!m.error) setModel(m.data ?? []);
     } catch (e) {
       console.error("[ScoutSpeedEdge] load failed", e);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runTrainer(opts: { activate_latest?: boolean } = {}) {
+    setTraining(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("scout-speed-model-trainer", { body: opts });
+      if (error) throw error;
+      if (data?.skipped === "insufficient_data") {
+        toast({ title: "Not enough data yet", description: `${data.n}/${data.min_samples} resolved edges. ${data.message}` });
+      } else if (data?.ok) {
+        toast({ title: opts.activate_latest ? "Model activated" : "Model trained", description: `v${data.version ?? "—"} · n=${data.n ?? "—"} · log-loss=${data.log_loss?.toFixed?.(3) ?? "—"}` });
+        load();
+      } else {
+        toast({ title: "Trainer error", description: data?.error ?? "unknown", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Trainer failed", description: e?.message ?? String(e), variant: "destructive" });
+    } finally {
+      setTraining(false);
     }
   }
 
@@ -138,6 +169,60 @@ export default function ScoutSpeedEdge() {
         icon={<Zap className="w-5 h-5 text-primary" />}
       />
       <main className="container mx-auto px-4 py-6 space-y-6">
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-primary" />
+              Learned model (Phase 1)
+            </CardTitle>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={training} onClick={() => runTrainer()}>Train now</Button>
+              <Button size="sm" variant="default" disabled={training} onClick={() => runTrainer({ activate_latest: true })}>Activate latest</Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {!model || (Array.isArray(model) && model.length === 0) ? (
+              <p className="text-sm text-muted-foreground">
+                No models trained yet. Engine is using the Phase-0 heuristic. Click <em>Train now</em> once
+                ≥200 resolved edges have accumulated in <code className="text-xs">lag_edges</code>.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Version</TableHead>
+                    <TableHead className="text-right">Samples</TableHead>
+                    <TableHead className="text-right">Log-loss</TableHead>
+                    <TableHead className="text-right">Brier</TableHead>
+                    <TableHead className="text-right">MSE (move)</TableHead>
+                    <TableHead>Fit at</TableHead>
+                    <TableHead className="text-right">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(model as any[]).map((m) => (
+                    <TableRow key={m.version}>
+                      <TableCell className="font-mono">v{m.version}</TableCell>
+                      <TableCell className="text-right">{m.n_samples}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{m.log_loss != null ? Number(m.log_loss).toFixed(3) : "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{m.brier != null ? Number(m.brier).toFixed(3) : "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{m.mse_move != null ? Number(m.mse_move).toFixed(3) : "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{new Date(m.fit_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-right">
+                        {m.active ? (
+                          <Badge className="bg-emerald-500/15 text-emerald-400">active</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">inactive</Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div>

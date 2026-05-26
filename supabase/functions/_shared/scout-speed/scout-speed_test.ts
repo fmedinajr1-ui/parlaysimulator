@@ -3,6 +3,14 @@ import { isRelevant, EVENT_MARKET_MAP } from "./relevance.ts";
 import { scoreEdge, evPerUnit, halfKellyStake, impactScore } from "./scoring.ts";
 import { verifyHmac } from "./hmac.ts";
 import { tierFor, formatSpeedEdgeAlert } from "./telegram-format.ts";
+import {
+  fitLogistic,
+  fitLinear,
+  logLoss,
+  brierScore,
+  type TrainingRow,
+  type SpeedModelCoefficients,
+} from "./model.ts";
 
 Deno.test("relevance map gates event/market pairs correctly", () => {
   assert(isRelevant("ASSIST", "player_ast"));
@@ -74,4 +82,84 @@ Deno.test("Telegram formatter uses full property labels and tier emoji", () => {
   assert(msg.includes("🔥 FIRE"));
   assert(msg.includes("Brunson"));
   assert(!msg.includes("player_ast"));
+});
+
+// ===== Phase 1: learned-model tests =====
+
+Deno.test("scoreEdge falls back to heuristic when no model is provided", () => {
+  const f = { excess_lag: 4, event_impact: 0.7, time_remaining: 20 };
+  const heur = scoreEdge(f);
+  assertEquals(heur.source, "heuristic");
+  const withNull = scoreEdge(f, null);
+  assertEquals(withNull.source, "heuristic");
+  assertEquals(heur.prob, withNull.prob);
+});
+
+Deno.test("scoreEdge uses model coefficients and clamps to prob_cap / move_floor", () => {
+  const model: SpeedModelCoefficients = {
+    prob_intercept: -10, prob_b_lag: 0, prob_b_impact: 0, prob_b_time: 0, prob_cap: 0.9,
+    move_intercept: -5, move_b_lag: 0, move_b_impact: 0, move_floor: 0.1,
+  };
+  const out = scoreEdge({ excess_lag: 1, event_impact: 0.5, time_remaining: 10 }, model);
+  assertEquals(out.source, "model");
+  assert(out.prob < 0.001, `prob should be tiny, got ${out.prob}`);
+  assertEquals(out.expectedMove, 0.1); // floored
+
+  const hot: SpeedModelCoefficients = { ...model, prob_intercept: 50 };
+  const hotOut = scoreEdge({ excess_lag: 1, event_impact: 0.5, time_remaining: 10 }, hot);
+  assertEquals(hotOut.prob, 0.9); // capped
+});
+
+Deno.test("fitLogistic recovers a clear linear separation", () => {
+  // hit = 1 iff excess_lag >= 5
+  const rows: TrainingRow[] = [];
+  for (let lag = 0; lag <= 10; lag++) {
+    for (let k = 0; k < 25; k++) {
+      rows.push({
+        excess_lag: lag, event_impact: 0.7, time_remaining: 20,
+        hit: lag >= 5 ? 1 : 0, actual_move: lag * 0.1,
+      });
+    }
+  }
+  const w = fitLogistic(rows, { iters: 3000 });
+  // Decision boundary ≈ 5 ⇒ b_lag * 5 + intercept ≈ 0, so b_lag > 0 and intercept < 0
+  assert(w[1] > 0, `expected positive lag weight, got ${w[1]}`);
+  assert(w[0] < 0, `expected negative intercept, got ${w[0]}`);
+  const ll = logLoss(rows, w);
+  const br = brierScore(rows, w);
+  assert(ll < 0.4, `log-loss should be low, got ${ll}`);
+  assert(br < 0.15, `brier should be low, got ${br}`);
+});
+
+Deno.test("fitLinear recovers known coefficients (closed-form OLS)", () => {
+  // y = 0.3 + 0.2*excess_lag + 0.5*event_impact
+  const rows: TrainingRow[] = [];
+  for (let lag = 0; lag <= 10; lag++) {
+    for (const imp of [0.3, 0.5, 0.7, 0.9, 1.0]) {
+      rows.push({
+        excess_lag: lag, event_impact: imp, time_remaining: 20,
+        hit: 1, actual_move: 0.3 + 0.2 * lag + 0.5 * imp,
+      });
+    }
+  }
+  const [b0, bLag, bImp] = fitLinear(rows);
+  assert(Math.abs(b0 - 0.3) < 1e-6, `intercept off: ${b0}`);
+  assert(Math.abs(bLag - 0.2) < 1e-6, `lag off: ${bLag}`);
+  assert(Math.abs(bImp - 0.5) < 1e-6, `impact off: ${bImp}`);
+});
+
+Deno.test("EV/Kelly downstream math is unchanged by model path", () => {
+  const model: SpeedModelCoefficients = {
+    prob_intercept: 0, prob_b_lag: 0.1, prob_b_impact: 0.5, prob_b_time: 0, prob_cap: 0.95,
+    move_intercept: 0.5, move_b_lag: 0.05, move_b_impact: 0.2, move_floor: 0.05,
+  };
+  const f = { excess_lag: 6, event_impact: impactScore("SHOT_MADE"), time_remaining: 18 };
+  const m = scoreEdge(f, model);
+  assert(halfKellyStake(m.prob, m.expectedMove) >= 0);
+
+  // Cold model → very low prob → negative EV → stake floored at 0.
+  const cold: SpeedModelCoefficients = { ...model, prob_intercept: -8 };
+  const c = scoreEdge(f, cold);
+  assert(evPerUnit(c.prob, c.expectedMove) < 0);
+  assertEquals(halfKellyStake(c.prob, c.expectedMove), 0);
 });
