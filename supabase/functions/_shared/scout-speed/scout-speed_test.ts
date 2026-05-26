@@ -218,12 +218,11 @@ Deno.test("MLB: formatHedgeAlert renders Home Runs label and flips side", async 
   assert(!/HR\b/.test(msg));
 });
 
-Deno.test("MLB: per-market reverse threshold falls back to default for unknown markets", async () => {
-  const { thresholdFor } = await import("../../scout-speed-hedge-monitor/index.ts")
-    .catch(async () => ({ thresholdFor: (_: string) => 0.5 })); // tolerate import side-effects
-  assertEquals(thresholdFor("player_home_runs"), 0.5);
-  assertEquals(thresholdFor("player_strikeouts"), 0.5);
-  assertEquals(thresholdFor("totally_unknown_market"), 0.5);
+Deno.test("MLB: impactScore covers new MLB events", () => {
+  assert(impactScore("HOME_RUN") >= 0.9);
+  assert(impactScore("STRIKEOUT") > 0.5);
+  assert(impactScore("WALK") > 0);
+  assertEquals(impactScore("UNKNOWN_MLB_EVENT"), 0.5);
 });
 
 Deno.test("reverseDelta fires when market moves against intended direction", () => {
