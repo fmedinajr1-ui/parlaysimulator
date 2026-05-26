@@ -14,9 +14,14 @@ interface Row {
   result: string | null;
   matchup: string | null;
   commence_at: string;
+  suppressed?: boolean | null;
+  suppressed_reason?: string | null;
+  projection?: number | null;
 }
 
 interface Bucket { label: string; wins: number; losses: number; pushes: number }
+
+interface BiasRow { dimension: string; bucket: string; n: number; mean_residual: number | null; win_rate: number | null }
 
 function rate(b: Bucket): string {
   const decided = b.wins + b.losses;
@@ -66,20 +71,30 @@ function tierFromTournament(t: string | null): string {
 
 export default function CourtEdgeAccuracy() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [bias, setBias] = useState<BiasRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [settling, setSettling] = useState(false);
+  const [diffing, setDiffing] = useState(false);
+  const [diffResult, setDiffResult] = useState<any>(null);
 
   async function load() {
     setLoading(true);
-    const { data, error } = await supabase
+    const [{ data, error }, biasRes] = await Promise.all([
+      supabase
       .from("court_edge_picks")
-      .select("verdict,surface,tournament,edge_pct,line,actual_total_games,result,matchup,commence_at")
+      .select("verdict,surface,tournament,edge_pct,line,actual_total_games,result,matchup,commence_at,suppressed,suppressed_reason,projection")
       .eq("graded", true)
       .in("verdict", ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER"])
       .order("commence_at", { ascending: false })
-      .limit(1000);
+      .limit(1000),
+      supabase.from("projection_bias_audit").select("*"),
+    ]);
     if (error) console.error(error);
+    if (biasRes.error) console.error(biasRes.error);
     setRows((data as Row[]) || []);
+    setBias(((biasRes.data as BiasRow[]) || []).sort((a, b) =>
+      Math.abs(Number(b.mean_residual ?? 0)) - Math.abs(Number(a.mean_residual ?? 0))
+    ));
     setLoading(false);
   }
 
@@ -95,17 +110,36 @@ export default function CourtEdgeAccuracy() {
     } finally { setSettling(false); }
   }
 
-  const total: Bucket = { label: "OVERALL", wins: 0, losses: 0, pushes: 0 };
-  for (const r of rows) {
-    if (r.result === "WIN") total.wins++;
-    else if (r.result === "LOSS") total.losses++;
-    else if (r.result === "PUSH") total.pushes++;
+  async function runParserDiff() {
+    setDiffing(true);
+    setDiffResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("court-edge-parser-diff", { body: { limit: 400 } });
+      if (error) console.error(error);
+      setDiffResult(data ?? { error: error?.message });
+    } finally { setDiffing(false); }
   }
 
-  const byVerdict = bucketBy(rows, (r) => r.verdict);
-  const bySurface = bucketBy(rows, (r) => r.surface ?? "unknown");
-  const byTier = bucketBy(rows, (r) => tierFromTournament(r.tournament));
-  const byEdge = bucketBy(rows, (r) => edgeBucket(Number(r.edge_pct)));
+  // v1 = legacy (all graded), v2 = excludes suppressed STRONG_OVER
+  const tallyRow = (r: Row, b: Bucket) => {
+    if (r.result === "WIN") b.wins++;
+    else if (r.result === "LOSS") b.losses++;
+    else if (r.result === "PUSH") b.pushes++;
+  };
+  const v1: Bucket = { label: "v1", wins: 0, losses: 0, pushes: 0 };
+  const v2: Bucket = { label: "v2", wins: 0, losses: 0, pushes: 0 };
+  for (const r of rows) {
+    tallyRow(r, v1);
+    if (!r.suppressed) tallyRow(r, v2);
+  }
+
+  const liveRows = rows.filter((r) => !r.suppressed);
+  const suppressedRows = rows.filter((r) => r.suppressed);
+
+  const byVerdict = bucketBy(liveRows, (r) => r.verdict);
+  const bySurface = bucketBy(liveRows, (r) => r.surface ?? "unknown");
+  const byTier = bucketBy(liveRows, (r) => tierFromTournament(r.tournament));
+  const byEdge = bucketBy(liveRows, (r) => edgeBucket(Number(r.edge_pct)));
 
   const Section = ({ title, buckets }: { title: string; buckets: Bucket[] }) => (
     <Card className="p-4">
@@ -144,32 +178,49 @@ export default function CourtEdgeAccuracy() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Court.Edge Accuracy</h1>
-          <p className="text-sm text-muted-foreground">Graded tennis picks, broken down by tier · ROI assumes -110.</p>
+          <p className="text-sm text-muted-foreground">Graded tennis picks · ROI assumes -110 · v2 excludes suppressed STRONG_OVER.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={load} disabled={loading}>Refresh</Button>
           <Button onClick={runSettle} disabled={settling}>{settling ? "Settling…" : "Run settle now"}</Button>
+          <Button variant="secondary" onClick={runParserDiff} disabled={diffing}>{diffing ? "Diffing…" : "Run parser diff"}</Button>
         </div>
       </div>
 
-      <Card className="p-4 flex items-center gap-6">
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Sample</div>
-          <div className="text-2xl font-bold">{total.wins + total.losses + total.pushes}</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Wins / Losses</div>
-          <div className="text-2xl font-bold">{total.wins}–{total.losses}<span className="text-sm text-muted-foreground ml-2">({total.pushes} push)</span></div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Hit rate</div>
-          <div className="text-2xl font-bold">{rate(total)}</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">ROI (-110)</div>
-          <div className="text-2xl font-bold">{roiUnits(total)}</div>
-        </div>
-      </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {[v1, v2].map((t, i) => (
+          <Card key={i} className="p-4">
+            <div className="text-xs text-muted-foreground uppercase mb-2">
+              {i === 0 ? "v1 · Legacy (all graded)" : "v2 · Excludes suppressed STRONG_OVER"}
+            </div>
+            <div className="flex items-center gap-6">
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">Sample</div>
+                <div className="text-2xl font-bold">{t.wins + t.losses + t.pushes}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">W–L</div>
+                <div className="text-2xl font-bold">{t.wins}–{t.losses}<span className="text-xs text-muted-foreground ml-2">({t.pushes}p)</span></div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">Hit</div>
+                <div className="text-2xl font-bold">{rate(t)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">ROI</div>
+                <div className="text-2xl font-bold">{roiUnits(t)}</div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {diffResult && (
+        <Card className="p-4">
+          <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Parser diff</h3>
+          <pre className="text-xs whitespace-pre-wrap overflow-x-auto">{JSON.stringify(diffResult, null, 2)}</pre>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Section title="By Verdict" buckets={byVerdict} />
@@ -177,6 +228,82 @@ export default function CourtEdgeAccuracy() {
         <Section title="By Surface" buckets={bySurface} />
         <Section title="By Tournament tier" buckets={byTier} />
       </div>
+
+      <Card className="p-4">
+        <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">
+          Projection bias (mean residual = projection − actual)
+        </h3>
+        <p className="text-xs text-muted-foreground mb-3">Positive residual = projection too high. Red = ≥+0.4 games with n ≥ 30 — candidate multiplier to dial back.</p>
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted-foreground">
+            <tr>
+              <th className="text-left py-1">Dimension</th>
+              <th className="text-left">Bucket</th>
+              <th className="text-right">n</th>
+              <th className="text-right">Mean residual</th>
+              <th className="text-right">Win rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bias.map((b, i) => {
+              const r = Number(b.mean_residual ?? 0);
+              const flag = r > 0.4 && b.n >= 30 ? "text-red-500 font-semibold"
+                : r < -0.4 && b.n >= 30 ? "text-green-500 font-semibold"
+                : "";
+              return (
+                <tr key={i} className="border-t border-border/40">
+                  <td className="py-1 font-mono text-xs">{b.dimension}</td>
+                  <td className="font-mono text-xs">{b.bucket}</td>
+                  <td className="text-right">{b.n}</td>
+                  <td className={`text-right ${flag}`}>{r > 0 ? "+" : ""}{r.toFixed(2)}</td>
+                  <td className="text-right">{b.win_rate == null ? "—" : `${b.win_rate}%`}</td>
+                </tr>
+              );
+            })}
+            {bias.length === 0 && (
+              <tr><td colSpan={5} className="text-center text-muted-foreground py-4 text-xs">No bias data yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card className="p-4">
+        <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">
+          Suppressed picks ({suppressedRows.length} graded)
+        </h3>
+        <p className="text-xs text-muted-foreground mb-3">Hidden from broadcast + headline ROI. Still graded so we can monitor whether the suppression decision was correct.</p>
+        <table className="w-full text-xs">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th className="text-left py-1">Match</th>
+              <th>Reason</th>
+              <th>Line</th>
+              <th>Proj</th>
+              <th>Actual</th>
+              <th>Would-be</th>
+            </tr>
+          </thead>
+          <tbody>
+            {suppressedRows.slice(0, 15).map((r, i) => (
+              <tr key={i} className="border-t border-border/40">
+                <td className="py-1 truncate max-w-[260px]">{r.matchup}</td>
+                <td className="text-center font-mono text-[10px]">{r.suppressed_reason}</td>
+                <td className="text-center">{r.line}</td>
+                <td className="text-center">{r.projection?.toFixed?.(1) ?? "—"}</td>
+                <td className="text-center">{r.actual_total_games ?? "—"}</td>
+                <td className="text-center">
+                  <Badge className={r.result === "WIN" ? "bg-green-600" : r.result === "LOSS" ? "bg-red-600" : "bg-muted"}>
+                    {r.result}
+                  </Badge>
+                </td>
+              </tr>
+            ))}
+            {suppressedRows.length === 0 && (
+              <tr><td colSpan={6} className="text-center text-muted-foreground py-4">No suppressed picks yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
 
       <Card className="p-4">
         <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Last 25 graded</h3>
@@ -192,7 +319,7 @@ export default function CourtEdgeAccuracy() {
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 25).map((r, i) => (
+            {liveRows.slice(0, 25).map((r, i) => (
               <tr key={i} className="border-t border-border/40">
                 <td className="py-1 truncate max-w-[260px]">{r.matchup}</td>
                 <td className="text-center"><Badge variant="outline" className="text-[10px]">{r.verdict.replace("_", " ")}</Badge></td>

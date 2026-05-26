@@ -3485,6 +3485,8 @@ export type Database = {
           settle_source: string | null
           settled_at: string | null
           source: string
+          suppressed: boolean
+          suppressed_reason: string | null
           surface: string | null
           tournament: string | null
           verdict: string
@@ -3518,6 +3520,8 @@ export type Database = {
           settle_source?: string | null
           settled_at?: string | null
           source: string
+          suppressed?: boolean
+          suppressed_reason?: string | null
           surface?: string | null
           tournament?: string | null
           verdict: string
@@ -3551,6 +3555,8 @@ export type Database = {
           settle_source?: string | null
           settled_at?: string | null
           source?: string
+          suppressed?: boolean
+          suppressed_reason?: string | null
           surface?: string | null
           tournament?: string | null
           verdict?: string
@@ -18453,6 +18459,16 @@ export type Database = {
           unsettled: number | null
           win_rate: number | null
           wins: number | null
+        }
+        Relationships: []
+      }
+      projection_bias_audit: {
+        Row: {
+          bucket: string | null
+          dimension: string | null
+          mean_residual: number | null
+          n: number | null
+          win_rate: number | null
         }
         Relationships: []
       }

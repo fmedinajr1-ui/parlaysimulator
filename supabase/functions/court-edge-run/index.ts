@@ -101,6 +101,10 @@ interface Pick {
   quarantine_reason?: string | null;
   books_count?: number | null;
   book_lines?: unknown;
+  // Pass-1: STRONG_OVER picks are persisted+graded but never broadcast or
+  // counted toward headline ROI. See plan: Court.Edge tennis model fix v1.
+  suppressed?: boolean;
+  suppressed_reason?: string | null;
 }
 
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
@@ -142,9 +146,13 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   const grouped: Record<Verdict, Pick[]> = {
     STRONG_OVER: [], STRONG_UNDER: [], LEAN_OVER: [], LEAN_UNDER: [], PASS: [], QUARANTINE: [],
   };
+  let suppressedCount = 0;
   for (const p of picks) {
     // QUARANTINE picks never appear in the user-facing digest; they're persisted for audit only.
     if (p.verdict === "QUARANTINE") { grouped.QUARANTINE.push(p); continue; }
+    // Pass-1: suppressed picks (e.g. STRONG_OVER) are persisted+graded but
+    // never appear in the user-facing digest. Count them separately.
+    if (p.suppressed) { suppressedCount += 1; continue; }
     grouped[p.verdict].push(p);
   }
 
@@ -171,7 +179,7 @@ function buildDigest(picks: Pick[], meta: { date: string; tournament: Tournament
   const passes = grouped.PASS.length;
   const quarantined = grouped.QUARANTINE.length;
   if (printed === 0) lines.push("_No actionable edges right now. Try again after the next slate refresh._\n");
-  lines.push(`Leans ${leans}  ·  Pass ${passes}  ·  Quarantine ${quarantined}`);
+  lines.push(`Leans ${leans}  ·  Pass ${passes}  ·  Quarantine ${quarantined}  ·  Suppressed ${suppressedCount}`);
   lines.push(`Sources: Odds API ${meta.sources.odds}  ·  PrizePicks ${meta.sources.pp}  ·  TennisAbstract ${meta.sources.l3}  ·  Weather ${meta.sources.wx}`);
   lines.push(`Run \`${meta.runId.slice(0, 8)}\`  ·  picks ${picks.length}  ·  errors ${meta.errors}`);
   // "Why empty?" diagnostic footer — only when nothing actionable went out.
@@ -590,9 +598,24 @@ Deno.serve(async (req) => {
       push(`Diagnostics warnings: ${diagnosticsBlob.warnings.join(", ")}`);
     }
 
-    // 6b. Build drilldown text for the top non-PASS picks (cap 5)
+    // 6a. Pass-1 STRONG_OVER suppression — mark in place. Picks are still
+    // persisted and graded so projection_bias_audit retains the residual,
+    // but they are filtered out of digest, drilldown, and headline ROI.
+    let suppressedStrongOver = 0;
+    for (const p of picks) {
+      if (p.verdict === "STRONG_OVER" && !p.suppressed) {
+        p.suppressed = true;
+        p.suppressed_reason = "strong_over_disabled_v1";
+        suppressedStrongOver += 1;
+      }
+    }
+    if (suppressedStrongOver > 0) push(`Suppressed STRONG_OVER picks: ${suppressedStrongOver}`);
+
+    // 6b. Build drilldown text for the top non-PASS, non-suppressed picks (cap 5)
     const DRILLDOWN_CAP = 5;
-    const topForDrilldown = picks.filter((p) => p.verdict !== "PASS").slice(0, DRILLDOWN_CAP);
+    const topForDrilldown = picks
+      .filter((p) => p.verdict !== "PASS" && !p.suppressed)
+      .slice(0, DRILLDOWN_CAP);
     for (const p of topForDrilldown) {
       const ref = breakdownByPickRef.get(p);
       if (!ref) continue;
