@@ -598,9 +598,24 @@ Deno.serve(async (req) => {
       push(`Diagnostics warnings: ${diagnosticsBlob.warnings.join(", ")}`);
     }
 
-    // 6b. Build drilldown text for the top non-PASS picks (cap 5)
+    // 6a. Pass-1 STRONG_OVER suppression — mark in place. Picks are still
+    // persisted and graded so projection_bias_audit retains the residual,
+    // but they are filtered out of digest, drilldown, and headline ROI.
+    let suppressedStrongOver = 0;
+    for (const p of picks) {
+      if (p.verdict === "STRONG_OVER" && !p.suppressed) {
+        p.suppressed = true;
+        p.suppressed_reason = "strong_over_disabled_v1";
+        suppressedStrongOver += 1;
+      }
+    }
+    if (suppressedStrongOver > 0) push(`Suppressed STRONG_OVER picks: ${suppressedStrongOver}`);
+
+    // 6b. Build drilldown text for the top non-PASS, non-suppressed picks (cap 5)
     const DRILLDOWN_CAP = 5;
-    const topForDrilldown = picks.filter((p) => p.verdict !== "PASS").slice(0, DRILLDOWN_CAP);
+    const topForDrilldown = picks
+      .filter((p) => p.verdict !== "PASS" && !p.suppressed)
+      .slice(0, DRILLDOWN_CAP);
     for (const p of topForDrilldown) {
       const ref = breakdownByPickRef.get(p);
       if (!ref) continue;
