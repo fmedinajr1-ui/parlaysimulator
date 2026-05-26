@@ -457,7 +457,7 @@ async function verifyOne(
   });
   // rough cost estimate: deep research ~$0.05, judge ~$0.02
   await bumpDailyCount(supa, degraded ? 0.005 : 0.07);
-  await notifyAdminTelegram(alert, judged.verdict, judged.confidence, multiplier, judged.reasoning, flags, degraded);
+  await notifyAdminTelegram(supa, alert, judged.verdict, judged.confidence, multiplier, judged.reasoning, flags, degraded);
   return { ok: true, verdict: judged.verdict };
 }
 
