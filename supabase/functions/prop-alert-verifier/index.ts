@@ -75,6 +75,65 @@ export function multiplierFor(verdict: Verdict, confidence: number): number {
   return Math.max(0.30, 0.55 - Math.min(0.25, (confidence - 50) / 200));
 }
 
+function verdictEmoji(v: Verdict): string {
+  return v === "APPROVE" ? "✅" : v === "CAUTION" ? "⚠️" : "🛑";
+}
+
+function escapeMd(s: string): string {
+  return String(s ?? "").replace(/([_*`\[\]()])/g, "\\$1");
+}
+
+async function notifyAdminTelegram(
+  alert: AlertCtx,
+  verdict: Verdict,
+  confidence: number,
+  multiplier: number,
+  reasoning: string,
+  flags: string[],
+  degraded: boolean,
+) {
+  try {
+    // Only notify on actionable verdicts (CAUTION / REJECT) or degraded runs.
+    const notify = verdict !== "APPROVE" || degraded;
+    if (!notify) return;
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRole) return;
+
+    const header = `${verdictEmoji(verdict)} *Verifier ${verdict}* ${degraded ? "_(degraded)_ " : ""}— mult \`${multiplier.toFixed(2)}x\``;
+    const ident = `*${escapeMd(alert.player_name ?? "Unknown")}* — ${escapeMd(alert.prop_type ?? "?")} ${escapeMd(alert.side ?? "")} ${alert.line ?? ""}`.trim();
+    const meta = `Sport: ${escapeMd(alert.sport ?? "?")} | Source: ${escapeMd(alert.source_table)} | Conf: ${confidence}`;
+    const flagsLine = flags.length ? `Flags: ${flags.map(escapeMd).join(", ")}` : "";
+    const reasonClipped = (reasoning ?? "").slice(0, 600);
+    const message = [
+      header,
+      ident,
+      meta,
+      flagsLine,
+      "",
+      `_${escapeMd(reasonClipped)}_`,
+    ].filter(Boolean).join("\n");
+
+    await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceRole}`,
+      },
+      body: JSON.stringify({
+        message,
+        parse_mode: "Markdown",
+        admin_only: true,
+        type: "prop_alert_verdict",
+        reference_key: `verifier:${alert.source_table}:${alert.alert_id}`,
+      }),
+    }).catch(() => {});
+  } catch (_e) {
+    // never let telegram failures break verification
+  }
+}
+
 export function buildResearchPrompt(a: AlertCtx): { system: string; user: string } {
   const sport = (a.sport || "").toUpperCase();
   const sportBlock = sport === "MLB"
