@@ -9,6 +9,9 @@ const IMPACT_HEURISTICS: Record<string, number> = {
   SHOT_MADE: 0.9, ASSIST: 0.7, REBOUND: 0.6,
   FOUL: 0.5, SUBSTITUTION: 0.4, INJURY: 1.0,
   TIMEOUT: 0.3, GOAL: 0.9, TD: 1.0,
+  // MLB
+  HOME_RUN: 1.0, STRIKEOUT: 0.7, HIT: 0.6, WALK: 0.4,
+  PITCHER_PULLED: 0.9, STOLEN_BASE: 0.6, RBI: 0.7, RUN_SCORED: 0.7,
 };
 
 export function impactScore(eventType: string): number {
@@ -18,9 +21,24 @@ export function impactScore(eventType: string): number {
 // Direction the speed edge expects the market line to move after the event.
 // "up"   = line should rise (over-side becomes more valuable to grab now)
 // "down" = line should fall (under-side becomes more valuable)
-const DOWN_EVENTS = new Set(["INJURY", "FOUL", "SUBSTITUTION", "TIMEOUT"]);
-export function eventDirection(eventType: string): "up" | "down" {
-  return DOWN_EVENTS.has(eventType) ? "down" : "up";
+//
+// Direction is per (event, market) because a single MLB event can push two
+// markets in opposite directions (e.g. STRIKEOUT raises pitcher K market
+// but suppresses batter hit/total-base markets).
+const UNIVERSAL_DOWN_EVENTS = new Set(["INJURY", "FOUL", "SUBSTITUTION", "TIMEOUT", "PITCHER_PULLED"]);
+
+// Markets that move DOWN when the named event happens (event-specific overrides).
+const DOWN_OVERRIDES: Record<string, Set<string>> = {
+  // A pitcher K shrinks the batter's hit ceiling
+  STRIKEOUT: new Set(["player_hits"]),
+  // A walk handed out reduces remaining K opportunities for the pitcher
+  WALK:      new Set(["player_strikeouts"]),
+};
+
+export function eventDirection(eventType: string, marketType?: string): "up" | "down" {
+  if (UNIVERSAL_DOWN_EVENTS.has(eventType)) return "down";
+  if (marketType && DOWN_OVERRIDES[eventType]?.has(marketType)) return "down";
+  return "up";
 }
 
 // A "reverse" is a market move OPPOSITE to the intended direction by at least

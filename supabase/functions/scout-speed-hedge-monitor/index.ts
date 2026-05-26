@@ -14,10 +14,25 @@ const corsHeaders = {
 
 // Look back at edges fired in the last 20 minutes (hedge windows are tight)
 const LOOKBACK_MS = 20 * 60 * 1000;
-// Min line units the market must move AGAINST us to trigger a hedge
-const HEDGE_REVERSE_THRESHOLD = 0.5;
 // Snapshot must be more recent than the fired snapshot by at least this
 const MIN_SNAPSHOT_LAG_MS = 5_000;
+
+// Per-market reverse threshold (line units the market must move AGAINST us).
+// Tuneable per market; defaults to 0.5 so unknown markets behave like before.
+const REVERSE_THRESHOLDS: Record<string, number> = {
+  // NBA
+  player_pts: 0.5, player_ast: 0.5, player_reb: 0.5, player_pra: 0.5,
+  // MLB
+  player_strikeouts: 0.5, player_hits: 0.5, player_home_runs: 0.5,
+  player_total_bases: 0.5, player_rbi: 0.5, player_runs: 0.5,
+  player_stolen_bases: 0.5, player_walks: 0.5,
+  // Team / game
+  live_total: 0.5, live_spread: 0.5, team_score: 0.5,
+};
+const DEFAULT_REVERSE_THRESHOLD = 0.5;
+export function thresholdFor(marketType: string): number {
+  return REVERSE_THRESHOLDS[marketType] ?? DEFAULT_REVERSE_THRESHOLD;
+}
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -94,7 +109,7 @@ Deno.serve(async (req) => {
       Number(fired.line),
       Number(latest.line),
     );
-    if (delta < HEDGE_REVERSE_THRESHOLD) continue;
+    if (delta < thresholdFor(edge.edge_type)) continue;
 
     // Stamp hedge first to be idempotent under concurrent runs
     const { error: updErr, data: updated } = await supabase

@@ -9,6 +9,15 @@ const MARKET_LABELS: Record<string, string> = {
   live_spread: "Live Spread",
   live_total: "Live Total",
   team_score: "Team Score",
+  // MLB
+  player_strikeouts:   "Strikeouts",
+  player_hits:         "Hits",
+  player_home_runs:    "Home Runs",
+  player_total_bases:  "Total Bases",
+  player_rbi:          "RBIs",
+  player_runs:         "Runs",
+  player_stolen_bases: "Stolen Bases",
+  player_walks:        "Walks",
 };
 
 export function marketLabel(marketType: string): string {

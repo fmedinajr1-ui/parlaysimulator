@@ -167,12 +167,62 @@ Deno.test("EV/Kelly downstream math is unchanged by model path", () => {
 // ───────── Phase 2: hedge logic ─────────
 
 Deno.test("eventDirection maps fade events to down, scoring events to up", () => {
-  assertEquals(eventDirection("SHOT_MADE"), "up");
-  assertEquals(eventDirection("ASSIST"), "up");
-  assertEquals(eventDirection("GOAL"), "up");
-  assertEquals(eventDirection("INJURY"), "down");
-  assertEquals(eventDirection("FOUL"), "down");
-  assertEquals(eventDirection("UNKNOWN_EVENT"), "up"); // default to up
+  assertEquals(eventDirection("SHOT_MADE", "player_pts"), "up");
+  assertEquals(eventDirection("ASSIST", "player_ast"), "up");
+  assertEquals(eventDirection("GOAL", "live_total"), "up");
+  assertEquals(eventDirection("INJURY", "player_pts"), "down");
+  assertEquals(eventDirection("FOUL", "player_pts"), "down");
+  assertEquals(eventDirection("UNKNOWN_EVENT", "player_pts"), "up");
+});
+
+// ───────── MLB expansion ─────────
+
+Deno.test("MLB: STRIKEOUT pushes pitcher K up but batter hits down", () => {
+  assertEquals(eventDirection("STRIKEOUT", "player_strikeouts"), "up");
+  assertEquals(eventDirection("STRIKEOUT", "player_hits"), "down");
+  assertEquals(eventDirection("PITCHER_PULLED", "player_strikeouts"), "down");
+  assertEquals(eventDirection("HOME_RUN", "player_home_runs"), "up");
+});
+
+Deno.test("MLB: relevance map covers expected event/market pairs", () => {
+  assert(isRelevant("HOME_RUN", "player_home_runs"));
+  assert(isRelevant("HOME_RUN", "live_total"));
+  assert(isRelevant("STRIKEOUT", "player_strikeouts"));
+  assert(isRelevant("STOLEN_BASE", "player_stolen_bases"));
+  assert(!isRelevant("HOME_RUN", "player_ast"));
+  assert(!isRelevant("STOLEN_BASE", "player_pts"));
+});
+
+Deno.test("MLB: reverseDelta detects pitcher K line drop after PITCHER_PULLED", () => {
+  // intended "down" (pitcher K market falls); a confirming move is down, so
+  // a reversal is an UPWARD move. But for PITCHER_PULLED on player_strikeouts
+  // intended_direction is "down" → line going UP would be a reversal.
+  assertEquals(reverseDelta("down", 5.5, 6.5), 1.0);
+  // Confirming downward move → no hedge
+  assertEquals(reverseDelta("down", 5.5, 4.5), 0);
+});
+
+Deno.test("MLB: formatHedgeAlert renders Home Runs label and flips side", async () => {
+  const { formatHedgeAlert } = await import("./telegram-format.ts");
+  const msg = formatHedgeAlert({
+    player_name: "Aaron Judge",
+    edge_type: "player_home_runs",
+    intended_direction: "up",
+    fired_line: 0.5,
+    reverse_line: 1.5,
+    reverse_delta: 1.0,
+  });
+  assert(msg.includes("Home Runs"));
+  assert(msg.includes("Aaron Judge"));
+  assert(msg.includes("UNDER 1.5"));
+  assert(!/HR\b/.test(msg));
+});
+
+Deno.test("MLB: impactScore covers new MLB events", () => {
+  assert(impactScore("HOME_RUN") >= 0.9);
+  assert(impactScore("STRIKEOUT") > 0.5);
+  assert(impactScore("WALK") > 0);
+  assertEquals(impactScore("UNKNOWN_MLB_EVENT"), 0.5);
 });
 
 Deno.test("reverseDelta fires when market moves against intended direction", () => {
