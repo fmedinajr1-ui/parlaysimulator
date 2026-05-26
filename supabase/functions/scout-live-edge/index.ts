@@ -1,4 +1,3 @@
-// redeploy: pick up rotated SERVICE_ROLE_KEY
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isRelevant } from "../_shared/scout-speed/relevance.ts";
 import { impactScore, scoreEdge, evPerUnit, halfKellyStake } from "../_shared/scout-speed/scoring.ts";
