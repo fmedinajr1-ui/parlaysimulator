@@ -1,3 +1,4 @@
+// redeploy: pick up rotated SERVICE_ROLE_KEY
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyHmac } from "../_shared/scout-speed/hmac.ts";
 
