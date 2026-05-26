@@ -148,20 +148,18 @@ Deno.test("fitLinear recovers known coefficients (closed-form OLS)", () => {
   assert(Math.abs(bImp - 0.5) < 1e-6, `impact off: ${bImp}`);
 });
 
-Deno.test("EV/Kelly behaviour is identical math regardless of source", () => {
-  // The contract: scoreEdge returns prob+expectedMove; downstream math doesn't care about source.
+Deno.test("EV/Kelly downstream math is unchanged by model path", () => {
   const model: SpeedModelCoefficients = {
     prob_intercept: 0, prob_b_lag: 0.1, prob_b_impact: 0.5, prob_b_time: 0, prob_cap: 0.95,
     move_intercept: 0.5, move_b_lag: 0.05, move_b_impact: 0.2, move_floor: 0.05,
   };
   const f = { excess_lag: 6, event_impact: impactScore("SHOT_MADE"), time_remaining: 18 };
   const m = scoreEdge(f, model);
-  const evM = evPerUnit(m.prob, m.expectedMove);
-  const stakeM = halfKellyStake(m.prob, m.expectedMove);
-  assert(stakeM >= 0);
-  // Negative-EV scenario still floors stake at 0 under model path.
-  const cold: SpeedModelCoefficients = { ...model, prob_intercept: -5 };
+  assert(halfKellyStake(m.prob, m.expectedMove) >= 0);
+
+  // Cold model → very low prob → negative EV → stake floored at 0.
+  const cold: SpeedModelCoefficients = { ...model, prob_intercept: -8 };
   const c = scoreEdge(f, cold);
-  assertEquals(halfKellyStake(c.prob, 0.5 + 0.1), evPerUnit(c.prob, 0.5 + 0.1) >= 0 ? halfKellyStake(c.prob, 0.5 + 0.1) : 0);
-  void evM;
+  assert(evPerUnit(c.prob, c.expectedMove) < 0);
+  assertEquals(halfKellyStake(c.prob, c.expectedMove), 0);
 });
