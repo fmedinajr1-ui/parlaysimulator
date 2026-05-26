@@ -7330,7 +7330,12 @@ export type Database = {
           expires_at: string | null
           fired_at: string | null
           game_id: string
+          hedge_fired_at: string | null
+          hedge_reverse_delta: number | null
+          hedge_reverse_line: number | null
+          hedge_snapshot_id: string | null
           id: string
+          intended_direction: string | null
           market_delay_seconds: number | null
           model_edge: number | null
           outcome: string | null
@@ -7352,7 +7357,12 @@ export type Database = {
           expires_at?: string | null
           fired_at?: string | null
           game_id: string
+          hedge_fired_at?: string | null
+          hedge_reverse_delta?: number | null
+          hedge_reverse_line?: number | null
+          hedge_snapshot_id?: string | null
           id?: string
+          intended_direction?: string | null
           market_delay_seconds?: number | null
           model_edge?: number | null
           outcome?: string | null
@@ -7374,7 +7384,12 @@ export type Database = {
           expires_at?: string | null
           fired_at?: string | null
           game_id?: string
+          hedge_fired_at?: string | null
+          hedge_reverse_delta?: number | null
+          hedge_reverse_line?: number | null
+          hedge_snapshot_id?: string | null
           id?: string
+          intended_direction?: string | null
           market_delay_seconds?: number | null
           model_edge?: number | null
           outcome?: string | null
@@ -7385,6 +7400,13 @@ export type Database = {
           status?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "lag_edges_hedge_snapshot_id_fkey"
+            columns: ["hedge_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "market_snapshot"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "lag_edges_source_event_id_fkey"
             columns: ["source_event_id"]
