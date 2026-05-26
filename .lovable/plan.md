@@ -1,95 +1,76 @@
-## Leg Verification Layer
+## Scout Speed Edge Engine — Phase 0 Build Plan
 
-Add a shared `validate_leg` / `validate_ticket` gate that runs on every candidate before it enters a parlay. Hard fails reject, soft fails apply a confidence haircut.
+Backend-only first pass. Real feeds POST to our webhooks. Telegram routes to admin chat. Defaults from spec (EV_FLOOR=0.03, 15s window, unique (source_event_id, edge_type) dedupe). UI = minimal admin Edge Terminal table for now.
 
-### 1. New shared module: `supabase/functions/_shared/leg-validator.ts`
+### 1. Database migration
 
-Single source of truth, used by all generators.
+Single migration creating:
+- `live_events` (sport, game_id, event_time, event_type, player_name, team, raw_data jsonb) + indexes on `(game_id, event_time desc)` and `(event_type, created_at desc)`.
+- `market_snapshot` (sportsbook, game_id, market_type, player_name, line, odds, captured_at) + indexes for game/market/time lookups.
+- `lag_edges` with detection signals, model outputs, lifecycle, backtest fields, FK to `live_events` and `market_snapshot`, partial index `(status, expires_at) where status='active'`, and unique `(source_event_id, edge_type)` for dedupe.
+- `market_baselines` seeded with the 7 default lag rows.
+- RLS: all four tables service-role-only writes; `lag_edges` readable by admins via existing `has_role(auth.uid(),'admin')` for the Edge Terminal UI.
+- ET-standardized timestamps (`timestamptz default now()`), matching core memory rules.
 
-```text
-validateLeg(leg, ctx) -> { hardFails: string[], softFails: string[], haircut: number }
-validateTicket(legs)  -> { hardFails: string[] }
-```
+### 2. Edge functions
 
-Where `ctx` carries the day's schedule, rosters, lineups, and team records, fetched once per run and passed in.
+Three new functions, all `verify_jwt = false`, HMAC verification on the two ingest endpoints.
 
-**Hard checks (reject leg):**
-1. `team` ∈ canonical whitelist (30 MLB / 32 NHL / 30 NBA / 30 NCAAF subset / etc). Reject partial/truncated names like `"Colorado A…alanche"`.
-2. Venue alignment: `schedule[game_id].home_team === leg.team` when `home_away==="HOME"`, mirror for AWAY.
-3. `game.start_time > now() + 5min`.
-4. Player on active roster (props only): reuse existing `_shared/rosters.ts` lookup; `rosterTeam(player) === leg.team`.
-5. Spread direction matches Fav/Dog tag: `tag==="Fav"` ⇒ `spread < 0`.
+**`market-snapshot-ingest`** — Accepts single object or `{snapshots:[...]}`, validates with Zod, bulk-inserts into `market_snapshot`. Verifies `ODDS_FEED_WEBHOOK_SECRET` HMAC header.
 
-**Cross-leg hard check (validateTicket):**
-6. No two legs share `game_id`.
+**`scout-live-edge`** — Event webhook. Flow:
+1. `{ping:true}` short-circuit for warm-keeper.
+2. Verify `LIVE_EVENT_WEBHOOK_SECRET`.
+3. Insert into `live_events`.
+4. Load `market_baselines` into a Map.
+5. Pull last 30s of `market_snapshot` for the game.
+6. For each snapshot: relevance map gate → player-name filter for `player_*` markets → compute `lag = event_time - captured_at` → require `excess_lag ≥ 2s` → score via heuristic `scoreEdge()` + `impactScore()` → require `EV ≥ 0.03` → compute half-Kelly stake → insert `lag_edges` row with `expires_at = now()+15s` → on success (23505 = silent skip) fire Telegram → stamp `fired_at`.
+7. Telegram message uses spec format with FIRE/STRONG/WATCH tiers and full property labels ("Assists", "Points", etc.) per core memory rule, sent through existing `bot-send-telegram` with `admin_only: true` so we reuse chunking/rate logic instead of calling Telegram API directly.
 
-**Soft checks (record reason, apply haircut to `safety` / `model_edge`):**
-7. Price-vs-strength: `team.win_pct < 0.450 && american_odds < -150` → 25% haircut, flag `weak_team_heavy_fav`.
-8. Lineup not confirmed within T-120min → 30% haircut; at T-30min still missing → reject.
+**`edge-resolver`** — Minute-cron. Selects active edges past `expires_at`, joins latest snapshot vs origin snapshot to compute `actual_move`, marks `status='expired'`. Scheduled via `pg_cron` + `pg_net` (separate `supabase--insert` call, not migration, so it isn't replayed on remixes).
 
-### 2. Canonical team whitelist: `supabase/functions/_shared/canonical-teams.ts`
+A warm-keeper cron also pings `scout-live-edge` every 60s.
 
-Hardcoded arrays per sport plus a `matchCanonicalTeam(sport, raw)` helper that normalizes (lowercase, strip punctuation, collapse whitespace) and requires an exact match — no substring/prefix matching. Returns `null` on truncated strings, which trips hard check #1.
+### 3. Shared utilities
 
-### 3. Schedule + lineup context loaders
+`supabase/functions/_shared/scout-speed/` with:
+- `relevance.ts` — event↔market type map.
+- `scoring.ts` — `impactScore`, `scoreEdge` (heuristic, clearly marked PHASE-0), `halfKellyStake`, EV calc.
+- `hmac.ts` — shared HMAC verifier for both ingest endpoints.
+- `telegram-format.ts` — alert formatter with tier emoji + full property labels.
 
-- `loadDailySchedule(sport, dateET)` → reuses ESPN scoreboard already used by `cross-sport-parlay-settler` (`?dates=YYYYMMDD`). Returns `Map<game_id, {home_team, away_team, start_time_utc}>`.
-- `loadConfirmedLineups(sport, dateET)` → MLB/NHL only; queries existing lineup tables if present, otherwise stub returning empty set (soft check #8 then just haircuts).
-- `loadTeamRecords(sport)` → existing standings table or ESPN standings API.
+Five Deno tests per memory rule (`constraints/testing-policy`): relevance map, scoreEdge monotonicity in excess_lag, EV floor gate, half-Kelly non-negativity, dedupe (23505) skip behavior.
 
-Loaders are cached per invocation, passed to validator via `ctx`.
+### 4. Minimal admin UI
 
-### 4. Wire into generators
+New route `/admin/scout-speed` (gated by `useAdminRole`):
+- Polls `lag_edges` (status=active, ordered by `model_edge desc`) every 5s + realtime subscription on insert/update.
+- Table columns: Player • Market+Line • Book • Confidence% • EV% • Lag (s) • Countdown • Status.
+- Color band: red ≥10% EV, orange 6–10%, gray 3–6%.
+- Bottom strip: last 30 fired edges with W/L/expired/void chip.
+- Link added under existing admin nav. No Live Field, no Chess Alerts in this pass (deferred to Phase 1 UI).
 
-Insert validation between candidate prep and ticket assembly in:
-- `cross-sport-parlay-generator/index.ts` — before `buildSlot()` greedy loop
-- `parlay-engine-v2/index.ts` (and `_shared/parlay-engine-v2/generator.ts` filter step)
-- `nuke-build-parlays/index.ts`
-- `daily-whale-parlay-generator/index.ts`
-- `ocr-pool-build-parlays/index.ts`
+### 5. Secrets & config
 
-Pattern in each:
-```text
-const ctx = await buildValidationContext(sports, dateET);
-const survivors = [];
-for (const leg of candidates) {
-  const v = validateLeg(leg, ctx);
-  if (v.hardFails.length) { bump(rejection, v.hardFails[0]); continue; }
-  if (v.softFails.length) leg.safety *= (1 - v.haircut);
-  survivors.push(leg);
-}
-// ...build tickets from survivors...
-const tv = validateTicket(ticket.legs);
-if (tv.hardFails.length) { reject; regenerate; }
-```
+Request via `add_secret` if not already present:
+- `ODDS_FEED_WEBHOOK_SECRET`
+- `LIVE_EVENT_WEBHOOK_SECRET`
 
-Regenerate up to existing `max_attempts`; if under minimum legs, skip the ticket.
+`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` already configured (used by other bot functions).
 
-### 5. Tests: `supabase/functions/_shared/leg-validator_test.ts`
+### 6. Memory
 
-5 deterministic tests covering:
-- Truncated team name rejected (`"Colorado A…alanche"`).
-- Rangers labeled HOME when schedule says AWAY → hard fail.
-- Started game rejected.
-- Two legs same game → ticket hard fail.
-- Weak team -198 fav → soft fail with 25% haircut applied.
+Add `mem://features/scout/speed-edge` describing: Phase-0 heuristic in place, EV_FLOOR=0.03, 15s window, dedupe rule, calibration plan (export → logistic regression → hardcode coefficients → raise floor). Add a Core line: *"Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_move data — do not tune by hand."*
 
-Per project rule (5 manual verifications before deploy), I'll also run `supabase--test_edge_functions` and dry-run one generator after wiring.
+### Out of scope this pass
 
-### 6. Upstream join audit (the real bug)
+Full 3-column Scout Live page, Chess Alerts views, closing-line resolver, vision/OCR ingest, auto-hedge, live SGP builder. All called out in spec Phase 2 and will be separate plans.
 
-Before/after the validator lands I'll grep how generators join odds rows to schedule rows. If the join key is team-name based rather than `event_id`/`game_id`, that's the actual source of "Rangers-Angels" mismatches. I'll patch the join to `event_id` where the column exists (`unified_props.event_id` already does) and flag any generator still doing name-based joins as a follow-up. The validator stays in either way as defense-in-depth.
+### Sequence
 
-### Memory updates
-
-Add `mem://logic/parlay/leg-validation-gate.md` with the hard/soft check list and link it from `mem://index.md` Core.
-
-### Files touched
-
-- new: `supabase/functions/_shared/leg-validator.ts`
-- new: `supabase/functions/_shared/canonical-teams.ts`
-- new: `supabase/functions/_shared/leg-validator_test.ts`
-- edited: 5 generator `index.ts` files above
-- new: `mem://logic/parlay/leg-validation-gate.md`, updated `mem://index.md`
-
-No DB migrations needed — validator is pure logic over existing tables.
+1. Migration (await approval).
+2. Shared utils + 3 edge functions + tests.
+3. Deploy + curl smoke tests via `supabase--curl_edge_functions` (ping, snapshot insert, synthetic event → expect lag_edge row + Telegram).
+4. Cron schedule via `supabase--insert`.
+5. Admin UI page + nav link.
+6. Memory write.

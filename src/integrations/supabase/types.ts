@@ -7317,6 +7317,90 @@ export type Database = {
         }
         Relationships: []
       }
+      lag_edges: {
+        Row: {
+          actual_move: number | null
+          closing_line: number | null
+          confidence: number | null
+          created_at: string
+          edge_type: string
+          event_impact: number | null
+          excess_lag_seconds: number | null
+          expected_move: number | null
+          expires_at: string | null
+          fired_at: string | null
+          game_id: string
+          id: string
+          market_delay_seconds: number | null
+          model_edge: number | null
+          outcome: string | null
+          player_name: string | null
+          source_event_id: string | null
+          source_snapshot_id: string | null
+          stake_units: number | null
+          status: string
+        }
+        Insert: {
+          actual_move?: number | null
+          closing_line?: number | null
+          confidence?: number | null
+          created_at?: string
+          edge_type: string
+          event_impact?: number | null
+          excess_lag_seconds?: number | null
+          expected_move?: number | null
+          expires_at?: string | null
+          fired_at?: string | null
+          game_id: string
+          id?: string
+          market_delay_seconds?: number | null
+          model_edge?: number | null
+          outcome?: string | null
+          player_name?: string | null
+          source_event_id?: string | null
+          source_snapshot_id?: string | null
+          stake_units?: number | null
+          status?: string
+        }
+        Update: {
+          actual_move?: number | null
+          closing_line?: number | null
+          confidence?: number | null
+          created_at?: string
+          edge_type?: string
+          event_impact?: number | null
+          excess_lag_seconds?: number | null
+          expected_move?: number | null
+          expires_at?: string | null
+          fired_at?: string | null
+          game_id?: string
+          id?: string
+          market_delay_seconds?: number | null
+          model_edge?: number | null
+          outcome?: string | null
+          player_name?: string | null
+          source_event_id?: string | null
+          source_snapshot_id?: string | null
+          stake_units?: number | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lag_edges_source_event_id_fkey"
+            columns: ["source_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lag_edges_source_snapshot_id_fkey"
+            columns: ["source_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "market_snapshot"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leads: {
         Row: {
           created_at: string
@@ -7986,6 +8070,42 @@ export type Database = {
         }
         Relationships: []
       }
+      live_events: {
+        Row: {
+          created_at: string
+          event_time: string
+          event_type: string
+          game_id: string
+          id: string
+          player_name: string | null
+          raw_data: Json | null
+          sport: string
+          team: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_time: string
+          event_type: string
+          game_id: string
+          id?: string
+          player_name?: string | null
+          raw_data?: Json | null
+          sport: string
+          team?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_time?: string
+          event_type?: string
+          game_id?: string
+          id?: string
+          player_name?: string | null
+          raw_data?: Json | null
+          sport?: string
+          team?: string | null
+        }
+        Relationships: []
+      }
       live_game_scores: {
         Row: {
           away_score: number | null
@@ -8037,6 +8157,24 @@ export type Database = {
           quarter_scores?: Json | null
           sport?: string
           start_time?: string
+        }
+        Relationships: []
+      }
+      market_baselines: {
+        Row: {
+          baseline_lag_seconds: number
+          market_type: string
+          updated_at: string
+        }
+        Insert: {
+          baseline_lag_seconds: number
+          market_type: string
+          updated_at?: string
+        }
+        Update: {
+          baseline_lag_seconds?: number
+          market_type?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -8157,6 +8295,39 @@ export type Database = {
           timing_sharpness_score?: number | null
           updated_at?: string | null
           verified_at?: string | null
+        }
+        Relationships: []
+      }
+      market_snapshot: {
+        Row: {
+          captured_at: string
+          game_id: string
+          id: string
+          line: number | null
+          market_type: string
+          odds: number | null
+          player_name: string | null
+          sportsbook: string
+        }
+        Insert: {
+          captured_at?: string
+          game_id: string
+          id?: string
+          line?: number | null
+          market_type: string
+          odds?: number | null
+          player_name?: string | null
+          sportsbook: string
+        }
+        Update: {
+          captured_at?: string
+          game_id?: string
+          id?: string
+          line?: number | null
+          market_type?: string
+          odds?: number | null
+          player_name?: string | null
+          sportsbook?: string
         }
         Relationships: []
       }
