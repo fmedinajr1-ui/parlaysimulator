@@ -101,6 +101,10 @@ interface Pick {
   quarantine_reason?: string | null;
   books_count?: number | null;
   book_lines?: unknown;
+  // Pass-1: STRONG_OVER picks are persisted+graded but never broadcast or
+  // counted toward headline ROI. See plan: Court.Edge tennis model fix v1.
+  suppressed?: boolean;
+  suppressed_reason?: string | null;
 }
 
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
