@@ -4,6 +4,7 @@
 parlay-engine-v2 MIN_LEG_CONFIDENCE pinned at 0.60. Never raise without explicit user approval.
 Cascade legs must clear a `0.5*std` band around L10 mean (BENCH/ROLE_PLAYER need `0.75*std`) and pass minutes floors (22 / 14 mpg) — see cascade-miss-by-1-guard.
 Team/game legs in parlay-engine-v2 require a real model score; never default to constant confidence. Drop spreads with |line| ≥ 9.5. Max 1 team-market leg per game per parlay. Lottery requires ≥1 player leg.
+Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_move data — do not tune scoreEdge by hand.
 
 ## Memories
 - [Raw props confidence fix](mem://infrastructure/pipeline/raw-props-confidence-fix) — Why parlays go empty when risk/sweet are thin + the orchestrator .catch crash
@@ -24,3 +25,4 @@ Team/game legs in parlay-engine-v2 require a real model score; never default to 
 - [Cross-sport bulk parlay generator](mem://logic/parlay/cross-sport-generator) — Perplexity-fed multi-sport sweet spots + 25-ticket bulk assembler (8 Lock / 8 Strong / 6 Stretch / 3 Lottery), player-primary, team legs ≤40%
 - [Profitability math (BANKROLL_MATH_V1)](mem://logic/betting/profitability-math) — Bayesian-smoothed p̂, ¼-Kelly stake, 7d EV gates, daily envelope
 - [Leg validation gate](mem://logic/parlay/leg-validation-gate) — Shared hard/soft verifier (canonical team, venue alignment, no-same-game, weak-fav haircut) wired into cross-sport-parlay-generator
+- [Scout Speed Edge](mem://features/scout/speed-edge) — Phase-0 lag hunter (live_events + market_snapshot + lag_edges), EV_FLOOR 0.03, 15s window, ½-Kelly, admin Telegram + /admin/scout-speed UI
