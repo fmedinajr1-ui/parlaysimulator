@@ -1,0 +1,1 @@
+ALTER TABLE public.prop_alert_verifier_daily_cost ADD COLUMN IF NOT EXISTS last_approve_notify_at timestamptz;
