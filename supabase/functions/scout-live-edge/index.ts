@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isRelevant } from "../_shared/scout-speed/relevance.ts";
-import { impactScore, scoreEdge, evPerUnit, halfKellyStake } from "../_shared/scout-speed/scoring.ts";
+import { impactScore, scoreEdge, evPerUnit, halfKellyStake, eventDirection } from "../_shared/scout-speed/scoring.ts";
 import { verifyHmac } from "../_shared/scout-speed/hmac.ts";
 import { formatSpeedEdgeAlert } from "../_shared/scout-speed/telegram-format.ts";
 import { loadActiveModel } from "../_shared/scout-speed/model.ts";
@@ -153,6 +153,7 @@ Deno.serve(async (req) => {
           stake_units: stake,
           status: "active",
           expires_at: expiresAt,
+          intended_direction: eventDirection(event.event_type),
           source_event_id: storedEvent.id,
           source_snapshot_id: market.id,
         })
