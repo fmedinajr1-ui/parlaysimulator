@@ -39,7 +39,7 @@ export default function PropAlertVerifier() {
     setLoading(true);
     let q = supabase.from("prop_alert_verdicts").select("*").order("created_at", { ascending: false }).limit(200);
     if (sportFilter !== "ALL") q = q.eq("sport", sportFilter);
-    if (verdictFilter !== "ALL") q = q.eq("verdict", verdictFilter);
+    if (verdictFilter !== "ALL") q = q.eq("verdict", verdictFilter as "APPROVE" | "CAUTION" | "REJECT");
     const { data } = await q;
     setRows((data ?? []) as Verdict[]);
     setLoading(false);
