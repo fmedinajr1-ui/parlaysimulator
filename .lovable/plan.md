@@ -1,124 +1,78 @@
+# Court.Edge — Tennis Model Fix, Pass 1
 
-## Verifier Agent — "Deep Research" gate for prop alerts
+Scope: stop the bleeding from STRONG_OVER, verify the parser hypothesis with real data, and stand up the diagnostic view that will gate any multiplier changes later. CLV tracking and multiplier review ship in pass 2.
 
-A second-opinion agent that reads every inbound prop alert, pulls fresh research (Perplexity sonar-deep-research), reasons over it with GPT-5, and stamps a verdict the parlay engine reads before turning the alert into a leg.
+## 1. Suppress STRONG_OVER at generation + broadcast
 
-Operating mode (confirmed):
-- **Soft tag + confidence haircut** — no hard block. Verdict + reasoning attach to the alert; parlay engine applies a multiplier.
-- **Deep research** — Perplexity `sonar-deep-research` for evidence, OpenAI `gpt-5` for the final judgement.
-- **Hybrid trigger** — realtime on every new alert + batch sweep before each parlay generation cycle as a safety net.
+In the Court.Edge run/generator, intercept any pick whose verdict resolves to `STRONG_OVER`:
 
----
+- Do not write it as an active pick visible to the digest, Telegram, or accuracy dashboard.
+- Insert into a new `court_edge_suppressed_picks` table with the full pick payload plus `reason = 'strong_over_disabled_v1'` and `suppressed_at`.
+- Still allow the settler to grade these (see step 4) so the bias audit retains the residual signal — they just never count toward headline ROI or get broadcast.
 
-### 1. New table: `prop_alert_verdicts`
+Telegram digest counter (`Leans N · Pass 0 · Quarantine N`) gains a `Suppressed N` field so it's visible the gate is doing work.
 
-One row per (alert_id, source_table) — the verifier's opinion on a single prop alert.
+## 2. Parser diff backfill (verify before patching)
 
-Columns (domain only — id/created_at/updated_at standard):
-- `alert_id` (uuid) + `source_table` (text: `fanduel_prediction_alerts` | `sharp_signals` | `extreme_movement_alerts` | `market_signals`)
-- `player_name`, `sport`, `prop_type`, `side`, `line`, `event_id`
-- `verdict` enum: `APPROVE` | `CAUTION` | `REJECT`
-- `verdict_confidence` (0–100)
-- `confidence_multiplier` (numeric, e.g. 1.10 / 0.75 / 0.40 — what the engine applies)
-- `reasoning` (text, 2–4 sentences plain English)
-- `evidence` (jsonb: citations[], injury notes, lineup, weather, sharp moves, L10 vs opp rank, line history)
-- `research_model`, `judge_model`, `tokens_used`, `cost_usd`, `research_ms`
-- `flags` (text[]: e.g. `INJURY_UPDATE_AFTER_LINE`, `WEATHER_FADE`, `LINEUP_CHANGE`, `STALE_LINE`, `BOOK_OVERREACTION`, `MATCHUP_MISMATCH`)
-- `status` (`pending` | `researching` | `complete` | `error`), `error_message`
+Before changing `parseRecentRows` / `sumSets`, prove the bug exists:
 
-Indexes on `(source_table, alert_id)` unique, `(created_at desc)`, `(sport, verdict)`.
+- Add a one-shot edge function `court-edge-parser-diff` that re-parses every graded pick's source row with a candidate parser (strips `(N)` tiebreak parentheticals defensively + treats any "set" with total games > 13 as a super-tiebreak = 1 game) and compares `actual_total_games` against the stored value.
+- Output: count of picks whose grade would change, list of changed picks, and whether the WIN/LOSS flips.
+- Decision rule:
+  - If ≥ 5% of graded picks change → ship the patched parser + re-grade backfill.
+  - If < 5% → leave parser alone, document the audit, move on. (Current regex already anchors with `^` so the `(N)` case is likely already handled — super-tiebreak is the only real risk.)
 
-RLS: admin-only writes (service role); authenticated read. GRANTs included.
+Either outcome is captured in a short note appended to `mem://logic/betting/tennis-data-sync`.
 
----
+## 3. `projection_bias_audit` view
 
-### 2. New edge function: `prop-alert-verifier`
+SQL view over `court_edge_picks` where `graded = true AND result IN ('WIN','LOSS')` (VOID and ungraded excluded; suppressed STRONG_OVER picks INCLUDED so the residual is visible):
 
-Two modes:
+Columns per row: dimension name, bucket, n, mean_residual (`projection - actual_total_games`), win_rate.
 
-**a) Single-alert mode** (realtime)
-- Body: `{ alert_id, source_table }`
-- Load the alert + sibling context (event, opp team, lineup_alerts, market_signals history for this player/prop, L10, defense rank).
-- **Research call** → Perplexity `sonar-deep-research`:
-  - Targeted prompt per sport (NBA / MLB / NHL / etc.) asking for: confirmed injury/lineup news within 24h, weather (MLB/NHL outdoor), recent usage trend, sharp line history for THIS prop, opp defense rank vs this prop type, any news that justifies or invalidates the alert's direction.
-  - Returns evidence + citations.
-- **Judge call** → OpenAI `gpt-5` via Lovable AI Gateway:
-  - Structured output (Zod schema) → `{ verdict, confidence, multiplier, reasoning, flags, key_evidence[] }`.
-  - System prompt instructs: take your time, weigh research vs alert direction, be skeptical of stale lines and reactive snap moves (poison signals memory), and require concrete reasons to REJECT.
-- Write to `prop_alert_verdicts`.
-- Patch the source alert's `metadata.verifier` with `{ verdict, multiplier, reasoning }` so existing engines pick it up without schema changes.
+Dimensions:
+- surface (clay / hard / grass / indoor)
+- verdict (4 buckets)
+- sets format (bo3 / bo5)
+- role combo (home_fav / home_dog / away_fav / away_dog) — derived from `formula.role_adj_*` sign
+- edge band (15%+, 10–15%, 7–10%, <7%)
+- tournament tier (reuse `tierFromTournament` helper from the dashboard)
 
-**b) Batch mode** (sweep)
-- Body: `{ mode: 'sweep', since_minutes: 30, limit: 200 }`
-- Finds alerts from the last N minutes across all 4 source tables with no row in `prop_alert_verdicts`, calls itself per alert with bounded concurrency (e.g. 4).
+The dimension with the largest positive `mean_residual` at `n ≥ 30` is the suspect multiplier and the input to pass 2.
 
-Guardrails:
-- Per-alert timeout 90s (deep research can be slow — that's intentional).
-- Dedup: skip if verdict exists within 2h for same (player, prop, side, line).
-- Cost cap: max 300 verdicts/day, daily counter table; over cap → degrade to internal-only (Gemini 2.5 Flash, no Perplexity).
-- Returns clean errors to the caller; never throws into the cron caller.
+## 4. Admin dashboard updates
 
----
+On `/admin/court-edge-accuracy`:
 
-### 3. Engine integration (soft tag, no hard block)
+- New top card: **v1 vs v2 ROI** side by side. v1 = all graded picks (legacy). v2 = graded picks excluding STRONG_OVER. Same for hit rate and sample size.
+- New section: **Projection bias** — render rows from `projection_bias_audit`, sorted by `|mean_residual|` desc, with sample size and a color cue (red if `mean_residual > +0.4` and `n ≥ 30`).
+- New section: **Suppressed picks (last 7d)** — count, plus a small table of the most recent 10 with what they would have done if graded.
 
-Single small change in `parlay-engine-v2/scoring.ts` (and `signal-alert-engine` if it filters before parlay):
-- When building a candidate leg, read `metadata.verifier.multiplier` (default 1.0).
-- Multiply `leg.confidence` by it before existing tier/signal weights.
-- If `verdict === 'REJECT'` AND `multiplier <= 0.45`, drop the leg from non-lottery strategies only (Lock/Strong/Stretch). Lottery still allowed.
-- Telegram broadcast adds a 🔍 footer line when verdict ≠ APPROVE: e.g. `🔍 Verifier: CAUTION — pitcher pulled in 4th, line stale`.
+## 5. Settler tweak
 
-No schema change to `fanduel_prediction_alerts` etc. — verdict travels in existing `metadata` jsonb.
+`court-edge-settle` extended to also pick up rows from `court_edge_suppressed_picks` and grade them in place (writes `result` / `actual_total_games` / `settled_at` on the suppressed row, not the main table). This is what feeds the bias audit's STRONG_OVER bucket.
 
----
+## Explicitly out of scope for pass 1
 
-### 4. Triggers
+- CLV / closing-line capture and columns
+- Any change to `surface_mult`, `role_adj`, `spread_adj`, or other projection multipliers
+- New tennis markets (set totals, game spreads, player props)
+- Verdict threshold changes (STRONG vs LEAN cutoffs)
+- Changes to `gradeVerdict` — confirmed correct, bug is upstream
 
-**Realtime:** Postgres trigger on insert into each of the 4 alert tables → `pg_net.http_post` to `prop-alert-verifier` with `{alert_id, source_table}`. Fire-and-forget; engine works fine if verdict not yet written (defaults multiplier 1.0).
+## Acceptance criteria
 
-**Batch sweep cron:** every 5 minutes, call `prop-alert-verifier` with `{mode:'sweep', since_minutes:30}`. Also one sweep kicked off at the top of the parlay generation phase so anything new gets a verdict before parlays are built.
+- [ ] After deploy, zero new rows in `court_edge_picks` with `verdict = 'STRONG_OVER'`; corresponding row exists in `court_edge_suppressed_picks` for each blocked emission.
+- [ ] Telegram digest shows a `Suppressed N` count.
+- [ ] `court-edge-parser-diff` run completes and returns a JSON report with `changed_count`, `flipped_count`, and per-pick deltas; decision logged.
+- [ ] `projection_bias_audit` view returns rows for every dimension with sample sizes; visible on the admin page.
+- [ ] Admin page renders v1 vs v2 ROI side by side and the suppressed-picks tile.
+- [ ] Settler updates suppressed rows so STRONG_OVER residuals appear in the bias audit.
 
----
+## Technical notes
 
-### 5. Admin UI: `/admin/verifier`
-
-Single page added under existing admin nav:
-- Live table of recent verdicts (last 24h): player, prop, side, verdict pill, multiplier, flags, "View reasoning" expandable, citations.
-- Filters: sport, verdict, source_table.
-- KPIs: % APPROVE / CAUTION / REJECT, avg multiplier, cost today, agreement rate (verdict APPROVE → alert was correct on settlement) — pulled by joining `prop_alert_verdicts` to settled `fanduel_prediction_alerts.was_correct`.
-- Manual "Re-verify alert" button on any row.
-
----
-
-### 6. Testing (5 required per memory rule)
-
-Deno tests in `supabase/functions/prop-alert-verifier/index_test.ts`:
-1. Loads alert + builds correct research prompt per sport (NBA vs MLB).
-2. Structured judge output parses to schema; rejects malformed.
-3. Dedup: second call within 2h for same prop returns cached verdict, no Perplexity call.
-4. Cost cap: at 300/day, falls back to Gemini 2.5 Flash, sets `flags: ['DEGRADED']`.
-5. Engine multiplier: leg.confidence pre × verifier multiplier = expected; REJECT @ 0.40 drops from Lock pool but stays in Lottery.
-
----
-
-### Secrets needed
-- `PERPLEXITY_API_KEY` (new) — Connectors → Perplexity, or add via secrets.
-- `LOVABLE_API_KEY` (already present).
-
----
-
-### Memory entry to add (post-build)
-`mem://logic/betting/prop-alert-verifier` — Verifier Agent: soft-tag (APPROVE/CAUTION/REJECT) + confidence multiplier, Perplexity sonar-deep-research + GPT-5 judge, realtime per-alert + 5-min batch sweep, cost-capped at 300/day with Gemini fallback.
-
----
-
-### Files to create/edit
-- new: `supabase/functions/prop-alert-verifier/index.ts`
-- new: `supabase/functions/prop-alert-verifier/index_test.ts`
-- new: `src/pages/admin/PropAlertVerifier.tsx` + route
-- edit: `supabase/functions/_shared/parlay-engine-v2/scoring.ts` (consume multiplier)
-- edit: `supabase/functions/signal-alert-engine/index.ts` (append verifier footer to Telegram)
-- migration: `prop_alert_verdicts` table + triggers on 4 alert tables + 5-min cron
-- new memory: `mem/logic/betting/prop-alert-verifier.md` + index entry
-
-Ready for build mode on your go.
+- New tables: `court_edge_suppressed_picks` (mirrors `court_edge_picks` columns + `reason`, `suppressed_at`, plus settler fields). Service role only; admin-only RLS via `has_role(auth.uid(), 'admin')`.
+- New view: `projection_bias_audit` (security_invoker, admin-readable).
+- New edge function: `court-edge-parser-diff` (one-shot, admin-invoked).
+- Edited: `court-edge-run` (or wherever verdict is finalized + broadcast), `court-edge-settle`, `src/pages/admin/CourtEdgeAccuracy.tsx`.
+- Memory update: append a "STRONG_OVER suppressed pending bias audit" note to `mem://logic/betting/tennis-data-sync`.
