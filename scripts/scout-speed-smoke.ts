@@ -19,6 +19,7 @@
  *   --no-event       only post snapshot
  *   --no-snapshot    only post event (use existing snapshot)
  *   --game <id>      override game id (default: smoke-<timestamp>)
+ *   --scenarios      run the strict-assertion scenario suite (fires + no-fires)
  */
 
 import { createHmac } from "node:crypto";
