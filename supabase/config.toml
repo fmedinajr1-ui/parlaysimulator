@@ -3,6 +3,15 @@ project_id = "pajakaqphlxoqjtrxzmi"
 [functions.sync-and-verify-all]
 verify_jwt = false
 
+[functions.scout-live-edge]
+verify_jwt = false
+
+[functions.market-snapshot-ingest]
+verify_jwt = false
+
+[functions.edge-resolver]
+verify_jwt = false
+
 [functions.extract-youtube-frames]
 verify_jwt = false
 
