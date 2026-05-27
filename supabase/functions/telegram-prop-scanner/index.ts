@@ -83,6 +83,67 @@ async function answerCallback(callback_query_id: string, text?: string) {
 }
 
 // =====================================================================
+// Admin-only: trigger the SB Unders daily report on demand.
+async function triggerSbUnders(
+  chat_id: number,
+  opts: { dry_run?: boolean; min_lead_minutes?: number; cutoff_local_time?: string | null } = {},
+) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRole) {
+    await sendMessage(chat_id, "❌ SB Unders trigger not configured (missing service role).");
+    return;
+  }
+  const dry = !!opts.dry_run;
+  await sendMessage(chat_id, dry ? "🔎 Running SB Unders *dry-run preview*…" : "📤 Sending SB Unders report now…");
+  try {
+    const body: Record<string, unknown> = {
+      trigger: "telegram-button",
+      timezone: "America/New_York",
+      min_lead_minutes: opts.min_lead_minutes ?? 0,
+    };
+    if (opts.cutoff_local_time) body.cutoff_local_time = opts.cutoff_local_time;
+    if (dry) {
+      body.dry_run = true;
+      body.chat_id = String(chat_id);
+    }
+    const res = await fetch(`${supabaseUrl}/functions/v1/sb-unders-daily-report`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serviceRole}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const txt = await res.text();
+    let parsed: any = null;
+    try { parsed = txt ? JSON.parse(txt) : null; } catch { parsed = { raw: txt }; }
+    if (!res.ok) {
+      await sendMessage(chat_id, `❌ SB Unders failed (${res.status}): \`${(parsed?.error || txt || "unknown").toString().slice(0, 300)}\``);
+      return;
+    }
+    if (dry) {
+      const games = parsed?.games ?? parsed?.preview?.length ?? parsed?.picks_count ?? "?";
+      await sendMessage(chat_id, `✅ Dry-run complete. Preview: \`${JSON.stringify(parsed).slice(0, 600)}\``);
+    } else {
+      const sent = parsed?.sent ?? parsed?.delivered ?? parsed?.messages ?? "ok";
+      await sendMessage(chat_id, `✅ SB Unders sent. (\`${JSON.stringify({ sent }).slice(0, 200)}\`)`);
+    }
+  } catch (e) {
+    await sendMessage(chat_id, `❌ SB Unders error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function sendSbUndersMenu(chat_id: number) {
+  await sendMessageWithButtons(
+    chat_id,
+    "*SB Unders — daily report*\n\nPick an action:",
+    [
+      [{ text: "📤 Send now (all games)", data: "sb_unders:send" }],
+      [{ text: "🔎 Dry-run preview", data: "sb_unders:dry" }],
+      [{ text: "⏰ Send, skip games <30min", data: "sb_unders:send_lead30" }],
+    ],
+  );
+}
+
+// =====================================================================
 // Admin-only: alert threshold tuning commands.
 //   /thresholds [SPORT] [axis]
 //   /set SPORT axis field value
@@ -923,6 +984,15 @@ Deno.serve(async (req) => {
           const scriptId = data.startsWith("render:") ? data.slice(7) : null;
           await triggerRender(cb_chat_id, scriptId);
         }
+      } else if (data.startsWith("sb_unders:")) {
+        if (!ADMIN_CHAT_ID || String(cb_chat_id) !== String(ADMIN_CHAT_ID)) {
+          await sendMessage(cb_chat_id, "🚫 Admin only.");
+        } else {
+          const action = data.slice("sb_unders:".length);
+          if (action === "dry") await triggerSbUnders(cb_chat_id, { dry_run: true });
+          else if (action === "send_lead30") await triggerSbUnders(cb_chat_id, { min_lead_minutes: 30 });
+          else await triggerSbUnders(cb_chat_id, {});
+        }
       }
       return new Response("ok");
     }
@@ -1015,6 +1085,27 @@ Deno.serve(async (req) => {
       const parts = text.split(/\s+/).slice(1);
       const scriptId = parts[0] && parts[0].length > 8 ? parts[0] : null;
       await triggerRender(chat_id, scriptId);
+      return new Response("ok");
+    }
+
+    // Admin-only: SB Unders daily report on-demand trigger
+    //   /sb_unders                → menu (Send / Dry-run / Skip <30min)
+    //   /sb_unders send           → send all
+    //   /sb_unders dry            → dry-run preview
+    //   /sb_unders cutoff 22:00   → send with local cutoff time
+    if (text === "/sb_unders" || text.startsWith("/sb_unders ") || text.startsWith("/sb_unders@")) {
+      if (!ADMIN_CHAT_ID || String(chat_id) !== String(ADMIN_CHAT_ID)) {
+        await sendMessage(chat_id, "🚫 Admin only.");
+        return new Response("ok");
+      }
+      const parts = text.split(/\s+/).slice(1);
+      const sub = (parts[0] ?? "").toLowerCase();
+      if (!sub) { await sendSbUndersMenu(chat_id); return new Response("ok"); }
+      if (sub === "dry") { await triggerSbUnders(chat_id, { dry_run: true }); return new Response("ok"); }
+      if (sub === "send") { await triggerSbUnders(chat_id, {}); return new Response("ok"); }
+      if (sub === "cutoff" && parts[1]) { await triggerSbUnders(chat_id, { cutoff_local_time: parts[1] }); return new Response("ok"); }
+      if (sub === "lead" && parts[1]) { await triggerSbUnders(chat_id, { min_lead_minutes: Number(parts[1]) || 0 }); return new Response("ok"); }
+      await sendSbUndersMenu(chat_id);
       return new Response("ok");
     }
 
