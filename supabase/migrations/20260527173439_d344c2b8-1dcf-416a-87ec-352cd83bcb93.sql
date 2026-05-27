@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS public.mlb_rbi_under_analysis_pdv_uniq;
+ALTER TABLE public.mlb_rbi_under_analysis ADD CONSTRAINT mlb_rbi_under_analysis_player_date_variant_key UNIQUE (player_name, analysis_date, variant);

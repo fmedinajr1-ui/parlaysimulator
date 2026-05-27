@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS mlb_rbi_under_analysis_player_date_variant_uniq ON public.mlb_rbi_under_analysis (player_name, analysis_date, variant);

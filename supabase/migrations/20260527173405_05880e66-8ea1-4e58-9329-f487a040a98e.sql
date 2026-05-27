@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS public.mlb_rbi_under_analysis_player_date_variant_uniq;
+DELETE FROM public.mlb_rbi_under_analysis a USING public.mlb_rbi_under_analysis b WHERE a.id < b.id AND a.player_name = b.player_name AND a.analysis_date = b.analysis_date AND a.variant IS NOT DISTINCT FROM b.variant;
+CREATE UNIQUE INDEX mlb_rbi_under_analysis_pdv_uniq ON public.mlb_rbi_under_analysis (player_name, analysis_date, COALESCE(variant, ''));
