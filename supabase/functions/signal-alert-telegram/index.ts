@@ -266,9 +266,10 @@ function formatAlert(a: Alert): string | string[] {
     const cohortAvg = Number(meta.cohort_avg_confidence ?? 0);
     const pct = Number(meta.percentile_rank ?? 0);
     const r = (meta.engine_reasoning ?? null) as PlayerReasoning | null;
+    const originalSide = (meta as any)?.original_side ?? (side === 'Over' ? 'Under' : 'Over');
     const out: string[] = [
-      `🚀 *SLATE OUTLIER* — ${escapeMd(sport)}`,
-      `One of the rarest-priced ${escapeMd(prop)} props on the slate today.`,
+      `🎯 *SLATE OUTLIER FADE* — ${escapeMd(sport)}`,
+      `Rare-priced ${escapeMd(prop)} prop \\— fading the public ${escapeMd(originalSide)} (28% historical hit).`,
       ``,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
