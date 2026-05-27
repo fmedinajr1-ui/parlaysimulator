@@ -604,6 +604,10 @@ Deno.serve(async (req) => {
     //    Logic: derived_confidence is in the top VELOCITY_TOP_PERCENTILE for its
     //    (sport, prop_type) cohort AND >= VELOCITY_MIN_CONFIDENCE. The slate is
     //    telling us this is a rare price. Movement-free, computed cross-sectionally.
+    //
+    //    FADE MODE (2026-05-27): historical accuracy on the natural side is 28.3%
+    //    (91/321) — strong inverse edge. We now FLIP the prediction to the
+    //    opposite side and emit it as a fade. Source side preserved in metadata.
     {
       const cohorts = new Map<string, ScoredProp[]>();
       for (const p of activeProps) {
