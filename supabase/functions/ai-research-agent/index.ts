@@ -119,9 +119,8 @@ async function queryPerplexity(
     'espn.com', 'cbssports.com', 'nba.com', 'nhl.com', 'mlb.com',
     'rotowire.com', 'rotoworld.com', 'sportsline.com', 'theathletic.com',
     'actionnetwork.com', 'vsin.com', 'oddsshark.com', 'covers.com',
-    'pregame.com', 'unabated.com', 'baseballreference.com', 'kenpom.com',
-    'tennis.com', 'atptour.com', 'wtatennis.com',
-    'weather.com', 'ballparkpal.com',
+    'unabated.com', 'kenpom.com', 'atptour.com', 'wtatennis.com',
+    'weather.com', 'ballparkpal.com', 'fangraphs.com',
   ];
   const response = await fetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
