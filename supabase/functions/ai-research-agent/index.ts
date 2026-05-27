@@ -452,7 +452,7 @@ Deno.serve(async (req) => {
 
     const { error: insertError } = await supabase
       .from('bot_research_findings')
-      .insert(inserts);
+      .upsert(inserts, { onConflict: 'category,research_date' });
 
     if (insertError) {
       console.error('[Research Agent] Insert error:', insertError);
