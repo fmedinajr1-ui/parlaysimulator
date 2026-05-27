@@ -113,6 +113,16 @@ async function queryPerplexity(
   query: string,
   systemPrompt: string
 ): Promise<{ content: string; citations: string[] }> {
+  // Reputable sports sources — Perplexity's default web index often skips sports
+  // pages, so we steer it at known feeds. Mix of national, team, and props/odds.
+  const SPORTS_DOMAINS = [
+    'espn.com', 'cbssports.com', 'nba.com', 'nhl.com', 'mlb.com',
+    'rotowire.com', 'rotoworld.com', 'sportsline.com', 'theathletic.com',
+    'actionnetwork.com', 'vsin.com', 'oddsshark.com', 'covers.com',
+    'pregame.com', 'unabated.com', 'baseballreference.com', 'kenpom.com',
+    'tennis.com', 'atptour.com', 'wtatennis.com',
+    'weather.com', 'ballparkpal.com',
+  ];
   const response = await fetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
@@ -125,7 +135,8 @@ async function queryPerplexity(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: query },
       ],
-      search_recency_filter: 'day',
+      search_recency_filter: 'week',
+      search_domain_filter: SPORTS_DOMAINS,
       temperature: 0.1,
     }),
   });
