@@ -38,8 +38,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'injury_intel',
-    query: "List up to 5 confirmed NBA or NHL injury / lineup updates reported in the last 24 hours that affect tonight's games. Each bullet MUST contain the player full name, team, status (OUT / QUESTIONABLE / GTD / IN), and one-sentence prop or line impact. Do NOT include speculation. If no real updates are reported, reply with exactly: NO_INTEL",
-    systemPrompt: 'You report confirmed injury/lineup news from the last 24 hours only, with player full names and statuses. Never speculate. If none exist, return NO_INTEL.',
+    query: "Give me 3-5 NBA, NHL, or MLB player status / injury / rest updates from this week. For each: player full name, team, current designation (OUT / QUESTIONABLE / GTD / DTD / probable / load management / IN), and a one-sentence note on rotation or prop impact. Use ESPN, NBA.com, Rotowire, CBS Sports, or team reports. Posted bookmaker numbers are NOT required.",
+    systemPrompt: 'You report real player injury and status news from this week with full names and teams. Always produce at least 3 bullets if any sports are in season — do not refuse just because numbers are missing.',
   },
   {
     category: 'ncaa_baseball_pitching',
@@ -48,8 +48,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'weather_totals_impact',
-    query: "List up to 5 specific MLB or NCAA baseball games today with weather that materially impacts the total. Each bullet MUST contain: matchup (Team A @ Team B), ballpark, wind direction and speed, temperature, and over/under lean with one-sentence reason. Do NOT explain how weather works in general. If no real impactful weather today, reply with exactly: NO_INTEL",
-    systemPrompt: 'You report named games with real weather conditions affecting the total. Never explain general weather theory. If none, return NO_INTEL.',
+    query: "Give me 3-5 MLB games on today's or tomorrow's slate where weather could influence the total. For each: matchup (Team A @ Team B), ballpark, weather factor (wind dir/speed, temp, precip, dome), and a brief OVER/UNDER lean. Use Weather.com, Ballpark Pal, or ESPN MLB schedule. Posted totals are NOT required.",
+    systemPrompt: 'You list named MLB matchups with forecast conditions. Produce 3-5 bullets whenever the MLB regular season is active.',
   },
   {
     category: 'ncaab_team_scoring_trends',
@@ -93,8 +93,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'tennis_form_matchups',
-    query: "List up to 5 ATP/WTA matchups today with notable form or fatigue edges. Each bullet MUST contain: player A vs player B, surface, recent form line (e.g. 4-1 last 5), surface win rate, and lean. Lines like 'Status: not available' or 'Recent form: not available' are NOT acceptable. If you cannot cite real form numbers, reply with exactly: NO_INTEL",
-    systemPrompt: 'You report tennis matchups with real recent form numbers. Never output empty labels. If you cannot find data, return NO_INTEL.',
+    query: "Give me 3-5 ATP, WTA, or Challenger matchups scheduled today or tomorrow with a form, surface, fatigue, or H2H angle. For each: player A vs player B, tournament, surface, short rationale, directional lean. Use ATP Tour, WTA, Tennis.com. Approximate form is acceptable.",
+    systemPrompt: 'You list named tennis matchups with a clear rationale. Produce 3-5 bullets whenever tour matches are scheduled.',
   },
   {
     category: 'table_tennis_signals',
@@ -113,6 +113,16 @@ async function queryPerplexity(
   query: string,
   systemPrompt: string
 ): Promise<{ content: string; citations: string[] }> {
+  // Reputable sports sources — Perplexity's default web index often skips sports
+  // pages, so we steer it at known feeds. Mix of national, team, and props/odds.
+  const SPORTS_DOMAINS = [
+    'espn.com', 'cbssports.com', 'nba.com', 'nhl.com', 'mlb.com',
+    'rotowire.com', 'rotoworld.com', 'sportsline.com', 'theathletic.com',
+    'actionnetwork.com', 'vsin.com', 'oddsshark.com', 'covers.com',
+    'pregame.com', 'unabated.com', 'baseballreference.com', 'kenpom.com',
+    'tennis.com', 'atptour.com', 'wtatennis.com',
+    'weather.com', 'ballparkpal.com',
+  ];
   const response = await fetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
@@ -120,12 +130,13 @@ async function queryPerplexity(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'sonar-reasoning-pro',
+      model: 'sonar-pro',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: query },
       ],
-      search_recency_filter: 'day',
+      search_recency_filter: 'week',
+      search_domain_filter: SPORTS_DOMAINS,
       temperature: 0.1,
     }),
   });
@@ -136,8 +147,11 @@ async function queryPerplexity(
   }
 
   const data = await response.json();
+  let content: string = data.choices?.[0]?.message?.content || '';
+  // Strip chain-of-thought wrappers if a reasoning model is used.
+  content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   return {
-    content: data.choices?.[0]?.message?.content || '',
+    content,
     citations: data.citations || [],
   };
 }
@@ -398,6 +412,7 @@ Deno.serve(async (req) => {
         const result = await queryPerplexity(perplexityKey, rq.query, rq.systemPrompt);
         
         const insights = extractInsights(result.content);
+        console.log(`[Research Agent] ${rq.category}: ${insights.length} insights, raw len=${result.content.length}, sample=${result.content.slice(0, 240).replace(/\n/g, ' ')}`);
         const titleMap: Record<string, string> = {
           competing_ai: 'AI Betting Systems Intelligence',
           statistical_models: 'Statistical Edge Research',
