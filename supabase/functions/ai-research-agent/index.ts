@@ -401,6 +401,7 @@ Deno.serve(async (req) => {
         const result = await queryPerplexity(perplexityKey, rq.query, rq.systemPrompt);
         
         const insights = extractInsights(result.content);
+        console.log(`[Research Agent] ${rq.category}: ${insights.length} insights, raw len=${result.content.length}, sample=${result.content.slice(0, 240).replace(/\n/g, ' ')}`);
         const titleMap: Record<string, string> = {
           competing_ai: 'AI Betting Systems Intelligence',
           statistical_models: 'Statistical Edge Research',
