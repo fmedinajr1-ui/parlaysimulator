@@ -266,13 +266,36 @@ function formatAlert(a: Alert): string | string[] {
     const cohortAvg = Number(meta.cohort_avg_confidence ?? 0);
     const pct = Number(meta.percentile_rank ?? 0);
     const r = (meta.engine_reasoning ?? null) as PlayerReasoning | null;
+    const mode = (meta as any)?.mode ?? 'fade'; // 'play' | 'fade'
     const originalSide = (meta as any)?.original_side ?? (side === 'Over' ? 'Under' : 'Over');
+    const strength = (meta as any)?.strength ?? null;
+    const meter = Math.max(0, Math.min(100, Number(strength?.meter ?? 50)));
+    const filled = Math.round(meter / 10);
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+    const label = String(strength?.label ?? 'NEUTRAL').replace(/_/g, ' ');
+    const hr = strength?.combined_hit_rate != null
+      ? `${Math.round(Number(strength.combined_hit_rate) * 100)}%`
+      : 'n/a';
+    const sampleN = Number(strength?.outcome?.n ?? 0) + Number(strength?.clv?.n ?? 0);
+    const cohort = String(strength?.cohort ?? 'global');
+
+    const header = mode === 'play'
+      ? `🚀 *SLATE OUTLIER — PLAY* — ${escapeMd(sport)}`
+      : `🎯 *SLATE OUTLIER — FADE* — ${escapeMd(sport)}`;
+    const subhead = mode === 'play'
+      ? `Rare-priced ${escapeMd(prop)} with a proven edge on the natural side.`
+      : `Rare-priced ${escapeMd(prop)} \\— fading public ${escapeMd(originalSide)} (history says inverse).`;
+
     const out: string[] = [
-      `🎯 *SLATE OUTLIER FADE* — ${escapeMd(sport)}`,
-      `Rare-priced ${escapeMd(prop)} prop \\— fading the public ${escapeMd(originalSide)} (28% historical hit).`,
+      header,
+      subhead,
       ``,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
+      ``,
+      `*Signal Strength:* \`${bar}\` ${meter}%`,
+      escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks (${cohort})`),
+      ``,
       `📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`,
       `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ];
