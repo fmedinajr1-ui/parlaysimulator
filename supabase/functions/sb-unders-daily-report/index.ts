@@ -15,20 +15,27 @@ const corsHeaders = {
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
 const PREFERRED_BOOKS = ["fanduel", "hardrockbet", "draftkings", "betmgm", "caesars"];
 
-function etDateString(d = new Date()): string {
-  // YYYY-MM-DD in America/New_York
+function tzDateString(d: Date, tz: string): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
   });
   return fmt.format(d);
 }
 
-function fmtEtTime(iso: string): string {
+function fmtTzTime(iso: string, tz: string): string {
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "numeric", minute: "2-digit", hour12: true,
+    timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true,
   }).format(new Date(iso));
+}
+
+/** Get local hour & minute of an ISO time in the given timezone. */
+function tzHourMinute(iso: string, tz: string): { h: number; m: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date(iso));
+  const h = Number(parts.find(p => p.type === "hour")?.value ?? "0");
+  const m = Number(parts.find(p => p.type === "minute")?.value ?? "0");
+  return { h: h === 24 ? 0 : h, m };
 }
 
 function pickBest<T extends { bookmaker: string }>(rows: T[]): T {
@@ -81,8 +88,34 @@ Deno.serve(async (req) => {
   );
 
   try {
-    const today = etDateString();
-    const nowIso = new Date().toISOString();
+    // ---- Filter rules (overridable per request) ----
+    let opts: Record<string, any> = {};
+    if (req.method === "POST") {
+      try { opts = await req.json(); } catch { /* ignore */ }
+    } else {
+      const u = new URL(req.url);
+      u.searchParams.forEach((v, k) => { opts[k] = v; });
+    }
+
+    const timezone: string = opts.timezone || "America/New_York";
+    // Minutes of lead time before first pitch a game must still have to be included.
+    // e.g. 30 => only games starting > 30 min from now.
+    const minLeadMinutes: number = Math.max(0, Number(opts.min_lead_minutes ?? 0));
+    // Optional hard local cutoff "HH:MM" — only games starting BEFORE this local time on `date` are included.
+    const cutoffLocalTime: string | null = opts.cutoff_local_time || null;
+    // Target date in the given timezone (defaults to "today" in tz).
+    const targetDate: string = opts.date || tzDateString(new Date(), timezone);
+    const dryRun: boolean = opts.dry_run === true || opts.dry_run === "true";
+    const overrideChatId: string | null = opts.chat_id ? String(opts.chat_id) : null;
+
+    const nowIso = new Date(Date.now() + minLeadMinutes * 60_000).toISOString();
+    const today = targetDate;
+
+    // Window: full day in the target timezone
+    const dayStartIso = new Date(`${targetDate}T00:00:00`).toLocaleString("en-US", { timeZone: timezone });
+    // Simpler: compute UTC bounds from local midnight
+    const startUtc = new Date(new Date(`${targetDate}T00:00:00Z`).getTime()); // placeholder, refined below
+    void dayStartIso; void startUtc;
 
     // Pull all SB props for today's unstarted games
     const { data, error } = await sb
@@ -96,9 +129,26 @@ Deno.serve(async (req) => {
 
     if (error) throw error;
 
+    // Post-filter:
+    //  - keep only games whose first pitch falls on `targetDate` in the given timezone
+    //  - if cutoff_local_time set, drop games starting at/after that local time
+    let cutH = 24, cutM = 0;
+    if (cutoffLocalTime) {
+      const [hh, mm] = cutoffLocalTime.split(":").map((n) => Number(n));
+      if (Number.isFinite(hh)) cutH = hh;
+      if (Number.isFinite(mm)) cutM = mm;
+    }
+    const filteredData = (data ?? []).filter((r: any) => {
+      const localDate = tzDateString(new Date(r.commence_time), timezone);
+      if (localDate !== targetDate) return false;
+      if (!cutoffLocalTime) return true;
+      const { h, m } = tzHourMinute(r.commence_time, timezone);
+      return h * 60 + m < cutH * 60 + cutM;
+    });
+
     // Group by player+event, pick best book
-    const byPlayer = new Map<string, typeof data>();
-    for (const r of data ?? []) {
+    const byPlayer = new Map<string, typeof filteredData>();
+    for (const r of filteredData) {
       const k = `${r.event_id}::${r.player_name}::${r.current_line}`;
       if (!byPlayer.has(k)) byPlayer.set(k, []);
       byPlayer.get(k)!.push(r);
@@ -110,18 +160,41 @@ Deno.serve(async (req) => {
       .sort((a, b) => (b.under_price ?? -99999) - (a.under_price ?? -99999));
 
     // Build chat list
-    const { data: chats } = await sb
-      .from("telegram_bot_state")
-      .select("chat_id")
-      .limit(50);
+    let targetChatIds: string[];
+    if (overrideChatId) {
+      targetChatIds = [overrideChatId];
+    } else {
+      const { data: chats } = await sb
+        .from("telegram_bot_state")
+        .select("chat_id")
+        .limit(50);
+      targetChatIds = (chats ?? [])
+        .map((c: any) => String(c.chat_id))
+        .filter(Boolean);
+      if (targetChatIds.length === 0) targetChatIds.push("7705141526");
+    }
 
-    const targetChatIds = (chats ?? [])
-      .map((c: any) => String(c.chat_id))
-      .filter(Boolean);
-    if (targetChatIds.length === 0) targetChatIds.push("7705141526");
+    const filterSummary =
+      `timezone=${timezone} • date=${targetDate} • min_lead=${minLeadMinutes}min` +
+      (cutoffLocalTime ? ` • cutoff<${cutoffLocalTime}` : "");
+
+    if (dryRun) {
+      return new Response(JSON.stringify({
+        success: true, dry_run: true, picks: picks.length,
+        games: new Set(picks.map((p: any) => p.event_id)).size,
+        filters: { timezone, date: targetDate, min_lead_minutes: minLeadMinutes, cutoff_local_time: cutoffLocalTime },
+        preview: picks.slice(0, 10).map((p: any) => ({
+          player: p.player_name, line: p.current_line, odds: p.under_price,
+          book: p.bookmaker, start_local: fmtTzTime(p.commence_time, timezone),
+          game: p.game_description,
+        })),
+      }, null, 2), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (picks.length === 0) {
-      const msg = `⚾ <b>SB Unders Report</b> — ${today}\n\nNo unstarted SB Under props posted right now.`;
+      const msg = `⚾ <b>SB Unders Report</b> — ${today}\n<i>${filterSummary}</i>\n\nNo SB Under props match these filters right now.`;
       for (const id of targetChatIds) await sendTelegram(id, msg);
       return new Response(JSON.stringify({ success: true, picks: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -147,13 +220,14 @@ Deno.serve(async (req) => {
     const header =
       `⚾ <b>MLB Stolen Bases — Unders</b>\n` +
       `📅 ${today} • ${picks.length} props across ${gameOrder.length} games\n` +
+      `🔧 <i>${filterSummary}</i>\n` +
       `⚠️ <i>All SB Unders are heavily juiced. Read the break-even on every card before betting.</i>`;
     for (const id of targetChatIds) await sendTelegram(id, header);
 
     // One card per game
     for (const [, gamePicks] of gameOrder) {
       const first = gamePicks[0];
-      const start = fmtEtTime(first.commence_time);
+      const start = fmtTzTime(first.commence_time, timezone);
       const game = first.game_description;
 
       const propLines = gamePicks
