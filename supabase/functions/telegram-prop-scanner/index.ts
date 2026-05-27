@@ -83,6 +83,67 @@ async function answerCallback(callback_query_id: string, text?: string) {
 }
 
 // =====================================================================
+// Admin-only: trigger the SB Unders daily report on demand.
+async function triggerSbUnders(
+  chat_id: number,
+  opts: { dry_run?: boolean; min_lead_minutes?: number; cutoff_local_time?: string | null } = {},
+) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRole) {
+    await sendMessage(chat_id, "❌ SB Unders trigger not configured (missing service role).");
+    return;
+  }
+  const dry = !!opts.dry_run;
+  await sendMessage(chat_id, dry ? "🔎 Running SB Unders *dry-run preview*…" : "📤 Sending SB Unders report now…");
+  try {
+    const body: Record<string, unknown> = {
+      trigger: "telegram-button",
+      timezone: "America/New_York",
+      min_lead_minutes: opts.min_lead_minutes ?? 0,
+    };
+    if (opts.cutoff_local_time) body.cutoff_local_time = opts.cutoff_local_time;
+    if (dry) {
+      body.dry_run = true;
+      body.chat_id = String(chat_id);
+    }
+    const res = await fetch(`${supabaseUrl}/functions/v1/sb-unders-daily-report`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serviceRole}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const txt = await res.text();
+    let parsed: any = null;
+    try { parsed = txt ? JSON.parse(txt) : null; } catch { parsed = { raw: txt }; }
+    if (!res.ok) {
+      await sendMessage(chat_id, `❌ SB Unders failed (${res.status}): \`${(parsed?.error || txt || "unknown").toString().slice(0, 300)}\``);
+      return;
+    }
+    if (dry) {
+      const games = parsed?.games ?? parsed?.preview?.length ?? parsed?.picks_count ?? "?";
+      await sendMessage(chat_id, `✅ Dry-run complete. Preview: \`${JSON.stringify(parsed).slice(0, 600)}\``);
+    } else {
+      const sent = parsed?.sent ?? parsed?.delivered ?? parsed?.messages ?? "ok";
+      await sendMessage(chat_id, `✅ SB Unders sent. (\`${JSON.stringify({ sent }).slice(0, 200)}\`)`);
+    }
+  } catch (e) {
+    await sendMessage(chat_id, `❌ SB Unders error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function sendSbUndersMenu(chat_id: number) {
+  await sendMessageWithButtons(
+    chat_id,
+    "*SB Unders — daily report*\n\nPick an action:",
+    [
+      [{ text: "📤 Send now (all games)", data: "sb_unders:send" }],
+      [{ text: "🔎 Dry-run preview", data: "sb_unders:dry" }],
+      [{ text: "⏰ Send, skip games <30min", data: "sb_unders:send_lead30" }],
+    ],
+  );
+}
+
+// =====================================================================
 // Admin-only: alert threshold tuning commands.
 //   /thresholds [SPORT] [axis]
 //   /set SPORT axis field value
