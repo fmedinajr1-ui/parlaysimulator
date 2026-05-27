@@ -654,13 +654,16 @@ Deno.serve(async (req) => {
           const overP = Number(p.over_price ?? NaN);
           const underP = Number(p.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
+          // FADE: flip side to capture the inverse edge (natural side hit 28.3%).
+          const originalSide = p.derived_side;
+          const fadedSide: 'Over' | 'Under' = originalSide === 'Over' ? 'Under' : 'Over';
           const engine_reasoning = await explain(p, gap, 'velocity_spike');
 
           const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
             player_name: p.player_name,
             event_id: p.event_id,
             signal_type: 'velocity_spike',
-            prediction: p.derived_side,
+            prediction: fadedSide,
             confidence: Math.round(p.derived_confidence),
             prop_type: p.prop_type,
             sport: normaliseSport(p.sport),
@@ -668,7 +671,10 @@ Deno.serve(async (req) => {
             event_description: p.game_description,
             commence_time: p.commence_time,
             metadata: {
-              detector: 'slate_outlier',
+              detector: 'slate_outlier_fade',
+              mode: 'fade',
+              original_side: originalSide,
+              fade_reason: 'historical 28.3% hit rate on natural side (91/321) — inverse edge',
               cohort_key: cohortKey,
               cohort_size: members.length,
               cohort_avg_confidence: Math.round(cohortAvg * 10) / 10,
