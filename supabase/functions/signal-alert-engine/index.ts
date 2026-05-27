@@ -2,6 +2,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { buildPlayerReasoning, buildGroupReasoning, type PlayerReasoning } from '../_shared/alert-explainer.ts';
 import { loadRoleContexts, dangerBandCheck, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 import { loadHardRockLines, checkHrbLine, type HardRockLine } from '../_shared/hardrock-lines.ts';
+import {
+  loadVelocitySpikeStrength,
+  scoreVelocitySpike,
+  type StrengthVerdict,
+} from '../_shared/velocity-spike-strength.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -140,6 +145,9 @@ Deno.serve(async (req) => {
   if (!hrbAvailable) {
     console.warn('[signal-alert-engine] HRB lines unavailable — all NBA alerts will be suppressed this run');
   }
+
+  // Load combined outcome+CLV strength stats for velocity_spike once per run.
+  const velocityStrength = await loadVelocitySpikeStrength(supabase);
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
@@ -654,16 +662,29 @@ Deno.serve(async (req) => {
           const overP = Number(p.over_price ?? NaN);
           const underP = Number(p.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
-          // FADE: flip side to capture the inverse edge (natural side hit 28.3%).
+
+          // ─── SIGNAL STRENGTH METER ────────────────────────────────────────
+          // Combined outcome+CLV historical performance decides play vs fade
+          // per (sport, prop_type). Falls back to sport, then global baseline.
           const originalSide = p.derived_side;
-          const fadedSide: 'Over' | 'Under' = originalSide === 'Over' ? 'Under' : 'Over';
+          const verdict: StrengthVerdict = scoreVelocitySpike(
+            velocityStrength,
+            normaliseSport(p.sport),
+            p.prop_type,
+          );
+          const finalSide: 'Over' | 'Under' =
+            verdict.recommendation === 'play'
+              ? originalSide
+              : (originalSide === 'Over' ? 'Under' : 'Over');
+          // Suppress NEUTRAL with insufficient sample only when meter is razor-thin.
+          // (We still fire — the fade default has +EV vs the natural side — but tag it.)
           const engine_reasoning = await explain(p, gap, 'velocity_spike');
 
           const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
             player_name: p.player_name,
             event_id: p.event_id,
             signal_type: 'velocity_spike',
-            prediction: fadedSide,
+            prediction: finalSide,
             confidence: Math.round(p.derived_confidence),
             prop_type: p.prop_type,
             sport: normaliseSport(p.sport),
@@ -671,10 +692,18 @@ Deno.serve(async (req) => {
             event_description: p.game_description,
             commence_time: p.commence_time,
             metadata: {
-              detector: 'slate_outlier_fade',
-              mode: 'fade',
+              detector: verdict.recommendation === 'play' ? 'slate_outlier_play' : 'slate_outlier_fade',
+              mode: verdict.recommendation,
               original_side: originalSide,
-              fade_reason: 'historical 28.3% hit rate on natural side (91/321) — inverse edge',
+              strength: {
+                label: verdict.label,
+                meter: verdict.meter,
+                combined_hit_rate: verdict.combined_hit_rate,
+                outcome: { n: verdict.outcome_n, correct: verdict.outcome_correct },
+                clv: { n: verdict.clv_n, correct: verdict.clv_correct },
+                cohort: verdict.cohort,
+                reason: verdict.reason,
+              },
               cohort_key: cohortKey,
               cohort_size: members.length,
               cohort_avg_confidence: Math.round(cohortAvg * 10) / 10,
