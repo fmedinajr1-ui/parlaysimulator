@@ -146,6 +146,9 @@ Deno.serve(async (req) => {
     console.warn('[signal-alert-engine] HRB lines unavailable — all NBA alerts will be suppressed this run');
   }
 
+  // Load combined outcome+CLV strength stats for velocity_spike once per run.
+  const velocityStrength = await loadVelocitySpikeStrength(supabase);
+
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
   const explain = async (p: ScoredProp, juiceGap: number | null, signal_type?: string): Promise<PlayerReasoning | null> => {
