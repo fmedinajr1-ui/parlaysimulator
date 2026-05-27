@@ -38,8 +38,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'injury_intel',
-    query: "List up to 5 NBA, NHL, or MLB injury / lineup / rest notes from the last 72 hours that affect upcoming games. Each bullet should include player full name, team, current status or designation (OUT / QUESTIONABLE / GTD / DTD / IN / load management / probable), and a one-sentence impact on props, lines, or rotations. Recent beat-writer reports, team PR, and reputable aggregators are acceptable sources — a posted bookmaker number is NOT required. Only reply NO_INTEL if you truly cannot find any relevant player news.",
-    systemPrompt: 'You surface real injury, lineup, and rest news from the last 72 hours with player full names. Cite a source URL when possible. Posted betting numbers are NOT required. Only return NO_INTEL if there is genuinely nothing.',
+    query: "Give me 3-5 NBA, NHL, or MLB player status / injury / rest updates from this week. For each: player full name, team, current designation (OUT / QUESTIONABLE / GTD / DTD / probable / load management / IN), and a one-sentence note on rotation or prop impact. Use ESPN, NBA.com, Rotowire, CBS Sports, or team reports. Posted bookmaker numbers are NOT required.",
+    systemPrompt: 'You report real player injury and status news from this week with full names and teams. Always produce at least 3 bullets if any sports are in season — do not refuse just because numbers are missing.',
   },
   {
     category: 'ncaa_baseball_pitching',
@@ -48,8 +48,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'weather_totals_impact',
-    query: "List up to 5 MLB or NCAA baseball games today or tomorrow where weather could influence the total. Each bullet should include matchup, ballpark, and the weather factor (wind, temp, precipitation, dome) plus a brief OVER/UNDER lean. Use forecasts from Weather.com, Windy, Ballpark Pal, or similar — a posted total is NOT required. Only reply NO_INTEL if no outdoor games exist or no weather signal can be found.",
-    systemPrompt: 'You report named outdoor baseball games with real forecast conditions affecting scoring. A posted total is NOT required. Only return NO_INTEL when there is genuinely nothing.',
+    query: "Give me 3-5 MLB games on today's or tomorrow's slate where weather could influence the total. For each: matchup (Team A @ Team B), ballpark, weather factor (wind dir/speed, temp, precip, dome), and a brief OVER/UNDER lean. Use Weather.com, Ballpark Pal, or ESPN MLB schedule. Posted totals are NOT required.",
+    systemPrompt: 'You list named MLB matchups with forecast conditions. Produce 3-5 bullets whenever the MLB regular season is active.',
   },
   {
     category: 'ncaab_team_scoring_trends',
@@ -93,8 +93,8 @@ const RESEARCH_QUERIES = [
   },
   {
     category: 'tennis_form_matchups',
-    query: "List up to 5 ATP, WTA, or Challenger matchups today or tomorrow with a form, surface, fatigue, or head-to-head edge. Each bullet should include player A vs player B, tournament, surface, a short rationale (recent results, H2H record, surface comfort, travel/fatigue, injury return), and a directional lean. Approximate form descriptions are acceptable when exact records are unavailable. Only reply NO_INTEL if there are truly no relevant matches.",
-    systemPrompt: 'You report tennis matchups with real player names and a clear rationale. Exact win-loss numbers are preferred but not required. Only return NO_INTEL when there is genuinely nothing.',
+    query: "Give me 3-5 ATP, WTA, or Challenger matchups scheduled today or tomorrow with a form, surface, fatigue, or H2H angle. For each: player A vs player B, tournament, surface, short rationale, directional lean. Use ATP Tour, WTA, Tennis.com. Approximate form is acceptable.",
+    systemPrompt: 'You list named tennis matchups with a clear rationale. Produce 3-5 bullets whenever tour matches are scheduled.',
   },
   {
     category: 'table_tennis_signals',
