@@ -39,6 +39,19 @@ function pickBest<T extends { bookmaker: string }>(rows: T[]): T {
   return rows[0];
 }
 
+function americanToImplied(odds: number): number {
+  if (odds < 0) return -odds / (-odds + 100);
+  return 100 / (odds + 100);
+}
+
+function riskTag(implied: number): string {
+  if (implied >= 0.98) return "🟣 EXTREME (lottery-grade juice)";
+  if (implied >= 0.965) return "🔴 VERY HIGH";
+  if (implied >= 0.95) return "🟠 HIGH";
+  if (implied >= 0.90) return "🟡 ELEVATED";
+  return "🟢 MODERATE";
+}
+
 async function sendTelegram(chatId: string, text: string) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
@@ -115,32 +128,75 @@ Deno.serve(async (req) => {
       });
     }
 
-    const lines: string[] = [];
-    lines.push(`⚾ <b>MLB Stolen Bases — Unders</b>`);
-    lines.push(`📅 ${today} • ${picks.length} unstarted props\n`);
+    // Group picks by game (event_id)
+    const byGame = new Map<string, typeof picks>();
     for (const p of picks) {
-      const start = fmtEtTime(p.commence_time);
-      const book = (p.bookmaker || "").toUpperCase();
-      const price = (p.under_price ?? 0) > 0 ? `+${p.under_price}` : `${p.under_price}`;
-      lines.push(
-        `• <b>${p.player_name}</b> U${p.current_line} @ <b>${price}</b>\n` +
-        `   ${p.game_description} — ${start} ET — ${book}`,
-      );
+      const k = String(p.event_id).split("_")[0]; // strip suffixes
+      if (!byGame.has(k)) byGame.set(k, []);
+      byGame.get(k)!.push(p);
     }
-    lines.push(`\n⚠️ High juice = high break-even. -2000 needs 95.2%, -3000 needs 96.8%.`);
 
-    const message = lines.join("\n");
-    // Telegram cap is 4096 chars — chunk if needed
-    const chunks: string[] = [];
-    let cur = "";
-    for (const ln of message.split("\n")) {
-      if ((cur + "\n" + ln).length > 3800) { chunks.push(cur); cur = ln; }
-      else cur = cur ? cur + "\n" + ln : ln;
-    }
-    if (cur) chunks.push(cur);
+    // Order games by first pitch
+    const gameOrder = Array.from(byGame.entries()).sort((a, b) => {
+      const ta = new Date(a[1][0].commence_time).getTime();
+      const tb = new Date(b[1][0].commence_time).getTime();
+      return ta - tb;
+    });
 
-    for (const id of targetChatIds) {
-      for (const c of chunks) await sendTelegram(id, c);
+    // Header card
+    const header =
+      `⚾ <b>MLB Stolen Bases — Unders</b>\n` +
+      `📅 ${today} • ${picks.length} props across ${gameOrder.length} games\n` +
+      `⚠️ <i>All SB Unders are heavily juiced. Read the break-even on every card before betting.</i>`;
+    for (const id of targetChatIds) await sendTelegram(id, header);
+
+    // One card per game
+    for (const [, gamePicks] of gameOrder) {
+      const first = gamePicks[0];
+      const start = fmtEtTime(first.commence_time);
+      const game = first.game_description;
+
+      const propLines = gamePicks
+        .sort((a, b) => (b.under_price ?? -99999) - (a.under_price ?? -99999))
+        .map((p) => {
+          const odds = p.under_price ?? 0;
+          const implied = americanToImplied(odds);
+          const price = odds > 0 ? `+${odds}` : `${odds}`;
+          const book = (p.bookmaker || "").toUpperCase();
+          const breakEven = (implied * 100).toFixed(1);
+          const risk = riskTag(implied);
+          return (
+            `👤 <b>${p.player_name}</b>\n` +
+            `   • Line: Under ${p.current_line} Stolen Bases\n` +
+            `   • Odds: <b>${price}</b> (${book})\n` +
+            `   • Implied / Break-Even: <b>${breakEven}%</b>\n` +
+            `   • Risk: ${risk}`
+          );
+        });
+
+      const card =
+        `🏟️ <b>${game}</b>\n` +
+        `🕒 First pitch: ${start} ET\n` +
+        `📊 ${gamePicks.length} SB Under prop${gamePicks.length === 1 ? "" : "s"}\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        propLines.join("\n\n");
+
+      // Telegram 4096 cap — chunk if needed (rare per-game)
+      if (card.length <= 3900) {
+        for (const id of targetChatIds) await sendTelegram(id, card);
+      } else {
+        const head = `🏟️ <b>${game}</b>\n🕒 ${start} ET\n━━━━━━━━━━━━━━━`;
+        let buf = head;
+        for (const ln of propLines) {
+          if ((buf + "\n\n" + ln).length > 3900) {
+            for (const id of targetChatIds) await sendTelegram(id, buf);
+            buf = head + "\n" + ln;
+          } else {
+            buf = buf + "\n\n" + ln;
+          }
+        }
+        if (buf) for (const id of targetChatIds) await sendTelegram(id, buf);
+      }
     }
 
     return new Response(JSON.stringify({ success: true, picks: picks.length, chats: targetChatIds.length }), {
