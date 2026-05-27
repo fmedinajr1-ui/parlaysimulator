@@ -120,7 +120,7 @@ async function queryPerplexity(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'sonar',
+      model: 'sonar-pro',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: query },
@@ -452,7 +452,7 @@ Deno.serve(async (req) => {
 
     const { error: insertError } = await supabase
       .from('bot_research_findings')
-      .insert(inserts);
+      .upsert(inserts, { onConflict: 'category,research_date' });
 
     if (insertError) {
       console.error('[Research Agent] Insert error:', insertError);
@@ -553,8 +553,8 @@ Deno.serve(async (req) => {
     // Only render categories with at least 1 surviving insight AND a non-zero quality score.
     const rendered = findings.filter(f => f.key_insights.length > 0 && f.relevance_score > 0);
 
-    // Low-signal short-circuit: if fewer than 4 categories survived, don't spam the channel.
-    const LOW_SIGNAL_THRESHOLD = 4;
+    // Low-signal short-circuit: if fewer than 2 categories survived, don't spam the channel.
+    const LOW_SIGNAL_THRESHOLD = 2;
     const lowSignal = rendered.length < LOW_SIGNAL_THRESHOLD;
 
     for (const f of rendered) {
