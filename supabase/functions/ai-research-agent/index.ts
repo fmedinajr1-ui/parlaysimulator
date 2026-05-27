@@ -120,7 +120,7 @@ async function queryPerplexity(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'sonar-reasoning-pro',
+      model: 'sonar-pro',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: query },
@@ -136,8 +136,11 @@ async function queryPerplexity(
   }
 
   const data = await response.json();
+  let content: string = data.choices?.[0]?.message?.content || '';
+  // Strip chain-of-thought wrappers if a reasoning model is used.
+  content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   return {
-    content: data.choices?.[0]?.message?.content || '',
+    content,
     citations: data.citations || [],
   };
 }
