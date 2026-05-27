@@ -2,6 +2,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { buildPlayerReasoning, buildGroupReasoning, type PlayerReasoning } from '../_shared/alert-explainer.ts';
 import { loadRoleContexts, dangerBandCheck, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 import { loadHardRockLines, checkHrbLine, type HardRockLine } from '../_shared/hardrock-lines.ts';
+import {
+  loadVelocitySpikeStrength,
+  scoreVelocitySpike,
+  type StrengthVerdict,
+} from '../_shared/velocity-spike-strength.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
