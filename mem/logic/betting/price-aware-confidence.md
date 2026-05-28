@@ -46,8 +46,11 @@ Tests: `supabase/functions/_shared/price-aware-confidence_test.ts` — 9 passing
 Open follow-ups (revisit before flipping the flag globally):
 1. Replace `derived_confidence` with a calibrated probability per signal type
    (e.g. logistic from juice-gap + cohort hit rate) so Module C can apply.
-2. Fix the `fanduel_prediction_accuracy ↔ fanduel_prediction_alerts` join —
-   accuracy rows use bare event_id, alerts use composite. Until fixed,
-   empirical calibration of cap thresholds is blocked.
+2. ✅ FIXED 2026-05-28 — join now works via `public.v_alert_accuracy`
+   (composite key on `event_id + player_name + prop_type + signal_type`,
+   indexes on both sides). Legacy 4,389 bare-event_id accuracy rows are
+   excluded (verified zero matching alerts in any ±6h window). 30-day audit
+   via the view: 16,145 alerts, 12% settled, 575H / 1362M = ~30% hit rate
+   on the picked side — confirms the heuristic is currently fading itself.
 3. Promote staleness from soft (`fresh` flag) to hard reject once we trust the
    `updated_at` cadence on `unified_props`.
