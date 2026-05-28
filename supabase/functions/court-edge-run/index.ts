@@ -27,6 +27,13 @@ import { playerSlug } from "../_shared/court-edge-slug.ts";
 import { baselineL3, baselineFor, type Surface, type SetsFormat } from "../_shared/court-edge-baseline.ts";
 import { pickSigma, type Tour } from "../_shared/court-edge-edge.ts";
 import { loadCourtEdgeConfig } from "../_shared/court-edge-config.ts";
+import {
+  gradeV3,
+  type ProjectionV3Result,
+  type SurfaceV3,
+  type TourV3,
+} from "../_shared/court-edge-projection-v3.ts";
+import { loadPlayerFit, fitFor, NEUTRAL_FIT, type SurfaceFit } from "../_shared/court-edge-fit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
