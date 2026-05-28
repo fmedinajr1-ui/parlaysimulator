@@ -309,14 +309,17 @@ async function collectMlbCandidates(supabase: any, today: string): Promise<LockC
   if (spots.length === 0) return [];
 
   // Pull active MLB lines
+  // Freshness gate: only lines updated within the last 2 hours to avoid stale snapshots
+  const freshCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   const { data: rawLines } = await supabase
     .from('unified_props')
-    .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, game_description')
+    .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, game_description, odds_updated_at, updated_at')
     .eq('sport', 'baseball_mlb').eq('is_active', true)
     .not('player_name', 'is', null).not('current_line', 'is', null)
+    .or(`odds_updated_at.gte.${freshCutoff},updated_at.gte.${freshCutoff}`)
     .limit(5000);
   const lines = rawLines || [];
-  console.log(`[MLB] ${lines.length} active lines`);
+  console.log(`[MLB] ${lines.length} fresh active lines (cutoff ${freshCutoff})`);
   if (!lines.length) return [];
 
   // Group lines by player|prop_type for quick lookup
