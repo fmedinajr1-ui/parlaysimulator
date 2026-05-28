@@ -163,3 +163,23 @@ export function evaluate(input: PriceAwareInput): PriceAwareResult {
     verdict,
   };
 }
+
+// ─── Line-health (no verdict) ──────────────────────────────────────────────
+// Use this when the upstream `confidence` is a heuristic (e.g. juice-gap
+// score), not a calibrated probability. Returns only the price-side facts so
+// callers can log them without producing a misleading BACK/FADE verdict.
+export interface LineHealth {
+  fair_prob_side: number;
+  implied_prob_side: number;
+  vig: number;
+}
+
+export function lineHealth(side: Side, over: number, under: number): LineHealth | null {
+  const dev = devigPair(over, under);
+  if (!dev) return null;
+  return {
+    fair_prob_side: side === 'Over' ? dev.fair_over : dev.fair_under,
+    implied_prob_side: americanToImplied(side === 'Over' ? over : under),
+    vig: dev.vig,
+  };
+}
