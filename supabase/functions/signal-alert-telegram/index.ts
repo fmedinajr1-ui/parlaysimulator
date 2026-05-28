@@ -277,7 +277,19 @@ function formatAlert(a: Alert): string | string[] {
       ? `${Math.round(Number(strength.combined_hit_rate) * 100)}%`
       : 'n/a';
     const sampleN = Number(strength?.outcome?.n ?? 0) + Number(strength?.clv?.n ?? 0);
-    const cohort = String(strength?.cohort ?? 'global');
+    const cohortTier = String(strength?.cohort ?? 'global');           // 'sport+prop' | 'sport' | 'global'
+    const cohortReason = String(strength?.reason ?? '');                // e.g. "MLB Pitcher Strikeouts"
+    const cohortHuman = cohortReason
+      || (cohortTier === 'sport+prop' ? `${sport} ${prop}`
+        : cohortTier === 'sport'      ? `${sport} all props`
+        :                                'global velocity_spike baseline');
+    // Verdict word for the on-card explainer.
+    const verdictWord = mode === 'play' ? 'PLAY' : 'FADE';
+    const verdictEmoji = mode === 'play' ? '🟢' : '🔴';
+    // Plain-English "why" so users can read the card without context.
+    const verdictWhy = mode === 'play'
+      ? `historical cohort hits ${hr} on the natural side — backing ${escapeMd(originalSide)}.`
+      : `historical cohort only hits ${hr} on ${escapeMd(originalSide)} — flipping to ${escapeMd(side)}.`;
 
     const header = mode === 'play'
       ? `🚀 *SLATE OUTLIER — PLAY* — ${escapeMd(sport)}`
@@ -294,7 +306,11 @@ function formatAlert(a: Alert): string | string[] {
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
       ``,
       `*Signal Strength:* \`${bar}\` ${meter}%`,
-      escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks (${cohort})`),
+      escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks`),
+      ``,
+      `${verdictEmoji} *Verdict: ${verdictWord}*`,
+      escapeMd(`↳ Cohort: ${cohortHuman} (${cohortTier}, n=${sampleN})`),
+      `↳ ${verdictWhy}`,
       ``,
       `📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`,
       `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
