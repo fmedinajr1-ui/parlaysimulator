@@ -20,11 +20,23 @@ into the `velocity_spike` insert path in `signal-alert-engine/index.ts`.
   emits `STRONG_BACK / BACK / LEAN_BACK / PASS / FADE` based on `edge_pp`
   vs `MIN_EDGE_TO_PLAY=0.03`, `STRONG_EDGE=0.06`, `FADE_EDGE=-0.03`.
 
-Module C is **gated behind `PRICE_AWARE_VERDICT_ENABLED` env var** (defaults
-false). When false, A+B still run and write a `metadata.price_aware` block for
-observation; broadcast `confidence` and the line-guard reject are no-ops.
-When true, broadcast confidence becomes `round(capped_prob*100)` and
-line-guard failures hard-skip the velocity_spike emit.
+Module C (BACK/FADE verdict) is **disabled for `take_it_now` and
+`velocity_spike`** as of the 2026-05-28 audit. The 14-day audit found 100% of
+those alerts overshoot a probability cap by ~50pp because broadcast
+`confidence` is a juice-gap heuristic (60–90), NOT a calibrated probability,
+and the picked side is the positive-juice dog (avg de-vigged fair side 27–33%).
+Running cap math on a heuristic is a category error.
+
+What runs today:
+- Module A (de-vig) — always, recorded under `metadata.price_aware.fair_prob`.
+- Module B (line guard) — always computed; hard-skips emit only when
+  `PRICE_AWARE_VERDICT_ENABLED=true` (defaults false).
+- Module C — kept in code for future signals whose `modelProb` is a real
+  probability (e.g. pitcher-k-over-model, rbi unders). Wire those in by
+  importing `evaluate` from `_shared/price-aware-confidence.ts`.
+
+Observation block written to `fanduel_prediction_alerts.metadata.price_aware`:
+`{ side_scored, fair_prob, implied_prob, vig, raw_heuristic_conf, mode: 'line_health_only' }`.
 
 Scored against the **final (post-fade-flip) side** so cap and verdict match
 what is actually broadcast.
@@ -32,8 +44,10 @@ what is actually broadcast.
 Tests: `supabase/functions/_shared/price-aware-confidence_test.ts` — 9 passing.
 
 Open follow-ups (revisit before flipping the flag globally):
-1. Calibrate `MIN_EDGE_TO_PLAY` against last 200 picks' post-cap edge histogram.
-2. Decide if `HARD_CONFIDENCE_CAP=0.85` applies to ALL signals (cascade etc.)
-   or only velocity_spike.
+1. Replace `derived_confidence` with a calibrated probability per signal type
+   (e.g. logistic from juice-gap + cohort hit rate) so Module C can apply.
+2. Fix the `fanduel_prediction_accuracy ↔ fanduel_prediction_alerts` join —
+   accuracy rows use bare event_id, alerts use composite. Until fixed,
+   empirical calibration of cap thresholds is blocked.
 3. Promote staleness from soft (`fresh` flag) to hard reject once we trust the
    `updated_at` cadence on `unified_props`.
