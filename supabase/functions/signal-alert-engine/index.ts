@@ -23,9 +23,12 @@ const MIN_JUICE_GAP = 15;             // min American-odds gap to consider a dir
 // detectors instead surface (a) the steepest juice gap per game and
 // (b) the rarest-priced props on the slate.
 const TAKE_IT_NOW_MIN_GAP = 30;       // American odds gap that screams "book is hammering one side"
-const VELOCITY_TOP_PERCENTILE = 0.05; // top 5% of derived confidence per (sport, prop_type)
-const VELOCITY_MIN_CONFIDENCE = 70;   // raise the floor for "rare on slate"
-const VELOCITY_MIN_GROUP_SIZE = 20;   // don't compute percentile on tiny pools
+// Relaxed 2026-05-28 so the strength meter has data to learn the fade/play
+// split. Old values (5% / 70 / 20) gated everything out. New values let the
+// top of each cohort surface; the strength meter then auto-routes play vs fade.
+const VELOCITY_TOP_PERCENTILE = 0.15; // top 15% of derived confidence per (sport, prop_type)
+const VELOCITY_MIN_CONFIDENCE = 65;   // floor for "rare on slate"
+const VELOCITY_MIN_GROUP_SIZE = 10;   // smaller cohorts still qualify (e.g. MLB Hits)
 
 // ─── POISON-SIGNAL BLACKLIST (Phase 1 kill switch) ───────────────────────────
 // Last 21d audit: batter_walks Over @ 28.5%, batter_stolen_bases Over @ ~0%.
