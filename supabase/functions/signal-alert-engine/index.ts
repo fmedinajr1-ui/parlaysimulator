@@ -9,7 +9,8 @@ import {
 } from '../_shared/velocity-spike-strength.ts';
 import {
   resolvePrice,
-  evaluate as evaluatePriceAware,
+  lineHealth as lineHealthCheck,
+  type LineHealth,
   HARD_CONFIDENCE_CAP,
 } from '../_shared/price-aware-confidence.ts';
 
@@ -703,18 +704,16 @@ Deno.serve(async (req) => {
             Number.isFinite(underP) ? underP : null,
             p.updated_at ?? null,
           );
-          let priceAware: ReturnType<typeof evaluatePriceAware> | null = null;
+          let priceAware: LineHealth | null = null;
           let broadcastConfidence = Math.round(p.derived_confidence);
           if (priceRes.ok) {
-            priceAware = evaluatePriceAware({
-              side: finalSide,
-              modelProb: Math.min(1, Math.max(0, p.derived_confidence / 100)),
-              over: priceRes.over,
-              under: priceRes.under,
-            });
-            if (PRICE_AWARE_VERDICT_ENABLED) {
-              broadcastConfidence = Math.round(priceAware.capped_prob * 100);
-            }
+            // NOTE: derived_confidence here is a juice-gap heuristic (60–90),
+            // not a calibrated probability. 14-day audit (2026-05-28):
+            // 100% of these alerts overshoot a probability cap by ~50pp
+            // because the picked side is the dog. So we do NOT run the
+            // BACK/FADE verdict math (it would be a category error) and we
+            // do NOT override broadcast confidence. We just log line health.
+            priceAware = lineHealthCheck(finalSide, priceRes.over, priceRes.under);
           }
           // Module B as a hard gate only when Module C is on (avoid losing
           // historical sample for the strength meter while we tune thresholds).
@@ -759,12 +758,10 @@ Deno.serve(async (req) => {
                     side_scored: finalSide,
                     fair_prob: Math.round(priceAware.fair_prob_side * 10000) / 10000,
                     implied_prob: Math.round(priceAware.implied_prob_side * 10000) / 10000,
-                    capped_prob: Math.round(priceAware.capped_prob * 10000) / 10000,
-                    raw_model_prob: Math.round((p.derived_confidence / 100) * 10000) / 10000,
-                    edge_pp: Math.round(priceAware.edge_pp * 10000) / 10000,
-                    is_plus_ev: priceAware.is_plus_ev,
-                    verdict: priceAware.verdict,
-                    hard_cap: HARD_CONFIDENCE_CAP,
+                    vig: Math.round(priceAware.vig * 10000) / 10000,
+                    raw_heuristic_conf: Math.round((p.derived_confidence / 100) * 10000) / 10000,
+                    mode: 'line_health_only',
+                    note: 'derived_confidence is juice-gap heuristic, not probability; verdict math skipped',
                   }
                 : { enabled_for_broadcast: PRICE_AWARE_VERDICT_ENABLED, line_guard: priceRes.ok ? 'ok' : priceRes.reason },
               cohort_key: cohortKey,
