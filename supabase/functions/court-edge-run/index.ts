@@ -520,6 +520,13 @@ Deno.serve(async (req) => {
         quarantine_reason: e.quarantine_reason ?? null,
         books_count: ev.books_count ?? null,
         book_lines: ev.book_lines ?? null,
+        v3_shadow: buildV3Shadow(
+          v3TourFromKey(ev.sport_key),
+          homeTotals, awayTotals,
+          ev.ml_home, ev.ml_away,
+          ev.total_point,
+          ev.home_team, ev.away_team,
+        ),
       });
       breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
