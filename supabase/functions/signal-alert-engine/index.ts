@@ -7,6 +7,17 @@ import {
   scoreVelocitySpike,
   type StrengthVerdict,
 } from '../_shared/velocity-spike-strength.ts';
+import {
+  resolvePrice,
+  evaluate as evaluatePriceAware,
+  HARD_CONFIDENCE_CAP,
+} from '../_shared/price-aware-confidence.ts';
+
+// Feature flag for Module C (BACK/LEAN/FADE verdict override). Modules A + B
+// (de-vig + line guard) always run; Module C only swaps the broadcast
+// confidence + verdict when explicitly enabled.
+const PRICE_AWARE_VERDICT_ENABLED =
+  (Deno.env.get('PRICE_AWARE_VERDICT_ENABLED') ?? 'false').toLowerCase() === 'true';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -679,6 +690,41 @@ Deno.serve(async (req) => {
             verdict.recommendation === 'play'
               ? originalSide
               : (originalSide === 'Over' ? 'Under' : 'Over');
+
+          // ─── PRICE-AWARE CONFIDENCE (Modules A + B always; C flagged) ─────
+          // A: de-vig the posted prices.
+          // B: line-guard — refuse to score when the priced row looks like an
+          //    ALT line (extreme juice) or a side is missing (UNPRICED_MAIN).
+          // C: cap model confidence at fair + 8pp + 0.85 hard cap, emit verdict.
+          // Score against the FINAL side (post-fade-flip) so the cap and
+          // verdict reflect what we're actually broadcasting.
+          const priceRes = resolvePrice(
+            Number.isFinite(overP) ? overP : null,
+            Number.isFinite(underP) ? underP : null,
+            p.updated_at ?? null,
+          );
+          let priceAware: ReturnType<typeof evaluatePriceAware> | null = null;
+          let broadcastConfidence = Math.round(p.derived_confidence);
+          if (priceRes.ok) {
+            priceAware = evaluatePriceAware({
+              side: finalSide,
+              modelProb: Math.min(1, Math.max(0, p.derived_confidence / 100)),
+              over: priceRes.over,
+              under: priceRes.under,
+            });
+            if (PRICE_AWARE_VERDICT_ENABLED) {
+              broadcastConfidence = Math.round(priceAware.capped_prob * 100);
+            }
+          }
+          // Module B as a hard gate only when Module C is on (avoid losing
+          // historical sample for the strength meter while we tune thresholds).
+          if (PRICE_AWARE_VERDICT_ENABLED && !priceRes.ok) {
+            console.log('[price-aware] skip velocity_spike', {
+              player: p.player_name, prop: p.prop_type, reason: priceRes.reason,
+            });
+            continue;
+          }
+
           // Suppress NEUTRAL with insufficient sample only when meter is razor-thin.
           // (We still fire — the fade default has +EV vs the natural side — but tag it.)
           const engine_reasoning = await explain(p, gap, 'velocity_spike');
@@ -688,7 +734,7 @@ Deno.serve(async (req) => {
             event_id: p.event_id,
             signal_type: 'velocity_spike',
             prediction: finalSide,
-            confidence: Math.round(p.derived_confidence),
+            confidence: broadcastConfidence,
             prop_type: p.prop_type,
             sport: normaliseSport(p.sport),
             bookmaker: hrbInfo ? 'hardrockbet' : (p.bookmaker ?? 'unknown'),
@@ -707,6 +753,20 @@ Deno.serve(async (req) => {
                 cohort: verdict.cohort,
                 reason: verdict.reason,
               },
+              price_aware: priceAware
+                ? {
+                    enabled_for_broadcast: PRICE_AWARE_VERDICT_ENABLED,
+                    side_scored: finalSide,
+                    fair_prob: Math.round(priceAware.fair_prob_side * 10000) / 10000,
+                    implied_prob: Math.round(priceAware.implied_prob_side * 10000) / 10000,
+                    capped_prob: Math.round(priceAware.capped_prob * 10000) / 10000,
+                    raw_model_prob: Math.round((p.derived_confidence / 100) * 10000) / 10000,
+                    edge_pp: Math.round(priceAware.edge_pp * 10000) / 10000,
+                    is_plus_ev: priceAware.is_plus_ev,
+                    verdict: priceAware.verdict,
+                    hard_cap: HARD_CONFIDENCE_CAP,
+                  }
+                : { enabled_for_broadcast: PRICE_AWARE_VERDICT_ENABLED, line_guard: priceRes.ok ? 'ok' : priceRes.reason },
               cohort_key: cohortKey,
               cohort_size: members.length,
               cohort_avg_confidence: Math.round(cohortAvg * 10) / 10,
