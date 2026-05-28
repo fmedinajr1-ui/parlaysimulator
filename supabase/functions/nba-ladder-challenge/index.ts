@@ -409,24 +409,51 @@ async function collectMlbCandidates(supabase: any, today: string): Promise<LockC
   return out;
 }
 
-async function sendTelegram(supabaseUrl: string, supabaseKey: string, message: string, picks: any[], adminOnly = false) {
+function escapeHtml(s: string): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function postTelegram(supabaseUrl: string, supabaseKey: string, payload: Record<string, unknown>) {
+  const res = await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+    body: JSON.stringify(payload),
+  });
+  const txt = await res.text().catch(() => '');
+  return { status: res.status, ok: res.ok, body: txt };
+}
+
+async function sendTelegram(
+  supabaseUrl: string,
+  supabaseKey: string,
+  message: string,
+  picks: any[],
+  adminOnly = false,
+  parseMode: 'HTML' | 'Markdown' | null = 'HTML',
+) {
   try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
-      body: JSON.stringify({
-        type: 'ladder_challenge',
-        admin_only: adminOnly,
-        message,
-        parse_mode: 'Markdown',
-        data: { message, picks },
-      }),
+    const trimmed = message.length > 3800 ? message.slice(0, 3800) + '…' : message;
+    const base: Record<string, unknown> = {
+      type: 'ladder_challenge',
+      admin_only: adminOnly,
+      message: trimmed,
+      data: { message: trimmed, picks },
+    };
+    if (parseMode) base.parse_mode = parseMode;
+    const r1 = await postTelegram(supabaseUrl, supabaseKey, base);
+    console.log(`[Ladder] telegram primary status=${r1.status} admin_only=${adminOnly} parse_mode=${parseMode ?? 'none'} body=${r1.body.slice(0, 240)}`);
+    if (r1.ok) return;
+    // Fallback: retry as plain text so admin always sees content even if parse fails.
+    const r2 = await postTelegram(supabaseUrl, supabaseKey, {
+      type: 'ladder_challenge',
+      admin_only: adminOnly,
+      message: trimmed,
+      data: { message: trimmed, picks },
     });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      console.warn('[Ladder] telegram non-ok', res.status, txt.slice(0, 300));
-    }
-  } catch (e) { console.warn('[Ladder] telegram send failed', (e as Error).message); }
+    console.log(`[Ladder] telegram fallback status=${r2.status} body=${r2.body.slice(0, 240)}`);
+  } catch (e) {
+    console.warn('[Ladder] telegram send failed', (e as Error).message);
+  }
 }
 
 Deno.serve(async (req) => {
