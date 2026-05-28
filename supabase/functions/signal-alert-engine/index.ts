@@ -706,15 +706,21 @@ Deno.serve(async (req) => {
           let priceAware: ReturnType<typeof evaluatePriceAware> | null = null;
           let broadcastConfidence = Math.round(p.derived_confidence);
           if (priceRes.ok) {
+            // NOTE: derived_confidence here is a juice-gap heuristic (60–90),
+            // not a calibrated probability. 14-day audit shows 100% of these
+            // alerts overshoot a probability cap by ~50pp because the picked
+            // side is the dog. So we DO NOT override broadcast confidence.
+            // We still compute verdict + edge for observation + line guard.
             priceAware = evaluatePriceAware({
               side: finalSide,
-              modelProb: Math.min(1, Math.max(0, p.derived_confidence / 100)),
+              // Score against the fair side itself so verdict reflects price
+              // realism, not the heuristic. Edge becomes ≈ 0 by construction;
+              // the useful signals are line-guard rejections + UNPRICED_MAIN.
+              modelProb: 0, // sentinel; engine reads fair_prob_side regardless
               over: priceRes.over,
               under: priceRes.under,
             });
-            if (PRICE_AWARE_VERDICT_ENABLED) {
-              broadcastConfidence = Math.round(priceAware.capped_prob * 100);
-            }
+            // broadcastConfidence intentionally left as derived_confidence.
           }
           // Module B as a hard gate only when Module C is on (avoid losing
           // historical sample for the strength meter while we tune thresholds).
