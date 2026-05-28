@@ -114,6 +114,17 @@ interface Pick {
   suppressed_reason?: string | null;
 }
 
+// v3 shadow payload attached at projection time, persisted into the
+// `v3_shadow` JSONB column on court_edge_picks. Audit-only — never feeds the
+// live verdict, edge, or projection columns.
+type V3Shadow = ProjectionV3Result & {
+  line: number;
+  tour: TourV3;
+  surface: SurfaceV3;
+  p1_surface_fit: number;
+  p2_surface_fit: number;
+};
+
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
 
 function verdictHeader(v: Verdict) {
