@@ -2471,6 +2471,13 @@ export type Database = {
             referencedRelation: "fanduel_prediction_alerts"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "bot_signal_broadcasts_alert_id_fkey"
+            columns: ["alert_id"]
+            isOneToOne: false
+            referencedRelation: "v_alert_accuracy"
+            referencedColumns: ["alert_id"]
+          },
         ]
       }
       bot_stake_config: {
@@ -18535,6 +18542,39 @@ export type Database = {
         }
         Relationships: []
       }
+      v_alert_accuracy: {
+        Row: {
+          accuracy_actual_outcome: string | null
+          accuracy_id: string | null
+          accuracy_was_correct: boolean | null
+          alert_actual_outcome: string | null
+          alert_confidence: number | null
+          alert_created_at: string | null
+          alert_id: string | null
+          alert_metadata: Json | null
+          alert_prediction: string | null
+          alert_settled_at: string | null
+          alert_was_correct: boolean | null
+          closing_line: number | null
+          confidence_at_signal: number | null
+          contrarian_flip_applied: boolean | null
+          edge_at_signal: number | null
+          event_id: string | null
+          line_at_alert: number | null
+          line_movement_after_alert: number | null
+          player_name: string | null
+          predicted_direction: string | null
+          prop_type: string | null
+          recommendation_status: string | null
+          signal_factors: Json | null
+          signal_type: string | null
+          sport: string | null
+          trap_type: string | null
+          verified_at: string | null
+          was_trap: boolean | null
+        }
+        Relationships: []
+      }
       v_parlay_broadcast_audit: {
         Row: {
           broadcast_id: string | null
@@ -18600,6 +18640,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "fanduel_prediction_alerts"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_signal_broadcasts_alert_id_fkey"
+            columns: ["alert_id"]
+            isOneToOne: false
+            referencedRelation: "v_alert_accuracy"
+            referencedColumns: ["alert_id"]
           },
         ]
       }
