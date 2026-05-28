@@ -409,24 +409,51 @@ async function collectMlbCandidates(supabase: any, today: string): Promise<LockC
   return out;
 }
 
-async function sendTelegram(supabaseUrl: string, supabaseKey: string, message: string, picks: any[], adminOnly = false) {
+function escapeHtml(s: string): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function postTelegram(supabaseUrl: string, supabaseKey: string, payload: Record<string, unknown>) {
+  const res = await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+    body: JSON.stringify(payload),
+  });
+  const txt = await res.text().catch(() => '');
+  return { status: res.status, ok: res.ok, body: txt };
+}
+
+async function sendTelegram(
+  supabaseUrl: string,
+  supabaseKey: string,
+  message: string,
+  picks: any[],
+  adminOnly = false,
+  parseMode: 'HTML' | 'Markdown' | null = 'HTML',
+) {
   try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
-      body: JSON.stringify({
-        type: 'ladder_challenge',
-        admin_only: adminOnly,
-        message,
-        parse_mode: 'Markdown',
-        data: { message, picks },
-      }),
+    const trimmed = message.length > 3800 ? message.slice(0, 3800) + '…' : message;
+    const base: Record<string, unknown> = {
+      type: 'ladder_challenge',
+      admin_only: adminOnly,
+      message: trimmed,
+      data: { message: trimmed, picks },
+    };
+    if (parseMode) base.parse_mode = parseMode;
+    const r1 = await postTelegram(supabaseUrl, supabaseKey, base);
+    console.log(`[Ladder] telegram primary status=${r1.status} admin_only=${adminOnly} parse_mode=${parseMode ?? 'none'} body=${r1.body.slice(0, 240)}`);
+    if (r1.ok) return;
+    // Fallback: retry as plain text so admin always sees content even if parse fails.
+    const r2 = await postTelegram(supabaseUrl, supabaseKey, {
+      type: 'ladder_challenge',
+      admin_only: adminOnly,
+      message: trimmed,
+      data: { message: trimmed, picks },
     });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      console.warn('[Ladder] telegram non-ok', res.status, txt.slice(0, 300));
-    }
-  } catch (e) { console.warn('[Ladder] telegram send failed', (e as Error).message); }
+    console.log(`[Ladder] telegram fallback status=${r2.status} body=${r2.body.slice(0, 240)}`);
+  } catch (e) {
+    console.warn('[Ladder] telegram send failed', (e as Error).message);
+  }
 }
 
 Deno.serve(async (req) => {
@@ -496,7 +523,7 @@ Deno.serve(async (req) => {
     try {
       const tierEmoji: Record<Tier, string> = { lock: '🔒', strong: '💪', lean: '📈' };
       const lines: string[] = [
-        `🧪 *Ladder Candidate Panel — ${today}*`,
+        `🧪 <b>Ladder Candidate Panel — ${escapeHtml(today)}</b>`,
         `Evaluated: ${all.length} qualified (NBA ${nba.length}, MLB ${mlb.length})`,
         `Verdict basis: tier + safety score, tiebreak by |odds|. Top = today's pick.`,
         `━━━━━━━━━━━━━━━━━━━━━`,
@@ -508,14 +535,14 @@ Deno.serve(async (req) => {
         const verdict = i === 0 ? 'PICKED' : `#${i + 1}`;
         const last5 = c.l10_values.slice(0, 5).join(',');
         lines.push(
-          `${tierEmoji[c.tier]} *${verdict}* — ${SPORT_EMOJI[c.sport]} ${c.player_name}\n` +
-          `  ${c.side} ${c.line} ${c.prop_label} (${o}) @ ${c.bookmaker} · vs ${c.opponent}\n` +
+          `${tierEmoji[c.tier]} <b>${verdict}</b> — ${SPORT_EMOJI[c.sport]} ${escapeHtml(c.player_name)}\n` +
+          `  ${escapeHtml(c.side)} ${c.line} ${escapeHtml(c.prop_label)} (${o}) @ ${escapeHtml(c.bookmaker)} · vs ${escapeHtml(c.opponent)}\n` +
           `  Tier=${c.tier} | Safety=${c.safety_score.toFixed(1)} (HR ${sb.hit_rate_score}/Fl ${sb.floor_score}/Ed ${sb.edge_score}/Cn ${sb.consistency_score})\n` +
           `  Hit ${hit} (${c.l10_hits}/${c.l10_games}) | Avg ${c.l10_avg} Med ${c.l10_median} | Floor ${c.l10_min} (m ${c.floor_margin >= 0 ? '+' : ''}${c.floor_margin}) Ceil ${c.l10_max}\n` +
-          `  L5: ${last5}`
+          `  L5: ${escapeHtml(last5)}`
         );
       });
-      await sendTelegram(supabaseUrl, supabaseKey, lines.join('\n\n'), [], true);
+      await sendTelegram(supabaseUrl, supabaseKey, lines.join('\n\n'), [], true, 'HTML');
     } catch (e) {
       console.warn('[Ladder] candidate panel send failed', (e as Error).message);
     }
@@ -567,11 +594,11 @@ Deno.serve(async (req) => {
         : '⚠️ Lean tier — relaxed gates today, ride with caution.';
 
     const telegramMessage =
-      `${TIER_HEADER[lock.tier]} ${SPORT_EMOJI[lock.sport]}\n` +
+      `<b>${escapeHtml(TIER_HEADER[lock.tier])}</b> ${SPORT_EMOJI[lock.sport]}\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n` +
-      `${lock.player_name}\n` +
-      `${sideEmoji} ${lock.side} ${lock.line} ${lock.prop_label} (${oddsStr})\n` +
-      `${lock.game || `${lock.player_team} vs ${lock.opponent}`}\n\n` +
+      `<b>${escapeHtml(lock.player_name)}</b>\n` +
+      `${sideEmoji} ${escapeHtml(lock.side)} ${lock.line} ${escapeHtml(lock.prop_label)} (${oddsStr})\n` +
+      `${escapeHtml(lock.game || `${lock.player_team} vs ${lock.opponent}`)}\n\n` +
       `📊 L10 Hit Rate: ${hitPct} (${lock.l10_hits}/${lock.l10_games})\n` +
       `📈 L10 Avg: ${lock.l10_avg} | Median: ${lock.l10_median}\n` +
       `🟢 Floor: ${lock.l10_min} (margin: ${lock.floor_margin >= 0 ? '+' : ''}${lock.floor_margin}) | Ceiling: ${lock.l10_max}\n` +
@@ -582,13 +609,13 @@ Deno.serve(async (req) => {
       `  Edge: ${sb.edge_score}/15\n` +
       `  Consistency: ${sb.consistency_score}/10\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n` +
-      `💰 $100 Stake | vs ${lock.opponent}\n` +
+      `💰 $100 Stake | vs ${escapeHtml(lock.opponent)}\n` +
       `${tierFooter}`;
 
     await sendTelegram(supabaseUrl, supabaseKey, telegramMessage, [{
       player: lock.player_name, line: lock.line, odds: oddsStr,
       prop: lock.prop_label, side: lock.side, sport: lock.sport, tier: lock.tier,
-    }]);
+    }], false, 'HTML');
 
     return new Response(JSON.stringify({
       success: true,
