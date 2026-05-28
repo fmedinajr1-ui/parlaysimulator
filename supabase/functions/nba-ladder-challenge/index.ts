@@ -486,6 +486,34 @@ Deno.serve(async (req) => {
     console.log(`[Ladder] Top 5:`, all.slice(0, 5).map(c =>
       `[${c.tier}] ${c.sport} ${c.player_name} ${c.prop_label} ${c.side} ${c.line} safety=${c.safety_score.toFixed(1)} hit=${(c.l10_hit_rate*100).toFixed(0)}%`));
 
+    // Admin-only: full candidate health panel
+    try {
+      const tierEmoji: Record<Tier, string> = { lock: '🔒', strong: '💪', lean: '📈' };
+      const lines: string[] = [
+        `🧪 *Ladder Candidate Panel — ${today}*`,
+        `Evaluated: ${all.length} qualified (NBA ${nba.length}, MLB ${mlb.length})`,
+        `Verdict basis: tier + safety score, tiebreak by |odds|. Top = today's pick.`,
+        `━━━━━━━━━━━━━━━━━━━━━`,
+      ];
+      all.forEach((c, i) => {
+        const o = c.odds > 0 ? `+${c.odds}` : `${c.odds}`;
+        const hit = `${(c.l10_hit_rate * 100).toFixed(0)}%`;
+        const sb = c.safety_breakdown;
+        const verdict = i === 0 ? 'PICKED' : `#${i + 1}`;
+        const last5 = c.l10_values.slice(0, 5).join(',');
+        lines.push(
+          `${tierEmoji[c.tier]} *${verdict}* — ${SPORT_EMOJI[c.sport]} ${c.player_name}\n` +
+          `  ${c.side} ${c.line} ${c.prop_label} (${o}) @ ${c.bookmaker} · vs ${c.opponent}\n` +
+          `  Tier=${c.tier} | Safety=${c.safety_score.toFixed(1)} (HR ${sb.hit_rate_score}/Fl ${sb.floor_score}/Ed ${sb.edge_score}/Cn ${sb.consistency_score})\n` +
+          `  Hit ${hit} (${c.l10_hits}/${c.l10_games}) | Avg ${c.l10_avg} Med ${c.l10_median} | Floor ${c.l10_min} (m ${c.floor_margin >= 0 ? '+' : ''}${c.floor_margin}) Ceil ${c.l10_max}\n` +
+          `  L5: ${last5}`
+        );
+      });
+      await sendTelegram(supabaseUrl, supabaseKey, lines.join('\n\n'), [], true);
+    } catch (e) {
+      console.warn('[Ladder] candidate panel send failed', (e as Error).message);
+    }
+
     const oddsStr = lock.odds > 0 ? `+${lock.odds}` : `${lock.odds}`;
     const decimal = americanToDecimal(lock.odds);
     const ip = impliedProb(lock.odds);
