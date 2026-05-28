@@ -7,6 +7,17 @@ import {
   scoreVelocitySpike,
   type StrengthVerdict,
 } from '../_shared/velocity-spike-strength.ts';
+import {
+  resolvePrice,
+  evaluate as evaluatePriceAware,
+  HARD_CONFIDENCE_CAP,
+} from '../_shared/price-aware-confidence.ts';
+
+// Feature flag for Module C (BACK/LEAN/FADE verdict override). Modules A + B
+// (de-vig + line guard) always run; Module C only swaps the broadcast
+// confidence + verdict when explicitly enabled.
+const PRICE_AWARE_VERDICT_ENABLED =
+  (Deno.env.get('PRICE_AWARE_VERDICT_ENABLED') ?? 'false').toLowerCase() === 'true';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
