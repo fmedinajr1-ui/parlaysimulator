@@ -112,6 +112,7 @@ interface Pick {
   // counted toward headline ROI. See plan: Court.Edge tennis model fix v1.
   suppressed?: boolean;
   suppressed_reason?: string | null;
+  v3_shadow?: V3Shadow | null;
 }
 
 // v3 shadow payload attached at projection time, persisted into the
