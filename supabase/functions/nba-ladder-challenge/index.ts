@@ -411,15 +411,21 @@ async function collectMlbCandidates(supabase: any, today: string): Promise<LockC
 
 async function sendTelegram(supabaseUrl: string, supabaseKey: string, message: string, picks: any[], adminOnly = false) {
   try {
-    await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+    const res = await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
       body: JSON.stringify({
         type: 'ladder_challenge',
         admin_only: adminOnly,
+        message,
+        parse_mode: 'Markdown',
         data: { message, picks },
       }),
     });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('[Ladder] telegram non-ok', res.status, txt.slice(0, 300));
+    }
   } catch (e) { console.warn('[Ladder] telegram send failed', (e as Error).message); }
 }
 
