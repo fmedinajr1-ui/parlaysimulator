@@ -3499,6 +3499,7 @@ export type Database = {
           suppressed_reason: string | null
           surface: string | null
           tournament: string | null
+          v3_shadow: Json | null
           verdict: string
           weather: Json | null
         }
@@ -3537,6 +3538,7 @@ export type Database = {
           suppressed_reason?: string | null
           surface?: string | null
           tournament?: string | null
+          v3_shadow?: Json | null
           verdict: string
           weather?: Json | null
         }
@@ -3575,6 +3577,7 @@ export type Database = {
           suppressed_reason?: string | null
           surface?: string | null
           tournament?: string | null
+          v3_shadow?: Json | null
           verdict?: string
           weather?: Json | null
         }
@@ -3587,6 +3590,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      court_edge_player_fit: {
+        Row: {
+          computed_at: string
+          fit: number
+          fit_n: number
+          player_slug: string
+          surface: string
+        }
+        Insert: {
+          computed_at?: string
+          fit: number
+          fit_n?: number
+          player_slug: string
+          surface: string
+        }
+        Update: {
+          computed_at?: string
+          fit?: number
+          fit_n?: number
+          player_slug?: string
+          surface?: string
+        }
+        Relationships: []
       }
       court_edge_player_roles: {
         Row: {
@@ -18452,6 +18479,80 @@ export type Database = {
       }
     }
     Views: {
+      court_edge_v3_audit: {
+        Row: {
+          actual_total_games: number | null
+          commence_at: string | null
+          id: string | null
+          line: number | null
+          live_edge_pct: number | null
+          live_projection: number | null
+          live_residual: number | null
+          live_suppressed: boolean | null
+          live_verdict: string | null
+          market: string | null
+          result: string | null
+          run_id: string | null
+          v3_edge_pct: number | null
+          v3_pass_reason: string | null
+          v3_projection: number | null
+          v3_residual: number | null
+          v3_sets_format: string | null
+          v3_verdict: string | null
+          verdict_agreement: boolean | null
+        }
+        Insert: {
+          actual_total_games?: number | null
+          commence_at?: string | null
+          id?: string | null
+          line?: number | null
+          live_edge_pct?: number | null
+          live_projection?: number | null
+          live_residual?: never
+          live_suppressed?: boolean | null
+          live_verdict?: string | null
+          market?: string | null
+          result?: string | null
+          run_id?: string | null
+          v3_edge_pct?: never
+          v3_pass_reason?: never
+          v3_projection?: never
+          v3_residual?: never
+          v3_sets_format?: never
+          v3_verdict?: never
+          verdict_agreement?: never
+        }
+        Update: {
+          actual_total_games?: number | null
+          commence_at?: string | null
+          id?: string | null
+          line?: number | null
+          live_edge_pct?: number | null
+          live_projection?: number | null
+          live_residual?: never
+          live_suppressed?: boolean | null
+          live_verdict?: string | null
+          market?: string | null
+          result?: string | null
+          run_id?: string | null
+          v3_edge_pct?: never
+          v3_pass_reason?: never
+          v3_projection?: never
+          v3_residual?: never
+          v3_sets_format?: never
+          v3_verdict?: never
+          verdict_agreement?: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_edge_picks_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "court_edge_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       mlb_rbi_under_variant_accuracy: {
         Row: {
           losses: number | null
