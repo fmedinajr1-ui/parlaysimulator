@@ -27,6 +27,13 @@ import { playerSlug } from "../_shared/court-edge-slug.ts";
 import { baselineL3, baselineFor, type Surface, type SetsFormat } from "../_shared/court-edge-baseline.ts";
 import { pickSigma, type Tour } from "../_shared/court-edge-edge.ts";
 import { loadCourtEdgeConfig } from "../_shared/court-edge-config.ts";
+import {
+  gradeV3,
+  type ProjectionV3Result,
+  type SurfaceV3,
+  type TourV3,
+} from "../_shared/court-edge-projection-v3.ts";
+import { loadPlayerFit, fitFor, NEUTRAL_FIT, type SurfaceFit } from "../_shared/court-edge-fit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -105,7 +112,19 @@ interface Pick {
   // counted toward headline ROI. See plan: Court.Edge tennis model fix v1.
   suppressed?: boolean;
   suppressed_reason?: string | null;
+  v3_shadow?: V3Shadow | null;
 }
+
+// v3 shadow payload attached at projection time, persisted into the
+// `v3_shadow` JSONB column on court_edge_picks. Audit-only — never feeds the
+// live verdict, edge, or projection columns.
+type V3Shadow = ProjectionV3Result & {
+  line: number;
+  tour: TourV3;
+  surface: SurfaceV3;
+  p1_surface_fit: number;
+  p2_surface_fit: number;
+};
 
 const VERDICT_ORDER: Verdict[] = ["STRONG_OVER", "STRONG_UNDER", "LEAN_OVER", "LEAN_UNDER", "PASS"];
 
@@ -301,6 +320,70 @@ Deno.serve(async (req) => {
     const roleSeedHits = Object.values(roleMap).filter((r) => r.source === "db").length;
     push(`Roles: ${roleSeedHits} from seed · ${players.length - roleSeedHits} heuristic`);
 
+    // 4c. v3 shadow — load per-surface fit for every player. Missing rows
+    // default to NEUTRAL_FIT so the weak-fit gate stays inert until backfill.
+    const v3Surface: SurfaceV3 =
+      tournament.surface === "clay" || tournament.surface === "grass" ? tournament.surface : "hard";
+    const v3FitSurface: SurfaceFit = v3Surface; // identical literal union
+    const playerSlugs = players.map((p) => playerSlug(p)).filter(Boolean);
+    const v3FitMap = await loadPlayerFit(supabase, playerSlugs, v3FitSurface);
+    push(`v3 fits: ${v3FitMap.size}/${players.length} (default ${NEUTRAL_FIT})`);
+
+    const v3TourFromKey = (k: string | undefined): TourV3 => {
+      const s = (k || "").toLowerCase();
+      if (s.includes("atp")) return "ATP";
+      return "WTA"; // default WTA — keeps bo3 classifier safe
+    };
+    const v3WeatherFromOdds = (w: { temp_f?: number | null; wind_mph?: number | null; humidity?: number | null } | null) => {
+      if (!w) return null;
+      const f = w.temp_f;
+      const m = w.wind_mph;
+      return {
+        temp_c: typeof f === "number" ? (f - 32) * (5 / 9) : null,
+        wind_kph: typeof m === "number" ? m * 1.609344 : null,
+        humidity: w.humidity ?? null,
+      };
+    };
+    const buildV3Shadow = (
+      tour: TourV3,
+      p1Totals: number[],
+      p2Totals: number[],
+      mlFav: number | null,
+      mlDog: number | null,
+      line: number,
+      p1Name: string | null,
+      p2Name: string | null,
+    ): V3Shadow | null => {
+      try {
+        const p1Fit = fitFor(v3FitMap, p1Name ? playerSlug(p1Name) : null);
+        const p2Fit = fitFor(v3FitMap, p2Name ? playerSlug(p2Name) : null);
+        const r = gradeV3({
+          tour,
+          tier,
+          surface: v3Surface,
+          venue: tournament.indoor ? "indoor" : "outdoor",
+          ml_fav: mlFav,
+          ml_dog: mlDog,
+          p1_L3_games: (p1Totals?.slice(0, 3) ?? []) as Array<number | null>,
+          p2_L3_games: (p2Totals?.slice(0, 3) ?? []) as Array<number | null>,
+          p1_surface_fit: p1Fit,
+          p2_surface_fit: p2Fit,
+          weather: v3WeatherFromOdds(weather as any),
+        }, line);
+        return {
+          ...r,
+          line,
+          tour,
+          surface: v3Surface,
+          p1_surface_fit: p1Fit,
+          p2_surface_fit: p2Fit,
+        };
+      } catch (e) {
+        console.warn("[v3 shadow]", (e as Error).message);
+        return null;
+      }
+    };
+
     // 5. Project picks
     const picks: Pick[] = [];
 
@@ -437,6 +520,13 @@ Deno.serve(async (req) => {
         quarantine_reason: e.quarantine_reason ?? null,
         books_count: ev.books_count ?? null,
         book_lines: ev.book_lines ?? null,
+        v3_shadow: buildV3Shadow(
+          v3TourFromKey(ev.sport_key),
+          homeTotals, awayTotals,
+          ev.ml_home, ev.ml_away,
+          ev.total_point,
+          ev.home_team, ev.away_team,
+        ),
       });
       breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
@@ -513,6 +603,13 @@ Deno.serve(async (req) => {
         quarantine_reason: e.quarantine_reason ?? null,
         books_count: ev?.books_count ?? null,
         book_lines: ev?.book_lines ?? null,
+        v3_shadow: buildV3Shadow(
+          v3TourFromKey(ev?.sport_key),
+          me.totals, opponentTotals,
+          inp.ml_home ?? null, inp.ml_away ?? null,
+          pp.line,
+          pp.player, opp,
+        ),
       });
       breakdownByPick.set(picks.length - 1, { breakdown: proj, matchProjection: proj.projection });
     }
