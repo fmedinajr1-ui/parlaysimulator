@@ -32,10 +32,10 @@ Deno.test("resolvePrice: accepts standard main line", () => {
 });
 
 Deno.test("evaluate: caps a 0.90 model claim at fair + 0.08", () => {
-  // -120/+100 → fair_over ≈ 0.5455
+  // -120/+100 → po=0.5455, pu=0.5000, sum=1.0455 → fair_over ≈ 0.5217
   const r = evaluate({ side: "Over", modelProb: 0.90, over: -120, under: +100 });
-  // ceiling = min(0.85, 0.5455 + 0.08) = 0.6255
-  assertAlmostEquals(r.capped_prob, 0.6255, 0.005);
+  // ceiling = min(0.85, 0.5217 + 0.08) = 0.6017
+  assertAlmostEquals(r.capped_prob, 0.6017, 0.005);
   assertEquals(r.verdict === "BACK" || r.verdict === "STRONG_BACK", true);
   assertEquals(r.is_plus_ev, true);
 });
