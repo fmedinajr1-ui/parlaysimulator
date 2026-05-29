@@ -250,9 +250,14 @@ function formatAlert(a: Alert, healthWarn: string | null = null): string | strin
       ``,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
-      `💰 prices: Over ${fmt(overP)} / Under ${fmt(underP)}  •  gap ${Math.round(gap)}`,
-      `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ];
+    if (fixedPayout) {
+      out.push(`💎 ${escapeMd(a.bookmaker ?? 'PrizePicks')} pick (fixed payout)`);
+    } else {
+      out.push(`💰 prices: Over ${fmt(overP)} / Under ${fmt(underP)}  •  gap ${Math.round(gap)}`);
+    }
+    out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
+    if (healthWarn) out.push(escapeMd(`⚠️ Form check: ${healthWarn}`));
     if (r) {
       out.push('');
       out.push(`*Engine reasoning:* ${verdictBadge(r.verdict)}`);
