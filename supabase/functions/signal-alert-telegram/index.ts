@@ -296,38 +296,48 @@ function formatAlert(a: Alert, healthWarn: string | null = null): string | strin
       || (cohortTier === 'sport+prop' ? `${sport} ${prop}`
         : cohortTier === 'sport'      ? `${sport} all props`
         :                                'global velocity_spike baseline');
-    // Verdict word for the on-card explainer.
-    const verdictWord = mode === 'play' ? 'PLAY' : 'FADE';
-    const verdictEmoji = mode === 'play' ? '🟢' : '🔴';
-    // Plain-English "why" so users can read the card without context.
-    const verdictWhy = mode === 'play'
-      ? `historical cohort hits ${hr} on the natural side — backing ${escapeMd(originalSide)}.`
-      : `historical cohort only hits ${hr} on ${escapeMd(originalSide)} — flipping to ${escapeMd(side)}.`;
-
+    // The recommended *bet* is always `side` (already flipped upstream in fade mode).
+    // We use a single action verb that matches the bet, plus an optional "public lean"
+    // counter-line so the header/badge/pick can never contradict each other.
+    const lineNum = Number((meta as any)?.line ?? (meta as any)?.current_line ?? 0);
+    const lineStr = lineNum > 0 ? ` ${lineNum}` : '';
     const header = mode === 'play'
-      ? `🚀 *SLATE OUTLIER — PLAY* — ${escapeMd(sport)}`
-      : `🎯 *SLATE OUTLIER — FADE* — ${escapeMd(sport)}`;
+      ? `🚀 *SLATE OUTLIER — BACK ${escapeMd(side)}* — ${escapeMd(sport)}`
+      : `🎯 *SLATE OUTLIER — FADE PUBLIC ${escapeMd(originalSide)}* — ${escapeMd(sport)}`;
     const subhead = mode === 'play'
-      ? `Rare-priced ${escapeMd(prop)} with a proven edge on the natural side.`
-      : `Rare-priced ${escapeMd(prop)} \\— fading public ${escapeMd(originalSide)} (history says inverse).`;
+      ? `Rare-priced ${escapeMd(prop)} — history rides with the book on ${escapeMd(originalSide)}.`
+      : `Rare-priced ${escapeMd(prop)} — public is on ${escapeMd(originalSide)}, history says the inverse hits.`;
+    const verdictWhy = mode === 'play'
+      ? `Cohort hits ${hr} on ${escapeMd(originalSide)} (n=${sampleN}) — we ride with the book.`
+      : `Cohort only hits ${hr} on ${escapeMd(originalSide)} (n=${sampleN}) — we bet ${escapeMd(side)} instead.`;
 
     const out: string[] = [
       header,
       subhead,
       ``,
+      `*Bet:* ${escapeMd(a.player_name)} ${escapeMd(side)}${lineStr} (${escapeMd(prop)})`,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
-      ``,
-      `*Signal Strength:* \`${bar}\` ${meter}%`,
-      escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks`),
-      ``,
-      `${verdictEmoji} *Verdict: ${verdictWord}*`,
-      escapeMd(`↳ Cohort: ${cohortHuman} (${cohortTier}, n=${sampleN})`),
-      `↳ ${verdictWhy}`,
-      ``,
-      `📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`,
-      `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ];
+    if (fixedPayout) {
+      out.push(`💎 ${escapeMd(a.bookmaker ?? 'PrizePicks')} pick (fixed payout)`);
+    }
+    if (healthWarn) {
+      out.push(escapeMd(`⚠️ Form check: ${healthWarn}`));
+    }
+    out.push(``);
+    out.push(`*Signal Strength:* \`${bar}\` ${meter}%`);
+    out.push(escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks`));
+    out.push(``);
+    out.push(`🟢 *Action: BACK ${escapeMd(side)}*`);
+    if (mode === 'fade') {
+      out.push(`🔴 _Public lean: ${escapeMd(originalSide)} — we're going the other way_`);
+    }
+    out.push(escapeMd(`↳ Cohort: ${cohortHuman} (${cohortTier}, n=${sampleN})`));
+    out.push(`↳ ${verdictWhy}`);
+    out.push(``);
+    out.push(`📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`);
+    out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
     if (r) {
       out.push('');
       out.push(`*Engine reasoning:* ${verdictBadge(r.verdict)}`);
