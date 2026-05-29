@@ -378,7 +378,15 @@ Deno.serve(async (req) => {
     });
   }
 
-  const stats = { considered: 0, sent: 0, skipped_tipoff: 0, skipped_dupe: 0, skipped_low_conf: 0, errors: 0 };
+  const stats = {
+    considered: 0,
+    sent: 0,
+    skipped_tipoff: 0,
+    skipped_dupe: 0,
+    skipped_low_conf: 0,
+    skipped_health_gate: 0,
+    errors: 0,
+  };
 
   try {
     const since = new Date(Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
@@ -409,6 +417,18 @@ Deno.serve(async (req) => {
       .eq('chat_id', adminChatId);
     const sentSet = new Set((alreadySent ?? []).map((r) => r.alert_id));
 
+    // Batch-load injury + recent form for every candidate player. Used only for
+    // velocity_spike alerts — cascade / take_it_now already have their own gates.
+    let healthBundle: HealthGateBundle = { injuries: new Map(), mlbForm: new Map() };
+    try {
+      healthBundle = await loadHealthGateBundle(
+        supabase,
+        candidates.map((c) => ({ player_name: c.player_name, sport: c.sport })),
+      );
+    } catch (e) {
+      console.warn('[signal-alert-telegram] health-gate bundle load failed (non-fatal):', e);
+    }
+
     const now = Date.now();
     let sent = 0;
 
@@ -430,7 +450,28 @@ Deno.serve(async (req) => {
         }
       }
 
-      const formatted = formatAlert(alert);
+      // Pre-broadcast sanity gate (velocity_spike only).
+      let gateResult: HealthGateResult = { block: false, reason: null, soft_warn: null };
+      if (alert.signal_type === 'velocity_spike') {
+        const meta = (alert.metadata ?? {}) as Record<string, any>;
+        gateResult = evaluateHealthGate(
+          {
+            player_name: alert.player_name,
+            sport: alert.sport,
+            prop_type: alert.prop_type,
+            side: alert.prediction,
+            line: meta?.line != null ? Number(meta.line) : (meta?.current_line != null ? Number(meta.current_line) : null),
+          },
+          healthBundle,
+        );
+        if (gateResult.block) {
+          stats.skipped_health_gate += 1;
+          console.log(`[signal-alert-telegram] health-gate blocked ${alert.player_name}: ${gateResult.reason}`);
+          continue;
+        }
+      }
+
+      const formatted = formatAlert(alert, gateResult.soft_warn);
       const parts: string[] = Array.isArray(formatted) ? formatted : [formatted];
 
       let firstMessageId: number | null = null;
