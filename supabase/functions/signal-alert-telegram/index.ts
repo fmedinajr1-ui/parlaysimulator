@@ -4,6 +4,13 @@ import { formatPlayerReasoningPlain } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 import { buildCascadeSim, formatCascadeSimLines, formatCascadeSimPlain } from '../_shared/cascade-sim.ts';
 import { spikeNarrate, type SpikeActionKind } from '../_shared/spike-narrator.ts';
+import {
+  loadHealthGateBundle,
+  evaluateHealthGate,
+  isFixedPayoutBook,
+  type HealthGateBundle,
+  type HealthGateResult,
+} from '../_shared/velocity-spike-health-gate.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -61,12 +68,13 @@ type Alert = {
   created_at: string;
 };
 
-function formatAlert(a: Alert): string | string[] {
+function formatAlert(a: Alert, healthWarn: string | null = null): string | string[] {
   const conf = Number(a.confidence ?? 0);
   const prop = prettyProp(a.prop_type);
   const side = a.prediction ?? '';
   const game = a.event_description ?? "Tonight's slate";
   const sport = a.sport ?? '';
+  const fixedPayout = isFixedPayoutBook(a.bookmaker);
   let tipoff = '';
   if (a.commence_time) {
     const t = new Date(a.commence_time);
