@@ -139,7 +139,7 @@ export function evaluateHealthGate(
     if (BLOCKING_STATUSES.has(status)) {
       return {
         block: true,
-        reason: `injury_out · ${injury.player_name ?? input.player_name} listed ${status}${injury.injury_detail ? ` (${injury.injury_detail})` : ''}`,
+        reason: `injury_out · ${input.player_name} listed ${status}${injury.injury_detail ? ` (${injury.injury_detail})` : ''}`,
         soft_warn: null,
       };
     }
