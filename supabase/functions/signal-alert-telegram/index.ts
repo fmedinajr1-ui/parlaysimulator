@@ -4,6 +4,13 @@ import { formatPlayerReasoningPlain } from '../_shared/alert-explainer.ts';
 import { formatRoleLine, type PlayerRoleContext } from '../_shared/player-role-context.ts';
 import { buildCascadeSim, formatCascadeSimLines, formatCascadeSimPlain } from '../_shared/cascade-sim.ts';
 import { spikeNarrate, type SpikeActionKind } from '../_shared/spike-narrator.ts';
+import {
+  loadHealthGateBundle,
+  evaluateHealthGate,
+  isFixedPayoutBook,
+  type HealthGateBundle,
+  type HealthGateResult,
+} from '../_shared/velocity-spike-health-gate.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -61,12 +68,13 @@ type Alert = {
   created_at: string;
 };
 
-function formatAlert(a: Alert): string | string[] {
+function formatAlert(a: Alert, healthWarn: string | null = null): string | string[] {
   const conf = Number(a.confidence ?? 0);
   const prop = prettyProp(a.prop_type);
   const side = a.prediction ?? '';
   const game = a.event_description ?? "Tonight's slate";
   const sport = a.sport ?? '';
+  const fixedPayout = isFixedPayoutBook(a.bookmaker);
   let tipoff = '';
   if (a.commence_time) {
     const t = new Date(a.commence_time);
@@ -242,9 +250,14 @@ function formatAlert(a: Alert): string | string[] {
       ``,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
-      `💰 prices: Over ${fmt(overP)} / Under ${fmt(underP)}  •  gap ${Math.round(gap)}`,
-      `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ];
+    if (fixedPayout) {
+      out.push(`💎 ${escapeMd(a.bookmaker ?? 'PrizePicks')} pick (fixed payout)`);
+    } else {
+      out.push(`💰 prices: Over ${fmt(overP)} / Under ${fmt(underP)}  •  gap ${Math.round(gap)}`);
+    }
+    out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
+    if (healthWarn) out.push(escapeMd(`⚠️ Form check: ${healthWarn}`));
     if (r) {
       out.push('');
       out.push(`*Engine reasoning:* ${verdictBadge(r.verdict)}`);
@@ -283,38 +296,48 @@ function formatAlert(a: Alert): string | string[] {
       || (cohortTier === 'sport+prop' ? `${sport} ${prop}`
         : cohortTier === 'sport'      ? `${sport} all props`
         :                                'global velocity_spike baseline');
-    // Verdict word for the on-card explainer.
-    const verdictWord = mode === 'play' ? 'PLAY' : 'FADE';
-    const verdictEmoji = mode === 'play' ? '🟢' : '🔴';
-    // Plain-English "why" so users can read the card without context.
-    const verdictWhy = mode === 'play'
-      ? `historical cohort hits ${hr} on the natural side — backing ${escapeMd(originalSide)}.`
-      : `historical cohort only hits ${hr} on ${escapeMd(originalSide)} — flipping to ${escapeMd(side)}.`;
-
+    // The recommended *bet* is always `side` (already flipped upstream in fade mode).
+    // We use a single action verb that matches the bet, plus an optional "public lean"
+    // counter-line so the header/badge/pick can never contradict each other.
+    const lineNum = Number((meta as any)?.line ?? (meta as any)?.current_line ?? 0);
+    const lineStr = lineNum > 0 ? ` ${lineNum}` : '';
     const header = mode === 'play'
-      ? `🚀 *SLATE OUTLIER — PLAY* — ${escapeMd(sport)}`
-      : `🎯 *SLATE OUTLIER — FADE* — ${escapeMd(sport)}`;
+      ? `🚀 *SLATE OUTLIER — BACK ${escapeMd(side)}* — ${escapeMd(sport)}`
+      : `🎯 *SLATE OUTLIER — FADE PUBLIC ${escapeMd(originalSide)}* — ${escapeMd(sport)}`;
     const subhead = mode === 'play'
-      ? `Rare-priced ${escapeMd(prop)} with a proven edge on the natural side.`
-      : `Rare-priced ${escapeMd(prop)} \\— fading public ${escapeMd(originalSide)} (history says inverse).`;
+      ? `Rare-priced ${escapeMd(prop)} — history rides with the book on ${escapeMd(originalSide)}.`
+      : `Rare-priced ${escapeMd(prop)} — public is on ${escapeMd(originalSide)}, history says the inverse hits.`;
+    const verdictWhy = mode === 'play'
+      ? `Cohort hits ${hr} on ${escapeMd(originalSide)} (n=${sampleN}) — we ride with the book.`
+      : `Cohort only hits ${hr} on ${escapeMd(originalSide)} (n=${sampleN}) — we bet ${escapeMd(side)} instead.`;
 
     const out: string[] = [
       header,
       subhead,
       ``,
+      `*Bet:* ${escapeMd(a.player_name)} ${escapeMd(side)}${lineStr} (${escapeMd(prop)})`,
       `🎯 ${escapeMd(a.player_name)}  ${escapeMd(prop)}`,
       `${sideEmoji(side)} *${escapeMd(side)}*  •  confidence ${Math.round(conf)}%`,
-      ``,
-      `*Signal Strength:* \`${bar}\` ${meter}%`,
-      escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks`),
-      ``,
-      `${verdictEmoji} *Verdict: ${verdictWord}*`,
-      escapeMd(`↳ Cohort: ${cohortHuman} (${cohortTier}, n=${sampleN})`),
-      `↳ ${verdictWhy}`,
-      ``,
-      `📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`,
-      `🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`,
     ];
+    if (fixedPayout) {
+      out.push(`💎 ${escapeMd(a.bookmaker ?? 'PrizePicks')} pick (fixed payout)`);
+    }
+    if (healthWarn) {
+      out.push(escapeMd(`⚠️ Form check: ${healthWarn}`));
+    }
+    out.push(``);
+    out.push(`*Signal Strength:* \`${bar}\` ${meter}%`);
+    out.push(escapeMd(`↳ ${label} · combined hit rate ${hr} on ${sampleN} prior picks`));
+    out.push(``);
+    out.push(`🟢 *Action: BACK ${escapeMd(side)}*`);
+    if (mode === 'fade') {
+      out.push(`🔴 _Public lean: ${escapeMd(originalSide)} — we're going the other way_`);
+    }
+    out.push(escapeMd(`↳ Cohort: ${cohortHuman} (${cohortTier}, n=${sampleN})`));
+    out.push(`↳ ${verdictWhy}`);
+    out.push(``);
+    out.push(`📊 top ${pct}% of ${meta.cohort_size ?? '?'} similar props (slate avg ${cohortAvg}%)`);
+    out.push(`🏟️ ${escapeMd(game)}  •  ${escapeMd(tipoff)}`);
     if (r) {
       out.push('');
       out.push(`*Engine reasoning:* ${verdictBadge(r.verdict)}`);
@@ -355,7 +378,15 @@ Deno.serve(async (req) => {
     });
   }
 
-  const stats = { considered: 0, sent: 0, skipped_tipoff: 0, skipped_dupe: 0, skipped_low_conf: 0, errors: 0 };
+  const stats = {
+    considered: 0,
+    sent: 0,
+    skipped_tipoff: 0,
+    skipped_dupe: 0,
+    skipped_low_conf: 0,
+    skipped_health_gate: 0,
+    errors: 0,
+  };
 
   try {
     const since = new Date(Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
@@ -386,6 +417,18 @@ Deno.serve(async (req) => {
       .eq('chat_id', adminChatId);
     const sentSet = new Set((alreadySent ?? []).map((r) => r.alert_id));
 
+    // Batch-load injury + recent form for every candidate player. Used only for
+    // velocity_spike alerts — cascade / take_it_now already have their own gates.
+    let healthBundle: HealthGateBundle = { injuries: new Map(), mlbForm: new Map() };
+    try {
+      healthBundle = await loadHealthGateBundle(
+        supabase,
+        candidates.map((c) => ({ player_name: c.player_name, sport: c.sport })),
+      );
+    } catch (e) {
+      console.warn('[signal-alert-telegram] health-gate bundle load failed (non-fatal):', e);
+    }
+
     const now = Date.now();
     let sent = 0;
 
@@ -407,7 +450,28 @@ Deno.serve(async (req) => {
         }
       }
 
-      const formatted = formatAlert(alert);
+      // Pre-broadcast sanity gate (velocity_spike only).
+      let gateResult: HealthGateResult = { block: false, reason: null, soft_warn: null };
+      if (alert.signal_type === 'velocity_spike') {
+        const meta = (alert.metadata ?? {}) as Record<string, any>;
+        gateResult = evaluateHealthGate(
+          {
+            player_name: alert.player_name,
+            sport: alert.sport,
+            prop_type: alert.prop_type,
+            side: alert.prediction,
+            line: meta?.line != null ? Number(meta.line) : (meta?.current_line != null ? Number(meta.current_line) : null),
+          },
+          healthBundle,
+        );
+        if (gateResult.block) {
+          stats.skipped_health_gate += 1;
+          console.log(`[signal-alert-telegram] health-gate blocked ${alert.player_name}: ${gateResult.reason}`);
+          continue;
+        }
+      }
+
+      const formatted = formatAlert(alert, gateResult.soft_warn);
       const parts: string[] = Array.isArray(formatted) ? formatted : [formatted];
 
       let firstMessageId: number | null = null;
