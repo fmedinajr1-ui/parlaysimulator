@@ -182,22 +182,22 @@ Deno.serve(async (req) => {
     let telegram: any = null;
     try {
       const lines: string[] = [];
-      lines.push(`🎯 *Fade Parlay of the Day* — ${legs.length} legs`);
-      lines.push(`Combined odds: *${totalOdds.toFixed(2)}x* · Avg meter ${avgMeter}`);
-      lines.push(`_Public-fade · engine NEUTRAL · cohort says inverse_`);
+      lines.push(`🎯 <b>Fade Parlay of the Day</b> — ${legs.length} legs`);
+      lines.push(`Combined odds: <b>${totalOdds.toFixed(2)}x</b> · Avg meter ${avgMeter}`);
+      lines.push(`<i>Public-fade · engine NEUTRAL · cohort says inverse</i>`);
       lines.push('');
       legs.forEach((l, i) => {
         const sideEmoji = (l.side ?? '').toLowerCase() === 'over' ? '⬆️' : '⬇️';
         const priceAmerican = (l.side ?? '').toLowerCase() === 'over' ? l.over_price : l.under_price;
         const badge = l.strength_label === 'STRONG_FADE' ? '🔴 STRONG_FADE' : '🟠 LEAN_FADE';
-        lines.push(`${i + 1}. *${l.player_name}* — ${sideEmoji} ${l.side} ${l.line} ${propLabel(l.prop_type)} (${americanString(Number(priceAmerican))})`);
+        lines.push(`${i + 1}. <b>${l.player_name}</b> — ${sideEmoji} ${l.side} ${l.line} ${propLabel(l.prop_type)} (${americanString(Number(priceAmerican))})`);
         lines.push(`   ${badge} · meter ${l.meter}`);
-        if (l.game) lines.push(`   _${l.game}_`);
+        if (l.game) lines.push(`   ${l.game}`);
         if (l.cohort_reason) lines.push(`   ↳ ${l.cohort_reason}`);
       });
       const message = lines.join('\n');
       const { data: sendResp, error: sendErr } = await supabase.functions.invoke('bot-send-telegram', {
-        body: { message, parse_mode: 'Markdown', admin_only: true, type: 'fade_parlay_of_the_day' },
+        body: { message, parse_mode: 'HTML', admin_only: true, type: 'fade_parlay_of_the_day' },
       });
       if (sendErr) console.warn('[fade-parlay] telegram send error:', sendErr);
       telegram = sendResp ?? null;
