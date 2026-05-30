@@ -230,8 +230,17 @@ Deno.serve(async (req) => {
 
   // Persist accuracy rows first (the recap depends on these)
   if (accuracyRows.length > 0) {
-    for (let i = 0; i < accuracyRows.length; i += 200) {
-      const chunk = accuracyRows.slice(i, i + 200);
+    // Dedupe by conflict key — multiple velocity_spike alerts can share
+    // (event_id, player_name, prop_type) which breaks ON CONFLICT in a
+    // single upsert. Keep the latest alert per key.
+    const dedup = new Map<string, any>();
+    for (const r of accuracyRows) {
+      const k = `${r.event_id}|${r.player_name}|${r.prop_type}|${r.signal_type}`;
+      dedup.set(k, r);
+    }
+    const unique = Array.from(dedup.values());
+    for (let i = 0; i < unique.length; i += 200) {
+      const chunk = unique.slice(i, i + 200);
       const { error: upErr } = await supabase
         .from("fanduel_prediction_accuracy")
         .upsert(chunk, { onConflict: "event_id,player_name,prop_type,signal_type" });
