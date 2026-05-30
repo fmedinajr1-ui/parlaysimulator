@@ -1,6 +1,8 @@
-// Take It Now settler — grades unsettled `signal_type='take_it_now'` alerts
-// against player_game_logs, then mirrors results into
-// `fanduel_prediction_accuracy` so the recap / accuracy cache pick them up.
+// Velocity Spike settler — grades ALL unsettled `signal_type='velocity_spike'`
+// alerts against player_game_logs (regardless of engine verdict: STRONG /
+// WEAK / LEAN / NEUTRAL / missing), then mirrors results into
+// `fanduel_prediction_accuracy`. The engine verdict is preserved in
+// signal_factors so accuracy-by-verdict queries work.
 //
 // Modes:
 //   default → settle a rolling batch (cron)
@@ -140,7 +142,7 @@ Deno.serve(async (req) => {
   let query = supabase
     .from("fanduel_prediction_alerts")
     .select("id, player_name, event_id, prop_type, sport, prediction, confidence, commence_time, created_at, metadata")
-    .eq("signal_type", "take_it_now")
+    .eq("signal_type", "velocity_spike")
     .is("was_correct", null)
     .is("settlement_method", null)
     .lt("commence_time", cutoffIso)
@@ -201,8 +203,9 @@ Deno.serve(async (req) => {
 
     updates.push({ id: a.id, was_correct, actual_outcome: outcome });
 
+    const verdict = (a.metadata as any)?.engine_reasoning?.verdict ?? null;
     accuracyRows.push({
-      signal_type: "take_it_now",
+      signal_type: "velocity_spike",
       sport: sportRaw,
       prop_type: a.prop_type,
       player_name: a.player_name,
@@ -216,10 +219,10 @@ Deno.serve(async (req) => {
       confidence_at_signal: a.confidence,
       edge_at_signal: typeof a.metadata?.["edge"] === "number" ? a.metadata!["edge"] : null,
       drift_pct_at_alert: typeof a.metadata?.["drift_pct"] === "number" ? a.metadata!["drift_pct"] : null,
-      signal_factors: a.metadata ?? null,
+      signal_factors: { ...(a.metadata ?? {}), engine_verdict: verdict },
       alert_sent_at: a.created_at,
       verified_at: new Date().toISOString(),
-      settlement_method: "game_log_v1",
+      settlement_method: "velocity_spike_game_log_v1",
       is_gated: false,
     });
     settled++;
