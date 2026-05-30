@@ -54,8 +54,9 @@ export function playAmericanOdds(a: SlateAlertLike): number | null {
 
 /** Converts American odds to decimal. Falls back to -110 (1.91) when missing. */
 export function americanToDecimal(odds: number | null | undefined): number {
+  if (odds === null || odds === undefined) return 1.91;
   const n = Number(odds);
-  if (!Number.isFinite(n)) return 1.91;
+  if (!Number.isFinite(n) || n === 0) return 1.91;
   return n > 0 ? 1 + n / 100 : 1 + 100 / Math.abs(n);
 }
 
