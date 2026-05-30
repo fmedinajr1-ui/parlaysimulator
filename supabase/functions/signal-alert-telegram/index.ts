@@ -455,6 +455,16 @@ Deno.serve(async (req) => {
       let gateResult: HealthGateResult = { block: false, reason: null, soft_warn: null };
       if (alert.signal_type === 'velocity_spike') {
         const meta = (alert.metadata ?? {}) as Record<string, any>;
+        // Skip when engine reasoning is NEUTRAL/WEAK — we don't want to broadcast
+        // a "BACK X" recommendation that the per-player engine has no conviction
+        // behind (e.g. "🟡 NEUTRAL · juice +250 · volatile minutes").
+        const r = (meta.engine_reasoning ?? null) as PlayerReasoning | null;
+        const verdict = (r?.verdict ?? '').toString().toUpperCase();
+        if (!r || verdict === 'NEUTRAL' || verdict === 'WEAK') {
+          stats.skipped_weak_reasoning += 1;
+          console.log(`[signal-alert-telegram] weak-reasoning skip ${alert.player_name}: verdict=${verdict || 'MISSING'}`);
+          continue;
+        }
         gateResult = evaluateHealthGate(
           {
             player_name: alert.player_name,
