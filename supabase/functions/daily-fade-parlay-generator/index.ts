@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const totalOdds = selected.reduce((acc, a) => acc * pickPrice(a), 1);
+    const totalOdds = selected.reduce((acc, a) => acc * playDecimalPrice(a), 1);
     const avgMeter = Math.round(
       selected.reduce((acc, a) => acc + Number(a.metadata?.strength?.meter ?? 0), 0) / selected.length,
     );
@@ -139,10 +139,10 @@ Deno.serve(async (req) => {
       player_name: a.player_name,
       prop_type: a.prop_type,
       side: playSide(a),
-      original_public_side: a.metadata?.original_side ?? a.prediction ?? null,
+      original_public_side: publicSide(a),
       mode: a.metadata?.mode ?? null,
       line: a.metadata?.line ?? null,
-      price: pickPrice(a),
+      price: playDecimalPrice(a),
       over_price: a.metadata?.over_price ?? null,
       under_price: a.metadata?.under_price ?? null,
       strength_label: a.metadata?.strength?.label ?? null,
