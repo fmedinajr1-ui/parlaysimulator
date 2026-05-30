@@ -929,7 +929,7 @@ Deno.serve(async (req) => {
     }
 
     phase1.slate_blowout_suppressed = slateBlowoutCohorts.size;
-    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total, phase1 } }), {
+    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total, phase1, take_it_now_gate: takeItNowGateLog } }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
