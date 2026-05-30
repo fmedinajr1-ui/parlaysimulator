@@ -34,11 +34,21 @@ function americanToDecimal(odds: number | null): number {
   return odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
 }
 
+/** Slate-outlier alerts store `prediction` as the ORIGINAL public side and
+ * set metadata.mode='fade' — the actual bet is the OPPOSITE side. */
+function playSide(a: Alert): 'Over' | 'Under' {
+  const orig = ((a.metadata?.original_side ?? a.prediction) ?? '').toString().toLowerCase();
+  const mode = (a.metadata?.mode ?? '').toString().toLowerCase();
+  const original: 'Over' | 'Under' = orig === 'over' ? 'Over' : 'Under';
+  if (mode === 'fade') return original === 'Over' ? 'Under' : 'Over';
+  return original;
+}
+
 function pickPrice(a: Alert): number {
-  const side = (a.prediction ?? '').toLowerCase();
+  const side = playSide(a);
   const op = Number(a.metadata?.over_price);
   const up = Number(a.metadata?.under_price);
-  const price = side === 'over' ? op : up;
+  const price = side === 'Over' ? op : up;
   return americanToDecimal(Number.isFinite(price) ? price : null);
 }
 
@@ -146,7 +156,9 @@ Deno.serve(async (req) => {
       sport: a.sport,
       player_name: a.player_name,
       prop_type: a.prop_type,
-      side: a.prediction,
+      side: playSide(a),
+      original_public_side: a.metadata?.original_side ?? a.prediction ?? null,
+      mode: a.metadata?.mode ?? null,
       line: a.metadata?.line ?? null,
       price: pickPrice(a),
       over_price: a.metadata?.over_price ?? null,
@@ -187,11 +199,15 @@ Deno.serve(async (req) => {
       lines.push(`<i>Public-fade · engine NEUTRAL · cohort says inverse</i>`);
       lines.push('');
       legs.forEach((l, i) => {
-        const sideEmoji = (l.side ?? '').toLowerCase() === 'over' ? '⬆️' : '⬇️';
-        const priceAmerican = (l.side ?? '').toLowerCase() === 'over' ? l.over_price : l.under_price;
+        const isOver = (l.side ?? '').toString().toLowerCase() === 'over';
+        const sideEmoji = isOver ? '⬆️' : '⬇️';
+        const priceAmerican = isOver ? l.over_price : l.under_price;
         const badge = l.strength_label === 'STRONG_FADE' ? '🔴 STRONG_FADE' : '🟠 LEAN_FADE';
         lines.push(`${i + 1}. <b>${l.player_name}</b> — ${sideEmoji} ${l.side} ${l.line} ${propLabel(l.prop_type)} (${americanString(Number(priceAmerican))})`);
-        lines.push(`   ${badge} · meter ${l.meter}`);
+        const publicNote = l.original_public_side && l.original_public_side !== l.side
+          ? ` · fading public ${l.original_public_side}`
+          : '';
+        lines.push(`   ${badge} · meter ${l.meter}${publicNote}`);
         if (l.game) lines.push(`   ${l.game}`);
         if (l.cohort_reason) lines.push(`   ↳ ${l.cohort_reason}`);
       });
