@@ -8,6 +8,11 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  playSide,
+  publicSide,
+  playDecimalPrice,
+} from '../_shared/slate-outlier-flip.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,29 +33,6 @@ type Alert = {
   commence_time: string | null;
   metadata: any;
 };
-
-function americanToDecimal(odds: number | null): number {
-  if (odds == null || !Number.isFinite(odds)) return 1.91;
-  return odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
-}
-
-/** Slate-outlier alerts store `prediction` as the ORIGINAL public side and
- * set metadata.mode='fade' — the actual bet is the OPPOSITE side. */
-function playSide(a: Alert): 'Over' | 'Under' {
-  const orig = ((a.metadata?.original_side ?? a.prediction) ?? '').toString().toLowerCase();
-  const mode = (a.metadata?.mode ?? '').toString().toLowerCase();
-  const original: 'Over' | 'Under' = orig === 'over' ? 'Over' : 'Under';
-  if (mode === 'fade') return original === 'Over' ? 'Under' : 'Over';
-  return original;
-}
-
-function pickPrice(a: Alert): number {
-  const side = playSide(a);
-  const op = Number(a.metadata?.over_price);
-  const up = Number(a.metadata?.under_price);
-  const price = side === 'Over' ? op : up;
-  return americanToDecimal(Number.isFinite(price) ? price : null);
-}
 
 function americanString(odds: number | null | undefined): string {
   if (odds == null || !Number.isFinite(Number(odds))) return '—';
@@ -145,7 +127,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const totalOdds = selected.reduce((acc, a) => acc * pickPrice(a), 1);
+    const totalOdds = selected.reduce((acc, a) => acc * playDecimalPrice(a), 1);
     const avgMeter = Math.round(
       selected.reduce((acc, a) => acc + Number(a.metadata?.strength?.meter ?? 0), 0) / selected.length,
     );
@@ -157,10 +139,10 @@ Deno.serve(async (req) => {
       player_name: a.player_name,
       prop_type: a.prop_type,
       side: playSide(a),
-      original_public_side: a.metadata?.original_side ?? a.prediction ?? null,
+      original_public_side: publicSide(a),
       mode: a.metadata?.mode ?? null,
       line: a.metadata?.line ?? null,
-      price: pickPrice(a),
+      price: playDecimalPrice(a),
       over_price: a.metadata?.over_price ?? null,
       under_price: a.metadata?.under_price ?? null,
       strength_label: a.metadata?.strength?.label ?? null,
