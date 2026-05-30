@@ -8,6 +8,11 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  playSide,
+  publicSide,
+  playDecimalPrice,
+} from '../_shared/slate-outlier-flip.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,29 +33,6 @@ type Alert = {
   commence_time: string | null;
   metadata: any;
 };
-
-function americanToDecimal(odds: number | null): number {
-  if (odds == null || !Number.isFinite(odds)) return 1.91;
-  return odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
-}
-
-/** Slate-outlier alerts store `prediction` as the ORIGINAL public side and
- * set metadata.mode='fade' — the actual bet is the OPPOSITE side. */
-function playSide(a: Alert): 'Over' | 'Under' {
-  const orig = ((a.metadata?.original_side ?? a.prediction) ?? '').toString().toLowerCase();
-  const mode = (a.metadata?.mode ?? '').toString().toLowerCase();
-  const original: 'Over' | 'Under' = orig === 'over' ? 'Over' : 'Under';
-  if (mode === 'fade') return original === 'Over' ? 'Under' : 'Over';
-  return original;
-}
-
-function pickPrice(a: Alert): number {
-  const side = playSide(a);
-  const op = Number(a.metadata?.over_price);
-  const up = Number(a.metadata?.under_price);
-  const price = side === 'Over' ? op : up;
-  return americanToDecimal(Number.isFinite(price) ? price : null);
-}
 
 function americanString(odds: number | null | undefined): string {
   if (odds == null || !Number.isFinite(Number(odds))) return '—';
