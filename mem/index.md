@@ -29,3 +29,4 @@ Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_m
 - [Prop alert verifier](mem://logic/betting/prop-alert-verifier) — Deep-research second-opinion agent: Perplexity sonar-deep-research + GPT-5 judge, soft-tags every alert with APPROVE/CAUTION/REJECT + multiplier, realtime trigger + 5-min sweep, 300/day cap with Gemini fallback
 - [Velocity-spike strength meter](mem://logic/betting/velocity-spike-strength-meter) — Slate Outlier auto-routes play vs fade via combined outcome+CLV hit rate per cohort
 - [Price-aware confidence](mem://logic/betting/price-aware-confidence) — De-vig + line-guard always run on velocity_spike; BACK/LEAN/FADE verdict gated by PRICE_AWARE_VERDICT_ENABLED env flag
+- [take_it_now prop gate](mem://logic/betting/take-it-now-prop-gate) — TAKE_IT_NOW_PROP_BLOCK allowlist + 30d break-even + n>=50 + 7d 40% brake, telemetry in stats.take_it_now_gate

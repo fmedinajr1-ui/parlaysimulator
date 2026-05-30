@@ -58,6 +58,77 @@ const SLATE_BLOWOUT_THRESHOLD = 0.20; // 20% of distinct players
 const SLATE_BLOWOUT_MIN_PLAYERS = 8;  // need a real sample first
 const ACCURACY_FLIP_TOP_N = 5;        // per-prop_type Under candidates we emit
 
+// ─── TAKE_IT_NOW PROP GATE (slip_validation_spec: TAKE_IT_NOW_PROP_BLOCK) ────
+// Hard allowlist + data-driven probation. take_it_now may only fire when the
+// prop type is on the allowlist AND its 30d hit rate clears break-even
+// (52.4% at -110) AND has n >= 50 settled AND its 7d hit rate >= 40%.
+// Everything else is muted regardless of model edge. See:
+//   mem://logic/betting/take-it-now-prop-gate
+const TAKE_IT_NOW_ELIGIBLE_PROPS: ReadonlySet<string> = new Set([
+  'pitcher_strikeouts',
+  'pitcher_hits_allowed',
+]);
+const TAKE_IT_NOW_MIN_HIT_RATE_30D = 0.524; // break-even at -110
+const TAKE_IT_NOW_MIN_SAMPLE_30D = 50;
+const TAKE_IT_NOW_MIN_HIT_RATE_7D = 0.40;
+
+type PropTypeStat = { hits: number; total: number; rate: number };
+
+async function loadTakeItNowPropStats(
+  supabase: ReturnType<typeof createClient>,
+): Promise<{ d30: Map<string, PropTypeStat>; d7: Map<string, PropTypeStat> }> {
+  const d30Cut = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const d7Cut  = new Date(Date.now() -  7 * 86400_000).toISOString();
+  const { data, error } = await supabase
+    .from('fanduel_prediction_accuracy')
+    .select('prop_type, was_correct, verified_at')
+    .eq('signal_type', 'take_it_now')
+    .gte('verified_at', d30Cut)
+    .not('was_correct', 'is', null)
+    .limit(50000);
+  const d30 = new Map<string, PropTypeStat>();
+  const d7  = new Map<string, PropTypeStat>();
+  if (error) {
+    console.warn('[take_it_now_gate] accuracy load failed:', error.message);
+    return { d30, d7 };
+  }
+  for (const r of (data ?? []) as Array<{ prop_type: string | null; was_correct: boolean | null; verified_at: string }>) {
+    const pt = (r.prop_type ?? '').toLowerCase();
+    if (!pt) continue;
+    const bump = (m: Map<string, PropTypeStat>) => {
+      const cur = m.get(pt) ?? { hits: 0, total: 0, rate: 0 };
+      cur.total += 1;
+      if (r.was_correct === true) cur.hits += 1;
+      cur.rate = cur.total > 0 ? cur.hits / cur.total : 0;
+      m.set(pt, cur);
+    };
+    bump(d30);
+    if (r.verified_at >= d7Cut) bump(d7);
+  }
+  return { d30, d7 };
+}
+
+function takeItNowGate(
+  propType: string | null,
+  stats: { d30: Map<string, PropTypeStat>; d7: Map<string, PropTypeStat> },
+): { eligible: boolean; reason: string; d30?: PropTypeStat; d7?: PropTypeStat } {
+  const pt = (propType ?? '').toLowerCase();
+  if (!pt) return { eligible: false, reason: 'no_prop_type' };
+  if (!TAKE_IT_NOW_ELIGIBLE_PROPS.has(pt)) return { eligible: false, reason: 'not_in_allowlist' };
+  const d30 = stats.d30.get(pt);
+  const d7  = stats.d7.get(pt);
+  if (!d30 || d30.total < TAKE_IT_NOW_MIN_SAMPLE_30D) {
+    return { eligible: false, reason: 'probation_low_sample', d30, d7 };
+  }
+  if (d30.rate < TAKE_IT_NOW_MIN_HIT_RATE_30D) {
+    return { eligible: false, reason: 'below_breakeven_30d', d30, d7 };
+  }
+  if (d7 && d7.total >= 5 && d7.rate < TAKE_IT_NOW_MIN_HIT_RATE_7D) {
+    return { eligible: false, reason: 'rolling_7d_brake', d30, d7 };
+  }
+  return { eligible: true, reason: 'ok', d30, d7 };
+}
+
 function isBlacklistedDirection(propType: string | null, side: 'Over' | 'Under'): boolean {
   if (!propType || side !== 'Over') return false;
   return BLACKLISTED_OVER_PROPS.has(propType);
@@ -163,6 +234,10 @@ Deno.serve(async (req) => {
 
   // Load combined outcome+CLV strength stats for velocity_spike once per run.
   const velocityStrength = await loadVelocitySpikeStrength(supabase);
+
+  // Load take_it_now per-prop_type accuracy once per run (TAKE_IT_NOW_PROP_BLOCK).
+  const takeItNowStats = await loadTakeItNowPropStats(supabase);
+  const takeItNowGateLog = { allowlist: 0, low_sample: 0, below_breakeven: 0, brake_7d: 0, passed: 0 };
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
@@ -556,15 +631,23 @@ Deno.serve(async (req) => {
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
-        // Profitability gate (7d audit 2026-05-22):
-        //   take_it_now overall = 24.9% (185/744). Only the under-snapback on
-        //   hits / hits+runs+rbis is profitable (~42–59%). Block everything else.
+        // TAKE_IT_NOW_PROP_BLOCK gate — allowlist + 30d break-even + n>=50 + 7d brake.
+        // Overrides model_edge; tags muted alerts so the dashboard shows why.
         {
-          const pt = (p.prop_type ?? '').toLowerCase();
-          const side = (p.derived_side ?? '').toLowerCase();
-          const profitablePair =
-            side === 'under' && (pt === 'batter_hits' || pt === 'batter_hits_runs_rbis');
-          if (!profitablePair) continue;
+          const g = takeItNowGate(p.prop_type, takeItNowStats);
+          if (!g.eligible) {
+            if (g.reason === 'not_in_allowlist') takeItNowGateLog.allowlist += 1;
+            else if (g.reason === 'probation_low_sample') takeItNowGateLog.low_sample += 1;
+            else if (g.reason === 'below_breakeven_30d') takeItNowGateLog.below_breakeven += 1;
+            else if (g.reason === 'rolling_7d_brake') takeItNowGateLog.brake_7d += 1;
+            console.log(
+              `[take_it_now_gate] muted prop=${p.prop_type} reason=${g.reason} ` +
+              `30d=${g.d30?.hits ?? 0}/${g.d30?.total ?? 0} (${((g.d30?.rate ?? 0) * 100).toFixed(1)}%) ` +
+              `7d=${g.d7?.hits ?? 0}/${g.d7?.total ?? 0} (${((g.d7?.rate ?? 0) * 100).toFixed(1)}%)`
+            );
+            continue;
+          }
+          takeItNowGateLog.passed += 1;
         }
 
         // Phase 1: suppress poison/blowout
@@ -846,7 +929,7 @@ Deno.serve(async (req) => {
     }
 
     phase1.slate_blowout_suppressed = slateBlowoutCohorts.size;
-    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total, phase1 } }), {
+    return new Response(JSON.stringify({ success: true, stats: { ...stats, dropped_legs_total, phase1, take_it_now_gate: takeItNowGateLog } }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
