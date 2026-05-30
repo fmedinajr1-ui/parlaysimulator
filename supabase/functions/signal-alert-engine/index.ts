@@ -235,6 +235,10 @@ Deno.serve(async (req) => {
   // Load combined outcome+CLV strength stats for velocity_spike once per run.
   const velocityStrength = await loadVelocitySpikeStrength(supabase);
 
+  // Load take_it_now per-prop_type accuracy once per run (TAKE_IT_NOW_PROP_BLOCK).
+  const takeItNowStats = await loadTakeItNowPropStats(supabase);
+  const takeItNowGateLog = { allowlist: 0, low_sample: 0, below_breakeven: 0, brake_7d: 0, passed: 0 };
+
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
   const explain = async (p: ScoredProp, juiceGap: number | null, signal_type?: string): Promise<PlayerReasoning | null> => {
@@ -627,15 +631,23 @@ Deno.serve(async (req) => {
         const conf = p.derived_confidence;
         if (conf < MIN_CONFIDENCE) continue;
 
-        // Profitability gate (7d audit 2026-05-22):
-        //   take_it_now overall = 24.9% (185/744). Only the under-snapback on
-        //   hits / hits+runs+rbis is profitable (~42–59%). Block everything else.
+        // TAKE_IT_NOW_PROP_BLOCK gate — allowlist + 30d break-even + n>=50 + 7d brake.
+        // Overrides model_edge; tags muted alerts so the dashboard shows why.
         {
-          const pt = (p.prop_type ?? '').toLowerCase();
-          const side = (p.derived_side ?? '').toLowerCase();
-          const profitablePair =
-            side === 'under' && (pt === 'batter_hits' || pt === 'batter_hits_runs_rbis');
-          if (!profitablePair) continue;
+          const g = takeItNowGate(p.prop_type, takeItNowStats);
+          if (!g.eligible) {
+            if (g.reason === 'not_in_allowlist') takeItNowGateLog.allowlist += 1;
+            else if (g.reason === 'probation_low_sample') takeItNowGateLog.low_sample += 1;
+            else if (g.reason === 'below_breakeven_30d') takeItNowGateLog.below_breakeven += 1;
+            else if (g.reason === 'rolling_7d_brake') takeItNowGateLog.brake_7d += 1;
+            console.log(
+              `[take_it_now_gate] muted prop=${p.prop_type} reason=${g.reason} ` +
+              `30d=${g.d30?.hits ?? 0}/${g.d30?.total ?? 0} (${((g.d30?.rate ?? 0) * 100).toFixed(1)}%) ` +
+              `7d=${g.d7?.hits ?? 0}/${g.d7?.total ?? 0} (${((g.d7?.rate ?? 0) * 100).toFixed(1)}%)`
+            );
+            continue;
+          }
+          takeItNowGateLog.passed += 1;
         }
 
         // Phase 1: suppress poison/blowout
