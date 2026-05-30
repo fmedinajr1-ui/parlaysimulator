@@ -385,6 +385,7 @@ Deno.serve(async (req) => {
     skipped_dupe: 0,
     skipped_low_conf: 0,
     skipped_health_gate: 0,
+    skipped_weak_reasoning: 0,
     errors: 0,
   };
 
