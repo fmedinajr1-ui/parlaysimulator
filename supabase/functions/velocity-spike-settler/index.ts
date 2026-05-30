@@ -247,7 +247,7 @@ Deno.serve(async (req) => {
         was_correct: u.was_correct,
         actual_outcome: u.actual_outcome,
         settled_at: nowIso,
-        settlement_method: "game_log_v1",
+        settlement_method: "velocity_spike_game_log_v1",
       })
       .eq("id", u.id)
   );
@@ -259,7 +259,7 @@ Deno.serve(async (req) => {
   if (ungradeable.length > 0) {
     for (let i = 0; i < ungradeable.length; i += 500) {
       await supabase.from("fanduel_prediction_alerts")
-        .update({ settlement_method: "ungradeable_v1", settled_at: nowIso })
+        .update({ settlement_method: "velocity_spike_ungradeable_v1", settled_at: nowIso })
         .in("id", ungradeable.slice(i, i + 500));
     }
   }
