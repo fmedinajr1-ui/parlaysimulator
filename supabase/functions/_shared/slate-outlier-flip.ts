@@ -47,8 +47,9 @@ export function publicSide(a: SlateAlertLike): Side {
 export function playAmericanOdds(a: SlateAlertLike): number | null {
   const side = playSide(a);
   const raw = side === 'Over' ? a.metadata?.over_price : a.metadata?.under_price;
+  if (raw === null || raw === undefined || raw === '') return null;
   const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) && n !== 0 ? n : null;
 }
 
 /** Converts American odds to decimal. Falls back to -110 (1.91) when missing. */
