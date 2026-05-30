@@ -8,11 +8,6 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import {
-  playSide,
-  publicSide,
-  playDecimalPrice,
-} from '../_shared/slate-outlier-flip.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,6 +33,27 @@ function americanString(odds: number | null | undefined): string {
   if (odds == null || !Number.isFinite(Number(odds))) return '—';
   const n = Number(odds);
   return n > 0 ? `+${n}` : `${n}`;
+}
+
+function americanToDecimal(odds: number | null | undefined): number {
+  const n = Number(odds);
+  if (!Number.isFinite(n) || n === 0) return 1.91;
+  return n > 0 ? 1 + n / 100 : 1 + 100 / Math.abs(n);
+}
+
+function legSide(a: Alert): string {
+  return (a.prediction ?? '').toString();
+}
+
+function legAmericanPrice(a: Alert): number | null {
+  const side = legSide(a).toLowerCase();
+  const raw = side === 'over' ? a.metadata?.over_price : a.metadata?.under_price;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function legDecimalPrice(a: Alert): number {
+  return americanToDecimal(legAmericanPrice(a));
 }
 
 function propLabel(p: string | null): string {
@@ -127,7 +143,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const totalOdds = selected.reduce((acc, a) => acc * playDecimalPrice(a), 1);
+    const totalOdds = selected.reduce((acc, a) => acc * legDecimalPrice(a), 1);
     const avgMeter = Math.round(
       selected.reduce((acc, a) => acc + Number(a.metadata?.strength?.meter ?? 0), 0) / selected.length,
     );
@@ -138,11 +154,10 @@ Deno.serve(async (req) => {
       sport: a.sport,
       player_name: a.player_name,
       prop_type: a.prop_type,
-      side: playSide(a),
-      original_public_side: publicSide(a),
+      side: legSide(a),
       mode: a.metadata?.mode ?? null,
       line: a.metadata?.line ?? null,
-      price: playDecimalPrice(a),
+      price: legDecimalPrice(a),
       over_price: a.metadata?.over_price ?? null,
       under_price: a.metadata?.under_price ?? null,
       strength_label: a.metadata?.strength?.label ?? null,
@@ -186,10 +201,7 @@ Deno.serve(async (req) => {
         const priceAmerican = isOver ? l.over_price : l.under_price;
         const badge = l.strength_label === 'STRONG_FADE' ? '🔴 STRONG_FADE' : '🟠 LEAN_FADE';
         lines.push(`${i + 1}. <b>${l.player_name}</b> — ${sideEmoji} ${l.side} ${l.line} ${propLabel(l.prop_type)} (${americanString(Number(priceAmerican))})`);
-        const publicNote = l.original_public_side && l.original_public_side !== l.side
-          ? ` · fading public ${l.original_public_side}`
-          : '';
-        lines.push(`   ${badge} · meter ${l.meter}${publicNote}`);
+        lines.push(`   ${badge} · meter ${l.meter}`);
         if (l.game) lines.push(`   ${l.game}`);
         if (l.cohort_reason) lines.push(`   ↳ ${l.cohort_reason}`);
       });
