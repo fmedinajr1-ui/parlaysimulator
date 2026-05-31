@@ -181,10 +181,24 @@ Deno.serve(async (req) => {
     if (!gameDate) { skippedNoLog++; continue; }
 
     const table = SPORT_TO_TABLE[sportRaw];
+    // Build case/punctuation-tolerant name candidates.
+    // Alerts frequently differ from log names by casing ("Deluca" vs "DeLuca")
+    // or by suffix punctuation ("Jr" vs "Jr."). Try a small set of variants
+    // via ilike before giving up.
+    const rawName = (a.player_name ?? "").trim();
+    const nameCandidates = new Set<string>([rawName]);
+    if (/\bJr$/i.test(rawName)) nameCandidates.add(rawName + ".");
+    if (/\bSr$/i.test(rawName)) nameCandidates.add(rawName + ".");
+    if (/\bJr\.$/i.test(rawName)) nameCandidates.add(rawName.replace(/\.$/, ""));
+    if (/\bSr\.$/i.test(rawName)) nameCandidates.add(rawName.replace(/\.$/, ""));
+    const escapeIlike = (s: string) => s.replace(/[%_\\]/g, "\\$&");
+    const orFilter = [...nameCandidates]
+      .map((n) => `player_name.ilike.${escapeIlike(n)}`)
+      .join(",");
     const { data: logs, error: logErr } = await supabase
       .from(table)
       .select("*")
-      .eq("player_name", a.player_name)
+      .or(orFilter)
       .eq("game_date", gameDate)
       .limit(1);
 
@@ -192,7 +206,14 @@ Deno.serve(async (req) => {
       console.error("log lookup error", logErr.message);
       continue;
     }
-    if (!logs || logs.length === 0) { skippedNoLog++; continue; }
+    if (!logs || logs.length === 0) {
+      skippedNoLog++;
+      // If the game is more than 14 days old and no log ever surfaced,
+      // tombstone so the scanner stops rescanning it every 30 minutes.
+      const ageMs = Date.now() - new Date(a.commence_time ?? a.created_at).getTime();
+      if (ageMs > 14 * 24 * 60 * 60 * 1000) ungradeable.push(a.id);
+      continue;
+    }
 
     const actual = resolve(logs[0]);
     if (actual === null || !Number.isFinite(actual)) { skippedNoStat++; ungradeable.push(a.id); continue; }
