@@ -427,7 +427,7 @@ async function verifyOne(
       verdict: "CAUTION", verdict_confidence: 0, confidence_multiplier: 0.85,
       reasoning: "Judge unavailable; defaulting to CAUTION.",
       flags: ["JUDGE_ERROR"],
-      research_model: degraded ? null : "perplexity:sonar-deep-research",
+      research_model: degraded ? null : "perplexity:sonar-pro",
       judge_model: degraded ? "google/gemini-2.5-flash" : "openai/gpt-5",
       research_ms: Date.now() - t0,
       status: "error", error_message: "judge_unavailable",
