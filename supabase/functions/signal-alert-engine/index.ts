@@ -71,6 +71,11 @@ const TAKE_IT_NOW_ELIGIBLE_PROPS: ReadonlySet<string> = new Set([
 const TAKE_IT_NOW_MIN_HIT_RATE_30D = 0.524; // break-even at -110
 const TAKE_IT_NOW_MIN_SAMPLE_30D = 50;
 const TAKE_IT_NOW_MIN_HIT_RATE_7D = 0.40;
+// Backtest rows (settlement_method='backtest') count toward sample floor and
+// hit rate, but at reduced weight so a perfect backtest doesn't masquerade as
+// live truth. Live rows always weight 1.0. See:
+//   mem://logic/betting/wnba-backtest-weighting
+const BACKTEST_ROW_WEIGHT = 0.7;
 
 type PropTypeStat = { hits: number; total: number; rate: number };
 
@@ -81,7 +86,7 @@ async function loadTakeItNowPropStats(
   const d7Cut  = new Date(Date.now() -  7 * 86400_000).toISOString();
   const { data, error } = await supabase
     .from('fanduel_prediction_accuracy')
-    .select('prop_type, was_correct, verified_at')
+    .select('prop_type, was_correct, verified_at, settlement_method')
     .eq('signal_type', 'take_it_now')
     .gte('verified_at', d30Cut)
     .not('was_correct', 'is', null)
@@ -92,13 +97,14 @@ async function loadTakeItNowPropStats(
     console.warn('[take_it_now_gate] accuracy load failed:', error.message);
     return { d30, d7 };
   }
-  for (const r of (data ?? []) as Array<{ prop_type: string | null; was_correct: boolean | null; verified_at: string }>) {
+  for (const r of (data ?? []) as Array<{ prop_type: string | null; was_correct: boolean | null; verified_at: string; settlement_method: string | null }>) {
     const pt = (r.prop_type ?? '').toLowerCase();
     if (!pt) continue;
+    const w = r.settlement_method === 'backtest' ? BACKTEST_ROW_WEIGHT : 1.0;
     const bump = (m: Map<string, PropTypeStat>) => {
       const cur = m.get(pt) ?? { hits: 0, total: 0, rate: 0 };
-      cur.total += 1;
-      if (r.was_correct === true) cur.hits += 1;
+      cur.total += w;
+      if (r.was_correct === true) cur.hits += w;
       cur.rate = cur.total > 0 ? cur.hits / cur.total : 0;
       m.set(pt, cur);
     };

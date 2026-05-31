@@ -18477,6 +18477,156 @@ export type Database = {
         }
         Relationships: []
       }
+      wnba_historical_odds_snapshots: {
+        Row: {
+          away_team: string | null
+          bookmaker: string
+          created_at: string
+          espn_event_id: string | null
+          event_id: string
+          game_date_et: string
+          game_start_ts: string
+          home_team: string | null
+          id: string
+          line: number
+          market: string
+          player_name: string
+          price: number
+          raw: Json | null
+          side: string
+          snapshot_tag: string
+          snapshot_ts: string
+        }
+        Insert: {
+          away_team?: string | null
+          bookmaker?: string
+          created_at?: string
+          espn_event_id?: string | null
+          event_id: string
+          game_date_et: string
+          game_start_ts: string
+          home_team?: string | null
+          id?: string
+          line?: number
+          market: string
+          player_name?: string
+          price: number
+          raw?: Json | null
+          side: string
+          snapshot_tag: string
+          snapshot_ts: string
+        }
+        Update: {
+          away_team?: string | null
+          bookmaker?: string
+          created_at?: string
+          espn_event_id?: string | null
+          event_id?: string
+          game_date_et?: string
+          game_start_ts?: string
+          home_team?: string | null
+          id?: string
+          line?: number
+          market?: string
+          player_name?: string
+          price?: number
+          raw?: Json | null
+          side?: string
+          snapshot_tag?: string
+          snapshot_ts?: string
+        }
+        Relationships: []
+      }
+      wnba_player_game_logs: {
+        Row: {
+          assists: number | null
+          blocks: number | null
+          created_at: string
+          did_not_play: boolean | null
+          espn_athlete_id: string | null
+          espn_event_id: string
+          fg_att: number | null
+          fg_made: number | null
+          ft_att: number | null
+          ft_made: number | null
+          game_date_et: string
+          game_start_ts: string | null
+          id: string
+          minutes: number | null
+          opponent_team: string | null
+          player_name: string
+          points: number | null
+          raw: Json | null
+          rebounds: number | null
+          season: number | null
+          season_type: string | null
+          steals: number | null
+          team: string | null
+          threes_att: number | null
+          threes_made: number | null
+          turnovers: number | null
+          updated_at: string
+        }
+        Insert: {
+          assists?: number | null
+          blocks?: number | null
+          created_at?: string
+          did_not_play?: boolean | null
+          espn_athlete_id?: string | null
+          espn_event_id: string
+          fg_att?: number | null
+          fg_made?: number | null
+          ft_att?: number | null
+          ft_made?: number | null
+          game_date_et: string
+          game_start_ts?: string | null
+          id?: string
+          minutes?: number | null
+          opponent_team?: string | null
+          player_name: string
+          points?: number | null
+          raw?: Json | null
+          rebounds?: number | null
+          season?: number | null
+          season_type?: string | null
+          steals?: number | null
+          team?: string | null
+          threes_att?: number | null
+          threes_made?: number | null
+          turnovers?: number | null
+          updated_at?: string
+        }
+        Update: {
+          assists?: number | null
+          blocks?: number | null
+          created_at?: string
+          did_not_play?: boolean | null
+          espn_athlete_id?: string | null
+          espn_event_id?: string
+          fg_att?: number | null
+          fg_made?: number | null
+          ft_att?: number | null
+          ft_made?: number | null
+          game_date_et?: string
+          game_start_ts?: string | null
+          id?: string
+          minutes?: number | null
+          opponent_team?: string | null
+          player_name?: string
+          points?: number | null
+          raw?: Json | null
+          rebounds?: number | null
+          season?: number | null
+          season_type?: string | null
+          steals?: number | null
+          team?: string | null
+          threes_att?: number | null
+          threes_made?: number | null
+          turnovers?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       court_edge_v3_audit: {
