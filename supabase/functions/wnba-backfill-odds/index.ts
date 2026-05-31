@@ -85,8 +85,8 @@ function rowsFromOddsPayload(payload: any, snapshotTag: string, snapshotTs: stri
           home_team: home,
           away_team: away,
           market: mk.key,
-          player_name: oc.description ?? null, // player props put player in `description`
-          line: oc.point ?? null,
+          player_name: oc.description ?? "", // player props put player in `description`
+          line: oc.point ?? -999999,
           side: String(oc.name ?? "").toLowerCase(),
           price: Number(oc.price),
           snapshot_ts: snapshotTs,
