@@ -87,9 +87,13 @@ async function processEvent(ev: any) {
     const teamId = String(t.team.id);
     const teamName = teamNames[teamId];
     const oppName = Object.entries(teamNames).find(([id]) => id !== teamId)?.[1] ?? "";
-    const statKeys: string[] = t.statistics?.[0]?.keys ?? []; // e.g. ["MIN","FG","3PT","FT","OREB","DREB","REB","AST","STL","BLK","TO","PF","+/-","PTS"]
-    const players = t.statistics?.[0]?.athletes ?? [];
-    const idx = (name: string) => statKeys.findIndex((k) => k.toUpperCase() === name);
+    // ESPN exposes `keys` (camelCase) plus `labels`/`names` (short abbreviations
+    // like MIN/PTS/3PT). The athlete `stats` array is positionally aligned to
+    // labels/names, so we index by those.
+    const statBlock = t.statistics?.[0] ?? {};
+    const statLabels: string[] = (statBlock.labels ?? statBlock.names ?? []) as string[];
+    const players = statBlock.athletes ?? [];
+    const idx = (name: string) => statLabels.findIndex((k) => String(k).toUpperCase() === name);
     const iMIN = idx("MIN");
     const iFG  = idx("FG");
     const i3PT = idx("3PT");
