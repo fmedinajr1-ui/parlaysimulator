@@ -14,6 +14,7 @@ const corsHeaders = {
 
 const SPORTS = [
   "basketball_nba",
+  "basketball_wnba",
   "baseball_mlb",
   "icehockey_nhl",
 ];
