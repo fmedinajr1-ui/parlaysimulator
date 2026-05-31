@@ -22,7 +22,7 @@ type SourceTable = typeof SOURCE_TABLES[number];
 
 const DAILY_CAP = 300;
 const DEDUPE_HOURS = 2;
-const PERPLEXITY_TIMEOUT_MS = 75_000;
+const PERPLEXITY_TIMEOUT_MS = 30_000;
 const JUDGE_TIMEOUT_MS = 45_000;
 
 type Verdict = "APPROVE" | "CAUTION" | "REJECT";
@@ -207,7 +207,7 @@ async function callPerplexity(prompt: { system: string; user: string }): Promise
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
       signal: ctrl.signal,
       body: JSON.stringify({
-        model: "sonar-deep-research",
+        model: "sonar-pro",
         messages: [
           { role: "system", content: prompt.system },
           { role: "user", content: prompt.user },
@@ -427,7 +427,7 @@ async function verifyOne(
       verdict: "CAUTION", verdict_confidence: 0, confidence_multiplier: 0.85,
       reasoning: "Judge unavailable; defaulting to CAUTION.",
       flags: ["JUDGE_ERROR"],
-      research_model: degraded ? null : "perplexity:sonar-deep-research",
+      research_model: degraded ? null : "perplexity:sonar-pro",
       judge_model: degraded ? "google/gemini-2.5-flash" : "openai/gpt-5",
       research_ms: Date.now() - t0,
       status: "error", error_message: "judge_unavailable",
@@ -446,7 +446,7 @@ async function verifyOne(
     confidence_multiplier: multiplier,
     reasoning: judged.reasoning, flags,
     evidence: { citations, research: researchText.slice(0, 4000) },
-    research_model: degraded ? null : "perplexity:sonar-deep-research",
+    research_model: degraded ? null : "perplexity:sonar-pro",
     judge_model: degraded ? "google/gemini-2.5-flash" : "openai/gpt-5",
     research_ms: Date.now() - t0,
     status: "complete",
