@@ -247,7 +247,8 @@ Deno.serve(async (req) => {
 
   // Load take_it_now per-prop_type accuracy once per run (TAKE_IT_NOW_PROP_BLOCK).
   const takeItNowStats = await loadTakeItNowPropStats(supabase);
-  const takeItNowGateLog = { allowlist: 0, low_sample: 0, below_breakeven: 0, brake_7d: 0, passed: 0 };
+  const takeItNowGateLog: { allowlist: number; low_sample: number; below_breakeven: number; brake_7d: number; passed: number; under_blocked: number } =
+    { allowlist: 0, low_sample: 0, below_breakeven: 0, brake_7d: 0, passed: 0, under_blocked: 0 };
 
   // Build (or reuse) a per-player reasoning block. Failures are non-fatal —
   // the alert still fires, just without the engine_reasoning attached.
