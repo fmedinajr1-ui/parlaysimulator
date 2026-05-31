@@ -446,7 +446,7 @@ async function verifyOne(
     confidence_multiplier: multiplier,
     reasoning: judged.reasoning, flags,
     evidence: { citations, research: researchText.slice(0, 4000) },
-    research_model: degraded ? null : "perplexity:sonar-deep-research",
+    research_model: degraded ? null : "perplexity:sonar-pro",
     judge_model: degraded ? "google/gemini-2.5-flash" : "openai/gpt-5",
     research_ms: Date.now() - t0,
     status: "complete",
