@@ -71,6 +71,10 @@ const TAKE_IT_NOW_ELIGIBLE_PROPS: ReadonlySet<string> = new Set([
 const TAKE_IT_NOW_MIN_HIT_RATE_30D = 0.524; // break-even at -110
 const TAKE_IT_NOW_MIN_SAMPLE_30D = 50;
 const TAKE_IT_NOW_MIN_HIT_RATE_7D = 0.40;
+// Under side has historically inverted on the allowlist (pitcher_strikeouts
+// Unders: 30% / 10; pitcher_hits_allowed Unders: 40% / 5). Overs follow steam,
+// Unders fade it. Hard-block Unders until live data proves otherwise.
+const TAKE_IT_NOW_OVERS_ONLY = true;
 // Backtest rows (settlement_method='backtest') count toward sample floor and
 // hit rate, but at reduced weight so a perfect backtest doesn't masquerade as
 // live truth. Live rows always weight 1.0. See:
@@ -654,6 +658,13 @@ Deno.serve(async (req) => {
             continue;
           }
           takeItNowGateLog.passed += 1;
+        }
+
+        // Overs-only block — Unders have inverted historically across the allowlist.
+        if (TAKE_IT_NOW_OVERS_ONLY && p.derived_side !== 'Over') {
+          takeItNowGateLog.under_blocked = (takeItNowGateLog.under_blocked ?? 0) + 1;
+          console.log(`[take_it_now_gate] muted prop=${p.prop_type} reason=under_side_blocked side=${p.derived_side}`);
+          continue;
         }
 
         // Phase 1: suppress poison/blowout
