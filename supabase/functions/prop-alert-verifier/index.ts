@@ -22,7 +22,7 @@ type SourceTable = typeof SOURCE_TABLES[number];
 
 const DAILY_CAP = 300;
 const DEDUPE_HOURS = 2;
-const PERPLEXITY_TIMEOUT_MS = 75_000;
+const PERPLEXITY_TIMEOUT_MS = 30_000;
 const JUDGE_TIMEOUT_MS = 45_000;
 
 type Verdict = "APPROVE" | "CAUTION" | "REJECT";
@@ -207,7 +207,7 @@ async function callPerplexity(prompt: { system: string; user: string }): Promise
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
       signal: ctrl.signal,
       body: JSON.stringify({
-        model: "sonar-deep-research",
+        model: "sonar-pro",
         messages: [
           { role: "system", content: prompt.system },
           { role: "user", content: prompt.user },
