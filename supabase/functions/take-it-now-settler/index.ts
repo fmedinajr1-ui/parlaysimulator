@@ -206,7 +206,14 @@ Deno.serve(async (req) => {
       console.error("log lookup error", logErr.message);
       continue;
     }
-    if (!logs || logs.length === 0) { skippedNoLog++; continue; }
+    if (!logs || logs.length === 0) {
+      skippedNoLog++;
+      // If the game is more than 14 days old and no log ever surfaced,
+      // tombstone so the scanner stops rescanning it every 30 minutes.
+      const ageMs = Date.now() - new Date(a.commence_time ?? a.created_at).getTime();
+      if (ageMs > 14 * 24 * 60 * 60 * 1000) ungradeable.push(a.id);
+      continue;
+    }
 
     const actual = resolve(logs[0]);
     if (actual === null || !Number.isFinite(actual)) { skippedNoStat++; ungradeable.push(a.id); continue; }
