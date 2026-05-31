@@ -18488,9 +18488,9 @@ export type Database = {
           game_start_ts: string
           home_team: string | null
           id: string
-          line: number | null
+          line: number
           market: string
-          player_name: string | null
+          player_name: string
           price: number
           raw: Json | null
           side: string
@@ -18507,9 +18507,9 @@ export type Database = {
           game_start_ts: string
           home_team?: string | null
           id?: string
-          line?: number | null
+          line?: number
           market: string
-          player_name?: string | null
+          player_name?: string
           price: number
           raw?: Json | null
           side: string
@@ -18526,9 +18526,9 @@ export type Database = {
           game_start_ts?: string
           home_team?: string | null
           id?: string
-          line?: number | null
+          line?: number
           market?: string
-          player_name?: string | null
+          player_name?: string
           price?: number
           raw?: Json | null
           side?: string
