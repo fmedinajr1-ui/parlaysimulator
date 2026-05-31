@@ -9,7 +9,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const DEFAULT_SPORTS = ["nba", "mlb", "soccer"];
+const DEFAULT_SPORTS = ["nba", "wnba", "mlb", "soccer"];
 
 function easternDate(): string {
   return new Intl.DateTimeFormat("en-CA", {

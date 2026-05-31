@@ -498,6 +498,7 @@ Deno.serve(async (req) => {
         log("=== PHASE 2: Refreshing upstream prop and stats inputs ===");
         await invokeParallel([
           ["Refreshing today props", "refresh-todays-props", {}],
+          ["Refreshing today props (WNBA)", "refresh-todays-props", { sport: "basketball_wnba", use_bdl_fallback: false }],
           ["Refreshing PVS inputs", "pvs-data-ingestion", { mode: "live" }],
         ]);
       },
