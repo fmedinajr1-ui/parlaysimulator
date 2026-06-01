@@ -514,6 +514,10 @@ Deno.serve(async (req) => {
     const built = variants.filter((v): v is Parlay => v != null);
     built.sort((a, b) => b.score - a.score);
 
+    console.log(`variants built: ${built.length}/${variants.length} · diag:`, variants.map((v, i) => ({
+      i, ok: !!v, legs: v?.legs.length, am: v?.american, dec: v?.decimal.toFixed(1),
+    })));
+
     if (built.length === 0) {
       const msg = `⚠️ *Lottery +1500 run failed*\n\nNo parlays could be built that reach +1500.\nPool: ${pool.length} candidates across ${sports.length} sports.\nTry again once more lines are posted.`;
       if (!dry) await sendTelegram(msg);
