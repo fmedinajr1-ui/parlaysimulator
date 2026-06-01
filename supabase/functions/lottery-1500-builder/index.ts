@@ -408,15 +408,22 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
 
-    // 1) Pull active pool (next 48h pregame)
-    const { data: rows, error } = await supabase
-      .from("unified_props")
-      .select("event_id, sport, game_description, commence_time, player_name, prop_type, current_line, over_price, under_price, market_type, composite_score, confidence")
-      .eq("is_active", true)
-      .gt("commence_time", new Date(Date.now() + 15 * 60_000).toISOString())
-      .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString())
-      .range(0, 7999);
-    if (error) throw new Error(`unified_props query failed: ${error.message}`);
+    // 1) Pull active pool (next 48h pregame), paginated
+    const rows: any[] = [];
+    const pageSize = 1000;
+    for (let from = 0; from < 20000; from += pageSize) {
+      const { data: page, error } = await supabase
+        .from("unified_props")
+        .select("event_id, sport, game_description, commence_time, player_name, prop_type, current_line, over_price, under_price, market_type, composite_score, confidence")
+        .eq("is_active", true)
+        .gt("commence_time", new Date(Date.now() + 15 * 60_000).toISOString())
+        .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString())
+        .range(from, from + pageSize - 1);
+      if (error) throw new Error(`unified_props query failed: ${error.message}`);
+      if (!page || page.length === 0) break;
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
 
     const sportsSet = new Set<string>((rows ?? []).map((r) => normSport(r.sport)));
     const sports = [...sportsSet];
