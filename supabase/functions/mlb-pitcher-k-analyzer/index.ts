@@ -213,34 +213,41 @@ Deno.serve(async (req) => {
     const rows: any[] = [];
     const broadcastable: any[] = [];
 
-    for (const g of games) {
-      const home = g.home_team;
-      const away = g.away_team;
-      const startTime = g.commence_time;
+    // Build a normalized index of pitcher logs to recover real-name + team from a
+    // normalized lookup (handles accents / Jr. / capitalization differences
+    // between FanDuel and our game logs).
+    const pitcherByNorm = new Map<string, string>();
+    for (const name of pitcherIdx.keys()) {
+      const nk = normName(name);
+      if (nk && !pitcherByNorm.has(nk)) pitcherByNorm.set(nk, name);
+    }
 
-      for (const side of [
-        { team: home, opp: away, isHome: true },
-        { team: away, opp: home, isHome: false },
-      ]) {
-        // Find side's most recent SP (pitcher row from this team in last 7 days, IP>=4)
-        const recent = allLogs
-          .filter((r) =>
-            r.team === side.team && Number(r.innings_pitched ?? 0) >= 4
-          )
-          .sort((a, b) => a.game_date < b.game_date ? 1 : -1)[0];
-        const pitcherName = recent?.player_name ?? null;
-        if (!pitcherName) continue;
+    // Drive off pitchers with a posted K line today — this is ground truth for
+    // "who is actually starting". For each, resolve team from game logs and
+    // find the matching game in today's schedule to determine opponent.
+    for (const [normPitcher, line] of lineMap) {
+      const pitcherName = pitcherByNorm.get(normPitcher);
+      if (!pitcherName) continue; // pitcher with line but no historical logs — skip
 
-        const stats = pitcherStats(pitcherName);
-        if (!stats) continue;
+      const stats = pitcherStats(pitcherName);
+      if (!stats) continue;
 
-        const oppKRate = teamKRateValue(side.opp);
-        const line = lineMap.get(normName(pitcherName)) ?? null;
+      const pitcherTeam = stats.team;
+      const game = games.find((g: any) =>
+        g.home_team === pitcherTeam || g.away_team === pitcherTeam
+      );
+      if (!game) continue; // team isn't playing today
+      const home = game.home_team;
+      const away = game.away_team;
+      const opp = pitcherTeam === home ? away : home;
+      const startTime = game.commence_time;
+
+      const oppKRate = teamKRateValue(opp);
 
         const result = modelPitcherKOver({
           pitcherName,
-          team: side.team,
-          opponent: side.opp,
+          team: pitcherTeam,
+          opponent: opp,
           homeTeam: home,
           line,
           pitcherK9L5: stats.k9L5,
@@ -252,8 +259,8 @@ Deno.serve(async (req) => {
 
         const row = {
           pitcher_name: pitcherName,
-          team: side.team,
-          opponent: side.opp,
+          team: pitcherTeam,
+          opponent: opp,
           home_team: home,
           game_date: today,
           line,
@@ -272,7 +279,6 @@ Deno.serve(async (req) => {
         };
         rows.push(row);
         if (row.recommend) broadcastable.push({ ...row, _start: startTime });
-      }
     }
 
     if (rows.length > 0) {
