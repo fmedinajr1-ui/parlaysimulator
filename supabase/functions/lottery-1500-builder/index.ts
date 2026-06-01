@@ -342,6 +342,7 @@ function buildVariant(
 ): Parlay | null {
   const TARGET = 16.0; // +1500
   const filtered = pool.filter(filter).sort(comparator);
+  console.log(`[${variant}] filtered=${filtered.length}`);
   if (filtered.length < opts.minLegs) return null;
 
   const legs: Candidate[] = [];
@@ -359,6 +360,7 @@ function buildVariant(
       }
     }
   }
+  console.log(`[${variant}] final legs=${legs.length} dec=${dec.toFixed(2)} distinct=${distinctGames(legs)}`);
 
   if (dec < TARGET || legs.length < opts.minLegs || distinctGames(legs) < 2) return null;
   if (opts.minBoosted != null && legs.filter((l) => l.boost >= 0.05).length < opts.minBoosted) return null;
