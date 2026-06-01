@@ -468,40 +468,42 @@ Deno.serve(async (req) => {
     // 4) Build 5 variants
     const variants: (Parlay | null)[] = [];
 
-    // V1 Chalk-Stack: heavy chalk (am <= -180), max safety, may need 5-8 legs to reach +1500
+    // V1 Chalk-Stack: all heavy chalk (any -EV side), pick highest safety first,
+    // accept up to 15 legs to reach +1500 even when avg juice is -500.
     variants.push(buildVariant(
       "Chalk-Stack",
       pool,
-      (c) => c.american <= -180 && c.american >= -500,
+      (c) => c.american <= -150 && c.american >= -500,
       (a, b) => b.safety - a.safety,
-      { minLegs: 5, maxLegs: 10 },
+      { minLegs: 5, maxLegs: 15 },
     ));
 
-    // V2 Balanced: -200..+130, sort by safety
+    // V2 Balanced: mix of -200..+150, sort by safety, room for 8 legs.
     variants.push(buildVariant(
       "Balanced",
       pool,
-      (c) => c.american >= -200 && c.american <= 130,
+      (c) => c.american >= -250 && c.american <= 160,
       (a, b) => b.safety - a.safety,
-      { minLegs: 4, maxLegs: 6 },
+      { minLegs: 4, maxLegs: 9 },
     ));
 
-    // V3 Player-Primary
+    // V3 Player-Primary: only player props, room for 10 legs.
     variants.push(buildVariant(
       "Player-Primary",
       pool.filter((c) => c.market_type === "player"),
-      (c) => c.american >= -250 && c.american <= 200,
+      (c) => c.american >= -300 && c.american <= 200,
       (a, b) => b.safety - a.safety,
-      { minLegs: 4, maxLegs: 7 },
+      { minLegs: 4, maxLegs: 10 },
     ));
 
-    // V4 Research-Boosted
+    // V4 Research-Boosted: sort by boost+safety; if no boosts (skip_research) this
+    // degrades to plain safety sort and may collide with Balanced — acceptable.
     variants.push(buildVariant(
       "Research-Boosted",
       pool,
       (c) => c.american >= -300 && c.american <= 250,
       (a, b) => (b.boost - a.boost) || (b.safety - a.safety),
-      { minLegs: 4, maxLegs: 7, minBoosted: 2 },
+      { minLegs: 4, maxLegs: 10 },
     ));
 
     // V5 Lottery-Stretch: 3 legs, dog-friendly
