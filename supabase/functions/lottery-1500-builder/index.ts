@@ -459,7 +459,7 @@ Deno.serve(async (req) => {
     variants.push(buildVariant(
       "Chalk-Stack",
       pool,
-      (c) => c.american <= -180 && c.american >= -500 && c.safety >= 0.55,
+      (c) => c.american <= -180 && c.american >= -500,
       (a, b) => b.safety - a.safety,
       { minLegs: 5, maxLegs: 10 },
     ));
@@ -468,7 +468,7 @@ Deno.serve(async (req) => {
     variants.push(buildVariant(
       "Balanced",
       pool,
-      (c) => c.american >= -200 && c.american <= 130 && c.safety >= 0.45,
+      (c) => c.american >= -200 && c.american <= 130,
       (a, b) => b.safety - a.safety,
       { minLegs: 4, maxLegs: 6 },
     ));
@@ -477,7 +477,7 @@ Deno.serve(async (req) => {
     variants.push(buildVariant(
       "Player-Primary",
       pool.filter((c) => c.market_type === "player"),
-      (c) => c.american >= -250 && c.american <= 200 && c.safety >= 0.45,
+      (c) => c.american >= -250 && c.american <= 200,
       (a, b) => b.safety - a.safety,
       { minLegs: 4, maxLegs: 7 },
     ));
@@ -495,7 +495,7 @@ Deno.serve(async (req) => {
     variants.push(buildVariant(
       "Lottery-Stretch",
       pool,
-      (c) => c.american >= -150 && c.american <= 400 && c.safety >= 0.35,
+      (c) => c.american >= -150 && c.american <= 400,
       (a, b) => b.safety - a.safety,
       { minLegs: 3, maxLegs: 3 },
     ));
