@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Video,
   ScanLine,
+  Radar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,6 +36,7 @@ const adminItems = [
   { icon: Shield, label: "Admin Panel", path: "/admin", description: "System management" },
   { icon: Users, label: "Collaborators", path: "/collaborate", description: "Team access" },
   { icon: Video, label: "TikTok Pipeline", path: "/admin/tiktok", description: "Script queue & persona manager" },
+  { icon: Radar, label: "Crawler Runs", path: "/admin/crawlers", description: "Scraper & odds-builder run history" },
 ];
 
 export function MenuDrawer() {
