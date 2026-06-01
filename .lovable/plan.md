@@ -1,72 +1,79 @@
-## WNBA Backtest Backfill — Plan
+# +1500 Lottery Parlay Run
 
-Goal: populate `fanduel_prediction_accuracy` with WNBA rows tagged `settlement_method='backtest'` so the n>=50 / 52.4% gate (the one currently blocking `take_it_now`, and by extension every other prop signal) has real evidence to evaluate before any live game is played.
+Goal: on demand, build 3–5 parlays each priced **≥ +1500** across every active sport in `unified_props` (today + next 48h pregame), use Perplexity `sonar-deep-research` as the intel layer, score them with the existing engine, and drop the winner to your admin Telegram.
 
-### What gets built
+Current odds pool (live check just now): MLB (3,021 player + 14 ML/SP/TOT), WNBA (6/6/6 team markets), NHL (1/1/1). Cross-sport-parlay-generator + parlay-engine-v2 already cover MLB/NHL/NBA/WNBA/NCAAB/NCAAF/tennis/MMA/soccer/golf when those sports have rows.
 
-**1. Schema additions (one migration)**
-- New table `wnba_player_game_logs` — per-player per-game box score (pts, reb, ast, stl, blk, threes, fta, ftm, fga, fgm, min, opponent_team, game_date_et). Source of truth for grading.
-- New table `wnba_historical_odds_snapshots` — one row per (event_id, market, player, line, side, price, snapshot_ts). Source of truth for "what was the line/price at decision time."
-- Add columns to `fanduel_prediction_accuracy`: nothing structural needed — we re-use `settlement_method` ('backtest' vs 'live'), `is_gated`, and `signal_factors` (we tag `{ backfill: true, season: '2024' }`).
+## What gets built
 
-**2. Three edge functions**
+A new edge function: `lottery-1500-builder`.
 
-| Function | Job | Source |
-|---|---|---|
-| `wnba-backfill-box-scores` | Pull every 2024 + 2025 WNBA regular-season + playoff game, write per-player rows | ESPN public scoreboard + boxscore endpoints (free, rate-limit ~1 req/sec) |
-| `wnba-backfill-odds` | For each game, pull historical odds snapshots (H2H, totals, spreads, player_points, player_rebounds, player_assists, player_threes, player_points_rebounds_assists) at T-24h, T-2h, T-30min | The Odds API `historical` endpoint (`THE_ODDS_API_KEY`) — counts against credit budget |
-| `wnba-backtest-signals` | Replay `signal-alert-engine` and `parlay-engine-v2` decision logic against each (snapshot, prop) pair. Compare to actual outcome from box scores. Write graded rows to `fanduel_prediction_accuracy`. | Internal — no API cost |
+```text
+                ┌─ run-now button / curl ─┐
+                ▼                         │
+   ┌───────────────────────────────┐      │
+   │ lottery-1500-builder          │      │
+   │  1. snapshot active sports    │      │
+   │  2. deep-research per sport   │──────┼─► perplexity sonar-deep-research
+   │  3. build candidate pool      │      │
+   │  4. compose 5 parlays @+1500  │      │
+   │  5. score & rank → winner     │      │
+   │  6. write bot_daily_parlays   │      │
+   │  7. bot-send-telegram admin   │──────┴─► you only
+   └───────────────────────────────┘
+```
 
-**3. Gate handling**
-- Modify the gate's `loadTakeItNowPropStats()` (and any other signal gate that queries `fanduel_prediction_accuracy`) to **count backtest rows toward sample floor but weight them at 0.7** when computing hit rate. This prevents a perfect backtest from looking like 100% live truth, but still lets gates unlock.
-- Add a `WNBA_BACKTEST_DECAY_DAYS=30` knob — backtest rows older than 30 days from go-live get their weight reduced further (toward 0.4) so live data dominates as it accumulates.
+## Steps
 
-**4. Orchestration**
-- Run the three functions in sequence as a one-shot: box scores -> odds snapshots -> signal replay. No cron — manual trigger from a small admin button or single curl.
-- Each function is idempotent (upsert on natural keys) so reruns are safe.
+1. **Active sport snapshot**
+   - Query `unified_props` for `is_active=true AND commence_time BETWEEN now()+15m AND now()+48h`.
+   - Group by `sport`; keep any sport with ≥3 legs of real lines (`has_real_line`).
+   - Apply existing pregame gate (no live/finished games) and the `unmapped_prop` / `weak_over_hit_rate` blacklists from `cross-sport-sweet-spots`.
 
-### Cost / data realism check (read this)
+2. **Deep research (Perplexity `sonar-deep-research`)**
+   - One call per active sport, sport-tailored prompt (extend `SPORT_PROMPTS` in `cross-sport-parlay-research`).
+   - 75s timeout per call, run sequentially (deep-research is slow).
+   - Store under `bot_research_findings` with category `lottery_<sport>`.
+   - Translate findings to a `research_boost` map: player+team → −0.10..+0.10, same shape the existing engine already consumes.
 
-- **ESPN box scores**: free, ~250 WNBA regular-season + ~40 playoff games per season. ~10 min total wall time.
-- **The Odds API historical**: this is the cost driver. Their historical endpoint charges **10 credits per request per market per snapshot**. To do 2 seasons (~600 games) x 8 markets x 3 snapshots = ~14,400 requests = **~144,000 credits**. Confirm your plan allows that before I run odds backfill. If budget is tight, options:
-  - Cut to 2025 only (~half cost)
-  - Cut to 1 snapshot per game at T-2h (~third cost)
-  - Cut player-prop markets to just the 3 most common (points, rebounds, assists) (~37% cost)
-- **Backtest replay**: free, compute-only.
+3. **Candidate pool**
+   - Reuse `cross-sport-sweet-spots` scoring (`safety = 0.45·l10_hit + 0.20·floor + 0.15·median + 0.10·line_edge + 0.10·research_boost`).
+   - Keep team legs (ML/spread/total) with existing −250 floor, drop spreads |line|≥9.5, drop all-zero Unders, drop `not_starter` pitchers.
+   - Tag each candidate with `decimal_odds`, `safety`, `tier`, `boost`, `sport`, `game_id`.
 
-### Honest caveat (this is why I pushed back earlier)
-Backtest hit rates measure "what the engine *would* have done given the line that *did* exist," but real `take_it_now` triggers off live FanDuel velocity / juice gap snapshots that aren't in The Odds API history. Three of the four sub-signals inside `take_it_now` (juice gap, velocity spike, pre-tip drift) can be reconstructed from the 3-snapshot pull; the live-line and post-alert-monitor pieces cannot. Expect the backtest to be **structurally weaker than live** — that's why backtest rows get the 0.7 weight.
+4. **Build 5 competing parlays at ≥ +1500**
+   - Target combined American odds **≥ +1500** (decimal ≥ 16.0).
+   - Variants generated in parallel:
+     - **V1 Chalk-Stack** — only legs priced ≤ −200; add legs until product ≥ 16.0 (your "all −400" idea — typically 5–7 legs).
+     - **V2 Balanced** — mix of −150 to +120 legs, 4–5 legs, highest mean safety.
+     - **V3 Player-Primary** — ≥80% player props, ≥2 distinct games, no >1 prop per player.
+     - **V4 Research-Boosted** — must include ≥2 legs with `research_boost ≥ +0.05`.
+     - **V5 Lottery-Stretch** — 3 legs, allow +100..+400 dogs, must still land ≥ +1500.
+   - All variants enforce existing guardrails: ≥2 distinct games, same-game concentration cap 0.75, no opposing team-market legs, no duplicate player.
 
-### Technical details
+5. **Rank & crown the winner**
+   - Score = `0.50·mean_safety + 0.25·min_leg_safety + 0.15·payout_decimal_scaled + 0.10·research_density`.
+   - Persist all 5 into `bot_daily_parlays` (strategy `lottery_1500_v{1..5}`), mark the top one `is_winner=true`.
 
-- `wnba-backfill-box-scores`: iterates `https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard?dates=YYYYMMDD` for each day in season window, then `https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/summary?event={id}` for each game. Maps ESPN athlete_id -> player name; upserts `wnba_player_game_logs` on `(player_name, game_date_et, opponent_team)`.
-- `wnba-backfill-odds`: for each game, calls `https://api.the-odds-api.com/v4/historical/sports/basketball_wnba/events/{event_id}/odds?date={iso}&markets={...}&regions=us&bookmakers=fanduel`. Three calls per game at game_start - 24h, -2h, -30m. Upserts on `(event_id, market, player_name, line, side, snapshot_ts)`.
-- `wnba-backtest-signals`: pseudocode
-  ```
-  for each (event, prop, snapshot_t-2h):
-    derive juice_gap = abs(americanToProb(over) - americanToProb(under))
-    if juice_gap >= 0.18 and prop_type in ALLOWED:
-      prediction = side_with_higher_implied_prob_INVERTED  // take_it_now fades the favorite
-      actual = box_score_lookup(player, prop_type, game_date)
-      hit = compare(actual, line, prediction)
-      insert fanduel_prediction_accuracy(signal_type='take_it_now', sport='wnba',
-        prop_type, player_name, event_id, prediction, was_correct=hit,
-        edge_at_signal=juice_gap, settlement_method='backtest',
-        signal_factors={backfill:true, season, snapshot:'t-2h'},
-        verified_at=game_end_ts)
-  ```
-- Gate edit in `signal-alert-engine/index.ts`: in `loadTakeItNowPropStats`, when summing hits/totals, multiply backtest-row contributions by 0.7. Add the same scaling to any analogous gate loaders we add later for other signals.
+6. **Deliver to Telegram (admin only)**
+   - Call `bot-send-telegram` with `admin_only: true`, type `lottery_1500`.
+   - Message format: header → 5 parlay cards with legs + odds + safety + 1-line "why" → bold "🏆 WINNER" block at top with the chosen ticket + bankroll note.
 
-### Files touched
-- new: `supabase/migrations/<ts>_wnba_backfill_tables.sql`
-- new: `supabase/functions/wnba-backfill-box-scores/index.ts`
-- new: `supabase/functions/wnba-backfill-odds/index.ts`
-- new: `supabase/functions/wnba-backtest-signals/index.ts`
-- edit: `supabase/functions/signal-alert-engine/index.ts` (weighted backtest counting)
-- new: `mem/logic/betting/wnba-backtest-weighting.md`
-- edit: `mem/index.md`
+7. **Run mechanics**
+   - On-demand only (no cron). Trigger via:
+     `supabase--curl_edge_functions path=/lottery-1500-builder method=POST` (admin JWT).
+   - Long-running (~5–10 min from deep-research). Function streams progress logs; returns final JSON summary.
 
-### Open questions before I build
-1. **Budget**: confirm The Odds API plan can absorb ~150k historical credits, or pick a reduced scope (2025-only / 1-snapshot / 3-markets).
-2. **Signal coverage**: just `take_it_now`, or also `velocity_spike`, `model_edge`, `live_line_about_to_move`? Each additional signal is a separate replay pass over the same odds data (cheap once odds are pulled).
-3. **Weight**: 0.7 backtest weight is my recommendation. You can override (1.0 = treat as fully live, 0.5 = backtest counts as half).
+## Technical notes
+
+- Reuses existing libraries: `_shared/parlay-engine-v2/*`, `cross-sport-sweet-spots` candidate prep, `bot-send-telegram` admin path.
+- New code in `supabase/functions/lottery-1500-builder/index.ts` only; no schema changes (writes to existing `bot_daily_parlays` + `bot_research_findings`).
+- Secrets used: `PERPLEXITY_API_KEY`, `LOVABLE_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (all already configured).
+- Adds 5 unit tests in `lottery-1500-builder/index_test.ts` per project policy (price math ≥+1500, distinct-games rule, duplicate-player block, research-boost variant requirement, admin-only Telegram path).
+- Settlement: existing `cross-sport-parlay-settler` already grades any `bot_daily_parlays` rows by sport+player+date — `lottery_1500_*` strategies are picked up automatically, no new settler.
+
+## Out of scope
+
+- No broadcast to all_access tier (admin-only per your choice).
+- No new cron — manual trigger only for now.
+- No UI page (results land in DB + Telegram; we can add a `/admin/lottery` panel later if you want).
