@@ -403,7 +403,36 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const dry = url.searchParams.get("dry") === "1";
   const skipResearch = url.searchParams.get("skip_research") === "1";
+  const async_ = url.searchParams.get("async") !== "0";  // default async
 
+  if (async_) {
+    // Fire-and-forget: return immediately, do the work in background.
+    // @ts-ignore EdgeRuntime is a Supabase runtime global
+    EdgeRuntime.waitUntil(runLottery({ dry, skipResearch, started }).catch((e) => {
+      console.error("background runLottery failed", e);
+    }));
+    return new Response(JSON.stringify({
+      ok: true, status: "started", dry, skip_research: skipResearch,
+      note: "Building in background. Telegram will fire when complete.",
+    }), { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  // Synchronous mode (for testing)
+  try {
+    const result = await runLottery({ dry, skipResearch, started });
+    return new Response(JSON.stringify(result), {
+      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e) {
+    console.error("lottery-1500-builder error", e);
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
+
+async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: number }): Promise<any> {
+  const { dry, skipResearch, started } = opts;
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
@@ -520,9 +549,7 @@ Deno.serve(async (req) => {
     if (built.length === 0) {
       const msg = `⚠️ *Lottery +1500 run failed*\n\nNo parlays could be built that reach +1500.\nPool: ${pool.length} candidates across ${sports.length} sports.\nTry again once more lines are posted.`;
       if (!dry) await sendTelegram(msg);
-      return new Response(JSON.stringify({ ok: false, reason: "no_parlays", pool: pool.length, sports }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return { ok: false, reason: "no_parlays", pool: pool.length, sports };
     }
 
     // 5) Persist + 6) Telegram
@@ -573,7 +600,7 @@ Deno.serve(async (req) => {
       if (!sent.ok) console.error("telegram send failed", sent.error);
     }
 
-    return new Response(JSON.stringify({
+    return {
       ok: true,
       pool: pool.length,
       sports,
@@ -587,14 +614,14 @@ Deno.serve(async (req) => {
       })),
       dry,
       ms: Date.now() - started,
-    }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    };
   } catch (e) {
     console.error("lottery-1500-builder error", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    const errMsg = e instanceof Error ? e.message : String(e);
+    try { await sendTelegram(`❌ *Lottery +1500 errored*\n\n\`${errMsg.slice(0, 500)}\``); } catch (_) { /* ignore */ }
+    return { ok: false, error: errMsg };
   }
-});
+}
 
 async function sendTelegram(message: string): Promise<{ ok: boolean; error?: string }> {
   try {
