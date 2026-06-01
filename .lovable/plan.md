@@ -1,79 +1,75 @@
-# +1500 Lottery Parlay Run
+## Goal
 
-Goal: on demand, build 3–5 parlays each priced **≥ +1500** across every active sport in `unified_props` (today + next 48h pregame), use Perplexity `sonar-deep-research` as the intel layer, score them with the existing engine, and drop the winner to your admin Telegram.
+Add an admin-only page that surfaces the latest crawler and odds-builder runs, with timestamps, fetched market counts, and any errors or missing-data notes.
 
-Current odds pool (live check just now): MLB (3,021 player + 14 ML/SP/TOT), WNBA (6/6/6 team markets), NHL (1/1/1). Cross-sport-parlay-generator + parlay-engine-v2 already cover MLB/NHL/NBA/WNBA/NCAAB/NCAAF/tennis/MMA/soccer/golf when those sports have rows.
+## Data source
 
-## What gets built
+Reuse `cron_job_history` (already populated by every scraper / fetcher / builder). No schema changes needed.
 
-A new edge function: `lottery-1500-builder`.
+Crawler/odds-builder jobs we'll filter for (substring match on `job_name`):
+- `*-scraper` (pp-props, sportsbook-props, whale-odds, ncaab-kenpom, ncaab-referee)
+- `*-fetcher` (nba-stats, nba-team-pace, ncaa-baseball, ncaab-team-stats, nfl-stats, nfl-team-defense, nhl-*)
+- `fetch-*-injuries` (mlb, nfl, nhl)
+- `fanduel-line-scanner`, `fanduel-behavior-analyzer`, `fanduel-trap-scanner`, `fanduel-accuracy-feedback`, `fanduel-prediction-alerts`
+- `unified-props-engine`, `lottery-1500-builder`, `verify-unified-outcomes`, `verify-fanduel-trap-outcomes`
+
+A constant array `CRAWLER_JOB_PATTERNS` will drive both filtering and grouping (Scrapers / Stats Fetchers / Injuries / FanDuel / Builders).
+
+## New page: `/admin/crawlers`
+
+Route added in `src/App.tsx`, gated by `useAdminRole`. Linked from `MenuDrawer` admin section (icon: `Radar`) and from the existing Admin Panel page.
+
+### Layout
 
 ```text
-                ┌─ run-now button / curl ─┐
-                ▼                         │
-   ┌───────────────────────────────┐      │
-   │ lottery-1500-builder          │      │
-   │  1. snapshot active sports    │      │
-   │  2. deep-research per sport   │──────┼─► perplexity sonar-deep-research
-   │  3. build candidate pool      │      │
-   │  4. compose 5 parlays @+1500  │      │
-   │  5. score & rank → winner     │      │
-   │  6. write bot_daily_parlays   │      │
-   │  7. bot-send-telegram admin   │──────┴─► you only
-   └───────────────────────────────┘
+Header: "Crawler & Odds Builder Runs"  [Refresh] [Auto-refresh 30s toggle]
+
+Summary strip (last 24h):
+ [Total runs] [✓ Completed] [⚠ No-data] [✗ Failed] [Avg duration]
+
+Filters row:
+ Category dropdown (All / Scrapers / Fetchers / Injuries / FanDuel / Builders)
+ Status dropdown (All / completed / failed / no_data / running)
+ Job name search input
+
+Group: "Latest run per job" (one row per distinct job_name, newest)
+ Table: Job | Category | Last run (relative) | Status | Duration | Markets/Rows fetched | Error/Note
+
+Group: "Recent run history" (paginated, 50 per page)
+ Same columns + expandable row showing full result JSON and error_message
 ```
 
-## Steps
+### "Markets/Rows fetched" extraction
 
-1. **Active sport snapshot**
-   - Query `unified_props` for `is_active=true AND commence_time BETWEEN now()+15m AND now()+48h`.
-   - Group by `sport`; keep any sport with ≥3 legs of real lines (`has_real_line`).
-   - Apply existing pregame gate (no live/finished games) and the `unmapped_prop` / `weak_over_hit_rate` blacklists from `cross-sport-sweet-spots`.
+Read from `result` JSON using common keys we already store:
+`markets`, `marketsCount`, `rowsFetched`, `inserted`, `updated`, `propsCount`, `gamesProcessed`, `totalFetched`. Show the first numeric one found, else `—`.
 
-2. **Deep research (Perplexity `sonar-deep-research`)**
-   - One call per active sport, sport-tailored prompt (extend `SPORT_PROMPTS` in `cross-sport-parlay-research`).
-   - 75s timeout per call, run sequentially (deep-research is slow).
-   - Store under `bot_research_findings` with category `lottery_<sport>`.
-   - Translate findings to a `research_boost` map: player+team → −0.10..+0.10, same shape the existing engine already consumes.
+### Errors / missing data
 
-3. **Candidate pool**
-   - Reuse `cross-sport-sweet-spots` scoring (`safety = 0.45·l10_hit + 0.20·floor + 0.15·median + 0.10·line_edge + 0.10·research_boost`).
-   - Keep team legs (ML/spread/total) with existing −250 floor, drop spreads |line|≥9.5, drop all-zero Unders, drop `not_starter` pitchers.
-   - Tag each candidate with `decimal_odds`, `safety`, `tier`, `boost`, `sport`, `game_id`.
+- `status='failed'` → red badge + `error_message`.
+- `status='no_data'` → amber badge + `error_message` (typically "no games today" style).
+- `status='completed'` with `result.markets === 0` or `result.inserted === 0` → amber "0 rows" warning chip.
 
-4. **Build 5 competing parlays at ≥ +1500**
-   - Target combined American odds **≥ +1500** (decimal ≥ 16.0).
-   - Variants generated in parallel:
-     - **V1 Chalk-Stack** — only legs priced ≤ −200; add legs until product ≥ 16.0 (your "all −400" idea — typically 5–7 legs).
-     - **V2 Balanced** — mix of −150 to +120 legs, 4–5 legs, highest mean safety.
-     - **V3 Player-Primary** — ≥80% player props, ≥2 distinct games, no >1 prop per player.
-     - **V4 Research-Boosted** — must include ≥2 legs with `research_boost ≥ +0.05`.
-     - **V5 Lottery-Stretch** — 3 legs, allow +100..+400 dogs, must still land ≥ +1500.
-   - All variants enforce existing guardrails: ≥2 distinct games, same-game concentration cap 0.75, no opposing team-market legs, no duplicate player.
+## Files
 
-5. **Rank & crown the winner**
-   - Score = `0.50·mean_safety + 0.25·min_leg_safety + 0.15·payout_decimal_scaled + 0.10·research_density`.
-   - Persist all 5 into `bot_daily_parlays` (strategy `lottery_1500_v{1..5}`), mark the top one `is_winner=true`.
+- `src/pages/admin/CrawlerRunsPage.tsx` — new page.
+- `src/components/admin/CrawlerRunsTable.tsx` — table + row expansion.
+- `src/components/admin/CrawlerSummaryStrip.tsx` — 24h stat cards.
+- `src/lib/crawlerJobs.ts` — `CRAWLER_JOB_PATTERNS`, category mapping, `extractFetchedCount(result)`.
+- `src/App.tsx` — add `/admin/crawlers` route (admin-guarded).
+- `src/components/layout/MenuDrawer.tsx` — add "Crawler Runs" item under Admin Tools.
 
-6. **Deliver to Telegram (admin only)**
-   - Call `bot-send-telegram` with `admin_only: true`, type `lottery_1500`.
-   - Message format: header → 5 parlay cards with legs + odds + safety + 1-line "why" → bold "🏆 WINNER" block at top with the chosen ticket + bankroll note.
+## Data fetching
 
-7. **Run mechanics**
-   - On-demand only (no cron). Trigger via:
-     `supabase--curl_edge_functions path=/lottery-1500-builder method=POST` (admin JWT).
-   - Long-running (~5–10 min from deep-research). Function streams progress logs; returns final JSON summary.
+Two `useQuery` hooks against `cron_job_history`:
 
-## Technical notes
+1. `latest-per-crawler` — RPC-free: `SELECT *` for jobs in the pattern list ordered by `started_at desc` limit 500, then dedupe client-side keeping newest per `job_name`.
+2. `crawler-history` — paginated `SELECT *` filtered by selected category + status + search, ordered by `started_at desc`, range pagination.
 
-- Reuses existing libraries: `_shared/parlay-engine-v2/*`, `cross-sport-sweet-spots` candidate prep, `bot-send-telegram` admin path.
-- New code in `supabase/functions/lottery-1500-builder/index.ts` only; no schema changes (writes to existing `bot_daily_parlays` + `bot_research_findings`).
-- Secrets used: `PERPLEXITY_API_KEY`, `LOVABLE_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (all already configured).
-- Adds 5 unit tests in `lottery-1500-builder/index_test.ts` per project policy (price math ≥+1500, distinct-games rule, duplicate-player block, research-boost variant requirement, admin-only Telegram path).
-- Settlement: existing `cross-sport-parlay-settler` already grades any `bot_daily_parlays` rows by sport+player+date — `lottery_1500_*` strategies are picked up automatically, no new settler.
+Both `refetchInterval: 30_000` when auto-refresh is on.
 
 ## Out of scope
 
-- No broadcast to all_access tier (admin-only per your choice).
-- No new cron — manual trigger only for now.
-- No UI page (results land in DB + Telegram; we can add a `/admin/lottery` panel later if you want).
+- No new tables, no migrations, no edge function changes.
+- No edits to existing crawler functions.
+- No write actions (manual re-trigger button) in this first cut — `CronJobHistoryPanel` already covers ad-hoc reruns elsewhere; can be added later if you want.
