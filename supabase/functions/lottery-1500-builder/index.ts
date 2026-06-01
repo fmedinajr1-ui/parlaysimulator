@@ -342,7 +342,6 @@ function buildVariant(
 ): Parlay | null {
   const TARGET = 16.0; // +1500
   const filtered = pool.filter(filter).sort(comparator);
-  console.log(`[${variant}] filtered=${filtered.length}`);
   if (filtered.length < opts.minLegs) return null;
 
   const legs: Candidate[] = [];
@@ -360,8 +359,7 @@ function buildVariant(
       }
     }
   }
-  console.log(`[${variant}] final legs=${legs.length} dec=${dec.toFixed(2)} distinct=${distinctGames(legs)}`);
-
+  console.log(`[${variant}] legs=${legs.length} dec=${dec.toFixed(2)} distinct=${distinctGames(legs)}`);
   if (dec < TARGET || legs.length < opts.minLegs || distinctGames(legs) < 2) return null;
   if (opts.minBoosted != null && legs.filter((l) => l.boost >= 0.05).length < opts.minBoosted) return null;
 
@@ -518,10 +516,7 @@ Deno.serve(async (req) => {
     const built = variants.filter((v): v is Parlay => v != null);
     built.sort((a, b) => b.score - a.score);
 
-    console.log(`variants built: ${built.length}/${variants.length} · diag:`, variants.map((v, i) => ({
-      i, ok: !!v, legs: v?.legs.length, am: v?.american, dec: v?.decimal.toFixed(1),
-    })));
-
+    console.log(`variants built: ${built.length}/${variants.length}`);
     if (built.length === 0) {
       const msg = `⚠️ *Lottery +1500 run failed*\n\nNo parlays could be built that reach +1500.\nPool: ${pool.length} candidates across ${sports.length} sports.\nTry again once more lines are posted.`;
       if (!dry) await sendTelegram(msg);
