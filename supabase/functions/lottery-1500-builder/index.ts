@@ -313,7 +313,7 @@ function prettyProp(p: string): string {
   return map[p] ?? p.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function noConflict(legs: Candidate[], cand: Candidate): boolean {
+function noConflict(legs: Candidate[], cand: Candidate, maxPerGame = 2): boolean {
   for (const l of legs) {
     if (l.key === cand.key) return false;
     // No duplicate player
@@ -323,6 +323,9 @@ function noConflict(legs: Candidate[], cand: Candidate): boolean {
       if (l.market_type === cand.market_type) return false;
     }
   }
+  // Concentration cap: at most maxPerGame legs from same event
+  const sameGame = legs.filter((l) => l.event_id === cand.event_id).length;
+  if (sameGame >= maxPerGame) return false;
   return true;
 }
 
@@ -335,7 +338,7 @@ function buildVariant(
   pool: Candidate[],
   filter: (c: Candidate) => boolean,
   comparator: (a: Candidate, b: Candidate) => number,
-  opts: { minLegs: number; maxLegs: number; minBoosted?: number },
+  opts: { minLegs: number; maxLegs: number; minBoosted?: number; maxPerGame?: number },
 ): Parlay | null {
   const TARGET = 16.0; // +1500
   const filtered = pool.filter(filter).sort(comparator);
@@ -343,10 +346,11 @@ function buildVariant(
 
   const legs: Candidate[] = [];
   let dec = 1;
+  const maxPerGame = opts.maxPerGame ?? 2;
 
   for (const c of filtered) {
     if (legs.length >= opts.maxLegs) break;
-    if (!noConflict(legs, c)) continue;
+    if (!noConflict(legs, c, maxPerGame)) continue;
     legs.push(c);
     dec *= c.decimal;
     if (dec >= TARGET && legs.length >= opts.minLegs && distinctGames(legs) >= 2) {
@@ -411,7 +415,7 @@ Deno.serve(async (req) => {
       .eq("is_active", true)
       .gt("commence_time", new Date(Date.now() + 15 * 60_000).toISOString())
       .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString())
-      .limit(8000);
+      .range(0, 7999);
     if (error) throw new Error(`unified_props query failed: ${error.message}`);
 
     const sportsSet = new Set<string>((rows ?? []).map((r) => normSport(r.sport)));
