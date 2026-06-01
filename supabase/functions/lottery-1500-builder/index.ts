@@ -62,8 +62,8 @@ function normSport(s: string): string {
   const x = s.toLowerCase();
   if (x.includes("mlb")) return "MLB";
   if (x.includes("nhl")) return "NHL";
-  if (x.includes("nba")) return "NBA";
   if (x.includes("wnba")) return "WNBA";
+  if (x.includes("nba")) return "NBA";
   if (x.includes("ncaab") || x.includes("basketball_ncaa")) return "NCAAB";
   if (x.includes("ncaaf") || x.includes("football_ncaa")) return "NCAAF";
   if (x.includes("nfl")) return "NFL";
