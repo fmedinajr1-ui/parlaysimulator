@@ -475,7 +475,7 @@ Deno.serve(async (req) => {
       pool,
       (c) => c.american <= -150 && c.american >= -500,
       (a, b) => b.safety - a.safety,
-      { minLegs: 5, maxLegs: 15 },
+      { minLegs: 5, maxLegs: 18 },
     ));
 
     // V2 Balanced: mix of -200..+150, sort by safety, room for 8 legs.
@@ -506,13 +506,13 @@ Deno.serve(async (req) => {
       { minLegs: 4, maxLegs: 10 },
     ));
 
-    // V5 Lottery-Stretch: 3 legs, dog-friendly
+    // V5 Lottery-Stretch: 3 legs, dog-friendly, sort by price (longest legs first)
     variants.push(buildVariant(
       "Lottery-Stretch",
       pool,
-      (c) => c.american >= -150 && c.american <= 400,
-      (a, b) => b.safety - a.safety,
-      { minLegs: 3, maxLegs: 3 },
+      (c) => c.american >= 100 && c.american <= 500,
+      (a, b) => b.decimal - a.decimal || b.safety - a.safety,
+      { minLegs: 3, maxLegs: 4, maxPerGame: 1 },
     ));
 
     const built = variants.filter((v): v is Parlay => v != null);
