@@ -836,12 +836,13 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     // 3) Build candidate pool
     const pool: Candidate[] = [];
     for (const r of rows ?? []) {
+      if (dropEventIds.has(String(r.event_id))) continue;
       const sport = normSport(r.sport);
       const b = research[sport] ?? { team_boosts: [], player_boosts: [] };
       const cs = rowToCandidates(r, b, matchupMap);
       pool.push(...cs);
     }
-    console.log(`candidate pool: ${pool.length}`);
+    console.log(`candidate pool: ${pool.length} (ghost_drops=${ghostDrops})`);
 
     // 4) Build 5 variants
     const variants: (Parlay | null)[] = [];
