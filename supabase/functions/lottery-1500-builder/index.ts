@@ -432,6 +432,7 @@ const VARIANT_DRIVERS: Record<string, string> = {
   "Research-Boosted": "Sorted by deep-research boost first, safety second. Highest 'sharp' density.",
   "Lottery-Stretch": "3–4 longshots (+100 to +700) from different games. Big payout, low hit rate.",
   "Heavy-Chalk-Mega": "20+ deep favorites (-250 to -800). Multiplies tiny edges to reach +1500. Single miss = bust.",
+  "Kitchen-Sink": "Round-robin across every active sport — 6–10 legs, ≥3 distinct sports, target ≥+3000. Mirrors the viral 'parlayed everything' tickets.",
 };
 
 function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
