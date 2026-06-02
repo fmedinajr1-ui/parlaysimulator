@@ -380,9 +380,9 @@ function buildVariant(
   pool: Candidate[],
   filter: (c: Candidate) => boolean,
   comparator: (a: Candidate, b: Candidate) => number,
-  opts: { minLegs: number; maxLegs: number; minBoosted?: number; maxPerGame?: number },
+  opts: { minLegs: number; maxLegs: number; minBoosted?: number; maxPerGame?: number; target?: number; minDistinctSports?: number },
 ): Parlay | null {
-  const TARGET = 16.0; // +1500
+  const TARGET = opts.target ?? 16.0; // default +1500
   const filtered = pool.filter(filter).sort(comparator);
   if (filtered.length < opts.minLegs) return null;
 
@@ -396,14 +396,15 @@ function buildVariant(
     legs.push(c);
     dec *= c.decimal;
     if (dec >= TARGET && legs.length >= opts.minLegs && distinctGames(legs) >= 2) {
-      if (opts.minBoosted == null || legs.filter((l) => l.boost >= 0.05).length >= opts.minBoosted) {
-        break;
-      }
+      const boostedOk = opts.minBoosted == null || legs.filter((l) => l.boost >= 0.05).length >= opts.minBoosted;
+      const sportsOk = opts.minDistinctSports == null || new Set(legs.map((l) => l.sport)).size >= opts.minDistinctSports;
+      if (boostedOk && sportsOk) break;
     }
   }
   console.log(`[${variant}] legs=${legs.length} dec=${dec.toFixed(2)} distinct=${distinctGames(legs)}`);
   if (dec < TARGET || legs.length < opts.minLegs || distinctGames(legs) < 2) return null;
   if (opts.minBoosted != null && legs.filter((l) => l.boost >= 0.05).length < opts.minBoosted) return null;
+  if (opts.minDistinctSports != null && new Set(legs.map((l) => l.sport)).size < opts.minDistinctSports) return null;
 
   const safeties = legs.map((l) => l.safety);
   const mean = safeties.reduce((a, b) => a + b, 0) / safeties.length;
