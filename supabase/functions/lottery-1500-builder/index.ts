@@ -313,11 +313,28 @@ function rowToCandidates(
       0.55 * imp + 0.18 * composite + 0.13 * conf + 0.07 + boost + matchupAdj,
     ));
     const why = buildWhy(mt, t.side, line, t.american, boost);
+    const gameKey = canonicalGameId(row.event_id, row.game_description);
+    // Resolve team / opponent for team-market labels.
+    let teamName: string | undefined;
+    let oppName: string | undefined;
+    if (mt === "moneyline" || mt === "spread" || mt === "total") {
+      const parts = String(row.game_description ?? "").split(" @ ");
+      if (parts.length === 2) {
+        const away = parts[0].trim();
+        const home = parts[1].trim();
+        if (t.side === "HOME") { teamName = home; oppName = away; }
+        else if (t.side === "AWAY") { teamName = away; oppName = home; }
+      }
+    }
     out.push({
       key: `${row.event_id}|${mt}|${player}|${prop}|${t.side}|${line ?? ""}`,
       sport,
       game,
       event_id: String(row.event_id),
+      game_key: gameKey,
+      team: teamName,
+      opponent: oppName,
+      commence_time: row.commence_time ? String(row.commence_time) : undefined,
       market_type: mt,
       player_name: player,
       prop_type: prop,
