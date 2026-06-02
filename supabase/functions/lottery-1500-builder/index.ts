@@ -241,12 +241,17 @@ function rowToCandidates(
     // unified_props stores h2h/spreads at the matchup level. over_price = HOME, under_price = AWAY by convention.
     if (op != null) tups.push({ side: "HOME", american: op });
     if (up != null) tups.push({ side: "AWAY", american: up });
+  } else if (mt === "outright") {
+    // outright_winner futures — over_price is the "to win" American price
+    if (op != null) tups.push({ side: "WIN" as Candidate["side"], american: op });
   }
 
   for (const t of tups) {
     if (!Number.isFinite(t.american) || t.american === 0) continue;
     // Gates widened: allow heavier chalk for chalk-stack variants, longer dogs for stretch.
-    if (t.american <= -1000 || t.american >= 900) continue;
+    // Outrights are inherently longshots — allow up to +5000 there.
+    const maxAm = mt === "outright" ? 5000 : 900;
+    if (t.american <= -1000 || t.american >= maxAm) continue;
     // Skip extreme spreads only
     if (mt === "spread" && line != null && Math.abs(line) >= 14) continue;
     // Fade fully-juiced fade alerts (negative research boost) by skipping if boost <= -0.08
@@ -327,6 +332,9 @@ function legLabel(c: Candidate): string {
     if (c.market_type === "moneyline") return `${team} ML`;
     const ln = (c.side === "AWAY" && c.line != null) ? -c.line : c.line;
     return `${team} ${ln != null && ln > 0 ? "+" : ""}${ln}`;
+  }
+  if (c.market_type === "outright") {
+    return `${c.player_name} to win ${c.game}`;
   }
   return `${c.player_name} ${c.side}`;
 }
@@ -651,6 +659,26 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
       if (!page || page.length === 0) break;
       rows.push(...page);
       if (page.length < pageSize) break;
+    }
+
+    // 1a) Outrights / futures: pull separately — their commence_time is weeks
+    // or months out so the 48h gate above filters them all out.
+    try {
+      const { data: outRows, error: outErr } = await supabase
+        .from("unified_props")
+        .select("event_id, sport, game_description, commence_time, player_name, prop_type, current_line, over_price, under_price, market_type, composite_score, confidence")
+        .eq("is_active", true)
+        .eq("market_type", "outright")
+        .gt("commence_time", new Date().toISOString())
+        .lt("commence_time", new Date(Date.now() + 180 * 24 * 3600_000).toISOString())
+        .limit(2000);
+      if (outErr) console.warn("outrights pull failed:", outErr.message);
+      else if (outRows?.length) {
+        console.log(`pool outrights: +${outRows.length} rows`);
+        rows.push(...outRows);
+      }
+    } catch (e) {
+      console.warn("outrights pull threw:", e instanceof Error ? e.message : String(e));
     }
 
     const sportsSet = new Set<string>((rows ?? []).map((r) => normSport(r.sport)));

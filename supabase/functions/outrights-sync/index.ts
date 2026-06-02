@@ -107,7 +107,10 @@ Deno.serve(async (req) => {
           if (price > 50000) continue;
 
           allRows.push({
-            event_id: `${ev.id}_outright_${outcome.name.replace(/\s+/g, "_").slice(0, 40)}`,
+            // Share event_id across all outcomes in the same tournament so the
+            // lottery builder's MAX_PER_GAME=1 prevents stacking multiple
+            // (mutually-exclusive) winners from the same field.
+            event_id: ev.id,
             sport: bucket,
             game_description: `${sport.title}`,
             commence_time: ev.commence_time,
