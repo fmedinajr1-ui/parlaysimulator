@@ -414,19 +414,19 @@ function noConflict(legs: Candidate[], cand: Candidate, maxPerGame = 2): boolean
     if (l.key === cand.key) return false;
     // No duplicate player
     if (cand.market_type === "player" && l.market_type === "player" && l.player_name.toLowerCase() === cand.player_name.toLowerCase()) return false;
-    // No opposing team-market legs on same game
-    if (l.event_id === cand.event_id && cand.market_type !== "player" && l.market_type !== "player") {
-      if (l.market_type === cand.market_type) return false;
+    // Block ANY two non-player legs on the same canonical game (h2h + spread + total combinations).
+    if (l.game_key === cand.game_key && cand.market_type !== "player" && l.market_type !== "player") {
+      return false;
     }
   }
-  // Concentration cap: at most maxPerGame legs from same event
-  const sameGame = legs.filter((l) => l.event_id === cand.event_id).length;
+  // Concentration cap: at most maxPerGame legs from same canonical game
+  const sameGame = legs.filter((l) => l.game_key === cand.game_key).length;
   if (sameGame >= maxPerGame) return false;
   return true;
 }
 
 function distinctGames(legs: Candidate[]): number {
-  return new Set(legs.map((l) => l.event_id)).size;
+  return new Set(legs.map((l) => l.game_key)).size;
 }
 
 function buildVariant(
