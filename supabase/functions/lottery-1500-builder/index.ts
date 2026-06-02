@@ -34,6 +34,9 @@ type Candidate = {
   safety: number;
   why: string;
   boost_reason?: string;
+  matchup_score?: number | null;   // normalized −1..+1 for the alerted side
+  matchup_note?: string;            // human-readable cross-ref summary
+  blocked_by_matchup?: boolean;     // matchup_intelligence.is_blocked = true
 };
 
 type Parlay = {
@@ -204,7 +207,55 @@ function lookupBoost(
   return { boost: 0 };
 }
 
-function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: any[] }): Candidate[] {
+type MatchupRow = {
+  matchup_score: number | null;
+  opponent_defensive_rank: number | null;
+  position_defense_rank: number | null;
+  position_group: string | null;
+  blowout_risk: number | null;
+  game_script: string | null;
+  is_blocked: boolean | null;
+  block_reason: string | null;
+  risk_flags: string[] | null;
+  confidence_adjustment: number | null;
+  opponent_team: string | null;
+};
+
+function lookupMatchup(
+  player: string,
+  prop: string,
+  side: string,
+  line: number | null,
+  map: Map<string, MatchupRow>,
+): MatchupRow | null {
+  if (!player || !prop) return null;
+  const sideKey = side === "OVER" || side === "UNDER" ? side : "ANY";
+  const lineKey = line != null ? String(line) : "";
+  const exact = map.get(`${player.toLowerCase()}|${prop}|${sideKey}|${lineKey}`);
+  if (exact) return exact;
+  // Fallback: any row for this player+prop+side (line may differ slightly)
+  for (const [k, v] of map) {
+    if (k.startsWith(`${player.toLowerCase()}|${prop}|${sideKey}|`)) return v;
+  }
+  return null;
+}
+
+function buildMatchupNote(m: MatchupRow): string {
+  const bits: string[] = [];
+  if (m.position_defense_rank != null) bits.push(`pos D rk ${m.position_defense_rank}${m.position_group ? `/${m.position_group}` : ""}`);
+  else if (m.opponent_defensive_rank != null) bits.push(`D rk ${m.opponent_defensive_rank}`);
+  if (m.matchup_score != null) bits.push(`m=${Number(m.matchup_score).toFixed(1)}`);
+  if (m.game_script && m.game_script !== "COMPETITIVE") bits.push(`script ${m.game_script}`);
+  if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.5) bits.push(`blowout`);
+  if (m.risk_flags && m.risk_flags.length) bits.push(m.risk_flags.slice(0, 2).join(","));
+  return bits.join(" · ");
+}
+
+function rowToCandidates(
+  row: any,
+  boosts: { team_boosts: any[]; player_boosts: any[] },
+  matchupMap: Map<string, MatchupRow>,
+): Candidate[] {
   const out: Candidate[] = [];
   const sport = normSport(row.sport);
   const game = String(row.game_description ?? "");
@@ -242,8 +293,38 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
     const boost = bl.boost;
     const composite = row.composite_score != null ? Number(row.composite_score) / 100 : 0;
     const conf = row.confidence != null ? Number(row.confidence) / 100 : 0;
-    // Safety = dejuiced implied + composite/confidence signal + research boost
-    const safety = Math.max(0, Math.min(1, 0.55 * imp + 0.20 * composite + 0.15 * conf + 0.10 + boost));
+
+    // Team-matchup cross-reference (player props only; team markets fall through).
+    let matchupScore: number | null = null;
+    let matchupNote = "";
+    let blockedByMatchup = false;
+    let matchupAdj = 0;
+    if (mt === "player" && player) {
+      const m = lookupMatchup(player, prop, t.side, line, matchupMap);
+      if (m) {
+        if (m.is_blocked) {
+          blockedByMatchup = true;
+        }
+        // matchup_score in DB ranges roughly -6..+6 for the side stored. Normalize to ±1.
+        if (m.matchup_score != null) {
+          matchupScore = Math.max(-1, Math.min(1, Number(m.matchup_score) / 5));
+        }
+        matchupNote = buildMatchupNote(m);
+        // Safety adjustment: ±7% from normalized matchup, ±5% from confidence_adjustment.
+        const ca = m.confidence_adjustment != null ? Math.max(-0.05, Math.min(0.05, Number(m.confidence_adjustment))) : 0;
+        matchupAdj = (matchupScore ?? 0) * 0.07 + ca;
+        // Hard fade: blowout risk on Over of a counting stat, or risk_flags contains BLOWOUT/FADE.
+        if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.7 && t.side === "OVER") {
+          matchupAdj -= 0.05;
+        }
+      }
+    }
+    if (blockedByMatchup) continue; // skip leg entirely
+
+    // Safety = dejuiced implied + composite/confidence signal + research boost + matchup cross-ref
+    const safety = Math.max(0, Math.min(1,
+      0.55 * imp + 0.18 * composite + 0.13 * conf + 0.07 + boost + matchupAdj,
+    ));
     const why = buildWhy(mt, t.side, line, t.american, boost);
     out.push({
       key: `${row.event_id}|${mt}|${player}|${prop}|${t.side}|${line ?? ""}`,
@@ -262,6 +343,8 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
       safety,
       why,
       boost_reason: bl.reason,
+      matchup_score: matchupScore,
+      matchup_note: matchupNote || undefined,
     });
   }
   return out;
@@ -402,7 +485,10 @@ function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
     ? `🏆 *WINNER — ${p.variant}*  +${p.american}`
     : `*#${idx} ${p.variant}*  +${p.american}`;
   const legs = p.legs
-    .map((l, i) => `  ${i + 1}. [${l.sport}] ${legLabel(l)}  \`${l.why}\``)
+    .map((l, i) => {
+      const mu = l.matchup_note ? `  · 🆚 ${l.matchup_note}` : "";
+      return `  ${i + 1}. [${l.sport}] ${legLabel(l)}  \`${l.why}\`${mu}`;
+    })
     .join("\n");
 
   // ── Explainer ──
@@ -445,7 +531,19 @@ function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
     researchBlock = `\n   🔬 *Research factors used:* none — built from price + composite/confidence only`;
   }
 
-  return `${head}\n${legs}\n${explainer}${researchBlock}`;
+  // Matchup cross-reference summary across legs
+  const playerLegs = p.legs.filter((l) => l.market_type === "player");
+  const withMatchup = p.legs.filter((l) => l.matchup_note);
+  const muScores = p.legs.map((l) => l.matchup_score).filter((x): x is number => x != null);
+  const muCoverage = playerLegs.length > 0 ? withMatchup.length / playerLegs.length : 0;
+  const muAvg = muScores.length ? muScores.reduce((a, b) => a + b, 0) / muScores.length : null;
+  const matchupBlock = playerLegs.length === 0
+    ? `\n   🆚 *Matchup cross-ref:* n/a (team markets only)`
+    : muScores.length === 0
+      ? `\n   🆚 *Matchup cross-ref:* no matchup_intelligence rows matched today's player legs`
+      : `\n   🆚 *Matchup cross-ref:* ${withMatchup.length}/${playerLegs.length} player legs aligned · avg score ${muAvg!.toFixed(2)} (±1 scale) · coverage ${(muCoverage * 100).toFixed(0)}%`;
+
+  return `${head}\n${legs}\n${explainer}${matchupBlock}${researchBlock}`;
 }
 
 Deno.serve(async (req) => {
@@ -513,6 +611,27 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     const sports = [...sportsSet];
     console.log(`pool: ${rows?.length ?? 0} rows · sports: ${sports.join(",")}`);
 
+    // 1b) Pull matchup_intelligence rows for today+tomorrow (ET) for cross-reference.
+    const etToday = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }))
+      .toISOString().slice(0, 10);
+    const etTomorrow = new Date(Date.now() + 24 * 3600_000).toLocaleString("en-US", { timeZone: "America/New_York" });
+    const etTomorrowDate = new Date(etTomorrow).toISOString().slice(0, 10);
+    const matchupMap = new Map<string, MatchupRow>();
+    try {
+      const { data: mrows, error: merr } = await supabase
+        .from("matchup_intelligence")
+        .select("player_name, prop_type, side, line, matchup_score, opponent_defensive_rank, position_defense_rank, position_group, blowout_risk, game_script, is_blocked, block_reason, risk_flags, confidence_adjustment, opponent_team")
+        .in("game_date", [etToday, etTomorrowDate]);
+      if (merr) console.error("matchup_intelligence query", merr.message);
+      for (const m of (mrows ?? [])) {
+        const k = `${String(m.player_name).toLowerCase()}|${m.prop_type}|${String(m.side).toUpperCase()}|${m.line ?? ""}`;
+        matchupMap.set(k, m as any);
+      }
+      console.log(`matchup_intelligence loaded: ${matchupMap.size} rows for ${etToday}..${etTomorrowDate}`);
+    } catch (e) {
+      console.error("matchup load threw", e);
+    }
+
     // 2) Deep research per sport (sequential — sonar-deep-research is slow)
     const research: Record<string, { team_boosts: any[]; player_boosts: any[] }> = {};
     if (!skipResearch && PERPLEXITY_API_KEY) {
@@ -542,7 +661,7 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     for (const r of rows ?? []) {
       const sport = normSport(r.sport);
       const b = research[sport] ?? { team_boosts: [], player_boosts: [] };
-      const cs = rowToCandidates(r, b);
+      const cs = rowToCandidates(r, b, matchupMap);
       pool.push(...cs);
     }
     console.log(`candidate pool: ${pool.length}`);
