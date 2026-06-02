@@ -707,12 +707,22 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
       }
     }
 
-    // 2) Deep research per sport (sequential — sonar-deep-research is slow)
+    // 2) Deep research per sport — run in PARALLEL (sonar-deep-research is slow per call)
     const research: Record<string, { team_boosts: any[]; player_boosts: any[] }> = {};
     if (!skipResearch && PERPLEXITY_API_KEY) {
-      for (const sport of sports) {
-        console.log(`deep-research → ${sport}`);
-        const r = await deepResearch(sport, PERPLEXITY_API_KEY);
+      console.log(`deep-research → parallel for [${sports.join(", ")}]`);
+      const settled = await Promise.allSettled(
+        sports.map(async (sport) => {
+          const r = await deepResearch(sport, PERPLEXITY_API_KEY);
+          return { sport, r };
+        }),
+      );
+      for (const s of settled) {
+        if (s.status !== "fulfilled") {
+          console.error("deep-research failed:", s.reason);
+          continue;
+        }
+        const { sport, r } = s.value;
         research[sport] = { team_boosts: r.team_boosts ?? [], player_boosts: r.player_boosts ?? [] };
         try {
           await supabase.from("bot_research_findings").insert({
