@@ -33,6 +33,7 @@ type Candidate = {
   boost: number;
   safety: number;
   why: string;
+  boost_reason?: string;
 };
 
 type Parlay = {
@@ -177,30 +178,30 @@ async function deepResearch(sport: string, apiKey: string): Promise<{
 
 function lookupBoost(
   cand: { player_name: string; game: string; side: string; market_type: string },
-  sportBoosts: { team: string; side?: string; boost: number }[] = [],
-  playerBoosts: { player: string; side?: string; boost: number }[] = [],
-): number {
+  sportBoosts: { team: string; side?: string; boost: number; reason?: string }[] = [],
+  playerBoosts: { player: string; side?: string; boost: number; reason?: string }[] = [],
+): { boost: number; reason?: string } {
   const pname = cand.player_name.toLowerCase();
   if (cand.market_type === "player") {
     for (const b of playerBoosts) {
       if (pname.includes(b.player.toLowerCase()) || b.player.toLowerCase().includes(pname)) {
         if (!b.side || b.side.toLowerCase() === "any" || b.side.toLowerCase() === cand.side.toLowerCase()) {
-          return Math.max(-0.1, Math.min(0.1, b.boost));
+          return { boost: Math.max(-0.1, Math.min(0.1, b.boost)), reason: b.reason };
         }
       }
     }
-    return 0;
+    return { boost: 0 };
   }
   const g = cand.game.toLowerCase();
   for (const b of sportBoosts) {
     const team = b.team.toLowerCase();
     if (g.includes(team)) {
       if (!b.side || b.side.toLowerCase() === "any" || b.side.toLowerCase() === cand.side.toLowerCase()) {
-        return Math.max(-0.1, Math.min(0.1, b.boost));
+        return { boost: Math.max(-0.1, Math.min(0.1, b.boost)), reason: b.reason };
       }
     }
   }
-  return 0;
+  return { boost: 0 };
 }
 
 function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: any[] }): Candidate[] {
@@ -237,7 +238,8 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
     // (handled later, just compute here)
     const dec = americanToDecimal(t.american);
     const imp = impliedProb(t.american);
-    const boost = lookupBoost({ player_name: player, game, side: t.side, market_type: mt }, boosts.team_boosts, boosts.player_boosts);
+    const bl = lookupBoost({ player_name: player, game, side: t.side, market_type: mt }, boosts.team_boosts, boosts.player_boosts);
+    const boost = bl.boost;
     const composite = row.composite_score != null ? Number(row.composite_score) / 100 : 0;
     const conf = row.confidence != null ? Number(row.confidence) / 100 : 0;
     // Safety = dejuiced implied + composite/confidence signal + research boost
@@ -259,6 +261,7 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
       boost,
       safety,
       why,
+      boost_reason: bl.reason,
     });
   }
   return out;
@@ -385,6 +388,15 @@ function buildVariant(
   };
 }
 
+const VARIANT_DRIVERS: Record<string, string> = {
+  "Chalk-Stack": "Stacks heavy favorites (-150 to -600). Wins on volume of small-edge legs; vulnerable to a single upset.",
+  "Balanced": "Mix of -250 to +160 legs ranked by safety. Best risk/reward when slate has moderate juice.",
+  "Player-Primary": "Player props only. Lowest correlation, leans on per-player research + composite scores.",
+  "Research-Boosted": "Sorted by deep-research boost first, safety second. Highest 'sharp' density.",
+  "Lottery-Stretch": "3–4 longshots (+100 to +700) from different games. Big payout, low hit rate.",
+  "Heavy-Chalk-Mega": "20+ deep favorites (-250 to -800). Multiplies tiny edges to reach +1500. Single miss = bust.",
+};
+
 function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
   const head = isWinner
     ? `🏆 *WINNER — ${p.variant}*  +${p.american}`
@@ -392,8 +404,48 @@ function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
   const legs = p.legs
     .map((l, i) => `  ${i + 1}. [${l.sport}] ${legLabel(l)}  \`${l.why}\``)
     .join("\n");
-  const stats = `   Avg safety ${(p.mean_safety * 100).toFixed(0)}% · Min ${(p.min_safety * 100).toFixed(0)}% · Research ${(p.research_density * 100).toFixed(0)}%`;
-  return `${head}\n${legs}\n${stats}`;
+
+  // ── Explainer ──
+  // EV estimate: our blended safety vs book payout. Implied = book product.
+  const ourProb = p.legs.reduce((a, l) => a * l.safety, 1);
+  const bookProb = p.legs.reduce((a, l) => a * l.implied, 1);
+  const evPct = (ourProb * p.decimal - 1) * 100;
+  const edgePct = (ourProb - bookProb) * 100;
+
+  // Tier drivers: show weighted score breakdown
+  const meanC = 0.50 * p.mean_safety;
+  const minC = 0.25 * p.min_safety;
+  const payoutC = 0.15 * Math.min(1, Math.log10(p.decimal) / 2);
+  const researchC = 0.10 * p.research_density;
+
+  const driverNote = VARIANT_DRIVERS[p.variant] ?? "";
+  const explainer = [
+    `   📊 *EV est:* ${evPct >= 0 ? "+" : ""}${evPct.toFixed(1)}% per $1 · edge vs book ${edgePct >= 0 ? "+" : ""}${(edgePct * 100).toFixed(2)}bp`,
+    `   🧪 *Our prob:* ${(ourProb * 100).toFixed(2)}% · *Book implied:* ${(bookProb * 100).toFixed(2)}% · *Payout:* ${p.decimal.toFixed(1)}x`,
+    `   🏷️ *Tier drivers:* mean=${meanC.toFixed(2)} min=${minC.toFixed(2)} payout=${payoutC.toFixed(2)} research=${researchC.toFixed(2)} → score *${p.score.toFixed(3)}*`,
+    `   🎯 *Strategy:* ${driverNote}`,
+    `   🛡 Avg safety ${(p.mean_safety * 100).toFixed(0)}% · Min ${(p.min_safety * 100).toFixed(0)}% · Research-tagged ${(p.research_density * 100).toFixed(0)}%`,
+  ].join("\n");
+
+  // Research factors actually applied to legs
+  const researchLegs = p.legs.filter((l) => l.boost !== 0);
+  let researchBlock = "";
+  if (researchLegs.length > 0) {
+    const shown = researchLegs.slice(0, 8);
+    const lines = shown.map((l) => {
+      const sign = l.boost > 0 ? "🔥" : "⚠️";
+      const tag = l.boost > 0 ? "back" : "fade";
+      const reason = (l.boost_reason ?? "research signal").replace(/\s+/g, " ").trim().slice(0, 140);
+      const name = l.market_type === "player" ? l.player_name : l.game;
+      return `     ${sign} *${name}* (${tag} ${(l.boost * 100).toFixed(0)}bp) — ${reason}`;
+    }).join("\n");
+    const more = researchLegs.length > shown.length ? `\n     …+${researchLegs.length - shown.length} more research-tagged legs` : "";
+    researchBlock = `\n   🔬 *Research factors used:*\n${lines}${more}`;
+  } else {
+    researchBlock = `\n   🔬 *Research factors used:* none — built from price + composite/confidence only`;
+  }
+
+  return `${head}\n${legs}\n${explainer}${researchBlock}`;
 }
 
 Deno.serve(async (req) => {
