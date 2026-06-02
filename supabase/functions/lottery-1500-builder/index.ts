@@ -215,54 +215,10 @@ function lookupBoost(
   return { boost: 0 };
 }
 
-type MatchupRow = {
-  matchup_score: number | null;
-  opponent_defensive_rank: number | null;
-  position_defense_rank: number | null;
-  position_group: string | null;
-  blowout_risk: number | null;
-  game_script: string | null;
-  is_blocked: boolean | null;
-  block_reason: string | null;
-  risk_flags: string[] | null;
-  confidence_adjustment: number | null;
-  opponent_team: string | null;
-};
-
-function lookupMatchup(
-  player: string,
-  prop: string,
-  side: string,
-  line: number | null,
-  map: Map<string, MatchupRow>,
-): MatchupRow | null {
-  if (!player || !prop) return null;
-  const sideKey = side === "OVER" || side === "UNDER" ? side : "ANY";
-  const lineKey = line != null ? String(line) : "";
-  const exact = map.get(`${player.toLowerCase()}|${prop}|${sideKey}|${lineKey}`);
-  if (exact) return exact;
-  // Fallback: any row for this player+prop+side (line may differ slightly)
-  for (const [k, v] of map) {
-    if (k.startsWith(`${player.toLowerCase()}|${prop}|${sideKey}|`)) return v;
-  }
-  return null;
-}
-
-function buildMatchupNote(m: MatchupRow): string {
-  const bits: string[] = [];
-  if (m.position_defense_rank != null) bits.push(`pos D rk ${m.position_defense_rank}${m.position_group ? `/${m.position_group}` : ""}`);
-  else if (m.opponent_defensive_rank != null) bits.push(`D rk ${m.opponent_defensive_rank}`);
-  if (m.matchup_score != null) bits.push(`m=${Number(m.matchup_score).toFixed(1)}`);
-  if (m.game_script && m.game_script !== "COMPETITIVE") bits.push(`script ${m.game_script}`);
-  if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.5) bits.push(`blowout`);
-  if (m.risk_flags && m.risk_flags.length) bits.push(m.risk_flags.slice(0, 2).join(","));
-  return bits.join(" · ");
-}
-
 function rowToCandidates(
   row: any,
   boosts: { team_boosts: any[]; player_boosts: any[] },
-  matchupMap: Map<string, MatchupRow>,
+  matchupMap: MatchupMap,
 ): Candidate[] {
   const out: Candidate[] = [];
   const sport = normSport(row.sport);
