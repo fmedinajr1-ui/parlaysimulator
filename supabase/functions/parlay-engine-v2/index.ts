@@ -24,6 +24,12 @@ import {
 } from "../_shared/parlay-engine-v2/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 import { bayesianHitRate, quarterKellyStake, requiredDecimal, evPerUnit, priorForLegCount } from "../_shared/staking/kelly.ts";
+import {
+  loadMatchupMap,
+  matchupAdjustment,
+  etTodayTomorrow,
+  type MatchupMap,
+} from "../_shared/matchup-xref.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -514,6 +520,50 @@ Deno.serve(async (req) => {
       rejections[k] = (rejections[k] ?? 0) + v;
     }
     mappingNotes.push(`extra candidates loaded: ${extraCandidates.length} (team_market + raw MLB)`);
+
+    // ----- Phase B.5: matchup_intelligence cross-reference for player props -----
+    // Adjusts per-leg confidence ±7% (and ±5% from confidence_adjustment) so the
+    // engine's downstream gates respect defensive matchups + game script. Blocked
+    // legs (is_blocked=true) are dropped entirely. Mirrors lottery-1500-builder.
+    const [etTodayD, etTomorrowD] = etTodayTomorrow();
+    let matchupMap: MatchupMap = await loadMatchupMap(sb, [etTodayD, etTomorrowD]);
+    if (matchupMap.size === 0) {
+      console.log("[parlay-engine-v2] matchup_intelligence empty — invoking refresh");
+      try {
+        const { error: refErr } = await sb.functions.invoke(
+          "matchup-intelligence-refresh",
+          { body: { dates: [etTodayD, etTomorrowD] } },
+        );
+        if (refErr) console.warn("[parlay-engine-v2] refresh invoke error:", refErr.message);
+        matchupMap = await loadMatchupMap(sb, [etTodayD, etTomorrowD]);
+      } catch (e) {
+        console.warn("[parlay-engine-v2] matchup refresh threw:", e instanceof Error ? e.message : String(e));
+      }
+    }
+    const matchupStats = { applied: 0, blocked: 0, adjusted: 0 };
+    const candidatesAfterMatchup: CandidateLeg[] = [];
+    for (const c of candidates) {
+      const isPlayer = !!c.player_name && (c.market_type ?? "player") === "player";
+      if (!isPlayer) { candidatesAfterMatchup.push(c); continue; }
+      const xref = matchupAdjustment(c.player_name!, c.prop_type, c.side, c.line, matchupMap);
+      if (xref.row) matchupStats.applied += 1;
+      if (xref.blocked) {
+        matchupStats.blocked += 1;
+        rejections["leg:matchup_blocked"] = (rejections["leg:matchup_blocked"] ?? 0) + 1;
+        continue;
+      }
+      if (xref.adj !== 0) {
+        matchupStats.adjusted += 1;
+        const next = Math.max(0, Math.min(0.95, c.confidence + xref.adj));
+        c.confidence = next;
+        c.edge = c.edge + xref.adj;
+        (c as any).matchup_note = xref.note;
+      }
+      candidatesAfterMatchup.push(c);
+    }
+    candidates.length = 0;
+    candidates.push(...candidatesAfterMatchup);
+    mappingNotes.push(`matchup_intelligence: ${matchupMap.size} rows; applied=${matchupStats.applied} adjusted=${matchupStats.adjusted} blocked=${matchupStats.blocked}`);
 
     // Per-source candidate mix so the UI can surface where the slate is coming from.
     const sourceMix = candidates.reduce<Record<string, number>>((acc, l) => {

@@ -21,6 +21,7 @@ Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_m
 - [Hard Rock line gating](mem://logic/betting/hardrock-line-gating) — signal-alert-engine drops cascade/single legs not tradable on hardrockbet via The Odds API; metadata.hrb_verified drives Telegram footer
 - [Nuke Parlay Scout (NBA)](mem://logic/parlay/nuke-scout) — Blowout-script engine: scoring weights, hard floors, role-player OVER template, +1000/+3000 odds band, daily 21:00/16:00 UTC crons
 - [Team leg intelligence](mem://logic/parlay/team-leg-intelligence) — Real scoring for team/MLB-raw legs, fat-spread drop, 1 team-market per game, lottery requires ≥1 player
+- [Matchup xref pipeline](mem://logic/parlay/matchup-xref-pipeline) — Shared `_shared/matchup-xref.ts` + `matchup-intelligence-refresh` self-healing builder consumed by lottery + parlay-engine-v2
 - [Ladder Challenge multi-sport](mem://logic/betting/ladder-challenge-multisport) — Daily Lock/Strong/Lean across NBA+MLB with odds floor and always-on Telegram
 - [Cross-sport bulk parlay generator](mem://logic/parlay/cross-sport-generator) — Perplexity-fed multi-sport sweet spots + 25-ticket bulk assembler (8 Lock / 8 Strong / 6 Stretch / 3 Lottery), player-primary, team legs ≤40%
 - [Profitability math (BANKROLL_MATH_V1)](mem://logic/betting/profitability-math) — Bayesian-smoothed p̂, ¼-Kelly stake, 7d EV gates, daily envelope

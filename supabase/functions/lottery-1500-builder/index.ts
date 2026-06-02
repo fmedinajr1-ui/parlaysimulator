@@ -11,6 +11,14 @@
  *   POST /lottery-1500-builder?skip_research=1  -> use empty boost map
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  loadMatchupMap,
+  matchupAdjustment,
+  buildMatchupNote,
+  etTodayTomorrow,
+  type MatchupRow,
+  type MatchupMap,
+} from "../_shared/matchup-xref.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -207,54 +215,10 @@ function lookupBoost(
   return { boost: 0 };
 }
 
-type MatchupRow = {
-  matchup_score: number | null;
-  opponent_defensive_rank: number | null;
-  position_defense_rank: number | null;
-  position_group: string | null;
-  blowout_risk: number | null;
-  game_script: string | null;
-  is_blocked: boolean | null;
-  block_reason: string | null;
-  risk_flags: string[] | null;
-  confidence_adjustment: number | null;
-  opponent_team: string | null;
-};
-
-function lookupMatchup(
-  player: string,
-  prop: string,
-  side: string,
-  line: number | null,
-  map: Map<string, MatchupRow>,
-): MatchupRow | null {
-  if (!player || !prop) return null;
-  const sideKey = side === "OVER" || side === "UNDER" ? side : "ANY";
-  const lineKey = line != null ? String(line) : "";
-  const exact = map.get(`${player.toLowerCase()}|${prop}|${sideKey}|${lineKey}`);
-  if (exact) return exact;
-  // Fallback: any row for this player+prop+side (line may differ slightly)
-  for (const [k, v] of map) {
-    if (k.startsWith(`${player.toLowerCase()}|${prop}|${sideKey}|`)) return v;
-  }
-  return null;
-}
-
-function buildMatchupNote(m: MatchupRow): string {
-  const bits: string[] = [];
-  if (m.position_defense_rank != null) bits.push(`pos D rk ${m.position_defense_rank}${m.position_group ? `/${m.position_group}` : ""}`);
-  else if (m.opponent_defensive_rank != null) bits.push(`D rk ${m.opponent_defensive_rank}`);
-  if (m.matchup_score != null) bits.push(`m=${Number(m.matchup_score).toFixed(1)}`);
-  if (m.game_script && m.game_script !== "COMPETITIVE") bits.push(`script ${m.game_script}`);
-  if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.5) bits.push(`blowout`);
-  if (m.risk_flags && m.risk_flags.length) bits.push(m.risk_flags.slice(0, 2).join(","));
-  return bits.join(" · ");
-}
-
 function rowToCandidates(
   row: any,
   boosts: { team_boosts: any[]; player_boosts: any[] },
-  matchupMap: Map<string, MatchupRow>,
+  matchupMap: MatchupMap,
 ): Candidate[] {
   const out: Candidate[] = [];
   const sport = normSport(row.sport);
@@ -300,23 +264,12 @@ function rowToCandidates(
     let blockedByMatchup = false;
     let matchupAdj = 0;
     if (mt === "player" && player) {
-      const m = lookupMatchup(player, prop, t.side, line, matchupMap);
-      if (m) {
-        if (m.is_blocked) {
-          blockedByMatchup = true;
-        }
-        // matchup_score in DB ranges roughly -6..+6 for the side stored. Normalize to ±1.
-        if (m.matchup_score != null) {
-          matchupScore = Math.max(-1, Math.min(1, Number(m.matchup_score) / 5));
-        }
-        matchupNote = buildMatchupNote(m);
-        // Safety adjustment: ±7% from normalized matchup, ±5% from confidence_adjustment.
-        const ca = m.confidence_adjustment != null ? Math.max(-0.05, Math.min(0.05, Number(m.confidence_adjustment))) : 0;
-        matchupAdj = (matchupScore ?? 0) * 0.07 + ca;
-        // Hard fade: blowout risk on Over of a counting stat, or risk_flags contains BLOWOUT/FADE.
-        if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.7 && t.side === "OVER") {
-          matchupAdj -= 0.05;
-        }
+      const xref = matchupAdjustment(player, prop, t.side, line, matchupMap);
+      blockedByMatchup = xref.blocked;
+      matchupAdj = xref.adj;
+      matchupNote = xref.note;
+      if (xref.row?.matchup_score != null) {
+        matchupScore = Math.max(-1, Math.min(1, Number(xref.row.matchup_score) / 5));
       }
     }
     if (blockedByMatchup) continue; // skip leg entirely
@@ -612,24 +565,25 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     console.log(`pool: ${rows?.length ?? 0} rows · sports: ${sports.join(",")}`);
 
     // 1b) Pull matchup_intelligence rows for today+tomorrow (ET) for cross-reference.
-    const etToday = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }))
-      .toISOString().slice(0, 10);
-    const etTomorrow = new Date(Date.now() + 24 * 3600_000).toLocaleString("en-US", { timeZone: "America/New_York" });
-    const etTomorrowDate = new Date(etTomorrow).toISOString().slice(0, 10);
-    const matchupMap = new Map<string, MatchupRow>();
-    try {
-      const { data: mrows, error: merr } = await supabase
-        .from("matchup_intelligence")
-        .select("player_name, prop_type, side, line, matchup_score, opponent_defensive_rank, position_defense_rank, position_group, blowout_risk, game_script, is_blocked, block_reason, risk_flags, confidence_adjustment, opponent_team")
-        .in("game_date", [etToday, etTomorrowDate]);
-      if (merr) console.error("matchup_intelligence query", merr.message);
-      for (const m of (mrows ?? [])) {
-        const k = `${String(m.player_name).toLowerCase()}|${m.prop_type}|${String(m.side).toUpperCase()}|${m.line ?? ""}`;
-        matchupMap.set(k, m as any);
+    // If the table is empty (refresher hasn't run yet today), self-trigger
+    // matchup-intelligence-refresh and reload before continuing.
+    const [etToday, etTomorrowDate] = etTodayTomorrow();
+    let matchupMap: MatchupMap = await loadMatchupMap(supabase, [etToday, etTomorrowDate]);
+    console.log(`matchup_intelligence loaded: ${matchupMap.size} rows for ${etToday}..${etTomorrowDate}`);
+    if (matchupMap.size === 0) {
+      console.log("matchup_intelligence empty — invoking matchup-intelligence-refresh");
+      try {
+        const { data: refResp, error: refErr } = await supabase.functions.invoke(
+          "matchup-intelligence-refresh",
+          { body: { dates: [etToday, etTomorrowDate] } },
+        );
+        if (refErr) console.warn("matchup-intelligence-refresh invoke error:", refErr.message);
+        else console.log("matchup-intelligence-refresh response:", JSON.stringify(refResp).slice(0, 300));
+        matchupMap = await loadMatchupMap(supabase, [etToday, etTomorrowDate]);
+        console.log(`matchup_intelligence reloaded: ${matchupMap.size} rows`);
+      } catch (e) {
+        console.warn("matchup refresh threw:", e instanceof Error ? e.message : String(e));
       }
-      console.log(`matchup_intelligence loaded: ${matchupMap.size} rows for ${etToday}..${etTomorrowDate}`);
-    } catch (e) {
-      console.error("matchup load threw", e);
     }
 
     // 2) Deep research per sport (sequential — sonar-deep-research is slow)
