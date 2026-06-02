@@ -426,7 +426,13 @@ function buildVariant(
 }
 
 const VARIANT_DRIVERS: Record<string, string> = {
-  // (kept above)
+  "Chalk-Stack": "Stacks heavy favorites (-150 to -600). Wins on volume of small-edge legs; vulnerable to a single upset.",
+  "Balanced": "Mix of -250 to +160 legs ranked by safety. Best risk/reward when slate has moderate juice.",
+  "Player-Primary": "Player props only. Lowest correlation, leans on per-player research + composite scores.",
+  "Research-Boosted": "Sorted by deep-research boost first, safety second. Highest 'sharp' density.",
+  "Lottery-Stretch": "3–4 longshots (+100 to +700) from different games. Big payout, low hit rate.",
+  "Heavy-Chalk-Mega": "20+ deep favorites (-250 to -800). Multiplies tiny edges to reach +1500. Single miss = bust.",
+  "Kitchen-Sink": "Round-robin across every active sport — 6–10 legs, ≥3 distinct sports, target ≥+3000. Mirrors the viral 'parlayed everything' tickets.",
 };
 
 // Round-robin sport picker. Buckets pool by sport, sorts each bucket by safety
@@ -522,16 +528,6 @@ function buildKitchenSink(pool: Candidate[]): Parlay | null {
     score,
   };
 }
-
-const _KITCHEN_SINK_DOC: Record<string, string> = {
-  "Chalk-Stack": "Stacks heavy favorites (-150 to -600). Wins on volume of small-edge legs; vulnerable to a single upset.",
-  "Balanced": "Mix of -250 to +160 legs ranked by safety. Best risk/reward when slate has moderate juice.",
-  "Player-Primary": "Player props only. Lowest correlation, leans on per-player research + composite scores.",
-  "Research-Boosted": "Sorted by deep-research boost first, safety second. Highest 'sharp' density.",
-  "Lottery-Stretch": "3–4 longshots (+100 to +700) from different games. Big payout, low hit rate.",
-  "Heavy-Chalk-Mega": "20+ deep favorites (-250 to -800). Multiplies tiny edges to reach +1500. Single miss = bust.",
-  "Kitchen-Sink": "Round-robin across every active sport — 6–10 legs, ≥3 distinct sports, target ≥+3000. Mirrors the viral 'parlayed everything' tickets.",
-};
 
 function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
   const head = isWinner
