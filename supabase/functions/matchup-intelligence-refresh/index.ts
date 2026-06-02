@@ -215,7 +215,8 @@ async function buildMlb(supabase: any, dates: string[], env: EnvMap): Promise<{ 
     .select("player_name, prop_type, current_line, sport, game_description, commence_time, market_type")
     .eq("is_active", true).eq("sport", "baseball_mlb")
     .gt("commence_time", new Date(Date.now() - 30 * 60_000).toISOString())
-    .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString());
+    .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString())
+    .limit(10_000);
 
   // Pitcher K analysis (last few days) — keyed by (pitcher_name|game_date)
   const { data: pkRows } = await supabase
