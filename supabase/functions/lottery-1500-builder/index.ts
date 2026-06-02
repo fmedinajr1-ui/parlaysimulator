@@ -731,6 +731,52 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     const sports = [...sportsSet];
     console.log(`pool: ${rows?.length ?? 0} rows · sports: ${sports.join(",")}`);
 
+    // 1a-bis) Ghost-game scrub: the odds feed sometimes lists the same team in
+    // two simultaneous games on the same ET day (e.g. Knicks @ Spurs AND
+    // Knicks @ Thunder). Both are impossible — drop ALL rows whose team
+    // appears in >1 distinct game_description for that (sport, ET day) for
+    // team-market sports. Fail-closed: when ambiguous we keep none.
+    const dropEventIds = new Set<string>();
+    let ghostDrops = 0;
+    try {
+      const teamDay = new Map<string, Set<string>>(); // key: sport|team|etDay → set of canonical game ids
+      const etDay = (iso: string) =>
+        new Date(new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York" }))
+          .toISOString().slice(0, 10);
+      for (const r of rows) {
+        const sport = normSport(r.sport);
+        // Only team sports — skip MMA/tennis/golf/soccer outrights etc.
+        if (!["NBA","WNBA","NHL","NFL","MLB","NCAAB","NCAAF"].includes(sport)) continue;
+        if (!["moneyline","spread","total","h2h","spreads","totals"].includes(String(r.market_type ?? "").toLowerCase())) continue;
+        const game = String(r.game_description ?? "");
+        if (!game.includes(" @ ")) continue;
+        const [away, home] = game.split(" @ ").map((s) => s.trim());
+        const day = etDay(String(r.commence_time ?? new Date().toISOString()));
+        const cid = canonicalGameId(r.event_id, game);
+        for (const team of [away, home]) {
+          const k = `${sport}|${team.toLowerCase()}|${day}`;
+          const s = teamDay.get(k) ?? new Set<string>();
+          s.add(cid);
+          teamDay.set(k, s);
+        }
+      }
+      const ambiguousCanonicalIds = new Set<string>();
+      for (const [, ids] of teamDay) {
+        if (ids.size > 1) for (const id of ids) ambiguousCanonicalIds.add(id);
+      }
+      if (ambiguousCanonicalIds.size > 0) {
+        for (const r of rows) {
+          if (ambiguousCanonicalIds.has(canonicalGameId(r.event_id, r.game_description))) {
+            dropEventIds.add(String(r.event_id));
+            ghostDrops++;
+          }
+        }
+        console.log(`ghost-game scrub: dropping ${ghostDrops} rows across ${ambiguousCanonicalIds.size} ambiguous canonical games`);
+      }
+    } catch (e) {
+      console.warn("ghost-game scrub threw:", e instanceof Error ? e.message : String(e));
+    }
+
     // 1b) Pull matchup_intelligence rows for today+tomorrow (ET) for cross-reference.
     // If the table is empty (refresher hasn't run yet today), self-trigger
     // matchup-intelligence-refresh and reload before continuing.
