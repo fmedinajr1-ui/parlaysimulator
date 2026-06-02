@@ -333,6 +333,9 @@ function legLabel(c: Candidate): string {
     const ln = (c.side === "AWAY" && c.line != null) ? -c.line : c.line;
     return `${team} ${ln != null && ln > 0 ? "+" : ""}${ln}`;
   }
+  if (c.market_type === "outright") {
+    return `${c.player_name} to win ${c.game}`;
+  }
   return `${c.player_name} ${c.side}`;
 }
 
