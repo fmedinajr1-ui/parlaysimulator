@@ -613,7 +613,13 @@ Deno.serve(async (req) => {
 
     console.log(`[matchup-refresh] built ${all.length} total rows across sports`, per);
 
-    const upserts = all;
+    // Dedupe by the unique key (player, prop, side, line, game_date) — last write wins.
+    const dedup = new Map<string, UpRow>();
+    for (const r of all) {
+      const k = `${r.player_name.toLowerCase()}|${r.prop_type}|${r.side}|${r.line}|${r.game_date}`;
+      dedup.set(k, r);
+    }
+    const upserts = [...dedup.values()];
     let upserted = 0;
     if (!dry && upserts.length > 0) {
       // Chunk to keep payloads small.
