@@ -107,6 +107,15 @@ function legNum(v: unknown): number | null {
 }
 
 function pickLegLabel(l: Leg): string {
+  // Outright futures: "<Contender> to win <Tournament>"
+  const mtRaw = (l.market_type ?? "").toString().toLowerCase();
+  if (mtRaw === "outright" || mtRaw === "outright_winner") {
+    const who = (l.player_name ?? l.player ?? "").toString().trim();
+    const where = (l.game_description ?? "").toString().trim();
+    if (who && where) return `${who} to win ${where}`;
+    if (who) return who;
+    if (where) return where;
+  }
   // Player props: just the name.
   if (l.player_name || l.player) return (l.player_name ?? l.player) as string;
 
