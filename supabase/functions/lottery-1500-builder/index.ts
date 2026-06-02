@@ -241,12 +241,17 @@ function rowToCandidates(
     // unified_props stores h2h/spreads at the matchup level. over_price = HOME, under_price = AWAY by convention.
     if (op != null) tups.push({ side: "HOME", american: op });
     if (up != null) tups.push({ side: "AWAY", american: up });
+  } else if (mt === "outright") {
+    // outright_winner futures — over_price is the "to win" American price
+    if (op != null) tups.push({ side: "WIN" as Candidate["side"], american: op });
   }
 
   for (const t of tups) {
     if (!Number.isFinite(t.american) || t.american === 0) continue;
     // Gates widened: allow heavier chalk for chalk-stack variants, longer dogs for stretch.
-    if (t.american <= -1000 || t.american >= 900) continue;
+    // Outrights are inherently longshots — allow up to +5000 there.
+    const maxAm = mt === "outright" ? 5000 : 900;
+    if (t.american <= -1000 || t.american >= maxAm) continue;
     // Skip extreme spreads only
     if (mt === "spread" && line != null && Math.abs(line) >= 14) continue;
     // Fade fully-juiced fade alerts (negative research boost) by skipping if boost <= -0.08
