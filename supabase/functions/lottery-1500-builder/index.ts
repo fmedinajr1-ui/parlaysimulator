@@ -440,11 +440,12 @@ const VARIANT_DRIVERS: Record<string, string> = {
 // sport. Stops when target decimal reached AND min sports + min legs satisfied,
 // or when no bucket has any leg left that passes conflict checks.
 function buildKitchenSink(pool: Candidate[]): Parlay | null {
-  const TARGET = 31.0;                  // ≈ +3000
+  const TARGET = 16.0;                  // ≥ +1500 (matches other variants)
+  const STRETCH_TARGET = 31.0;          // soft target: keep adding until ≥ +3000 if pool allows
   const MIN_LEGS = 6;
-  const MAX_LEGS = 10;
+  const MAX_LEGS = 12;
   const MIN_SPORTS = 3;                 // soft floor; we try for 5+
-  const MAX_PER_SPORT = 2;
+  const MAX_PER_SPORT = 3;
   const MAX_PER_GAME = 1;               // one leg per game for true diversity
 
   // Eligible pool: any side priced -600..+700, not actively faded by research.
@@ -488,12 +489,8 @@ function buildKitchenSink(pool: Candidate[]): Parlay | null {
       progressed = true;
 
       const sportsHit = new Set(legs.map((l) => l.sport)).size;
-      if (
-        dec >= TARGET &&
-        legs.length >= MIN_LEGS &&
-        sportsHit >= MIN_SPORTS
-      ) {
-        // stop early when target hit
+      // Hard stop: hit the stretch target with min legs+sports.
+      if (dec >= STRETCH_TARGET && legs.length >= MIN_LEGS && sportsHit >= MIN_SPORTS) {
         progressed = false;
         break;
       }
