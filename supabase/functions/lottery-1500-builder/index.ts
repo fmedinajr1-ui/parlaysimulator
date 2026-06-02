@@ -420,7 +420,7 @@ function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
 
   const driverNote = VARIANT_DRIVERS[p.variant] ?? "";
   const explainer = [
-    `   📊 *EV est:* ${evPct >= 0 ? "+" : ""}${evPct.toFixed(1)}% per $1 · edge vs book ${edgePct >= 0 ? "+" : ""}${(edgePct * 100).toFixed(2)}bp`,
+    `   📊 *EV est:* ${evPct >= 0 ? "+" : ""}${evPct.toFixed(1)}% per $1 · edge vs book ${edgePct >= 0 ? "+" : ""}${edgePct.toFixed(2)}pp`,
     `   🧪 *Our prob:* ${(ourProb * 100).toFixed(2)}% · *Book implied:* ${(bookProb * 100).toFixed(2)}% · *Payout:* ${p.decimal.toFixed(1)}x`,
     `   🏷️ *Tier drivers:* mean=${meanC.toFixed(2)} min=${minC.toFixed(2)} payout=${payoutC.toFixed(2)} research=${researchC.toFixed(2)} → score *${p.score.toFixed(3)}*`,
     `   🎯 *Strategy:* ${driverNote}`,
