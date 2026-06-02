@@ -37,6 +37,7 @@ interface Leg {
   team?: string | null;
   opponent?: string | null;
   game_description?: string | null;
+  market_type?: string | null;
 }
 
 interface ParlayRow {
