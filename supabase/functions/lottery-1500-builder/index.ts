@@ -47,6 +47,13 @@ type Candidate = {
   blocked_by_matchup?: boolean;     // matchup_intelligence.is_blocked = true
 };
 
+/** Strip market-type suffix from unified_props.event_id so h2h/spread/total share one id. */
+function canonicalGameId(eventId: string | null | undefined, gameDescription?: string | null): string {
+  const raw = String(eventId ?? "");
+  const stripped = raw.replace(/_(h2h|spread|spreads|total|totals|outright|moneyline)$/i, "");
+  return stripped || String(gameDescription ?? raw);
+}
+
 type Parlay = {
   variant: string;
   legs: Candidate[];
