@@ -682,6 +682,12 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
       { minLegs: 8, maxLegs: 30, maxPerGame: 3 },
     ));
 
+    // V7 Kitchen-Sink: round-robin across every active sport. Forces cross-sport
+    // diversity (≥3 distinct sports, ≤2 legs per sport) and targets ≥+3000.
+    // Mirrors the "parlayed everything under the sun" tickets — 6-10 legs spread
+    // across MLB, NFL/NCAAF, NBA/WNBA, NHL, MMA, etc.
+    variants.push(buildKitchenSink(pool));
+
     const built = variants.filter((v): v is Parlay => v != null);
     built.sort((a, b) => b.score - a.score);
 
