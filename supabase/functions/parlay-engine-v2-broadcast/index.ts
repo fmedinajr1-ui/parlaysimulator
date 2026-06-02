@@ -70,6 +70,10 @@ const PROP_LABELS: Record<string, string> = {
   TO: "Turnovers",
   RBI: "RBIs", HITS: "Hits", TB: "Total Bases",
   SOG: "Shots on Goal", SAVES: "Saves",
+  H2H: "ML", MONEYLINE: "ML", ML: "ML",
+  SPREAD: "Spread", SPREADS: "Spread",
+  TOTAL: "Total", TOTALS: "Total", GAME_TOTAL: "Total",
+  OUTRIGHT: "to win", OUTRIGHT_WINNER: "to win",
 };
 
 function fullPropName(raw: string | null | undefined): string {
