@@ -37,6 +37,7 @@ interface Leg {
   team?: string | null;
   opponent?: string | null;
   game_description?: string | null;
+  market_type?: string | null;
 }
 
 interface ParlayRow {
@@ -70,6 +71,10 @@ const PROP_LABELS: Record<string, string> = {
   TO: "Turnovers",
   RBI: "RBIs", HITS: "Hits", TB: "Total Bases",
   SOG: "Shots on Goal", SAVES: "Saves",
+  H2H: "ML", MONEYLINE: "ML", ML: "ML",
+  SPREAD: "Spread", SPREADS: "Spread",
+  TOTAL: "Total", TOTALS: "Total", GAME_TOTAL: "Total",
+  OUTRIGHT: "to win", OUTRIGHT_WINNER: "to win",
 };
 
 function fullPropName(raw: string | null | undefined): string {
@@ -103,6 +108,15 @@ function legNum(v: unknown): number | null {
 }
 
 function pickLegLabel(l: Leg): string {
+  // Outright futures: "<Contender> to win <Tournament>"
+  const mtRaw = (l.market_type ?? "").toString().toLowerCase();
+  if (mtRaw === "outright" || mtRaw === "outright_winner") {
+    const who = (l.player_name ?? l.player ?? "").toString().trim();
+    const where = (l.game_description ?? "").toString().trim();
+    if (who && where) return `${who} to win ${where}`;
+    if (who) return who;
+    if (where) return where;
+  }
   // Player props: just the name.
   if (l.player_name || l.player) return (l.player_name ?? l.player) as string;
 

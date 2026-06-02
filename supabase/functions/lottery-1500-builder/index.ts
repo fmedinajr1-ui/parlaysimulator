@@ -47,6 +47,13 @@ type Candidate = {
   blocked_by_matchup?: boolean;     // matchup_intelligence.is_blocked = true
 };
 
+/** Strip market-type suffix from unified_props.event_id so h2h/spread/total share one id. */
+function canonicalGameId(eventId: string | null | undefined, gameDescription?: string | null): string {
+  const raw = String(eventId ?? "");
+  const stripped = raw.replace(/_(h2h|spread|spreads|total|totals|outright|moneyline)$/i, "");
+  return stripped || String(gameDescription ?? raw);
+}
+
 type Parlay = {
   variant: string;
   legs: Candidate[];
@@ -254,6 +261,28 @@ function rowToCandidates(
     if (t.american <= -1000 || t.american >= maxAm) continue;
     // Skip extreme spreads only
     if (mt === "spread" && line != null && Math.abs(line) >= 14) continue;
+    // ── Junk-market blacklist ──────────────────────────────────────────
+    // Novelty binary markets generate nonsensical UNDER 0.5 chalk like
+    // "Pitcher Record A Win UNDER" — drop outright.
+    const propLc = prop.toLowerCase();
+    if (
+      propLc === "pitcher_record_a_win" ||
+      propLc === "batter_first_home_run" ||
+      propLc === "first_to_score" ||
+      propLc.startsWith("anytime_") && propLc.includes("first")
+    ) continue;
+    // Player-prop juice gates — no -700 chalk floor-bets like "Hits 0.5".
+    if (mt === "player") {
+      if (t.american <= -600) continue;
+      const countStat =
+        propLc === "batter_hits" ||
+        propLc === "batter_home_runs" ||
+        propLc === "batter_stolen_bases" ||
+        propLc === "batter_rbis" ||
+        propLc === "player_steals" ||
+        propLc === "player_blocks";
+      if (countStat && t.side === "OVER" && line != null && line <= 0.5 && t.american < -250) continue;
+    }
     // Fade fully-juiced fade alerts (negative research boost) by skipping if boost <= -0.08
     // (handled later, just compute here)
     const dec = americanToDecimal(t.american);
@@ -284,11 +313,28 @@ function rowToCandidates(
       0.55 * imp + 0.18 * composite + 0.13 * conf + 0.07 + boost + matchupAdj,
     ));
     const why = buildWhy(mt, t.side, line, t.american, boost);
+    const gameKey = canonicalGameId(row.event_id, row.game_description);
+    // Resolve team / opponent for team-market labels.
+    let teamName: string | undefined;
+    let oppName: string | undefined;
+    if (mt === "moneyline" || mt === "spread" || mt === "total") {
+      const parts = String(row.game_description ?? "").split(" @ ");
+      if (parts.length === 2) {
+        const away = parts[0].trim();
+        const home = parts[1].trim();
+        if (t.side === "HOME") { teamName = home; oppName = away; }
+        else if (t.side === "AWAY") { teamName = away; oppName = home; }
+      }
+    }
     out.push({
       key: `${row.event_id}|${mt}|${player}|${prop}|${t.side}|${line ?? ""}`,
       sport,
       game,
       event_id: String(row.event_id),
+      game_key: gameKey,
+      team: teamName,
+      opponent: oppName,
+      commence_time: row.commence_time ? String(row.commence_time) : undefined,
       market_type: mt,
       player_name: player,
       prop_type: prop,
@@ -368,19 +414,19 @@ function noConflict(legs: Candidate[], cand: Candidate, maxPerGame = 2): boolean
     if (l.key === cand.key) return false;
     // No duplicate player
     if (cand.market_type === "player" && l.market_type === "player" && l.player_name.toLowerCase() === cand.player_name.toLowerCase()) return false;
-    // No opposing team-market legs on same game
-    if (l.event_id === cand.event_id && cand.market_type !== "player" && l.market_type !== "player") {
-      if (l.market_type === cand.market_type) return false;
+    // Block ANY two non-player legs on the same canonical game (h2h + spread + total combinations).
+    if (l.game_key === cand.game_key && cand.market_type !== "player" && l.market_type !== "player") {
+      return false;
     }
   }
-  // Concentration cap: at most maxPerGame legs from same event
-  const sameGame = legs.filter((l) => l.event_id === cand.event_id).length;
+  // Concentration cap: at most maxPerGame legs from same canonical game
+  const sameGame = legs.filter((l) => l.game_key === cand.game_key).length;
   if (sameGame >= maxPerGame) return false;
   return true;
 }
 
 function distinctGames(legs: Candidate[]): number {
-  return new Set(legs.map((l) => l.event_id)).size;
+  return new Set(legs.map((l) => l.game_key)).size;
 }
 
 function buildVariant(
@@ -487,7 +533,7 @@ function buildKitchenSink(pool: Candidate[]): Parlay | null {
       const bucket = buckets.get(sport) ?? [];
       const idx = bucket.findIndex((c) =>
         noConflict(legs, c, MAX_PER_GAME) &&
-        !legs.some((l) => l.event_id === c.event_id && l.player_name === c.player_name && l.prop_type === c.prop_type)
+        !legs.some((l) => l.game_key === c.game_key && l.player_name === c.player_name && l.prop_type === c.prop_type)
       );
       if (idx === -1) continue;
       const pick = bucket.splice(idx, 1)[0];
@@ -685,6 +731,52 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     const sports = [...sportsSet];
     console.log(`pool: ${rows?.length ?? 0} rows · sports: ${sports.join(",")}`);
 
+    // 1a-bis) Ghost-game scrub: the odds feed sometimes lists the same team in
+    // two simultaneous games on the same ET day (e.g. Knicks @ Spurs AND
+    // Knicks @ Thunder). Both are impossible — drop ALL rows whose team
+    // appears in >1 distinct game_description for that (sport, ET day) for
+    // team-market sports. Fail-closed: when ambiguous we keep none.
+    const dropEventIds = new Set<string>();
+    let ghostDrops = 0;
+    try {
+      const teamDay = new Map<string, Set<string>>(); // key: sport|team|etDay → set of canonical game ids
+      const etDay = (iso: string) =>
+        new Date(new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York" }))
+          .toISOString().slice(0, 10);
+      for (const r of rows) {
+        const sport = normSport(r.sport);
+        // Only team sports — skip MMA/tennis/golf/soccer outrights etc.
+        if (!["NBA","WNBA","NHL","NFL","MLB","NCAAB","NCAAF"].includes(sport)) continue;
+        if (!["moneyline","spread","total","h2h","spreads","totals"].includes(String(r.market_type ?? "").toLowerCase())) continue;
+        const game = String(r.game_description ?? "");
+        if (!game.includes(" @ ")) continue;
+        const [away, home] = game.split(" @ ").map((s) => s.trim());
+        const day = etDay(String(r.commence_time ?? new Date().toISOString()));
+        const cid = canonicalGameId(r.event_id, game);
+        for (const team of [away, home]) {
+          const k = `${sport}|${team.toLowerCase()}|${day}`;
+          const s = teamDay.get(k) ?? new Set<string>();
+          s.add(cid);
+          teamDay.set(k, s);
+        }
+      }
+      const ambiguousCanonicalIds = new Set<string>();
+      for (const [, ids] of teamDay) {
+        if (ids.size > 1) for (const id of ids) ambiguousCanonicalIds.add(id);
+      }
+      if (ambiguousCanonicalIds.size > 0) {
+        for (const r of rows) {
+          if (ambiguousCanonicalIds.has(canonicalGameId(r.event_id, r.game_description))) {
+            dropEventIds.add(String(r.event_id));
+            ghostDrops++;
+          }
+        }
+        console.log(`ghost-game scrub: dropping ${ghostDrops} rows across ${ambiguousCanonicalIds.size} ambiguous canonical games`);
+      }
+    } catch (e) {
+      console.warn("ghost-game scrub threw:", e instanceof Error ? e.message : String(e));
+    }
+
     // 1b) Pull matchup_intelligence rows for today+tomorrow (ET) for cross-reference.
     // If the table is empty (refresher hasn't run yet today), self-trigger
     // matchup-intelligence-refresh and reload before continuing.
@@ -744,12 +836,13 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     // 3) Build candidate pool
     const pool: Candidate[] = [];
     for (const r of rows ?? []) {
+      if (dropEventIds.has(String(r.event_id))) continue;
       const sport = normSport(r.sport);
       const b = research[sport] ?? { team_boosts: [], player_boosts: [] };
       const cs = rowToCandidates(r, b, matchupMap);
       pool.push(...cs);
     }
-    console.log(`candidate pool: ${pool.length}`);
+    console.log(`candidate pool: ${pool.length} (ghost_drops=${ghostDrops})`);
 
     // 4) Build 5 variants
     const variants: (Parlay | null)[] = [];
@@ -835,12 +928,17 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
       legs: p.legs.map((l) => ({
         sport: l.sport,
         event_id: l.event_id,
+        game_key: l.game_key,
         market_type: l.market_type,
         player_name: l.player_name,
         prop_type: l.prop_type,
         side: l.side,
         line: l.line,
         american: l.american,
+        american_odds: l.american,
+        confidence: l.safety,
+        team: l.team ?? null,
+        opponent: l.opponent ?? null,
         decimal: l.decimal,
         game_description: l.game,
         boost: l.boost,
@@ -878,6 +976,7 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     return {
       ok: true,
       pool: pool.length,
+      ghost_drops: ghostDrops,
       sports,
       parlays: built.map((p) => ({
         variant: p.variant,
