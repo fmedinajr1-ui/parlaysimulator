@@ -976,6 +976,7 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     return {
       ok: true,
       pool: pool.length,
+      ghost_drops: ghostDrops,
       sports,
       parlays: built.map((p) => ({
         variant: p.variant,
