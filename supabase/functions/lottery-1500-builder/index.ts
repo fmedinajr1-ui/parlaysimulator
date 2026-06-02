@@ -34,6 +34,9 @@ type Candidate = {
   safety: number;
   why: string;
   boost_reason?: string;
+  matchup_score?: number | null;   // normalized −1..+1 for the alerted side
+  matchup_note?: string;            // human-readable cross-ref summary
+  blocked_by_matchup?: boolean;     // matchup_intelligence.is_blocked = true
 };
 
 type Parlay = {
@@ -204,7 +207,55 @@ function lookupBoost(
   return { boost: 0 };
 }
 
-function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: any[] }): Candidate[] {
+type MatchupRow = {
+  matchup_score: number | null;
+  opponent_defensive_rank: number | null;
+  position_defense_rank: number | null;
+  position_group: string | null;
+  blowout_risk: number | null;
+  game_script: string | null;
+  is_blocked: boolean | null;
+  block_reason: string | null;
+  risk_flags: string[] | null;
+  confidence_adjustment: number | null;
+  opponent_team: string | null;
+};
+
+function lookupMatchup(
+  player: string,
+  prop: string,
+  side: string,
+  line: number | null,
+  map: Map<string, MatchupRow>,
+): MatchupRow | null {
+  if (!player || !prop) return null;
+  const sideKey = side === "OVER" || side === "UNDER" ? side : "ANY";
+  const lineKey = line != null ? String(line) : "";
+  const exact = map.get(`${player.toLowerCase()}|${prop}|${sideKey}|${lineKey}`);
+  if (exact) return exact;
+  // Fallback: any row for this player+prop+side (line may differ slightly)
+  for (const [k, v] of map) {
+    if (k.startsWith(`${player.toLowerCase()}|${prop}|${sideKey}|`)) return v;
+  }
+  return null;
+}
+
+function buildMatchupNote(m: MatchupRow): string {
+  const bits: string[] = [];
+  if (m.position_defense_rank != null) bits.push(`pos D rk ${m.position_defense_rank}${m.position_group ? `/${m.position_group}` : ""}`);
+  else if (m.opponent_defensive_rank != null) bits.push(`D rk ${m.opponent_defensive_rank}`);
+  if (m.matchup_score != null) bits.push(`m=${Number(m.matchup_score).toFixed(1)}`);
+  if (m.game_script && m.game_script !== "COMPETITIVE") bits.push(`script ${m.game_script}`);
+  if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.5) bits.push(`blowout`);
+  if (m.risk_flags && m.risk_flags.length) bits.push(m.risk_flags.slice(0, 2).join(","));
+  return bits.join(" · ");
+}
+
+function rowToCandidates(
+  row: any,
+  boosts: { team_boosts: any[]; player_boosts: any[] },
+  matchupMap: Map<string, MatchupRow>,
+): Candidate[] {
   const out: Candidate[] = [];
   const sport = normSport(row.sport);
   const game = String(row.game_description ?? "");
@@ -242,8 +293,38 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
     const boost = bl.boost;
     const composite = row.composite_score != null ? Number(row.composite_score) / 100 : 0;
     const conf = row.confidence != null ? Number(row.confidence) / 100 : 0;
-    // Safety = dejuiced implied + composite/confidence signal + research boost
-    const safety = Math.max(0, Math.min(1, 0.55 * imp + 0.20 * composite + 0.15 * conf + 0.10 + boost));
+
+    // Team-matchup cross-reference (player props only; team markets fall through).
+    let matchupScore: number | null = null;
+    let matchupNote = "";
+    let blockedByMatchup = false;
+    let matchupAdj = 0;
+    if (mt === "player" && player) {
+      const m = lookupMatchup(player, prop, t.side, line, matchupMap);
+      if (m) {
+        if (m.is_blocked) {
+          blockedByMatchup = true;
+        }
+        // matchup_score in DB ranges roughly -6..+6 for the side stored. Normalize to ±1.
+        if (m.matchup_score != null) {
+          matchupScore = Math.max(-1, Math.min(1, Number(m.matchup_score) / 5));
+        }
+        matchupNote = buildMatchupNote(m);
+        // Safety adjustment: ±7% from normalized matchup, ±5% from confidence_adjustment.
+        const ca = m.confidence_adjustment != null ? Math.max(-0.05, Math.min(0.05, Number(m.confidence_adjustment))) : 0;
+        matchupAdj = (matchupScore ?? 0) * 0.07 + ca;
+        // Hard fade: blowout risk on Over of a counting stat, or risk_flags contains BLOWOUT/FADE.
+        if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.7 && t.side === "OVER") {
+          matchupAdj -= 0.05;
+        }
+      }
+    }
+    if (blockedByMatchup) continue; // skip leg entirely
+
+    // Safety = dejuiced implied + composite/confidence signal + research boost + matchup cross-ref
+    const safety = Math.max(0, Math.min(1,
+      0.55 * imp + 0.18 * composite + 0.13 * conf + 0.07 + boost + matchupAdj,
+    ));
     const why = buildWhy(mt, t.side, line, t.american, boost);
     out.push({
       key: `${row.event_id}|${mt}|${player}|${prop}|${t.side}|${line ?? ""}`,
@@ -262,6 +343,8 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
       safety,
       why,
       boost_reason: bl.reason,
+      matchup_score: matchupScore,
+      matchup_note: matchupNote || undefined,
     });
   }
   return out;
