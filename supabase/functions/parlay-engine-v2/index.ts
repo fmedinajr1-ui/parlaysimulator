@@ -24,6 +24,12 @@ import {
 } from "../_shared/parlay-engine-v2/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 import { bayesianHitRate, quarterKellyStake, requiredDecimal, evPerUnit, priorForLegCount } from "../_shared/staking/kelly.ts";
+import {
+  loadMatchupMap,
+  matchupAdjustment,
+  etTodayTomorrow,
+  type MatchupMap,
+} from "../_shared/matchup-xref.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
