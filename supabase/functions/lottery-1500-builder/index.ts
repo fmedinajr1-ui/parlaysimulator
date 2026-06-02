@@ -380,9 +380,9 @@ function buildVariant(
   pool: Candidate[],
   filter: (c: Candidate) => boolean,
   comparator: (a: Candidate, b: Candidate) => number,
-  opts: { minLegs: number; maxLegs: number; minBoosted?: number; maxPerGame?: number },
+  opts: { minLegs: number; maxLegs: number; minBoosted?: number; maxPerGame?: number; target?: number; minDistinctSports?: number },
 ): Parlay | null {
-  const TARGET = 16.0; // +1500
+  const TARGET = opts.target ?? 16.0; // default +1500
   const filtered = pool.filter(filter).sort(comparator);
   if (filtered.length < opts.minLegs) return null;
 
@@ -396,14 +396,15 @@ function buildVariant(
     legs.push(c);
     dec *= c.decimal;
     if (dec >= TARGET && legs.length >= opts.minLegs && distinctGames(legs) >= 2) {
-      if (opts.minBoosted == null || legs.filter((l) => l.boost >= 0.05).length >= opts.minBoosted) {
-        break;
-      }
+      const boostedOk = opts.minBoosted == null || legs.filter((l) => l.boost >= 0.05).length >= opts.minBoosted;
+      const sportsOk = opts.minDistinctSports == null || new Set(legs.map((l) => l.sport)).size >= opts.minDistinctSports;
+      if (boostedOk && sportsOk) break;
     }
   }
   console.log(`[${variant}] legs=${legs.length} dec=${dec.toFixed(2)} distinct=${distinctGames(legs)}`);
   if (dec < TARGET || legs.length < opts.minLegs || distinctGames(legs) < 2) return null;
   if (opts.minBoosted != null && legs.filter((l) => l.boost >= 0.05).length < opts.minBoosted) return null;
+  if (opts.minDistinctSports != null && new Set(legs.map((l) => l.sport)).size < opts.minDistinctSports) return null;
 
   const safeties = legs.map((l) => l.safety);
   const mean = safeties.reduce((a, b) => a + b, 0) / safeties.length;
@@ -431,7 +432,99 @@ const VARIANT_DRIVERS: Record<string, string> = {
   "Research-Boosted": "Sorted by deep-research boost first, safety second. Highest 'sharp' density.",
   "Lottery-Stretch": "3–4 longshots (+100 to +700) from different games. Big payout, low hit rate.",
   "Heavy-Chalk-Mega": "20+ deep favorites (-250 to -800). Multiplies tiny edges to reach +1500. Single miss = bust.",
+  "Kitchen-Sink": "Round-robin across every active sport — 6–10 legs, ≥3 distinct sports, target ≥+3000. Mirrors the viral 'parlayed everything' tickets.",
 };
+
+// Round-robin sport picker. Buckets pool by sport, sorts each bucket by safety
+// desc, then walks bucket-by-bucket appending the best surviving leg from each
+// sport. Stops when target decimal reached AND min sports + min legs satisfied,
+// or when no bucket has any leg left that passes conflict checks.
+function buildKitchenSink(pool: Candidate[]): Parlay | null {
+  const TARGET = 16.0;                  // ≥ +1500 (matches other variants)
+  const STRETCH_TARGET = 31.0;          // soft target: keep adding until ≥ +3000 if pool allows
+  const MIN_LEGS = 6;
+  const MAX_LEGS = 12;
+  const MIN_SPORTS = 3;                 // soft floor; we try for 5+
+  const MAX_PER_SPORT = 3;
+  const MAX_PER_GAME = 1;               // one leg per game for true diversity
+
+  // Eligible pool: any side priced -600..+700, not actively faded by research.
+  const eligible = pool.filter((c) =>
+    c.american >= -600 && c.american <= 700 && c.boost > -0.05
+  );
+  if (eligible.length < MIN_LEGS) return null;
+
+  const buckets = new Map<string, Candidate[]>();
+  for (const c of eligible) {
+    const arr = buckets.get(c.sport) ?? [];
+    arr.push(c);
+    buckets.set(c.sport, arr);
+  }
+  for (const arr of buckets.values()) {
+    arr.sort((a, b) => (b.boost - a.boost) || (b.safety - a.safety));
+  }
+  const sports = [...buckets.keys()];
+  if (sports.length < MIN_SPORTS) return null;
+
+  const legs: Candidate[] = [];
+  const perSport = new Map<string, number>();
+  let dec = 1;
+  let progressed = true;
+
+  while (legs.length < MAX_LEGS && progressed) {
+    progressed = false;
+    for (const sport of sports) {
+      if (legs.length >= MAX_LEGS) break;
+      if ((perSport.get(sport) ?? 0) >= MAX_PER_SPORT) continue;
+      const bucket = buckets.get(sport) ?? [];
+      const idx = bucket.findIndex((c) =>
+        noConflict(legs, c, MAX_PER_GAME) &&
+        !legs.some((l) => l.event_id === c.event_id && l.player_name === c.player_name && l.prop_type === c.prop_type)
+      );
+      if (idx === -1) continue;
+      const pick = bucket.splice(idx, 1)[0];
+      legs.push(pick);
+      dec *= pick.decimal;
+      perSport.set(sport, (perSport.get(sport) ?? 0) + 1);
+      progressed = true;
+
+      const sportsHit = new Set(legs.map((l) => l.sport)).size;
+      // Hard stop: hit the stretch target with min legs+sports.
+      if (dec >= STRETCH_TARGET && legs.length >= MIN_LEGS && sportsHit >= MIN_SPORTS) {
+        progressed = false;
+        break;
+      }
+    }
+  }
+
+  const sportsHit = new Set(legs.map((l) => l.sport)).size;
+  console.log(`[Kitchen-Sink] legs=${legs.length} dec=${dec.toFixed(2)} sports=${sportsHit}`);
+  if (
+    dec < TARGET ||
+    legs.length < MIN_LEGS ||
+    sportsHit < MIN_SPORTS
+  ) return null;
+
+  const safeties = legs.map((l) => l.safety);
+  const mean = safeties.reduce((a, b) => a + b, 0) / safeties.length;
+  const min = Math.min(...safeties);
+  const research_density = legs.filter((l) => l.boost !== 0).length / legs.length;
+  const payout_scaled = Math.min(1, Math.log10(dec) / 2);
+  // Reward cross-sport diversity in the ranking score.
+  const diversityBonus = Math.min(0.10, (sportsHit - MIN_SPORTS) * 0.025);
+  const score = 0.45 * mean + 0.20 * min + 0.20 * payout_scaled + 0.10 * research_density + 0.05 + diversityBonus;
+
+  return {
+    variant: "Kitchen-Sink",
+    legs,
+    decimal: dec,
+    american: decimalToAmerican(dec),
+    mean_safety: mean,
+    min_safety: min,
+    research_density,
+    score,
+  };
+}
 
 function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
   const head = isWinner
@@ -679,6 +772,12 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
       (a, b) => b.safety - a.safety,
       { minLegs: 8, maxLegs: 30, maxPerGame: 3 },
     ));
+
+    // V7 Kitchen-Sink: round-robin across every active sport. Forces cross-sport
+    // diversity (≥3 distinct sports, ≤2 legs per sport) and targets ≥+3000.
+    // Mirrors the "parlayed everything under the sun" tickets — 6-10 legs spread
+    // across MLB, NFL/NCAAF, NBA/WNBA, NHL, MMA, etc.
+    variants.push(buildKitchenSink(pool));
 
     const built = variants.filter((v): v is Parlay => v != null);
     built.sort((a, b) => b.score - a.score);
