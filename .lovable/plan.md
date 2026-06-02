@@ -1,75 +1,53 @@
-## Goal
 
-Add an admin-only page that surfaces the latest crawler and odds-builder runs, with timestamps, fetched market counts, and any errors or missing-data notes.
+## What's wrong
 
-## Data source
+Lottery is picking **two NBA games that share the same team in the same time window**:
 
-Reuse `cron_job_history` (already populated by every scraper / fetcher / builder). No schema changes needed.
-
-Crawler/odds-builder jobs we'll filter for (substring match on `job_name`):
-- `*-scraper` (pp-props, sportsbook-props, whale-odds, ncaab-kenpom, ncaab-referee)
-- `*-fetcher` (nba-stats, nba-team-pace, ncaa-baseball, ncaab-team-stats, nfl-stats, nfl-team-defense, nhl-*)
-- `fetch-*-injuries` (mlb, nfl, nhl)
-- `fanduel-line-scanner`, `fanduel-behavior-analyzer`, `fanduel-trap-scanner`, `fanduel-accuracy-feedback`, `fanduel-prediction-alerts`
-- `unified-props-engine`, `lottery-1500-builder`, `verify-unified-outcomes`, `verify-fanduel-trap-outcomes`
-
-A constant array `CRAWLER_JOB_PATTERNS` will drive both filtering and grouping (Scrapers / Stats Fetchers / Injuries / FanDuel / Builders).
-
-## New page: `/admin/crawlers`
-
-Route added in `src/App.tsx`, gated by `useAdminRole`. Linked from `MenuDrawer` admin section (icon: `Radar`) and from the existing Admin Panel page.
-
-### Layout
-
-```text
-Header: "Crawler & Odds Builder Runs"  [Refresh] [Auto-refresh 30s toggle]
-
-Summary strip (last 24h):
- [Total runs] [✓ Completed] [⚠ No-data] [✗ Failed] [Avg duration]
-
-Filters row:
- Category dropdown (All / Scrapers / Fetchers / Injuries / FanDuel / Builders)
- Status dropdown (All / completed / failed / no_data / running)
- Job name search input
-
-Group: "Latest run per job" (one row per distinct job_name, newest)
- Table: Job | Category | Last run (relative) | Status | Duration | Markets/Rows fetched | Error/Note
-
-Group: "Recent run history" (paginated, 50 per page)
- Same columns + expandable row showing full result JSON and error_message
+```
+basketball_nba  New York Knicks @ San Antonio Spurs       2026-06-04 00:30 UTC
+basketball_nba  New York Knicks @ Oklahoma City Thunder   2026-06-04 00:40 UTC
 ```
 
-### "Markets/Rows fetched" extraction
+Only one of these is a real game tonight (Knicks @ Spurs in the NBA Cup / postseason). The Knicks @ OKC entry is stale/duplicate junk from the odds feed but unified_props happily stores it. Lottery then ladders BOTH games, picks OKC twice (h2h + spread), and ships an impossible parlay.
 
-Read from `result` JSON using common keys we already store:
-`markets`, `marketsCount`, `rowsFetched`, `inserted`, `updated`, `propsCount`, `gamesProcessed`, `totalFetched`. Show the first numeric one found, else `—`.
+This stacks on top of the same-game / odds-missing bugs from the previous message.
 
-### Errors / missing data
+## Fix scope (lottery-1500-builder + broadcaster mapping only)
 
-- `status='failed'` → red badge + `error_message`.
-- `status='no_data'` → amber badge + `error_message` (typically "no games today" style).
-- `status='completed'` with `result.markets === 0` or `result.inserted === 0` → amber "0 rows" warning chip.
+### A. `supabase/functions/lottery-1500-builder/index.ts`
 
-## Files
+1. **Team-uniqueness scrub at pool build (NEW — fixes the OKC ghost game).**
+   For each team-market sport (NBA / WNBA / NHL / NFL), group rows by `(sport, team, calendar_day_ET)`. If a team appears in >1 distinct `game_description` on the same ET day, keep only the row whose `commence_time` is closest to the *earlier* game in that team's schedule (canonical source: `live_game_scores` if a row exists for that team+date; otherwise drop ALL ambiguous entries — fail-closed). Tag dropped rows with a `pool_drop:duplicate_team_schedule` counter returned in the response payload.
 
-- `src/pages/admin/CrawlerRunsPage.tsx` — new page.
-- `src/components/admin/CrawlerRunsTable.tsx` — table + row expansion.
-- `src/components/admin/CrawlerSummaryStrip.tsx` — 24h stat cards.
-- `src/lib/crawlerJobs.ts` — `CRAWLER_JOB_PATTERNS`, category mapping, `extractFetchedCount(result)`.
-- `src/App.tsx` — add `/admin/crawlers` route (admin-guarded).
-- `src/components/layout/MenuDrawer.tsx` — add "Crawler Runs" item under Admin Tools.
+2. **Canonical game key for same-game dedupe.** `event_id` in unified_props is suffixed (`..._h2h`, `..._spread`, `..._total`), so the current per-game cap never triggers. Add `canonicalGameId(row)` = strip `_h2h|_spread|_total|_outright` suffix, fallback to `game_description`. Use it everywhere `event_id` is compared in `noConflict`, `distinctGames`, and the dup-player check. Also block ANY two non-player legs on the same canonical game (today only blocks identical market_type).
 
-## Data fetching
+3. **Persist broadcaster-friendly fields** on the inserted leg JSON:
+   - `american_odds: l.american` (broadcaster reads this, not `american`)
+   - `confidence: l.safety`
+   - `team` / `opponent` parsed from `game_description.split(" @ ")` (HOME → idx 1, AWAY → idx 0)
+   This fixes the `(n/a)` odds + `EV +0.00u` + ugly `h2h HOME 0` rendering.
 
-Two `useQuery` hooks against `cron_job_history`:
+4. **Blacklist junk markets** in `buildCandidatesFromRow`:
+   - Drop `prop_type ∈ { pitcher_record_a_win, batter_first_home_run, first_to_score }` and any `anytime_*_first` novelty.
+   - For `market_type === "player"`: require `american >= -600` (no Trea Turner Hits 0.5 chalk).
+   - For OVER 0.5 on count-stat props (hits / HR / SB / RBI / steals / blocks): require `american >= -250`.
 
-1. `latest-per-crawler` — RPC-free: `SELECT *` for jobs in the pattern list ordered by `started_at desc` limit 500, then dedupe client-side keeping newest per `job_name`.
-2. `crawler-history` — paginated `SELECT *` filtered by selected category + status + search, ordered by `started_at desc`, range pagination.
+### B. `supabase/functions/parlay-engine-v2-broadcast/index.ts`
 
-Both `refetchInterval: 30_000` when auto-refresh is on.
+Tiny label fix so lottery-style legs read cleanly:
+- `prop_type === "h2h"` → render `"ML"`; `prop_type === "spreads"` → render `"Spread"`; `market_type === "outright"` → render `"<player_name> to win <game_description>"`.
+
+## Verification (admin-only sandbox first)
+
+1. Deploy both functions.
+2. `POST /lottery-1500-builder?dry=true&skip_research=true` and inspect JSON:
+   - `pool_drop.duplicate_team_schedule > 0` for NBA (Knicks ghost game gone).
+   - No two legs share `canonical_game_id`.
+   - Every leg has numeric `american_odds`.
+   - No `pitcher_record_a_win` legs.
+3. Trigger non-dry. Telegram drop should show real odds (no `(n/a)`), clean `Team ML / Team Spread` labels, and a single NBA game (Knicks @ Spurs only, not OKC).
 
 ## Out of scope
 
-- No new tables, no migrations, no edge function changes.
-- No edits to existing crawler functions.
-- No write actions (manual re-trigger button) in this first cut — `CronJobHistoryPanel` already covers ad-hoc reruns elsewhere; can be added later if you want.
+- Upstream odds-feed dedupe (root cause of the ghost OKC game lives in the sync, not the builder) — handled defensively here for now; can be promoted to the team-markets-sync layer in a follow-up.
+- Outrights sync, parallel research, cron schedule — already in place.
