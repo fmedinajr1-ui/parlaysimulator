@@ -261,6 +261,28 @@ function rowToCandidates(
     if (t.american <= -1000 || t.american >= maxAm) continue;
     // Skip extreme spreads only
     if (mt === "spread" && line != null && Math.abs(line) >= 14) continue;
+    // ── Junk-market blacklist ──────────────────────────────────────────
+    // Novelty binary markets generate nonsensical UNDER 0.5 chalk like
+    // "Pitcher Record A Win UNDER" — drop outright.
+    const propLc = prop.toLowerCase();
+    if (
+      propLc === "pitcher_record_a_win" ||
+      propLc === "batter_first_home_run" ||
+      propLc === "first_to_score" ||
+      propLc.startsWith("anytime_") && propLc.includes("first")
+    ) continue;
+    // Player-prop juice gates — no -700 chalk floor-bets like "Hits 0.5".
+    if (mt === "player") {
+      if (t.american <= -600) continue;
+      const countStat =
+        propLc === "batter_hits" ||
+        propLc === "batter_home_runs" ||
+        propLc === "batter_stolen_bases" ||
+        propLc === "batter_rbis" ||
+        propLc === "player_steals" ||
+        propLc === "player_blocks";
+      if (countStat && t.side === "OVER" && line != null && line <= 0.5 && t.american < -250) continue;
+    }
     // Fade fully-juiced fade alerts (negative research boost) by skipping if boost <= -0.08
     // (handled later, just compute here)
     const dec = americanToDecimal(t.american);
