@@ -426,6 +426,104 @@ function buildVariant(
 }
 
 const VARIANT_DRIVERS: Record<string, string> = {
+  // (kept above)
+};
+
+// Round-robin sport picker. Buckets pool by sport, sorts each bucket by safety
+// desc, then walks bucket-by-bucket appending the best surviving leg from each
+// sport. Stops when target decimal reached AND min sports + min legs satisfied,
+// or when no bucket has any leg left that passes conflict checks.
+function buildKitchenSink(pool: Candidate[]): Parlay | null {
+  const TARGET = 31.0;                  // ≈ +3000
+  const MIN_LEGS = 6;
+  const MAX_LEGS = 10;
+  const MIN_SPORTS = 3;                 // soft floor; we try for 5+
+  const MAX_PER_SPORT = 2;
+  const MAX_PER_GAME = 1;               // one leg per game for true diversity
+
+  // Eligible pool: any side priced -600..+700, not actively faded by research.
+  const eligible = pool.filter((c) =>
+    c.american >= -600 && c.american <= 700 && c.boost > -0.05
+  );
+  if (eligible.length < MIN_LEGS) return null;
+
+  const buckets = new Map<string, Candidate[]>();
+  for (const c of eligible) {
+    const arr = buckets.get(c.sport) ?? [];
+    arr.push(c);
+    buckets.set(c.sport, arr);
+  }
+  for (const arr of buckets.values()) {
+    arr.sort((a, b) => (b.boost - a.boost) || (b.safety - a.safety));
+  }
+  const sports = [...buckets.keys()];
+  if (sports.length < MIN_SPORTS) return null;
+
+  const legs: Candidate[] = [];
+  const perSport = new Map<string, number>();
+  let dec = 1;
+  let progressed = true;
+
+  while (legs.length < MAX_LEGS && progressed) {
+    progressed = false;
+    for (const sport of sports) {
+      if (legs.length >= MAX_LEGS) break;
+      if ((perSport.get(sport) ?? 0) >= MAX_PER_SPORT) continue;
+      const bucket = buckets.get(sport) ?? [];
+      const idx = bucket.findIndex((c) =>
+        noConflict(legs, c, MAX_PER_GAME) &&
+        !legs.some((l) => l.event_id === c.event_id && l.player_name === c.player_name && l.prop_type === c.prop_type)
+      );
+      if (idx === -1) continue;
+      const pick = bucket.splice(idx, 1)[0];
+      legs.push(pick);
+      dec *= pick.decimal;
+      perSport.set(sport, (perSport.get(sport) ?? 0) + 1);
+      progressed = true;
+
+      const sportsHit = new Set(legs.map((l) => l.sport)).size;
+      if (
+        dec >= TARGET &&
+        legs.length >= MIN_LEGS &&
+        sportsHit >= MIN_SPORTS
+      ) {
+        // stop early when target hit
+        progressed = false;
+        break;
+      }
+    }
+  }
+
+  const sportsHit = new Set(legs.map((l) => l.sport)).size;
+  console.log(`[Kitchen-Sink] legs=${legs.length} dec=${dec.toFixed(2)} sports=${sportsHit}`);
+  if (
+    dec < TARGET ||
+    legs.length < MIN_LEGS ||
+    sportsHit < MIN_SPORTS
+  ) return null;
+
+  const safeties = legs.map((l) => l.safety);
+  const mean = safeties.reduce((a, b) => a + b, 0) / safeties.length;
+  const min = Math.min(...safeties);
+  const research_density = legs.filter((l) => l.boost !== 0).length / legs.length;
+  const payout_scaled = Math.min(1, Math.log10(dec) / 2);
+  // Reward cross-sport diversity in the ranking score.
+  const diversityBonus = Math.min(0.10, (sportsHit - MIN_SPORTS) * 0.025);
+  const score = 0.45 * mean + 0.20 * min + 0.20 * payout_scaled + 0.10 * research_density + 0.05 + diversityBonus;
+
+  return {
+    variant: "Kitchen-Sink",
+    legs,
+    decimal: dec,
+    american: decimalToAmerican(dec),
+    mean_safety: mean,
+    min_safety: min,
+    research_density,
+    score,
+  };
+}
+
+const _KITCHEN_SINK_DOC: Record<string, string> = {
   "Chalk-Stack": "Stacks heavy favorites (-150 to -600). Wins on volume of small-edge legs; vulnerable to a single upset.",
   "Balanced": "Mix of -250 to +160 legs ranked by safety. Best risk/reward when slate has moderate juice.",
   "Player-Primary": "Player props only. Lowest correlation, leans on per-player research + composite scores.",
