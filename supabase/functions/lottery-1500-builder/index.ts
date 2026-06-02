@@ -533,7 +533,7 @@ function buildKitchenSink(pool: Candidate[]): Parlay | null {
       const bucket = buckets.get(sport) ?? [];
       const idx = bucket.findIndex((c) =>
         noConflict(legs, c, MAX_PER_GAME) &&
-        !legs.some((l) => l.event_id === c.event_id && l.player_name === c.player_name && l.prop_type === c.prop_type)
+        !legs.some((l) => l.game_key === c.game_key && l.player_name === c.player_name && l.prop_type === c.prop_type)
       );
       if (idx === -1) continue;
       const pick = bucket.splice(idx, 1)[0];
