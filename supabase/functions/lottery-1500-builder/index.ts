@@ -11,6 +11,14 @@
  *   POST /lottery-1500-builder?skip_research=1  -> use empty boost map
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  loadMatchupMap,
+  matchupAdjustment,
+  buildMatchupNote,
+  etTodayTomorrow,
+  type MatchupRow,
+  type MatchupMap,
+} from "../_shared/matchup-xref.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
