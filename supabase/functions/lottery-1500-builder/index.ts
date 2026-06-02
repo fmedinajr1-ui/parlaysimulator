@@ -661,6 +661,26 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
       if (page.length < pageSize) break;
     }
 
+    // 1a) Outrights / futures: pull separately — their commence_time is weeks
+    // or months out so the 48h gate above filters them all out.
+    try {
+      const { data: outRows, error: outErr } = await supabase
+        .from("unified_props")
+        .select("event_id, sport, game_description, commence_time, player_name, prop_type, current_line, over_price, under_price, market_type, composite_score, confidence")
+        .eq("is_active", true)
+        .eq("market_type", "outright")
+        .gt("commence_time", new Date().toISOString())
+        .lt("commence_time", new Date(Date.now() + 180 * 24 * 3600_000).toISOString())
+        .limit(2000);
+      if (outErr) console.warn("outrights pull failed:", outErr.message);
+      else if (outRows?.length) {
+        console.log(`pool outrights: +${outRows.length} rows`);
+        rows.push(...outRows);
+      }
+    } catch (e) {
+      console.warn("outrights pull threw:", e instanceof Error ? e.message : String(e));
+    }
+
     const sportsSet = new Set<string>((rows ?? []).map((r) => normSport(r.sport)));
     const sports = [...sportsSet];
     console.log(`pool: ${rows?.length ?? 0} rows · sports: ${sports.join(",")}`);
