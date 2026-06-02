@@ -75,17 +75,17 @@ function normSport(s: string): string {
 }
 
 const SPORT_PROMPTS: Record<string, string> = {
-  MLB: "For TODAY's MLB slate: probable starters with ERA<3.50, weather (wind/temp), confirmed lineup scratches, bullpen fatigue, sharp money on totals/run-lines, and any hot hitter on a 5+ game streak. Be specific with player and team names.",
-  NHL: "For TODAY's NHL slate: confirmed starting goalies with recent SV% trend, injury scratches, line-rush changes, sharp money on totals/puck-lines, and back-to-back fatigue spots.",
-  NBA: "For TONIGHT's NBA: confirmed scratches and load management, starting lineup changes, sharp money on player props (PTS/REB/AST/3PM), pace-up matchups.",
-  WNBA: "For TONIGHT's WNBA: confirmed injuries/scratches, starting lineup, sharp money on totals/spreads/player props, and any pace mismatches.",
-  NCAAB: "For TODAY's NCAA men's basketball: injured/suspended starters, tempo mismatches, reverse line movement on spreads/totals, letdown/revenge spots.",
-  NCAAF: "For TODAY's NCAA football: weather affecting totals, starting QB injuries, sharp money on spreads/totals, letdown/revenge spots.",
-  NFL: "For TODAY's NFL: weather, QB/skill injuries, sharp money on spreads/totals, primetime/letdown spots.",
-  TENNIS: "For TODAY's ATP/WTA matches: surface form, recent retirements, sharp money on moneylines/totals.",
-  MMA: "For TODAY's MMA card: weight-cut issues, late replacements, sharp money on moneylines/method/round totals.",
-  SOCCER: "For TODAY's soccer matches: confirmed lineups, key injuries, sharp money on totals/BTTS/spreads.",
-  GOLF: "For TODAY's PGA/LIV/DP tour: weather, withdrawals, hot form, sharp money on top-finish props.",
+  MLB: "TODAY's MLB slate. Cover: (1) probable starters with ERA<3.50 and matchup history vs opposing lineup, (2) ballpark + weather (wind direction & speed, temp, humidity), (3) confirmed lineup scratches & late lineup news, (4) bullpen fatigue / closer availability, (5) sharp money + steam moves on totals/run-lines, (6) hot hitters on 5+ game streaks, (7) cold pitcher form (last 3 starts). Name specific players and teams.",
+  NHL: "TODAY's NHL slate. Cover: (1) confirmed starting goalies + last-5 SV%, (2) injury scratches, (3) line-rush changes & power-play units, (4) sharp money on totals/puck-lines, (5) back-to-back fatigue, (6) any hot scorer streak. Be specific with names.",
+  NBA: "TONIGHT's NBA. Cover: (1) confirmed scratches & load management, (2) starting lineup changes, (3) sharp money on player props (PTS/REB/AST/3PM), (4) pace-up matchups, (5) revenge/letdown spots, (6) referee tendencies. Specific names.",
+  WNBA: "TONIGHT's WNBA. Cover: (1) confirmed injuries/scratches, (2) starting lineup, (3) sharp money on totals/spreads/player props, (4) pace mismatches, (5) hot scorer streaks.",
+  NCAAB: "TODAY's NCAA men's basketball. Cover: (1) injured/suspended starters, (2) tempo mismatches (top-50 pace vs bottom-50), (3) reverse line movement on spreads/totals, (4) letdown/revenge spots, (5) home court advantage outliers.",
+  NCAAF: "TODAY's NCAA football. Cover: (1) weather affecting totals (wind 15+, rain, cold), (2) starting QB injuries, (3) sharp money on spreads/totals, (4) letdown/revenge spots, (5) lookahead games.",
+  NFL: "TODAY's NFL. Cover: (1) weather (wind, precip, cold), (2) QB & skill-position injuries (incl. inactives), (3) sharp money on spreads/totals/player props, (4) primetime/letdown spots, (5) divisional dynamics.",
+  TENNIS: "TODAY's ATP/WTA matches. Cover: (1) surface form (clay/hard/grass last 10), (2) recent retirements/walkovers, (3) head-to-head history, (4) sharp money on moneylines/sets/games totals, (5) travel/altitude factors.",
+  MMA: "TODAY's MMA card. Cover: (1) weight-cut issues / missed weight, (2) late replacements & short notice, (3) sharp money on moneylines/method/round totals, (4) reach/style matchup edges, (5) camp changes.",
+  SOCCER: "TODAY's soccer matches. Cover: (1) confirmed lineups & key injuries/suspensions, (2) rotation risk for cup competitions, (3) sharp money on totals/BTTS/spreads, (4) home/away form splits, (5) European competition fatigue.",
+  GOLF: "TODAY/THIS WEEK's PGA/LIV/DP tour. Cover: (1) weather (wind, rain), (2) withdrawals/MC risk, (3) hot recent form (last 5 events), (4) course history & fit, (5) sharp money on top-5/top-10/top-20 props.",
 };
 
 const BOOST_SCHEMA = {
@@ -134,7 +134,7 @@ async function deepResearch(sport: string, apiKey: string): Promise<{
   if (!prompt) return { summary: "", team_boosts: [], player_boosts: [] };
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 240_000);
+    const t = setTimeout(() => ctrl.abort(), 420_000); // 7 min — deep-research is slow
     const resp = await fetch("https://api.perplexity.ai/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -144,11 +144,12 @@ async function deepResearch(sport: string, apiKey: string): Promise<{
         messages: [
           {
             role: "system",
-            content: `You are an elite ${sport} betting research analyst. Return ONLY strict JSON matching the schema. Cap each boost at +/- 0.10. Boost > 0 favors the named side; boost < 0 fades it.`,
+            content: `You are an elite ${sport} betting research analyst with access to live news, injury reports, weather feeds, and sharp money trackers. Be aggressive about flagging fades — losing tickets come from missed bad spots. Return AT LEAST 8 team_boosts and 8 player_boosts when possible (mix positive and negative). Return ONLY strict JSON matching the schema. Cap each boost at +/- 0.10. Boost > 0 favors the named side; boost < 0 fades it.`,
           },
           { role: "user", content: prompt },
         ],
         search_recency_filter: "day",
+        max_tokens: 4000,
         response_format: { type: "json_schema", json_schema: BOOST_SCHEMA },
       }),
     });
@@ -228,10 +229,12 @@ function rowToCandidates(row: any, boosts: { team_boosts: any[]; player_boosts: 
 
   for (const t of tups) {
     if (!Number.isFinite(t.american) || t.american === 0) continue;
-    // Filter: skip extreme chalk and dogs
-    if (t.american <= -600 || t.american >= 500) continue;
-    // Skip wide spreads (cross-sport gate)
-    if (mt === "spread" && line != null && Math.abs(line) >= 9.5) continue;
+    // Gates widened: allow heavier chalk for chalk-stack variants, longer dogs for stretch.
+    if (t.american <= -1000 || t.american >= 900) continue;
+    // Skip extreme spreads only
+    if (mt === "spread" && line != null && Math.abs(line) >= 14) continue;
+    // Fade fully-juiced fade alerts (negative research boost) by skipping if boost <= -0.08
+    // (handled later, just compute here)
     const dec = americanToDecimal(t.american);
     const imp = impliedProb(t.american);
     const boost = lookupBoost({ player_name: player, game, side: t.side, market_type: mt }, boosts.team_boosts, boosts.player_boosts);
@@ -500,7 +503,7 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     variants.push(buildVariant(
       "Chalk-Stack",
       pool,
-      (c) => c.american <= -150 && c.american >= -500,
+    (c) => c.american <= -150 && c.american >= -600 && c.boost > -0.05,
       (a, b) => b.safety - a.safety,
       { minLegs: 5, maxLegs: 18 },
     ));
@@ -537,9 +540,19 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     variants.push(buildVariant(
       "Lottery-Stretch",
       pool,
-      (c) => c.american >= 100 && c.american <= 500,
+    (c) => c.american >= 100 && c.american <= 700 && c.boost > -0.05,
       (a, b) => b.decimal - a.decimal || b.safety - a.safety,
       { minLegs: 3, maxLegs: 4, maxPerGame: 1 },
+    ));
+
+    // V6 Heavy-Chalk-Mega: stack 20+ deep favorites (-300 to -800) to reach +1500.
+    // Demanded by user: "create one parlay with as many -400s as needed."
+    variants.push(buildVariant(
+      "Heavy-Chalk-Mega",
+      pool,
+      (c) => c.american <= -250 && c.american >= -800 && c.boost > -0.05,
+      (a, b) => b.safety - a.safety,
+      { minLegs: 8, maxLegs: 30, maxPerGame: 3 },
     ));
 
     const built = variants.filter((v): v is Parlay => v != null);
