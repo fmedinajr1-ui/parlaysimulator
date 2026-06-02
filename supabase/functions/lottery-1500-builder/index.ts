@@ -565,24 +565,25 @@ async function runLottery(opts: { dry: boolean; skipResearch: boolean; started: 
     console.log(`pool: ${rows?.length ?? 0} rows · sports: ${sports.join(",")}`);
 
     // 1b) Pull matchup_intelligence rows for today+tomorrow (ET) for cross-reference.
-    const etToday = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }))
-      .toISOString().slice(0, 10);
-    const etTomorrow = new Date(Date.now() + 24 * 3600_000).toLocaleString("en-US", { timeZone: "America/New_York" });
-    const etTomorrowDate = new Date(etTomorrow).toISOString().slice(0, 10);
-    const matchupMap = new Map<string, MatchupRow>();
-    try {
-      const { data: mrows, error: merr } = await supabase
-        .from("matchup_intelligence")
-        .select("player_name, prop_type, side, line, matchup_score, opponent_defensive_rank, position_defense_rank, position_group, blowout_risk, game_script, is_blocked, block_reason, risk_flags, confidence_adjustment, opponent_team")
-        .in("game_date", [etToday, etTomorrowDate]);
-      if (merr) console.error("matchup_intelligence query", merr.message);
-      for (const m of (mrows ?? [])) {
-        const k = `${String(m.player_name).toLowerCase()}|${m.prop_type}|${String(m.side).toUpperCase()}|${m.line ?? ""}`;
-        matchupMap.set(k, m as any);
+    // If the table is empty (refresher hasn't run yet today), self-trigger
+    // matchup-intelligence-refresh and reload before continuing.
+    const [etToday, etTomorrowDate] = etTodayTomorrow();
+    let matchupMap: MatchupMap = await loadMatchupMap(supabase, [etToday, etTomorrowDate]);
+    console.log(`matchup_intelligence loaded: ${matchupMap.size} rows for ${etToday}..${etTomorrowDate}`);
+    if (matchupMap.size === 0) {
+      console.log("matchup_intelligence empty — invoking matchup-intelligence-refresh");
+      try {
+        const { data: refResp, error: refErr } = await supabase.functions.invoke(
+          "matchup-intelligence-refresh",
+          { body: { dates: [etToday, etTomorrowDate] } },
+        );
+        if (refErr) console.warn("matchup-intelligence-refresh invoke error:", refErr.message);
+        else console.log("matchup-intelligence-refresh response:", JSON.stringify(refResp).slice(0, 300));
+        matchupMap = await loadMatchupMap(supabase, [etToday, etTomorrowDate]);
+        console.log(`matchup_intelligence reloaded: ${matchupMap.size} rows`);
+      } catch (e) {
+        console.warn("matchup refresh threw:", e instanceof Error ? e.message : String(e));
       }
-      console.log(`matchup_intelligence loaded: ${matchupMap.size} rows for ${etToday}..${etTomorrowDate}`);
-    } catch (e) {
-      console.error("matchup load threw", e);
     }
 
     // 2) Deep research per sport (sequential — sonar-deep-research is slow)
