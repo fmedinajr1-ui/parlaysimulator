@@ -485,7 +485,10 @@ function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
     ? `🏆 *WINNER — ${p.variant}*  +${p.american}`
     : `*#${idx} ${p.variant}*  +${p.american}`;
   const legs = p.legs
-    .map((l, i) => `  ${i + 1}. [${l.sport}] ${legLabel(l)}  \`${l.why}\``)
+    .map((l, i) => {
+      const mu = l.matchup_note ? `  · 🆚 ${l.matchup_note}` : "";
+      return `  ${i + 1}. [${l.sport}] ${legLabel(l)}  \`${l.why}\`${mu}`;
+    })
     .join("\n");
 
   // ── Explainer ──
@@ -528,7 +531,19 @@ function formatParlay(p: Parlay, idx: number, isWinner: boolean): string {
     researchBlock = `\n   🔬 *Research factors used:* none — built from price + composite/confidence only`;
   }
 
-  return `${head}\n${legs}\n${explainer}${researchBlock}`;
+  // Matchup cross-reference summary across legs
+  const playerLegs = p.legs.filter((l) => l.market_type === "player");
+  const withMatchup = p.legs.filter((l) => l.matchup_note);
+  const muScores = p.legs.map((l) => l.matchup_score).filter((x): x is number => x != null);
+  const muCoverage = playerLegs.length > 0 ? withMatchup.length / playerLegs.length : 0;
+  const muAvg = muScores.length ? muScores.reduce((a, b) => a + b, 0) / muScores.length : null;
+  const matchupBlock = playerLegs.length === 0
+    ? `\n   🆚 *Matchup cross-ref:* n/a (team markets only)`
+    : muScores.length === 0
+      ? `\n   🆚 *Matchup cross-ref:* no matchup_intelligence rows matched today's player legs`
+      : `\n   🆚 *Matchup cross-ref:* ${withMatchup.length}/${playerLegs.length} player legs aligned · avg score ${muAvg!.toFixed(2)} (±1 scale) · coverage ${(muCoverage * 100).toFixed(0)}%`;
+
+  return `${head}\n${legs}\n${explainer}${matchupBlock}${researchBlock}`;
 }
 
 Deno.serve(async (req) => {
