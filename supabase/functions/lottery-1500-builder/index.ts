@@ -264,23 +264,12 @@ function rowToCandidates(
     let blockedByMatchup = false;
     let matchupAdj = 0;
     if (mt === "player" && player) {
-      const m = lookupMatchup(player, prop, t.side, line, matchupMap);
-      if (m) {
-        if (m.is_blocked) {
-          blockedByMatchup = true;
-        }
-        // matchup_score in DB ranges roughly -6..+6 for the side stored. Normalize to ±1.
-        if (m.matchup_score != null) {
-          matchupScore = Math.max(-1, Math.min(1, Number(m.matchup_score) / 5));
-        }
-        matchupNote = buildMatchupNote(m);
-        // Safety adjustment: ±7% from normalized matchup, ±5% from confidence_adjustment.
-        const ca = m.confidence_adjustment != null ? Math.max(-0.05, Math.min(0.05, Number(m.confidence_adjustment))) : 0;
-        matchupAdj = (matchupScore ?? 0) * 0.07 + ca;
-        // Hard fade: blowout risk on Over of a counting stat, or risk_flags contains BLOWOUT/FADE.
-        if (m.blowout_risk != null && Number(m.blowout_risk) >= 0.7 && t.side === "OVER") {
-          matchupAdj -= 0.05;
-        }
+      const xref = matchupAdjustment(player, prop, t.side, line, matchupMap);
+      blockedByMatchup = xref.blocked;
+      matchupAdj = xref.adj;
+      matchupNote = xref.note;
+      if (xref.row?.matchup_score != null) {
+        matchupScore = Math.max(-1, Math.min(1, Number(xref.row.matchup_score) / 5));
       }
     }
     if (blockedByMatchup) continue; // skip leg entirely
