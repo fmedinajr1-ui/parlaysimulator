@@ -210,27 +210,45 @@ function mlbPitcherProps(): Set<string> {
 }
 
 async function buildMlb(supabase: any, dates: string[], env: EnvMap): Promise<{ rows: UpRow[]; skipped: any }> {
-  const { data: props } = await supabase
-    .from("unified_props")
-    .select("player_name, prop_type, current_line, sport, game_description, commence_time, market_type")
-    .eq("is_active", true).eq("sport", "baseball_mlb")
-    .gt("commence_time", new Date(Date.now() - 30 * 60_000).toISOString())
-    .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString())
-    .limit(10_000);
+  // Paginate around PostgREST's 1000-row cap so we don't silently drop batters.
+  const props: any[] = [];
+  const pageSize = 1000;
+  for (let from = 0; from < 20_000; from += pageSize) {
+    const { data, error } = await supabase
+      .from("unified_props")
+      .select("player_name, prop_type, current_line, sport, game_description, commence_time, market_type")
+      .eq("is_active", true).eq("sport", "baseball_mlb")
+      .gt("commence_time", new Date(Date.now() - 30 * 60_000).toISOString())
+      .lt("commence_time", new Date(Date.now() + 48 * 3600_000).toISOString())
+      .range(from, from + pageSize - 1);
+    if (error) { console.warn("[mlb] paginate err:", error.message); break; }
+    if (!data || !data.length) break;
+    props.push(...data);
+    if (data.length < pageSize) break;
+  }
 
-  // Pitcher K analysis (last few days) — keyed by (pitcher_name|game_date)
+  // Pitcher K analysis — pull last 14 days so we always have a recent K/9 baseline
+  // even when today's pitcher row hasn't landed yet. We still prefer today's row
+  // when both exist.
+  const lookbackStart = new Date(Date.now() - 14 * 86400_000).toISOString().slice(0, 10);
   const { data: pkRows } = await supabase
     .from("mlb_pitcher_k_analysis")
     .select("pitcher_name, team, opponent, game_date, line, pitcher_k9_blended, p_over, edge, tier, block_reason, opp_k_rate_mult, park_k_mult")
-    .in("game_date", dates);
-  const pkByPitcher = new Map<string, any>();           // pitcher_name → row (latest)
-  const pkByTeamDate = new Map<string, any>();          // "team|date" → opposing pitcher row, so batters can xref
+    .gte("game_date", lookbackStart)
+    .order("game_date", { ascending: false })
+    .limit(5000);
+  const pkByPitcher = new Map<string, any>();           // pitcher_name → row (most recent)
+  const pkByTeamDate = new Map<string, any>();          // "team|date" → opposing pitcher row (today first, else most recent)
+  const pkByOpponentRecent = new Map<string, any>();    // "team" → most recent row facing that team (fallback)
   for (const r of (pkRows ?? [])) {
     if (!r.pitcher_name) continue;
-    pkByPitcher.set(String(r.pitcher_name).toLowerCase(), r);
-    // Index by opponent team (the team this pitcher is throwing AGAINST) so we can look up "what pitcher faces team X today?"
+    const pname = String(r.pitcher_name).toLowerCase();
+    if (!pkByPitcher.has(pname)) pkByPitcher.set(pname, r); // first = most recent due to order
     if (r.opponent && r.game_date) {
-      pkByTeamDate.set(`${String(r.opponent).toLowerCase()}|${r.game_date}`, r);
+      const k = `${String(r.opponent).toLowerCase()}|${r.game_date}`;
+      if (!pkByTeamDate.has(k)) pkByTeamDate.set(k, r);
+      const oppKey = String(r.opponent).toLowerCase();
+      if (!pkByOpponentRecent.has(oppKey)) pkByOpponentRecent.set(oppKey, r);
     }
   }
 
@@ -304,7 +322,8 @@ async function buildMlb(supabase: any, dates: string[], env: EnvMap): Promise<{ 
       if (!team) { noPlayer++; continue; }
       opponent = team.toLowerCase() === home.toLowerCase() ? away
                : team.toLowerCase() === away.toLowerCase() ? home : home;
-      const pk = pkByTeamDate.get(`${team.toLowerCase()}|${gameDate}`);
+      const pk = pkByTeamDate.get(`${team.toLowerCase()}|${gameDate}`)
+              ?? pkByOpponentRecent.get(team.toLowerCase());
       if (!pk || pk.pitcher_k9_blended == null) { noDefense++; continue; }
       const k9 = Number(pk.pitcher_k9_blended);
       // High-K pitcher (>=10) → hurts batter Overs by ~-3. Weak pitcher (<=7) → +3.
