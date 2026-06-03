@@ -42,6 +42,13 @@ const PRIOR_STARTS = 5;
 const IP_CAP = 7.0;
 const IMPLIED_AT_MINUS_115 = 115 / (115 + 100); // ~0.535
 
+// Cushion requirements — fixes the "miss by 1" leak. Lines are set just
+// above expectation, so naive p_over ≥ 0.62 still loses when expected_K is
+// only ~0.3 above the line. Require real headroom.
+const A_TIER_MIN_CUSHION = 1.0; // expected_K - line ≥ 1.0
+const S_TIER_MIN_CUSHION = 1.5;
+const A_TIER_MIN_IP = 5.0;
+
 /** Bayesian shrink of L5 toward season prior (5-start prior weight). */
 function blendK9(
   l5: number | null,
@@ -93,6 +100,13 @@ export function modelPitcherKOver(input: PitcherKInput): PitcherKResult {
 
   const pOver = blockReason ? 0 : poissonProbOver(expectedK, input.line!);
   const edge = blockReason ? 0 : pOver - IMPLIED_AT_MINUS_115;
+  const cushion = blockReason ? 0 : expectedK - (input.line ?? 0);
+
+  // Hard block: if the line sits at or above our expectation, this is the
+  // "miss by 1" trap — no recommendation regardless of model probability.
+  if (!blockReason && cushion < 0.5) {
+    blockReason = "insufficient_cushion_vs_line";
+  }
 
   let tier: PitcherKResult["tier"] = "PASS";
   if (!blockReason) {
@@ -101,10 +115,16 @@ export function modelPitcherKOver(input: PitcherKInput): PitcherKResult {
       pOver >= 0.68 &&
       k9val >= 10.0 &&
       (input.oppKRateSeason ?? 0) >= leagueAvg &&
-      ip >= 5.5
+      ip >= 5.5 &&
+      cushion >= S_TIER_MIN_CUSHION
     ) {
       tier = "S";
-    } else if (pOver >= 0.62 && edge >= 0.05) {
+    } else if (
+      pOver >= 0.65 &&
+      edge >= 0.07 &&
+      cushion >= A_TIER_MIN_CUSHION &&
+      ip >= A_TIER_MIN_IP
+    ) {
       tier = "A";
     }
   }
