@@ -29,9 +29,13 @@ Replacement for the retired team No-HR model. Single-actor (pitcher only) so var
 
 ### Tiers
 
-- **S** — `p_over ≥ 0.68` AND `K9_blended ≥ 10.0` AND opp K% ≥ league avg AND `expected_IP ≥ 5.5`
-- **A** — `p_over ≥ 0.62` AND `edge ≥ 0.05`
+- **S** — `p_over ≥ 0.68` AND `K9_blended ≥ 10.0` AND opp K% ≥ league avg AND `expected_IP ≥ 5.5` AND `cushion ≥ 1.5`
+- **A** — `p_over ≥ 0.65` AND `edge ≥ 0.07` AND `cushion ≥ 1.0` AND `expected_IP ≥ 5.0`
 - **PASS** — anything else
+
+### Miss-by-1 guard
+
+`cushion = expected_K - line`. If `cushion < 0.5` → hard block `insufficient_cushion_vs_line`, regardless of pOver. Tightened 2026-06-03 after repeat losses where the line sat at/just above expectation (e.g. Davis Martin Over 5.5 → 2). Naive Poisson p_over ≥ 0.62 is not enough when expectation is only ~0.3 above the line.
 
 ### Delivery
 
