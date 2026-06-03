@@ -90,8 +90,27 @@ Deno.test("PASS: low K9 + line too high", () => {
     oppKRateSeason: 0.190,
   });
   assertEquals(r.tier, "PASS");
-  assertEquals(r.blockReason, null);
+  assertEquals(r.blockReason, "insufficient_cushion_vs_line");
   assert(r.pOver < 0.62, `pOver=${r.pOver}`);
+});
+
+// 7) PASS — miss-by-1 trap: line sits right at expectation
+Deno.test("PASS: cushion < 0.5 blocks recommendation", () => {
+  const r = modelPitcherKOver({
+    pitcherName: "Razor Thin",
+    team: "BOS",
+    opponent: "NYY",
+    homeTeam: "BOS",
+    line: 6.5,
+    pitcherK9L5: 10.0,
+    pitcherK9Season: 10.0,
+    pitcherStartsSeason: 15,
+    expectedIP: 6.0,
+    oppKRateSeason: 0.225,
+  });
+  // expected_K ≈ 10 * 6/9 * 1.0 = 6.67 → cushion 0.17 → block
+  assertEquals(r.tier, "PASS");
+  assertEquals(r.blockReason, "insufficient_cushion_vs_line");
 });
 
 // 6) Edge math sanity — implied prob at -115 is ~0.535
