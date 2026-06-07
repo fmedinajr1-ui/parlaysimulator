@@ -9340,8 +9340,10 @@ export type Database = {
           book_implied: number | null
           book_implied_devig: number | null
           book_last_move_ts: number | null
+          book_price: number | null
           closing_attached_at: string | null
           closing_book_implied_devig: number | null
+          closing_resolution_status: string | null
           clv_pct: number | null
           created_at: string
           delta_wp: number | null
@@ -9357,11 +9359,13 @@ export type Database = {
           home_won: boolean | null
           id: string
           market: string
+          opposite_book_price: number | null
           outcome_attached_at: string | null
           post_state: Json
           pre_state: Json
           realized_hit: boolean | null
           severity: string
+          side: string | null
           skip_reason: string | null
           telegram_admin_only: boolean
           telegram_sent: boolean
@@ -9374,8 +9378,10 @@ export type Database = {
           book_implied?: number | null
           book_implied_devig?: number | null
           book_last_move_ts?: number | null
+          book_price?: number | null
           closing_attached_at?: string | null
           closing_book_implied_devig?: number | null
+          closing_resolution_status?: string | null
           clv_pct?: number | null
           created_at?: string
           delta_wp?: number | null
@@ -9391,11 +9397,13 @@ export type Database = {
           home_won?: boolean | null
           id?: string
           market?: string
+          opposite_book_price?: number | null
           outcome_attached_at?: string | null
           post_state: Json
           pre_state: Json
           realized_hit?: boolean | null
           severity?: string
+          side?: string | null
           skip_reason?: string | null
           telegram_admin_only?: boolean
           telegram_sent?: boolean
@@ -9408,8 +9416,10 @@ export type Database = {
           book_implied?: number | null
           book_implied_devig?: number | null
           book_last_move_ts?: number | null
+          book_price?: number | null
           closing_attached_at?: string | null
           closing_book_implied_devig?: number | null
+          closing_resolution_status?: string | null
           clv_pct?: number | null
           created_at?: string
           delta_wp?: number | null
@@ -9425,11 +9435,13 @@ export type Database = {
           home_won?: boolean | null
           id?: string
           market?: string
+          opposite_book_price?: number | null
           outcome_attached_at?: string | null
           post_state?: Json
           pre_state?: Json
           realized_hit?: boolean | null
           severity?: string
+          side?: string | null
           skip_reason?: string | null
           telegram_admin_only?: boolean
           telegram_sent?: boolean
@@ -18813,6 +18825,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      mlb_fair_price_event_completeness: {
+        Row: {
+          avg_closing_latency_sec: number | null
+          avg_outcome_latency_sec: number | null
+          day_et: string | null
+          fires: number | null
+          fires_complete: number | null
+          fires_with_closing: number | null
+          fires_with_outcome: number | null
+        }
+        Relationships: []
       }
       mlb_rbi_under_variant_accuracy: {
         Row: {
