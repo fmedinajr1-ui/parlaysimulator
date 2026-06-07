@@ -6,6 +6,7 @@
 //   STRIKEOUT, WALK, HIT, HOME_RUN, RBI, RUN_SCORED, STOLEN_BASE, PITCHER_PULLED
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { BaseState, basesFromBools, applyTransition, type GameState, type Tier1Event } from "../_shared/mlb-fair-price/state.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +65,67 @@ async function postEvent(event: Record<string, unknown>): Promise<boolean> {
 type EventType =
   | "STRIKEOUT" | "WALK" | "HIT" | "HOME_RUN" | "RBI"
   | "RUN_SCORED" | "STOLEN_BASE" | "PITCHER_PULLED";
+
+// Reconstruct the pre-event GameState from an MLB feed play.
+// We use play.matchup's pre-play base occupancy (preOnFirst/Second/Third)
+// when available; otherwise we walk the runners' origin bases.
+function preStateFromPlay(play: any, feedTs: number): GameState | null {
+  const inning = Number(play?.about?.inning);
+  const halfStr = play?.about?.halfInning;
+  if (!Number.isFinite(inning) || (halfStr !== "top" && halfStr !== "bottom")) return null;
+  const battingTeam = halfStr === "top" ? "away" : "home";
+
+  // play.count.outs in MLB feed is outs AT START of plate appearance (pre-play).
+  const preOuts = Math.max(0, Math.min(2, Number(play?.count?.outs ?? 0))) as 0 | 1 | 2;
+
+  // Pre-play base occupancy: derive from runners' originBase.
+  let b1 = false, b2 = false, b3 = false;
+  for (const r of play?.runners ?? []) {
+    const origin = r?.movement?.originBase;
+    if (origin === "1B") b1 = true;
+    else if (origin === "2B") b2 = true;
+    else if (origin === "3B") b3 = true;
+  }
+  const bases = basesFromBools(b1, b2, b3);
+
+  // scoreDiff BEFORE this play: use awayScore/homeScore on play.result (post)
+  // and subtract this play's run contribution.
+  const postHome = Number(play?.result?.homeScore ?? 0);
+  const postAway = Number(play?.result?.awayScore ?? 0);
+  let runs = 0;
+  for (const r of play?.runners ?? []) {
+    if (r?.movement?.end === "score") runs++;
+  }
+  const preHome = battingTeam === "home" ? postHome - runs : postHome;
+  const preAway = battingTeam === "away" ? postAway - runs : postAway;
+
+  return {
+    inning,
+    half: halfStr,
+    outs: preOuts,
+    bases,
+    scoreDiff: preHome - preAway,
+    battingTeam,
+    feedTs,
+    batterId: play?.matchup?.batter?.id ? String(play.matchup.batter.id) : null,
+    pitcherId: play?.matchup?.pitcher?.id ? String(play.matchup.pitcher.id) : null,
+  };
+}
+
+const TIER1_MAP: Record<string, Tier1Event | undefined> = {
+  STRIKEOUT: "STRIKEOUT",
+  WALK: "WALK",
+  HOME_RUN: "HOME_RUN",
+};
+
+function fairPriceMetaFor(play: any, eventType: EventType, feedTs: number) {
+  const t1 = TIER1_MAP[eventType];
+  if (!t1) return null;
+  const pre = preStateFromPlay(play, feedTs);
+  if (!pre) return null;
+  const post = applyTransition(pre, t1);
+  return { tier: 1 as const, pre_state: pre, post_state: post, feed_ts: feedTs };
+}
 
 function classifyPlay(play: any): { type: EventType; player: string | null; team: string | null } | null {
   const eventType = (play?.result?.eventType ?? "").toLowerCase();
@@ -140,6 +202,9 @@ async function processGame(gamePk: number): Promise<{ posted: number; skipped: n
       const cls = classifyPlay(play);
       if (!cls) continue;
 
+      const feedTs = Date.now();
+      const fpMeta = fairPriceMetaFor(play, cls.type, feedTs);
+
       const ok = await postEvent({
         sport: "MLB",
         game_id: gameId,
@@ -149,6 +214,7 @@ async function processGame(gamePk: number): Promise<{ posted: number; skipped: n
         team: cls.team,
         play_id: playId,
         source: "mlb-statsapi",
+        fair_price: fpMeta,
       });
       if (ok) posted++;
 
