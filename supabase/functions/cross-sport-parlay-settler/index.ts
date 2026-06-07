@@ -190,18 +190,30 @@ Deno.serve(async (req) => {
     // window so we don't re-grade ancient cross-sport tickets.
     const fadeSince = new Date(Date.now() - 60 * 24 * 3600_000).toISOString().slice(0, 10);
 
-    const { data: pendings, error } = await supabase
+    // Cross-sport family stays inside the rolling 72h window.
+    const { data: csRows, error: csErr } = await supabase
       .from("bot_daily_parlays")
       .select("id, parlay_date, legs, leg_count, strategy_name")
       .or(
         "strategy_name.like.cross_sport_%," +
         "strategy_name.eq.ladder_challenge," +
-        "strategy_name.eq.mega_lottery_scanner," +
-        "strategy_name.eq.optimal_combo",
+        "strategy_name.eq.mega_lottery_scanner",
       )
       .is("settled_at", null)
       .gte("parlay_date", since);
-    if (error) throw error;
+    if (csErr) throw csErr;
+
+    // Optimal-combo has its own (wider) backlog window so historical
+    // parlays still get a chance to settle.
+    const { data: ocRows, error: ocErr } = await supabase
+      .from("bot_daily_parlays")
+      .select("id, parlay_date, legs, leg_count, strategy_name")
+      .eq("strategy_name", "optimal_combo")
+      .is("settled_at", null)
+      .gte("parlay_date", fadeSince);
+    if (ocErr) throw ocErr;
+
+    const pendings = [...(csRows ?? []), ...(ocRows ?? [])];
 
     // Fade parlays live in ai_generated_parlays with strategy_used. Normalize
     // them into the same shape (id, parlay_date, legs, leg_count, strategy_name)
