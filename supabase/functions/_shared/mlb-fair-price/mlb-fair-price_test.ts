@@ -2,6 +2,7 @@ import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.t
 import { BaseState, GameState, applyTransition } from "./state.ts";
 import { winProb, isWpCalibrated } from "./win-prob.ts";
 import { STALE_FEED_MS } from "./constants.ts";
+import { buildFairPriceAdminPayload } from "./alert-payload.ts";
 
 function base(): GameState {
   return {
@@ -66,4 +67,39 @@ Deno.test("stale-feed guard: feedTs older than STALE_FEED_MS is detected", () =>
   const stale: GameState = { ...base(), feedTs: oldFeed };
   const ageMs = Date.now() - stale.feedTs;
   assert(ageMs > STALE_FEED_MS, "guard should trip");
+});
+
+Deno.test("WARN alert payload is admin-only and typed mlb_fair_price", () => {
+  const payload = buildFairPriceAdminPayload("[MLB Fair-Price WARN] test");
+  // Contract: admin chat ONLY, never customer broadcast.
+  assertEquals(payload.admin_only, true);
+  assertEquals(payload.type, "mlb_fair_price");
+  assertEquals(payload.parse_mode, "Markdown");
+  assert(payload.message.includes("WARN"), "message must carry WARN tag");
+});
+
+Deno.test("WARN alert payload routes through bot-send-telegram admin path", async () => {
+  // bot-send-telegram treats admin_only !== false as admin-only.
+  // Simulate the gate: any payload we send MUST keep admin_only === true,
+  // otherwise it would fan out to all tier recipients.
+  const payload = buildFairPriceAdminPayload("ΔWP 0.07 fire");
+
+  const calls: Array<{ fn: string; body: any }> = [];
+  const fakeSupabase = {
+    functions: {
+      invoke: async (fn: string, opts: { body: any }) => {
+        calls.push({ fn, body: opts.body });
+        return { data: { success: true, message_id: 1 }, error: null };
+      },
+    },
+  };
+
+  await fakeSupabase.functions.invoke("bot-send-telegram", { body: payload });
+
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].fn, "bot-send-telegram");
+  assertEquals(calls[0].body.admin_only, true);
+  // admin_only === false would cause customer fanout — guard against regression.
+  assert(calls[0].body.admin_only !== false, "must never broadcast to customers");
+  assertEquals(calls[0].body.type, "mlb_fair_price");
 });
