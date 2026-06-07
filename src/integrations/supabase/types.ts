@@ -410,6 +410,7 @@ export type Database = {
           id: string
           leg_sources: Json | null
           legs: Json
+          legs_graded: Json | null
           outcome: string
           settled_at: string | null
           signals_used: string[]
@@ -430,6 +431,7 @@ export type Database = {
           id?: string
           leg_sources?: Json | null
           legs?: Json
+          legs_graded?: Json | null
           outcome?: string
           settled_at?: string | null
           signals_used?: string[]
@@ -450,6 +452,7 @@ export type Database = {
           id?: string
           leg_sources?: Json | null
           legs?: Json
+          legs_graded?: Json | null
           outcome?: string
           settled_at?: string | null
           signals_used?: string[]
@@ -1608,6 +1611,7 @@ export type Database = {
           is_simulated: boolean | null
           leg_count: number
           legs: Json
+          legs_graded: Json | null
           legs_hit: number | null
           legs_missed: number | null
           legs_swapped: number | null
@@ -1638,6 +1642,7 @@ export type Database = {
           is_simulated?: boolean | null
           leg_count?: number
           legs?: Json
+          legs_graded?: Json | null
           legs_hit?: number | null
           legs_missed?: number | null
           legs_swapped?: number | null
@@ -1668,6 +1673,7 @@ export type Database = {
           is_simulated?: boolean | null
           leg_count?: number
           legs?: Json
+          legs_graded?: Json | null
           legs_hit?: number | null
           legs_missed?: number | null
           legs_swapped?: number | null

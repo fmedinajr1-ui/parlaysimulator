@@ -33,6 +33,9 @@ const SPORT_ALIASES: Record<string, string> = {
   nhl: "icehockey_nhl", icehockey_nhl: "icehockey_nhl",
   ncaab: "basketball_ncaab", basketball_ncaab: "basketball_ncaab",
   nfl: "americanfootball_nfl", americanfootball_nfl: "americanfootball_nfl",
+  wnba: "basketball_wnba", basketball_wnba: "basketball_wnba",
+  mma: "mma_mixed_martial_arts", mma_mixed_martial_arts: "mma_mixed_martial_arts",
+  ncaaf: "americanfootball_ncaaf", americanfootball_ncaaf: "americanfootball_ncaaf",
 };
 function canonSport(s: unknown): string | null {
   const k = String(s ?? "").toLowerCase();
@@ -182,15 +185,65 @@ Deno.serve(async (req) => {
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const since = new Date(Date.now() - 72 * 3600_000).toISOString().slice(0, 10);
-    const { data: pendings, error } = await supabase
+    // Widen the lookback for fade parlays (they sit pending for weeks while
+    // historical MMA/NCAAF cards play out). Bot_daily_parlays keeps the 72h
+    // window so we don't re-grade ancient cross-sport tickets.
+    const fadeSince = new Date(Date.now() - 60 * 24 * 3600_000).toISOString().slice(0, 10);
+
+    // Cross-sport family stays inside the rolling 72h window.
+    const { data: csRows, error: csErr } = await supabase
       .from("bot_daily_parlays")
       .select("id, parlay_date, legs, leg_count, strategy_name")
-      .or("strategy_name.like.cross_sport_%,strategy_name.eq.ladder_challenge,strategy_name.eq.mega_lottery_scanner")
+      .or(
+        "strategy_name.like.cross_sport_%," +
+        "strategy_name.eq.ladder_challenge," +
+        "strategy_name.eq.mega_lottery_scanner",
+      )
       .is("settled_at", null)
       .gte("parlay_date", since);
-    if (error) throw error;
+    if (csErr) throw csErr;
 
-    const dates = [...new Set((pendings ?? []).map(p => (p as { parlay_date: string }).parlay_date))];
+    // Optimal-combo has its own (wider) backlog window so historical
+    // parlays still get a chance to settle.
+    const { data: ocRows, error: ocErr } = await supabase
+      .from("bot_daily_parlays")
+      .select("id, parlay_date, legs, leg_count, strategy_name")
+      .eq("strategy_name", "optimal_combo")
+      .is("settled_at", null)
+      .gte("parlay_date", fadeSince);
+    if (ocErr) throw ocErr;
+
+    const pendings = [...(csRows ?? []), ...(ocRows ?? [])];
+
+    // Fade parlays live in ai_generated_parlays with strategy_used. Normalize
+    // them into the same shape (id, parlay_date, legs, leg_count, strategy_name)
+    // so the grading loop can treat them uniformly.
+    const { data: fadeRows, error: fadeErr } = await supabase
+      .from("ai_generated_parlays")
+      .select("id, created_at, legs")
+      .eq("strategy_used", "fade_parlay_of_the_day")
+      .eq("outcome", "pending")
+      .gte("created_at", `${fadeSince}T00:00:00Z`);
+    if (fadeErr) throw fadeErr;
+
+    const fadeNormalized = (fadeRows ?? []).map((r) => {
+      const o = r as { id: string; created_at: string; legs: Record<string, unknown>[] };
+      // ET date stamp (parlay_date semantics matches the generator's broadcast).
+      const etDate = new Date(o.created_at).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      return {
+        id: o.id,
+        parlay_date: etDate,
+        legs: o.legs ?? [],
+        leg_count: (o.legs ?? []).length,
+        strategy_name: "fade_parlay_of_the_day",
+        _table: "ai_generated_parlays" as const,
+      };
+    });
+
+    const botPendings = (pendings ?? []).map((p) => ({ ...(p as Record<string, unknown>), _table: "bot_daily_parlays" as const }));
+    const allPendings = [...botPendings, ...fadeNormalized];
+
+    const dates = [...new Set(allPendings.map(p => (p as { parlay_date: string }).parlay_date))];
 
     // Bulk-load scores per date (no event_id required).
     type ScoreRow = { home_team: string; away_team: string; home_score: number; away_score: number; status: string };
@@ -218,7 +271,7 @@ Deno.serve(async (req) => {
 
     // Bulk-load player game logs per sport.
     const allPlayerKeys = new Map<string, Set<string>>(); // sportCanon -> set(player_name)
-    for (const p of pendings ?? []) {
+    for (const p of allPendings) {
       for (const l of (p as { legs: Record<string, unknown>[] }).legs ?? []) {
         const sp = canonSport(l.sport);
         if (sp && l.player_name) {
@@ -262,8 +315,8 @@ Deno.serve(async (req) => {
     let settled = 0, stillPending = 0;
     const feedbackRows: Record<string, unknown>[] = [];
 
-    for (const p of pendings ?? []) {
-      const par = p as { id: string; parlay_date: string; legs: Record<string, unknown>[]; leg_count: number; strategy_name: string };
+    for (const p of allPendings) {
+      const par = p as { id: string; parlay_date: string; legs: Record<string, unknown>[]; leg_count: number; strategy_name: string; _table: "bot_daily_parlays" | "ai_generated_parlays" };
       const legs = par.legs ?? [];
       const legResults: Array<{ leg: Record<string, unknown>; result: LegOut; actual: unknown; reason?: string; kind: LegKind; sport: string | null }> = [];
       let parlayPending = false;
@@ -320,15 +373,42 @@ Deno.serve(async (req) => {
         .map(r => `${r.result.toUpperCase()} ${r.leg.player_name ?? r.leg.team ?? r.kind} ${r.leg.prop_type ?? r.kind} ${r.leg.side ?? ""} ${r.leg.line ?? ""}${r.actual != null ? ` (actual ${r.actual})` : ""}${r.reason ? ` [${r.reason}]` : ""}`)
         .join(" ; ")}`.slice(0, 1000);
 
-      const { error: uerr } = await supabase.from("bot_daily_parlays").update({
-        outcome, legs_hit: hits, legs_missed: misses, legs_voided: voids,
-        settled_at: new Date().toISOString(), lesson_learned: lesson,
-      }).eq("id", par.id);
-      if (uerr) { console.error("settle update err", uerr); continue; }
+      // Per-leg detail (powers the leg-by-leg report).
+      const legsGraded = legResults.map((r) => ({
+        player_name: r.leg.player_name ?? null,
+        team: r.leg.team ?? null,
+        sport: r.sport ?? r.leg.sport ?? null,
+        prop_type: r.leg.prop_type ?? null,
+        side: r.leg.side ?? null,
+        line: r.leg.line ?? null,
+        kind: r.kind,
+        result: r.result,
+        actual: r.actual ?? null,
+        reason: r.reason ?? null,
+        game: r.leg.game ?? r.leg.game_description ?? null,
+      }));
+
+      if (par._table === "ai_generated_parlays") {
+        const { error: uerr } = await supabase.from("ai_generated_parlays").update({
+          outcome, settled_at: new Date().toISOString(), legs_graded: legsGraded,
+        }).eq("id", par.id);
+        if (uerr) { console.error("settle update err (fade)", uerr); continue; }
+      } else {
+        const { error: uerr } = await supabase.from("bot_daily_parlays").update({
+          outcome, legs_hit: hits, legs_missed: misses, legs_voided: voids,
+          settled_at: new Date().toISOString(), lesson_learned: lesson,
+          legs_graded: legsGraded,
+        }).eq("id", par.id);
+        if (uerr) { console.error("settle update err", uerr); continue; }
+      }
       settled++;
 
       for (const r of legResults) {
         if (r.result === "void") continue;
+        // Only emit leg-level feedback for the original cross_sport_* family.
+        // Fade and optimal_combo strategies persist their per-leg detail in
+        // legs_graded; they don't participate in the cross-sport feedback loop.
+        if (!par.strategy_name.startsWith("cross_sport_") && par.strategy_name !== "ladder_challenge" && par.strategy_name !== "mega_lottery_scanner") continue;
         feedbackRows.push({
           parlay_id: par.id,
           parlay_date: par.parlay_date,
@@ -427,7 +507,11 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({
-      ok: true, pending_total: (pendings ?? []).length, settled, stillPending,
+      ok: true,
+      pending_total: allPendings.length,
+      bot_pending: botPendings.length,
+      fade_pending: fadeNormalized.length,
+      settled, stillPending,
       feedback_rows: feedbackRows.length,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
