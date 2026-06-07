@@ -18,6 +18,8 @@ interface Row {
   ev_pct: number | null;
   realized_hit: boolean | null;
   outcome_attached_at: string | null;
+  closing_attached_at: string | null;
+  clv_pct: number | null;
 }
 
 function pct(n: number, d: number): string {
@@ -27,7 +29,7 @@ function pct(n: number, d: number): string {
 
 function summarize(rows: Row[], label: string): string {
   const total = rows.length;
-  const fires = rows.filter((r) => r.gate_decision === "FIRE");
+  const fires = rows.filter((r) => r.gate_decision === "fire");
   const sent = fires.filter((r) => r.telegram_sent).length;
   const resolved = fires.filter((r) => r.outcome_attached_at && r.realized_hit !== null);
   const hits = resolved.filter((r) => r.realized_hit).length;
@@ -38,9 +40,18 @@ function summarize(rows: Row[], label: string): string {
     ? (fires.reduce((s, r) => s + (r.ev_pct ?? 0), 0) / fires.length * 100).toFixed(2) + "%"
     : "—";
 
+  const clvFires = fires.filter((r) => r.clv_pct != null) as (Row & { clv_pct: number })[];
+  const avgClv = clvFires.length
+    ? (clvFires.reduce((s, r) => s + r.clv_pct, 0) / clvFires.length * 100).toFixed(2) + "%"
+    : "—";
+  const posClv = clvFires.length
+    ? pct(clvFires.filter((r) => r.clv_pct > 0).length, clvFires.length)
+    : "—";
+  const missingClosing = fires.filter((r) => r.outcome_attached_at && !r.closing_attached_at).length;
+
   const skips: Record<string, number> = {};
   for (const r of rows) {
-    if (r.gate_decision === "SKIP" && r.skip_reason) {
+    if (r.gate_decision === "skip" && r.skip_reason) {
       skips[r.skip_reason] = (skips[r.skip_reason] ?? 0) + 1;
     }
   }
@@ -56,6 +67,8 @@ function summarize(rows: Row[], label: string): string {
     `Fill rate (sent/fire): ${pct(sent, fires.length)}`,
     `Realized hit rate: ${pct(hits, resolved.length)} (${resolved.length} resolved)`,
     `Avg edge: ${avgEdge} · Avg EV: ${avgEv}`,
+    `CLV: avg ${avgClv} · positive ${posClv} (${clvFires.length} graded)`,
+    `Closing line missing on ${missingClosing} resolved fires`,
     skipLines ? `Top skip reasons:\n${skipLines}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -73,7 +86,7 @@ Deno.serve(async (req) => {
 
   const { data, error } = await supabase
     .from("mlb_fair_price_events")
-    .select("gate_decision, skip_reason, telegram_sent, edge, ev_pct, realized_hit, outcome_attached_at, created_at")
+    .select("gate_decision, skip_reason, telegram_sent, edge, ev_pct, realized_hit, outcome_attached_at, closing_attached_at, clv_pct, created_at")
     .gte("created_at", since7d);
 
   if (error) {
