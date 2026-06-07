@@ -4,6 +4,10 @@ import { impactScore, scoreEdge, evPerUnit, halfKellyStake, eventDirection } fro
 import { verifyHmac } from "../_shared/scout-speed/hmac.ts";
 import { formatSpeedEdgeAlert } from "../_shared/scout-speed/telegram-format.ts";
 import { loadActiveModel } from "../_shared/scout-speed/model.ts";
+import { winProb } from "../_shared/mlb-fair-price/win-prob.ts";
+import { MIN_EV_PCT, MIN_LIQUIDITY, STALE_FEED_MS } from "../_shared/mlb-fair-price/constants.ts";
+import { americanToImplied, deVig, liveMlEdge, type BookLine } from "../_shared/mlb-fair-price/edge.ts";
+import type { GameState } from "../_shared/mlb-fair-price/state.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +42,150 @@ async function sendTelegram(message: string) {
     });
   } catch (e) {
     console.error("[scout-live-edge] telegram send failed", e);
+  }
+}
+
+// MLB Fair-Price (latency arb) v1 — admin-only WARN alerts, log-only.
+// Spec: mlb_fair_price_spec.md. NEVER auto-bets, NEVER notifies customers.
+async function sendFairPriceAdminAlert(message: string) {
+  try {
+    await supabase.functions.invoke("bot-send-telegram", {
+      body: {
+        message,
+        parse_mode: "Markdown",
+        admin_only: true,
+        type: "mlb_fair_price",
+      },
+    });
+  } catch (e) {
+    console.error("[scout-live-edge] fair-price telegram send failed", e);
+  }
+}
+
+async function evaluateMlbFairPrice(event: any, eventRowId: string) {
+  const fp = event?.fair_price;
+  if (!fp || fp.tier !== 1) return;
+  const pre = fp.pre_state as GameState | undefined;
+  const post = fp.post_state as GameState | undefined;
+  const feedTs = Number(fp.feed_ts ?? Date.now());
+  if (!pre || !post) return;
+
+  // Stale-feed guard
+  const age = Date.now() - feedTs;
+  if (age > STALE_FEED_MS) {
+    await logFp({ event, eventRowId, pre, post, feedTs, decision: "skip", skipReason: "stale_feed" });
+    return;
+  }
+
+  // WP must be uncalibrated-allowed in v1 (WARN mode). Returns finite or null.
+  const wpPre = winProb(pre, { allowUncalibrated: true });
+  const wpPost = winProb(post, { allowUncalibrated: true });
+  if (wpPre == null || wpPost == null) {
+    await logFp({ event, eventRowId, pre, post, feedTs, decision: "skip", skipReason: "wp_null" });
+    return;
+  }
+
+  // Pull latest LIVE_ML snapshot for this game (book line).
+  let book: BookLine | null = null;
+  try {
+    const { data } = await supabase
+      .from("market_snapshot")
+      .select("*")
+      .eq("game_id", String(event.game_id))
+      .eq("market_type", "live_ml")
+      .order("captured_at", { ascending: false })
+      .limit(2);
+    if (data && data.length > 0) {
+      const top = data[0];
+      const opp = data.find((r: any) => r.id !== top.id && r.sportsbook === top.sportsbook);
+      const impliedA = americanToImplied(Number(top.american_odds ?? 0));
+      const impliedB = opp ? americanToImplied(Number(opp.american_odds ?? 0)) : impliedA;
+      const devig = deVig(impliedA, impliedB);
+      const lastMoveTs = Date.parse(top.captured_at);
+      book = {
+        bookId: String(top.sportsbook ?? "unknown"),
+        market: "LIVE_ML",
+        impliedDevig: Number.isFinite(devig) ? devig : impliedA,
+        lastMoveTs: Number.isFinite(lastMoveTs) ? lastMoveTs : 0,
+        limit: Number(top.limit_amount ?? 0),
+        suspended: !!top.suspended,
+      };
+    }
+  } catch (e) {
+    console.error("[scout-live-edge] fair-price book load failed", e);
+  }
+
+  if (!book || book.suspended) {
+    await logFp({ event, eventRowId, pre, post, feedTs, wpPre, wpPost, decision: "skip", skipReason: "no_book_or_suspended" });
+    return;
+  }
+  if (book.lastMoveTs > feedTs) {
+    await logFp({ event, eventRowId, pre, post, feedTs, wpPre, wpPost, book, decision: "skip", skipReason: "book_reacted" });
+    return;
+  }
+  if ((book.limit ?? 0) < MIN_LIQUIDITY) {
+    await logFp({ event, eventRowId, pre, post, feedTs, wpPre, wpPost, book, decision: "skip", skipReason: "below_min_liquidity" });
+    return;
+  }
+
+  const edge = liveMlEdge(wpPost, book);
+  const fired = edge >= MIN_EV_PCT;
+  await logFp({
+    event, eventRowId, pre, post, feedTs, wpPre, wpPost, book, edge,
+    decision: fired ? "fire" : "skip",
+    skipReason: fired ? null : "below_min_ev",
+  });
+
+  if (fired) {
+    const msg =
+      `*[MLB Fair-Price WARN]* \`${event.event_type}\` ${event.game_id}\n` +
+      `ΔWP ${(wpPost - wpPre).toFixed(3)} | fair ${(wpPost * 100).toFixed(1)}% vs book ${(book.impliedDevig * 100).toFixed(1)}%\n` +
+      `edge ${(edge * 100).toFixed(2)}% · ${book.bookId} · limit $${book.limit ?? 0}\n` +
+      `_uncalibrated WP — measurement only, do not bet_`;
+    await sendFairPriceAdminAlert(msg);
+  }
+}
+
+async function logFp(params: {
+  event: any;
+  eventRowId: string;
+  pre: GameState;
+  post: GameState;
+  feedTs: number;
+  wpPre?: number | null;
+  wpPost?: number | null;
+  book?: BookLine | null;
+  edge?: number;
+  decision: "fire" | "skip";
+  skipReason?: string | null;
+}) {
+  try {
+    await supabase.from("mlb_fair_price_events").insert({
+      game_id: String(params.event.game_id),
+      event_type: String(params.event.event_type),
+      feed_ts: params.feedTs,
+      event_time: params.event.event_time,
+      pre_state: params.pre,
+      post_state: params.post,
+      wp_pre: params.wpPre ?? null,
+      wp_post: params.wpPost ?? null,
+      delta_wp: (params.wpPre != null && params.wpPost != null) ? params.wpPost - params.wpPre : null,
+      market: "LIVE_ML",
+      book_id: params.book?.bookId ?? null,
+      book_implied: null,
+      book_implied_devig: params.book?.impliedDevig ?? null,
+      book_last_move_ts: params.book?.lastMoveTs ?? null,
+      edge: params.edge ?? null,
+      ev_pct: params.edge ?? null,
+      ttl_ms: null,
+      gate_decision: params.decision,
+      skip_reason: params.skipReason ?? null,
+      severity: "WARN",
+      telegram_sent: params.decision === "fire",
+      telegram_admin_only: true,
+    });
+  } catch (e) {
+    console.error("[scout-live-edge] mlb_fair_price_events insert failed", e);
   }
 }
 
@@ -84,6 +232,12 @@ Deno.serve(async (req) => {
     storedEvent = data;
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "event insert failed" }, 500);
+  }
+
+  // 1b) MLB Fair-Price layer (admin-only WARN, log-only). Best-effort.
+  if (event.sport === "MLB" && event.fair_price) {
+    try { await evaluateMlbFairPrice(event, storedEvent.id); }
+    catch (e) { console.error("[scout-live-edge] fair-price block failed", e); }
   }
 
   // 2) baselines
