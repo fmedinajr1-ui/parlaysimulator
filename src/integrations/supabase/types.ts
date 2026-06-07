@@ -9340,6 +9340,9 @@ export type Database = {
           book_implied: number | null
           book_implied_devig: number | null
           book_last_move_ts: number | null
+          closing_attached_at: string | null
+          closing_book_implied_devig: number | null
+          clv_pct: number | null
           created_at: string
           delta_wp: number | null
           edge: number | null
@@ -9347,12 +9350,17 @@ export type Database = {
           event_time: string
           event_type: string
           feed_ts: number
+          final_away_score: number | null
+          final_home_score: number | null
           game_id: string
           gate_decision: string
+          home_won: boolean | null
           id: string
           market: string
+          outcome_attached_at: string | null
           post_state: Json
           pre_state: Json
+          realized_hit: boolean | null
           severity: string
           skip_reason: string | null
           telegram_admin_only: boolean
@@ -9366,6 +9374,9 @@ export type Database = {
           book_implied?: number | null
           book_implied_devig?: number | null
           book_last_move_ts?: number | null
+          closing_attached_at?: string | null
+          closing_book_implied_devig?: number | null
+          clv_pct?: number | null
           created_at?: string
           delta_wp?: number | null
           edge?: number | null
@@ -9373,12 +9384,17 @@ export type Database = {
           event_time: string
           event_type: string
           feed_ts: number
+          final_away_score?: number | null
+          final_home_score?: number | null
           game_id: string
           gate_decision: string
+          home_won?: boolean | null
           id?: string
           market?: string
+          outcome_attached_at?: string | null
           post_state: Json
           pre_state: Json
+          realized_hit?: boolean | null
           severity?: string
           skip_reason?: string | null
           telegram_admin_only?: boolean
@@ -9392,6 +9408,9 @@ export type Database = {
           book_implied?: number | null
           book_implied_devig?: number | null
           book_last_move_ts?: number | null
+          closing_attached_at?: string | null
+          closing_book_implied_devig?: number | null
+          clv_pct?: number | null
           created_at?: string
           delta_wp?: number | null
           edge?: number | null
@@ -9399,12 +9418,17 @@ export type Database = {
           event_time?: string
           event_type?: string
           feed_ts?: number
+          final_away_score?: number | null
+          final_home_score?: number | null
           game_id?: string
           gate_decision?: string
+          home_won?: boolean | null
           id?: string
           market?: string
+          outcome_attached_at?: string | null
           post_state?: Json
           pre_state?: Json
+          realized_hit?: boolean | null
           severity?: string
           skip_reason?: string | null
           telegram_admin_only?: boolean
