@@ -33,3 +33,4 @@ Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_m
 - [take_it_now prop gate](mem://logic/betting/take-it-now-prop-gate) — TAKE_IT_NOW_PROP_BLOCK allowlist + 30d break-even + n>=50 + 7d 40% brake, telemetry in stats.take_it_now_gate
 - [WNBA data collection](mem://logic/betting/wnba-data-collection) — Wired into team-markets-sync, refresh-todays-props phase2, nuke-sync-rosters; picks muted until n>=50 settled per signal/prop
 - [WNBA backtest weighting](mem://logic/betting/wnba-backtest-weighting) — Backtest rows weight 0.7 in gates; 3 edge fns: box scores, odds, signal replay
+- [MLB fair-price v1](mem://logic/betting/mlb-fair-price-v1) — Latency-arb Tier-1 layer; admin-only WARN, uncalibrated WP, log to mlb_fair_price_events
