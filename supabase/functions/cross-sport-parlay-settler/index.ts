@@ -393,6 +393,10 @@ Deno.serve(async (req) => {
 
       for (const r of legResults) {
         if (r.result === "void") continue;
+        // Only emit leg-level feedback for the original cross_sport_* family.
+        // Fade and optimal_combo strategies persist their per-leg detail in
+        // legs_graded; they don't participate in the cross-sport feedback loop.
+        if (!par.strategy_name.startsWith("cross_sport_") && par.strategy_name !== "ladder_challenge" && par.strategy_name !== "mega_lottery_scanner") continue;
         feedbackRows.push({
           parlay_id: par.id,
           parlay_date: par.parlay_date,
