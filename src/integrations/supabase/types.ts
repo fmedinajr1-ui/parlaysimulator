@@ -9328,6 +9328,87 @@ export type Database = {
         }
         Relationships: []
       }
+      mlb_fair_price_events: {
+        Row: {
+          book_id: string | null
+          book_implied: number | null
+          book_implied_devig: number | null
+          book_last_move_ts: number | null
+          created_at: string
+          delta_wp: number | null
+          edge: number | null
+          ev_pct: number | null
+          event_time: string
+          event_type: string
+          feed_ts: number
+          game_id: string
+          gate_decision: string
+          id: string
+          market: string
+          post_state: Json
+          pre_state: Json
+          severity: string
+          skip_reason: string | null
+          telegram_admin_only: boolean
+          telegram_sent: boolean
+          ttl_ms: number | null
+          wp_post: number | null
+          wp_pre: number | null
+        }
+        Insert: {
+          book_id?: string | null
+          book_implied?: number | null
+          book_implied_devig?: number | null
+          book_last_move_ts?: number | null
+          created_at?: string
+          delta_wp?: number | null
+          edge?: number | null
+          ev_pct?: number | null
+          event_time: string
+          event_type: string
+          feed_ts: number
+          game_id: string
+          gate_decision: string
+          id?: string
+          market?: string
+          post_state: Json
+          pre_state: Json
+          severity?: string
+          skip_reason?: string | null
+          telegram_admin_only?: boolean
+          telegram_sent?: boolean
+          ttl_ms?: number | null
+          wp_post?: number | null
+          wp_pre?: number | null
+        }
+        Update: {
+          book_id?: string | null
+          book_implied?: number | null
+          book_implied_devig?: number | null
+          book_last_move_ts?: number | null
+          created_at?: string
+          delta_wp?: number | null
+          edge?: number | null
+          ev_pct?: number | null
+          event_time?: string
+          event_type?: string
+          feed_ts?: number
+          game_id?: string
+          gate_decision?: string
+          id?: string
+          market?: string
+          post_state?: Json
+          pre_state?: Json
+          severity?: string
+          skip_reason?: string | null
+          telegram_admin_only?: boolean
+          telegram_sent?: boolean
+          ttl_ms?: number | null
+          wp_post?: number | null
+          wp_pre?: number | null
+        }
+        Relationships: []
+      }
       mlb_no_hr_team_analysis: {
         Row: {
           actual_team_hr: number | null
