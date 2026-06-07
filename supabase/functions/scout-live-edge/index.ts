@@ -83,6 +83,8 @@ async function evaluateMlbFairPrice(event: any, eventRowId: string) {
 
   // Pull latest LIVE_ML snapshot for this game (book line).
   let book: BookLine | null = null;
+  let bookPriceAmerican: number | null = null;
+  let oppositePriceAmerican: number | null = null;
   try {
     const { data } = await supabase
       .from("market_snapshot")
@@ -94,8 +96,12 @@ async function evaluateMlbFairPrice(event: any, eventRowId: string) {
     if (data && data.length > 0) {
       const top = data[0];
       const opp = data.find((r: any) => r.id !== top.id && r.sportsbook === top.sportsbook);
-      const impliedA = americanToImplied(Number(top.american_odds ?? 0));
-      const impliedB = opp ? americanToImplied(Number(opp.american_odds ?? 0)) : impliedA;
+      const topOdds = Number(top.american_odds ?? top.odds ?? 0);
+      const oppOdds = opp ? Number(opp.american_odds ?? opp.odds ?? 0) : topOdds;
+      bookPriceAmerican = Number.isFinite(topOdds) ? Math.round(topOdds) : null;
+      oppositePriceAmerican = opp && Number.isFinite(oppOdds) ? Math.round(oppOdds) : null;
+      const impliedA = americanToImplied(topOdds);
+      const impliedB = opp ? americanToImplied(oppOdds) : impliedA;
       const devig = deVig(impliedA, impliedB);
       const lastMoveTs = Date.parse(top.captured_at);
       book = {
@@ -126,8 +132,14 @@ async function evaluateMlbFairPrice(event: any, eventRowId: string) {
 
   const edge = liveMlEdge(wpPost, book);
   const fired = edge >= MIN_EV_PCT;
+  // Side fired is implied by the sign of the edge against the book's modeled side.
+  // Current evaluator always compares wp_post (home) vs book home-side devig, so fires are HOME.
+  const sideFired: "HOME" | "AWAY" = edge >= 0 ? "HOME" : "AWAY";
   await logFp({
     event, eventRowId, pre, post, feedTs, wpPre, wpPost, book, edge,
+    side: sideFired,
+    bookPrice: bookPriceAmerican,
+    oppositePrice: oppositePriceAmerican,
     decision: fired ? "fire" : "skip",
     skipReason: fired ? null : "below_min_ev",
   });
@@ -152,6 +164,9 @@ async function logFp(params: {
   wpPost?: number | null;
   book?: BookLine | null;
   edge?: number;
+  side?: "HOME" | "AWAY" | null;
+  bookPrice?: number | null;
+  oppositePrice?: number | null;
   decision: "fire" | "skip";
   skipReason?: string | null;
 }) {
@@ -179,6 +194,9 @@ async function logFp(params: {
       severity: "WARN",
       telegram_sent: params.decision === "fire",
       telegram_admin_only: true,
+      side: params.side ?? null,
+      book_price: params.bookPrice ?? null,
+      opposite_book_price: params.oppositePrice ?? null,
     });
   } catch (e) {
     console.error("[scout-live-edge] mlb_fair_price_events insert failed", e);
