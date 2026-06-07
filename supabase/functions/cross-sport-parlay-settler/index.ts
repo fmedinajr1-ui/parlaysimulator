@@ -33,6 +33,9 @@ const SPORT_ALIASES: Record<string, string> = {
   nhl: "icehockey_nhl", icehockey_nhl: "icehockey_nhl",
   ncaab: "basketball_ncaab", basketball_ncaab: "basketball_ncaab",
   nfl: "americanfootball_nfl", americanfootball_nfl: "americanfootball_nfl",
+  wnba: "basketball_wnba", basketball_wnba: "basketball_wnba",
+  mma: "mma_mixed_martial_arts", mma_mixed_martial_arts: "mma_mixed_martial_arts",
+  ncaaf: "americanfootball_ncaaf", americanfootball_ncaaf: "americanfootball_ncaaf",
 };
 function canonSport(s: unknown): string | null {
   const k = String(s ?? "").toLowerCase();
