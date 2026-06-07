@@ -8,6 +8,7 @@ import { winProb } from "../_shared/mlb-fair-price/win-prob.ts";
 import { MIN_EV_PCT, MIN_LIQUIDITY, STALE_FEED_MS } from "../_shared/mlb-fair-price/constants.ts";
 import { americanToImplied, deVig, liveMlEdge, type BookLine } from "../_shared/mlb-fair-price/edge.ts";
 import type { GameState } from "../_shared/mlb-fair-price/state.ts";
+import { buildFairPriceAdminPayload } from "../_shared/mlb-fair-price/alert-payload.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,12 +51,7 @@ async function sendTelegram(message: string) {
 async function sendFairPriceAdminAlert(message: string) {
   try {
     await supabase.functions.invoke("bot-send-telegram", {
-      body: {
-        message,
-        parse_mode: "Markdown",
-        admin_only: true,
-        type: "mlb_fair_price",
-      },
+      body: buildFairPriceAdminPayload(message),
     });
   } catch (e) {
     console.error("[scout-live-edge] fair-price telegram send failed", e);
