@@ -16,6 +16,12 @@ const corsHeaders = {
 
 const MIN_LEGS = 2;
 const MAX_LEGS = 5;
+// Only consider games tipping off within this window. Prevents stale
+// future-dated alerts (weeks/months out) from leaking into the parlay.
+const MAX_LOOKAHEAD_HOURS = 36;
+// h2h is moneyline (team-vs-team); Over/Under semantics don't apply and
+// the generator has no clean way to invert it into a team-fade. Exclude.
+const EXCLUDED_PROP_TYPES = new Set(['h2h', 'moneyline']);
 
 type Alert = {
   id: string;
@@ -74,11 +80,14 @@ Deno.serve(async (req) => {
 
   try {
     // Pull velocity_spike alerts for games that haven't started yet.
+    const nowIso = new Date().toISOString();
+    const cutoffIso = new Date(Date.now() + MAX_LOOKAHEAD_HOURS * 3600 * 1000).toISOString();
     const { data, error } = await supabase
       .from('fanduel_prediction_alerts')
       .select('id,player_name,sport,prop_type,prediction,event_id,event_description,commence_time,metadata')
       .eq('signal_type', 'velocity_spike')
-      .gte('commence_time', new Date().toISOString())
+      .gte('commence_time', nowIso)
+      .lte('commence_time', cutoffIso)
       .order('commence_time', { ascending: true })
       .limit(500);
     if (error) throw error;
@@ -86,6 +95,8 @@ Deno.serve(async (req) => {
     const pool: Alert[] = (data ?? []).filter((a: any) => {
       const label = a?.metadata?.strength?.label;
       const verdict = a?.metadata?.engine_reasoning?.verdict;
+      const propType = (a?.prop_type ?? '').toString().toLowerCase();
+      if (EXCLUDED_PROP_TYPES.has(propType)) return false;
       return (label === 'STRONG_FADE' || label === 'LEAN_FADE') && verdict === 'NEUTRAL';
     });
 
