@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { buildPlayerReasoning, buildGroupReasoning, type PlayerReasoning } from '../_shared/alert-explainer.ts';
 import { loadRoleContexts, dangerBandCheck, type PlayerRoleContext } from '../_shared/player-role-context.ts';
-import { loadHardRockLines, checkHrbLine, type HardRockLine } from '../_shared/hardrock-lines.ts';
+import { loadFanduelLines, checkFdLine, type FanduelLine } from '../_shared/fanduel-lines.ts';
 import {
   loadVelocitySpikeStrength,
   scoreVelocitySpike,
@@ -227,19 +227,19 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   );
 
-  const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0, dropped_no_hrb: 0 };
+  const stats = { snapshots: 0, cascades: 0, take_it_now: 0, velocity_spike: 0, deduped: 0, errors: 0, dropped_no_fd: 0 };
   let dropped_legs_total = 0;
   // Phase 1 telemetry
   const phase1 = { poison_suppressed: 0, slate_blowout_suppressed: 0, accuracy_flip_emitted: 0 };
   const slateBlowoutCohorts = new Set<string>(); // `${sport}|${propType}|${side}`
   const explainerCache = reasoningCache();
 
-  // Load Hard Rock prop lines once per run. Empty map = HRB has no coverage,
+  // Load FanDuel prop lines once per run. Empty map = FD has no coverage,
   // in which case we skip broadcasting (better silent than untradable).
-  const hrbLines = await loadHardRockLines();
-  const hrbAvailable = hrbLines.size > 0;
-  if (!hrbAvailable) {
-    console.warn('[signal-alert-engine] HRB lines unavailable — all NBA alerts will be suppressed this run');
+  const fdLines = await loadFanduelLines();
+  const fdAvailable = fdLines.size > 0;
+  if (!fdAvailable) {
+    console.warn('[signal-alert-engine] FD lines unavailable — all NBA alerts will be suppressed this run');
   }
 
   // Load combined outcome+CLV strength stats for velocity_spike once per run.
@@ -476,18 +476,18 @@ Deno.serve(async (req) => {
 
       const first = cascadeMembers[0];
 
-      // Hard Rock gate — drop legs that aren't tradable on HRB at the alerted line.
-      let hrbFilteredMembers = cascadeMembers;
-      const hrbDropped: Array<{ player: string; reason: string }> = [];
-      const hrbByPlayer = new Map<string, HardRockLine>();
+      // FanDuel gate — drop legs that aren't tradable on FD at the alerted line.
+      let fdFilteredMembers = cascadeMembers;
+      const fdDropped: Array<{ player: string; reason: string }> = [];
+      const fdByPlayer = new Map<string, FanduelLine>();
       if (normaliseSport(first.sport) === 'NBA') {
-        if (!hrbAvailable) {
-          stats.dropped_no_hrb += 1;
+        if (!fdAvailable) {
+          stats.dropped_no_fd += 1;
           continue;
         }
-        hrbFilteredMembers = cascadeMembers.filter((m) => {
+        fdFilteredMembers = cascadeMembers.filter((m) => {
           if (!m.player_name || !m.prop_type || !m.event_id) return false;
-          const r = checkHrbLine(hrbLines, {
+          const r = checkFdLine(fdLines, {
             event_id: m.event_id,
             player: m.player_name,
             prop_type: m.prop_type,
@@ -495,22 +495,22 @@ Deno.serve(async (req) => {
             line: Number(m.current_line ?? 0),
           });
           if (!r.ok) {
-            hrbDropped.push({ player: m.player_name, reason: r.reason ?? 'hrb_reject' });
+            fdDropped.push({ player: m.player_name, reason: r.reason ?? 'fd_reject' });
             return false;
           }
-          if (r.hrb && m.player_name) hrbByPlayer.set(m.player_name.toLowerCase(), r.hrb);
+          if (r.hrb && m.player_name) fdByPlayer.set(m.player_name.toLowerCase(), r.hrb);
           return true;
         });
-        const hrbDistinct = Array.from(new Set(hrbFilteredMembers.map((m) => m.player_name)));
-        if (hrbDistinct.length < CASCADE_MIN_PLAYERS) {
-          stats.dropped_no_hrb += 1;
-          console.log(`[signal-alert-engine] cascade suppressed by HRB gate (${groupKey}) — ${hrbDropped.length} legs dropped`);
+        const fdDistinct = Array.from(new Set(fdFilteredMembers.map((m) => m.player_name)));
+        if (fdDistinct.length < CASCADE_MIN_PLAYERS) {
+          stats.dropped_no_fd += 1;
+          console.log(`[signal-alert-engine] cascade suppressed by FD gate (${groupKey}) — ${fdDropped.length} legs dropped`);
           continue;
         }
       }
 
       const avgConfidence = Math.round(
-        hrbFilteredMembers.reduce((sum, m) => sum + m.derived_confidence, 0) / hrbFilteredMembers.length,
+        fdFilteredMembers.reduce((sum, m) => sum + m.derived_confidence, 0) / fdFilteredMembers.length,
       );
       if (avgConfidence < MIN_CONFIDENCE) continue;
 
@@ -519,7 +519,7 @@ Deno.serve(async (req) => {
 
       // Build per-player reasoning in parallel (≤8 players typically)
       const reasonings = await Promise.all(
-        hrbFilteredMembers.map((m) => {
+        fdFilteredMembers.map((m) => {
           const overP = Number(m.over_price ?? NaN);
           const underP = Number(m.under_price ?? NaN);
           const gap = Number.isFinite(overP) && Number.isFinite(underP) ? Math.abs(overP - underP) : null;
@@ -527,21 +527,21 @@ Deno.serve(async (req) => {
         }),
       );
 
-      const playerBreakdownRaw = hrbFilteredMembers.map((m, i) => {
+      const playerBreakdownRaw = fdFilteredMembers.map((m, i) => {
         const ctx = m.player_name ? roleCtxMap.get(m.player_name.toLowerCase()) ?? null : null;
-        const hrb = m.player_name ? hrbByPlayer.get(m.player_name.toLowerCase()) ?? null : null;
-        const hrbPriceForSide = hrb ? (m.derived_side === 'Over' ? hrb.over_price : hrb.under_price) : null;
+        const fd = m.player_name ? fdByPlayer.get(m.player_name.toLowerCase()) ?? null : null;
+        const fdPriceForSide = fd ? (m.derived_side === 'Over' ? fd.over_price : fd.under_price) : null;
         return {
           player: m.player_name,
           confidence: m.derived_confidence,
           composite: m.derived_score,
-          // Prefer the actual HRB line when available so the alert shows what the user can book.
-          line: hrb ? hrb.line : Number(m.current_line ?? 0),
+          // Prefer the actual FD line when available so the alert shows what the user can book.
+          line: fd ? fd.line : Number(m.current_line ?? 0),
           side: m.derived_side,
           pvs_tier: m.pvs_tier,
-          hrb_line: hrb ? hrb.line : null,
-          hrb_price: hrbPriceForSide,
-          book: hrb ? 'hardrockbet' : (m.bookmaker ?? null),
+          fd_line: fd ? fd.line : null,
+          fd_price: fdPriceForSide,
+          book: fd ? 'fanduel' : (m.bookmaker ?? null),
           role_context: ctx
             ? {
                 archetype: ctx.archetype,
@@ -580,7 +580,7 @@ Deno.serve(async (req) => {
         if (k in verdictCounts) verdictCounts[k] += 1;
       }
 
-      const firstHrb = first.player_name ? hrbByPlayer.get(first.player_name.toLowerCase()) ?? null : null;
+      const firstFd = first.player_name ? fdByPlayer.get(first.player_name.toLowerCase()) ?? null : null;
       const { error: insErr } = await supabase.from('fanduel_prediction_alerts').insert({
         player_name: `TEAM CASCADE (${distinctPlayers.slice(0, 3).join(', ')}${distinctPlayers.length > 3 ? '…' : ''})`,
         event_id: first.event_id,
@@ -589,24 +589,24 @@ Deno.serve(async (req) => {
         confidence: avgConfidence,
         prop_type: first.prop_type,
         sport: normaliseSport(first.sport),
-        bookmaker: hrbByPlayer.size > 0 ? 'hardrockbet' : (first.bookmaker ?? 'unknown'),
+        bookmaker: fdByPlayer.size > 0 ? 'fanduel' : (first.bookmaker ?? 'unknown'),
         event_description: first.game_description,
         commence_time: first.commence_time,
         metadata: {
           players_involved: distinctPlayers.length,
           direction: first.derived_side,
-          line: firstHrb ? firstHrb.line : first.current_line,
+          line: firstFd ? firstFd.line : first.current_line,
           alignment: 100,
           player_breakdown: playerBreakdown,
           group_reasoning: groupReasoning,
           verdict_counts: verdictCounts,
           dropped_legs: dedupedDropped,
-          hrb_dropped_legs: hrbDropped,
+          fd_dropped_legs: fdDropped,
           danger_band_filtered: dedupedDropped.length,
           explainer_version: 'v1',
           source: 'unified_props_price_derived',
-          source_book: hrbByPlayer.size > 0 ? 'hardrockbet' : null,
-          hrb_verified: hrbByPlayer.size > 0,
+          source_book: fdByPlayer.size > 0 ? 'fanduel' : null,
+          fd_verified: fdByPlayer.size > 0,
         },
       });
       if (insErr) {
@@ -674,17 +674,17 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // HRB gate (NBA only — other sports not yet covered by HRB feed here)
-        let hrbInfo: HardRockLine | null = null;
+        // FD gate (NBA only — other sports not yet covered by FD feed here)
+        let fdInfo: FanduelLine | null = null;
         if (normaliseSport(p.sport) === 'NBA') {
-          if (!hrbAvailable) { stats.dropped_no_hrb += 1; continue; }
+          if (!fdAvailable) { stats.dropped_no_fd += 1; continue; }
           if (!p.player_name || !p.prop_type) continue;
-          const r = checkHrbLine(hrbLines, {
+          const r = checkFdLine(fdLines, {
             event_id: p.event_id, player: p.player_name, prop_type: p.prop_type,
             side: p.derived_side, line: Number(p.current_line ?? 0),
           });
-          if (!r.ok) { stats.dropped_no_hrb += 1; continue; }
-          hrbInfo = r.hrb ?? null;
+          if (!r.ok) { stats.dropped_no_fd += 1; continue; }
+          fdInfo = r.hrb ?? null;
         }
 
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
@@ -700,17 +700,17 @@ Deno.serve(async (req) => {
           confidence: Math.round(conf),
           prop_type: p.prop_type,
           sport: normaliseSport(p.sport),
-          bookmaker: hrbInfo ? 'hardrockbet' : (p.bookmaker ?? 'unknown'),
+          bookmaker: fdInfo ? 'fanduel' : (p.bookmaker ?? 'unknown'),
           event_description: p.game_description,
           commence_time: p.commence_time,
           metadata: {
             detector: 'sharpest_juice_gap',
             juice_gap: gap,
-            over_price: hrbInfo ? hrbInfo.over_price : p.over_price,
-            under_price: hrbInfo ? hrbInfo.under_price : p.under_price,
-            line: hrbInfo ? hrbInfo.line : p.current_line,
-            source_book: hrbInfo ? 'hardrockbet' : null,
-            hrb_verified: !!hrbInfo,
+            over_price: fdInfo ? fdInfo.over_price : p.over_price,
+            under_price: fdInfo ? fdInfo.under_price : p.under_price,
+            line: fdInfo ? fdInfo.line : p.current_line,
+            source_book: fdInfo ? 'fanduel' : null,
+            fd_verified: !!fdInfo,
             pvs_tier: p.pvs_tier,
             engine_reasoning,
             explainer_version: 'v1',
@@ -759,17 +759,17 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // HRB gate
-          let hrbInfo: HardRockLine | null = null;
+          // FD gate
+          let fdInfo: FanduelLine | null = null;
           if (normaliseSport(p.sport) === 'NBA') {
-            if (!hrbAvailable) { stats.dropped_no_hrb += 1; continue; }
+            if (!fdAvailable) { stats.dropped_no_fd += 1; continue; }
             if (!p.prop_type) continue;
-            const r = checkHrbLine(hrbLines, {
+            const r = checkFdLine(fdLines, {
               event_id: p.event_id, player: p.player_name, prop_type: p.prop_type,
               side: p.derived_side, line: Number(p.current_line ?? 0),
             });
-            if (!r.ok) { stats.dropped_no_hrb += 1; continue; }
-            hrbInfo = r.hrb ?? null;
+            if (!r.ok) { stats.dropped_no_fd += 1; continue; }
+            fdInfo = r.hrb ?? null;
           }
 
           const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
@@ -837,7 +837,7 @@ Deno.serve(async (req) => {
             confidence: broadcastConfidence,
             prop_type: p.prop_type,
             sport: normaliseSport(p.sport),
-            bookmaker: hrbInfo ? 'hardrockbet' : (p.bookmaker ?? 'unknown'),
+            bookmaker: fdInfo ? 'fanduel' : (p.bookmaker ?? 'unknown'),
             event_description: p.game_description,
             commence_time: p.commence_time,
             metadata: {
@@ -869,11 +869,11 @@ Deno.serve(async (req) => {
               cohort_size: members.length,
               cohort_avg_confidence: Math.round(cohortAvg * 10) / 10,
               percentile_rank: Math.round((1 - winners.indexOf(p) / sorted.length) * 1000) / 10,
-              over_price: hrbInfo ? hrbInfo.over_price : p.over_price,
-              under_price: hrbInfo ? hrbInfo.under_price : p.under_price,
-              line: hrbInfo ? hrbInfo.line : p.current_line,
-              source_book: hrbInfo ? 'hardrockbet' : null,
-              hrb_verified: !!hrbInfo,
+              over_price: fdInfo ? fdInfo.over_price : p.over_price,
+              under_price: fdInfo ? fdInfo.under_price : p.under_price,
+              line: fdInfo ? fdInfo.line : p.current_line,
+              source_book: fdInfo ? 'fanduel' : null,
+              fd_verified: !!fdInfo,
               engine_reasoning,
               explainer_version: 'v1',
               source: 'unified_props_price_derived',
