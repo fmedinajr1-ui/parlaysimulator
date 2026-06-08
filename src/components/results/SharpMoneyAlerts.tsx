@@ -142,6 +142,20 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
     return names[key] || key;
   };
 
+  const getSportLabel = (sport: string) => {
+    const s = (sport || '').toLowerCase();
+    if (s.includes('basketball_nba')) return 'NBA';
+    if (s.includes('basketball_wnba')) return 'WNBA';
+    if (s.includes('baseball_mlb')) return 'MLB';
+    if (s.startsWith('tennis')) return 'Tennis';
+    if (s.includes('icehockey_nhl')) return 'NHL';
+    if (s.includes('americanfootball_nfl')) return 'NFL';
+    if (s.includes('ncaab')) return 'NCAAB';
+    if (s.includes('ncaaf')) return 'NCAAF';
+    if (s.includes('soccer')) return 'Soccer';
+    return sport;
+  };
+
   if (isLoading) {
     return (
       <FeedCard delay={delay}>
@@ -207,7 +221,7 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1 mb-0.5 flex-wrap">
                   <Badge variant="outline" className="text-[10px] px-1 py-0">
-                    {alert.sport}
+                    {getSportLabel(alert.sport)}
                   </Badge>
                   <Badge variant="secondary" className="text-[10px] px-1 py-0">
                     {getBookmakerName(alert.bookmaker)}
