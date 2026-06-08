@@ -186,6 +186,47 @@ export default function MlbFairPriceDashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Resolve team names from MLB Stats API for any game_id (mlb_<gamePk>) we don't already have a score join for.
+  useEffect(() => {
+    const unresolved = Array.from(new Set(events.map(e => e.game_id).filter(Boolean)))
+      .filter(gid => gid.startsWith("mlb_") && !scores[gid] && !mlbInfo[gid])
+      .map(gid => gid.replace(/^mlb_/, ""))
+      .filter(pk => /^\d+$/.test(pk));
+    if (unresolved.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&gamePks=${unresolved.join(",")}`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const j = await r.json();
+        const map: Record<string, Score> = {};
+        for (const day of j?.dates ?? []) {
+          for (const g of day?.games ?? []) {
+            const pk = String(g.gamePk);
+            const gid = `mlb_${pk}`;
+            map[gid] = {
+              event_id: gid,
+              home_team: g.teams?.home?.team?.name ?? null,
+              away_team: g.teams?.away?.team?.name ?? null,
+              home_score: g.teams?.home?.score ?? null,
+              away_score: g.teams?.away?.score ?? null,
+              game_status: g.status?.abstractGameState ?? g.status?.detailedState ?? null,
+              period: g.linescore?.currentInningOrdinal ?? null,
+              clock: g.linescore?.inningState ?? null,
+            };
+          }
+        }
+        if (!cancelled && Object.keys(map).length) {
+          setMlbInfo(prev => ({ ...prev, ...map }));
+        }
+      } catch (e) {
+        console.warn("[MlbFairPriceDashboard] MLB schedule lookup failed", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [events, scores, mlbInfo]);
+
   // Rollups
   const rollup24h = useMemo(() => {
     const fires = events.filter(e => e.gate_decision === "fire");
