@@ -198,6 +198,53 @@ export default function MlbFairPriceDashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Today's MLB slate (ET) — refreshes every 60s
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSlate() {
+      try {
+        // ET date
+        const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const y = etNow.getFullYear();
+        const m = String(etNow.getMonth() + 1).padStart(2, "0");
+        const d = String(etNow.getDate()).padStart(2, "0");
+        const date = `${y}-${m}-${d}`;
+        const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=linescore`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const j = await r.json();
+        const rows: typeof todaySlate = [];
+        for (const day of j?.dates ?? []) {
+          for (const g of day?.games ?? []) {
+            rows.push({
+              gamePk: g.gamePk,
+              gameId: `mlb_${g.gamePk}`,
+              home_team: g.teams?.home?.team?.name ?? "?",
+              away_team: g.teams?.away?.team?.name ?? "?",
+              game_status: g.status?.detailedState ?? g.status?.abstractGameState ?? "—",
+              start_iso: g.gameDate,
+              home_score: g.teams?.home?.score ?? null,
+              away_score: g.teams?.away?.score ?? null,
+              inning: g.linescore?.currentInningOrdinal
+                ? `${g.linescore.inningState ?? ""} ${g.linescore.currentInningOrdinal}`.trim()
+                : null,
+            });
+          }
+        }
+        rows.sort((a, b) => a.start_iso.localeCompare(b.start_iso));
+        if (!cancelled) {
+          setTodaySlate(rows);
+          setTodayDate(date);
+        }
+      } catch (e) {
+        console.warn("[MlbFairPriceDashboard] today slate failed", e);
+      }
+    }
+    loadSlate();
+    const id = setInterval(loadSlate, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   // Resolve team names from MLB Stats API for any game_id (mlb_<gamePk>) we don't already have a score join for.
   useEffect(() => {
     const unresolved = Array.from(new Set(events.map(e => e.game_id).filter(Boolean)))
