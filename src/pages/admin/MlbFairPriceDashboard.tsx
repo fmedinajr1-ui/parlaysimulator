@@ -592,12 +592,128 @@ export default function MlbFairPriceDashboard() {
         </Card>
 
         {/* Events feed */}
+        {(() => {
+          const DELAY_MS = 5000;
+          const delayCatches = events
+            .filter(e => e.feed_ts != null && e.book_last_move_ts != null && e.book_price != null && (e.feed_ts - e.book_last_move_ts) >= DELAY_MS)
+            .map(e => ({ ev: e, lag: (e.feed_ts! - e.book_last_move_ts!) }))
+            .sort((a, b) => b.lag - a.lag);
+          const noBookCount = events.filter(e => e.skip_reason === "no_book_or_suspended" || e.book_id == null).length;
+          const realLineFires = events.filter(e => e.gate_decision === "fire" && e.book_price != null).length;
+          const maxLag = delayCatches[0]?.lag ?? 1;
+          const allNoBook = events.length > 0 && events.every(e => e.book_id == null);
+
+          return (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span>Delay catches (≥ 5s book lag)</span>
+                  <span className="text-xs text-muted-foreground font-normal">{delayCatches.length} caught · 24h</span>
+                </CardTitle>
+                <div className="flex flex-wrap gap-2 pt-2 text-[11px]">
+                  <Badge variant="outline" className="bg-amber-500/10 border-amber-500/30 text-amber-400 font-mono">
+                    Delay catches: {delayCatches.length}
+                  </Badge>
+                  <Badge variant="outline" className="bg-muted/40 font-mono text-muted-foreground">
+                    No book / suspended: {noBookCount}
+                  </Badge>
+                  <Badge variant="outline" className="bg-emerald-500/10 border-emerald-500/30 text-emerald-400 font-mono">
+                    Real-line fires: {realLineFires}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {allNoBook && (
+                  <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+                    <div className="font-semibold text-amber-300 mb-1">⚠ No book data in last 24h</div>
+                    <p className="text-amber-200/80">
+                      The fair-price engine logged {events.length} events but every one was{" "}
+                      <span className="font-mono">no_book_or_suspended</span>. The book snapshot feed
+                      isn't writing rows, so lag cannot be measured. Fix upstream scraper to unblock
+                      this view.
+                    </p>
+                  </div>
+                )}
+                {delayCatches.length === 0 && !allNoBook ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">
+                    No book reactions slower than 5s in the last 24h. Books are keeping up.
+                  </p>
+                ) : delayCatches.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Time</TableHead>
+                          <TableHead>Game</TableHead>
+                          <TableHead>Event</TableHead>
+                          <TableHead>Player</TableHead>
+                          <TableHead>Side</TableHead>
+                          <TableHead>Book</TableHead>
+                          <TableHead className="text-right">Lag</TableHead>
+                          <TableHead className="text-right">Edge</TableHead>
+                          <TableHead>Decision</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {delayCatches.slice(0, 100).map(({ ev: e, lag }) => {
+                          const sc = scores[e.game_id];
+                          const trig = triggers[`${e.game_id}|${e.event_time}|${e.event_type}`];
+                          const lagSec = (lag / 1000).toFixed(1);
+                          const color = lag >= 10000 ? "text-red-400" : "text-amber-400";
+                          const barColor = lag >= 10000 ? "bg-red-500/50" : "bg-amber-500/50";
+                          const w = Math.max(8, (lag / maxLag) * 100);
+                          return (
+                            <TableRow key={e.id} className="text-xs">
+                              <TableCell className="font-mono text-[11px] whitespace-nowrap">{fmtTime(e.created_at)}</TableCell>
+                              <TableCell>
+                                <button
+                                  onClick={() => setOpenGameId(e.game_id)}
+                                  className="text-primary hover:underline truncate max-w-[160px] inline-block align-middle"
+                                >
+                                  {sc ? `${sc.away_team}@${sc.home_team}` : e.game_id}
+                                </button>
+                              </TableCell>
+                              <TableCell className="font-mono text-[10px] text-muted-foreground">{e.event_type ?? "—"}</TableCell>
+                              <TableCell className="text-[11px]">
+                                {trig?.player_name ? trig.player_name : <span className="text-muted-foreground">—</span>}
+                              </TableCell>
+                              <TableCell>{sideBadge(e.side)}</TableCell>
+                              <TableCell className="font-mono text-[11px]">{e.book_id ?? "—"}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <div className="relative h-4 w-24 bg-muted/30 rounded overflow-hidden">
+                                    <div className={`absolute inset-y-0 left-0 ${barColor}`} style={{ width: `${w}%` }} />
+                                  </div>
+                                  <span className={`font-mono text-[11px] ${color}`}>{lagSec}s</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-mono">{pct(e.edge, 2)}</TableCell>
+                              <TableCell>{decisionBadge(e.gate_decision)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+        {/* Raw events feed (collapsed by default) */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center justify-between">
-              <span>Events feed (last 24h, max 200)</span>
+              <span>Raw events feed (last 24h, max 200) — debug</span>
               <span className="text-xs text-muted-foreground font-normal">{filteredEvents.length} shown</span>
             </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground mb-3">
+                Show raw event stream
+              </summary>
             <div className="flex flex-wrap gap-2 pt-2">
               <FilterChip label="All" active={filter.decision === "all"} onClick={() => setFilter(f => ({ ...f, decision: "all" }))} />
               <FilterChip label="FIRE" active={filter.decision === "fire"} onClick={() => setFilter(f => ({ ...f, decision: "fire" }))} />
@@ -624,8 +740,6 @@ export default function MlbFairPriceDashboard() {
                 />
               </div>
             </div>
-          </CardHeader>
-          <CardContent>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
