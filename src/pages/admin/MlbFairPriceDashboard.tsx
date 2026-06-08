@@ -450,20 +450,15 @@ export default function MlbFairPriceDashboard() {
               onClick={async () => {
                 setPinging(true);
                 try {
-                  const { data, error } = await supabase.functions.invoke("mlb-fair-price-digest", {
-                    method: "POST",
-                    body: { mode: "pulse", force: 1 },
-                  });
-                  // Force query-string variant for cron-style call too
                   const fnUrl = `${(import.meta as any).env.VITE_SUPABASE_URL}/functions/v1/mlb-fair-price-digest?mode=pulse&force=1`;
                   const tokenRes = await supabase.auth.getSession();
                   const tok = tokenRes.data.session?.access_token ?? (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY;
                   const r = await fetch(fnUrl, { method: "POST", headers: { Authorization: `Bearer ${tok}` } });
                   const j = await r.json().catch(() => ({}));
-                  if (error || j?.ok === false) {
-                    toast.error(`Ping failed: ${error?.message || j?.error || "unknown"}`);
+                  if (!r.ok || j?.ok === false) {
+                    toast.error(`Ping failed: ${j?.error || r.statusText}`);
                   } else {
-                    toast.success(`Admin Telegram sent · evals=${j?.evals ?? data?.evals ?? 0} · outage=${j?.outage ?? data?.outage ?? false}`);
+                    toast.success(`Admin Telegram sent · evals=${j?.evals ?? 0} · outage=${j?.outage ?? false}`);
                   }
                 } catch (e) {
                   toast.error(`Ping error: ${e instanceof Error ? e.message : String(e)}`);
