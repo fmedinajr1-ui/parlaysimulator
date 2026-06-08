@@ -10,6 +10,12 @@ import { Trophy } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
+export function computeDefaultSport(date: Date = new Date()): string {
+  const month = date.getMonth() + 1; // 1-12
+  if (month >= 4 && month <= 10) return 'MLB';
+  return 'NBA';
+}
+
 interface SubmitLegModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -19,12 +25,7 @@ interface SubmitLegModalProps {
 
 export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: SubmitLegModalProps) {
   // Pick a sensible default based on the current month (MLB Apr-Oct, Tennis year-round fallback to NBA).
-  const defaultSport = useMemo(() => {
-    const month = new Date().getMonth() + 1; // 1-12
-    if (month >= 4 && month <= 10) return 'MLB';
-    if (month >= 11 || month <= 3) return 'NBA';
-    return 'NBA';
-  }, []);
+  const defaultSport = useMemo(() => computeDefaultSport(), []);
 
   const [description, setDescription] = useState('');
   const [odds, setOdds] = useState('');

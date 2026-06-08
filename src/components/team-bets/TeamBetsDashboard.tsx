@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TeamBetCard } from './TeamBetCard';
 
-const SPORTS = ['ALL', 'MLB', 'TENNIS', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA', 'BASEBALL'];
+export const SPORTS = ['ALL', 'MLB', 'TENNIS', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA', 'BASEBALL'];
 const BET_TYPES = [
   { id: 'all', label: 'All Bets', icon: Activity },
   { id: 'spread', label: 'Spreads', icon: TrendingUp },
@@ -52,7 +52,7 @@ interface GameBet {
 }
 
 // Map sport keys to display names
-function getSportDisplay(sport: string): string {
+export function getSportDisplay(sport: string): string {
   const map: Record<string, string> = {
     'basketball_nba': 'NBA',
     'icehockey_nhl': 'NHL',
@@ -68,7 +68,7 @@ function getSportDisplay(sport: string): string {
   return map[sport] || sport.toUpperCase();
 }
 
-function getSportKey(display: string): string {
+export function getSportKey(display: string): string {
   const map: Record<string, string> = {
     'NBA': 'basketball_nba',
     'NHL': 'icehockey_nhl',

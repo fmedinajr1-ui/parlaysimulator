@@ -7,6 +7,20 @@ import { Badge } from "@/components/ui/badge";
 import { Zap, TrendingUp, TrendingDown, Clock, BatteryLow } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
+export function getSharpSportLabel(sport: string): string {
+  const s = (sport || '').toLowerCase();
+  if (s.includes('basketball_nba')) return 'NBA';
+  if (s.includes('basketball_wnba')) return 'WNBA';
+  if (s.includes('baseball_mlb')) return 'MLB';
+  if (s.startsWith('tennis')) return 'Tennis';
+  if (s.includes('icehockey_nhl')) return 'NHL';
+  if (s.includes('americanfootball_nfl')) return 'NFL';
+  if (s.includes('ncaab')) return 'NCAAB';
+  if (s.includes('ncaaf')) return 'NCAAF';
+  if (s.includes('soccer')) return 'Soccer';
+  return sport;
+}
+
 interface SharpAlert {
   id: string;
   sport: string;
@@ -142,19 +156,7 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
     return names[key] || key;
   };
 
-  const getSportLabel = (sport: string) => {
-    const s = (sport || '').toLowerCase();
-    if (s.includes('basketball_nba')) return 'NBA';
-    if (s.includes('basketball_wnba')) return 'WNBA';
-    if (s.includes('baseball_mlb')) return 'MLB';
-    if (s.startsWith('tennis')) return 'Tennis';
-    if (s.includes('icehockey_nhl')) return 'NHL';
-    if (s.includes('americanfootball_nfl')) return 'NFL';
-    if (s.includes('ncaab')) return 'NCAAB';
-    if (s.includes('ncaaf')) return 'NCAAF';
-    if (s.includes('soccer')) return 'Soccer';
-    return sport;
-  };
+  const getSportLabel = getSharpSportLabel;
 
   if (isLoading) {
     return (
