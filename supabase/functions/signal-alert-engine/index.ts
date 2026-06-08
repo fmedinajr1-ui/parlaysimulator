@@ -498,7 +498,7 @@ Deno.serve(async (req) => {
             fdDropped.push({ player: m.player_name, reason: r.reason ?? 'fd_reject' });
             return false;
           }
-          if (r.hrb && m.player_name) fdByPlayer.set(m.player_name.toLowerCase(), r.hrb);
+          if (r.fd && m.player_name) fdByPlayer.set(m.player_name.toLowerCase(), r.fd);
           return true;
         });
         const fdDistinct = Array.from(new Set(fdFilteredMembers.map((m) => m.player_name)));
@@ -684,7 +684,7 @@ Deno.serve(async (req) => {
             side: p.derived_side, line: Number(p.current_line ?? 0),
           });
           if (!r.ok) { stats.dropped_no_fd += 1; continue; }
-          fdInfo = r.hrb ?? null;
+          fdInfo = r.fd ?? null;
         }
 
         const dKey = dedupeKey(['take_it_now', p.event_id, p.player_name, p.prop_type, p.derived_side]);
@@ -769,7 +769,7 @@ Deno.serve(async (req) => {
               side: p.derived_side, line: Number(p.current_line ?? 0),
             });
             if (!r.ok) { stats.dropped_no_fd += 1; continue; }
-            fdInfo = r.hrb ?? null;
+            fdInfo = r.fd ?? null;
           }
 
           const dKey = dedupeKey(['velocity_spike', p.event_id, p.player_name, p.prop_type]);
