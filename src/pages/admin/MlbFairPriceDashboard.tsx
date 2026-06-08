@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/table";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MobileHeader } from "@/components/layout/MobileHeader";
-import { Activity, Flame, RefreshCw, Search } from "lucide-react";
+import { Activity, Flame, RefreshCw, Search, Send } from "lucide-react";
+import { toast } from "sonner";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from "recharts";
@@ -146,6 +147,7 @@ export default function MlbFairPriceDashboard() {
   const [todayDate, setTodayDate] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [pinging, setPinging] = useState(false);
   const [filter, setFilter] = useState<{ decision: string; severity: string; closing: string; side: string; search: string }>({
     decision: "all", severity: "all", closing: "all", side: "all", search: "",
   });
@@ -440,9 +442,42 @@ export default function MlbFairPriceDashboard() {
           <div>
             {loading ? "Loading…" : `Auto-refresh every 15s · last ${lastRefresh ? lastRefresh.toLocaleTimeString() : "—"}`}
           </div>
-          <Button size="sm" variant="outline" onClick={load} disabled={loading}>
-            <RefreshCw className={`w-3 h-3 mr-1 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pinging}
+              onClick={async () => {
+                setPinging(true);
+                try {
+                  const { data, error } = await supabase.functions.invoke("mlb-fair-price-digest", {
+                    method: "POST",
+                    body: { mode: "pulse", force: 1 },
+                  });
+                  // Force query-string variant for cron-style call too
+                  const fnUrl = `${(import.meta as any).env.VITE_SUPABASE_URL}/functions/v1/mlb-fair-price-digest?mode=pulse&force=1`;
+                  const tokenRes = await supabase.auth.getSession();
+                  const tok = tokenRes.data.session?.access_token ?? (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY;
+                  const r = await fetch(fnUrl, { method: "POST", headers: { Authorization: `Bearer ${tok}` } });
+                  const j = await r.json().catch(() => ({}));
+                  if (error || j?.ok === false) {
+                    toast.error(`Ping failed: ${error?.message || j?.error || "unknown"}`);
+                  } else {
+                    toast.success(`Admin Telegram sent · evals=${j?.evals ?? data?.evals ?? 0} · outage=${j?.outage ?? data?.outage ?? false}`);
+                  }
+                } catch (e) {
+                  toast.error(`Ping error: ${e instanceof Error ? e.message : String(e)}`);
+                } finally {
+                  setPinging(false);
+                }
+              }}
+            >
+              <Send className={`w-3 h-3 mr-1 ${pinging ? "animate-pulse" : ""}`} /> Send Test Ping
+            </Button>
+            <Button size="sm" variant="outline" onClick={load} disabled={loading}>
+              <RefreshCw className={`w-3 h-3 mr-1 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </div>
         </div>
 
         {/* 24h rollups */}
