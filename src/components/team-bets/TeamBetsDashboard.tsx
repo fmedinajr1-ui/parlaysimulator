@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TeamBetCard } from './TeamBetCard';
 
-const SPORTS = ['ALL', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA', 'BASEBALL'];
+const SPORTS = ['ALL', 'MLB', 'TENNIS', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA', 'BASEBALL'];
 const BET_TYPES = [
   { id: 'all', label: 'All Bets', icon: Activity },
   { id: 'spread', label: 'Spreads', icon: TrendingUp },
@@ -61,6 +61,9 @@ function getSportDisplay(sport: string): string {
     'americanfootball_ncaaf': 'NCAAF',
     'basketball_wnba': 'WNBA',
     'baseball_ncaa': 'BASEBALL',
+    'baseball_mlb': 'MLB',
+    'tennis_atp': 'TENNIS',
+    'tennis_wta': 'TENNIS',
   };
   return map[sport] || sport.toUpperCase();
 }
@@ -74,6 +77,8 @@ function getSportKey(display: string): string {
     'NCAAF': 'americanfootball_ncaaf',
     'WNBA': 'basketball_wnba',
     'BASEBALL': 'baseball_ncaa',
+    'MLB': 'baseball_mlb',
+    'TENNIS': 'tennis_atp',
   };
   return map[display] || display.toLowerCase();
 }
@@ -102,13 +107,13 @@ export function TeamBetsDashboard() {
     staleTime: 60000,
   });
 
-  // Default to NCAAB when it has games but NBA doesn't
+  // Default to the sport with the most upcoming games today.
   useEffect(() => {
-    if (sportCounts && selectedSport === 'ALL') {
-      if (sportCounts['NBA']) return;
-      if (sportCounts['NCAAB']) { setSelectedSport('NCAAB'); return; }
-      if (sportCounts['NHL']) { setSelectedSport('NHL'); return; }
-    }
+    if (!sportCounts || selectedSport !== 'ALL') return;
+    const entries = Object.entries(sportCounts).filter(([k]) => k !== 'ALL');
+    if (entries.length === 0) return;
+    const top = entries.sort((a, b) => b[1] - a[1])[0][0];
+    if (top && SPORTS.includes(top)) setSelectedSport(top);
   }, [sportCounts]);
 
   // Fetch team bets (upcoming)
@@ -124,7 +129,11 @@ export function TeamBetsDashboard() {
         .limit(100);
 
       if (selectedSport !== 'ALL') {
-        query = query.eq('sport', getSportKey(selectedSport));
+        if (selectedSport === 'TENNIS') {
+          query = query.in('sport', ['tennis_atp', 'tennis_wta']);
+        } else {
+          query = query.eq('sport', getSportKey(selectedSport));
+        }
       }
       if (selectedBetType !== 'all') {
         query = query.eq('bet_type', selectedBetType);
@@ -172,7 +181,11 @@ export function TeamBetsDashboard() {
         .limit(10);
 
       if (selectedSport !== 'ALL') {
-        query = query.eq('sport', getSportKey(selectedSport));
+        if (selectedSport === 'TENNIS') {
+          query = query.in('sport', ['tennis_atp', 'tennis_wta']);
+        } else {
+          query = query.eq('sport', getSportKey(selectedSport));
+        }
       }
       if (selectedBetType !== 'all') {
         query = query.eq('bet_type', selectedBetType);
