@@ -224,9 +224,9 @@ function formatAlert(a: Alert, healthWarn: string | null = null): string | strin
       out.push(`_+${sorted.length - MAX_PLAYERS_RENDERED} more — see dashboard_`);
     }
 
-    // Verified-on-HRB footer (only when engine confirmed it)
-    const hrbVerified = (meta as any)?.fd_verified === true || (meta as any)?.source_book === 'fanduel';
-    if (hrbVerified) {
+    // Verified-on-FD/DK footer (only when engine confirmed it)
+    const fdVerified = (meta as any)?.fd_verified === true || (meta as any)?.source_book === 'fanduel';
+    if (fdVerified) {
       out.push('');
       out.push(`📘 _Lines verified on FanDuel & DraftKings_`);
     }
