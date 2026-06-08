@@ -1,91 +1,68 @@
+## Goal
+Send admin-only Telegram alerts before every MLB game (T-30m and T-5m) with the matchup, the books currently missing a posted line for that game, a per-book latency table prioritizing Hard Rock + FanDuel + DraftKings, and the top delay catches from the last 24h.
 
-## The problem with what you're seeing
+## Pieces to build
 
-Last 24h in `mlb_fair_price_events`:
+### 1. New edge function: `mlb-pregame-latency-alert`
+Runs every minute, ET-aware.
 
-- **38 total events** logged
-- **0 had `book_id`** populated
-- **0 had `book_implied`**
-- **0 had `book_last_move_ts`**
-- All 38 → `skip` / `no_book_or_suspended` / `WARN`
-- `book_snapshot` table: **0 rows in 24h**
+For each MLB game on today's slate (from `statsapi.mlb.com/api/v1/schedule?sportId=1&date=<ET>`):
+- Compute minutes until `gameDate`.
+- Fire once at T-30 (window 29–31m) and once at T-5 (window 4–6m). Dedupe via a new tiny table `mlb_pregame_alert_log(game_pk, kind, sent_at)` so each `(game_pk, '30m'|'5m')` pair only fires once.
+- Skip games already started / final.
 
-That's why the feed reads like wallpaper. It's not catching delays — it's logging "we couldn't even see a book line" 38 times in a row. The lag column will never populate while the upstream book snapshot is empty, so a "Book Latency Leaderboard" built on this data has nothing to rank.
+Per game, build the alert payload by querying `mlb_fair_price_events` (last 24h, `game_id = 'mlb_'||gamePk`):
+- **Books currently missing**: full configured book list MINUS books seen for this game_id in the last 6h.
+- **Per-book latency table**: median lag (`event_time - to_timestamp(feed_ts/1000)` ms), sample count, % stale (>5s). Sort with Hard Rock, FanDuel, DraftKings pinned at top, others below. Format as a fixed-width Markdown code block.
+- **Top delay catches (24h, global)**: top 5 events with largest lag where `event_type` indicates a delay catch, with book + game label.
 
-There are two things to fix, and they're separate. This plan only covers the UI redesign you asked about. The empty `book_snapshot` is an upstream/scraper issue I'll flag in the UI but not touch in this plan.
+### 2. Telegram send
+Use existing telegram connector pattern (admin chat id from `bot_authorized_users` / settings — same path used by other admin-only alerts in this codebase). HTML parse mode, no per-leg property abbreviations.
 
-## What the feed becomes: "Delay Catches"
+Message shape:
+```
+⚾ Pre-game · T-30m
+Away @ Home — 7:05 PM ET
 
-Replace the current dumping-ground table with a feed that only shows things worth looking at.
+Missing books (3): BetMGM, Caesars, ESPNBet
 
-### Inclusion rule (hard filter)
+Latency (24h, ms)
+Book          med   n    stale%
+HardRock      ...   ..   ..%
+FanDuel       ...   ..   ..%
+DraftKings    ...   ..   ..%
+─────
+<others ranked>
 
-A row appears **only** if all are true:
-- `book_last_move_ts IS NOT NULL` AND `feed_ts IS NOT NULL`
-- `lag_ms = feed_ts - book_last_move_ts >= 5000` (≥ 5s)
-- `book_price IS NOT NULL` (we actually had a line to react to)
-
-Everything else — `no_book_or_suspended`, suspended markets, skips with no book — is dropped from this feed entirely.
-
-### Header strip (replaces noise)
-
-Three small counters above the feed so the dropped data still gets accounted for:
-
-```text
-[ Delay catches: 12 ]  [ No book / suspended: 142 ]  [ Real-line fires: 4 ]
-                       (24h window)
+Top delay catches (24h)
+1. 8.4s — HardRock — NYY @ BOS — ML
+2. ...
 ```
 
-Clicking "No book / suspended" opens a small drawer with that subset — they're not gone, just not in the main view.
+### 3. Schedule
+Add `pg_cron` job calling the edge function every minute. Insert via `supabase--insert` (carries function URL + anon key, per platform rules — not a migration).
 
-### Columns (per row)
-
-| Time | Game | Event | Player | Side | Book | Lag | Edge | Decision |
-|------|------|-------|--------|------|------|-----|------|----------|
-
-- **Lag**: the headline number, e.g. `7.4s`, colored amber 5–10s, red >10s, with a small horizontal bar scaled to the slowest lag in view.
-- **Book**: which book was late (DK, FD, MGM, etc.).
-- **Decision**: `fire` / `skip` — and skip-reason chip only if it's `book_reacted` or `stale_feed` (the interesting skips). Boring skips don't qualify under the filter anyway.
-
-### Empty-state callout (this is what you'll see today)
-
-When the filter returns zero rows AND `book_id` is null on 100% of recent events, show a prominent banner instead of an empty table:
-
+### 4. Dedupe table (migration)
 ```text
-⚠ No book data in last 24h
-The fair-price engine logged 38 events but every one was "no_book_or_suspended".
-The book snapshot feed isn't writing rows (book_snapshot: 0 in 24h).
-Until that's fixed, lag cannot be measured. [View raw events →]
+mlb_pregame_alert_log(
+  game_pk bigint,
+  kind text check (kind in ('30m','5m')),
+  sent_at timestamptz default now(),
+  primary key (game_pk, kind)
+)
 ```
+Plus the required GRANTs + RLS (service_role only; no client read needed).
 
-This makes the actual problem visible instead of hiding it behind a wall of identical WARN rows.
+### 5. Dashboard tile (optional, small)
+On `MlbFairPriceDashboard`, add a "Pre-game alerts" status strip showing the last 5 rows of `mlb_pregame_alert_log` so you can confirm sends without leaving the page.
 
-## What stays / what goes
+## Open assumptions (will use unless you say otherwise)
+- "Hard Rock" book_id = `hardrock` / `hard_rock` — function will accept both.
+- Stale threshold = ≥5s (matches the existing delay-catch rule in core memory).
+- "Missing for this game" window = no event from that book in the last 6h before scheduled start.
+- Admin chat id pulled from the same source the existing admin-only fair-price alerts already use (`telegram_admin_only=true` path in `mlb_fair_price_events`).
 
-**Keep on the page:**
-- Top KPI cards (fire/skip rates, hit rate, CLV)
-- Book Latency Leaderboard card (already added) — will show "(awaiting book data)" until snapshots flow
-- Histogram of `feed_ts − book_last_move_ts` — same gating
-- Per-game drill-down sheet
-
-**Replace:**
-- The current "Events Feed (last 24h, max 200)" table — this is the noise you screenshotted.
-
-**Remove from default view:**
-- The `All / FIRE / SKIP` + `Any sev / WARN / INFO` + `Any side / HOME / AWAY` chip rows on the feed. They're filtering noise. New default = delay catches only, with one toggle "Show raw events" that reveals the old unfiltered table for debugging.
-
-## Technical notes
-
-- Single file edit: `src/pages/admin/MlbFairPriceDashboard.tsx`
-- Add `delayCatches = useMemo(...)` deriving from existing `events` state (no new query)
-- Add `noBookCount` / `realLineCount` counters from same array
-- New `<DelayCatchesTable />` block inline
-- Wrap existing feed table in a `<details>` / collapsible "Show raw events"
-- No schema changes, no edge function changes, no cron changes
-- Polling stays at 15s as-is
-
-## Out of scope (call out, don't fix here)
-
-- Why `book_snapshot` is empty — that's a scraper/worker issue. Flag in UI banner, separate ticket.
-- Lag leaderboard ranking math — already implemented, will populate once book data flows.
-
+## Out of scope
+- No customer-facing broadcast.
+- No changes to the fair-price gate logic itself.
+- No new UI beyond the small status strip.
