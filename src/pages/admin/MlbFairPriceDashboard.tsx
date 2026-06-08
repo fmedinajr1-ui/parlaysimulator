@@ -337,9 +337,9 @@ export default function MlbFairPriceDashboard() {
     return Object.entries(byGame).map(([gid, evs]) => {
       const fires = evs.filter(e => e.gate_decision === "fire").length;
       const last = evs[0];
-      return { gameId: gid, fires, total: evs.length, last, score: scores[gid] };
+      return { gameId: gid, fires, total: evs.length, last, score: scores[gid] ?? mlbInfo[gid] };
     }).sort((a, b) => b.fires - a.fires || b.total - a.total);
-  }, [events, scores]);
+  }, [events, scores, mlbInfo]);
 
   // Filtered feed
   const filteredEvents = useMemo(() => {
@@ -356,7 +356,7 @@ export default function MlbFairPriceDashboard() {
 
 
   const openGameEvents = openGameId ? events.filter(e => e.game_id === openGameId).slice().reverse() : [];
-  const openGameScore = openGameId ? scores[openGameId] : null;
+  const openGameScore = openGameId ? (scores[openGameId] ?? mlbInfo[openGameId]) : null;
 
   return (
     <div className="min-h-screen bg-background pb-12">
