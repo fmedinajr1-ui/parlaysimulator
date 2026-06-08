@@ -1,72 +1,93 @@
-## Goal
-Capture a true "closing line" for every `mlb_fair_price_events` row so we can compute CLV — the leading signal that tells us whether MLB Fair-Price v1 is finding real edge, weeks before we have enough settled games to refit the WP model.
+# MLB Fair-Price Admin Dashboard
 
-## What "closing line" means here
-For each fired event, the closing line is the **last observed de-vigged book implied probability for the side we fired**, captured at or just before game-final. CLV is `(closing_devig − devig_at_fire) / devig_at_fire`, signed toward our side. Positive CLV = market moved our way = edge is likely real.
+A new admin-only page at `/admin/mlb-fair-price` that lets you watch the engine fire in real time, audit completeness, and drill into any in-progress game — same spirit as the NBA Scout War Room.
 
-## What's missing today
-- No continuous snapshot of MLB live moneyline prices keyed by `game_id`.
-- `mlb-fair-price-outcome-attacher` only fills score/realized_hit; `closing_book_implied_devig`, `closing_attached_at`, `clv_pct` stay null.
-- No record of the **opposite-side** price at fire time on the event row itself (we have `book_price` and `book_devig_at_fire`, but not the raw opposite quote that produced the de-vig). Useful for audit.
+## Route & access
 
-## Build
+- New page: `src/pages/admin/MlbFairPriceDashboard.tsx`, lazy-loaded in `src/App.tsx` at `/admin/mlb-fair-price`.
+- Gated by `useAdminRole()`; non-admins get redirected to `/admin-login` (same pattern as other admin pages).
+- Add a card/link on `src/pages/Admin.tsx` index so it's discoverable.
 
-### 1. Snapshot table for MLB live ML ticks
-New table `mlb_live_ml_snapshots`:
-- `game_id`, `book_id`, `captured_at`
-- `home_price` (american), `away_price` (american)
-- `home_implied`, `away_implied`, `home_devig`, `away_devig`
-- `suspended bool`, `source text` (e.g. `fanduel`, `the-odds-api`)
-- index on `(game_id, captured_at desc)`
-- RLS: service_role full, authenticated read-only (admin dashboards)
+## Layout
 
-### 2. Snapshotter edge function `mlb-ml-snapshotter`
-- Cron every 60s while any MLB game is `in_progress` or `scheduled` within ±30 min of start.
-- Pulls current MLB ML quotes from the existing odds source already used by scout-live-edge (reuse, do not add a new provider).
-- Writes one row per `(game_id, book_id)` per tick. Skips writes when price unchanged from last tick (dedupe on price hash) to keep table lean.
+Three stacked sections, each independently refreshing:
 
-### 3. Augment fire-time recording in `scout-live-edge` MLB Fair-Price branch
-On every fire, also write to `mlb_fair_price_events`:
-- `opposite_book_price` (american) — raw opposite quote used in the de-vig
-- `book_id` — which book the fire priced against
-- `side` ('HOME' | 'AWAY') — explicit, derived from edge sign
-- `pre_state_json`, `post_state_json` — already there as `pre_state`/`post_state`; confirm full game-state snapshot (inning, outs, baserunners, score) is captured, add any missing fields
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ Header: MLB Fair-Price v1 · measurement mode · last refresh  │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Completeness strip (14d, daily rows from view)            │
+│    fires · outcome-attached · closing-resolved · avg latency │
+├──────────────────────────────────────────────────────────────┤
+│ 2. Live game strip (today's MLB games w/ engine activity)    │
+│    one tile per game → click to open game drawer             │
+├──────────────────────────────────────────────────────────────┤
+│ 3. Recent events feed (last 200 fires/skips, filterable)     │
+└──────────────────────────────────────────────────────────────┘
+```
 
-Migration adds the missing columns + backfill defaults.
+### 1. Completeness panel
+Source: `mlb_fair_price_event_completeness` view. Table with one row per day for the last 14 days:
+- date, fires, outcome_attached, closing_attached, both, avg fire→outcome latency, avg fire→closing latency, % missing closing.
+- Color-code rows where completeness < 90%.
+- Top of panel shows 24h + 7d rollup tiles (reuse `StatsCard`/`StatItem`).
 
-### 4. Closing-line resolver `mlb-fair-price-closing-resolver`
-- Cron every 30 min (same cadence as outcome-attacher, runs right after it).
-- For each event where `outcome_attached_at IS NOT NULL` AND `closing_attached_at IS NULL`:
-  - Look up the latest `mlb_live_ml_snapshots` row for `game_id` (same `book_id` as fire if available, else the most-traded book).
-  - Take that snapshot's `home_devig` or `away_devig` matching the fired side.
-  - Write `closing_book_implied_devig`, `closing_attached_at = now()`, and `clv_pct` (signed toward fired side).
-- If no snapshot exists for the game (e.g. snapshotter wasn't running yet), mark `closing_attached_at` with a sentinel and `clv_pct = null` so we don't retry forever.
+### 2. Live game strip
+For each MLB `game_id` with any event in the last 6h or `live_game_scores.status` in (`scheduled`,`in_progress`) for today:
+- Tile shows: matchup (away @ home), score, inning/status, fires count, last event time, last `gate_decision`, current `edge` if open.
+- Joined from `mlb_fair_price_events` + `live_game_scores`.
+- Click → opens **Game Drawer**:
+  - Header: matchup, live score, current inning.
+  - WP timeline chart (recharts line): `wp_pre` / `wp_post` over `event_time` for that game.
+  - Snapshot panel: latest `mlb_live_ml_snapshots` row (home/away price, devig, captured_at, suspended).
+  - Events table: every row from `mlb_fair_price_events` for this game ordered desc — columns: time, side, market, edge%, EV%, book_price/opposite_price, gate_decision, skip_reason, severity, telegram_sent, realized_hit (if attached), clv_pct (if resolved).
+  - Manual actions: "Re-run outcome attacher", "Re-run closing resolver" (invoke existing edge functions scoped to this `game_id`).
 
-### 5. Extend the daily digest
-`mlb-fair-price-digest` adds:
-- Avg CLV % on resolved fires (24h, 7d)
-- % of fires with positive CLV
-- Count of events still missing closing line (data quality signal)
+### 3. Recent events feed
+Global, last 200 rows from `mlb_fair_price_events` ordered by `created_at desc`. Filters:
+- gate_decision (fire / skip)
+- severity (WARN / INFO)
+- has_closing (yes/no/null)
+- side (HOME/AWAY)
+- search by `game_id`
+Each row: timestamp, game (clickable → opens game drawer), event_type, side, edge%, EV%, decision, top skip_reason. Color-code FIRE rows by severity, SKIP rows muted.
 
-### 6. Audit / "are we recording everything?" check
-Add a SQL view `mlb_fair_price_event_completeness` that reports, per day:
-- fires
-- with outcome attached
-- with closing line attached
-- with both
-- avg latency from fire → outcome_attached, fire → closing_attached
+Bottom card: **Top skip reasons (24h / 7d)** — bar list grouped by `skip_reason` with counts (matches digest content).
 
-Surface a one-line health check in the daily digest so any gap is visible.
+## Data layer
 
-## Out of scope (call out, don't build)
-- Refitting BETA / flipping `CALIBRATED = true` — still gated on ~2 weeks of data.
-- Tier-2 (1B/2B/3B/IP_OUT) and LIVE_TOTAL — still deferred per the v1 constraint.
-- Lifting `admin_only` or WARN severity — unchanged.
+New hooks (TanStack Query, polling every 15s while tab visible):
+- `useMlbFpCompleteness()` → `from('mlb_fair_price_event_completeness').select('*').order('day', { desc: true }).limit(14)`
+- `useMlbFpLiveGames()` → events grouped by `game_id` for today + join `live_game_scores`
+- `useMlbFpGameDetail(gameId)` → events, snapshots, latest score for one game
+- `useMlbFpRecentEvents(filters)` → last 200 events with filters
+- `useMlbFpSkipReasons(window)` → aggregated counts
 
-## Files touched
-- New migration: `mlb_live_ml_snapshots` table + extra columns on `mlb_fair_price_events` (`opposite_book_price`, `book_id`, `side`)
-- New edge function: `supabase/functions/mlb-ml-snapshotter/index.ts`
-- New edge function: `supabase/functions/mlb-fair-price-closing-resolver/index.ts`
-- Edit: `supabase/functions/scout-live-edge/index.ts` (MLB Fair-Price branch — write extra fire-time fields)
-- Edit: `supabase/functions/mlb-fair-price-digest/index.ts` (add CLV + completeness rows)
-- Two new cron entries via `supabase--insert`
+All queries use the existing `supabase` client; the view + tables already permit `authenticated` reads.
+
+## Charts & UI primitives
+
+- `recharts` (already in project) for WP timeline.
+- Reuse `Card`, `Table`, `StatsCard`, `StatItem`, `Badge`, `Drawer`/`Sheet` from `src/components/ui/`.
+- Pattern after `AdminWarRoomView.tsx` for game-tile→drawer flow and styling.
+
+## Component files to create
+
+```
+src/pages/admin/MlbFairPriceDashboard.tsx          (page shell, admin gate, layout)
+src/components/admin/mlb-fair-price/
+  CompletenessPanel.tsx
+  LiveGameStrip.tsx
+  GameDetailDrawer.tsx
+  EventsFeed.tsx
+  SkipReasonsCard.tsx
+src/hooks/useMlbFairPrice.ts                        (all query hooks)
+```
+
+## Out of scope
+- No changes to engine, cron, or schema. Read-only dashboard over what's already being recorded.
+- No edits to existing edge functions other than allowing optional `game_id` arg on the two re-run buttons — only if the manual-action buttons are desired; flag with confirmation. (Can be deferred.)
+
+## Open questions
+1. Should the "manual re-run" buttons in the game drawer be included in v1, or read-only only?
+2. Polling cadence — 15s OK, or faster (5s) while you're actively trading?
