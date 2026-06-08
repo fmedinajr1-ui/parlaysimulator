@@ -820,6 +820,7 @@ export default function MlbFairPriceDashboard() {
                 </TableBody>
               </Table>
             </div>
+            </details>
           </CardContent>
         </Card>
       </main>
