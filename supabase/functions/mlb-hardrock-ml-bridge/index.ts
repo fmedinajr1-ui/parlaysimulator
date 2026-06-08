@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
   // so cron doesn't alarm.
   let events: HrEvent[] = [];
   try {
-    const r = await fetch(`${workerUrl.replace(/\/$/, "")}/scrape-hardrock-mlb-ml`, {
+    const r = await fetch(`${workerUrl.replace(/\/$/, "")}/scrape/mlb`, {
       method: "POST",
       headers: { Authorization: `Bearer ${workerSecret}`, "Content-Type": "application/json" },
       body: "{}",
