@@ -131,6 +131,7 @@ export default function MlbFairPriceDashboard() {
   const [scores, setScores] = useState<Record<string, Score>>({});
   const [triggers, setTriggers] = useState<Record<string, Trigger>>({});
   const [lagEdges, setLagEdges] = useState<LagEdge[]>([]);
+  const [mlbInfo, setMlbInfo] = useState<Record<string, Score>>({});
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [filter, setFilter] = useState<{ decision: string; severity: string; closing: string; side: string; search: string }>({
