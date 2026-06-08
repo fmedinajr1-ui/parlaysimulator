@@ -20,8 +20,6 @@ const BOOK_HINTS: Record<string, string> = {
     "FanDuel layout: prop type as section header; player rows show name + line, then OVER price stacked above UNDER price (e.g. '27.5  Over -115 / Under -105'). American odds.",
   draftkings:
     "DraftKings layout: line in middle, OVER on left and UNDER on right of the same row. American odds.",
-  hardrock:
-    "Hard Rock Bet layout: dense grid; bolded player name on top of card, line + over/under prices in compact rows. American odds.",
   prizepicks:
     "PrizePicks pick'em: NO over/under odds — just player + projection line + 'More' / 'Less' buttons. Map 'More'->over, 'Less'->under. Set over_price=null, under_price=null.",
   underdog:

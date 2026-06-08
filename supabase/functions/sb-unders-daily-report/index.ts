@@ -13,7 +13,7 @@ const corsHeaders = {
 };
 
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
-const PREFERRED_BOOKS = ["fanduel", "hardrockbet", "draftkings", "betmgm", "caesars"];
+const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars"];
 
 function tzDateString(d: Date, tz: string): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {

@@ -220,7 +220,7 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const {
-      books = ['fanduel', 'hardrock'],
+      books = ['fanduel', 'draftkings'],
       sport = 'basketball_ncaab',
     } = body;
 
@@ -240,9 +240,8 @@ serve(async (req) => {
         { url: 'https://sportsbook.fanduel.com/college-basketball/player-props', bookmaker: 'fanduel' },
         { url: 'https://sportsbook.fanduel.com/college-basketball', bookmaker: 'fanduel' },
       ],
-      hardrock: [
-        { url: 'https://www.hardrocksportsbook.com/sports/basketball/college-basketball/player-props', bookmaker: 'hardrock' },
-        { url: 'https://www.hardrocksportsbook.com/sports/basketball/college-basketball', bookmaker: 'hardrock' },
+      draftkings: [
+        { url: 'https://sportsbook.draftkings.com/leagues/basketball/ncaab', bookmaker: 'draftkings' },
       ],
     };
 

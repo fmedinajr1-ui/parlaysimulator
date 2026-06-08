@@ -6,7 +6,7 @@ const corsHeaders = {
 };
 
 // Priority order for bookmakers - Hard Rock first, then FanDuel and DraftKings
-const PRIORITY_BOOKMAKERS = ['hardrockbet', 'fanduel', 'draftkings'];
+const PRIORITY_BOOKMAKERS = ['fanduel', 'draftkings'];
 const FALLBACK_BOOKMAKERS = ['betmgm', 'caesars', 'pointsbet', 'bovada', 'williamhill_us'];
 
 const PROP_MARKET_MAP: Record<string, string> = {

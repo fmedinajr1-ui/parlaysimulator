@@ -3,7 +3,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-const PRIORITY_BOOKMAKERS = ['hardrockbet', 'fanduel', 'draftkings'];
+const PRIORITY_BOOKMAKERS = ['fanduel', 'draftkings'];
 const FALLBACK_BOOKMAKERS = ['betmgm', 'caesars', 'pointsbet', 'bovada', 'williamhill_us'];
 const normalizeName = (name: string) => {
   return name.toLowerCase()
