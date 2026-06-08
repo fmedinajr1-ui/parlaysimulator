@@ -1,68 +1,46 @@
-## Goal
-Send admin-only Telegram alerts before every MLB game (T-30m and T-5m) with the matchup, the books currently missing a posted line for that game, a per-book latency table prioritizing Hard Rock + FanDuel + DraftKings, and the top delay catches from the last 24h.
+## Why `book_id` is NULL
 
-## Pieces to build
+The chain that's supposed to populate it:
 
-### 1. New edge function: `mlb-pregame-latency-alert`
-Runs every minute, ET-aware.
-
-For each MLB game on today's slate (from `statsapi.mlb.com/api/v1/schedule?sportId=1&date=<ET>`):
-- Compute minutes until `gameDate`.
-- Fire once at T-30 (window 29–31m) and once at T-5 (window 4–6m). Dedupe via a new tiny table `mlb_pregame_alert_log(game_pk, kind, sent_at)` so each `(game_pk, '30m'|'5m')` pair only fires once.
-- Skip games already started / final.
-
-Per game, build the alert payload by querying `mlb_fair_price_events` (last 24h, `game_id = 'mlb_'||gamePk`):
-- **Books currently missing**: full configured book list MINUS books seen for this game_id in the last 6h.
-- **Per-book latency table**: median lag (`event_time - to_timestamp(feed_ts/1000)` ms), sample count, % stale (>5s). Sort with Hard Rock, FanDuel, DraftKings pinned at top, others below. Format as a fixed-width Markdown code block.
-- **Top delay catches (24h, global)**: top 5 events with largest lag where `event_type` indicates a delay catch, with book + game label.
-
-### 2. Telegram send
-Use existing telegram connector pattern (admin chat id from `bot_authorized_users` / settings — same path used by other admin-only alerts in this codebase). HTML parse mode, no per-leg property abbreviations.
-
-Message shape:
 ```
-⚾ Pre-game · T-30m
-Away @ Home — 7:05 PM ET
-
-Missing books (3): BetMGM, Caesars, ESPNBet
-
-Latency (24h, ms)
-Book          med   n    stale%
-HardRock      ...   ..   ..%
-FanDuel       ...   ..   ..%
-DraftKings    ...   ..   ..%
-─────
-<others ranked>
-
-Top delay catches (24h)
-1. 8.4s — HardRock — NYY @ BOS — ML
-2. ...
+The Odds API (live MLB h2h)
+  → market_snapshot (market_type='live_ml', sportsbook=<book>)
+    → scout-live-edge pulls latest snapshot for the game
+      → mlb_fair_price_events.book_id = <book>
 ```
 
-### 3. Schedule
-Add `pg_cron` job calling the edge function every minute. Insert via `supabase--insert` (carries function URL + anon key, per platform rules — not a migration).
+What I found in the DB:
+- `market_snapshot` has zero rows with `market_type='live_ml'` (only `player_pts` and `player_ast`).
+- `team_moneyline_odds` and `odds_snapshots` also have zero MLB rows in the last 24h.
+- All 38 fair-price events in the last 24h were logged with `gate_decision='skip'`, `skip_reason='no_book_or_suspended'`. That's `scout-live-edge` saying "I have no book line for this game," so it writes the event with `book_id=null`.
 
-### 4. Dedupe table (migration)
-```text
-mlb_pregame_alert_log(
-  game_pk bigint,
-  kind text check (kind in ('30m','5m')),
-  sent_at timestamptz default now(),
-  primary key (game_pk, kind)
-)
-```
-Plus the required GRANTs + RLS (service_role only; no client read needed).
+So the NULLs are honest — there is literally no live MLB moneyline being ingested anywhere in the system today. The existing `fetch-team-moneylines` function knows how to hit The Odds API for `baseball_mlb` h2h but writes to `team_moneyline_odds` (pre-game only, different table, different `game_id` format), so the fair-price evaluator never sees it.
 
-### 5. Dashboard tile (optional, small)
-On `MlbFairPriceDashboard`, add a "Pre-game alerts" status strip showing the last 5 rows of `mlb_pregame_alert_log` so you can confirm sends without leaving the page.
+## Fix
 
-## Open assumptions (will use unless you say otherwise)
-- "Hard Rock" book_id = `hardrock` / `hard_rock` — function will accept both.
-- Stale threshold = ≥5s (matches the existing delay-catch rule in core memory).
-- "Missing for this game" window = no event from that book in the last 6h before scheduled start.
-- Admin chat id pulled from the same source the existing admin-only fair-price alerts already use (`telegram_admin_only=true` path in `mlb_fair_price_events`).
+### 1. New edge function: `mlb-live-ml-bridge`
+- Hits `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?regions=us&markets=h2h&oddsFormat=american` every 30s.
+- Joins each event to today's MLB Stats API schedule by home/away team name to resolve `gamePk`.
+- For each `(event, bookmaker)`, inserts two rows into `market_snapshot`:
+  - `game_id='mlb_<gamePk>'`, `market_type='live_ml'`, `sportsbook=<bookmaker.key>`, `player_name=<home_team>`, `odds=<home_price>`, `captured_at=<bookmaker.last_update>`
+  - same for the away outcome.
+- This is the exact shape `scout-live-edge` already reads (lines 89–115 of that file): it sorts by `captured_at desc`, takes the top two rows for the same sportsbook, de-vigs the two prices, and sets `book.bookId = top.sportsbook`. Result: `book_id` is populated on every event going forward.
+
+### 2. Schedule
+- pg_cron job `mlb-live-ml-bridge-30s` calling the bridge every 30s during MLB hours (10:00–02:00 ET). Inserted via `supabase--insert` (not a migration), per the platform rule that cron URLs/keys aren't migrated.
+
+### 3. Hard Rock note
+The Odds API US region returns FanDuel, DraftKings, BetMGM, Caesars, ESPNBet, Fanatics, BetRivers — **not Hard Rock**. Hard Rock would need a separate scraper (Hard Rock has no public odds API). For now the bridge will fill book_id for the supported books; Hard Rock will continue to show "missing" in the pre-game alert until a Hard Rock scraper is added (separate ticket).
+
+### 4. Verify
+- Run the bridge once manually, then query `market_snapshot WHERE market_type='live_ml'` to confirm rows landed.
+- Wait one event cycle and confirm `mlb_fair_price_events.book_id IS NOT NULL` for new rows.
+- Pre-game Telegram alert's per-book latency table will start showing real numbers automatically.
+
+## Requirements
+- `THE_ODDS_API_KEY` secret — already exists (used by `fetch-team-moneylines`), no new secret needed.
 
 ## Out of scope
-- No customer-facing broadcast.
-- No changes to the fair-price gate logic itself.
-- No new UI beyond the small status strip.
+- Hard Rock ingestion (no public API).
+- Backfilling historical `book_id` NULLs — past events stay null; only new events get tagged.
+- Any change to the fair-price gate logic.
