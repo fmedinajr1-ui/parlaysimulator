@@ -121,7 +121,7 @@ function extractPropsFromMarkdown(markdown: string, bookmaker: string): Array<{
   // Common non-player phrases to skip
   const skipNames = new Set([
     'player props', 'game lines', 'player points', 'player rebounds',
-    'player assists', 'over under', 'college basketball', 'hard rock',
+    'player assists', 'over under', 'college basketball',
     'fan duel', 'see all', 'show more', 'view all', 'bet now',
     'sign up', 'log in', 'terms conditions', 'privacy policy',
   ]);

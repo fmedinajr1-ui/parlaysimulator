@@ -5,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Priority order for bookmakers - Hard Rock first, then FanDuel and DraftKings
+// Priority order for bookmakers - FanDuel first, then DraftKings
 const PRIORITY_BOOKMAKERS = ['fanduel', 'draftkings'];
 const FALLBACK_BOOKMAKERS = ['betmgm', 'caesars', 'pointsbet', 'bovada', 'williamhill_us'];
 

@@ -754,7 +754,7 @@ async function handleLink(supabase: any, chat_id: number, args: string[], from?:
 
   await sendMessage(
     chat_id,
-    `✅ *Linked to ${email}*\n\nYou're all set. Send a screenshot of any sportsbook prop page (FanDuel, DraftKings, Hard Rock, PrizePicks, Underdog) and I'll run it through 8 engines.\n\nQuick start:\n• \`/book fanduel\` then send a screenshot\n• \`/parlay 3\` after you've scanned a few\n• \`/help\` anytime`,
+    `✅ *Linked to ${email}*\n\nYou're all set. Send a screenshot of any sportsbook prop page (FanDuel, DraftKings, PrizePicks, Underdog) and I'll run it through 8 engines.\n\nQuick start:\n• \`/book fanduel\` then send a screenshot\n• \`/parlay 3\` after you've scanned a few\n• \`/help\` anytime`,
   );
 }
 

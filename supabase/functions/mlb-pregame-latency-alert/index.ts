@@ -2,7 +2,7 @@
 // Cron every 1 min. For each MLB game today:
 //   - Fires once at T-30m and once at T-5m (deduped via mlb_pregame_alert_log).
 // Alert includes: matchup + first pitch, books currently missing, per-book
-// latency table (Hard Rock / FanDuel / DraftKings pinned), top delay catches 24h.
+// latency table (FanDuel / DraftKings pinned), top delay catches 24h.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
