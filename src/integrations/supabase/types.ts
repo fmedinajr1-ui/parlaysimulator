@@ -9688,6 +9688,27 @@ export type Database = {
         }
         Relationships: []
       }
+      mlb_pregame_alert_log: {
+        Row: {
+          game_pk: number
+          kind: string
+          payload: Json | null
+          sent_at: string
+        }
+        Insert: {
+          game_pk: number
+          kind: string
+          payload?: Json | null
+          sent_at?: string
+        }
+        Update: {
+          game_pk?: number
+          kind?: string
+          payload?: Json | null
+          sent_at?: string
+        }
+        Relationships: []
+      }
       mlb_rbi_under_analysis: {
         Row: {
           actual_rbis: number | null
