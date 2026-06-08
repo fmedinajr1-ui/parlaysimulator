@@ -95,6 +95,30 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_alert_state: {
+        Row: {
+          alert_key: string
+          last_sent_at: string
+          payload: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          alert_key: string
+          last_sent_at?: string
+          payload?: Json | null
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          alert_key?: string
+          last_sent_at?: string
+          payload?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       ai_avoid_patterns: {
         Row: {
           accuracy_rate: number | null
