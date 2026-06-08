@@ -396,6 +396,80 @@ export default function MlbFairPriceDashboard() {
           </CardContent>
         </Card>
 
+        {/* Per-book latency leaderboard */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Per-book latency leaderboard (24h)</CardTitle>
+            <p className="text-[11px] text-muted-foreground">
+              Higher median = book's published line is further behind the live event when we fire. These are the books most exposed to latency arb.
+              Min 5 fires per book to rank; the rest are aggregated below.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {perBookLatency.ranked.length === 0 && perBookLatency.lowVol.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No book-tagged fires in the last 24h.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Book</TableHead>
+                    <TableHead className="text-right">Fires</TableHead>
+                    <TableHead>Median lag</TableHead>
+                    <TableHead className="text-right">p90</TableHead>
+                    <TableHead className="text-right">Max</TableHead>
+                    <TableHead className="text-right">book_reacted</TableHead>
+                    <TableHead className="text-right">stale_feed</TableHead>
+                    <TableHead className="text-right">Real-line %</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {perBookLatency.ranked.map(r => {
+                    const med = r.median ?? 0;
+                    const tone = med >= 2000 ? "text-red-500" : med >= 1000 ? "text-amber-500" : "text-emerald-500";
+                    const barPct = Math.min(100, Math.max(4, (med / perBookLatency.slowest) * 100));
+                    return (
+                      <TableRow key={r.book}>
+                        <TableCell className="font-mono text-xs">{r.book}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.fires}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 relative h-3 bg-muted/30 rounded overflow-hidden min-w-[60px]">
+                              <div className="absolute inset-y-0 left-0 bg-amber-500/40" style={{ width: `${barPct}%` }} />
+                            </div>
+                            <span className={`font-mono text-xs w-16 text-right ${tone}`}>{r.median != null ? `${r.median}ms` : "—"}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.p90 != null ? `${r.p90}ms` : "—"}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.max != null ? `${r.max}ms` : "—"}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.reacted}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.stale}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.realPct != null ? `${(r.realPct * 100).toFixed(0)}%` : "—"}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {perBookLatency.lowVol.length > 0 && (
+                    <TableRow className="text-muted-foreground">
+                      <TableCell className="font-mono text-xs italic">(low-volume × {perBookLatency.lowVol.length})</TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {perBookLatency.lowVol.reduce((s, r) => s + r.fires, 0)}
+                      </TableCell>
+                      <TableCell colSpan={4} className="text-xs italic">
+                        {perBookLatency.lowVol.map(r => r.book).join(", ")}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {perBookLatency.lowVol.reduce((s, r) => s + r.reacted, 0)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {perBookLatency.lowVol.reduce((s, r) => s + r.stale, 0)}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Completeness panel */}
         <Card>
           <CardHeader className="pb-3">
