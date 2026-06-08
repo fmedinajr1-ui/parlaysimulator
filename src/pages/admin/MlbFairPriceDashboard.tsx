@@ -30,6 +30,8 @@ type Event = {
   book_id: string | null;
   book_implied: number | null;
   book_implied_devig: number | null;
+  book_last_move_ts: number | null;
+  feed_ts: number | null;
   edge: number | null;
   ev_pct: number | null;
   ttl_ms: number | null;
@@ -50,6 +52,9 @@ type Event = {
   clv_pct: number | null;
   closing_resolution_status: string | null;
 };
+
+type Trigger = { player_name: string | null; team: string | null };
+type LagEdge = { excess_lag_seconds: number | null; created_at: string };
 
 type Completeness = {
   day_et: string;
@@ -124,6 +129,8 @@ export default function MlbFairPriceDashboard() {
   const [completeness, setCompleteness] = useState<Completeness[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [scores, setScores] = useState<Record<string, Score>>({});
+  const [triggers, setTriggers] = useState<Record<string, Trigger>>({});
+  const [lagEdges, setLagEdges] = useState<LagEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [filter, setFilter] = useState<{ decision: string; severity: string; closing: string; side: string; search: string }>({
@@ -134,21 +141,34 @@ export default function MlbFairPriceDashboard() {
   async function load() {
     try {
       const since24 = new Date(Date.now() - 24 * 3600_000).toISOString();
-      const [comp, evs] = await Promise.all([
+      const [comp, evs, le] = await Promise.all([
         (supabase as any).from("mlb_fair_price_event_completeness").select("*").order("day_et", { ascending: false }).limit(14),
         (supabase as any).from("mlb_fair_price_events").select("*").gte("created_at", since24).order("created_at", { ascending: false }).limit(500),
+        supabase.from("lag_edges").select("excess_lag_seconds, created_at").gte("created_at", since24).limit(1000),
       ]);
       if (!comp.error) setCompleteness((comp.data ?? []) as Completeness[]);
       const evRows = (evs.data ?? []) as Event[];
       if (!evs.error) setEvents(evRows);
+      if (!le.error) setLagEdges((le.data ?? []) as LagEdge[]);
 
       const gameIds = Array.from(new Set(evRows.map(e => e.game_id).filter(Boolean)));
       if (gameIds.length) {
-        const sc = await supabase.from("live_game_scores").select("event_id, home_team, away_team, home_score, away_score, game_status, period, clock").in("event_id", gameIds);
+        const [sc, le2] = await Promise.all([
+          supabase.from("live_game_scores").select("event_id, home_team, away_team, home_score, away_score, game_status, period, clock").in("event_id", gameIds),
+          supabase.from("live_events").select("game_id, event_time, event_type, player_name, team").eq("sport", "MLB").gte("created_at", since24).in("game_id", gameIds).limit(2000),
+        ]);
         if (!sc.error) {
           const map: Record<string, Score> = {};
           (sc.data ?? []).forEach((r: any) => { map[r.event_id] = r; });
           setScores(map);
+        }
+        if (!le2.error) {
+          const tmap: Record<string, Trigger> = {};
+          (le2.data ?? []).forEach((r: any) => {
+            const k = `${r.game_id}|${r.event_time}|${r.event_type}`;
+            tmap[k] = { player_name: r.player_name, team: r.team };
+          });
+          setTriggers(tmap);
         }
       }
       setLastRefresh(new Date());
@@ -177,8 +197,44 @@ export default function MlbFairPriceDashboard() {
     const avgClv = clvs.length ? clvs.reduce((s, v) => s + v, 0) / clvs.length : null;
     const avgEdge = fires.length ? fires.reduce((s, e) => s + (e.edge ?? 0), 0) / fires.length : null;
     const avgEv = fires.length ? fires.reduce((s, e) => s + (e.ev_pct ?? 0), 0) / fires.length : null;
-    return { evals: events.length, fires: fires.length, sent, resolved: resolved.length, hits, avgEdge, avgEv, avgClv, posClv, clvCount: clvs.length };
+    const real = fires.filter(e => e.book_id && e.book_price != null).length;
+    return { evals: events.length, fires: fires.length, sent, resolved: resolved.length, hits, avgEdge, avgEv, avgClv, posClv, clvCount: clvs.length, real };
   }, [events]);
+
+  // Book-latency (latency-arb evidence): for FIRE rows, feed_ts − book_last_move_ts (ms).
+  // Positive = book hadn't yet reacted to the event we just consumed.
+  const latencyStats = useMemo(() => {
+    const fires = events.filter(e => e.gate_decision === "fire" && e.feed_ts != null && e.book_last_move_ts != null);
+    const lags = fires.map(e => (e.feed_ts as number) - (e.book_last_move_ts as number)).filter(Number.isFinite);
+    lags.sort((a, b) => a - b);
+    const p = (q: number) => lags.length ? lags[Math.min(lags.length - 1, Math.floor(lags.length * q))] : null;
+    const skips = events.filter(e => e.gate_decision === "skip");
+    const bookReacted = skips.filter(e => e.skip_reason === "book_reacted").length;
+    const staleFeed = skips.filter(e => e.skip_reason === "stale_feed").length;
+    const noBook = skips.filter(e => e.skip_reason === "no_book_or_suspended").length;
+
+    const lagSecs = lagEdges.map(r => r.excess_lag_seconds ?? 0).filter(Number.isFinite).sort((a, b) => a - b);
+    const lp = (q: number) => lagSecs.length ? lagSecs[Math.min(lagSecs.length - 1, Math.floor(lagSecs.length * q))] : null;
+
+    // Simple buckets for fire-lag histogram (ms)
+    const buckets = [
+      { label: "<500ms", lo: -Infinity, hi: 500 },
+      { label: "0.5–1s", lo: 500, hi: 1000 },
+      { label: "1–2s", lo: 1000, hi: 2000 },
+      { label: "2–5s", lo: 2000, hi: 5000 },
+      { label: "5s+", lo: 5000, hi: Infinity },
+    ].map(b => ({ ...b, n: lags.filter(l => l >= b.lo && l < b.hi).length }));
+    const bucketMax = Math.max(1, ...buckets.map(b => b.n));
+
+    return {
+      fireCount: lags.length,
+      median: p(0.5), p90: p(0.9),
+      bookReacted, staleFeed, noBook,
+      lagEdges24h: lagEdges.length,
+      lagP50: lp(0.5), lagP90: lp(0.9),
+      buckets, bucketMax,
+    };
+  }, [events, lagEdges]);
 
   const topSkipReasons = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -236,6 +292,13 @@ export default function MlbFairPriceDashboard() {
         icon={<Flame className="w-5 h-5 text-primary" />}
       />
       <main className="container mx-auto px-4 py-6 space-y-6">
+        {/* Engine scope note */}
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Tier-1 triggers (HR/K/BB) move <span className="font-mono">pre_state → post_state</span>; the wager is the
+          game <span className="font-mono">LIVE_ML</span> moneyline, priced against a real <span className="font-mono">market_snapshot</span> row.
+          Player props live in a separate <span className="font-mono">lag_edges</span> engine (latency tile below).
+        </p>
+
         {/* Header strip */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <div>
@@ -247,14 +310,51 @@ export default function MlbFairPriceDashboard() {
         </div>
 
         {/* 24h rollups */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
           <RollupTile label="Events (24h)" value={String(rollup24h.evals)} />
           <RollupTile label="Fires" value={String(rollup24h.fires)} hint={`sent ${pctRatio(rollup24h.sent, rollup24h.fires)}`} />
+          <RollupTile label="Real book" value={pctRatio(rollup24h.real, rollup24h.fires)} hint={`${rollup24h.real}/${rollup24h.fires} fires`} />
           <RollupTile label="Hit rate" value={pctRatio(rollup24h.hits, rollup24h.resolved)} hint={`${rollup24h.resolved} resolved`} />
           <RollupTile label="Avg edge" value={pct(rollup24h.avgEdge, 2)} />
           <RollupTile label="Avg EV" value={pct(rollup24h.avgEv, 2)} />
           <RollupTile label="Avg CLV" value={pct(rollup24h.avgClv, 2)} hint={`${pctRatio(rollup24h.posClv, rollup24h.clvCount)} +CLV`} />
         </div>
+
+        {/* Book latency / latency-arb evidence */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Book latency (24h) — how far behind the book was when we fired</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+              <RollupTile label="Fires w/ book ts" value={String(latencyStats.fireCount)} />
+              <RollupTile label="Median lag" value={latencyStats.median != null ? `${latencyStats.median}ms` : "—"} />
+              <RollupTile label="p90 lag" value={latencyStats.p90 != null ? `${latencyStats.p90}ms` : "—"} />
+              <RollupTile label="book_reacted" value={String(latencyStats.bookReacted)} hint="book moved first" />
+              <RollupTile label="stale_feed" value={String(latencyStats.staleFeed)} hint="our feed was stale" />
+              <RollupTile label="no_book" value={String(latencyStats.noBook)} hint="no live_ml snapshot" />
+            </div>
+            <div>
+              <div className="text-[11px] text-muted-foreground mb-1">Fire lag distribution (feed_ts − book_last_move_ts)</div>
+              <div className="space-y-1">
+                {latencyStats.buckets.map(b => (
+                  <div key={b.label} className="flex items-center gap-3 text-xs">
+                    <div className="w-16 font-mono text-[10px] text-muted-foreground">{b.label}</div>
+                    <div className="flex-1 relative h-5 bg-muted/30 rounded overflow-hidden">
+                      <div className="absolute inset-y-0 left-0 bg-emerald-500/30" style={{ width: `${(b.n / latencyStats.bucketMax) * 100}%` }} />
+                    </div>
+                    <div className="w-10 text-right font-mono">{b.n}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
+              Sibling engine: <span className="font-mono">lag_edges</span> (player props) — {latencyStats.lagEdges24h} rows in 24h ·
+              excess lag p50 <span className="font-mono">{latencyStats.lagP50 != null ? latencyStats.lagP50.toFixed(1) + "s" : "—"}</span> ·
+              p90 <span className="font-mono">{latencyStats.lagP90 != null ? latencyStats.lagP90.toFixed(1) + "s" : "—"}</span>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Completeness panel */}
         <Card>
@@ -424,10 +524,12 @@ export default function MlbFairPriceDashboard() {
                     <TableHead>Time</TableHead>
                     <TableHead>Game</TableHead>
                     <TableHead>Event</TableHead>
+                    <TableHead>Player</TableHead>
                     <TableHead>Side</TableHead>
                     <TableHead className="text-right">Edge</TableHead>
                     <TableHead className="text-right">EV</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead className="text-right">Book / Price</TableHead>
+                    <TableHead className="text-right">Lag</TableHead>
                     <TableHead>Decision</TableHead>
                     <TableHead>Sev</TableHead>
                     <TableHead>Reason</TableHead>
@@ -437,6 +539,10 @@ export default function MlbFairPriceDashboard() {
                 <TableBody>
                   {filteredEvents.map(e => {
                     const sc = scores[e.game_id];
+                    const trig = triggers[`${e.game_id}|${e.event_time}|${e.event_type}`];
+                    const lag = (e.feed_ts != null && e.book_last_move_ts != null)
+                      ? (e.feed_ts - e.book_last_move_ts) : null;
+                    const realBook = !!(e.book_id && e.book_price != null);
                     return (
                       <TableRow key={e.id} className="text-xs">
                         <TableCell className="font-mono text-[11px] whitespace-nowrap">{fmtTime(e.created_at)}</TableCell>
@@ -449,10 +555,35 @@ export default function MlbFairPriceDashboard() {
                           </button>
                         </TableCell>
                         <TableCell className="font-mono text-[10px] text-muted-foreground">{e.event_type ?? "—"}</TableCell>
+                        <TableCell className="text-[11px]">
+                          {trig?.player_name ? (
+                            <span>
+                              {trig.player_name}
+                              {trig.team && <span className="text-muted-foreground font-mono ml-1">({trig.team})</span>}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
                         <TableCell>{sideBadge(e.side)}</TableCell>
                         <TableCell className="text-right font-mono">{pct(e.edge, 2)}</TableCell>
                         <TableCell className="text-right font-mono">{pct(e.ev_pct, 2)}</TableCell>
-                        <TableCell className="text-right font-mono">{e.book_price ?? "—"}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {realBook ? (
+                              <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[9px] font-mono px-1 py-0">REAL</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[9px] font-mono px-1 py-0 text-muted-foreground">NO BOOK</Badge>
+                            )}
+                            <span className="font-mono text-[11px]">{e.book_id ?? "—"}</span>
+                            <span className="font-mono text-[11px] text-muted-foreground">{e.book_price ?? "—"}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-[10px]">
+                          {lag != null ? (
+                            <span className={lag >= 0 ? "text-emerald-400" : "text-red-400"}>
+                              {lag >= 0 ? "+" : ""}{lag}ms
+                            </span>
+                          ) : "—"}
+                        </TableCell>
                         <TableCell>{decisionBadge(e.gate_decision)}</TableCell>
                         <TableCell>{sevBadge(e.severity)}</TableCell>
                         <TableCell className="text-muted-foreground font-mono text-[10px] truncate max-w-[140px]">{e.skip_reason ?? "—"}</TableCell>
@@ -461,7 +592,7 @@ export default function MlbFairPriceDashboard() {
                     );
                   })}
                   {filteredEvents.length === 0 && (
-                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6">No events match the filters.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-6">No events match the filters.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -523,20 +654,31 @@ export default function MlbFairPriceDashboard() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Time</TableHead>
+                      <TableHead>Trigger</TableHead>
                       <TableHead>Side</TableHead>
                       <TableHead className="text-right">WP pre→post</TableHead>
                       <TableHead className="text-right">Edge</TableHead>
                       <TableHead className="text-right">EV</TableHead>
                       <TableHead className="text-right">Book / Opp</TableHead>
+                      <TableHead className="text-right">Lag</TableHead>
                       <TableHead>Decision</TableHead>
                       <TableHead>Reason</TableHead>
                       <TableHead>Outcome / CLV</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {openGameEvents.map(e => (
+                    {openGameEvents.map(e => {
+                      const trig = triggers[`${e.game_id}|${e.event_time}|${e.event_type}`];
+                      const lag = (e.feed_ts != null && e.book_last_move_ts != null)
+                        ? (e.feed_ts - e.book_last_move_ts) : null;
+                      return (
                       <TableRow key={e.id} className="text-xs">
                         <TableCell className="font-mono text-[11px] whitespace-nowrap">{fmtTime(e.created_at)}</TableCell>
+                        <TableCell className="text-[11px]">
+                          <span className="font-mono text-muted-foreground">{e.event_type ?? "—"}</span>
+                          {trig?.player_name && <span className="ml-1">{trig.player_name}</span>}
+                          {trig?.team && <span className="font-mono text-muted-foreground ml-1">({trig.team})</span>}
+                        </TableCell>
                         <TableCell>{sideBadge(e.side)}</TableCell>
                         <TableCell className="text-right font-mono">
                           {e.wp_pre != null ? (e.wp_pre * 100).toFixed(1) : "—"}→{e.wp_post != null ? (e.wp_post * 100).toFixed(1) : "—"}
@@ -544,15 +686,24 @@ export default function MlbFairPriceDashboard() {
                         <TableCell className="text-right font-mono">{pct(e.edge, 2)}</TableCell>
                         <TableCell className="text-right font-mono">{pct(e.ev_pct, 2)}</TableCell>
                         <TableCell className="text-right font-mono">
+                          <span className="text-muted-foreground">{e.book_id ?? "—"} </span>
                           {e.book_price ?? "—"} / {e.opposite_book_price ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-[10px]">
+                          {lag != null ? (
+                            <span className={lag >= 0 ? "text-emerald-400" : "text-red-400"}>
+                              {lag >= 0 ? "+" : ""}{lag}ms
+                            </span>
+                          ) : "—"}
                         </TableCell>
                         <TableCell>{decisionBadge(e.gate_decision)}</TableCell>
                         <TableCell className="text-muted-foreground font-mono text-[10px] truncate max-w-[120px]">{e.skip_reason ?? "—"}</TableCell>
                         <TableCell>{hitBadge(e.realized_hit, e.clv_pct)}</TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                     {openGameEvents.length === 0 && (
-                      <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-6">No events for this game.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6">No events for this game.</TableCell></TableRow>
                     )}
                   </TableBody>
                 </Table>
