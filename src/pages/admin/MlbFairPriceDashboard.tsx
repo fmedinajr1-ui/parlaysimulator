@@ -612,6 +612,53 @@ export default function MlbFairPriceDashboard() {
           </CardContent>
         </Card>
 
+        {/* Today's MLB slate */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span>Today's MLB slate{todayDate ? ` · ${todayDate} ET` : ""}</span>
+              <Badge variant="outline" className="font-mono text-[10px]">{todaySlate.length} games</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {todaySlate.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">No games scheduled today.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {todaySlate.map(g => {
+                  const hasEvents = events.some(e => e.game_id === g.gameId);
+                  const live = /In Progress|Live|Manager Challenge|Warmup/i.test(g.game_status);
+                  const final = /Final|Game Over|Completed/i.test(g.game_status);
+                  const start = new Date(g.start_iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+                  return (
+                    <button
+                      key={g.gamePk}
+                      onClick={() => hasEvents && setOpenGameId(g.gameId)}
+                      className={`text-left rounded-lg border bg-card p-3 space-y-1 transition ${hasEvents ? "border-border hover:bg-muted/30 cursor-pointer" : "border-border/50 opacity-70 cursor-default"}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{g.away_team} @ {g.home_team}</div>
+                        <Badge
+                          variant="outline"
+                          className={`font-mono text-[10px] ${live ? "border-emerald-500/40 text-emerald-400" : final ? "text-muted-foreground" : ""}`}
+                        >
+                          {live ? (g.inning ?? "LIVE") : final ? "FINAL" : start + " ET"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span className="font-mono">
+                          {(live || final) ? `${g.away_score ?? 0}–${g.home_score ?? 0}` : "—"}
+                        </span>
+                        <span>{hasEvents ? "events ✓" : "no events"}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Live game strip */}
         <Card>
           <CardHeader className="pb-3">
