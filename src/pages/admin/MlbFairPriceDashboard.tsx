@@ -246,6 +246,46 @@ export default function MlbFairPriceDashboard() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [events]);
 
+  // Per-book latency leaderboard — real mlb_fair_price_events data, grouped by book_id.
+  const perBookLatency = useMemo(() => {
+    const groups: Record<string, { fires: number[]; reacted: number; stale: number; realFires: number; totalFires: number }> = {};
+    events.forEach(e => {
+      const bk = e.book_id;
+      if (!bk) return;
+      const g = (groups[bk] ||= { fires: [], reacted: 0, stale: 0, realFires: 0, totalFires: 0 });
+      if (e.gate_decision === "fire") {
+        g.totalFires += 1;
+        if (e.book_price != null) g.realFires += 1;
+        if (e.feed_ts != null && e.book_last_move_ts != null) {
+          const lag = (e.feed_ts as number) - (e.book_last_move_ts as number);
+          if (Number.isFinite(lag)) g.fires.push(lag);
+        }
+      } else if (e.gate_decision === "skip") {
+        if (e.skip_reason === "book_reacted") g.reacted += 1;
+        else if (e.skip_reason === "stale_feed") g.stale += 1;
+      }
+    });
+    const rows = Object.entries(groups).map(([book, g]) => {
+      const sorted = g.fires.slice().sort((a, b) => a - b);
+      const q = (p: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : null;
+      return {
+        book,
+        fires: g.totalFires,
+        lagN: sorted.length,
+        median: q(0.5),
+        p90: q(0.9),
+        max: sorted.length ? sorted[sorted.length - 1] : null,
+        reacted: g.reacted,
+        stale: g.stale,
+        realPct: g.totalFires ? g.realFires / g.totalFires : null,
+      };
+    });
+    const ranked = rows.filter(r => r.lagN >= 5).sort((a, b) => (b.median ?? -1) - (a.median ?? -1));
+    const lowVol = rows.filter(r => r.lagN < 5);
+    const slowest = Math.max(1, ...ranked.map(r => r.median ?? 0));
+    return { ranked, lowVol, slowest };
+  }, [events]);
+
   // Live game tiles: group events by game_id
   const gameTiles = useMemo(() => {
     const byGame: Record<string, Event[]> = {};
@@ -353,6 +393,80 @@ export default function MlbFairPriceDashboard() {
               excess lag p50 <span className="font-mono">{latencyStats.lagP50 != null ? latencyStats.lagP50.toFixed(1) + "s" : "—"}</span> ·
               p90 <span className="font-mono">{latencyStats.lagP90 != null ? latencyStats.lagP90.toFixed(1) + "s" : "—"}</span>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Per-book latency leaderboard */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Per-book latency leaderboard (24h)</CardTitle>
+            <p className="text-[11px] text-muted-foreground">
+              Higher median = book's published line is further behind the live event when we fire. These are the books most exposed to latency arb.
+              Min 5 fires per book to rank; the rest are aggregated below.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {perBookLatency.ranked.length === 0 && perBookLatency.lowVol.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No book-tagged fires in the last 24h.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Book</TableHead>
+                    <TableHead className="text-right">Fires</TableHead>
+                    <TableHead>Median lag</TableHead>
+                    <TableHead className="text-right">p90</TableHead>
+                    <TableHead className="text-right">Max</TableHead>
+                    <TableHead className="text-right">book_reacted</TableHead>
+                    <TableHead className="text-right">stale_feed</TableHead>
+                    <TableHead className="text-right">Real-line %</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {perBookLatency.ranked.map(r => {
+                    const med = r.median ?? 0;
+                    const tone = med >= 2000 ? "text-red-500" : med >= 1000 ? "text-amber-500" : "text-emerald-500";
+                    const barPct = Math.min(100, Math.max(4, (med / perBookLatency.slowest) * 100));
+                    return (
+                      <TableRow key={r.book}>
+                        <TableCell className="font-mono text-xs">{r.book}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.fires}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 relative h-3 bg-muted/30 rounded overflow-hidden min-w-[60px]">
+                              <div className="absolute inset-y-0 left-0 bg-amber-500/40" style={{ width: `${barPct}%` }} />
+                            </div>
+                            <span className={`font-mono text-xs w-16 text-right ${tone}`}>{r.median != null ? `${r.median}ms` : "—"}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.p90 != null ? `${r.p90}ms` : "—"}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.max != null ? `${r.max}ms` : "—"}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.reacted}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.stale}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.realPct != null ? `${(r.realPct * 100).toFixed(0)}%` : "—"}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {perBookLatency.lowVol.length > 0 && (
+                    <TableRow className="text-muted-foreground">
+                      <TableCell className="font-mono text-xs italic">(low-volume × {perBookLatency.lowVol.length})</TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {perBookLatency.lowVol.reduce((s, r) => s + r.fires, 0)}
+                      </TableCell>
+                      <TableCell colSpan={4} className="text-xs italic">
+                        {perBookLatency.lowVol.map(r => r.book).join(", ")}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {perBookLatency.lowVol.reduce((s, r) => s + r.reacted, 0)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {perBookLatency.lowVol.reduce((s, r) => s + r.stale, 0)}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
 
