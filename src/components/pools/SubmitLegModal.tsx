@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,10 +18,18 @@ interface SubmitLegModalProps {
 }
 
 export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: SubmitLegModalProps) {
+  // Pick a sensible default based on the current month (MLB Apr-Oct, Tennis year-round fallback to NBA).
+  const defaultSport = useMemo(() => {
+    const month = new Date().getMonth() + 1; // 1-12
+    if (month >= 4 && month <= 10) return 'MLB';
+    if (month >= 11 || month <= 3) return 'NBA';
+    return 'NBA';
+  }, []);
+
   const [description, setDescription] = useState('');
   const [odds, setOdds] = useState('');
   const [betType, setBetType] = useState('prop');
-  const [sport, setSport] = useState('NBA');
+  const [sport, setSport] = useState(defaultSport);
   const [playerName, setPlayerName] = useState('');
   const [propType, setPropType] = useState('');
   const [line, setLine] = useState('');
@@ -88,7 +96,7 @@ export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: S
     setDescription('');
     setOdds('');
     setBetType('prop');
-    setSport('NBA');
+    setSport(defaultSport);
     setPlayerName('');
     setPropType('');
     setLine('');
@@ -158,6 +166,7 @@ export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: S
                 <SelectItem value="NFL">NFL</SelectItem>
                 <SelectItem value="NHL">NHL</SelectItem>
                 <SelectItem value="MLB">MLB</SelectItem>
+                <SelectItem value="Tennis">Tennis</SelectItem>
                 <SelectItem value="NCAAB">NCAAB</SelectItem>
                 <SelectItem value="NCAAF">NCAAF</SelectItem>
                 <SelectItem value="Soccer">Soccer</SelectItem>
