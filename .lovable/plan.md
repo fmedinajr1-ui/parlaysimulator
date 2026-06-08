@@ -1,43 +1,91 @@
-## Per-Book Latency Leaderboard — using real `mlb_fair_price_events` data
 
-Add a new card to `/admin/mlb-fair-price` that ranks each sportsbook by how slow it was to react to live game events when we fired. Pure UI on data already polled every 15s — no engine, schema, or cron changes.
+## The problem with what you're seeing
 
-### Data source (real, no mocks)
+Last 24h in `mlb_fair_price_events`:
 
-Already loaded by the existing `load()` call:
-- `mlb_fair_price_events` rows from the last 24h with `book_id`, `book_price`, `feed_ts`, `book_last_move_ts`, `gate_decision`, `skip_reason`.
+- **38 total events** logged
+- **0 had `book_id`** populated
+- **0 had `book_implied`**
+- **0 had `book_last_move_ts`**
+- All 38 → `skip` / `no_book_or_suspended` / `WARN`
+- `book_snapshot` table: **0 rows in 24h**
 
-Per-book aggregation (client-side, in a new `perBookLatency` `useMemo`):
-- Group rows by `book_id` (skip null).
-- For `gate_decision='fire'` rows with both timestamps → `lag_ms = feed_ts − book_last_move_ts`.
-- Compute `median`, `p90`, `max` per book.
-- For `gate_decision='skip'` rows → count `skip_reason='book_reacted'` (book beat us) and `'stale_feed'` (our feed lagged) per book.
-- Compute `real_line_pct` = % of book's fires where `book_price` is finite.
-- Books with `< 5` fires → bucketed into a single `(low-volume)` row to keep the ranking honest.
+That's why the feed reads like wallpaper. It's not catching delays — it's logging "we couldn't even see a book line" 38 times in a row. The lag column will never populate while the upstream book snapshot is empty, so a "Book Latency Leaderboard" built on this data has nothing to rank.
 
-### UI
+There are two things to fix, and they're separate. This plan only covers the UI redesign you asked about. The empty `book_snapshot` is an upstream/scraper issue I'll flag in the UI but not touch in this plan.
 
-New `<Card>` placed directly under the existing "Book latency (24h)" card.
+## What the feed becomes: "Delay Catches"
 
-Title: **Per-book latency leaderboard (24h)**
-Subtitle: *Higher median = book's published line is further behind the live event when we fire. These are the books most exposed to latency arb.*
+Replace the current dumping-ground table with a feed that only shows things worth looking at.
 
-Table columns:
-| Book | Fires | Median | p90 | Max | book_reacted | stale_feed | Real-line % |
+### Inclusion rule (hard filter)
 
-Rows sorted by `median` descending. Each row's median cell shows a horizontal bar scaled to the slowest book (`width = median / slowest`). Color rules on median:
-- `≥ 2000ms` → red
-- `1000–1999ms` → amber
-- `< 1000ms` → green
+A row appears **only** if all are true:
+- `book_last_move_ts IS NOT NULL` AND `feed_ts IS NOT NULL`
+- `lag_ms = feed_ts - book_last_move_ts >= 5000` (≥ 5s)
+- `book_price IS NOT NULL` (we actually had a line to react to)
 
-Low-volume books collapse to a footer row showing aggregate counts.
+Everything else — `no_book_or_suspended`, suspended markets, skips with no book — is dropped from this feed entirely.
 
-### Files touched
+### Header strip (replaces noise)
 
-- `src/pages/admin/MlbFairPriceDashboard.tsx` only — add `perBookLatency` memo + the new `<Card>` after the existing Book-Latency card.
+Three small counters above the feed so the dropped data still gets accounted for:
 
-### Out of scope
+```text
+[ Delay catches: 12 ]  [ No book / suspended: 142 ]  [ Real-line fires: 4 ]
+                       (24h window)
+```
 
-- No per-market-type split (Fair-Price v1 fires `live_ml` only).
-- No historical window beyond the dashboard's 24h.
-- No changes to `lag_edges` (player-prop) tile.
+Clicking "No book / suspended" opens a small drawer with that subset — they're not gone, just not in the main view.
+
+### Columns (per row)
+
+| Time | Game | Event | Player | Side | Book | Lag | Edge | Decision |
+|------|------|-------|--------|------|------|-----|------|----------|
+
+- **Lag**: the headline number, e.g. `7.4s`, colored amber 5–10s, red >10s, with a small horizontal bar scaled to the slowest lag in view.
+- **Book**: which book was late (DK, FD, MGM, etc.).
+- **Decision**: `fire` / `skip` — and skip-reason chip only if it's `book_reacted` or `stale_feed` (the interesting skips). Boring skips don't qualify under the filter anyway.
+
+### Empty-state callout (this is what you'll see today)
+
+When the filter returns zero rows AND `book_id` is null on 100% of recent events, show a prominent banner instead of an empty table:
+
+```text
+⚠ No book data in last 24h
+The fair-price engine logged 38 events but every one was "no_book_or_suspended".
+The book snapshot feed isn't writing rows (book_snapshot: 0 in 24h).
+Until that's fixed, lag cannot be measured. [View raw events →]
+```
+
+This makes the actual problem visible instead of hiding it behind a wall of identical WARN rows.
+
+## What stays / what goes
+
+**Keep on the page:**
+- Top KPI cards (fire/skip rates, hit rate, CLV)
+- Book Latency Leaderboard card (already added) — will show "(awaiting book data)" until snapshots flow
+- Histogram of `feed_ts − book_last_move_ts` — same gating
+- Per-game drill-down sheet
+
+**Replace:**
+- The current "Events Feed (last 24h, max 200)" table — this is the noise you screenshotted.
+
+**Remove from default view:**
+- The `All / FIRE / SKIP` + `Any sev / WARN / INFO` + `Any side / HOME / AWAY` chip rows on the feed. They're filtering noise. New default = delay catches only, with one toggle "Show raw events" that reveals the old unfiltered table for debugging.
+
+## Technical notes
+
+- Single file edit: `src/pages/admin/MlbFairPriceDashboard.tsx`
+- Add `delayCatches = useMemo(...)` deriving from existing `events` state (no new query)
+- Add `noBookCount` / `realLineCount` counters from same array
+- New `<DelayCatchesTable />` block inline
+- Wrap existing feed table in a `<details>` / collapsible "Show raw events"
+- No schema changes, no edge function changes, no cron changes
+- Polling stays at 15s as-is
+
+## Out of scope (call out, don't fix here)
+
+- Why `book_snapshot` is empty — that's a scraper/worker issue. Flag in UI banner, separate ticket.
+- Lag leaderboard ranking math — already implemented, will populate once book data flows.
+
