@@ -132,6 +132,18 @@ export default function MlbFairPriceDashboard() {
   const [triggers, setTriggers] = useState<Record<string, Trigger>>({});
   const [lagEdges, setLagEdges] = useState<LagEdge[]>([]);
   const [mlbInfo, setMlbInfo] = useState<Record<string, Score>>({});
+  const [todaySlate, setTodaySlate] = useState<Array<{
+    gamePk: number;
+    gameId: string;
+    home_team: string;
+    away_team: string;
+    game_status: string;
+    start_iso: string;
+    home_score: number | null;
+    away_score: number | null;
+    inning: string | null;
+  }>>([]);
+  const [todayDate, setTodayDate] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [filter, setFilter] = useState<{ decision: string; severity: string; closing: string; side: string; search: string }>({
@@ -184,6 +196,53 @@ export default function MlbFairPriceDashboard() {
     load();
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
+  }, []);
+
+  // Today's MLB slate (ET) — refreshes every 60s
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSlate() {
+      try {
+        // ET date
+        const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const y = etNow.getFullYear();
+        const m = String(etNow.getMonth() + 1).padStart(2, "0");
+        const d = String(etNow.getDate()).padStart(2, "0");
+        const date = `${y}-${m}-${d}`;
+        const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=linescore`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const j = await r.json();
+        const rows: typeof todaySlate = [];
+        for (const day of j?.dates ?? []) {
+          for (const g of day?.games ?? []) {
+            rows.push({
+              gamePk: g.gamePk,
+              gameId: `mlb_${g.gamePk}`,
+              home_team: g.teams?.home?.team?.name ?? "?",
+              away_team: g.teams?.away?.team?.name ?? "?",
+              game_status: g.status?.detailedState ?? g.status?.abstractGameState ?? "—",
+              start_iso: g.gameDate,
+              home_score: g.teams?.home?.score ?? null,
+              away_score: g.teams?.away?.score ?? null,
+              inning: g.linescore?.currentInningOrdinal
+                ? `${g.linescore.inningState ?? ""} ${g.linescore.currentInningOrdinal}`.trim()
+                : null,
+            });
+          }
+        }
+        rows.sort((a, b) => a.start_iso.localeCompare(b.start_iso));
+        if (!cancelled) {
+          setTodaySlate(rows);
+          setTodayDate(date);
+        }
+      } catch (e) {
+        console.warn("[MlbFairPriceDashboard] today slate failed", e);
+      }
+    }
+    loadSlate();
+    const id = setInterval(loadSlate, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   // Resolve team names from MLB Stats API for any game_id (mlb_<gamePk>) we don't already have a score join for.
@@ -550,6 +609,53 @@ export default function MlbFairPriceDashboard() {
                 })}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+
+        {/* Today's MLB slate */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span>Today's MLB slate{todayDate ? ` · ${todayDate} ET` : ""}</span>
+              <Badge variant="outline" className="font-mono text-[10px]">{todaySlate.length} games</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {todaySlate.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">No games scheduled today.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {todaySlate.map(g => {
+                  const hasEvents = events.some(e => e.game_id === g.gameId);
+                  const live = /In Progress|Live|Manager Challenge|Warmup/i.test(g.game_status);
+                  const final = /Final|Game Over|Completed/i.test(g.game_status);
+                  const start = new Date(g.start_iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+                  return (
+                    <button
+                      key={g.gamePk}
+                      onClick={() => hasEvents && setOpenGameId(g.gameId)}
+                      className={`text-left rounded-lg border bg-card p-3 space-y-1 transition ${hasEvents ? "border-border hover:bg-muted/30 cursor-pointer" : "border-border/50 opacity-70 cursor-default"}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{g.away_team} @ {g.home_team}</div>
+                        <Badge
+                          variant="outline"
+                          className={`font-mono text-[10px] ${live ? "border-emerald-500/40 text-emerald-400" : final ? "text-muted-foreground" : ""}`}
+                        >
+                          {live ? (g.inning ?? "LIVE") : final ? "FINAL" : start + " ET"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span className="font-mono">
+                          {(live || final) ? `${g.away_score ?? 0}–${g.home_score ?? 0}` : "—"}
+                        </span>
+                        <span>{hasEvents ? "events ✓" : "no events"}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
 
