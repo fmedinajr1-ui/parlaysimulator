@@ -1,46 +1,75 @@
-## Why `book_id` is NULL
+## Goal
 
-The chain that's supposed to populate it:
+Self-hosted Hard Rock Bet MLB moneyline scraper so `mlb_fair_price_events.book_id` and the pre-game latency table include `hardrockbet` alongside FanDuel/DK/etc.
 
+## Architecture
+
+```text
+[hardrock-worker container]  -- runs alongside fanduel-worker on the same VPS
+  POST /scrape-hardrock-mlb-ml
+    1. Reuse cached HR session cookie (login on cold start with HARDROCK_USER / HARDROCK_PASS)
+    2. Hit HR's internal JSON odds endpoint for MLB h2h (reverse-engineered from devtools)
+    3. Return normalized JSON: [{ game, home_team, away_team, home_price, away_price, captured_at }]
+
+[Supabase edge fn: mlb-hardrock-ml-bridge]  -- every 30s via pg_cron
+    1. fetch worker /scrape-hardrock-mlb-ml with WORKER_SECRET
+    2. Resolve each (away@home) to today's MLB gamePk via statsapi.mlb.com
+    3. Insert two rows per game into market_snapshot
+       (sportsbook='hardrockbet', market_type='live_ml', game_id='mlb_<pk>')
+    4. Silent retry on failure — log to console, no Telegram noise
+
+[Existing scout-live-edge]  -- unchanged
+    Already picks `top.sportsbook` by latest captured_at, so HR rows
+    will naturally land in mlb_fair_price_events.book_id whenever
+    HR posts a fresher line than the other books.
 ```
-The Odds API (live MLB h2h)
-  → market_snapshot (market_type='live_ml', sportsbook=<book>)
-    → scout-live-edge pulls latest snapshot for the game
-      → mlb_fair_price_events.book_id = <book>
-```
 
-What I found in the DB:
-- `market_snapshot` has zero rows with `market_type='live_ml'` (only `player_pts` and `player_ast`).
-- `team_moneyline_odds` and `odds_snapshots` also have zero MLB rows in the last 24h.
-- All 38 fair-price events in the last 24h were logged with `gate_decision='skip'`, `skip_reason='no_book_or_suspended'`. That's `scout-live-edge` saying "I have no book line for this game," so it writes the event with `book_id=null`.
+## File changes
 
-So the NULLs are honest — there is literally no live MLB moneyline being ingested anywhere in the system today. The existing `fetch-team-moneylines` function knows how to hit The Odds API for `baseball_mlb` h2h but writes to `team_moneyline_odds` (pre-game only, different table, different `game_id` format), so the fair-price evaluator never sees it.
+### New worker service
+- `hardrock-worker/Dockerfile` — mirror of fanduel-worker, Playwright + stealth
+- `hardrock-worker/package.json` — same deps as fanduel-worker
+- `hardrock-worker/src/server.js` — Express on `:8081`, endpoints:
+  - `GET /health`
+  - `POST /scrape-hardrock-mlb-ml` (Bearer `WORKER_SECRET`)
+- `hardrock-worker/src/hardrock-client.js` — login + JSON-endpoint client
+  - Logs in once with `HARDROCK_USER` / `HARDROCK_PASS`, persists cookies in-memory
+  - 401 → re-login once, then surface error
+  - Reverse-engineered JSON endpoint with documented field mapping
+- `hardrock-worker/README.md` — deploy notes (same VPS, port 8081, env vars)
 
-## Fix
+### Supabase edge function
+- `supabase/functions/mlb-hardrock-ml-bridge/index.ts` — same shape as `mlb-live-ml-bridge`, but pulls from `HARDROCK_WORKER_URL` instead of The Odds API
+- `supabase/functions/mlb-hardrock-ml-bridge_test.ts` — 5 unit tests per testing-policy memory: (a) team-name normalization, (b) unmatched event drop, (c) row shape, (d) empty worker response → 0 inserts, (e) worker 5xx → silent retry signal
 
-### 1. New edge function: `mlb-live-ml-bridge`
-- Hits `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?regions=us&markets=h2h&oddsFormat=american` every 30s.
-- Joins each event to today's MLB Stats API schedule by home/away team name to resolve `gamePk`.
-- For each `(event, bookmaker)`, inserts two rows into `market_snapshot`:
-  - `game_id='mlb_<gamePk>'`, `market_type='live_ml'`, `sportsbook=<bookmaker.key>`, `player_name=<home_team>`, `odds=<home_price>`, `captured_at=<bookmaker.last_update>`
-  - same for the away outcome.
-- This is the exact shape `scout-live-edge` already reads (lines 89–115 of that file): it sorts by `captured_at desc`, takes the top two rows for the same sportsbook, de-vigs the two prices, and sets `book.bookId = top.sportsbook`. Result: `book_id` is populated on every event going forward.
+### Cron
+- `supabase--insert` to register `mlb-hardrock-ml-bridge-30s` pg_cron job (same cadence/window as `mlb-live-ml-bridge-30s`, 10:00–02:00 ET)
 
-### 2. Schedule
-- pg_cron job `mlb-live-ml-bridge-30s` calling the bridge every 30s during MLB hours (10:00–02:00 ET). Inserted via `supabase--insert` (not a migration), per the platform rule that cron URLs/keys aren't migrated.
+### Secrets (request via `add_secret`)
+- `HARDROCK_USER` — HR account email
+- `HARDROCK_PASS` — HR account password
+- `HARDROCK_WORKER_URL` — `https://your-vps.host:8081` (set after worker deploys)
+- `HARDROCK_WORKER_SECRET` — shared Bearer for the edge function → worker call (re-use FanDuel's value or new, your call)
 
-### 3. Hard Rock note
-The Odds API US region returns FanDuel, DraftKings, BetMGM, Caesars, ESPNBet, Fanatics, BetRivers — **not Hard Rock**. Hard Rock would need a separate scraper (Hard Rock has no public odds API). For now the bridge will fill book_id for the supported books; Hard Rock will continue to show "missing" in the pre-game alert until a Hard Rock scraper is added (separate ticket).
+### Plan doc
+- Update `.lovable/plan.md` with the new bridge so the Hard Rock "out of scope" note is removed.
 
-### 4. Verify
-- Run the bridge once manually, then query `market_snapshot WHERE market_type='live_ml'` to confirm rows landed.
-- Wait one event cycle and confirm `mlb_fair_price_events.book_id IS NOT NULL` for new rows.
-- Pre-game Telegram alert's per-book latency table will start showing real numbers automatically.
+## Out of scope (this ticket)
 
-## Requirements
-- `THE_ODDS_API_KEY` secret — already exists (used by `fetch-team-moneylines`), no new secret needed.
+- Player-prop ingestion from Hard Rock (only MLB h2h here). The existing `_shared/hardrock-lines.ts` for NBA props is unaffected.
+- VPS provisioning — assumes the FanDuel worker box stays up; we just add a second container.
+- Backfill — only new `mlb_fair_price_events` rows get `book_id='hardrockbet'`.
 
-## Out of scope
-- Hard Rock ingestion (no public API).
-- Backfilling historical `book_id` NULLs — past events stay null; only new events get tagged.
-- Any change to the fair-price gate logic.
+## Verification
+
+1. `curl https://<vps>:8081/health` → `{ok:true}`
+2. Run worker `/scrape-hardrock-mlb-ml` manually → returns ≥1 MLB game with prices
+3. Manually invoke `mlb-hardrock-ml-bridge` edge fn → `{ok:true, matched, inserted}`
+4. `SELECT * FROM market_snapshot WHERE sportsbook='hardrockbet' ORDER BY captured_at DESC LIMIT 5;` → rows present
+5. Wait ~2 min for `scout-live-edge` tick → `SELECT book_id, count(*) FROM mlb_fair_price_events WHERE created_at > now()-interval '5 min' GROUP BY 1;` should show `hardrockbet` appearing
+
+## Risks & mitigations
+
+- **HR rotates endpoint paths / adds bot challenge** → wrap fetch in worker with one Playwright-fallback path that loads the live MLB page and scrapes the embedded JSON; logged but not auto-enabled.
+- **Login MFA / device check** → if HR forces MFA, worker login will fail loudly in `/health`; you'll need to whitelist the VPS IP in your HR account or disable email-MFA on that account.
+- **TOS** — scraping HR while logged in is a grey area; using a dedicated burner account scoped to read-only odds pages keeps blast radius small.
