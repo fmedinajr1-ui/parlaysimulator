@@ -149,26 +149,22 @@ function buildTopDelays(rows: FpRow[]): string {
 }
 
 async function sendAdminTelegram(message: string) {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
-  const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_ADMIN_CHAT_ID");
-  if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY || !ADMIN_CHAT_ID) {
-    return { ok: false, error: "telegram secrets missing" };
-  }
-  const res = await fetch("https://connector-gateway.lovable.dev/telegram/sendMessage", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": TELEGRAM_API_KEY,
-      "Content-Type": "application/json",
+  const res = await fetch(
+    `${Deno.env.get("SUPABASE_URL")}/functions/v1/bot-send-telegram`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({
+        message,
+        parse_mode: "HTML",
+        admin_only: true,
+        type: "mlb_pregame_latency",
+      }),
     },
-    body: JSON.stringify({
-      chat_id: ADMIN_CHAT_ID,
-      text: message,
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-    }),
-  });
+  );
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
 }
