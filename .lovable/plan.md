@@ -1,67 +1,36 @@
 ## Goal
+Stop hardcoding "NBA" in 3 frontend surfaces so MLB and Tennis render correctly.
 
-Remove every Hard Rock Bet code path. Verify NBA alerts against **FanDuel live lines only**. Update the Telegram footer to read **"Lines verified on FanDuel & DraftKings"** (DK is already pulled via The Odds API for line comparison; FD is the gate).
+## Changes (frontend-only, presentation)
 
-## What gets deleted
+### 1. `src/components/results/SharpMoneyAlerts.tsx`
+- Replace the NBA-only fatigue gate (`alert.sport !== 'basketball_nba'`) with a sport-aware label resolver that maps `alert.sport` → display string:
+  - `basketball_nba` → `NBA`
+  - `baseball_mlb` → `MLB`
+  - `tennis_*` (atp/wta) → `Tennis`
+  - fallback → existing raw value
+- Keep fatigue badge logic but allow MLB/Tennis (no fatigue scores → simply skip badge instead of bailing the whole card to NBA branding).
+- Show the resolved sport label in the existing `<Badge>{alert.sport}</Badge>` slot.
 
-### Worker + bridge
-- Entire `hardrock-worker/` directory
-- `supabase/functions/mlb-hardrock-ml-bridge/` (function + tests)
-- `supabase/functions/fetch-hardrock-longshots/`
-- `supabase/functions/_shared/hardrock-lines.ts` + `_test.ts`
-- pg_cron jobs: `mlb-hardrock-ml-bridge-30s-a` and `-b` (unschedule via `supabase--insert`)
+### 2. `src/components/pools/SubmitLegModal.tsx`
+- Replace default `useState('NBA')` and reset `setSport('NBA')` with a derived default driven by today's active sport (MLB in season → "MLB", else Tennis → "Tennis", else "NBA").
+- Add `MLB` and `Tennis` `<SelectItem>`s to the sport dropdown so users can submit non-NBA legs.
 
-### Secrets to drop
-- `HARDROCK_WORKER_URL`, `HARDROCK_WORKER_SECRET`, `HARDROCK_USER`, `HARDROCK_PASS` (via `secrets--delete_secret`)
-
-### Plan / memory cleanup
-- `.lovable/plan.md` — remove HR section
-- Delete `mem://logic/betting/hardrock-line-gating.md`
-- Update `mem://index.md` to drop that entry and the two HRB-specialty references that are now stale (`hrb-rbi-analyzer`, `hrb-specialty-scanners` — keep if they're FD/MLB-only despite the name; verify on read)
-
-## What gets rewritten
-
-### New `_shared/fanduel-lines.ts`
-Mirror of the deleted `hardrock-lines.ts` but pulls `sportsbook='fanduel'` from `market_snapshot` (already populated by the existing FanDuel worker + `mlb-live-ml-bridge` pattern) instead of HR. Same exported surface so callers don't change:
-- `getLiveLines(sport)` → cached 5 min
-- `checkFdLine({event_id, player, prop_type, side, line})` returning `{ok, line, price, reason?}`
-- Tolerance `0.5`, max juice `-200` (unchanged)
-
-### `signal-alert-engine`
-- Replace every `checkHrbLine` call with `checkFdLine`
-- Replace `stats.dropped_no_hrb` → `stats.dropped_no_fd`
-- Suppressed-when-empty rule unchanged (FD coverage gap → suppress NBA alerts)
-- Inserted `fanduel_prediction_alerts` row uses FD's `line` / `over_price` / `under_price`, `bookmaker='fanduel'`, `metadata.fd_verified=true`, per-leg `fd_line` / `fd_price`
-
-### `signal-alert-telegram`
-- Read `metadata.fd_verified` instead of `hrb_verified`
-- Footer text → `📘 Lines verified on FanDuel & DraftKings`
-
-### Surface-only edits (search & replace, no logic change)
-Files still referencing `hardrockbet` / `hardrock` for display, dropdowns, or odds-source lists:
-- `src/components/auth/TelegramOnboarding.tsx`
-- `src/components/scout/warroom/HedgeModeTable.tsx`, `HedgeSlideIn.tsx`
-- `src/hooks/useLiveOdds.ts`, `useLiveSweetSpotLines.ts`
-- `src/lib/bookScannerMarket.ts`
-- `src/pages/PropScanner.tsx`
-- `supabase/functions/{fetch-batch-odds, fetch-current-odds, mlb-odds-props-sync, mlb-pregame-latency-alert, nba-ladder-challenge, ocr-prop-scan, outrights-sync, sb-unders-daily-report, sportsbook-props-scraper, team-markets-sync, telegram-prop-scanner}/index.ts`
-
-Remove `hardrockbet` from sportsbook arrays/enums/UI labels. Where a single book must be chosen, default to `fanduel`. Keep DraftKings rows everywhere they exist.
-
-### Database
-- Leave existing `market_snapshot` rows with `sportsbook='hardrockbet'` in place (historical). New writes stop the moment the bridge cron is unscheduled.
-- `mlb_fair_price_events.book_id='hardrockbet'` rows are historical too; `scout-live-edge` will naturally stop picking HR since no fresh snapshots will land.
-
-## Verification (per testing-policy memory — 5 checks)
-
-1. Rewritten `_shared/fanduel-lines_test.ts` — 5 unit tests: cache hit, empty coverage, tolerance pass, tolerance fail, juice cap.
-2. `signal-alert-engine` dry-run via `supabase--curl_edge_functions` → confirm `dropped_no_fd` populated, alerts carry `metadata.fd_verified=true`.
-3. `grep -ri "hardrock\|hrb_verified\|checkHrbLine" supabase/functions src` returns nothing.
-4. `select count(*) from cron.job where jobname like '%hardrock%'` → 0.
-5. Telegram test broadcast → footer reads "Lines verified on FanDuel & DraftKings".
+### 3. `src/components/team-bets/TeamBetsDashboard.tsx`
+- Extend `SPORTS` array to include `'MLB'` and `'TENNIS'`.
+- Add mapping entries:
+  - display → key: `'MLB' → 'baseball_mlb'`, `'TENNIS' → 'tennis_atp'`
+  - key → display: `'baseball_mlb' → 'MLB'`, `'tennis_atp' → 'TENNIS'`, `'tennis_wta' → 'TENNIS'`
+- Update the default-sport effect: prefer the sport with the most games today instead of forcing NBA when NCAAB is empty. Falls back to NBA only if no other sport has games.
 
 ## Out of scope
+- Backend / edge functions (already FanDuel-gated).
+- `TrapFavoriteAlert` (NBA/NFL-only by design — trap-favorite model doesn't run for MLB/Tennis).
+- Admin-only panels (`SharpLineCalculator`, `BulkSlipUpload`) — those are operator tools, not user-facing.
 
-- Backfilling historical HR-tagged rows
-- Removing DraftKings (it stays; only HR is dropped)
-- Tearing down the FanDuel worker (it's the new gate)
+## Verification
+1. Load `/` with an MLB sharp alert in `line_movements` → badge reads "MLB", not "basketball_mlb" or "NBA".
+2. Load `/` with a tennis sharp alert → badge reads "Tennis".
+3. Open Submit Leg modal during MLB season → default sport is MLB; dropdown lists MLB + Tennis.
+4. Open `/team-bets` on a day with MLB games only → dashboard defaults to MLB tab, not NBA.
+5. Switch TeamBets tab to TENNIS → tennis_atp + tennis_wta games both appear.
