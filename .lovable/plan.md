@@ -1,36 +1,45 @@
 ## Goal
-Stop hardcoding "NBA" in 3 frontend surfaces so MLB and Tennis render correctly.
+Get **every minute of MLB Fair-Price latency activity** delivered to the admin Telegram, plus an **immediate alert when the book-snapshot feed goes dark**, and provide a one-click way to verify it's working.
 
-## Changes (frontend-only, presentation)
+Right now: the `mlb-fair-price-digest` edge function exists and sends an admin Telegram, but it is **never scheduled**. The live engine only sends a Telegram on `gate_decision = "fire"`, and the last 24h had 0 fires (all 27 evals were `no_book_or_suspended` skips). That's why nothing arrives.
 
-### 1. `src/components/results/SharpMoneyAlerts.tsx`
-- Replace the NBA-only fatigue gate (`alert.sport !== 'basketball_nba'`) with a sport-aware label resolver that maps `alert.sport` → display string:
-  - `basketball_nba` → `NBA`
-  - `baseball_mlb` → `MLB`
-  - `tennis_*` (atp/wta) → `Tennis`
-  - fallback → existing raw value
-- Keep fatigue badge logic but allow MLB/Tennis (no fatigue scores → simply skip badge instead of bailing the whole card to NBA branding).
-- Show the resolved sport label in the existing `<Badge>{alert.sport}</Badge>` slot.
+## Changes
 
-### 2. `src/components/pools/SubmitLegModal.tsx`
-- Replace default `useState('NBA')` and reset `setSport('NBA')` with a derived default driven by today's active sport (MLB in season → "MLB", else Tennis → "Tennis", else "NBA").
-- Add `MLB` and `Tennis` `<SelectItem>`s to the sport dropdown so users can submit non-NBA legs.
+### 1. Upgrade `mlb-fair-price-digest` to a minute-level latency pulse
+Currently it sends a 24h + 7d summary — way too coarse for live monitoring. Rework it to support two modes via `?mode=pulse|daily` (default `pulse`):
 
-### 3. `src/components/team-bets/TeamBetsDashboard.tsx`
-- Extend `SPORTS` array to include `'MLB'` and `'TENNIS'`.
-- Add mapping entries:
-  - display → key: `'MLB' → 'baseball_mlb'`, `'TENNIS' → 'tennis_atp'`
-  - key → display: `'baseball_mlb' → 'MLB'`, `'tennis_atp' → 'TENNIS'`, `'tennis_wta' → 'TENNIS'`
-- Update the default-sport effect: prefer the sport with the most games today instead of forcing NBA when NCAAB is empty. Falls back to NBA only if no other sport has games.
+- **`pulse` (default, 1-min cron):** Aggregates the **last 5 minutes** of `mlb_fair_price_events`:
+  - eval count, fire count, sent count
+  - skip breakdown (top 3 reasons)
+  - latency: p50 / p90 of `feed_ts − book_last_move_ts` for fires
+  - `lag_edges` count in window + p90 excess_lag_seconds
+  - book-snapshot health: if `book_snapshot` table has 0 rows inserted in last 5 min OR ≥90% of skips are `no_book_or_suspended`, prepend a 🚨 `BOOK FEED DOWN` banner
+  - **Quiet rule:** if there were 0 evals AND 0 lag_edges in the window, skip sending (don't spam during off-hours). Always send when the outage banner triggers.
+- **`daily`:** Existing 24h + 7d digest (unchanged behavior), keep for once-a-day rollup.
 
-## Out of scope
-- Backend / edge functions (already FanDuel-gated).
-- `TrapFavoriteAlert` (NBA/NFL-only by design — trap-favorite model doesn't run for MLB/Tennis).
-- Admin-only panels (`SharpLineCalculator`, `BulkSlipUpload`) — those are operator tools, not user-facing.
+All sends go through `buildFairPriceAdminPayload` → `bot-send-telegram` with `admin_only: true` (already the existing admin route).
+
+### 2. Schedule the pulse via `pg_cron`
+Insert (not migration — contains the project URL + anon key):
+- `mlb-fair-price-pulse` — every minute, calls digest with `?mode=pulse`
+- `mlb-fair-price-daily` — once daily at 9:05am ET (13:05 UTC), calls digest with `?mode=daily`
+
+### 3. Immediate book-snapshot outage alert (debounced)
+Inside the `pulse` handler, when the outage condition is detected, write a row to a tiny new table `admin_alert_state` keyed by `alert_key` to debounce — only re-send the outage alert if last sent >15 min ago OR state flipped from healthy→down. Same table tracks recovery (down→healthy) so admin gets a "✅ Book feed recovered" ping.
+
+### 4. Manual "Send test ping" button on `/admin/mlb-fair-price`
+Add a small admin-only button in the header that calls `mlb-fair-price-digest?mode=pulse&force=1` (force bypasses the quiet rule) and toasts the Telegram API response, so you can verify end-to-end in one click without waiting for cron.
 
 ## Verification
-1. Load `/` with an MLB sharp alert in `line_movements` → badge reads "MLB", not "basketball_mlb" or "NBA".
-2. Load `/` with a tennis sharp alert → badge reads "Tennis".
-3. Open Submit Leg modal during MLB season → default sport is MLB; dropdown lists MLB + Tennis.
-4. Open `/team-bets` on a day with MLB games only → dashboard defaults to MLB tab, not NBA.
-5. Switch TeamBets tab to TENNIS → tennis_atp + tennis_wta games both appear.
+1. Click the new "Send Test Ping" button on `/admin/mlb-fair-price` → admin Telegram receives a pulse message within 5 sec; toast shows `ok: true`.
+2. Manually `curl` the digest endpoint with `?mode=pulse&force=1` → identical Telegram message arrives.
+3. Wait 2 minutes, check `edge_function_logs` for `mlb-fair-price-digest` → confirm cron-fired invocations at minute boundaries.
+4. While book-snapshot is empty (current state), pulse messages include the 🚨 `BOOK FEED DOWN` banner naming the dominant skip reason.
+5. Insert a fake `book_snapshot` row → within the next 1-min tick, recovery alert "✅ Book feed recovered" is delivered exactly once.
+
+## Technical details
+- New table `admin_alert_state(alert_key text primary key, status text, last_sent_at timestamptz, payload jsonb)` with service-role-only access (admin debouncer; no client read).
+- `pulse` window = last 5 min so we never miss activity even with 1-min cron jitter; dedupe is handled by `admin_alert_state` and the quiet rule (no row inserted for empty pulses).
+- All ET timestamps via existing `etDateShort` / `date-et.ts` helper.
+- No changes to `scout-live-edge` evaluation logic — only the reporting layer changes.
+- No customer-facing surface affected; everything routes through `admin_only: true`.
