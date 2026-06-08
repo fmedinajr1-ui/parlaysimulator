@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAdminRole } from "@/hooks/useAdminRole";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -125,7 +125,7 @@ function hitBadge(r: boolean | null, clv: number | null) {
 }
 
 export default function MlbFairPriceDashboard() {
-  const { isAdmin, isLoading: roleLoading } = useAdminRole();
+  
   const [completeness, setCompleteness] = useState<Completeness[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [scores, setScores] = useState<Record<string, Score>>({});
@@ -180,11 +180,10 @@ export default function MlbFairPriceDashboard() {
   }
 
   useEffect(() => {
-    if (!isAdmin) return;
     load();
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
-  }, [isAdmin]);
+  }, []);
 
   // Rollups
   const rollup24h = useMemo(() => {
@@ -313,10 +312,6 @@ export default function MlbFairPriceDashboard() {
     }).slice(0, 200);
   }, [events, filter]);
 
-  if (roleLoading) return null;
-  if (!isAdmin) {
-    return <div className="min-h-screen bg-background p-6"><p className="text-muted-foreground">Admins only.</p></div>;
-  }
 
   const openGameEvents = openGameId ? events.filter(e => e.game_id === openGameId).slice().reverse() : [];
   const openGameScore = openGameId ? scores[openGameId] : null;
@@ -325,7 +320,7 @@ export default function MlbFairPriceDashboard() {
     <div className="min-h-screen bg-background pb-12">
       <MobileHeader
         title="MLB Fair-Price"
-        subtitle="v1 measurement · admin only"
+        subtitle="v1 measurement"
         showBack
         backTo="/admin"
         showLogo={false}
