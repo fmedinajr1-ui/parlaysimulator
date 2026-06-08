@@ -131,6 +131,7 @@ export default function MlbFairPriceDashboard() {
   const [scores, setScores] = useState<Record<string, Score>>({});
   const [triggers, setTriggers] = useState<Record<string, Trigger>>({});
   const [lagEdges, setLagEdges] = useState<LagEdge[]>([]);
+  const [mlbInfo, setMlbInfo] = useState<Record<string, Score>>({});
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [filter, setFilter] = useState<{ decision: string; severity: string; closing: string; side: string; search: string }>({
@@ -184,6 +185,47 @@ export default function MlbFairPriceDashboard() {
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, []);
+
+  // Resolve team names from MLB Stats API for any game_id (mlb_<gamePk>) we don't already have a score join for.
+  useEffect(() => {
+    const unresolved = Array.from(new Set(events.map(e => e.game_id).filter(Boolean)))
+      .filter(gid => gid.startsWith("mlb_") && !scores[gid] && !mlbInfo[gid])
+      .map(gid => gid.replace(/^mlb_/, ""))
+      .filter(pk => /^\d+$/.test(pk));
+    if (unresolved.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&gamePks=${unresolved.join(",")}`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const j = await r.json();
+        const map: Record<string, Score> = {};
+        for (const day of j?.dates ?? []) {
+          for (const g of day?.games ?? []) {
+            const pk = String(g.gamePk);
+            const gid = `mlb_${pk}`;
+            map[gid] = {
+              event_id: gid,
+              home_team: g.teams?.home?.team?.name ?? null,
+              away_team: g.teams?.away?.team?.name ?? null,
+              home_score: g.teams?.home?.score ?? null,
+              away_score: g.teams?.away?.score ?? null,
+              game_status: g.status?.abstractGameState ?? g.status?.detailedState ?? null,
+              period: g.linescore?.currentInningOrdinal ?? null,
+              clock: g.linescore?.inningState ?? null,
+            };
+          }
+        }
+        if (!cancelled && Object.keys(map).length) {
+          setMlbInfo(prev => ({ ...prev, ...map }));
+        }
+      } catch (e) {
+        console.warn("[MlbFairPriceDashboard] MLB schedule lookup failed", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [events, scores, mlbInfo]);
 
   // Rollups
   const rollup24h = useMemo(() => {
@@ -295,9 +337,9 @@ export default function MlbFairPriceDashboard() {
     return Object.entries(byGame).map(([gid, evs]) => {
       const fires = evs.filter(e => e.gate_decision === "fire").length;
       const last = evs[0];
-      return { gameId: gid, fires, total: evs.length, last, score: scores[gid] };
+      return { gameId: gid, fires, total: evs.length, last, score: scores[gid] ?? mlbInfo[gid] };
     }).sort((a, b) => b.fires - a.fires || b.total - a.total);
-  }, [events, scores]);
+  }, [events, scores, mlbInfo]);
 
   // Filtered feed
   const filteredEvents = useMemo(() => {
@@ -314,7 +356,7 @@ export default function MlbFairPriceDashboard() {
 
 
   const openGameEvents = openGameId ? events.filter(e => e.game_id === openGameId).slice().reverse() : [];
-  const openGameScore = openGameId ? scores[openGameId] : null;
+  const openGameScore = openGameId ? (scores[openGameId] ?? mlbInfo[openGameId]) : null;
 
   return (
     <div className="min-h-screen bg-background pb-12">
