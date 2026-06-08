@@ -13,10 +13,9 @@ export interface MarketLineLike {
   odds_updated_at?: string | null;
 }
 
-export const BOOKMAKER_PRIORITY = ["hardrockbet", "fanduel", "draftkings", "betmgm"] as const;
+export const BOOKMAKER_PRIORITY = ["fanduel", "draftkings", "betmgm"] as const;
 
 export const BOOKMAKER_LABELS: Record<string, string> = {
-  hardrockbet: "HR",
   fanduel: "FD",
   draftkings: "DK",
   betmgm: "MGM",

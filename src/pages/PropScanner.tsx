@@ -22,7 +22,6 @@ const SPORTS = ["nba", "mlb", "nfl", "nhl"];
 const BOOKS = [
   { id: "fanduel", label: "FanDuel" },
   { id: "draftkings", label: "DraftKings" },
-  { id: "hardrock", label: "Hard Rock Bet" },
   { id: "prizepicks", label: "PrizePicks" },
   { id: "underdog", label: "Underdog" },
 ];

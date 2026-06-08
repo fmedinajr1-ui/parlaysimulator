@@ -124,7 +124,7 @@ export function useLiveSweetSpotLines(
         body: {
           sport: 'basketball_nba',
           players,
-          preferred_bookmakers: ['hardrockbet', 'fanduel', 'draftkings'],
+          preferred_bookmakers: ['fanduel', 'draftkings'],
           return_all_books: true,
         }
       });

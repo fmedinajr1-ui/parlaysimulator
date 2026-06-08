@@ -51,7 +51,7 @@ function HelpTip({ children, tip, side = 'top' }: { children: React.ReactNode; t
 }
 
 const BOOK_SHORT: Record<string, string> = {
-  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
+  fanduel: 'FD', draftkings: 'DK',
   betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
 };
 

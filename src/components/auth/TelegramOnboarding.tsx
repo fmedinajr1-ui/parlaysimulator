@@ -76,8 +76,8 @@ export function TelegramOnboarding({ email, onContinue }: TelegramOnboardingProp
           title="Send a screenshot of any prop page"
           body={
             <p className="text-xs text-muted-foreground">
-              FanDuel, DraftKings, Hard Rock, PrizePicks, or Underdog. Set the book with{" "}
-              <code className="font-mono text-foreground/80">/book hardrock</code> if needed.
+              FanDuel, DraftKings, PrizePicks, or Underdog. Set the book with{" "}
+              <code className="font-mono text-foreground/80">/book fanduel</code> if needed.
             </p>
           }
         />
