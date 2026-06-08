@@ -21,7 +21,7 @@ const OCR_TOOL = {
         },
         sportsbook: {
           type: "string",
-          description: "Sportsbook brand if visible (FanDuel, DraftKings, BetMGM, Caesars, PrizePicks, Underdog, Hard Rock, etc.).",
+          description: "Sportsbook brand if visible (FanDuel, DraftKings, BetMGM, Caesars, PrizePicks, Underdog, etc.).",
         },
         player_legs: {
           type: "array",

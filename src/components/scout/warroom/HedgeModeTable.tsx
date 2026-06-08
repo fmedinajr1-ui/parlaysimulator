@@ -8,7 +8,7 @@ import { calculateLineMispricing, type LineValueClass } from '@/lib/liveMisprice
 import { getHedgeActionLabel, type HedgeActionLabel } from '@/lib/hedgeStatusUtils';
 
 const BOOK_SHORT: Record<string, string> = {
-  hardrockbet: 'HR', fanduel: 'FD', draftkings: 'DK',
+  fanduel: 'FD', draftkings: 'DK',
   betmgm: 'MGM', caesars: 'CZR', pointsbet: 'PB',
 };
 

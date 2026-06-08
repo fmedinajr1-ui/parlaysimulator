@@ -33,7 +33,7 @@ const SPORTS = [
   "tennis_wta",
   "golf_pga_championship_winner",
 ];
-const PREFERRED_BOOKS = ["fanduel", "hardrockbet", "draftkings", "betmgm", "caesars"];
+const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars"];
 const MARKETS = "h2h,spreads,totals";
 
 interface UnifiedRow {

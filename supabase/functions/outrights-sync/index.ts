@@ -17,7 +17,7 @@ const corsHeaders = {
 };
 
 const ALLOWED_GROUPS = new Set(["Golf", "Tennis", "Soccer", "Darts"]);
-const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "betrivers", "hardrockbet"];
+const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "betrivers"];
 
 function americanFromOutcome(price: unknown): number | null {
   const n = Number(price);

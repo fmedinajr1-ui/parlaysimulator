@@ -219,7 +219,7 @@ async function collectNbaCandidates(supabase: any, today: string, apiKey: string
   const allLines: LL[] = [];
   for (const evt of events) {
     try {
-      const url = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${evt.id}/odds?apiKey=${apiKey}&regions=us&markets=${neededMarkets.join(',')}&oddsFormat=american&bookmakers=fanduel,draftkings,hardrockbet`;
+      const url = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${evt.id}/odds?apiKey=${apiKey}&regions=us&markets=${neededMarkets.join(',')}&oddsFormat=american&bookmakers=fanduel,draftkings`;
       const r = await fetchWithTimeout(url);
       if (!r.ok) continue;
       const d = await r.json();

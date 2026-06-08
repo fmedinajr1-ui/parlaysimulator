@@ -2,7 +2,7 @@
 // Cron every 1 min. For each MLB game today:
 //   - Fires once at T-30m and once at T-5m (deduped via mlb_pregame_alert_log).
 // Alert includes: matchup + first pitch, books currently missing, per-book
-// latency table (Hard Rock / FanDuel / DraftKings pinned), top delay catches 24h.
+// latency table (FanDuel / DraftKings pinned), top delay catches 24h.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -10,9 +10,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const PINNED = ["hardrock", "hard_rock", "fanduel", "draftkings"];
+const PINNED = ["fanduel", "draftkings"];
 const KNOWN_BOOKS = [
-  "fanduel", "draftkings", "hardrock", "betmgm", "caesars",
+  "fanduel", "draftkings", "betmgm", "caesars",
   "espnbet", "fanatics", "betrivers", "pinnacle",
 ];
 const STALE_MS = 5000;
@@ -41,7 +41,6 @@ function pad(s: string, n: number) { return (s + " ".repeat(n)).slice(0, n); }
 
 function labelBook(b: string) {
   const map: Record<string, string> = {
-    hardrock: "HardRock", hard_rock: "HardRock",
     fanduel: "FanDuel", draftkings: "DraftKings",
     betmgm: "BetMGM", caesars: "Caesars", espnbet: "ESPNBet",
     fanatics: "Fanatics", betrivers: "BetRivers", pinnacle: "Pinnacle",
@@ -78,9 +77,7 @@ async function buildGameSection(
       .map((r) => (r.book_id || "").toLowerCase())
       .filter(Boolean),
   );
-  const missing = KNOWN_BOOKS.filter(
-    (b) => !seenBooks.has(b) && !(b === "hardrock" && seenBooks.has("hard_rock")),
-  );
+  const missing = KNOWN_BOOKS.filter((b) => !seenBooks.has(b));
 
   const start = new Date(startIso);
   const kindLabel = kind === "30m" ? "T-30m" : "T-5m";

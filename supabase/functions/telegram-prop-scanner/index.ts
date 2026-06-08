@@ -496,7 +496,6 @@ function fmtPropLine(p: any, i: number): string {
 
 async function handleStart(supabase: any, chat_id: number, args: string[]) {
   // Smart arg parsing — users type things like:
-  //   /scan start hardrock bet      → book="hardrock bet" (Hard Rock), sport=nba
   //   /scan start fanduel           → book="fanduel", sport=nba
   //   /scan start nba fanduel       → sport=nba, book=fanduel
   //   /scan start fanduel nba       → book=fanduel, sport=nba (reversed)
@@ -504,7 +503,7 @@ async function handleStart(supabase: any, chat_id: number, args: string[]) {
   const raw = args.map((a) => a.toLowerCase());
   const joined = raw.join(" ").replace(/\s+/g, " ").trim();
 
-  // Try to detect a book in the full joined string (handles "hardrock bet", "hard rock", "draft kings")
+  // Try to detect a book in the full joined string (handles "draft kings")
   const compact = joined.replace(/\s+/g, "");
   const bookFromJoined = BOOK_ALIASES[compact] ?? (VALID_BOOKS.includes(compact) ? compact : null);
 
@@ -531,7 +530,7 @@ async function handleStart(supabase: any, chat_id: number, args: string[]) {
       // Couldn't recognize — bail with help
       await sendMessage(
         chat_id,
-        `❌ Couldn't recognize \`${joined}\`.\n\nUsage: \`/scan start <sport> <book>\`\n*Sports:* ${VALID_SPORTS.slice(0, 6).join(", ")}…\n*Books:* ${VALID_BOOKS.join(", ")}\n\nExamples:\n\`/scan start hardrock\`\n\`/scan start nba fanduel\``,
+        `❌ Couldn't recognize \`${joined}\`.\n\nUsage: \`/scan start <sport> <book>\`\n*Sports:* ${VALID_SPORTS.slice(0, 6).join(", ")}…\n*Books:* ${VALID_BOOKS.join(", ")}\n\nExamples:\n\`/scan start fanduel\`\n\`/scan start nba draftkings\``,
       );
       return;
     }
@@ -643,11 +642,10 @@ async function handleEnd(supabase: any, chat_id: number) {
   await sendMessage(chat_id, `✅ Session \`${session.id.slice(0, 8)}\` finalized.`);
 }
 
-const VALID_BOOKS = ["fanduel", "draftkings", "hardrock", "prizepicks", "underdog"];
+const VALID_BOOKS = ["fanduel", "draftkings", "prizepicks", "underdog"];
 const BOOK_ALIASES: Record<string, string> = {
   fd: "fanduel", fanduel: "fanduel",
   dk: "draftkings", draftkings: "draftkings", "draft-kings": "draftkings",
-  hr: "hardrock", hrb: "hardrock", hardrock: "hardrock", "hard-rock": "hardrock", "hard_rock": "hardrock",
   pp: "prizepicks", prizepicks: "prizepicks", "prize-picks": "prizepicks",
   ud: "underdog", underdog: "underdog", "under-dog": "underdog",
 };
@@ -657,10 +655,10 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
   if (!raw) {
     const session = await getActiveSession(supabase, chat_id);
     if (!session) {
-      await sendMessage(chat_id, "📚 Pick a book with `/book fanduel` (or dk, hardrock, pp, ud), then send a screenshot.");
+      await sendMessage(chat_id, "📚 Pick a book with `/book fanduel` (or dk, pp, ud), then send a screenshot.");
       return;
     }
-    await sendMessage(chat_id, `📚 *Current book:* ${session.book}\n\nUsage: \`/scan book <fanduel|draftkings|hardrock|prizepicks|underdog>\``);
+    await sendMessage(chat_id, `📚 *Current book:* ${session.book}\n\nUsage: \`/scan book <fanduel|draftkings|prizepicks|underdog>\``);
     return;
   }
   const book = BOOK_ALIASES[raw] ?? raw;
@@ -684,14 +682,13 @@ async function handleBook(supabase: any, chat_id: number, args: string[]) {
 async function handleHelp(chat_id: number) {
   await sendMessageWithButtons(
     chat_id,
-    `👋 *Welcome to Parlayfarm Scanner*\n\n*Step 1 — Link your account (one time):*\nSend \`/link your@email.com\` (the email you signed up with).\n\n*Step 2 — Send a screenshot* of any sportsbook prop page. We'll auto-start a session, run it through 8 engines, and tell you which legs to keep, swap or drop.\n\n*Useful commands:*\n• \`/book fanduel\` (or dk, hardrock, pp, ud)\n• \`/sport nba\` (or mlb, nfl, nhl, wnba…)\n• \`/pool\` — see captured props\n• \`/parlay 3\` — auto-build a 3-leg ticket\n• \`/end\` — finalize session\n\n_Default: NBA · FanDuel. Tap below to change anytime._`,
+    `👋 *Welcome to Parlayfarm Scanner*\n\n*Step 1 — Link your account (one time):*\nSend \`/link your@email.com\` (the email you signed up with).\n\n*Step 2 — Send a screenshot* of any sportsbook prop page. We'll auto-start a session, run it through 8 engines, and tell you which legs to keep, swap or drop.\n\n*Useful commands:*\n• \`/book fanduel\` (or dk, pp, ud)\n• \`/sport nba\` (or mlb, nfl, nhl, wnba…)\n• \`/pool\` — see captured props\n• \`/parlay 3\` — auto-build a 3-leg ticket\n• \`/end\` — finalize session\n\n_Default: NBA · FanDuel. Tap below to change anytime._`,
     [
       [
         { text: "📚 FanDuel", data: "book:fanduel" },
         { text: "📚 DraftKings", data: "book:draftkings" },
       ],
       [
-        { text: "📚 Hard Rock", data: "book:hardrock" },
         { text: "📚 PrizePicks", data: "book:prizepicks" },
         { text: "📚 Underdog", data: "book:underdog" },
       ],
@@ -757,7 +754,7 @@ async function handleLink(supabase: any, chat_id: number, args: string[], from?:
 
   await sendMessage(
     chat_id,
-    `✅ *Linked to ${email}*\n\nYou're all set. Send a screenshot of any sportsbook prop page (FanDuel, DraftKings, Hard Rock, PrizePicks, Underdog) and I'll run it through 8 engines.\n\nQuick start:\n• \`/book fanduel\` then send a screenshot\n• \`/parlay 3\` after you've scanned a few\n• \`/help\` anytime`,
+    `✅ *Linked to ${email}*\n\nYou're all set. Send a screenshot of any sportsbook prop page (FanDuel, DraftKings, PrizePicks, Underdog) and I'll run it through 8 engines.\n\nQuick start:\n• \`/book fanduel\` then send a screenshot\n• \`/parlay 3\` after you've scanned a few\n• \`/help\` anytime`,
   );
 }
 
@@ -863,7 +860,7 @@ async function handleStartPassword(
 
   await sendMessage(
     chat_id,
-    `🎉 *Welcome to Parlayfarm!*\n\n${tierLabel} access is now active${pw.email ? ` for *${pw.email}*` : ""}.\n\n*What you can do right now:*\n• Send a screenshot of any sportsbook prop page — I'll run it through 8 engines and tell you keep / swap / drop.\n• \`/parlay 3\` — auto-build a vetted 3-leg ticket from the daily pool.\n• \`/book fanduel\` (or dk, hardrock, pp, ud) — set your book before scanning.\n• \`/sport nba\` (or mlb, nhl, wnba…) — set the sport.\n• \`/help\` — see everything.\n\nDaily picks will start flowing automatically. Let's eat 🥩`,
+    `🎉 *Welcome to Parlayfarm!*\n\n${tierLabel} access is now active${pw.email ? ` for *${pw.email}*` : ""}.\n\n*What you can do right now:*\n• Send a screenshot of any sportsbook prop page — I'll run it through 8 engines and tell you keep / swap / drop.\n• \`/parlay 3\` — auto-build a vetted 3-leg ticket from the daily pool.\n• \`/book fanduel\` (or dk, pp, ud) — set your book before scanning.\n• \`/sport nba\` (or mlb, nhl, wnba…) — set the sport.\n• \`/help\` — see everything.\n\nDaily picks will start flowing automatically. Let's eat 🥩`,
   );
 }
 
@@ -968,7 +965,7 @@ Deno.serve(async (req) => {
       } else if (data === "switchbook") {
         await sendMessageWithButtons(cb_chat_id, "Pick the sportsbook you screenshotted from:", [
           [{ text: "FanDuel", data: "book:fanduel" }, { text: "DraftKings", data: "book:draftkings" }],
-          [{ text: "Hard Rock", data: "book:hardrock" }, { text: "PrizePicks", data: "book:prizepicks" }, { text: "Underdog", data: "book:underdog" }],
+          [{ text: "PrizePicks", data: "book:prizepicks" }, { text: "Underdog", data: "book:underdog" }],
         ]);
       } else if (data === "pool") {
         await handlePool(supabase, cb_chat_id);

@@ -18,7 +18,7 @@ Scout Speed Edge is Phase-0 heuristic until lag_edges has ≥2 weeks of actual_m
 - [No HR Team — RETIRED](mem://logic/betting/no-hr-team-model) — RETIRED 2026-05-02 after 0/3; analyzer disabled, replaced by pitcher-k-over-model
 - [RBI Unders bake-off](mem://logic/betting/mlb-rbi-system) — Rebuilt RBI Unders analyzer with 4 parallel L3-gate variants (A/B/C/D); only variant C broadcasts during bake-off; settled via mlb-over-tracker; accuracy view `mlb_rbi_under_variant_accuracy`
 - [Spike personal share link](mem://features/spike/personal-link) — profiles.spike_share_token + /spike/:token route + share_my_link agent tool + SpikeShareCard UI
-- [Hard Rock line gating](mem://logic/betting/hardrock-line-gating) — signal-alert-engine drops cascade/single legs not tradable on hardrockbet via The Odds API; metadata.hrb_verified drives Telegram footer
+- [FanDuel line gating](mem://logic/betting/fanduel-line-gating) — signal-alert-engine drops NBA cascade/single legs not tradable on FanDuel via The Odds API; metadata.fd_verified drives "Lines verified on FanDuel & DraftKings" Telegram footer
 - [Nuke Parlay Scout (NBA)](mem://logic/parlay/nuke-scout) — Blowout-script engine: scoring weights, hard floors, role-player OVER template, +1000/+3000 odds band, daily 21:00/16:00 UTC crons
 - [Team leg intelligence](mem://logic/parlay/team-leg-intelligence) — Real scoring for team/MLB-raw legs, fat-spread drop, 1 team-market per game, lottery requires ≥1 player
 - [Matchup xref pipeline](mem://logic/parlay/matchup-xref-pipeline) — Shared `_shared/matchup-xref.ts` + `matchup-intelligence-refresh` self-healing builder consumed by lottery + parlay-engine-v2

@@ -13,7 +13,7 @@ const corsHeaders = {
 };
 
 const SPORT = "baseball_mlb";
-const PREFERRED_BOOKS = ["fanduel", "hardrockbet", "draftkings", "betmgm", "caesars"];
+const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars"];
 const PLAYER_MARKETS = [
   "pitcher_strikeouts",
   "pitcher_outs",
