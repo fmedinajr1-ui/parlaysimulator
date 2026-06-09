@@ -37,7 +37,10 @@ const SPORT_EDGE_FLOOR: Record<string, number> = {
   soccer_mls: 0.05,
 };
 const DEFAULT_EDGE_FLOOR = 0.05;
-const SKIP_PROP_TYPES = new Set(["h2h", "spreads", "totals", "outright", "winner"]);
+// h2h + spreads are home/away markets — no clean "value side" from static prices alone
+// (the favorite always has higher implied prob). Totals are over/under and DO carry a
+// real vig-free edge signal, so we keep them in.
+const SKIP_PROP_TYPES = new Set(["h2h", "spreads", "outright", "outright_winner", "winner"]);
 const SKIP_SPORT_PREFIXES = ["golf", "soccer_fifa_world_cup"];
 
 function americanToProb(odds: number | null): number | null {
