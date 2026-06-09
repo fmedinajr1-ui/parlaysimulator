@@ -17,6 +17,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { buildCorrelationMatrix, calculateCorrelatedProbability, getCorrelationSeverity } from "@/lib/correlation-engine";
 import { ParlayLeg } from "@/types/parlay";
 import { getTeamAbbreviation, formatMatchupAbbreviation, abbreviateTeamsInDescription } from "@/lib/team-abbreviations";
+import { useFadeAngles } from "@/hooks/useFadeAngles";
+import { FadeAngleBadge } from "@/components/fade/FadeAngleBadge";
 interface SuggestedLeg {
   description: string;
   odds: number;
