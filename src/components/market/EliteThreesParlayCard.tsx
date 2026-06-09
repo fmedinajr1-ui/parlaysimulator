@@ -19,6 +19,7 @@ export function EliteThreesParlayCard() {
     avgL10HitRate,
     uniqueTeams,
   } = useEliteThreesBuilder();
+  const fade = useFadeAngles();
 
   if (isLoading) {
     return (
