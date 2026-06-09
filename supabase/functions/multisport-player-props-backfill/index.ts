@@ -131,7 +131,11 @@ Deno.serve(async (req) => {
               + `&regions=us&markets=${markets}&oddsFormat=american`;
             const r = await fetch(oddsUrl);
             creditsApprox += cfg.markets.length * 10;
-            if (!r.ok) { log(`  ${sportKey} ${event.id} odds ${r.status}`); await sleep(120); continue; }
+            if (!r.ok) {
+              const txt = await r.text().catch(() => "");
+              log(`  ${sportKey} ${event.id} odds ${r.status} ${txt.slice(0, 200)}`);
+              await sleep(120); continue;
+            }
             const payload = await r.json();
             const data = payload?.data ?? payload;
             const gameDesc = `${event.away_team} vs ${event.home_team}`;
