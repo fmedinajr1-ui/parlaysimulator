@@ -124,7 +124,10 @@ Deno.serve(async (req) => {
           for (const event of dayEvents) {
             if (dryRun) continue;
             const tip = new Date(event.commence_time).getTime();
-            const snapTs = new Date(tip - snapshotOffsetMs).toISOString();
+            // The Odds API requires historical snapshot timestamps to land on
+            // recorded 5-minute boundaries. Snap down to the nearest 5 min.
+            const snapMs = Math.floor((tip - snapshotOffsetMs) / 300_000) * 300_000;
+            const snapTs = new Date(snapMs).toISOString();
             const markets = cfg.markets.join(",");
             const oddsUrl = `${ODDS_BASE}/historical/sports/${sportKey}/events/${event.id}/odds`
               + `?apiKey=${apiKey}&date=${snapTs}`
