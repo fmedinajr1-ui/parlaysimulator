@@ -117,6 +117,22 @@ export function EliteThreesParlayCard() {
                         NEW
                       </Badge>
                     )}
+                    {(() => {
+                      const matched = [
+                        ...fade.byPlayer(pick.player_name),
+                        ...fade.byTeam(pick.team),
+                      ];
+                      const seen = new Set<string>();
+                      const uniq = matched.filter((a) => {
+                        const k = `${a.player}|${a.team}|${a.status}|${a.detail}`;
+                        if (seen.has(k)) return false;
+                        seen.add(k);
+                        return true;
+                      });
+                      return uniq.length > 0 ? (
+                        <FadeAngleBadge angles={uniq} compact />
+                      ) : null;
+                    })()}
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <Badge className="text-[9px] px-1 py-0 bg-violet-500/20 text-violet-400 border-violet-500/30">
