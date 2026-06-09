@@ -53,6 +53,14 @@ const SPORT_MARKETS: Record<string, { canonical: string; markets: string[] }> = 
     canonical: "soccer_laliga",
     markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
   },
+  soccer_fifa_world_cup: {
+    canonical: "soccer_world_cup",
+    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
+  },
+  soccer_fifa_club_world_cup: {
+    canonical: "soccer_club_world_cup",
+    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
+  },
 };
 
 const PREFERRED_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus"];
