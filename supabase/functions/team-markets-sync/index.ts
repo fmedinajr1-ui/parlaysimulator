@@ -29,6 +29,8 @@ const SPORTS = [
   "soccer_italy_serie_a",
   "soccer_germany_bundesliga",
   "soccer_usa_mls",
+  "soccer_fifa_world_cup",
+  "soccer_fifa_club_world_cup",
   "tennis_atp",
   "tennis_wta",
   "golf_pga_championship_winner",
