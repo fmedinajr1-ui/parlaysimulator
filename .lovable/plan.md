@@ -1,45 +1,79 @@
 ## Goal
-Get **every minute of MLB Fair-Price latency activity** delivered to the admin Telegram, plus an **immediate alert when the book-snapshot feed goes dark**, and provide a one-click way to verify it's working.
+Run the NBA Sharp Money playbook (price-edge + line-movement detection → engine_live_tracker → automated settlement) across every in-season sport: MLB, WNBA, tennis, soccer. No fake/scaffold data — everything must trace to a real bookmaker line and a real final stat line.
 
-Right now: the `mlb-fair-price-digest` edge function exists and sends an admin Telegram, but it is **never scheduled**. The live engine only sends a Telegram on `gate_decision = "fire"`, and the last 24h had 0 fires (all 27 evals were `no_book_or_suspended` skips). That's why nothing arrives.
+## Current gap (verified)
+- `engine_live_tracker` last 7d: only `Unified Props` is writing. `Bot Exploration`, `Sweet Spot`, `Juiced` have been dark since March.
+- `unified_props` active rows: MLB/WNBA = h2h/spreads/totals only (no player props). Tennis = 0. Soccer = futures only.
+- `sharp_line_tracker` has 42 rows in 7d — all manual NBA entries. Zero automated tracking for MLB/WNBA/tennis/soccer.
+- `mlb_engine_picks` table exists with 1.4k historical rows but the writer (mlb-pitcher-k-analyzer / mlb-rbi-under-analyzer) hasn't fired since March.
+- `tennis_match_model`, `soccer_match_results`, `soccer_player_match_stats` tables exist but are empty.
 
-## Changes
+## Plan
 
-### 1. Upgrade `mlb-fair-price-digest` to a minute-level latency pulse
-Currently it sends a 24h + 7d summary — way too coarse for live monitoring. Rework it to support two modes via `?mode=pulse|daily` (default `pulse`):
+### 1. Automated Sharp Money tracker (4 sports)
+New edge function `sharp-tracker-auto-ingest` runs every 10 min via pg_cron:
+- Pulls active player-prop and totals rows from `unified_props` for `baseball_mlb`, `basketball_wnba`, `tennis_atp`, `tennis_wta`, `soccer_*` leagues.
+- For each `(player, prop_type, line)`, if no existing `sharp_line_tracker` row, INSERTs as the opening snapshot. If it exists, UPDATEs `current_line` / `current_over_price` / `current_under_price`.
+- Computes `ai_direction` using the same vig-free price-edge math as the side-picker, gated by `SPORT_EDGE_FLOOR`. Tags `ai_signals.sharp` when line moves ≥ 0.5 against price (steam) or price moves ≥ 15c with line static.
+- Writes a mirror row into `engine_live_tracker` with `engine_name='Sharp Money'`, `status='pending'` so the existing settlement loop grades it the same way NBA picks are graded.
 
-- **`pulse` (default, 1-min cron):** Aggregates the **last 5 minutes** of `mlb_fair_price_events`:
-  - eval count, fire count, sent count
-  - skip breakdown (top 3 reasons)
-  - latency: p50 / p90 of `feed_ts − book_last_move_ts` for fires
-  - `lag_edges` count in window + p90 excess_lag_seconds
-  - book-snapshot health: if `book_snapshot` table has 0 rows inserted in last 5 min OR ≥90% of skips are `no_book_or_suspended`, prepend a 🚨 `BOOK FEED DOWN` banner
-  - **Quiet rule:** if there were 0 evals AND 0 lag_edges in the window, skip sending (don't spam during off-hours). Always send when the outage banner triggers.
-- **`daily`:** Existing 24h + 7d digest (unchanged behavior), keep for once-a-day rollup.
+### 2. Reactivate Bot Exploration for MLB + WNBA
+- Audit `mlb-pitcher-k-analyzer`, `mlb-rbi-under-analyzer`, `mlb-no-hr-team-analyzer` — they already write to `mlb_engine_picks`. Remove the sport-gate / cron-disable that stopped them in March (likely a `is_in_season` flag).
+- Add a thin bridge `mlb-engine-bridge` that mirrors new `mlb_engine_picks` rows into `engine_live_tracker` with `engine_name='Bot Exploration'` so they show up in the same accuracy dashboard.
+- WNBA: extend `wnba-backtest-signals` to also write live picks (currently backtest-only) into `engine_live_tracker` for active games.
 
-All sends go through `buildFairPriceAdminPayload` → `bot-send-telegram` with `admin_only: true` (already the existing admin route).
+### 3. Tennis pipeline (real data)
+- Tennis odds: `tennis-props-sync` already fetches from The Odds API. Confirm it's populating `unified_props` for `tennis_atp`/`tennis_wta`; if not, enable the cron and add ATP/WTA to the sport-allowlist.
+- Tennis settlement: extend `court-edge-settle` pattern — scrape TennisAbstract for final game totals — to also grade `engine_live_tracker` rows where `sport ILIKE 'tennis%'`. Add a new `tennis-engine-settler` that re-uses `playerSlug` + `parseRecentRows` from `_shared/court-edge-slug.ts`.
 
-### 2. Schedule the pulse via `pg_cron`
-Insert (not migration — contains the project URL + anon key):
-- `mlb-fair-price-pulse` — every minute, calls digest with `?mode=pulse`
-- `mlb-fair-price-daily` — once daily at 9:05am ET (13:05 UTC), calls digest with `?mode=daily`
+### 4. Soccer pipeline (real data)
+- Soccer odds ingest: add `soccer-odds-ingest` (The Odds API) for EPL/MLS/UCL/La Liga player props (goals, shots, shots on target, cards) → `unified_props`.
+- Soccer stats ingest: add `soccer-stats-ingest` that pulls final box scores from a free source (api-football free tier or football-data.org) → populates `soccer_match_results` + `soccer_player_match_stats`.
+- `soccer-engine-settler` already exists as scaffold — it'll start grading the second real stats land.
 
-### 3. Immediate book-snapshot outage alert (debounced)
-Inside the `pulse` handler, when the outage condition is detected, write a row to a tiny new table `admin_alert_state` keyed by `alert_key` to debounce — only re-send the outage alert if last sent >15 min ago OR state flipped from healthy→down. Same table tracks recovery (down→healthy) so admin gets a "✅ Book feed recovered" ping.
+### 5. Cron + orchestration
+Add pg_cron jobs:
+- `sharp-tracker-auto-ingest` — every 10 min
+- `mlb-engine-bridge` — every 15 min during MLB window (12pm–11pm ET)
+- `tennis-engine-settler` — every hour
+- `soccer-odds-ingest` — every 30 min
+- `soccer-stats-ingest` — every 2 hours
+- `soccer-engine-settler` — every hour after stats ingest
 
-### 4. Manual "Send test ping" button on `/admin/mlb-fair-price`
-Add a small admin-only button in the header that calls `mlb-fair-price-digest?mode=pulse&force=1` (force bypasses the quiet rule) and toasts the Telegram API response, so you can verify end-to-end in one click without waiting for cron.
-
-## Verification
-1. Click the new "Send Test Ping" button on `/admin/mlb-fair-price` → admin Telegram receives a pulse message within 5 sec; toast shows `ok: true`.
-2. Manually `curl` the digest endpoint with `?mode=pulse&force=1` → identical Telegram message arrives.
-3. Wait 2 minutes, check `edge_function_logs` for `mlb-fair-price-digest` → confirm cron-fired invocations at minute boundaries.
-4. While book-snapshot is empty (current state), pulse messages include the 🚨 `BOOK FEED DOWN` banner naming the dominant skip reason.
-5. Insert a fake `book_snapshot` row → within the next 1-min tick, recovery alert "✅ Book feed recovered" is delivered exactly once.
+### 6. Verification (must pass before claiming done)
+For each of the 4 sports, prove:
+1. `unified_props` has > 0 active player-prop rows updated in the last hour.
+2. `engine_live_tracker` has new `pending` rows from at least one engine in the last hour.
+3. Settled rows from yesterday have non-null `result` and a real `actual_value`.
+4. Win rate is computed from ≥ 5 real settled picks per sport.
 
 ## Technical details
-- New table `admin_alert_state(alert_key text primary key, status text, last_sent_at timestamptz, payload jsonb)` with service-role-only access (admin debouncer; no client read).
-- `pulse` window = last 5 min so we never miss activity even with 1-min cron jitter; dedupe is handled by `admin_alert_state` and the quiet rule (no row inserted for empty pulses).
-- All ET timestamps via existing `etDateShort` / `date-et.ts` helper.
-- No changes to `scout-live-edge` evaluation logic — only the reporting layer changes.
-- No customer-facing surface affected; everything routes through `admin_only: true`.
+
+### Files to create
+- `supabase/functions/sharp-tracker-auto-ingest/index.ts`
+- `supabase/functions/mlb-engine-bridge/index.ts`
+- `supabase/functions/tennis-engine-settler/index.ts`
+- `supabase/functions/soccer-odds-ingest/index.ts`
+- `supabase/functions/soccer-stats-ingest/index.ts`
+- `mem/logic/betting/multisport-sharp-money.md`
+- Migration: pg_cron schedules + any needed index on `sharp_line_tracker (sport, player_name, prop_type, line)`.
+
+### Files to edit
+- `supabase/functions/mlb-pitcher-k-analyzer/index.ts` — remove March-era sport-gate
+- `supabase/functions/mlb-rbi-under-analyzer/index.ts` — same
+- `supabase/functions/wnba-backtest-signals/index.ts` — add live-mode flag
+- `supabase/functions/tennis-props-sync/index.ts` — confirm sport allowlist
+- `supabase/functions/soccer-engine-settler/index.ts` — already works once stats land
+- `mem/index.md` — register new memory file
+
+### Secrets required
+- `THE_ODDS_API_KEY` — likely already present (used by existing odds sync)
+- `FOOTBALL_DATA_API_KEY` or `API_FOOTBALL_KEY` — for soccer box scores. I'll ask you for one before adding the soccer stats ingest; until then soccer settles via web-scrape fallback.
+
+### Scope of this turn
+I'll ship sections 1, 2, 3, and 5 (everything except soccer stats ingest which needs a key) — then verify each sport produces real picks and real settlements. Soccer will stay on the existing scaffold pending the API key.
+
+## Out of scope
+- New UI surfaces (existing accuracy dashboards already read from `engine_live_tracker`).
+- Re-grading historical March picks (those were already settled in `mlb_engine_picks`).
+- NHL / NCAAB / NFL / NBA (all offseason).
