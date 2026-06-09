@@ -15504,6 +15504,120 @@ export type Database = {
         }
         Relationships: []
       }
+      soccer_match_results: {
+        Row: {
+          away_score: number | null
+          away_team: string
+          created_at: string
+          external_id: string | null
+          home_score: number | null
+          home_team: string
+          id: string
+          league: string
+          match_date: string
+          raw: Json | null
+          settled: boolean
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          away_score?: number | null
+          away_team: string
+          created_at?: string
+          external_id?: string | null
+          home_score?: number | null
+          home_team: string
+          id?: string
+          league: string
+          match_date: string
+          raw?: Json | null
+          settled?: boolean
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          away_score?: number | null
+          away_team?: string
+          created_at?: string
+          external_id?: string | null
+          home_score?: number | null
+          home_team?: string
+          id?: string
+          league?: string
+          match_date?: string
+          raw?: Json | null
+          settled?: boolean
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      soccer_player_match_stats: {
+        Row: {
+          assists: number | null
+          cards_red: number | null
+          cards_yellow: number | null
+          created_at: string
+          fouls: number | null
+          goals: number | null
+          id: string
+          league: string
+          match_date: string
+          match_external_id: string | null
+          minutes: number | null
+          opponent: string | null
+          passes: number | null
+          player_name: string
+          raw: Json | null
+          shots: number | null
+          shots_on_target: number | null
+          tackles: number | null
+          team: string | null
+        }
+        Insert: {
+          assists?: number | null
+          cards_red?: number | null
+          cards_yellow?: number | null
+          created_at?: string
+          fouls?: number | null
+          goals?: number | null
+          id?: string
+          league: string
+          match_date: string
+          match_external_id?: string | null
+          minutes?: number | null
+          opponent?: string | null
+          passes?: number | null
+          player_name: string
+          raw?: Json | null
+          shots?: number | null
+          shots_on_target?: number | null
+          tackles?: number | null
+          team?: string | null
+        }
+        Update: {
+          assists?: number | null
+          cards_red?: number | null
+          cards_yellow?: number | null
+          created_at?: string
+          fouls?: number | null
+          goals?: number | null
+          id?: string
+          league?: string
+          match_date?: string
+          match_external_id?: string | null
+          minutes?: number | null
+          opponent?: string | null
+          passes?: number | null
+          player_name?: string
+          raw?: Json | null
+          shots?: number | null
+          shots_on_target?: number | null
+          tackles?: number | null
+          team?: string | null
+        }
+        Relationships: []
+      }
       sports_fatigue_edge_tracking: {
         Row: {
           actual_spread: number | null
