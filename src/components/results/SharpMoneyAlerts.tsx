@@ -6,6 +6,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Zap, TrendingUp, TrendingDown, Clock, BatteryLow } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useFadeAngles } from "@/hooks/useFadeAngles";
+import { FadeAngleBadge } from "@/components/fade/FadeAngleBadge";
 
 export function getSharpSportLabel(sport: string): string {
   const s = (sport || '').toLowerCase();
@@ -56,6 +58,7 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
   const [alerts, setAlerts] = useState<SharpAlert[]>([]);
   const [fatigueData, setFatigueData] = useState<Map<string, FatigueData[]>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
+  const fade = useFadeAngles();
 
   useEffect(() => {
     const fetchAlerts = async () => {
@@ -243,6 +246,23 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
                 <p className="text-[10px] text-muted-foreground truncate">
                   {alert.outcome_name}
                 </p>
+                {(() => {
+                  const matched = [
+                    ...fade.byEvent(alert.event_id),
+                    ...fade.byDescription(`${alert.description} ${alert.outcome_name}`),
+                  ];
+                  // de-dupe
+                  const seen = new Set<string>();
+                  const uniq = matched.filter((a) => {
+                    const k = `${a.player}|${a.team}|${a.status}|${a.detail}`;
+                    if (seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                  });
+                  return uniq.length > 0 ? (
+                    <div className="mt-1"><FadeAngleBadge angles={uniq} compact /></div>
+                  ) : null;
+                })()}
                 {fatigueInfo && (
                   <p className="text-[9px] text-neon-cyan mt-0.5">
                     ⚡ {fatigueInfo.team_name} {fatigueInfo.fatigue_category}

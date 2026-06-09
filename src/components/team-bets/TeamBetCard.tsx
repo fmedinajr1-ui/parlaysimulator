@@ -8,6 +8,8 @@ import {
 import { format } from 'date-fns';
 import { TeamBetOddsDisplay } from './TeamBetOddsDisplay';
 import { TeamBetPickBanner } from './TeamBetPickBanner';
+import { useFadeAngles } from '@/hooks/useFadeAngles';
+import { FadeAngleBadge } from '@/components/fade/FadeAngleBadge';
 
 interface GameBet {
   id: string;
@@ -136,6 +138,12 @@ export function TeamBetCard({ bet }: TeamBetCardProps) {
   const hasStrongSignal = (displayScore || 0) >= 62;
   const hasRecommendation = !!bet.recommended_side;
   const breakdownPills = getBreakdownPills(bet.score_breakdown);
+  const fade = useFadeAngles();
+  const fadeAngles = [
+    ...fade.byTeam(bet.home_team),
+    ...fade.byTeam(bet.away_team),
+    ...fade.byEvent(bet.game_id),
+  ].filter((a, i, arr) => arr.findIndex((b) => b.player === a.player && b.detail === a.detail) === i);
   
   const gameTime = new Date(bet.commence_time);
   const isToday = new Date().toDateString() === gameTime.toDateString();
@@ -170,6 +178,11 @@ export function TeamBetCard({ bet }: TeamBetCardProps) {
             <div className="font-medium text-sm">
               {bet.away_team} @ {bet.home_team}
             </div>
+            {fadeAngles.length > 0 && (
+              <div className="mt-1">
+                <FadeAngleBadge angles={fadeAngles} compact={false} />
+              </div>
+            )}
             
             <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
               <Clock className="h-3 w-3" />

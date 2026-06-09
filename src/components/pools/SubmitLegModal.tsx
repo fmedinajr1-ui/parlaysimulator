@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Trophy } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useFadeAngles } from '@/hooks/useFadeAngles';
+import { FadeAngleBadge } from '@/components/fade/FadeAngleBadge';
 
 export function computeDefaultSport(date: Date = new Date()): string {
   const month = date.getMonth() + 1; // 1-12
@@ -26,6 +28,7 @@ interface SubmitLegModalProps {
 export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: SubmitLegModalProps) {
   // Pick a sensible default based on the current month (MLB Apr-Oct, Tennis year-round fallback to NBA).
   const defaultSport = useMemo(() => computeDefaultSport(), []);
+  const fade = useFadeAngles();
 
   const [description, setDescription] = useState('');
   const [odds, setOdds] = useState('');
@@ -36,6 +39,19 @@ export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: S
   const [line, setLine] = useState('');
   const [side, setSide] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
+
+  const legFadeAngles = useMemo(() => {
+    const fromPlayer = fade.byPlayer(playerName);
+    const fromDesc = fade.byDescription(description);
+    const all = [...fromPlayer, ...fromDesc];
+    const seen = new Set<string>();
+    return all.filter((a) => {
+      const k = `${a.player}|${a.status}|${a.detail}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [playerName, description, fade]);
 
   const handleSubmit = async () => {
     if (!description.trim()) {
@@ -125,6 +141,14 @@ export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: S
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
             />
+            {legFadeAngles.length > 0 && (
+              <div className="rounded-md border border-orange-500/30 bg-orange-500/5 p-2 space-y-1">
+                <FadeAngleBadge angles={legFadeAngles} compact={false} />
+                <p className="text-[11px] text-orange-300">
+                  Heads up — at least one matching status/news flag is active for this pick.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

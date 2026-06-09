@@ -17,6 +17,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { buildCorrelationMatrix, calculateCorrelatedProbability, getCorrelationSeverity } from "@/lib/correlation-engine";
 import { ParlayLeg } from "@/types/parlay";
 import { getTeamAbbreviation, formatMatchupAbbreviation, abbreviateTeamsInDescription } from "@/lib/team-abbreviations";
+import { useFadeAngles } from "@/hooks/useFadeAngles";
+import { FadeAngleBadge } from "@/components/fade/FadeAngleBadge";
 interface SuggestedLeg {
   description: string;
   odds: number;
@@ -148,6 +150,7 @@ export function SuggestedParlayCard({
   fatigueInfo,
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
+  const fade = useFadeAngles();
   const [correlationData, setCorrelationData] = useState<{
     hasCorrelation: boolean;
     avgCorrelation: number;
@@ -441,6 +444,23 @@ export function SuggestedParlayCard({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-foreground leading-tight">{getEnhancedDescription()}</p>
+                    {(() => {
+                      const matched = [
+                        ...fade.byDescription(leg.description),
+                        ...fade.byTeam(leg.homeTeam),
+                        ...fade.byTeam(leg.awayTeam),
+                      ];
+                      const seen = new Set<string>();
+                      const uniq = matched.filter((a) => {
+                        const k = `${a.player}|${a.team}|${a.status}|${a.detail}`;
+                        if (seen.has(k)) return false;
+                        seen.add(k);
+                        return true;
+                      });
+                      return uniq.length > 0 ? (
+                        <div className="mt-1"><FadeAngleBadge angles={uniq} compact /></div>
+                      ) : null;
+                    })()}
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
                       <span>{leg.sport}</span>
                       {matchupLabel && (
