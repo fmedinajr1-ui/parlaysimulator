@@ -150,6 +150,7 @@ export function SuggestedParlayCard({
   fatigueInfo,
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
+  const fade = useFadeAngles();
   const [correlationData, setCorrelationData] = useState<{
     hasCorrelation: boolean;
     avgCorrelation: number;
