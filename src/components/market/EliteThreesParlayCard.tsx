@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useFadeAngles } from "@/hooks/useFadeAngles";
+import { FadeAngleBadge } from "@/components/fade/FadeAngleBadge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Target, Plus, Loader2, TrendingUp, Crosshair } from "lucide-react";
