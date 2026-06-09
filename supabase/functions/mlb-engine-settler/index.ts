@@ -49,11 +49,11 @@ function num(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function gradeOverUnder(actual: number, line: number, side: string): "win" | "loss" | "push" {
+function gradeOverUnder(actual: number, line: number, side: string): "won" | "lost" | "push" {
   if (actual === line) return "push";
   const isOver = actual > line;
   const wantOver = side.toLowerCase() === "over";
-  return isOver === wantOver ? "win" : "loss";
+  return isOver === wantOver ? "won" : "lost";
 }
 
 function etDateKey(d = new Date()): string {
@@ -161,8 +161,8 @@ Deno.serve(async (req) => {
     }
 
     const breakdown = {
-      wins: updates.filter((u) => u.result === "win").length,
-      losses: updates.filter((u) => u.result === "loss").length,
+      wins: updates.filter((u) => u.result === "won").length,
+      losses: updates.filter((u) => u.result === "lost").length,
       pushes: updates.filter((u) => u.result === "push").length,
     };
 
