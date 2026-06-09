@@ -61,6 +61,22 @@ const SPORT_MARKETS: Record<string, { canonical: string; markets: string[] }> = 
     canonical: "soccer_club_world_cup",
     markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
   },
+  soccer_brazil_campeonato: {
+    canonical: "soccer_brazil_serie_a",
+    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
+  },
+  soccer_brazil_serie_b: {
+    canonical: "soccer_brazil_serie_b",
+    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
+  },
+  soccer_conmebol_copa_libertadores: {
+    canonical: "soccer_copa_libertadores",
+    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
+  },
+  soccer_conmebol_copa_sudamericana: {
+    canonical: "soccer_copa_sudamericana",
+    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
+  },
 };
 
 const PREFERRED_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus"];
