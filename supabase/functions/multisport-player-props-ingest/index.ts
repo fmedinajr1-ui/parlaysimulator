@@ -198,20 +198,26 @@ Deno.serve(async (req) => {
 
   // Upsert into unified_props on the natural key.
   let written = 0;
+  const errors: string[] = [];
   if (dedup.length) {
     // Batch by 500
     for (let i = 0; i < dedup.length; i += 500) {
       const batch = dedup.slice(i, i + 500);
-      const { error } = await supabase.from("unified_props").upsert(batch, {
-        onConflict: "sport,player_name,prop_type,current_line,bookmaker",
-        ignoreDuplicates: false,
-      });
+      const { error, count } = await supabase
+        .from("unified_props")
+        .upsert(batch, {
+          // Matches the actual unique constraint on unified_props.
+          onConflict: "event_id,player_name,prop_type,bookmaker",
+          ignoreDuplicates: false,
+          count: "exact",
+        });
       if (error) {
-        // Fall back to insert with conflict-on-do-nothing if no unique index exists.
-        const { error: insErr } = await supabase.from("unified_props").insert(batch);
-        if (insErr) { log(`upsert+insert failed: ${insErr.message}`); continue; }
+        const msg = `batch ${i}-${i + batch.length}: ${error.message}`;
+        log(`upsert failed: ${msg}`);
+        errors.push(msg);
+        continue;
       }
-      written += batch.length;
+      written += count ?? batch.length;
     }
   }
 
@@ -219,6 +225,12 @@ Deno.serve(async (req) => {
     [k, { events: v.events, rows: v.rows, markets: [...v.markets] }]));
 
   return new Response(JSON.stringify({
-    success: true, date: today, total_rows: allRows.length, deduped: dedup.length, written, per_sport: summary,
+    success: errors.length === 0,
+    date: today,
+    total_rows: allRows.length,
+    deduped: dedup.length,
+    written,
+    errors,
+    per_sport: summary,
   }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
