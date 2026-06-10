@@ -163,10 +163,10 @@ Deno.serve(async (req) => {
     const raw = aiJson?.choices?.[0]?.message?.content ?? "{}";
     let parsed: { predictions?: any[] } = {};
     try {
-      parsed = JSON.parse(raw);
+      parsed = safeParseJson(raw);
     } catch (err) {
-      console.error("[live-next-play-predictor] bad JSON from model", err, raw);
-      return json({ error: "bad_model_json" }, 500);
+      console.error("[live-next-play-predictor] bad JSON from model", err, String(raw).slice(0, 500));
+      return json({ skipped: true, reason: "bad_model_json" });
     }
     const preds = Array.isArray(parsed.predictions) ? parsed.predictions.slice(0, 5) : [];
     if (!preds.length) return json({ inserted: 0, reason: "no_preds" });
@@ -218,6 +218,25 @@ Deno.serve(async (req) => {
 function clamp01(n: number) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+function safeParseJson(raw: unknown): { predictions?: any[] } {
+  if (raw && typeof raw === "object") return raw as any;
+  let s = String(raw ?? "").trim();
+  // strip markdown fences
+  s = s.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  // find outermost { ... }
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) s = s.slice(start, end + 1);
+  try {
+    return JSON.parse(s);
+  } catch {
+    const cleaned = s
+      .replace(/,\s*}/g, "}")
+      .replace(/,\s*\]/g, "]")
+      .replace(/[\x00-\x1F\x7F]/g, "");
+    return JSON.parse(cleaned);
+  }
 }
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
