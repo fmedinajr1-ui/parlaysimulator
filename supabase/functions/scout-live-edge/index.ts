@@ -248,11 +248,13 @@ Deno.serve(async (req) => {
     return json({ error: e instanceof Error ? e.message : "event insert failed" }, 500);
   }
 
-  // 1b) MLB Fair-Price layer (admin-only WARN, log-only). Best-effort.
-  if (event.sport === "MLB" && event.fair_price) {
-    try { await evaluateMlbFairPrice(event, storedEvent.id); }
-    catch (e) { console.error("[scout-live-edge] fair-price block failed", e); }
-  }
+  // 1b) MLB Fair-Price layer — SHUT DOWN. v1 was uncalibrated WP / log-only;
+  // disabled entirely per product decision. Do not re-enable without a
+  // refit on real PBP data and an updated memory note.
+  // if (event.sport === "MLB" && event.fair_price) {
+  //   try { await evaluateMlbFairPrice(event, storedEvent.id); }
+  //   catch (e) { console.error("[scout-live-edge] fair-price block failed", e); }
+  // }
 
   // 2) baselines
   const baseMap = new Map<string, number>();
