@@ -4,6 +4,8 @@ import { STATE_COLOR, STATE_LABEL } from "./state/stateColors";
 import type { PlayerState } from "./types";
 import type { PropEdgeRow } from "./hooks/useTerminalFeed";
 import type { NextPlayPrediction } from "./hooks/useNextPlayPredictions";
+import type { PropQuote } from "@/features/live3d/types";
+import { useEffect, useState } from "react";
 
 export function TerminalPanels({
   state,
@@ -14,6 +16,7 @@ export function TerminalPanels({
   pbpAvailable,
   nextPlayPredictions,
   nextPlayLastRun,
+  quotes,
 }: {
   state: LiveGameState;
   playerStates: Record<string, PlayerState>;
@@ -23,6 +26,7 @@ export function TerminalPanels({
   pbpAvailable: boolean;
   nextPlayPredictions: NextPlayPrediction[];
   nextPlayLastRun: number | null;
+  quotes: PropQuote[];
 }) {
   const { players } = buildMockTerminal(state, { playerStates, edgeRows });
   const ranked = [...players]
@@ -42,7 +46,7 @@ export function TerminalPanels({
       <FeedChip on={nextPlayPredictions.length > 0} label={`AI Next Play · ${nextPlayPredictions.length}`} />
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-      <NextPlayPanel predictions={nextPlayPredictions} lastRun={nextPlayLastRun} />
+      <NextPlayPanel predictions={nextPlayPredictions} lastRun={nextPlayLastRun} quotes={quotes} />
 
       <Panel title="Player involvement">
         <ul className="space-y-1.5">
