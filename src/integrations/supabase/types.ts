@@ -8324,6 +8324,63 @@ export type Database = {
         }
         Relationships: []
       }
+      live_next_play_predictions: {
+        Row: {
+          american_price: number | null
+          book: string | null
+          created_at: string
+          edge_pct: number | null
+          event_id: string
+          expires_at: string
+          id: string
+          line: number
+          model: string | null
+          player_name: string
+          prob_next_play: number
+          prop_label: string
+          prop_type: string
+          rationale: string | null
+          side: string
+          state_context: Json | null
+        }
+        Insert: {
+          american_price?: number | null
+          book?: string | null
+          created_at?: string
+          edge_pct?: number | null
+          event_id: string
+          expires_at?: string
+          id?: string
+          line: number
+          model?: string | null
+          player_name: string
+          prob_next_play: number
+          prop_label: string
+          prop_type: string
+          rationale?: string | null
+          side: string
+          state_context?: Json | null
+        }
+        Update: {
+          american_price?: number | null
+          book?: string | null
+          created_at?: string
+          edge_pct?: number | null
+          event_id?: string
+          expires_at?: string
+          id?: string
+          line?: number
+          model?: string | null
+          player_name?: string
+          prob_next_play?: number
+          prop_label?: string
+          prop_type?: string
+          rationale?: string | null
+          side?: string
+          state_context?: Json | null
+        }
+        Relationships: []
+      }
       live_prop_quotes: {
         Row: {
           bookmaker: string

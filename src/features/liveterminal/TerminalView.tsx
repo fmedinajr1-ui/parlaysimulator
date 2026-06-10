@@ -5,6 +5,7 @@ import { TerminalPanels } from "./panels";
 import { EdgeBoard } from "./EdgeBoard";
 import { useTerminalFeed } from "./hooks/useTerminalFeed";
 import { useLivePBP } from "@/hooks/useLivePBP";
+import { useNextPlayPredictions } from "./hooks/useNextPlayPredictions";
 
 export function TerminalView({
   state,
@@ -17,6 +18,7 @@ export function TerminalView({
 }) {
   const feed = useTerminalFeed(state.game_id, quotes);
   const pbp = useLivePBP(state.game_id, state.status);
+  const nextPlay = useNextPlayPredictions(state.game_id);
 
   return (
     <div className="flex flex-col gap-3 h-full">
@@ -51,6 +53,8 @@ export function TerminalView({
         signalCount={feed.signalCount}
         hasProjections={feed.hasProjections}
         pbpAvailable={!!pbp.data?.recentPlays?.length}
+        nextPlayPredictions={nextPlay.predictions}
+        nextPlayLastRun={nextPlay.lastRun}
       />
       <EdgeBoard rows={feed.rows} />
     </div>

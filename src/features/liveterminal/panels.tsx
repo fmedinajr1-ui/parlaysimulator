@@ -3,6 +3,7 @@ import { buildMockTerminal } from "./state/mockFeed";
 import { STATE_COLOR, STATE_LABEL } from "./state/stateColors";
 import type { PlayerState } from "./types";
 import type { PropEdgeRow } from "./hooks/useTerminalFeed";
+import type { NextPlayPrediction } from "./hooks/useNextPlayPredictions";
 
 export function TerminalPanels({
   state,
@@ -11,6 +12,8 @@ export function TerminalPanels({
   signalCount,
   hasProjections,
   pbpAvailable,
+  nextPlayPredictions,
+  nextPlayLastRun,
 }: {
   state: LiveGameState;
   playerStates: Record<string, PlayerState>;
@@ -18,8 +21,10 @@ export function TerminalPanels({
   signalCount: number;
   hasProjections: boolean;
   pbpAvailable: boolean;
+  nextPlayPredictions: NextPlayPrediction[];
+  nextPlayLastRun: number | null;
 }) {
-  const { players, nextPlays } = buildMockTerminal(state, { playerStates, edgeRows });
+  const { players } = buildMockTerminal(state, { playerStates, edgeRows });
   const ranked = [...players]
     .filter((p) => p.edge)
     .sort((a, b) => Math.abs(b.edge!.edgePct) - Math.abs(a.edge!.edgePct))
@@ -34,23 +39,10 @@ export function TerminalPanels({
       <FeedChip on={signalCount > 0} label={`Signals · ${signalCount}`} />
       <FeedChip on={hasProjections} label="Projections" />
       <FeedChip on={pbpAvailable} label="Play-by-play" />
+      <FeedChip on={nextPlayPredictions.length > 0} label={`AI Next Play · ${nextPlayPredictions.length}`} />
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-      <Panel title="Next likely play">
-        <ul className="space-y-1.5">
-          {nextPlays.map((np) => (
-            <li key={np.label} className="flex items-center gap-2">
-              <div className="flex-1 text-xs text-[hsl(var(--term-text))]">{np.label}</div>
-              <div className="w-20 h-1.5 bg-[hsl(var(--term-grid))] rounded-full overflow-hidden">
-                <div className="h-full bg-[hsl(var(--state-sharp))]" style={{ width: `${Math.round(np.probability * 100)}%` }} />
-              </div>
-              <div className="w-9 text-right text-[11px] font-mono text-[hsl(var(--term-text))] term-tabular">
-                {Math.round(np.probability * 100)}%
-              </div>
-            </li>
-          ))}
-        </ul>
-      </Panel>
+      <NextPlayPanel predictions={nextPlayPredictions} lastRun={nextPlayLastRun} />
 
       <Panel title="Player involvement">
         <ul className="space-y-1.5">
@@ -116,6 +108,82 @@ export function TerminalPanels({
       </Panel>
     </div>
     </>
+  );
+}
+
+function NextPlayPanel({
+  predictions,
+  lastRun,
+}: {
+  predictions: NextPlayPrediction[];
+  lastRun: number | null;
+}) {
+  const ago = lastRun ? Math.max(0, Math.floor((Date.now() - lastRun) / 1000)) : null;
+  return (
+    <div className="rounded-md border border-[hsl(var(--term-grid))] bg-[hsl(var(--term-bg))] p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--term-muted))]">
+          AI · Next play props
+        </div>
+        {ago !== null && (
+          <div className="text-[9px] uppercase tracking-widest text-[hsl(var(--term-muted))] font-mono">
+            {ago}s ago
+          </div>
+        )}
+      </div>
+      {predictions.length === 0 ? (
+        <div className="text-[11px] text-[hsl(var(--term-muted))] py-3 text-center">
+          AI is watching the game… first picks land in ~15s.
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {predictions.map((p) => {
+            const edge = p.edge_pct ?? 0;
+            const edgeColor = edge >= 0 ? "hsl(var(--state-over))" : "hsl(var(--state-under))";
+            return (
+              <li
+                key={p.id}
+                className="rounded border border-[hsl(var(--term-grid))] bg-[hsl(var(--term-bg))]/40 p-2"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] text-[hsl(var(--term-muted))] truncate font-mono">
+                      {p.player_name}
+                    </div>
+                    <div className="text-xs text-[hsl(var(--term-text))] font-semibold leading-tight">
+                      {p.prop_label} {p.side} {p.line}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-mono term-tabular text-[hsl(var(--term-text))]">
+                      {Math.round(p.prob_next_play * 100)}%
+                    </div>
+                    <div
+                      className="text-[10px] font-mono term-tabular"
+                      style={{ color: edgeColor }}
+                    >
+                      {edge >= 0 ? "+" : ""}
+                      {edge.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-[10px] text-[hsl(var(--term-muted))] font-mono">
+                  {p.book && <span className="uppercase">{p.book}</span>}
+                  {p.american_price != null && (
+                    <span>{p.american_price > 0 ? "+" : ""}{p.american_price}</span>
+                  )}
+                </div>
+                {p.rationale && (
+                  <div className="mt-1 text-[10px] italic text-[hsl(var(--term-muted))] leading-snug">
+                    {p.rationale}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
