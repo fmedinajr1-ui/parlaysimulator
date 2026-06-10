@@ -1,5 +1,6 @@
 import type { LiveGameState } from "@/features/live3d/types";
 import type { NextPlay, PlayerState, TerminalPlayer, Trajectory, Side } from "../types";
+import type { PropEdgeRow } from "../hooks/useTerminalFeed";
 
 // Deterministic PRNG so the view is stable per game_id
 function hash(str: string): number {
@@ -123,26 +124,67 @@ function buildTrail(rand: () => number, x: number, y: number) {
 const HOME_COLOR = "#3aa8ff";
 const AWAY_COLOR = "#ff4d4d";
 
-export function buildMockTerminal(state: LiveGameState) {
+export type BuildOpts = {
+  /** Map of real-player-name → derived state from market_signals */
+  playerStates?: Record<string, PlayerState>;
+  /** Real edge rows so player tokens reflect the top live edges per side */
+  edgeRows?: PropEdgeRow[];
+};
+
+export function buildMockTerminal(state: LiveGameState, opts: BuildOpts = {}) {
   const kind = sportKind(state.sport);
   const [home, away] = formation(kind);
   const rand = mulberry32(hash(state.game_id));
   const positions = POSITIONS[kind];
   const props = PROPS[kind];
 
-  function makeSide(coords: Array<[number, number]>, side: Side, name: string, color: string, startNum: number): TerminalPlayer[] {
+  // Partition real edges into home/away buckets. We don't know team affiliation
+  // from quotes, so we round-robin assign by appearance order while preserving
+  // the strongest edges first.
+  const sortedEdges = [...(opts.edgeRows ?? [])].sort(
+    (a, b) => Math.abs(b.edgePct) - Math.abs(a.edgePct),
+  );
+  const homeEdges: PropEdgeRow[] = [];
+  const awayEdges: PropEdgeRow[] = [];
+  sortedEdges.forEach((e, i) => (i % 2 === 0 ? homeEdges : awayEdges).push(e));
+
+  function realStateFor(name: string | undefined): PlayerState | undefined {
+    if (!name || !opts.playerStates) return undefined;
+    return opts.playerStates[name];
+  }
+
+  function makeSide(
+    coords: Array<[number, number]>,
+    side: Side,
+    name: string,
+    color: string,
+    startNum: number,
+    realEdges: PropEdgeRow[],
+  ): TerminalPlayer[] {
     return coords.map(([x, y], i) => {
-      const stateRoll = STATES[Math.floor(rand() * STATES.length)];
+      const realEdge = realEdges[i];
+      const fallbackState = STATES[Math.floor(rand() * STATES.length)];
+      const realState = realEdge ? realStateFor(realEdge.player_name) : undefined;
       const ghostDx = (side === "home" ? 0.04 : -0.04) + (rand() - 0.5) * 0.02;
       const ghostDy = (rand() - 0.5) * 0.05;
-      const line = Math.round((10 + rand() * 25) * 2) / 2;
-      const proj = +(line + (rand() - 0.4) * 6).toFixed(1);
-      const edgePct = +(((proj - line) / Math.max(line, 1)) * 100).toFixed(1);
-      const lastName = name.split(/\s+/).pop() ?? name;
+      const fallbackLine = Math.round((10 + rand() * 25) * 2) / 2;
+      const fallbackProj = +(fallbackLine + (rand() - 0.4) * 6).toFixed(1);
+      const fallbackEdgePct = +(((fallbackProj - fallbackLine) / Math.max(fallbackLine, 1)) * 100).toFixed(1);
+      const displayName = realEdge?.player_name ?? `${name.split(/\s+/).pop() ?? name} ${i + 1}`;
+      const lastName = displayName.split(/\s+/).pop() ?? displayName;
+      const tokenState: PlayerState =
+        realState ??
+        (realEdge
+          ? realEdge.edgePct >= 3
+            ? "over_pace"
+            : realEdge.edgePct <= -3
+              ? "under_pace"
+              : "neutral"
+          : fallbackState);
       return {
         id: `${side}-${i}`,
         side,
-        name: `${positions[i % positions.length]} · ${lastName} ${i + 1}`,
+        name: `${positions[i % positions.length]} · ${displayName}`,
         initials: (lastName[0] ?? "P") + String(i + 1),
         number: startNum + i,
         position: positions[i % positions.length],
@@ -150,23 +192,31 @@ export function buildMockTerminal(state: LiveGameState) {
         y,
         trail: buildTrail(rand, x, y),
         ghost: { x: Math.max(0.03, Math.min(0.97, x + ghostDx)), y: Math.max(0.05, Math.min(0.95, y + ghostDy)) },
-        state: stateRoll,
+        state: tokenState,
         isBallCarrier: false,
         teamColor: color,
-        edge: {
-          propType: props[i % props.length],
-          line,
-          projection: proj,
-          edgePct,
-          book: ["FanDuel", "DraftKings", "BetMGM"][Math.floor(rand() * 3)],
-        },
+        edge: realEdge
+          ? {
+              propType: realEdge.prop_label,
+              line: realEdge.line,
+              projection: +realEdge.modelLine.toFixed(2),
+              edgePct: realEdge.edgePct,
+              book: realEdge.refBook,
+            }
+          : {
+              propType: props[i % props.length],
+              line: fallbackLine,
+              projection: fallbackProj,
+              edgePct: fallbackEdgePct,
+              book: ["FanDuel", "DraftKings", "BetMGM"][Math.floor(rand() * 3)],
+            },
         involvementPct: Math.round(8 + rand() * 32),
       };
     });
   }
 
-  const homePlayers = makeSide(home, "home", state.home_team, HOME_COLOR, 1);
-  const awayPlayers = makeSide(away, "away", state.away_team, AWAY_COLOR, 21);
+  const homePlayers = makeSide(home, "home", state.home_team, HOME_COLOR, 1, homeEdges);
+  const awayPlayers = makeSide(away, "away", state.away_team, AWAY_COLOR, 21, awayEdges);
 
   // assign ball carrier based on possession
   const possSide: Side | null =

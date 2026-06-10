@@ -63,7 +63,7 @@ export default function LiveGame() {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
         <div className="h-[60vh] lg:h-[calc(100vh-180px)]">
-          <TerminalView state={state} />
+          <TerminalView state={state} quotes={quotes} />
         </div>
         <aside className="bg-slate-950">
           <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-2">
