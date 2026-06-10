@@ -1,8 +1,8 @@
 import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { Text } from "@react-three/drei";
 import type { LiveGameState } from "../types";
+import { PlayerAvatar } from "../components/PlayerAvatar";
 
 function Court() {
   return (
@@ -62,43 +62,29 @@ function Hoop({ x }: { x: number }) {
   );
 }
 
-function PlayerMarker({
+function BballPlayer({
   x,
   z,
   color,
   num,
+  facing,
+  isHandler,
 }: {
   x: number;
   z: number;
   color: string;
-  num: string;
+  num: number;
+  facing: number;
+  isHandler: boolean;
 }) {
-  const ref = useRef<THREE.Group>(null);
-  useFrame((s) => {
-    if (!ref.current) return;
-    ref.current.position.x = x + Math.sin(s.clock.elapsedTime + Number(num)) * 0.4;
-    ref.current.position.z = z + Math.cos(s.clock.elapsedTime * 0.7 + Number(num)) * 0.4;
-  });
   return (
-    <group ref={ref} position={[x, 0, z]}>
-      <mesh castShadow position={[0, 0.9, 0]}>
-        <cylinderGeometry args={[0.45, 0.45, 1.8, 16]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0, 2.05, 0]}>
-        <sphereGeometry args={[0.35, 16, 16]} />
-        <meshStandardMaterial color="#f1c27d" />
-      </mesh>
-      <Text
-        position={[0, 0.9, 0.46]}
-        fontSize={0.45}
-        color="white"
-        anchorX="center"
-        anchorY="middle"
-      >
-        {num}
-      </Text>
-    </group>
+    <PlayerAvatar
+      position={[x, 0, z]}
+      rotationY={facing}
+      teamColor={color}
+      number={num}
+      pose={isHandler ? "shooting" : "idle"}
+    />
   );
 }
 
@@ -142,10 +128,26 @@ export function BasketballScene({ state }: { state: LiveGameState }) {
       <Court />
       <Ball possession={possession} />
       {lineup.map(([x, z], i) => (
-        <PlayerMarker key={`h${i}`} x={x} z={z} color={home} num={String(i + 1)} />
+        <BballPlayer
+          key={`h${i}`}
+          x={x}
+          z={z}
+          color={home}
+          num={i + 1}
+          facing={Math.PI / 2}
+          isHandler={possession === "home" && i === 0}
+        />
       ))}
       {lineup.map(([x, z], i) => (
-        <PlayerMarker key={`a${i}`} x={-x} z={z} color={away} num={String(i + 6)} />
+        <BballPlayer
+          key={`a${i}`}
+          x={-x}
+          z={z}
+          color={away}
+          num={i + 6}
+          facing={-Math.PI / 2}
+          isHandler={possession === "away" && i === 0}
+        />
       ))}
     </>
   );
