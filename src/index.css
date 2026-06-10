@@ -4,6 +4,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Live terminal tokens + utilities */
+:root {
+  --term-bg: 222 47% 6%;
+  --term-grid: 222 30% 14%;
+  --term-text: 210 20% 92%;
+  --term-muted: 215 16% 60%;
+  --state-over: 142 76% 45%;
+  --state-under: 0 75% 58%;
+  --state-usage: 28 96% 56%;
+  --state-sharp: 270 80% 65%;
+  --state-volatility: 48 100% 60%;
+}
+
+.term-tabular { font-variant-numeric: tabular-nums; }
+
+@keyframes term-pulse-kf {
+  0%, 100% { opacity: 0.95; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.08); }
+}
+.term-pulse { transform-origin: center; transform-box: fill-box; animation: term-pulse-kf 1.6s ease-in-out infinite; }
+
+@keyframes term-ghost-spin-kf { to { stroke-dashoffset: -24; } }
+.term-ghost-spin { animation: term-ghost-spin-kf 6s linear infinite; }
+
+@keyframes term-draw-kf {
+  from { stroke-dashoffset: 60; opacity: 0.1; }
+  to { stroke-dashoffset: 0; opacity: 0.75; }
+}
+.term-draw { animation: term-draw-kf 1.4s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .term-pulse, .term-ghost-spin, .term-draw { animation: none !important; }
+}
+
 @layer base {
   :root {
     /* FanDuel-inspired deep dark theme */
