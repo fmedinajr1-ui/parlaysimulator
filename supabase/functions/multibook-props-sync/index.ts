@@ -84,6 +84,14 @@ Deno.serve(async (req) => {
         provider_message: t.slice(0, 300),
       });
     }
+    if (res.status === 404) {
+      return json({
+        success: true,
+        written: 0,
+        event_not_found: true,
+        provider_message: t.slice(0, 300),
+      });
+    }
     return json({ success: false, error: `Odds API ${res.status}: ${t.slice(0, 200)}` }, 502);
   }
   const data = await res.json();
