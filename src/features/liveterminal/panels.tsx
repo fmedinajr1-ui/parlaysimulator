@@ -2,9 +2,24 @@ import type { LiveGameState } from "@/features/live3d/types";
 import { buildMockTerminal } from "./state/mockFeed";
 import { STATE_COLOR, STATE_LABEL } from "./state/stateColors";
 import type { PlayerState } from "./types";
+import type { PropEdgeRow } from "./hooks/useTerminalFeed";
 
-export function TerminalPanels({ state }: { state: LiveGameState }) {
-  const { players, nextPlays } = buildMockTerminal(state);
+export function TerminalPanels({
+  state,
+  playerStates,
+  edgeRows,
+  signalCount,
+  hasProjections,
+  pbpAvailable,
+}: {
+  state: LiveGameState;
+  playerStates: Record<string, PlayerState>;
+  edgeRows: PropEdgeRow[];
+  signalCount: number;
+  hasProjections: boolean;
+  pbpAvailable: boolean;
+}) {
+  const { players, nextPlays } = buildMockTerminal(state, { playerStates, edgeRows });
   const ranked = [...players]
     .filter((p) => p.edge)
     .sort((a, b) => Math.abs(b.edge!.edgePct) - Math.abs(a.edge!.edgePct))
@@ -13,6 +28,13 @@ export function TerminalPanels({ state }: { state: LiveGameState }) {
   const legendStates: PlayerState[] = ["over_pace", "under_pace", "usage_spike", "sharp_action", "volatility"];
 
   return (
+    <>
+    <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--term-muted))]">
+      <FeedChip on={edgeRows.length > 0} label={`Quotes · ${edgeRows.length}`} />
+      <FeedChip on={signalCount > 0} label={`Signals · ${signalCount}`} />
+      <FeedChip on={hasProjections} label="Projections" />
+      <FeedChip on={pbpAvailable} label="Play-by-play" />
+    </div>
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
       <Panel title="Next likely play">
         <ul className="space-y-1.5">
@@ -93,6 +115,20 @@ export function TerminalPanels({ state }: { state: LiveGameState }) {
         </ul>
       </Panel>
     </div>
+    </>
+  );
+}
+
+function FeedChip({ on, label }: { on: boolean; label: string }) {
+  const color = on ? "hsl(var(--state-over))" : "hsl(var(--term-muted))";
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border"
+      style={{ borderColor: `${color}55`, color }}
+    >
+      <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
   );
 }
 

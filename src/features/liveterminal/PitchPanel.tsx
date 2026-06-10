@@ -4,10 +4,22 @@ import { buildMockTerminal } from "./state/mockFeed";
 import { PITCH_H, PITCH_W, pitchFor } from "./pitches";
 import { GhostLayer, TrailLayer, TrajectoryLayer } from "./layers";
 import { PlayerToken } from "./PlayerToken";
-import type { TerminalPlayer } from "./types";
+import type { PlayerState, TerminalPlayer } from "./types";
+import type { PropEdgeRow } from "./hooks/useTerminalFeed";
+import type { PBPPlay } from "@/hooks/useLivePBP";
 
-export function PitchPanel({ state }: { state: LiveGameState }) {
-  const { players, trajectories } = buildMockTerminal(state);
+export function PitchPanel({
+  state,
+  playerStates,
+  edgeRows,
+  recentPlays,
+}: {
+  state: LiveGameState;
+  playerStates: Record<string, PlayerState>;
+  edgeRows: PropEdgeRow[];
+  recentPlays: PBPPlay[];
+}) {
+  const { players, trajectories } = buildMockTerminal(state, { playerStates, edgeRows });
   const [hover, setHover] = useState<TerminalPlayer | null>(null);
 
   return (
@@ -58,6 +70,33 @@ export function PitchPanel({ state }: { state: LiveGameState }) {
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* PBP ticker */}
+      {recentPlays.length > 0 && (
+        <div className="absolute top-7 left-3 right-3 max-w-[55%] rounded-md border border-[hsl(var(--term-grid))] bg-black/60 backdrop-blur px-3 py-2 text-[11px] text-[hsl(var(--term-text))]">
+          <div className="text-[9px] uppercase tracking-[0.2em] text-[hsl(var(--term-muted))] mb-1">
+            Live play-by-play
+          </div>
+          <ul className="space-y-0.5 max-h-28 overflow-hidden">
+            {recentPlays.slice(0, 5).map((p, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="font-mono text-[10px] text-[hsl(var(--term-muted))] w-10 shrink-0">
+                  {p.time}
+                </span>
+                <span
+                  className={
+                    p.isHighMomentum
+                      ? "text-[hsl(var(--state-volatility))]"
+                      : "text-[hsl(var(--term-text))]"
+                  }
+                >
+                  {p.text}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
