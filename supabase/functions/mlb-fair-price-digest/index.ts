@@ -248,6 +248,13 @@ async function runPulse(supabase: ReturnType<typeof createClient>, force: boolea
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // MLB Fair-Price v1 is SHUT DOWN. Digest disabled — return ok no-op so
+  // any lingering cron entry doesn't error.
+  return new Response(JSON.stringify({ ok: true, disabled: true, reason: "mlb_fair_price_shutdown" }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+  // eslint-disable-next-line no-unreachable
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
