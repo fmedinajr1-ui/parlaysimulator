@@ -163,10 +163,10 @@ Deno.serve(async (req) => {
     const raw = aiJson?.choices?.[0]?.message?.content ?? "{}";
     let parsed: { predictions?: any[] } = {};
     try {
-      parsed = JSON.parse(raw);
+      parsed = safeParseJson(raw);
     } catch (err) {
-      console.error("[live-next-play-predictor] bad JSON from model", err, raw);
-      return json({ error: "bad_model_json" }, 500);
+      console.error("[live-next-play-predictor] bad JSON from model", err, String(raw).slice(0, 500));
+      return json({ skipped: true, reason: "bad_model_json" });
     }
     const preds = Array.isArray(parsed.predictions) ? parsed.predictions.slice(0, 5) : [];
     if (!preds.length) return json({ inserted: 0, reason: "no_preds" });
