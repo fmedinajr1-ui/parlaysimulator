@@ -3,12 +3,9 @@ import { useParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveGameState, usePropQuotes } from "@/features/live3d/hooks";
 import { SPORT_KEY } from "@/features/live3d/types";
-import { SceneFrame } from "@/features/live3d/scenes/SceneFrame";
-import { BasketballScene } from "@/features/live3d/scenes/BasketballScene";
-import { BaseballScene } from "@/features/live3d/scenes/BaseballScene";
-import { GenericFieldScene } from "@/features/live3d/scenes/GenericFieldScene";
 import { Scoreboard } from "@/features/live3d/components/Scoreboard";
 import { PropBookGrid } from "@/features/live3d/components/PropBookGrid";
+import { TerminalView } from "@/features/liveterminal/TerminalView";
 
 export default function LiveGame() {
   const { gameId } = useParams<{ gameId: string }>();
@@ -66,7 +63,7 @@ export default function LiveGame() {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
         <div className="h-[60vh] lg:h-[calc(100vh-180px)]">
-          <SceneFrame>{renderScene(state)}</SceneFrame>
+          <TerminalView state={state} />
         </div>
         <aside className="bg-slate-950">
           <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-2">
@@ -83,25 +80,4 @@ export default function LiveGame() {
       </div>
     </div>
   );
-}
-
-function renderScene(state: ReturnType<typeof useLiveGameState>["state"]) {
-  if (!state) return null;
-  switch (state.sport) {
-    case "NBA":
-    case "WNBA":
-    case "NCAAB":
-      return <BasketballScene state={state} />;
-    case "MLB":
-      return <BaseballScene state={state} />;
-    case "NFL":
-    case "NCAAF":
-      return <GenericFieldScene state={state} kind="football" perSide={11} />;
-    case "NHL":
-      return <GenericFieldScene state={state} kind="hockey" perSide={6} />;
-    case "Soccer":
-      return <GenericFieldScene state={state} kind="soccer" perSide={11} />;
-    default:
-      return <GenericFieldScene state={state} kind="soccer" perSide={5} />;
-  }
 }
