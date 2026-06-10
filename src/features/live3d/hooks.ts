@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { LiveGameState, PropQuote } from "./types";
 
@@ -73,6 +73,7 @@ export function useLiveGames() {
 export function usePropQuotes(eventId: string | undefined) {
   const [quotes, setQuotes] = useState<PropQuote[]>([]);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
     if (!eventId) return;
@@ -96,10 +97,14 @@ export function usePropQuotes(eventId: string | undefined) {
         () => load(),
       )
       .subscribe();
+    channelRef.current = ch;
     return () => {
       cancelled = true;
       clearInterval(id);
-      supabase.removeChannel(ch);
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
   }, [eventId]);
 
