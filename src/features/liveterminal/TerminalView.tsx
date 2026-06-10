@@ -55,6 +55,7 @@ export function TerminalView({
         pbpAvailable={!!pbp.data?.recentPlays?.length}
         nextPlayPredictions={nextPlay.predictions}
         nextPlayLastRun={nextPlay.lastRun}
+        quotes={quotes}
       />
       <EdgeBoard rows={feed.rows} />
     </div>

@@ -4,6 +4,8 @@ import { STATE_COLOR, STATE_LABEL } from "./state/stateColors";
 import type { PlayerState } from "./types";
 import type { PropEdgeRow } from "./hooks/useTerminalFeed";
 import type { NextPlayPrediction } from "./hooks/useNextPlayPredictions";
+import type { PropQuote } from "@/features/live3d/types";
+import { useEffect, useState } from "react";
 
 export function TerminalPanels({
   state,
@@ -14,6 +16,7 @@ export function TerminalPanels({
   pbpAvailable,
   nextPlayPredictions,
   nextPlayLastRun,
+  quotes,
 }: {
   state: LiveGameState;
   playerStates: Record<string, PlayerState>;
@@ -23,6 +26,7 @@ export function TerminalPanels({
   pbpAvailable: boolean;
   nextPlayPredictions: NextPlayPrediction[];
   nextPlayLastRun: number | null;
+  quotes: PropQuote[];
 }) {
   const { players } = buildMockTerminal(state, { playerStates, edgeRows });
   const ranked = [...players]
@@ -42,7 +46,7 @@ export function TerminalPanels({
       <FeedChip on={nextPlayPredictions.length > 0} label={`AI Next Play · ${nextPlayPredictions.length}`} />
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-      <NextPlayPanel predictions={nextPlayPredictions} lastRun={nextPlayLastRun} />
+      <NextPlayPanel predictions={nextPlayPredictions} lastRun={nextPlayLastRun} quotes={quotes} />
 
       <Panel title="Player involvement">
         <ul className="space-y-1.5">
@@ -114,11 +118,46 @@ export function TerminalPanels({
 function NextPlayPanel({
   predictions,
   lastRun,
+  quotes,
 }: {
   predictions: NextPlayPrediction[];
   lastRun: number | null;
+  quotes: PropQuote[];
 }) {
-  const ago = lastRun ? Math.max(0, Math.floor((Date.now() - lastRun) / 1000)) : null;
+  const REFRESH_MS = 20_000;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const ago = lastRun ? Math.max(0, Math.floor((now - lastRun) / 1000)) : null;
+  const nextIn = lastRun ? Math.max(0, Math.ceil((lastRun + REFRESH_MS - now) / 1000)) : null;
+
+  // Build a quick lookup of freshest quotes for live revaluation
+  const latestByKey = new Map<string, PropQuote>();
+  const REF_PRIORITY = ["fanduel", "draftkings", "betmgm", "williamhill_us", "pinnacle"];
+  for (const q of quotes) {
+    if (q.line == null) continue;
+    const k = `${q.player_name}|${q.prop_type}|${q.line}`;
+    const cur = latestByKey.get(k);
+    if (!cur) {
+      latestByKey.set(k, q);
+      continue;
+    }
+    // prefer newer fetched_at, tie-break by book priority
+    const newer = new Date(q.fetched_at).getTime() > new Date(cur.fetched_at).getTime();
+    const curRank = REF_PRIORITY.indexOf(cur.bookmaker);
+    const newRank = REF_PRIORITY.indexOf(q.bookmaker);
+    if (newer || (newRank !== -1 && (curRank === -1 || newRank < curRank))) {
+      latestByKey.set(k, q);
+    }
+  }
+
+  function americanToProb(p: number | null): number | null {
+    if (p == null) return null;
+    return p > 0 ? 100 / (p + 100) : -p / (-p + 100);
+  }
+
   return (
     <div className="rounded-md border border-[hsl(var(--term-grid))] bg-[hsl(var(--term-bg))] p-3">
       <div className="flex items-center justify-between mb-2">
@@ -126,8 +165,10 @@ function NextPlayPanel({
           AI · Next play props
         </div>
         {ago !== null && (
-          <div className="text-[9px] uppercase tracking-widest text-[hsl(var(--term-muted))] font-mono">
-            {ago}s ago
+          <div className="text-[9px] uppercase tracking-widest text-[hsl(var(--term-muted))] font-mono flex items-center gap-1.5">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-[hsl(var(--state-over))] animate-pulse" />
+            <span>Revalued {ago}s ago</span>
+            {nextIn !== null && <span className="opacity-60">· next {nextIn}s</span>}
           </div>
         )}
       </div>
@@ -138,8 +179,20 @@ function NextPlayPanel({
       ) : (
         <ul className="space-y-2">
           {predictions.map((p) => {
-            const edge = p.edge_pct ?? 0;
+            // Revalue against the freshest quote we hold on the client
+            const live = latestByKey.get(`${p.player_name}|${p.prop_type}|${p.line}`);
+            const livePrice =
+              live && (p.side === "Over" ? live.over_price : live.under_price);
+            const price = livePrice ?? p.american_price;
+            const implied = americanToProb(price ?? null);
+            const liveEdge =
+              implied != null ? +((p.prob_next_play - implied) * 100).toFixed(2) : (p.edge_pct ?? 0);
+            const edge = liveEdge;
             const edgeColor = edge >= 0 ? "hsl(var(--state-over))" : "hsl(var(--state-under))";
+            const priceAgeSec = live
+              ? Math.max(0, Math.floor((now - new Date(live.fetched_at).getTime()) / 1000))
+              : null;
+            const book = live?.bookmaker ?? p.book;
             return (
               <li
                 key={p.id}
@@ -168,9 +221,15 @@ function NextPlayPanel({
                   </div>
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-[10px] text-[hsl(var(--term-muted))] font-mono">
-                  {p.book && <span className="uppercase">{p.book}</span>}
-                  {p.american_price != null && (
-                    <span>{p.american_price > 0 ? "+" : ""}{p.american_price}</span>
+                  {book && <span className="uppercase">{book}</span>}
+                  {price != null && (
+                    <span>{price > 0 ? "+" : ""}{price}</span>
+                  )}
+                  {implied != null && (
+                    <span className="opacity-70">· imp {(implied * 100).toFixed(1)}%</span>
+                  )}
+                  {priceAgeSec != null && (
+                    <span className="ml-auto opacity-60">priced {priceAgeSec}s ago</span>
                   )}
                 </div>
                 {p.rationale && (
