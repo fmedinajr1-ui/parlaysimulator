@@ -203,7 +203,9 @@ async function processGame(gamePk: number): Promise<{ posted: number; skipped: n
       if (!cls) continue;
 
       const feedTs = Date.now();
-      const fpMeta = fairPriceMetaFor(play, cls.type, feedTs);
+      // MLB Fair-Price v1 is SHUT DOWN — do not attach fair_price metadata.
+      const fpMeta = null;
+      void fairPriceMetaFor; void feedTs;
 
       const ok = await postEvent({
         sport: "MLB",

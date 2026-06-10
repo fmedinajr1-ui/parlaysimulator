@@ -15,6 +15,12 @@ const FINAL_STATUSES = new Set([
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // MLB Fair-Price v1 is SHUT DOWN. Outcome attacher disabled.
+  return new Response(JSON.stringify({ ok: true, disabled: true, reason: "mlb_fair_price_shutdown" }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+  // eslint-disable-next-line no-unreachable
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
