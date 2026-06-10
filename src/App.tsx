@@ -55,6 +55,8 @@ const MlbFairPriceDashboard = React.lazy(() => import("./pages/admin/MlbFairPric
 const PropScanner = React.lazy(() => import("./pages/PropScanner"));
 const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 const LiveAI = React.lazy(() => import("./pages/LiveAI"));
+const LiveGames = React.lazy(() => import("./pages/LiveGames"));
+const LiveGame = React.lazy(() => import("./pages/LiveGame"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -128,6 +130,8 @@ function AnimatedRoutes() {
               <Route path="/manual" element={<ManualBuilder />} />
               <Route path="/live-ai" element={<LiveAI />} />
               <Route path="/spike/:token" element={<LiveAI />} />
+              <Route path="/live" element={<LiveGames />} />
+              <Route path="/live/:gameId" element={<LiveGame />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
