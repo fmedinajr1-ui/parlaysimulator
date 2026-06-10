@@ -74,6 +74,16 @@ Deno.serve(async (req) => {
   const res = await fetch(url);
   if (!res.ok) {
     const t = await res.text();
+    // Quota / auth issues: degrade gracefully so the client doesn't blank-screen.
+    if (res.status === 401 || res.status === 429) {
+      return json({
+        success: true,
+        written: 0,
+        quota_exceeded: true,
+        provider_status: res.status,
+        provider_message: t.slice(0, 300),
+      });
+    }
     return json({ success: false, error: `Odds API ${res.status}: ${t.slice(0, 200)}` }, 502);
   }
   const data = await res.json();

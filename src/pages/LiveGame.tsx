@@ -13,7 +13,7 @@ import { PropBookGrid } from "@/features/live3d/components/PropBookGrid";
 export default function LiveGame() {
   const { gameId } = useParams<{ gameId: string }>();
   const { state, loading } = useLiveGameState(gameId);
-  const quotes = usePropQuotes(gameId);
+  const { quotes, quotaExceeded, setQuotaExceeded } = usePropQuotes(gameId);
 
   // Trigger a multi-book sync on mount + every 60s while viewing.
   useEffect(() => {
@@ -25,11 +25,16 @@ export default function LiveGame() {
         .invoke("multibook-props-sync", {
           body: { event_id: state.game_id, sport_key, sport: state.sport },
         })
+        .then((res) => {
+          const data = res?.data as { quota_exceeded?: boolean } | null;
+          if (data?.quota_exceeded) setQuotaExceeded(true);
+          else if (quotaExceeded) setQuotaExceeded(false);
+        })
         .catch(() => {});
     fire();
     const id = setInterval(fire, 60_000);
     return () => clearInterval(id);
-  }, [state]);
+  }, [state, quotaExceeded, setQuotaExceeded]);
 
   if (loading) {
     return (
@@ -67,6 +72,12 @@ export default function LiveGame() {
           <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-2">
             Multi-book prop comparison
           </h3>
+          {quotaExceeded && (
+            <div className="mb-2 text-xs rounded-md border border-amber-700/40 bg-amber-950/40 text-amber-300 px-3 py-2">
+              Odds provider quota exceeded. Live prop quotes are paused until the
+              key tops up or the monthly reset.
+            </div>
+          )}
           <PropBookGrid quotes={quotes} />
         </aside>
       </div>

@@ -72,6 +72,7 @@ export function useLiveGames() {
 
 export function usePropQuotes(eventId: string | undefined) {
   const [quotes, setQuotes] = useState<PropQuote[]>([]);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   useEffect(() => {
     if (!eventId) return;
@@ -93,5 +94,5 @@ export function usePropQuotes(eventId: string | undefined) {
     };
   }, [eventId]);
 
-  return quotes;
+  return { quotes, quotaExceeded, setQuotaExceeded };
 }
