@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { PropQuote } from "@/features/live3d/types";
 import type { PlayerState } from "../types";
@@ -225,6 +225,7 @@ export function useTerminalFeed(eventId: string | undefined, quotes: PropQuote[]
   const [projections, setProjections] = useState<
     Array<{ player_name: string; prop_type: string; projected_value: number | null; recommended_side: string | null; confidence_score: number | null }>
   >([]);
+  const [quotesTick, setQuotesTick] = useState(0);
 
   useEffect(() => {
     if (!eventId) return;
@@ -251,7 +252,7 @@ export function useTerminalFeed(eventId: string | undefined, quotes: PropQuote[]
       }
     }
     load();
-    const id = setInterval(load, 45_000);
+    const id = setInterval(load, 20_000);
 
     const ch = supabase
       .channel(`terminal-feed-${eventId}`)
@@ -259,6 +260,11 @@ export function useTerminalFeed(eventId: string | undefined, quotes: PropQuote[]
         "postgres_changes",
         { event: "*", schema: "public", table: "market_signals", filter: `event_id=eq.${eventId}` },
         () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "live_prop_quotes", filter: `event_id=eq.${eventId}` },
+        () => setQuotesTick((t) => t + 1),
       )
       .subscribe();
 
@@ -269,29 +275,52 @@ export function useTerminalFeed(eventId: string | undefined, quotes: PropQuote[]
     };
   }, [eventId]);
 
-  const rows = buildEdgeRows(quotes);
-
-  // Overlay model projection where available
-  const projIndex = new Map<string, { proj: number | null; side: string | null; conf: number | null }>();
-  for (const p of projections) {
-    projIndex.set(`${p.player_name}|${p.prop_type}`, {
-      proj: p.projected_value,
-      side: p.recommended_side,
-      conf: p.confidence_score,
-    });
-  }
-  const enriched = rows.map((r) => {
-    const hit = projIndex.get(r.key);
-    if (hit?.proj != null) {
-      return { ...r, modelLine: Number(hit.proj) };
+  // Freshness filter: only keep latest snapshot per (player|prop|book|line) by fetched_at
+  const freshQuotes = useMemo(() => {
+    const latest = new Map<string, PropQuote>();
+    for (const q of quotes) {
+      const k = `${q.player_name}|${q.prop_type}|${q.bookmaker}|${q.line}`;
+      const prev = latest.get(k);
+      const ts = (q as any).fetched_at ? new Date((q as any).fetched_at).getTime() : 0;
+      const prevTs = prev && (prev as any).fetched_at ? new Date((prev as any).fetched_at).getTime() : -1;
+      if (!prev || ts > prevTs) latest.set(k, q);
     }
-    return r;
-  });
+    return Array.from(latest.values());
+    // intentionally include quotesTick so realtime nudges recompute even if reference is same
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotes, quotesTick]);
+
+  const enriched = useMemo(() => {
+    const rows = buildEdgeRows(freshQuotes);
+    const projIndex = new Map<string, { proj: number | null; side: string | null; conf: number | null }>();
+    for (const p of projections) {
+      projIndex.set(`${p.player_name}|${p.prop_type}`, {
+        proj: p.projected_value,
+        side: p.recommended_side,
+        conf: p.confidence_score,
+      });
+    }
+    return rows.map((r) => {
+      const hit = projIndex.get(r.key);
+      if (hit?.proj != null) return { ...r, modelLine: Number(hit.proj) };
+      return r;
+    });
+  }, [freshQuotes, projections]);
+
+  const lastUpdated = useMemo(() => {
+    let max = 0;
+    for (const q of quotes) {
+      const ts = (q as any).fetched_at ? new Date((q as any).fetched_at).getTime() : 0;
+      if (ts > max) max = ts;
+    }
+    return max || null;
+  }, [quotes]);
 
   return {
     rows: enriched,
     playerStates: statesFromSignals(signals),
     signalCount: signals.length,
     hasProjections: projections.length > 0,
+    lastUpdated,
   };
 }
