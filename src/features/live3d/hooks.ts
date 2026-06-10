@@ -87,10 +87,19 @@ export function usePropQuotes(eventId: string | undefined) {
       if (!cancelled) setQuotes((data as PropQuote[]) ?? []);
     }
     load();
-    const id = setInterval(load, 30_000);
+    const id = setInterval(load, 15_000);
+    const ch = supabase
+      .channel(`live_prop_quotes:${eventId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "live_prop_quotes", filter: `event_id=eq.${eventId}` },
+        () => load(),
+      )
+      .subscribe();
     return () => {
       cancelled = true;
       clearInterval(id);
+      supabase.removeChannel(ch);
     };
   }, [eventId]);
 

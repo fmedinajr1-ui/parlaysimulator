@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useLiveGameState, usePropQuotes } from "@/features/live3d/hooks";
 import { SPORT_KEY } from "@/features/live3d/types";
 import { Scoreboard } from "@/features/live3d/components/Scoreboard";
-import { PropBookGrid } from "@/features/live3d/components/PropBookGrid";
 import { TerminalView } from "@/features/liveterminal/TerminalView";
 
 export default function LiveGame() {
@@ -29,7 +28,7 @@ export default function LiveGame() {
         })
         .catch(() => {});
     fire();
-    const id = setInterval(fire, 60_000);
+    const id = setInterval(fire, 30_000);
     return () => clearInterval(id);
   }, [state, quotaExceeded, setQuotaExceeded]);
 
@@ -61,22 +60,8 @@ export default function LiveGame() {
       <div className="mt-2 mb-3">
         <Scoreboard state={state} />
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
-        <div className="h-[60vh] lg:h-[calc(100vh-180px)]">
-          <TerminalView state={state} quotes={quotes} />
-        </div>
-        <aside className="bg-slate-950">
-          <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-2">
-            Multi-book prop comparison
-          </h3>
-          {quotaExceeded && (
-            <div className="mb-2 text-xs rounded-md border border-amber-700/40 bg-amber-950/40 text-amber-300 px-3 py-2">
-              Odds provider quota exceeded. Live prop quotes are paused until the
-              key tops up or the monthly reset.
-            </div>
-          )}
-          <PropBookGrid quotes={quotes} />
-        </aside>
+      <div className="h-[70vh] lg:h-[calc(100vh-180px)]">
+        <TerminalView state={state} quotes={quotes} quotaExceeded={quotaExceeded} />
       </div>
     </div>
   );
