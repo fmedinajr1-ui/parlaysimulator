@@ -1,79 +1,100 @@
-## Goal
-Run the NBA Sharp Money playbook (price-edge + line-movement detection → engine_live_tracker → automated settlement) across every in-season sport: MLB, WNBA, tennis, soccer. No fake/scaffold data — everything must trace to a real bookmaker line and a real final stat line.
+# Live 3D Game View + Multi-Book Prop Panel
 
-## Current gap (verified)
-- `engine_live_tracker` last 7d: only `Unified Props` is writing. `Bot Exploration`, `Sweet Spot`, `Juiced` have been dark since March.
-- `unified_props` active rows: MLB/WNBA = h2h/spreads/totals only (no player props). Tennis = 0. Soccer = futures only.
-- `sharp_line_tracker` has 42 rows in 7d — all manual NBA entries. Zero automated tracking for MLB/WNBA/tennis/soccer.
-- `mlb_engine_picks` table exists with 1.4k historical rows but the writer (mlb-pitcher-k-analyzer / mlb-rbi-under-analyzer) hasn't fired since March.
-- `tennis_match_model`, `soccer_match_results`, `soccer_player_match_stats` tables exist but are empty.
+A new `/live/:gameId` route that pairs a 3D broadcast-style visualization of an in-progress game with a sticky scoreboard and a side-by-side sportsbook prop comparison panel.
 
-## Plan
+## Scope Reality Check (read first)
 
-### 1. Automated Sharp Money tracker (4 sports)
-New edge function `sharp-tracker-auto-ingest` runs every 10 min via pg_cron:
-- Pulls active player-prop and totals rows from `unified_props` for `baseball_mlb`, `basketball_wnba`, `tennis_atp`, `tennis_wta`, `soccer_*` leagues.
-- For each `(player, prop_type, line)`, if no existing `sharp_line_tracker` row, INSERTs as the opening snapshot. If it exists, UPDATEs `current_line` / `current_over_price` / `current_under_price`.
-- Computes `ai_direction` using the same vig-free price-edge math as the side-picker, gated by `SPORT_EDGE_FLOOR`. Tags `ai_signals.sharp` when line moves ≥ 0.5 against price (steam) or price moves ≥ 15c with line static.
-- Writes a mirror row into `engine_live_tracker` with `engine_name='Sharp Money'`, `status='pending'` so the existing settlement loop grades it the same way NBA picks are graded.
+You picked **realistic broadcast-style across NBA/WNBA/NCAAB, NFL/NCAAF, MLB, NHL, Soccer**. That is a multi-month, multi-thousand-dollar effort if taken literally:
 
-### 2. Reactivate Bot Exploration for MLB + WNBA
-- Audit `mlb-pitcher-k-analyzer`, `mlb-rbi-under-analyzer`, `mlb-no-hr-team-analyzer` — they already write to `mlb_engine_picks`. Remove the sport-gate / cron-disable that stopped them in March (likely a `is_in_season` flag).
-- Add a thin bridge `mlb-engine-bridge` that mirrors new `mlb_engine_picks` rows into `engine_live_tracker` with `engine_name='Bot Exploration'` so they show up in the same accuracy dashboard.
-- WNBA: extend `wnba-backtest-signals` to also write live picks (currently backtest-only) into `engine_live_tracker` for active games.
+- Real player models per sport = licensed 3D assets or custom rigging (10–50 MB each, hundreds of players).
+- Real x/y/z tracking data is **not free**. The realistic providers:
+  - **Sportradar** (NBA/NFL/NHL/MLB/Soccer) — enterprise pricing, typically $2k–$20k+/mo.
+  - **Genius Sports** (NFL/NBA Next Gen Stats reseller) — enterprise only.
+  - **StatsPerform / Opta** (Soccer/NCAA) — enterprise.
+  - **MLB Statcast** — free historical, **no public live feed**.
+- No tier of The Odds API (what we already use) returns play-by-play coordinates.
 
-### 3. Tennis pipeline (real data)
-- Tennis odds: `tennis-props-sync` already fetches from The Odds API. Confirm it's populating `unified_props` for `tennis_atp`/`tennis_wta`; if not, enable the cron and add ATP/WTA to the sport-allowlist.
-- Tennis settlement: extend `court-edge-settle` pattern — scrape TennisAbstract for final game totals — to also grade `engine_live_tracker` rows where `sport ILIKE 'tennis%'`. Add a new `tennis-engine-settler` that re-uses `playerSlug` + `parseRecentRows` from `_shared/court-edge-slug.ts`.
+**My recommendation: ship a "broadcast-style stylized" v1, not literal-realism v1.** It still looks premium (think NBA League Pass "Mosaic" view, not 2K graphics) and is achievable in days, not months. We can layer realism on later if a data deal happens.
 
-### 4. Soccer pipeline (real data)
-- Soccer odds ingest: add `soccer-odds-ingest` (The Odds API) for EPL/MLS/UCL/La Liga player props (goals, shots, shots on target, cards) → `unified_props`.
-- Soccer stats ingest: add `soccer-stats-ingest` that pulls final box scores from a free source (api-football free tier or football-data.org) → populates `soccer_match_results` + `soccer_player_match_stats`.
-- `soccer-engine-settler` already exists as scaffold — it'll start grading the second real stats land.
+If you want literal realism now, the plan changes to "procure data partnership first, build second" and I should stop and get you on a call with Sportradar before any code.
 
-### 5. Cron + orchestration
-Add pg_cron jobs:
-- `sharp-tracker-auto-ingest` — every 10 min
-- `mlb-engine-bridge` — every 15 min during MLB window (12pm–11pm ET)
-- `tennis-engine-settler` — every hour
-- `soccer-odds-ingest` — every 30 min
-- `soccer-stats-ingest` — every 2 hours
-- `soccer-engine-settler` — every hour after stats ingest
+Assuming **stylized broadcast v1**, here is the plan.
 
-### 6. Verification (must pass before claiming done)
-For each of the 4 sports, prove:
-1. `unified_props` has > 0 active player-prop rows updated in the last hour.
-2. `engine_live_tracker` has new `pending` rows from at least one engine in the last hour.
-3. Settled rows from yesterday have non-null `result` and a real `actual_value`.
-4. Win rate is computed from ≥ 5 real settled picks per sport.
+## What gets built
 
-## Technical details
+### 1. Route + layout: `/live/:gameId`
 
-### Files to create
-- `supabase/functions/sharp-tracker-auto-ingest/index.ts`
-- `supabase/functions/mlb-engine-bridge/index.ts`
-- `supabase/functions/tennis-engine-settler/index.ts`
-- `supabase/functions/soccer-odds-ingest/index.ts`
-- `supabase/functions/soccer-stats-ingest/index.ts`
-- `mem/logic/betting/multisport-sharp-money.md`
-- Migration: pg_cron schedules + any needed index on `sharp_line_tracker (sport, player_name, prop_type, line)`.
+```text
++----------------------------------------------------+
+|  HOME 78  ─────  AWAY 74   Q3 4:32   ⏺ LIVE        |  ← scoreboard (sticky)
++----------------------------------------------------+
+|                                  |                  |
+|        3D COURT / FIELD          |  PROP COMPARE    |
+|        (react-three-fiber)       |  ┌──────────────┐|
+|        - ball position           |  │ Tatum Pts    │|
+|        - possession marker       |  │ FD  o27.5 -110│|
+|        - player dots w/ numbers  |  │ DK  o27.5 -115│|
+|        - team-colored court      |  │ MGM o28.5 +105│|
+|                                  |  │ ...          │|
+|                                  |  └──────────────┘|
++----------------------------------------------------+
+```
 
-### Files to edit
-- `supabase/functions/mlb-pitcher-k-analyzer/index.ts` — remove March-era sport-gate
-- `supabase/functions/mlb-rbi-under-analyzer/index.ts` — same
-- `supabase/functions/wnba-backtest-signals/index.ts` — add live-mode flag
-- `supabase/functions/tennis-props-sync/index.ts` — confirm sport allowlist
-- `supabase/functions/soccer-engine-settler/index.ts` — already works once stats land
-- `mem/index.md` — register new memory file
+Mobile: scoreboard top, 3D view middle (60vh), prop panel collapses into a bottom sheet.
 
-### Secrets required
-- `THE_ODDS_API_KEY` — likely already present (used by existing odds sync)
-- `FOOTBALL_DATA_API_KEY` or `API_FOOTBALL_KEY` — for soccer box scores. I'll ask you for one before adding the soccer stats ingest; until then soccer settles via web-scrape fallback.
+### 2. Sport-specific 3D scenes (`src/features/live3d/scenes/`)
 
-### Scope of this turn
-I'll ship sections 1, 2, 3, and 5 (everything except soccer stats ingest which needs a key) — then verify each sport produces real picks and real settlements. Soccer will stay on the existing scaffold pending the API key.
+One scene component per sport, all sharing a `<Field>` base:
+- `BasketballScene` — half-court textures, hoop, ball, 10 player markers
+- `FootballScene` — gridiron with yard lines, ball spot, down marker, 22 markers
+- `BaseballScene` — diamond, bases (lit when occupied), pitch zone, 9 fielders
+- `HockeyScene` — rink, puck, 12 markers
+- `SoccerScene` — pitch, ball, 22 markers
 
-## Out of scope
-- New UI surfaces (existing accuracy dashboards already read from `engine_live_tracker`).
-- Re-grading historical March picks (those were already settled in `mlb_engine_picks`).
-- NHL / NCAAB / NFL / NBA (all offseason).
+Player markers = team-colored cylinders with jersey-number sprite. Ball/puck = sphere with trail. Camera orbits via OrbitControls; preset "Broadcast", "Overhead", "End-zone" buttons.
+
+### 3. Live data feed
+
+- **Score / clock / possession / outs / down-and-distance**: poll The Odds API `/scores` every 15s (already wired) + a new `live-game-state-sync` edge function that normalizes per sport into a `live_game_state` row.
+- **Ball / player positions**: **simulated** in v1 from coarse signals (possession team → ball near their hoop; pitch in progress → ball at mound→plate; etc.). Honest UI label: "Visualized — not tracked." This is the only intellectually honest option without a tracking-data deal.
+- Realtime: subscribe to `live_game_state` via Supabase Realtime so the scene updates without polling on the client.
+
+### 4. Multi-book prop comparison
+
+- New edge function `multibook-props-sync` queries Odds API `/events/{id}/odds` with `bookmakers=fanduel,draftkings,betmgm,williamhill_us,betrivers,espnbet,pinnacle,...` for the active game.
+- Persists into a new `live_prop_quotes` table: `(event_id, player_name, prop_type, line, book, over_price, under_price, fetched_at)`.
+- UI: searchable list of player props. Each row expands to a book-by-book grid with best price highlighted and an "edge vs Pinnacle" tag when Pinnacle is present.
+
+### 5. Game list page `/live`
+
+Grid of currently-live games (pulled from `live_game_scores` we already have) → click → 3D view.
+
+## Technical Details
+
+- **3D**: `@react-three/fiber@^8.18` + `@react-three/drei@^9.122.0` (per project constraints, React 18).
+- **New tables**:
+  - `live_game_state` (game_id PK, sport, period, clock, home_score, away_score, possession, situation_json, updated_at) + Realtime publication + RLS read-for-authenticated.
+  - `live_prop_quotes` (composite unique on event_id+player+prop+book) + RLS.
+  - Both get the full GRANT block per project rules.
+- **New edge functions**:
+  - `live-game-state-sync` (cron every 15s while any game is live)
+  - `multibook-props-sync` (cron every 60s while any game is live; respects Odds API budget table `api_budget_tracker`)
+- **Client**:
+  - `src/features/live3d/` (scenes, hooks, camera presets)
+  - `src/features/live3d/components/Scoreboard.tsx`
+  - `src/features/live3d/components/PropBookGrid.tsx`
+  - `src/pages/LiveGames.tsx`, `src/pages/LiveGame.tsx`
+- **Cost guardrails**: only poll/sync while at least one game is `status='in_progress'`; otherwise the cron returns immediately. Multi-book sync limited to games actually being viewed (write a `viewing_heartbeat` row, only sync games with a heartbeat in last 2 min) to keep Odds API credits sane.
+- **Honest labeling**: a small "Visualized • not player-tracked" badge sits in the 3D corner so users aren't misled.
+
+## Out of scope for v1 (call out so you can confirm)
+
+- Real player skeletons / animations
+- Real x/y/z tracking (needs Sportradar/Genius deal)
+- Replay scrubbing / historical games
+- AR / VR / fullscreen broadcast mode
+- Betting-action buttons inside the 3D scene
+
+## Open question before I build
+
+The single biggest fork: **do you accept stylized broadcast v1 with simulated positions?** If yes, I build the above. If you want literal-realistic tracked positions, I stop and we scope a Sportradar (or equivalent) procurement first — no point writing code that has no data to drive it.
