@@ -8270,6 +8270,99 @@ export type Database = {
         }
         Relationships: []
       }
+      live_game_state: {
+        Row: {
+          away_score: number
+          away_team: string
+          clock: string | null
+          commence_time: string | null
+          created_at: string
+          game_id: string
+          home_score: number
+          home_team: string
+          league: string | null
+          period: string | null
+          possession: string | null
+          situation: Json
+          sport: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          away_score?: number
+          away_team: string
+          clock?: string | null
+          commence_time?: string | null
+          created_at?: string
+          game_id: string
+          home_score?: number
+          home_team: string
+          league?: string | null
+          period?: string | null
+          possession?: string | null
+          situation?: Json
+          sport: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          away_score?: number
+          away_team?: string
+          clock?: string | null
+          commence_time?: string | null
+          created_at?: string
+          game_id?: string
+          home_score?: number
+          home_team?: string
+          league?: string | null
+          period?: string | null
+          possession?: string | null
+          situation?: Json
+          sport?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      live_prop_quotes: {
+        Row: {
+          bookmaker: string
+          event_id: string
+          fetched_at: string
+          id: number
+          line: number | null
+          over_price: number | null
+          player_name: string
+          prop_type: string
+          sport: string
+          under_price: number | null
+        }
+        Insert: {
+          bookmaker: string
+          event_id: string
+          fetched_at?: string
+          id?: number
+          line?: number | null
+          over_price?: number | null
+          player_name: string
+          prop_type: string
+          sport: string
+          under_price?: number | null
+        }
+        Update: {
+          bookmaker?: string
+          event_id?: string
+          fetched_at?: string
+          id?: number
+          line?: number | null
+          over_price?: number | null
+          player_name?: string
+          prop_type?: string
+          sport?: string
+          under_price?: number | null
+        }
+        Relationships: []
+      }
       market_baselines: {
         Row: {
           baseline_lag_seconds: number
