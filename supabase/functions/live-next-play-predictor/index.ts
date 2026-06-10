@@ -151,6 +151,8 @@ Deno.serve(async (req) => {
           { role: "user", content: user },
         ],
         response_format: { type: "json_object" },
+        temperature: 0.1,
+        max_tokens: 900,
       }),
     });
 
@@ -224,10 +226,8 @@ function safeParseJson(raw: unknown): { predictions?: any[] } {
   let s = String(raw ?? "").trim();
   // strip markdown fences
   s = s.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-  // find outermost { ... }
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) s = s.slice(start, end + 1);
+  const firstObject = extractFirstJsonObject(s);
+  if (firstObject) s = firstObject;
   try {
     return JSON.parse(s);
   } catch {
@@ -235,8 +235,33 @@ function safeParseJson(raw: unknown): { predictions?: any[] } {
       .replace(/,\s*}/g, "}")
       .replace(/,\s*\]/g, "]")
       .replace(/[\x00-\x1F\x7F]/g, "");
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(extractFirstJsonObject(cleaned) ?? cleaned);
+    return Array.isArray(parsed) ? { predictions: parsed } : parsed;
   }
+}
+
+function extractFirstJsonObject(input: string): string | null {
+  const start = input.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return input.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
