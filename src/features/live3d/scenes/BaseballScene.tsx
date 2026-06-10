@@ -2,6 +2,8 @@ import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { LiveGameState } from "../types";
+import { PlayerAvatar } from "../components/PlayerAvatar";
+import type { PoseName } from "../components/poses";
 
 function Diamond() {
   return (
@@ -54,43 +56,63 @@ function Ball() {
   );
 }
 
-function Fielder({ x, z, color }: { x: number; z: number; color: string }) {
+function Fielder({
+  x,
+  z,
+  color,
+  num,
+  pose = "idle",
+  facing = 0,
+}: {
+  x: number;
+  z: number;
+  color: string;
+  num: number;
+  pose?: PoseName;
+  facing?: number;
+}) {
   return (
-    <group position={[x, 0, z]}>
-      <mesh castShadow position={[0, 0.7, 0]}>
-        <cylinderGeometry args={[0.3, 0.3, 1.4, 12]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0, 1.65, 0]}>
-        <sphereGeometry args={[0.28, 12, 12]} />
-        <meshStandardMaterial color="#f1c27d" />
-      </mesh>
-    </group>
+    <PlayerAvatar
+      position={[x, 0, z]}
+      rotationY={facing}
+      teamColor={color}
+      number={num}
+      pose={pose}
+      scale={0.9}
+    />
   );
 }
 
 export function BaseballScene({ state: _state }: { state: LiveGameState }) {
   const def = "#1e6fff";
-  const positions: [number, number][] = [
-    [0, -4.5], // pitcher
-    [0, 0.5], // catcher
-    [5, -3], // 1B
-    [3, -7], // 2B
-    [-3, -7], // SS
-    [-5, -3], // 3B
-    [-8, -12], // LF
-    [0, -15], // CF
-    [8, -12], // RF
+  const fielders: Array<{ x: number; z: number; num: number; pose: PoseName }> = [
+    { x: 0, z: -4.5, num: 17, pose: "pitching" },
+    { x: 0, z: 0.5, num: 8, pose: "catcher" },
+    { x: 5, z: -3, num: 25, pose: "idle" },
+    { x: 3, z: -7, num: 4, pose: "idle" },
+    { x: -3, z: -7, num: 11, pose: "idle" },
+    { x: -5, z: -3, num: 2, pose: "idle" },
+    { x: -8, z: -12, num: 19, pose: "idle" },
+    { x: 0, z: -15, num: 22, pose: "idle" },
+    { x: 8, z: -12, num: 27, pose: "idle" },
   ];
   return (
     <>
       <Diamond />
       <Ball />
-      {positions.map(([x, z], i) => (
-        <Fielder key={i} x={x} z={z} color={def} />
+      {fielders.map((f, i) => (
+        <Fielder
+          key={i}
+          x={f.x}
+          z={f.z}
+          color={def}
+          num={f.num}
+          pose={f.pose}
+          facing={Math.PI}
+        />
       ))}
       {/* batter */}
-      <Fielder x={-0.6} z={0.2} color="#ff3b3b" />
+      <Fielder x={-0.6} z={0.2} color="#ff3b3b" num={34} pose="batting" facing={-Math.PI / 2} />
     </>
   );
 }

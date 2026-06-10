@@ -2,6 +2,8 @@ import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { LiveGameState } from "../types";
+import { PlayerAvatar } from "../components/PlayerAvatar";
+import type { PoseName } from "../components/poses";
 
 type Kind = "football" | "hockey" | "soccer";
 
@@ -11,24 +13,29 @@ const CFG: Record<Kind, { surface: string; w: number; h: number; lines: string }
   soccer: { surface: "#2f7a3a", w: 30, h: 18, lines: "white" },
 };
 
-function Player({ x, z, color }: { x: number; z: number; color: string }) {
-  const ref = useRef<THREE.Group>(null);
-  useFrame((s) => {
-    if (!ref.current) return;
-    ref.current.position.x = x + Math.sin(s.clock.elapsedTime + x) * 0.6;
-    ref.current.position.z = z + Math.cos(s.clock.elapsedTime * 0.8 + z) * 0.6;
-  });
+function Player({
+  x,
+  z,
+  color,
+  num,
+  pose,
+  facing,
+}: {
+  x: number;
+  z: number;
+  color: string;
+  num: number;
+  pose: PoseName;
+  facing: number;
+}) {
   return (
-    <group ref={ref} position={[x, 0, z]}>
-      <mesh castShadow position={[0, 0.8, 0]}>
-        <cylinderGeometry args={[0.35, 0.35, 1.6, 12]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0, 1.85, 0]}>
-        <sphereGeometry args={[0.3, 12, 12]} />
-        <meshStandardMaterial color="#f1c27d" />
-      </mesh>
-    </group>
+    <PlayerAvatar
+      position={[x, 0, z]}
+      rotationY={facing}
+      teamColor={color}
+      number={num}
+      pose={pose}
+    />
   );
 }
 
@@ -69,13 +76,17 @@ export function GenericFieldScene({
   const cfg = CFG[kind];
   const home = "#1e6fff";
   const away = "#ff3b3b";
-  const positions: [number, number][] = [];
+  const positions: Array<{ x: number; z: number; side: "home" | "away"; idx: number }> = [];
   const cols = perSide;
   for (let i = 0; i < cols; i++) {
     const z = -cfg.h / 2 + (cfg.h / (cols - 1)) * i;
-    positions.push([-cfg.w / 4, z]);
-    positions.push([cfg.w / 4, z]);
+    positions.push({ x: -cfg.w / 4, z, side: "home", idx: i });
+    positions.push({ x: cfg.w / 4, z, side: "away", idx: i });
   }
+  const defaultPose: PoseName =
+    kind === "hockey" ? "skating" : kind === "football" ? "running" : "running";
+  // mark the last index per side as a goalie/keeper for hockey & soccer
+  const keeperIdx = cols - 1;
   return (
     <>
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
@@ -103,9 +114,20 @@ export function GenericFieldScene({
           </mesh>
         ))}
       <BallOrPuck kind={kind} />
-      {positions.map(([x, z], i) => (
-        <Player key={i} x={x} z={z} color={i % 2 === 0 ? home : away} />
-      ))}
+      {positions.map((p, i) => {
+        const isKeeper = (kind === "hockey" || kind === "soccer") && p.idx === keeperIdx;
+        return (
+          <Player
+            key={i}
+            x={p.x}
+            z={p.z}
+            color={p.side === "home" ? home : away}
+            num={(p.side === "home" ? 1 : 50) + p.idx}
+            pose={isKeeper ? "goalie" : defaultPose}
+            facing={p.side === "home" ? Math.PI / 2 : -Math.PI / 2}
+          />
+        );
+      })}
     </>
   );
 }
