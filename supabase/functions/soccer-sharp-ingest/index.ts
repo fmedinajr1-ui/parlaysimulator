@@ -9,6 +9,7 @@ import {
   classifyEdge,
   edgePct,
   expectedValue,
+  impliedToAmerican,
   powerDevig,
 } from "../_shared/soccer-devig.ts";
 import { soccerChessScore } from "../_shared/soccer-chess.ts";
@@ -79,7 +80,17 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const stats = { sports: 0, events: 0, sharpRows: 0, comparisons: 0, alerts: 0, errors: [] as string[] };
+  const stats = {
+    sports: 0,
+    events: 0,
+    sharpRows: 0,
+    fallbackRows: 0,
+    comparisons: 0,
+    alerts: 0,
+    bookmakerKeys: {} as Record<string, number>,
+    marketKeys: {} as Record<string, number>,
+    errors: [] as string[],
+  };
 
   for (const sportKey of SPORT_KEYS) {
     try {
@@ -95,11 +106,19 @@ Deno.serve(async (req) => {
       const events = (await res.json()) as Event[];
       stats.sports++;
       for (const evt of events) {
+        for (const book of evt.bookmakers ?? []) {
+          stats.bookmakerKeys[book.key] = (stats.bookmakerKeys[book.key] ?? 0) + 1;
+          for (const market of book.markets ?? []) {
+            stats.marketKeys[market.key] = (stats.marketKeys[market.key] ?? 0) + 1;
+          }
+        }
         const r = await processEvent(supabase, sportKey, evt);
         stats.events++;
         stats.sharpRows += r.sharpRows;
+        stats.fallbackRows += r.fallbackRows;
         stats.comparisons += r.comparisons;
         stats.alerts += r.alerts;
+        stats.errors.push(...r.errors);
       }
     } catch (err) {
       stats.errors.push(`${sportKey}: ${(err as Error).message}`);
@@ -110,10 +129,10 @@ Deno.serve(async (req) => {
 });
 
 async function processEvent(supabase: any, sportKey: string, evt: Event) {
-  const result = { sharpRows: 0, comparisons: 0, alerts: 0 };
+  const result = { sharpRows: 0, fallbackRows: 0, comparisons: 0, alerts: 0, errors: [] as string[] };
   // Pick a sharp anchor PER market type — Pinnacle preferred, then Circa, then BetOnline.
   // This lets us still generate edges when Pinnacle hasn't posted AH/Totals yet.
-  const sharpSlugs = new Set(SHARP_BOOK_PRIORITY.map((s) => s.slug));
+  const sharpSlugs = new Set<string>(SHARP_BOOK_PRIORITY.map((s) => s.slug));
   const marketKeys = ["h2h", "spreads", "totals"] as const;
 
   for (const mKey of marketKeys) {
@@ -128,15 +147,18 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
         break;
       }
     }
-    if (!sharpBook) continue;
-    const market = sharpBook.markets.find((m) => m.key === mKey)!;
+    const market = sharpBook?.markets.find((m) => m.key === mKey) ?? buildConsensusSharpMarket(evt, mKey);
+    if (!market) continue;
+    const usingConsensusFallback = !sharpBook;
     const otherBooks = evt.bookmakers.filter((b) => b !== sharpBook);
 
     const marketType = mapMarketKey(market.key);
     if (!marketType) continue;
 
-    // Group by line (point); h2h has no line.
-    const groups = groupByPoint(market.outcomes);
+    // Group by playable line. Spreads need home/away paired by opposite points;
+    // totals pair Over/Under on the same point; h2h has no line.
+    const groups = groupMarketOutcomes(marketType, market.outcomes, evt);
+    const anchorSlug = usingConsensusFallback ? "consensus" : sharpSlug;
     for (const [pointKey, outcomes] of Object.entries(groups)) {
       // Need exactly 2 sides to devig (for 3-way h2h we still treat home vs away pair)
       const sides = pickTwoSides(marketType, outcomes, evt);
@@ -162,16 +184,20 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
           pinnacle_price_b: sideB.price,
           sharp_probability_a: fairA,
           sharp_probability_b: fairB,
-          raw: { pointKey, outcomes, sharp_book: sharpSlug },
+          raw: { pointKey, outcomes, sharp_book: usingConsensusFallback ? "consensus" : sharpSlug },
         })
         .select("id")
         .single();
-      if (sharpErr) continue;
+      if (sharpErr) {
+        result.errors.push(`${evt.id}:${marketType}:${sharpErr.message}`);
+        continue;
+      }
       result.sharpRows++;
+      if (usingConsensusFallback) result.fallbackRows++;
 
       // Track sharp anchor line movement
-      await updateMovement(supabase, evt.id, sharpSlug, marketType, "a", lineValue, sideA.price);
-      await updateMovement(supabase, evt.id, sharpSlug, marketType, "b", lineValue, sideB.price);
+      await updateMovement(supabase, evt.id, anchorSlug, marketType, "a", lineValue, sideA.price);
+      await updateMovement(supabase, evt.id, anchorSlug, marketType, "b", lineValue, sideB.price);
 
       // Compare each US book that has matching market+line
       for (const book of otherBooks) {
@@ -179,7 +205,7 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
         if (!slug || sharpSlugs.has(slug) || !COMPARE_BOOKS.includes(slug)) continue;
         const bookMarket = book.markets.find((m) => m.key === market.key);
         if (!bookMarket) continue;
-        const bookGroups = groupByPoint(bookMarket.outcomes);
+          const bookGroups = groupMarketOutcomes(marketType, bookMarket.outcomes, evt);
         const matched = bookGroups[pointKey] ?? null;
         if (!matched) continue;
         const bookSides = pickTwoSides(marketType, matched, evt);
@@ -214,10 +240,10 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
 
           // CHESS inputs
           const ahMove = marketType === "asian_handicap"
-            ? await recentMoveMagnitude(supabase, evt.id, sharpSlug, "asian_handicap")
+            ? await recentMoveMagnitude(supabase, evt.id, anchorSlug, "asian_handicap")
             : 0;
           const totalMove = marketType === "totals"
-            ? await recentMoveMagnitude(supabase, evt.id, sharpSlug, "totals")
+            ? await recentMoveMagnitude(supabase, evt.id, anchorSlug, "totals")
             : 0;
           const chess = soccerChessScore({
             edgePct: edge,
@@ -229,7 +255,7 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
 
           if (edge > 4 && chess > 70) {
             // STEAM detection: sharp anchor moved within last 15min AND this book hasn't matched line
-            const steam = await isSteam(supabase, evt.id, marketType, lineValue, slug, sharpSlug);
+            const steam = await isSteam(supabase, evt.id, marketType, lineValue, slug, anchorSlug);
             const classification = steam ? "STEAM" : (edge >= 6 && chess >= 80 ? "HAMMER" : cls);
             const recommendedSide = sideKey === "a" ? sideA.name : sideB.name;
             await supabase.from("soccer_sharp_alerts").insert({
@@ -250,7 +276,7 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
               confidence: chess,
               risk_flags: [
                 ...(steam ? ["steam_detected"] : []),
-                ...(sharpSlug !== "pinnacle" ? [`sharp_fallback_${sharpSlug}`] : []),
+                ...(anchorSlug !== "pinnacle" ? [`sharp_fallback_${anchorSlug}`] : []),
               ],
               status: "open",
             });
@@ -277,6 +303,63 @@ function groupByPoint(outcomes: Outcome[]): Record<string, Outcome[]> {
     (out[key] ||= []).push(o);
   }
   return out;
+}
+
+function groupMarketOutcomes(marketType: string, outcomes: Outcome[], evt: Event): Record<string, Outcome[]> {
+  if (marketType !== "asian_handicap") return groupByPoint(outcomes);
+
+  const groups: Record<string, Outcome[]> = {};
+  const homeOutcomes = outcomes.filter((o) => o.name === evt.home_team && o.point != null);
+  const awayOutcomes = outcomes.filter((o) => o.name === evt.away_team && o.point != null);
+  for (const home of homeOutcomes) {
+    const away = awayOutcomes.find((o) => Math.abs(Number(o.point) + Number(home.point)) < 0.001);
+    if (away) groups[String(home.point)] = [home, away];
+  }
+  return Object.keys(groups).length ? groups : groupByPoint(outcomes);
+}
+
+function buildConsensusSharpMarket(evt: Event, marketKey: "h2h" | "spreads" | "totals"): Market | null {
+  const marketType = mapMarketKey(marketKey);
+  if (!marketType) return null;
+
+  const buckets = new Map<string, { line: number | null; sideAName: string; sideBName: string; fairA: number[]; fairB: number[] }>();
+  for (const book of evt.bookmakers) {
+    const slug = BOOK_MAP[book.key];
+    if (!slug || !COMPARE_BOOKS.includes(slug)) continue;
+    const market = book.markets.find((m) => m.key === marketKey);
+    if (!market) continue;
+
+    for (const [pointKey, outcomes] of Object.entries(groupMarketOutcomes(marketType, market.outcomes, evt))) {
+      const sides = pickTwoSides(marketType, outcomes, evt);
+      if (!sides) continue;
+      const { fairA, fairB } = powerDevig(sides.sideA.price, sides.sideB.price);
+      if (!Number.isFinite(fairA) || !Number.isFinite(fairB)) continue;
+      const bucket = buckets.get(pointKey) ?? {
+        line: sides.lineValue,
+        sideAName: sides.sideA.name,
+        sideBName: sides.sideB.name,
+        fairA: [],
+        fairB: [],
+      };
+      bucket.fairA.push(fairA);
+      bucket.fairB.push(fairB);
+      buckets.set(pointKey, bucket);
+    }
+  }
+
+  const outcomes: Outcome[] = [];
+  for (const b of buckets.values()) {
+    if (b.fairA.length < 2) continue;
+    const fairA = b.fairA.reduce((a, n) => a + n, 0) / b.fairA.length;
+    const fairB = b.fairB.reduce((a, n) => a + n, 0) / b.fairB.length;
+    outcomes.push({ name: b.sideAName, price: impliedToAmerican(fairA), point: b.line ?? undefined });
+    outcomes.push({
+      name: b.sideBName,
+      price: impliedToAmerican(fairB),
+      point: marketType === "asian_handicap" && b.line != null ? -Number(b.line) : b.line ?? undefined,
+    });
+  }
+  return outcomes.length >= 2 ? { key: marketKey, outcomes } : null;
 }
 
 function pickTwoSides(
