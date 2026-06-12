@@ -1,74 +1,42 @@
-# Soccer Sharp Market Engine
+## Why it's broken
 
-A Pinnacle-anchored sharp-divergence engine for soccer that devigs Pinnacle ML / Asian Handicap / Totals / Team Totals, compares against Hard Rock / DK / FD / Caesars / MGM, scores each opportunity with a Soccer-tuned CHESS formula, and surfaces edges + steam in a Sharp Scanner page.
+Logs from today's run show the root cause clearly:
 
-## 1. Data layer (new tables)
+```
+tennis_wta_queens_club_champ: 4/4 events today
+Kamilla Rakhimova vs Emma Raducanu: odds 422 — {"message":"Invalid markets: alternate_total_games, player_games_won, player_total_..."}
+Odds API scraped: 0 prop lines across 1 sports
+```
 
-- `soccer_sharp_lines` — Pinnacle snapshots per `(match_id, market_type, line)` with both `pinnacle_price_a/b` and devigged `sharp_probability_a/b`.
-- `soccer_book_comparisons` — per book/market/line row with `sportsbook_probability`, `edge_percent`, side, captured at the same tick as the sharp row (FK to `soccer_sharp_lines`).
-- `soccer_sharp_alerts` — fired alerts: `market`, `edge_percent`, `chess_score`, `classification` (LEAN/STRONG/HAMMER/STEAM), `status` (open/closed/expired), `recommended_side`, `risk_flags jsonb`.
-- `soccer_line_movements` — opening + last + current line/price per book/market for the movement panel and steam detection.
+The Odds API does **not** support player-prop markets for tennis (`player_total_games`, `player_games_won`, `player_total_sets`, `alternate_total_games`). When the function asks for them, Odds API rejects the **entire** request with a 422 — so even the match-level `totals` market that *is* supported gets thrown away. Result: 0 props, 0 prop types, Telegram shows "none".
 
-All tables: `service_role` full grant + `authenticated SELECT`; RLS read-only for authenticated.
+`pp_snapshot` and `game_bets` are also empty for tennis right now, so neither fallback has anything to add.
 
-## 2. Devig + edge math (shared module)
+## Fix
 
-`supabase/functions/_shared/soccer-devig.ts`:
-- `americanToDecimal`, `decimalToImplied`
-- `powerDevig(odds_a, odds_b)` — solves k such that `p_a^k + p_b^k = 1`, returns fair probs
-- `edgePct(sharpProb, bookProb)` and `classifyEdge(edge)` → PASS/LEAN/STRONG/HAMMER
-- Totals/AH use the matched line on each book; if no matched line, devig nearest and apply standard half-point adjustment.
+Update `supabase/functions/tennis-props-sync/index.ts`:
 
-## 3. Ingestion + comparison engine
+1. **Split market requests into two calls per event** so a bad market never tanks the good one:
+   - Call A: player markets (`player_total_games,player_games_won,player_total_sets`)
+   - Call B: match totals (`totals` only — drop `total`, `total_games`, they're not valid Odds API keys)
+   - Treat a 422 on call A as "player props unavailable for this sport" and silently skip; only call B is required.
 
-`supabase/functions/soccer-sharp-ingest` (5-min cron):
-1. Pull Pinnacle ML/AH/Totals/Team Totals for the target leagues (World Cup Qual, MLS, EPL, La Liga, Serie A, UCL, Copa Libertadores).
-2. Power-devig each two-way market → insert `soccer_sharp_lines`.
-3. Pull same matches/markets from secondary feed (Odds API / OpticOdds / SportsDataIO) for HRB, DK, FD, CZR, MGM → upsert `soccer_book_comparisons` with `edge_percent = sharp_prob - book_prob`.
-4. Update `soccer_line_movements` (open if first sight, otherwise current/previous).
-5. Run alert evaluator (see §5).
+2. **Discover supported markets per event** using the `/events/{id}/markets` Odds API endpoint when it's available, and intersect the wanted list with what's offered. Fallback to (1) if discovery fails.
 
-Secret strategy: requires `PINNACLE_API_KEY` (or RapidAPI Pinnacle Odds key) and at least one of `ODDS_API_KEY` / `OPTICODDS_API_KEY` / `SPORTSDATAIO_KEY`. Plan will pause for the user to add these before deploying the ingest.
+3. **Tighten the WTA/ATP sport classifier** so tournament keys like `tennis_wta_queens_club_champ` map to `tennis_wta` and `tennis_atp_*` to `tennis_atp` (current `.includes("wta")` already works, just verifying).
 
-## 4. Soccer CHESS scoring
+4. **Improve Telegram message** so when player props are unavailable but totals synced, it reports that explicitly (e.g. `Sources: Odds API totals only — player props unsupported for tennis`) instead of an empty "none".
 
-`_shared/soccer-chess.ts`:
-- SD = normalized edge vs Pinnacle (0–1)
-- LM = AH line move magnitude in points (normalized)
-- TM = Total line move magnitude (normalized)
-- LI = lineup impact (placeholder 0; wires into existing `lineup_alerts` later)
-- PS = public sentiment (placeholder from book consensus drift)
-- `CHESS = 0.4·SD + 0.2·LM + 0.1·TM + 0.2·LI + 0.1·PS`, scaled 0–100.
+5. **Log per-market HTTP status** so future failures are obvious in one line.
 
-## 5. Alert + steam logic
+No DB or schema changes needed. No new secrets.
 
-Alert when ALL: `edge > 4%` AND `chess > 70` AND Pinnacle moved before any compared book in the last 15 min AND ≥2 books still on the stale line. Classification follows edge buckets; bumped to `STEAM` when Pinnacle line moves (e.g. -0.5 → -0.75) before HRB/DK/FD adjust.
+## Verification (per project rule: 5 independent checks)
 
-Hammer tier: `edge > 6% AND chess > 80`.
+After the fix, redeploy and re-run via `supabase--curl_edge_functions`, then confirm:
 
-## 6. UI — `/soccer-sharp-scanner`
-
-New page with three sections:
-1. **Today's Edges** — table: Match · Market · Sharp Prob · Book Prob · Edge · CHESS · Classification, sortable by edge.
-2. **Live Line Movement** — per market: Opening / Current / Δ / Direction with sparkline.
-3. **Hammer Candidates** — filtered cards (edge>6, chess>80) showing EV %, market, recommended side, risk flags.
-
-Realtime via Supabase channel on `soccer_sharp_alerts` + 30s polling fallback. Added to nav under existing Sharp tools.
-
-## 7. Automation
-
-`pg_cron` job `soccer-sharp-ingest-5min` invoking the edge function every 5 minutes (via `supabase--insert` so the per-project URL stays out of migrations).
-
-## 8. Open questions before build
-
-1. Which Pinnacle source do you have a key for — direct Pinnacle Odds API, RapidAPI Pinnacle Odds, or pull Pinnacle through OpticOdds?
-2. For the non-Pinnacle books (HRB/DK/FD/CZR/MGM), do you want me to use The Odds API (already common in this project) or wire in OpticOdds/SportsDataIO?
-3. Lineup Impact (LI) and Public Sentiment (PS) — ship as 0/neutral placeholders for v1, or block on a data source first?
-
-## Technical details
-
-- Tables created in one migration with GRANTs + RLS + `updated_at` triggers.
-- Edge functions: `soccer-sharp-ingest` (cron + manual), `soccer-sharp-alert-evaluator` (called inline by ingest, also exposed for replay).
-- Shared modules under `supabase/functions/_shared/` (`soccer-devig.ts`, `soccer-chess.ts`).
-- Frontend: `src/pages/SoccerSharpScanner.tsx` + hook `src/hooks/useSoccerSharpScanner.ts`; route registered in `App.tsx`.
-- No changes to existing MLB/tennis sharp pipelines.
+1. HTTP 200 + JSON `synced > 0` for today's WTA Queen's Club slate.
+2. `unified_props` has new rows where `sport='tennis_wta'` and `prop_type='total_games'` with today's timestamp.
+3. Edge function logs show `totals` market succeeded for each event (no 422 on totals).
+4. Telegram message shows non-empty `Prop types` and `Sports`.
+5. A second invocation is idempotent (upsert by `event_id,player_name,prop_type,bookmaker` doesn't duplicate rows).

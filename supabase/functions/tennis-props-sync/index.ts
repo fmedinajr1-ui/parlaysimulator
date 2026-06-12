@@ -28,16 +28,15 @@ function normName(s: string): string {
 
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports";
 
-// Player prop markets to request
+// Player prop markets to request (best-effort — tennis usually rejects these on Odds API).
 const PLAYER_PROP_MARKETS = [
   "player_total_games",
-  "player_games_won", 
+  "player_games_won",
   "player_total_sets",
-  "alternate_total_games",
 ].join(",");
 
-// Match-level total markets (fallback from game_bets)
-const MATCH_TOTAL_MARKETS = ["totals", "total", "total_games"].join(",");
+// Match-level markets that Odds API actually supports for tennis.
+const MATCH_MARKETS = "totals";
 
 interface OddsApiEvent {
   id: string;
@@ -126,20 +125,44 @@ Deno.serve(async (req) => {
 
           sportKeysSeen.add(sportKey);
 
-          // Step 2: Fetch props for each event (batch max 5 to conserve API calls)
+          // Step 2: Fetch props for each event (batch max 8 to conserve API calls).
+          // We split into TWO requests so a 422 on player markets doesn't drop the
+          // match totals we actually get from Odds API for tennis.
           const eventsToFetch = todayEvents.slice(0, 8);
+          let playerPropsUnsupported = false;
           for (const event of eventsToFetch) {
             try {
-              const oddsUrl = `${ODDS_API_BASE}/${sportKey}/events/${event.id}/odds?apiKey=${apiKey}&regions=us,us2,eu&markets=${PLAYER_PROP_MARKETS},${MATCH_TOTAL_MARKETS}&oddsFormat=american`;
-              const oddsRes = await fetch(oddsUrl);
-              if (!oddsRes.ok) {
-                const txt = await oddsRes.text();
-                log(`  ${event.away_team} vs ${event.home_team}: odds ${oddsRes.status} — ${txt.slice(0, 80)}`);
-                continue;
+              const baseUrl = `${ODDS_API_BASE}/${sportKey}/events/${event.id}/odds?apiKey=${apiKey}&regions=us,us2,eu&oddsFormat=american`;
+
+              // Request A: match totals (must succeed for tennis)
+              const totalsRes = await fetch(`${baseUrl}&markets=${MATCH_MARKETS}`);
+              const totalsTxt = totalsRes.ok ? null : await totalsRes.text();
+              if (!totalsRes.ok) {
+                log(`  ${event.away_team} vs ${event.home_team}: totals ${totalsRes.status} — ${totalsTxt?.slice(0, 80)}`);
               }
 
-              const oddsData = await oddsRes.json();
-              const bookmakers = oddsData.bookmakers || [];
+              // Request B: player props (often 422 for tennis — non-fatal)
+              let playerBooks: any[] = [];
+              if (!playerPropsUnsupported) {
+                const ppRes = await fetch(`${baseUrl}&markets=${PLAYER_PROP_MARKETS}`);
+                if (ppRes.ok) {
+                  const ppData = await ppRes.json();
+                  playerBooks = ppData.bookmakers || [];
+                } else {
+                  const ppTxt = await ppRes.text();
+                  if (ppRes.status === 422) {
+                    playerPropsUnsupported = true;
+                    log(`  ${sportKey}: player props unsupported by Odds API (422) — skipping for remaining events`);
+                  } else {
+                    log(`  ${event.away_team} vs ${event.home_team}: player props ${ppRes.status} — ${ppTxt.slice(0, 80)}`);
+                  }
+                }
+              }
+
+              if (!totalsRes.ok && playerBooks.length === 0) continue;
+
+              const totalsData = totalsRes.ok ? await totalsRes.json() : { bookmakers: [] };
+              const bookmakers = [...(totalsData.bookmakers || []), ...playerBooks];
               const gameDesc = `${event.away_team} vs ${event.home_team}`;
 
               for (const book of bookmakers) {
@@ -218,6 +241,11 @@ Deno.serve(async (req) => {
         }
       }
 
+          // (logged outside loop)
+        } catch (sportErr: any) {
+          log(`Sport ${sportKey} error: ${sportErr.message}`);
+        }
+      }
       log(`Odds API scraped: ${allRows.length} prop lines across ${sportKeysSeen.size} sports`);
     } else if (!apiKey) {
       log("⚠ THE_ODDS_API_KEY not set — skipping direct scrape");
