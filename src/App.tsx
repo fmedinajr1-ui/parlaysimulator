@@ -57,6 +57,7 @@ const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 const LiveAI = React.lazy(() => import("./pages/LiveAI"));
 const LiveGames = React.lazy(() => import("./pages/LiveGames"));
 const LiveGame = React.lazy(() => import("./pages/LiveGame"));
+const SoccerSharpScanner = React.lazy(() => import("./pages/SoccerSharpScanner"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -132,6 +133,7 @@ function AnimatedRoutes() {
               <Route path="/spike/:token" element={<LiveAI />} />
               <Route path="/live" element={<LiveGames />} />
               <Route path="/live/:gameId" element={<LiveGame />} />
+              <Route path="/soccer-sharp-scanner" element={<SoccerSharpScanner />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
