@@ -297,6 +297,63 @@ function groupByPoint(outcomes: Outcome[]): Record<string, Outcome[]> {
   return out;
 }
 
+function groupMarketOutcomes(marketType: string, outcomes: Outcome[], evt: Event): Record<string, Outcome[]> {
+  if (marketType !== "asian_handicap") return groupByPoint(outcomes);
+
+  const groups: Record<string, Outcome[]> = {};
+  const homeOutcomes = outcomes.filter((o) => o.name === evt.home_team && o.point != null);
+  const awayOutcomes = outcomes.filter((o) => o.name === evt.away_team && o.point != null);
+  for (const home of homeOutcomes) {
+    const away = awayOutcomes.find((o) => Math.abs(Number(o.point) + Number(home.point)) < 0.001);
+    if (away) groups[String(home.point)] = [home, away];
+  }
+  return Object.keys(groups).length ? groups : groupByPoint(outcomes);
+}
+
+function buildConsensusSharpMarket(evt: Event, marketKey: "h2h" | "spreads" | "totals"): Market | null {
+  const marketType = mapMarketKey(marketKey);
+  if (!marketType) return null;
+
+  const buckets = new Map<string, { line: number | null; sideAName: string; sideBName: string; fairA: number[]; fairB: number[] }>();
+  for (const book of evt.bookmakers) {
+    const slug = BOOK_MAP[book.key];
+    if (!slug || !COMPARE_BOOKS.includes(slug)) continue;
+    const market = book.markets.find((m) => m.key === marketKey);
+    if (!market) continue;
+
+    for (const [pointKey, outcomes] of Object.entries(groupMarketOutcomes(marketType, market.outcomes, evt))) {
+      const sides = pickTwoSides(marketType, outcomes, evt);
+      if (!sides) continue;
+      const { fairA, fairB } = powerDevig(sides.sideA.price, sides.sideB.price);
+      if (!Number.isFinite(fairA) || !Number.isFinite(fairB)) continue;
+      const bucket = buckets.get(pointKey) ?? {
+        line: sides.lineValue,
+        sideAName: sides.sideA.name,
+        sideBName: sides.sideB.name,
+        fairA: [],
+        fairB: [],
+      };
+      bucket.fairA.push(fairA);
+      bucket.fairB.push(fairB);
+      buckets.set(pointKey, bucket);
+    }
+  }
+
+  const outcomes: Outcome[] = [];
+  for (const b of buckets.values()) {
+    if (b.fairA.length < 2) continue;
+    const fairA = b.fairA.reduce((a, n) => a + n, 0) / b.fairA.length;
+    const fairB = b.fairB.reduce((a, n) => a + n, 0) / b.fairB.length;
+    outcomes.push({ name: b.sideAName, price: impliedToAmerican(fairA), point: b.line ?? undefined });
+    outcomes.push({
+      name: b.sideBName,
+      price: impliedToAmerican(fairB),
+      point: marketType === "asian_handicap" && b.line != null ? -Number(b.line) : b.line ?? undefined,
+    });
+  }
+  return outcomes.length >= 2 ? { key: marketKey, outcomes } : null;
+}
+
 function pickTwoSides(
   marketType: string,
   outcomes: Outcome[],
