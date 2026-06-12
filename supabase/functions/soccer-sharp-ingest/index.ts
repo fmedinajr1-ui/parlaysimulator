@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
 });
 
 async function processEvent(supabase: any, sportKey: string, evt: Event) {
-  const result = { sharpRows: 0, comparisons: 0, alerts: 0 };
+  const result = { sharpRows: 0, fallbackRows: 0, comparisons: 0, alerts: 0, errors: [] as string[] };
   // Pick a sharp anchor PER market type — Pinnacle preferred, then Circa, then BetOnline.
   // This lets us still generate edges when Pinnacle hasn't posted AH/Totals yet.
   const sharpSlugs = new Set(SHARP_BOOK_PRIORITY.map((s) => s.slug));
@@ -139,8 +139,9 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
         break;
       }
     }
-    if (!sharpBook) continue;
-    const market = sharpBook.markets.find((m) => m.key === mKey)!;
+    const market = sharpBook?.markets.find((m) => m.key === mKey) ?? buildConsensusSharpMarket(evt, mKey);
+    if (!market) continue;
+    const usingConsensusFallback = !sharpBook;
     const otherBooks = evt.bookmakers.filter((b) => b !== sharpBook);
 
     const marketType = mapMarketKey(market.key);
@@ -173,16 +174,20 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
           pinnacle_price_b: sideB.price,
           sharp_probability_a: fairA,
           sharp_probability_b: fairB,
-          raw: { pointKey, outcomes, sharp_book: sharpSlug },
+          raw: { pointKey, outcomes, sharp_book: usingConsensusFallback ? "consensus" : sharpSlug },
         })
         .select("id")
         .single();
-      if (sharpErr) continue;
+      if (sharpErr) {
+        result.errors.push(`${evt.id}:${marketType}:${sharpErr.message}`);
+        continue;
+      }
       result.sharpRows++;
+      if (usingConsensusFallback) result.fallbackRows++;
 
       // Track sharp anchor line movement
-      await updateMovement(supabase, evt.id, sharpSlug, marketType, "a", lineValue, sideA.price);
-      await updateMovement(supabase, evt.id, sharpSlug, marketType, "b", lineValue, sideB.price);
+      await updateMovement(supabase, evt.id, usingConsensusFallback ? "consensus" : sharpSlug, marketType, "a", lineValue, sideA.price);
+      await updateMovement(supabase, evt.id, usingConsensusFallback ? "consensus" : sharpSlug, marketType, "b", lineValue, sideB.price);
 
       // Compare each US book that has matching market+line
       for (const book of otherBooks) {
