@@ -111,14 +111,27 @@ Deno.serve(async (req) => {
 
 async function processEvent(supabase: any, sportKey: string, evt: Event) {
   const result = { sharpRows: 0, comparisons: 0, alerts: 0 };
-  const pinnacle = evt.bookmakers.find((b) => b.key === "pinnacle");
-  if (!pinnacle) return result;
+  // Pick a sharp anchor PER market type — Pinnacle preferred, then Circa, then BetOnline.
+  // This lets us still generate edges when Pinnacle hasn't posted AH/Totals yet.
+  const sharpSlugs = new Set(SHARP_BOOK_PRIORITY.map((s) => s.slug));
+  const marketKeys = ["h2h", "spreads", "totals"] as const;
 
-  const otherBooks = evt.bookmakers.filter((b) => b.key !== "pinnacle");
+  for (const mKey of marketKeys) {
+    // Find first sharp book in priority order that offers this market.
+    let sharpBook: Bookmaker | undefined;
+    let sharpSlug = "pinnacle";
+    for (const cand of SHARP_BOOK_PRIORITY) {
+      const bm = evt.bookmakers.find((b) => b.key === cand.key);
+      if (bm && bm.markets.some((m) => m.key === mKey)) {
+        sharpBook = bm;
+        sharpSlug = cand.slug;
+        break;
+      }
+    }
+    if (!sharpBook) continue;
+    const market = sharpBook.markets.find((m) => m.key === mKey)!;
+    const otherBooks = evt.bookmakers.filter((b) => b !== sharpBook);
 
-  // Build per-market work. h2h → moneyline (3-way: home/draw/away — handle as pairwise vs market sum)
-  // spreads → asian_handicap, totals → totals
-  for (const market of pinnacle.markets) {
     const marketType = mapMarketKey(market.key);
     if (!marketType) continue;
 
@@ -149,21 +162,21 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
           pinnacle_price_b: sideB.price,
           sharp_probability_a: fairA,
           sharp_probability_b: fairB,
-          raw: { pointKey, outcomes },
+          raw: { pointKey, outcomes, sharp_book: sharpSlug },
         })
         .select("id")
         .single();
       if (sharpErr) continue;
       result.sharpRows++;
 
-      // Track Pinnacle line movement
-      await updateMovement(supabase, evt.id, "pinnacle", marketType, "a", lineValue, sideA.price);
-      await updateMovement(supabase, evt.id, "pinnacle", marketType, "b", lineValue, sideB.price);
+      // Track sharp anchor line movement
+      await updateMovement(supabase, evt.id, sharpSlug, marketType, "a", lineValue, sideA.price);
+      await updateMovement(supabase, evt.id, sharpSlug, marketType, "b", lineValue, sideB.price);
 
       // Compare each US book that has matching market+line
       for (const book of otherBooks) {
         const slug = BOOK_MAP[book.key];
-        if (!slug || !COMPARE_BOOKS.includes(slug)) continue;
+        if (!slug || sharpSlugs.has(slug) || !COMPARE_BOOKS.includes(slug)) continue;
         const bookMarket = book.markets.find((m) => m.key === market.key);
         if (!bookMarket) continue;
         const bookGroups = groupByPoint(bookMarket.outcomes);
@@ -201,10 +214,10 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
 
           // CHESS inputs
           const ahMove = marketType === "asian_handicap"
-            ? await recentMoveMagnitude(supabase, evt.id, "pinnacle", "asian_handicap")
+            ? await recentMoveMagnitude(supabase, evt.id, sharpSlug, "asian_handicap")
             : 0;
           const totalMove = marketType === "totals"
-            ? await recentMoveMagnitude(supabase, evt.id, "pinnacle", "totals")
+            ? await recentMoveMagnitude(supabase, evt.id, sharpSlug, "totals")
             : 0;
           const chess = soccerChessScore({
             edgePct: edge,
@@ -215,8 +228,8 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
           });
 
           if (edge > 4 && chess > 70) {
-            // STEAM detection: pinnacle moved within last 15min AND this book hasn't matched line
-            const steam = await isSteam(supabase, evt.id, marketType, lineValue, slug);
+            // STEAM detection: sharp anchor moved within last 15min AND this book hasn't matched line
+            const steam = await isSteam(supabase, evt.id, marketType, lineValue, slug, sharpSlug);
             const classification = steam ? "STEAM" : (edge >= 6 && chess >= 80 ? "HAMMER" : cls);
             const recommendedSide = sideKey === "a" ? sideA.name : sideB.name;
             await supabase.from("soccer_sharp_alerts").insert({
@@ -235,7 +248,10 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
               classification,
               expected_value: expectedValue(sharpProb, bookSide.price),
               confidence: chess,
-              risk_flags: steam ? ["steam_detected"] : [],
+              risk_flags: [
+                ...(steam ? ["steam_detected"] : []),
+                ...(sharpSlug !== "pinnacle" ? [`sharp_fallback_${sharpSlug}`] : []),
+              ],
               status: "open",
             });
             result.alerts++;
@@ -363,14 +379,15 @@ async function isSteam(
   marketType: string,
   line: number | null,
   bookSlug: string,
+  sharpSlug: string = "pinnacle",
 ): Promise<boolean> {
-  // Pinnacle moved within last 15 min AND this book's current line != pinnacle current line
+  // Sharp anchor moved within last 15 min AND this book's current line != sharp current line
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const { data: pinMove } = await supabase
     .from("soccer_line_movements")
     .select("current_at,current_line")
     .eq("match_id", matchId)
-    .eq("sportsbook", "pinnacle")
+    .eq("sportsbook", sharpSlug)
     .eq("market_type", marketType)
     .gte("current_at", fifteenMinAgo)
     .gt("movement_count", 0)
