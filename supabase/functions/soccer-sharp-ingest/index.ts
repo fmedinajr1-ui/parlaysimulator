@@ -124,7 +124,7 @@ async function processEvent(supabase: any, sportKey: string, evt: Event) {
   const result = { sharpRows: 0, fallbackRows: 0, comparisons: 0, alerts: 0, errors: [] as string[] };
   // Pick a sharp anchor PER market type — Pinnacle preferred, then Circa, then BetOnline.
   // This lets us still generate edges when Pinnacle hasn't posted AH/Totals yet.
-  const sharpSlugs = new Set(SHARP_BOOK_PRIORITY.map((s) => s.slug));
+  const sharpSlugs = new Set<string>(SHARP_BOOK_PRIORITY.map((s) => s.slug));
   const marketKeys = ["h2h", "spreads", "totals"] as const;
 
   for (const mKey of marketKeys) {
