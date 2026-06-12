@@ -37,6 +37,8 @@ const SPORT_KEYS = [
 // Map The Odds API bookmaker keys → our internal slugs.
 const BOOK_MAP: Record<string, string> = {
   pinnacle: "pinnacle",
+  circasports: "circa",
+  betonlineag: "betonline",
   draftkings: "draftkings",
   fanduel: "fanduel",
   betmgm: "betmgm",
@@ -44,6 +46,13 @@ const BOOK_MAP: Record<string, string> = {
   williamhill_us: "caesars", // Caesars on Odds API
 };
 const COMPARE_BOOKS = ["hardrock", "draftkings", "fanduel", "caesars", "betmgm"];
+// Sharp anchor priority: Pinnacle first, then Circa, then BetOnline as fallback
+// when Pinnacle hasn't posted AH/Totals yet.
+const SHARP_BOOK_PRIORITY = [
+  { key: "pinnacle", slug: "pinnacle" },
+  { key: "circasports", slug: "circa" },
+  { key: "betonlineag", slug: "betonline" },
+] as const;
 
 type Outcome = { name: string; price: number; point?: number };
 type Market = { key: string; outcomes: Outcome[] };
@@ -75,7 +84,7 @@ Deno.serve(async (req) => {
   for (const sportKey of SPORT_KEYS) {
     try {
       const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds?apiKey=${apiKey}` +
-        `&regions=us,eu&markets=h2h,spreads,totals&oddsFormat=american` +
+        `&regions=us,us2,eu&markets=h2h,spreads,totals&oddsFormat=american` +
         `&bookmakers=${Object.keys(BOOK_MAP).join(",")}`;
       const res = await fetch(url);
       if (!res.ok) {
