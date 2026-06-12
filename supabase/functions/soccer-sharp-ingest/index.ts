@@ -9,6 +9,7 @@ import {
   classifyEdge,
   edgePct,
   expectedValue,
+  impliedToAmerican,
   powerDevig,
 } from "../_shared/soccer-devig.ts";
 import { soccerChessScore } from "../_shared/soccer-chess.ts";
@@ -79,7 +80,15 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const stats = { sports: 0, events: 0, sharpRows: 0, comparisons: 0, alerts: 0, errors: [] as string[] };
+  const stats = {
+    sports: 0,
+    events: 0,
+    sharpRows: 0,
+    fallbackRows: 0,
+    comparisons: 0,
+    alerts: 0,
+    errors: [] as string[],
+  };
 
   for (const sportKey of SPORT_KEYS) {
     try {
@@ -98,8 +107,10 @@ Deno.serve(async (req) => {
         const r = await processEvent(supabase, sportKey, evt);
         stats.events++;
         stats.sharpRows += r.sharpRows;
+        stats.fallbackRows += r.fallbackRows;
         stats.comparisons += r.comparisons;
         stats.alerts += r.alerts;
+        stats.errors.push(...r.errors);
       }
     } catch (err) {
       stats.errors.push(`${sportKey}: ${(err as Error).message}`);
