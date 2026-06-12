@@ -240,12 +240,6 @@ Deno.serve(async (req) => {
           log(`Sport ${sportKey} error: ${sportErr.message}`);
         }
       }
-
-          // (logged outside loop)
-        } catch (sportErr: any) {
-          log(`Sport ${sportKey} error: ${sportErr.message}`);
-        }
-      }
       log(`Odds API scraped: ${allRows.length} prop lines across ${sportKeysSeen.size} sports`);
     } else if (!apiKey) {
       log("⚠ THE_ODDS_API_KEY not set — skipping direct scrape");
