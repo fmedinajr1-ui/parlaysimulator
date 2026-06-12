@@ -135,22 +135,52 @@ export default function SoccerSharpScanner() {
                   <TableHead>Side</TableHead>
                   <TableHead>Opening</TableHead>
                   <TableHead>Current</TableHead>
-                  <TableHead>Delta</TableHead>
+                  <TableHead>Line Δ</TableHead>
+                  <TableHead>Price Δ</TableHead>
                   <TableHead>Direction</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(movements.data ?? []).map((m) => {
-                  const delta = (m.current_line ?? 0) - (m.opening_line ?? 0);
+                  const lineDelta =
+                    m.opening_line != null && m.current_line != null
+                      ? Number(m.current_line) - Number(m.opening_line)
+                      : null;
+                  const priceDelta =
+                    m.opening_price != null && m.current_price != null
+                      ? Number(m.current_price) - Number(m.opening_price)
+                      : null;
+                  // Direction: prefer line move (handicap/total); fall back to price (moneyline).
+                  // For prices, a MORE negative number = shorter price = sharper money on that side ⇒ ↑.
+                  let dir: "↑" | "↓" | "—" = "—";
+                  if (lineDelta != null && lineDelta !== 0) {
+                    dir = lineDelta > 0 ? "↑" : "↓";
+                  } else if (priceDelta != null && priceDelta !== 0) {
+                    dir = priceDelta < 0 ? "↑" : "↓";
+                  }
+                  const fmtLine = (n: number | null) => (n == null ? "—" : Number(n).toFixed(2));
+                  const fmtPrice = (n: number | null) =>
+                    n == null ? "—" : n > 0 ? `+${n}` : `${n}`;
+                  const openCell = m.opening_line != null
+                    ? `${fmtLine(m.opening_line)} @ ${fmtPrice(m.opening_price)}`
+                    : fmtPrice(m.opening_price);
+                  const curCell = m.current_line != null
+                    ? `${fmtLine(m.current_line)} @ ${fmtPrice(m.current_price)}`
+                    : fmtPrice(m.current_price);
                   return (
                     <TableRow key={m.id}>
                       <TableCell className="capitalize">{m.sportsbook}</TableCell>
                       <TableCell>{MARKET_LABEL[m.market_type] ?? m.market_type}</TableCell>
                       <TableCell>{m.side}</TableCell>
-                      <TableCell>{m.opening_line ?? "—"}</TableCell>
-                      <TableCell>{m.current_line ?? "—"}</TableCell>
-                      <TableCell className="font-mono">{delta.toFixed(2)}</TableCell>
-                      <TableCell>{delta > 0 ? "↑" : delta < 0 ? "↓" : "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{openCell}</TableCell>
+                      <TableCell className="font-mono text-xs">{curCell}</TableCell>
+                      <TableCell className="font-mono">
+                        {lineDelta == null ? "—" : (lineDelta > 0 ? "+" : "") + lineDelta.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="font-mono">
+                        {priceDelta == null ? "—" : (priceDelta > 0 ? "+" : "") + priceDelta}
+                      </TableCell>
+                      <TableCell>{dir}</TableCell>
                     </TableRow>
                   );
                 })}
