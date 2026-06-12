@@ -15654,6 +15654,116 @@ export type Database = {
         }
         Relationships: []
       }
+      soccer_book_comparisons: {
+        Row: {
+          created_at: string
+          edge_percent: number
+          id: string
+          line: number | null
+          market_type: string
+          match_id: string
+          sharp_line_id: string | null
+          sharp_probability: number
+          side: string
+          sportsbook: string
+          sportsbook_price: number
+          sportsbook_probability: number
+        }
+        Insert: {
+          created_at?: string
+          edge_percent: number
+          id?: string
+          line?: number | null
+          market_type: string
+          match_id: string
+          sharp_line_id?: string | null
+          sharp_probability: number
+          side: string
+          sportsbook: string
+          sportsbook_price: number
+          sportsbook_probability: number
+        }
+        Update: {
+          created_at?: string
+          edge_percent?: number
+          id?: string
+          line?: number | null
+          market_type?: string
+          match_id?: string
+          sharp_line_id?: string | null
+          sharp_probability?: number
+          side?: string
+          sportsbook?: string
+          sportsbook_price?: number
+          sportsbook_probability?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "soccer_book_comparisons_sharp_line_id_fkey"
+            columns: ["sharp_line_id"]
+            isOneToOne: false
+            referencedRelation: "soccer_sharp_lines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      soccer_line_movements: {
+        Row: {
+          current_at: string
+          current_line: number | null
+          current_price: number | null
+          id: string
+          market_type: string
+          match_id: string
+          movement_count: number
+          opening_at: string
+          opening_line: number | null
+          opening_price: number | null
+          previous_at: string | null
+          previous_line: number | null
+          previous_price: number | null
+          side: string
+          sportsbook: string
+          updated_at: string
+        }
+        Insert: {
+          current_at?: string
+          current_line?: number | null
+          current_price?: number | null
+          id?: string
+          market_type: string
+          match_id: string
+          movement_count?: number
+          opening_at?: string
+          opening_line?: number | null
+          opening_price?: number | null
+          previous_at?: string | null
+          previous_line?: number | null
+          previous_price?: number | null
+          side: string
+          sportsbook: string
+          updated_at?: string
+        }
+        Update: {
+          current_at?: string
+          current_line?: number | null
+          current_price?: number | null
+          id?: string
+          market_type?: string
+          match_id?: string
+          movement_count?: number
+          opening_at?: string
+          opening_line?: number | null
+          opening_price?: number | null
+          previous_at?: string | null
+          previous_line?: number | null
+          previous_price?: number | null
+          side?: string
+          sportsbook?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       soccer_match_results: {
         Row: {
           away_score: number | null
@@ -15765,6 +15875,132 @@ export type Database = {
           shots_on_target?: number | null
           tackles?: number | null
           team?: string | null
+        }
+        Relationships: []
+      }
+      soccer_sharp_alerts: {
+        Row: {
+          away_team: string
+          chess_score: number
+          classification: string
+          confidence: number | null
+          created_at: string
+          edge_percent: number
+          expected_value: number | null
+          home_team: string
+          id: string
+          league: string | null
+          line: number | null
+          market: string
+          match_id: string
+          recommended_side: string
+          risk_flags: Json | null
+          sharp_probability: number
+          sportsbook: string
+          sportsbook_probability: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          away_team: string
+          chess_score: number
+          classification: string
+          confidence?: number | null
+          created_at?: string
+          edge_percent: number
+          expected_value?: number | null
+          home_team: string
+          id?: string
+          league?: string | null
+          line?: number | null
+          market: string
+          match_id: string
+          recommended_side: string
+          risk_flags?: Json | null
+          sharp_probability: number
+          sportsbook: string
+          sportsbook_probability: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          away_team?: string
+          chess_score?: number
+          classification?: string
+          confidence?: number | null
+          created_at?: string
+          edge_percent?: number
+          expected_value?: number | null
+          home_team?: string
+          id?: string
+          league?: string | null
+          line?: number | null
+          market?: string
+          match_id?: string
+          recommended_side?: string
+          risk_flags?: Json | null
+          sharp_probability?: number
+          sportsbook?: string
+          sportsbook_probability?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      soccer_sharp_lines: {
+        Row: {
+          away_team: string
+          commence_time: string | null
+          created_at: string
+          home_team: string
+          id: string
+          league: string | null
+          line: number | null
+          market_type: string
+          match_id: string
+          pinnacle_price_a: number
+          pinnacle_price_b: number
+          raw: Json | null
+          sharp_probability_a: number
+          sharp_probability_b: number
+          side_a_label: string
+          side_b_label: string
+        }
+        Insert: {
+          away_team: string
+          commence_time?: string | null
+          created_at?: string
+          home_team: string
+          id?: string
+          league?: string | null
+          line?: number | null
+          market_type: string
+          match_id: string
+          pinnacle_price_a: number
+          pinnacle_price_b: number
+          raw?: Json | null
+          sharp_probability_a: number
+          sharp_probability_b: number
+          side_a_label: string
+          side_b_label: string
+        }
+        Update: {
+          away_team?: string
+          commence_time?: string | null
+          created_at?: string
+          home_team?: string
+          id?: string
+          league?: string | null
+          line?: number | null
+          market_type?: string
+          match_id?: string
+          pinnacle_price_a?: number
+          pinnacle_price_b?: number
+          raw?: Json | null
+          sharp_probability_a?: number
+          sharp_probability_b?: number
+          side_a_label?: string
+          side_b_label?: string
         }
         Relationships: []
       }
