@@ -401,7 +401,8 @@ Deno.serve(async (req) => {
       `Synced: ${totalSynced} props to unified_props`,
       `Sports: ${[...sportKeysSeen].join(", ") || "none"}`,
       `Prop types: ${[...propTypesWritten].join(", ") || "none"}`,
-      `Sources: ${apiKey ? "Odds API" : "⚠ no API key"} + game_bets (${gameBets?.length || 0})`,
+      `Sources: ${apiKey ? "Odds API totals" : "⚠ no API key"} + game_bets (${gameBets?.length || 0})`,
+      apiKey ? "Note: Odds API does not expose player props for tennis — totals only" : "",
     ];
     if (Object.keys(propBreakdown).length > 0) {
       telegramLines.push("", "📊 *Breakdown:*");
