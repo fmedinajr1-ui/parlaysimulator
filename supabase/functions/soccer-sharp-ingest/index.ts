@@ -20,7 +20,12 @@ const corsHeaders = {
 
 // The Odds API soccer sport keys for the requested leagues.
 const SPORT_KEYS = [
-  "soccer_fifa_world_cup_qualifiers",
+  // The Odds API splits WC qualifiers by confederation – the umbrella key 404s.
+  "soccer_fifa_world_cup_qualifiers_europe",
+  "soccer_fifa_world_cup_qualifiers_south_america",
+  "soccer_fifa_world_cup_qualifiers_concacaf",
+  "soccer_fifa_world_cup_qualifiers_africa",
+  "soccer_fifa_world_cup_qualifiers_asia",
   "soccer_usa_mls",
   "soccer_epl",
   "soccer_spain_la_liga",
@@ -74,7 +79,8 @@ Deno.serve(async (req) => {
         `&bookmakers=${Object.keys(BOOK_MAP).join(",")}`;
       const res = await fetch(url);
       if (!res.ok) {
-        stats.errors.push(`${sportKey}: HTTP ${res.status}`);
+        // 404 = league out of season / unsupported key. Treat as non-fatal silent skip.
+        if (res.status !== 404) stats.errors.push(`${sportKey}: HTTP ${res.status}`);
         continue;
       }
       const events = (await res.json()) as Event[];
