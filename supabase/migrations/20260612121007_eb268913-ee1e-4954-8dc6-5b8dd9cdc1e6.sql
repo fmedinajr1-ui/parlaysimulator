@@ -1,0 +1,1 @@
+ALTER TABLE public.soccer_sharp_alerts ADD COLUMN IF NOT EXISTS telegram_sent_at TIMESTAMPTZ;
