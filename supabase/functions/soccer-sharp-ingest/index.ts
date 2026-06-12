@@ -87,6 +87,8 @@ Deno.serve(async (req) => {
     fallbackRows: 0,
     comparisons: 0,
     alerts: 0,
+    bookmakerKeys: {} as Record<string, number>,
+    marketKeys: {} as Record<string, number>,
     errors: [] as string[],
   };
 
@@ -104,6 +106,12 @@ Deno.serve(async (req) => {
       const events = (await res.json()) as Event[];
       stats.sports++;
       for (const evt of events) {
+        for (const book of evt.bookmakers ?? []) {
+          stats.bookmakerKeys[book.key] = (stats.bookmakerKeys[book.key] ?? 0) + 1;
+          for (const market of book.markets ?? []) {
+            stats.marketKeys[market.key] = (stats.marketKeys[market.key] ?? 0) + 1;
+          }
+        }
         const r = await processEvent(supabase, sportKey, evt);
         stats.events++;
         stats.sharpRows += r.sharpRows;
