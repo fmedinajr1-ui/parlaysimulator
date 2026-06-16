@@ -30,6 +30,12 @@ import {
   etTodayTomorrow,
   type MatchupMap,
 } from "../_shared/matchup-xref.ts";
+import {
+  generateParlayTickets,
+  type LegInput,
+  type ParlayTicket,
+  type StrategyName,
+} from "../_shared/parlay-engine-v2/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
