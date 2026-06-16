@@ -14,8 +14,8 @@ import {
   kellyLiteSizer,
   warningsFor,
   adjustedCombinedProbability,
-} from "../../_shared/parlay-engine-v2/index.ts";
-import { STAKE_BY_TIER } from "../../_shared/parlay-engine-v2/config.ts";
+} from "../../_shared/parlay-engine-legacy/index.ts";
+import { STAKE_BY_TIER } from "../../_shared/parlay-engine-legacy/config.ts";
 
 const NOW = new Date("2026-04-21T18:00:00Z");
 const TIPOFF = new Date(NOW.getTime() + 3 * 60 * 60 * 1000);

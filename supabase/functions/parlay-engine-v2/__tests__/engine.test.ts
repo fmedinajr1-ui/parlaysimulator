@@ -11,12 +11,12 @@ import {
   legQualityScore,
   mispricedEdge,
   validateLeg,
-} from "../../_shared/parlay-engine-v2/index.ts";
+} from "../../_shared/parlay-engine-legacy/index.ts";
 import {
   ACTIVE_STRATEGIES,
   LEG_COUNT_ALLOCATION,
   STAKE_BY_TIER,
-} from "../../_shared/parlay-engine-v2/config.ts";
+} from "../../_shared/parlay-engine-legacy/config.ts";
 
 const NOW = new Date("2026-04-21T18:00:00Z");
 const FRESH = new Date(NOW.getTime() - 30 * 60 * 1000);

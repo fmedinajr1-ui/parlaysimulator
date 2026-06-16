@@ -21,7 +21,7 @@ import {
   BacktestOptions,
   replayParlays,
   calibrate,
-} from "../_shared/parlay-engine-v2/index.ts";
+} from "../_shared/parlay-engine-legacy/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
