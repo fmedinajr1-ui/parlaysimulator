@@ -1,191 +1,67 @@
-// ============================================================================
-// filters.ts — Direct port of filters.py
-// Leg-level + parlay-level validation gates
-// ============================================================================
-
-import * as config from "./config.ts";
 import {
-  CandidateLeg,
-  Parlay,
-  combinedAmericanOdds,
-  combinedDecimalOdds,
-  combinedProbability,
-  legCount,
-  legPropKey,
-  signalNorm,
-} from "./models.ts";
+  MAX_COMBINED_AMERICAN_ODDS,
+  MAX_SAME_GAME_SHARE,
+  MAX_TEAM_LEG_SHARE_FOR_3_PLUS,
+  MAX_TEAM_LEGS_PER_GAME,
+  MIN_COMBINED_AMERICAN_ODDS,
+  MIN_DISTINCT_GAMES,
+  MIN_LEG_CONFIDENCE,
+  MIN_OVER_L10_HIT_RATE,
+  MIN_PARLAY_EDGE,
+} from "./config.ts";
+import type { ScoredLeg } from "./models.ts";
+import { decimalToAmerican } from "./scoring.ts";
 
-export type GateResult = readonly [boolean, string];
+export function parlayEdge(legs: ScoredLeg[]): number {
+  const confidenceProduct = legs.reduce((product, leg) => product * leg.confidence, 1);
+  const inverseOdds = 1 / legs.reduce((product, leg) => product * leg.decimalOdds, 1);
+  return inverseOdds > 0 ? confidenceProduct / inverseOdds - 1 : -1;
+}
 
-// ---------- Leg-level gates ----------
-
-export function legIsBettable(leg: CandidateLeg, now: Date): GateResult {
-  if (!(leg.line_confirmed_on_book ?? true)) {
-    return [false, "line_not_on_book"];
+export function ticketGateReasons(legs: ScoredLeg[]): string[] {
+  const reasons: string[] = [];
+  if (legs.some((leg) => leg.confidence < MIN_LEG_CONFIDENCE)) reasons.push("min_leg_confidence");
+  if (legs.some((leg) => leg.safetyTier === "drop")) reasons.push("dropped_leg");
+  if (legs.some((leg) => leg.kind === "player" && (leg.side ?? "").toLowerCase() === "over" && (leg.l10HitRate ?? 1) < MIN_OVER_L10_HIT_RATE)) {
+    reasons.push("over_l10_hit_rate");
   }
 
-  if (leg.player_name && leg.player_active === false) {
-    return [false, "player_inactive"];
-  }
+  const distinctGames = new Set(legs.map((leg) => leg.gameId)).size;
+  if (distinctGames < MIN_DISTINCT_GAMES) reasons.push("distinct_games");
 
-  const projAgeMin = (now.getTime() - leg.projection_updated_at.getTime()) / 60_000;
-  if (projAgeMin > config.VOID_GUARDS.require_fresh_projection_age_minutes) {
-    return [false, `projection_stale_${Math.floor(projAgeMin)}m`];
-  }
-
-  if (leg.defensive_context_updated_at) {
-    const defAgeMin = (now.getTime() - leg.defensive_context_updated_at.getTime()) / 60_000;
-    if (defAgeMin > config.VOID_GUARDS.require_defensive_context_minutes) {
-      return [false, `def_context_stale_${Math.floor(defAgeMin)}m`];
+  const gameCounts = new Map<string, number>();
+  const teamLegCounts = new Map<string, number>();
+  let teamLegs = 0;
+  const playerPropKeys = new Set<string>();
+  for (const leg of legs) {
+    gameCounts.set(leg.gameId, (gameCounts.get(leg.gameId) ?? 0) + 1);
+    if (leg.kind === "team") {
+      teamLegs += 1;
+      teamLegCounts.set(leg.gameId, (teamLegCounts.get(leg.gameId) ?? 0) + 1);
+    }
+    if (leg.kind === "player" && leg.player) {
+      const key = `${leg.player.toLowerCase()}::${(leg.prop ?? "").toLowerCase()}`;
+      if (playerPropKeys.has(key)) reasons.push("player_prop_dupe");
+      playerPropKeys.add(key);
     }
   }
 
-  const minsToTip = (leg.tipoff.getTime() - now.getTime()) / 60_000;
-  if (minsToTip < config.VOID_GUARDS.min_minutes_before_tipoff) {
-    return [false, `too_close_to_tipoff_${Math.floor(minsToTip)}m`];
+  const maxSameGameShare = Math.max(...gameCounts.values()) / legs.length;
+  if (maxSameGameShare > MAX_SAME_GAME_SHARE) reasons.push("same_game_share");
+  if ([...teamLegCounts.values()].some((count) => count > MAX_TEAM_LEGS_PER_GAME)) reasons.push("team_legs_per_game");
+  if (legs.length >= 3 && teamLegs / legs.length > MAX_TEAM_LEG_SHARE_FOR_3_PLUS) reasons.push("team_leg_share");
+  if (legs.length >= 5 && !legs.some((leg) => leg.kind === "player")) reasons.push("lottery_requires_player_leg");
+
+  const decimalOdds = legs.reduce((product, leg) => product * leg.decimalOdds, 1);
+  const americanOdds = decimalToAmerican(decimalOdds);
+  if (americanOdds < MIN_COMBINED_AMERICAN_ODDS || americanOdds > MAX_COMBINED_AMERICAN_ODDS) {
+    reasons.push("combined_odds_band");
   }
 
-  return [true, "ok"];
+  if (parlayEdge(legs) < MIN_PARLAY_EDGE) reasons.push("min_parlay_edge");
+  return [...new Set(reasons)];
 }
 
-export function legPassesSignalGate(leg: CandidateLeg): GateResult {
-  const sig = signalNorm(leg);
-  if (config.SIGNAL_BLACKLIST.has(sig)) {
-    return [false, `signal_blacklisted:${sig}`];
-  }
-  const minConf = config.SIGNAL_TIER_S.has(sig)
-    ? config.S_TIER_CONFIDENCE_OVERRIDE
-    : config.MIN_LEG_CONFIDENCE;
-  if (leg.confidence < minConf) {
-    return [false, `confidence_below_${minConf.toFixed(2)}`];
-  }
-  return [true, "ok"];
-}
-
-export function legPassesPropGate(leg: CandidateLeg): GateResult {
-  if (leg.sport !== "NBA") return [true, "non_nba_passthrough"];
-  if (config.PROP_BLACKLIST.has(legPropKey(leg))) {
-    return [false, `prop_blacklisted:${leg.prop_type}_${leg.side}`];
-  }
-  return [true, "ok"];
-}
-
-export function validateLeg(leg: CandidateLeg, now: Date): GateResult {
-  const r1 = legIsBettable(leg, now);
-  if (!r1[0]) return r1;
-  const r2 = legPassesSignalGate(leg);
-  if (!r2[0]) return r2;
-  const r3 = legPassesPropGate(leg);
-  if (!r3[0]) return r3;
-  return [true, "ok"];
-}
-
-// ---------- Parlay-level gates ----------
-
-export function parlayWithinOddsBand(p: Parlay): GateResult {
-  const odds = combinedAmericanOdds(p);
-  if (odds < config.MIN_PARLAY_ODDS) return [false, `combined_odds_${odds}_below_min`];
-  if (odds > config.MAX_PARLAY_ODDS) return [false, `combined_odds_${odds}_above_max`];
-  return [true, "ok"];
-}
-
-export function parlayEdgeSufficient(p: Parlay): GateResult {
-  const implied = 1.0 / combinedDecimalOdds(p);
-  const edge = combinedProbability(p) / implied - 1.0;
-  if (edge < config.MIN_PARLAY_EDGE) return [false, `edge_${edge.toFixed(2)}_below_min`];
-  return [true, "ok"];
-}
-
-export function parlayNoConflictingLegs(p: Parlay): GateResult {
-  const seen = new Set<string>();
-  for (const leg of p.legs) {
-    // Player props key on player+prop. Team markets (Moneyline/Spread/Total)
-    // key on the unordered matchup + prop_type so a parlay can never contain
-    // both HOME and AWAY (or OVER and UNDER) of the same game market.
-    let key: string;
-    if (leg.player_name) {
-      key = `${leg.player_name}|${leg.prop_type}`;
-    } else {
-      const game = (leg.team ?? "") < (leg.opponent ?? "")
-        ? `${leg.team}|${leg.opponent}`
-        : `${leg.opponent}|${leg.team}`;
-      key = `GAME:${game}|${leg.prop_type}`;
-    }
-    if (seen.has(key)) return [false, `conflicting_leg:${key}`];
-    seen.add(key);
-  }
-  return [true, "ok"];
-}
-
-export function parlayLegCountValid(p: Parlay): GateResult {
-  if (!(legCount(p) in config.LEG_COUNT_ALLOCATION)) {
-    return [false, `leg_count_${legCount(p)}_not_allocated`];
-  }
-  return [true, "ok"];
-}
-
-// TEMP 2026-04-21: loosened from 0.6 → 0.75 while bot_daily_pick_pool coverage
-// is thin (only 2 games matched tonight). Revert to 0.6 once morning prep
-// pipeline restores full slate coverage. See mem://logic/parlay/same-game-concentration.
-export function parlaySameGameConcentration(p: Parlay, max_share = 0.75): GateResult {
-  const counts = new Map<string, number>();
-  for (const l of p.legs) {
-    const k = l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
-    counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  const top = Math.max(...counts.values());
-  const share = top / legCount(p);
-  if (share > max_share) return [false, `same_game_share_${share.toFixed(2)}`];
-  return [true, "ok"];
-}
-
-// Hard floor: every parlay must touch at least `min` distinct games.
-// Survives future threshold tweaks to parlaySameGameConcentration — even if
-// max_share drifts up, this gate guarantees no 100% same-game tickets ship.
-export function parlayMinDistinctGames(p: Parlay, min = 2): GateResult {
-  const games = new Set<string>();
-  for (const l of p.legs) {
-    const k = l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
-    games.add(k);
-  }
-  if (games.size < min) return [false, `single_game_only`];
-  return [true, "ok"];
-}
-
-// At most N team-market legs (Spread / Moneyline / Total — anything with
-// player_name == null) may share the same game inside a parlay. Prevents
-// "Spread HOME -1.5 + Spread HOME -6.5 + Total OVER 8.5" all on the same MLB
-// matchup. Player props on that game are still allowed, governed by the
-// same-game concentration gate.
-export function parlayTeamLegsPerGame(
-  p: Parlay,
-  max = config.MAX_TEAM_LEGS_PER_GAME_IN_PARLAY,
-): GateResult {
-  const counts = new Map<string, number>();
-  for (const l of p.legs) {
-    if (l.player_name) continue; // player props don't count
-    const k = l.team < l.opponent ? `${l.team}|${l.opponent}` : `${l.opponent}|${l.team}`;
-    counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  for (const [game, n] of counts.entries()) {
-    if (n > max) return [false, `team_legs_per_game:${game}:${n}`];
-  }
-  return [true, "ok"];
-}
-
-export function validateParlay(p: Parlay): GateResult {
-  const gates: Array<(p: Parlay) => GateResult> = [
-    parlayLegCountValid,
-    parlayWithinOddsBand,
-    parlayNoConflictingLegs,
-    parlayTeamLegsPerGame,
-    parlayMinDistinctGames,
-    parlaySameGameConcentration,
-    parlayEdgeSufficient,
-  ];
-  for (const g of gates) {
-    const r = g(p);
-    if (!r[0]) return r;
-  }
-  return [true, "ok"];
+export function passesTicketGates(legs: ScoredLeg[]): boolean {
+  return ticketGateReasons(legs).length === 0;
 }
