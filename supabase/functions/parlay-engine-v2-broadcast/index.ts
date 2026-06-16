@@ -7,7 +7,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { etDateKey } from "../_shared/date-et.ts";
-import { BOOK_TAG } from "../_shared/parlay-engine-v2/config.ts";
+import { BOOK_TAG } from "../_shared/parlay-engine-legacy/config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

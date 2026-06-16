@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { etDateKey } from "../_shared/date-et.ts";
-import { BOOKMAKER_PRIORITY, MAX_BOOK_LINE_AGE_MIN, MAX_LINE_DRIFT } from "../_shared/parlay-engine-v2/config.ts";
+import { BOOKMAKER_PRIORITY, MAX_BOOK_LINE_AGE_MIN, MAX_LINE_DRIFT } from "../_shared/parlay-engine-legacy/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 
 const corsHeaders = {

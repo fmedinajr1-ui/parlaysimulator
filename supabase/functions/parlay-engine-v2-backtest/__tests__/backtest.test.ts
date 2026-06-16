@@ -9,7 +9,7 @@ import {
   ExposureTracker,
   replayParlays,
   calibrate,
-} from "../../_shared/parlay-engine-v2/index.ts";
+} from "../../_shared/parlay-engine-legacy/index.ts";
 
 // ---------- Fixture helpers ----------
 

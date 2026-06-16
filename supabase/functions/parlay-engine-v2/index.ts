@@ -14,14 +14,14 @@ import {
   combinedDecimalOdds,
   combinedProbability,
   expectedValueUnits,
-} from "../_shared/parlay-engine-v2/index.ts";
+} from "../_shared/parlay-engine-legacy/index.ts";
 import {
   BOOKMAKER_PRIORITY,
   MAX_BOOK_LINE_AGE_MIN,
   MAX_LINE_DRIFT,
   MAX_TEAM_SPREAD_ABS,
   PROP_WHITELIST,
-} from "../_shared/parlay-engine-v2/config.ts";
+} from "../_shared/parlay-engine-legacy/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
 import { bayesianHitRate, quarterKellyStake, requiredDecimal, evPerUnit, priorForLegCount } from "../_shared/staking/kelly.ts";
 import {
@@ -585,10 +585,10 @@ Deno.serve(async (req) => {
     {
       // Re-run the leg-level whitelist filter the strategies use, post-validation.
       const SIG_S_OR_A = new Set([
-        ...Array.from((await import("../_shared/parlay-engine-v2/config.ts")).SIGNAL_TIER_S),
-        ...Array.from((await import("../_shared/parlay-engine-v2/config.ts")).SIGNAL_TIER_A),
+        ...Array.from((await import("../_shared/parlay-engine-legacy/config.ts")).SIGNAL_TIER_S),
+        ...Array.from((await import("../_shared/parlay-engine-legacy/config.ts")).SIGNAL_TIER_A),
       ]);
-      const PROP_WL = (await import("../_shared/parlay-engine-v2/config.ts")).PROP_WHITELIST;
+      const PROP_WL = (await import("../_shared/parlay-engine-legacy/config.ts")).PROP_WHITELIST;
       const propKey = (l: any) => `${l.prop_type}|${l.side}`;
       eligibility.mispriced_edge = candidates.filter(l =>
         l.sport === "NBA" && l.confidence >= 0.70 && (propKey(l) in PROP_WL)).length;
