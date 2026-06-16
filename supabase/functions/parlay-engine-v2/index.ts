@@ -581,6 +581,69 @@ Deno.serve(async (req) => {
     const engine = new ParlayEngine();
     const slate = engine.generateSlate(candidates, now);
 
+    // -----------------------------------------------------------------------
+    // PARLAY_ENGINE_V2_NEW — feature flag. When "true", route the slate through
+    // the new generateParlayTickets pipeline and translate its tickets back
+    // into the legacy Parlay shape so downstream readers (settler, accuracy
+    // dashboards, bot_daily_parlays.strategy_name) don't break. Default OFF.
+    // -----------------------------------------------------------------------
+    const useNewEngine = (Deno.env.get("PARLAY_ENGINE_V2_NEW") ?? "false").toLowerCase() === "true";
+    if (useNewEngine) {
+      const STRAT_MAP: Record<StrategyName, { name: string; tier: "CORE" | "EDGE" | "LOTTERY" }> = {
+        lock_2:    { name: "mispriced_edge",        tier: "CORE" },
+        strong_3:  { name: "grind_stack",           tier: "CORE" },
+        stretch_4: { name: "double_confirmed",      tier: "EDGE" },
+        lottery_5: { name: "role_stacked_longshot", tier: "LOTTERY" },
+      };
+
+      const legInputs: LegInput[] = candidates.map((c, i) => ({
+        id: `${c.player_name ?? c.team}|${c.prop_type}|${c.side}|${c.line}|${i}`,
+        sport: c.sport,
+        gameId: (c as any).event_id ?? `${c.team}|${c.opponent}`,
+        americanOdds: c.american_odds,
+        confidence: c.confidence,
+        edge: c.edge,
+        kind: c.player_name ? "player" : "team",
+        team: c.team,
+        opponent: c.opponent,
+        player: c.player_name ?? undefined,
+        prop: c.prop_type,
+        side: c.side?.toLowerCase(),
+      }));
+
+      const result = generateParlayTickets({
+        legs: legInputs,
+        stake: 1,
+        bankroll: { enabled: false },
+      });
+
+      const newParlays = result.tickets.map((t: ParlayTicket) => {
+        const mapped = STRAT_MAP[t.strategy as StrategyName] ?? { name: t.strategy, tier: t.tier };
+        // Reconstruct legs back into CandidateLeg shape using the original candidates list.
+        const legs = t.legs.map(l => {
+          const orig = candidates.find(c =>
+            (c.player_name ?? c.team) === (l.player ?? l.team) &&
+            c.prop_type === l.prop &&
+            (c.side?.toLowerCase() === l.side)
+          );
+          return orig ?? candidates[0];
+        });
+        return {
+          strategy: mapped.name,
+          tier: mapped.tier,
+          legs,
+          stake_units: t.stake,
+          rationale: `v2new[${t.strategy}] prob=${t.correlatedProb.toFixed(3)} ev=${t.ev.toFixed(3)} edge=${t.parlayEdge.toFixed(3)}`,
+          generated_at: new Date(),
+        };
+      });
+
+      slate.parlays = newParlays as typeof slate.parlays;
+      slate.report.rejection_reasons["v2new:dropped"] = result.dropped.length;
+      slate.report.rejection_reasons["v2new:engine"] = 1;
+      mappingNotes.push(`PARLAY_ENGINE_V2_NEW=true — using generateParlayTickets (${newParlays.length} tickets, ${result.dropped.length} legs dropped)`);
+    }
+
     // Merge book-line rejections into the engine's rejection_reasons report
     for (const [k, v] of Object.entries(rejections)) {
       slate.report.rejection_reasons[k] = (slate.report.rejection_reasons[k] ?? 0) + v;
