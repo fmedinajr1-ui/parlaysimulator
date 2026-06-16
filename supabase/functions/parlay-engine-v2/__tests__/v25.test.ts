@@ -17,7 +17,7 @@ import {
 } from "../../_shared/parlay-engine-legacy/index.ts";
 import { STAKE_BY_TIER } from "../../_shared/parlay-engine-legacy/config.ts";
 
-const NOW = new Date("2026-04-21T18:00:00Z");
+const NOW = new Date();
 const TIPOFF = new Date(NOW.getTime() + 3 * 60 * 60 * 1000);
 const FRESH = new Date(NOW.getTime() - 30 * 60 * 1000);
 
