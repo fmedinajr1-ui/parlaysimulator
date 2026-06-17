@@ -36,6 +36,7 @@ import {
   type ParlayTicket,
   type StrategyName,
 } from "../_shared/parlay-engine-v2/index.ts";
+import { isAllowedSport } from "../_shared/parlay-engine-v2/config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -221,6 +222,11 @@ function buildCandidates(
     if (american == null) { bump("leg:no_price_for_side"); continue; }
 
     const sport = (matchedProp.sport ?? inferSport(row.prop_type)).toUpperCase();
+    // Sport allowlist: only MLB, WNBA, tennis, FIFA World Cup soccer.
+    if (!isAllowedSport(matchedProp.sport ?? sport)) {
+      bump("leg:sport_not_allowed");
+      continue;
+    }
     const { team, opponent } = parseTeams(matchedProp.game_description ?? null);
     const tipoff = matchedProp.commence_time
       ? new Date(matchedProp.commence_time)
@@ -400,6 +406,11 @@ function buildExtraCandidates(
                     : sport === "ICEHOCKEY_NHL"  ? "NHL"
                     : sport === "AMERICANFOOTBALL_NFL" ? "NFL"
                     : sport;
+    // Sport allowlist: only MLB, WNBA, tennis, FIFA World Cup soccer.
+    if (!isAllowedSport(r.sport)) {
+      bump("extra:sport_not_allowed");
+      continue;
+    }
     const { team, opponent } = parseTeams(r.game_description ?? null);
     const tipoff = r.commence_time ? new Date(r.commence_time)
                                    : new Date(now.getTime() + 6 * 60 * 60 * 1000);
@@ -515,7 +526,13 @@ Deno.serve(async (req) => {
       .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at, market_type, category, event_id")
       .gte("commence_time", startOfDay)
       .lte("commence_time", endOfDay)
-      .or("market_type.neq.player,sport.eq.baseball_mlb");
+      // Original behavior: team markets across all sports OR raw MLB player props.
+      .or("market_type.neq.player,sport.eq.baseball_mlb")
+      // Sport allowlist: MLB, WNBA, FIFA World Cup, any tennis tour.
+      // Stacked .or filters are AND-ed by PostgREST.
+      .or(
+        "sport.eq.baseball_mlb,sport.eq.basketball_wnba,sport.eq.soccer_fifa_world_cup,sport.eq.soccer_fifa_world_cup_winner,sport.like.tennis_*"
+      );
     if (extraErr) {
       console.warn("[parlay-engine-v2] extra-rows fetch warning:", extraErr.message);
     }
@@ -526,6 +543,11 @@ Deno.serve(async (req) => {
       rejections[k] = (rejections[k] ?? 0) + v;
     }
     mappingNotes.push(`extra candidates loaded: ${extraCandidates.length} (team_market + raw MLB)`);
+    mappingNotes.push(
+      `sport_allowlist: mlb, wnba, tennis, soccer_fifa_world_cup ` +
+      `(dropped — player: ${rejections["leg:sport_not_allowed"] ?? 0}, ` +
+      `extra: ${rejections["extra:sport_not_allowed"] ?? 0})`,
+    );
 
     // ----- Phase B.5: matchup_intelligence cross-reference for player props -----
     // Adjusts per-leg confidence ±7% (and ±5% from confidence_adjustment) so the

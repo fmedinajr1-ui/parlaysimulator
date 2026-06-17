@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { etDateKey } from "../_shared/date-et.ts";
 import { BOOKMAKER_PRIORITY, MAX_BOOK_LINE_AGE_MIN, MAX_LINE_DRIFT } from "../_shared/parlay-engine-legacy/config.ts";
 import { loadDirectPickRows } from "../_shared/direct-pick-sources.ts";
+import { isAllowedSport } from "../_shared/parlay-engine-v2/config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,6 +35,7 @@ interface PropRow {
   over_price: number | null;
   under_price: number | null;
   is_active: boolean | null;
+  sport?: string | null;
   bookmaker?: string | null;
   odds_updated_at?: string | null;
   updated_at?: string | null;
@@ -177,14 +179,20 @@ Deno.serve(async (req) => {
     const playerNames = Array.from(new Set(poolState.pool.map((row) => row.player_name).filter(Boolean)));
     const { data: propData, error: propErr } = await sb
       .from("unified_props")
-      .select("player_name, prop_type, current_line, over_price, under_price, is_active, bookmaker, odds_updated_at, updated_at")
+      .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, bookmaker, odds_updated_at, updated_at")
       .in("player_name", playerNames)
-      .eq("is_active", true);
+      .eq("is_active", true)
+      // Sport allowlist: MLB, WNBA, FIFA World Cup, any tennis tour.
+      .or(
+        "sport.eq.baseball_mlb,sport.eq.basketball_wnba,sport.eq.soccer_fifa_world_cup,sport.eq.soccer_fifa_world_cup_winner,sport.like.tennis_*"
+      );
     if (propErr) throw propErr;
 
     const propsByKey = new Map<string, PropRow[]>();
     for (const prop of (propData ?? []) as PropRow[]) {
       if (!prop.player_name || !prop.prop_type) continue;
+      // Defensive: drop any row whose sport slipped past the DB filter.
+      if (!isAllowedSport(prop.sport)) continue;
       const key = normalizeKey(prop.player_name, prop.prop_type);
       const rows = propsByKey.get(key) ?? [];
       rows.push(prop);

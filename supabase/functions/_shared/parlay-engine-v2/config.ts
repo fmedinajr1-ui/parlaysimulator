@@ -47,3 +47,26 @@ export const STRATEGY_COUNTS = {
   stretch_4: 6,
   lottery_5: 3,
 } as const;
+
+// ---- Sport allowlist (project-wide) -----------------------------------------
+// Only these sports are eligible to enter the parlay/straight-bet pool.
+// Soccer is intentionally limited to FIFA World Cup (and the long-shot winner
+// market) — other competitions (Brazil Serie A/B, Copa Libertadores, etc.)
+// are dropped. Tennis is allowed across all tours via the prefix check.
+export const ALLOWED_SPORTS: ReadonlySet<string> = new Set([
+  "baseball_mlb",
+  "basketball_wnba",
+  "soccer_fifa_world_cup",
+  "soccer_fifa_world_cup_winner",
+  // normalized variants that may appear after .toUpperCase() pipelines
+  "mlb",
+  "wnba",
+]);
+export const ALLOWED_SPORT_PREFIXES: readonly string[] = ["tennis_"];
+
+export function isAllowedSport(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const s = String(raw).toLowerCase();
+  if (ALLOWED_SPORTS.has(s)) return true;
+  return ALLOWED_SPORT_PREFIXES.some((p) => s.startsWith(p));
+}
