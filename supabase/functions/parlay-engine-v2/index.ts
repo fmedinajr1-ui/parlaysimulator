@@ -36,6 +36,7 @@ import {
   type ParlayTicket,
   type StrategyName,
 } from "../_shared/parlay-engine-v2/index.ts";
+import { isAllowedSport } from "../_shared/parlay-engine-v2/config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
