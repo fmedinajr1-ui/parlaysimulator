@@ -526,7 +526,10 @@ Deno.serve(async (req) => {
       .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at, market_type, category, event_id")
       .gte("commence_time", startOfDay)
       .lte("commence_time", endOfDay)
+      // Original behavior: team markets across all sports OR raw MLB player props.
+      .or("market_type.neq.player,sport.eq.baseball_mlb")
       // Sport allowlist: MLB, WNBA, FIFA World Cup, any tennis tour.
+      // Stacked .or filters are AND-ed by PostgREST.
       .or(
         "sport.eq.baseball_mlb,sport.eq.basketball_wnba,sport.eq.soccer_fifa_world_cup,sport.eq.soccer_fifa_world_cup_winner,sport.like.tennis_*"
       );
@@ -540,6 +543,11 @@ Deno.serve(async (req) => {
       rejections[k] = (rejections[k] ?? 0) + v;
     }
     mappingNotes.push(`extra candidates loaded: ${extraCandidates.length} (team_market + raw MLB)`);
+    mappingNotes.push(
+      `sport_allowlist: mlb, wnba, tennis, soccer_fifa_world_cup ` +
+      `(dropped — player: ${rejections["leg:sport_not_allowed"] ?? 0}, ` +
+      `extra: ${rejections["extra:sport_not_allowed"] ?? 0})`,
+    );
 
     // ----- Phase B.5: matchup_intelligence cross-reference for player props -----
     // Adjusts per-leg confidence ±7% (and ±5% from confidence_adjustment) so the
