@@ -526,7 +526,10 @@ Deno.serve(async (req) => {
       .select("player_name, prop_type, current_line, over_price, under_price, is_active, sport, game_description, commence_time, updated_at, bookmaker, odds_updated_at, market_type, category, event_id")
       .gte("commence_time", startOfDay)
       .lte("commence_time", endOfDay)
-      .or("market_type.neq.player,sport.eq.baseball_mlb");
+      // Sport allowlist: MLB, WNBA, FIFA World Cup, any tennis tour.
+      .or(
+        "sport.eq.baseball_mlb,sport.eq.basketball_wnba,sport.eq.soccer_fifa_world_cup,sport.eq.soccer_fifa_world_cup_winner,sport.like.tennis_*"
+      );
     if (extraErr) {
       console.warn("[parlay-engine-v2] extra-rows fetch warning:", extraErr.message);
     }
