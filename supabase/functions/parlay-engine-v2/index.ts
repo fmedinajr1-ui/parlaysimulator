@@ -222,6 +222,11 @@ function buildCandidates(
     if (american == null) { bump("leg:no_price_for_side"); continue; }
 
     const sport = (matchedProp.sport ?? inferSport(row.prop_type)).toUpperCase();
+    // Sport allowlist: only MLB, WNBA, tennis, FIFA World Cup soccer.
+    if (!isAllowedSport(matchedProp.sport ?? sport)) {
+      bump("leg:sport_not_allowed");
+      continue;
+    }
     const { team, opponent } = parseTeams(matchedProp.game_description ?? null);
     const tipoff = matchedProp.commence_time
       ? new Date(matchedProp.commence_time)
@@ -401,6 +406,11 @@ function buildExtraCandidates(
                     : sport === "ICEHOCKEY_NHL"  ? "NHL"
                     : sport === "AMERICANFOOTBALL_NFL" ? "NFL"
                     : sport;
+    // Sport allowlist: only MLB, WNBA, tennis, FIFA World Cup soccer.
+    if (!isAllowedSport(r.sport)) {
+      bump("extra:sport_not_allowed");
+      continue;
+    }
     const { team, opponent } = parseTeams(r.game_description ?? null);
     const tipoff = r.commence_time ? new Date(r.commence_time)
                                    : new Date(now.getTime() + 6 * 60 * 60 * 1000);
