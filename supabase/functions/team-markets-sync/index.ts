@@ -13,31 +13,11 @@ const corsHeaders = {
 };
 
 const SPORTS = [
-  "basketball_nba",
   "basketball_wnba",
   "baseball_mlb",
-  "icehockey_nhl",
-  // Expanded coverage — silently skipped by the API when out of season.
-  "americanfootball_nfl",
-  "americanfootball_ncaaf",
-  "basketball_ncaab",
-  "mma_mixed_martial_arts",
-  "soccer_epl",
-  "soccer_uefa_champs_league",
-  "soccer_uefa_europa_league",
-  "soccer_spain_la_liga",
-  "soccer_italy_serie_a",
-  "soccer_germany_bundesliga",
-  "soccer_usa_mls",
   "soccer_fifa_world_cup",
-  "soccer_fifa_club_world_cup",
-  "soccer_brazil_campeonato",
-  "soccer_brazil_serie_b",
-  "soccer_conmebol_copa_libertadores",
-  "soccer_conmebol_copa_sudamericana",
   "tennis_atp",
   "tennis_wta",
-  "golf_pga_championship_winner",
 ];
 const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars"];
 const MARKETS = "h2h,spreads,totals";

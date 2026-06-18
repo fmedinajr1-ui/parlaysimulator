@@ -37,44 +37,8 @@ const SPORT_MARKETS: Record<string, { canonical: string; markets: string[] }> = 
       "player_points_rebounds_assists", "player_points_rebounds", "player_points_assists",
     ],
   },
-  soccer_epl: {
-    canonical: "soccer_epl",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target", "player_total_passes"],
-  },
-  soccer_usa_mls: {
-    canonical: "soccer_mls",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_uefa_champs_league: {
-    canonical: "soccer_ucl",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_spain_la_liga: {
-    canonical: "soccer_laliga",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
   soccer_fifa_world_cup: {
     canonical: "soccer_world_cup",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_fifa_club_world_cup: {
-    canonical: "soccer_club_world_cup",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_brazil_campeonato: {
-    canonical: "soccer_brazil_serie_a",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_brazil_serie_b: {
-    canonical: "soccer_brazil_serie_b",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_conmebol_copa_libertadores: {
-    canonical: "soccer_copa_libertadores",
-    markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
-  },
-  soccer_conmebol_copa_sudamericana: {
-    canonical: "soccer_copa_sudamericana",
     markets: ["player_goals", "player_assists", "player_shots", "player_shots_on_target"],
   },
 };
