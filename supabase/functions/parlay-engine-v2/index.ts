@@ -592,6 +592,9 @@ Deno.serve(async (req) => {
       `(dropped — player: ${rejections["leg:sport_not_allowed"] ?? 0}, ` +
       `extra: ${rejections["extra:sport_not_allowed"] ?? 0})`,
     );
+    if (fallbackUsed) {
+      mappingNotes.push(`auto_fallback: requested=${requestedDate} → ${fallbackUsed}`);
+    }
 
     // ----- Phase B.5: matchup_intelligence cross-reference for player props -----
     // Adjusts per-leg confidence ±7% (and ±5% from confidence_adjustment) so the
