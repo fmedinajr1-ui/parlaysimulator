@@ -297,8 +297,12 @@ export async function loadDirectPickRows(
     const rawRes = await sb
       .from("unified_props")
       .select("player_name, prop_type, current_line, recommended_side, recommendation, confidence, composite_score, category, over_price, under_price, odds_updated_at, updated_at, created_at, sport, is_active, market_type")
-      .eq("sport", "basketball_nba")
       .eq("is_active", true)
+      // Sport allowlist: MLB, WNBA, FIFA World Cup, any tennis tour.
+      // (Previously hardcoded to basketball_nba which starved every other sport.)
+      .or(
+        "sport.eq.baseball_mlb,sport.eq.basketball_wnba,sport.eq.soccer_fifa_world_cup,sport.eq.soccer_fifa_world_cup_winner,sport.like.tennis_*"
+      )
       // Skip team markets (h2h/spread/total) — those are loaded directly via
       // parlay-engine-v2's buildExtraCandidates with proper HOME/AWAY sides.
       .or("market_type.is.null,market_type.eq.player")
