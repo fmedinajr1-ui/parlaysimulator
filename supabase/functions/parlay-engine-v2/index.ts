@@ -494,13 +494,57 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    let body: { dry_run?: boolean; date?: string } = {};
+    let body: { dry_run?: boolean; date?: string; auto_fallback?: boolean } = {};
     try { body = await req.json(); } catch { /* allow empty */ }
     const dryRun = body.dry_run !== false; // default to dry_run for safety
-    const targetDate = body.date ?? etDateKey();
+    const autoFallback = body.auto_fallback !== false; // default ON
+    const requestedDate = body.date ?? etDateKey();
+    let targetDate = requestedDate;
+    let fallbackUsed: string | null = null;
 
-    const directSourceState = await loadDirectPickRows(sb, { targetDate, minimumRiskRows: 8, fallbackLimit: 40 });
-    const pool = directSourceState.rows as PoolRow[];
+    let directSourceState = await loadDirectPickRows(sb, { targetDate, minimumRiskRows: 8, fallbackLimit: 40 });
+    let pool = directSourceState.rows as PoolRow[];
+
+    // Auto-fallback: if no rows for requested date, scan recent ET dates in
+    // unified_props for the allowed sports and re-load against the most recent
+    // date that has usable odds.
+    if (autoFallback && pool.length === 0) {
+      try {
+        const { data: recent } = await sb
+          .from("unified_props")
+          .select("commence_time")
+          .eq("is_active", true)
+          .or(
+            "sport.eq.baseball_mlb,sport.eq.basketball_wnba,sport.eq.soccer_fifa_world_cup,sport.eq.soccer_fifa_world_cup_winner,sport.like.tennis_*"
+          )
+          .gte("commence_time", new Date(Date.now() - 14 * 86400_000).toISOString())
+          .lte("commence_time", new Date(Date.now() + 2 * 86400_000).toISOString())
+          .order("commence_time", { ascending: false })
+          .limit(500);
+        const seen = new Set<string>();
+        const dates: string[] = [];
+        for (const r of recent ?? []) {
+          // ET date key from commence_time
+          const d = new Date((r as any).commence_time);
+          const et = new Date(d.getTime() - 4 * 3600_000).toISOString().slice(0, 10);
+          if (!seen.has(et)) { seen.add(et); dates.push(et); }
+        }
+        for (const d of dates) {
+          if (d === requestedDate) continue;
+          const probe = await loadDirectPickRows(sb, { targetDate: d, minimumRiskRows: 1, fallbackLimit: 40 });
+          if ((probe.rows?.length ?? 0) > 0) {
+            targetDate = d;
+            fallbackUsed = d;
+            directSourceState = probe;
+            pool = probe.rows as PoolRow[];
+            console.log(`[parlay-engine-v2] auto-fallback: requested=${requestedDate} → using ${d} (${pool.length} rows)`);
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn("[parlay-engine-v2] auto-fallback probe failed:", (e as Error).message);
+      }
+    }
     const poolAfterCount = pool.length;
 
     // Load matching props for odds + game context
