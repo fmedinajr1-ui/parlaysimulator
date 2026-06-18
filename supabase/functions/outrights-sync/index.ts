@@ -16,7 +16,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const ALLOWED_GROUPS = new Set(["Golf", "Tennis", "Soccer", "Darts"]);
+const ALLOWED_GROUPS = new Set(["Tennis", "Soccer"]);
 const PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "betrivers"];
 
 function americanFromOutcome(price: unknown): number | null {
