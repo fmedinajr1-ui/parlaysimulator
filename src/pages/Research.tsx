@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { summarizePlayer, statValue, type GameLog, type StatKey } from "@/utils/nbaBoxScoreMath";
+import { ResearchAiPanel, callResearchAi, Prose } from "@/components/research/ResearchAiPanel";
 
 const STATS: { key: StatKey; label: string }[] = [
   { key: "points", label: "Points" },
@@ -64,7 +65,7 @@ export default function Research() {
         console.error("research extras failed", e);
       }
     })();
-  }, []);
+  }, [today]);
 
   const byPlayer = useMemo(() => {
     const m = new Map<string, GameLog[]>();
@@ -165,7 +166,7 @@ export default function Research() {
                   </tr>
                   {open === r.player && (
                     <tr key={r.player + "-d"} className="bg-muted/30">
-                      <td colSpan={9} className="px-3 py-3">
+                      <td colSpan={10} className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
                           {(byPlayer.get(r.player) ?? [])
                             .filter((g) => (Number(g.minutes_played) || 0) > 0)
@@ -195,7 +196,7 @@ export default function Research() {
                 </Fragment>
               ))}
               {!rows.length && (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">No players match.</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">No players match.</td></tr>
               )}
             </tbody>
           </table>
