@@ -1,0 +1,76 @@
+import { Link } from "react-router-dom";
+import type { EdgePick } from "@/hooks/useResearchData";
+
+interface Props {
+  logs: number;
+  players: number;
+  lines: number;
+  injuries: number;
+  latest: string | null;
+  edges: EdgePick[];
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="flex flex-col leading-none">
+      <span className="desk-label">{label}</span>
+      <span className={`desk-mono text-base font-semibold ${accent ? "text-[hsl(var(--desk-amber))]" : "text-[hsl(var(--desk-text))]"}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Props) {
+  const tickerItems = edges.length
+    ? edges.map(
+        (e) =>
+          `${e.player.toUpperCase()} · ${e.stat.toUpperCase()} · LINE ${e.line} · L10 MED ${Math.round(e.median * 10) / 10} · EDGE ${
+            e.edge > 0 ? "+" : ""
+          }${Math.round(e.edge * 100)}%`,
+      )
+    : ["NO SPORTSBOOK LINES LOADED TODAY · ADD A WORKING ODDS KEY TO SEE LIVE EDGES"];
+
+  return (
+    <header className="sticky top-0 z-30 border-b border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg)/0.88)] backdrop-blur">
+      <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-4 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-lg border border-[hsl(var(--desk-amber)/0.5)] bg-[hsl(var(--desk-amber)/0.12)]">
+            <span className="desk-mono text-sm font-bold text-[hsl(var(--desk-amber))]">PF</span>
+          </div>
+          <div className="leading-none">
+            <div className="desk-display text-lg font-bold tracking-tight">PARLAYFARM</div>
+            <div className="desk-label mt-1">Research Desk · 2026–27</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-5">
+          <Stat label="Game logs" value={logs.toLocaleString()} />
+          <Stat label="Players" value={players.toLocaleString()} />
+          <Stat label="Lines today" value={String(lines)} accent />
+          <Stat label="Injuries" value={String(injuries)} />
+          <Stat label="Latest" value={latest ?? "—"} />
+          <nav className="flex items-center gap-1 pl-2">
+            <Link to="/" className="desk-tab" data-active="true">Desk</Link>
+            <Link to="/landing" className="desk-tab">Marketing</Link>
+            <Link to="/blog" className="desk-tab">Blog</Link>
+          </nav>
+        </div>
+      </div>
+
+      <div className="overflow-hidden border-t border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-panel)/0.6)] py-1.5">
+        <div className="desk-ticker">
+          {[0, 1].map((dup) => (
+            <div key={dup} className="flex gap-10 pr-10">
+              {tickerItems.map((t, i) => (
+                <span key={`${dup}-${i}`} className="desk-mono text-[11px] tracking-wide text-[hsl(var(--desk-muted))]">
+                  <span className="text-[hsl(var(--desk-amber))]">▸</span> {t}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </header>
+  );
+}
