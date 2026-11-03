@@ -132,17 +132,19 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                       onClick={() => setOpen(open === r.player ? null : r.player)}
                     >
                       <td className="px-3 py-2 font-semibold text-[hsl(var(--desk-text))]">
-                        {r.player}
-                        {injury && (
-                          <span className="ml-2 rounded bg-[hsl(var(--desk-loss)/0.15)] px-1.5 py-0.5 text-[10px] text-[hsl(var(--desk-loss))]">
-                            {injury}
-                          </span>
-                        )}
+                        <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
+                          {r.player}
+                          {injury && (
+                            <span className="desk-mono whitespace-nowrap rounded bg-[hsl(var(--desk-loss)/0.15)] px-1.5 py-0.5 text-[10px] text-[hsl(var(--desk-loss))]">
+                              {injury}
+                            </span>
+                          )}
+                        </span>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 text-[hsl(var(--desk-muted))]">
                         {r.lastDate} vs {r.lastOpponent ?? "?"}
                       </td>
-                      <td className="px-3 py-2 text-[hsl(var(--desk-indigo))]">{ln ?? "—"}</td>
+                      <td className={`px-3 py-2 ${ln ? "text-[hsl(var(--desk-indigo))]" : "text-[hsl(var(--desk-muted))]"}`}>{ln ?? "—"}</td>
                       <td className="px-3 py-2 text-[hsl(var(--desk-muted))]">{fmt(r.l5.median)}</td>
                       <td className="px-3 py-2 font-bold text-[hsl(var(--desk-amber))]">{fmt(r.l10.median)}</td>
                       <td className="px-3 py-2 text-[hsl(var(--desk-muted))]">{fmt(r.l10.floor)}</td>
