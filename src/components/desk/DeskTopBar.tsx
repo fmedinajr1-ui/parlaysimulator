@@ -59,17 +59,25 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
       </div>
 
       <div className="overflow-hidden border-t border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-panel)/0.6)] py-1.5">
-        <div className="desk-ticker">
-          {[0, 1].map((dup) => (
-            <div key={dup} className="flex gap-10 pr-10">
-              {tickerItems.map((t, i) => (
-                <span key={`${dup}-${i}`} className="desk-mono text-[11px] tracking-wide text-[hsl(var(--desk-muted))]">
-                  <span className="text-[hsl(var(--desk-amber))]">▸</span> {t}
-                </span>
-              ))}
-            </div>
-          ))}
-        </div>
+        {edges.length ? (
+          <div className="desk-ticker">
+            {[0, 1].map((dup) => (
+              <div key={dup} className="flex gap-10 pr-10">
+                {tickerItems.map((t, i) => (
+                  <span key={`${dup}-${i}`} className="desk-mono text-[11px] tracking-wide text-[hsl(var(--desk-muted))]">
+                    <span className="text-[hsl(var(--desk-amber))]">▸</span> {t}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mx-auto max-w-[1500px] px-4">
+            <span className="desk-mono text-[11px] tracking-wide text-[hsl(var(--desk-muted))]">
+              <span className="text-[hsl(var(--desk-amber))]">▸</span> {tickerItems[0]}
+            </span>
+          </div>
+        )}
       </div>
     </header>
   );

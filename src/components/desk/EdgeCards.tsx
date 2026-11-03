@@ -68,7 +68,7 @@ export function EdgeCards({ edges, onPick }: Props) {
       {!edges.length && (
         <div className="desk-panel-flat p-4 sm:col-span-2 xl:col-span-4">
           <div className="desk-label">Daily edge</div>
-          <p className="mt-1 text-sm text-[hsl(var(--desk-muted))]">
+          <p className="desk-note mt-1 text-sm">
             No sportsbook prop lines loaded for today yet. The desk still ranks every player by box score
             math — the edge cards fill in once live lines land.
           </p>
