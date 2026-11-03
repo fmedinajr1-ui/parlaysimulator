@@ -49,8 +49,6 @@ Deno.serve(async (req) => {
       const edges = (await slateEdges(sb, today)).slice(0, 40);
       // Pull box score math for players named in the latest question.
       const last = history[history.length - 1]?.content ?? "";
-      const { data: names } = await sb.rpc("noop").then(() => ({ data: null }), () => ({ data: null }));
-      void names;
       const words = last.split(/[^A-Za-z'.-]+/).filter((w: string) => w.length > 3).slice(0, 6);
       const found: any[] = [];
       for (const w of words) {
