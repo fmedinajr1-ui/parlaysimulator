@@ -73,10 +73,13 @@
 .desk-theme .desk-label {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: hsl(var(--desk-muted));
+  color: hsl(215 18% 72%);
 }
+
+.desk-theme .desk-note { color: hsl(215 18% 78%); }
+
 
 .desk-theme .desk-chip {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
@@ -95,7 +98,7 @@
   border: 1px solid hsl(var(--desk-line));
   border-radius: 9px;
   padding: 6px 12px;
-  color: hsl(var(--desk-muted));
+  color: hsl(215 18% 74%);
   background: hsl(var(--desk-panel));
   transition: border-color .15s ease, color .15s ease, background .15s ease;
 }

@@ -56,7 +56,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
   };
 
   return (
-    <section className="desk-panel flex min-h-[520px] flex-col p-4">
+    <section className="desk-panel flex min-h-[420px] flex-col p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="desk-label">Research terminal</div>
