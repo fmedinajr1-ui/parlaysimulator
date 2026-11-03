@@ -26,6 +26,7 @@ const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
 const BotLanding = React.lazy(() => import("./pages/BotLanding"));
 const Home = React.lazy(() => import("./pages/Home"));
 const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
+const Research = React.lazy(() => import("./pages/Research"));
 const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 const Admin = React.lazy(() => import("./pages/Admin"));
 const Collaborate = React.lazy(() => import("./pages/Collaborate"));
@@ -99,6 +100,7 @@ function AnimatedRoutes() {
               <Route path="/" element={<Home />} />
               <Route path="/legacy-landing" element={<BotLanding />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
+              <Route path="/research" element={<Research />} />
               <Route path="/auth" element={<Navigate to="/" replace />} />
               <Route path="/bot" element={<Navigate to="/" replace />} />
               <Route path="/dashboard" element={<BotDashboard />} />
