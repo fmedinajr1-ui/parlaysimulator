@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
       const d = describe(logs, stat, line);
       if (!d) return json({ error: "No recent games for that player." }, 404);
       const { data: lines } = await sb.from("research_prop_lines").select("line,book,over_price,under_price").eq("game_date", today).ilike("player_name", d.player).eq("stat", stat);
-      const { data: inj } = await sb.from("nba_injury_reports").select("status,injury_type").ilike("player_name", d.player).order("updated_at", { ascending: false }).limit(1);
+      const { data: inj } = await sb.from("nba_injury_reports").select("status,injury_type").ilike("player_name", d.player).eq("game_date", today).order("updated_at", { ascending: false }).limit(1);
       const text = await runResearchAi(RESEARCH_INSTRUCTIONS, [{ role: "user", content:
         `Explain ${d.player}'s ${d.stat} edge in 3-5 short bullet points and end with a lean (Over / Under / Pass).\nBox score math: ${JSON.stringify(d)}\nToday's lines: ${JSON.stringify(lines ?? [])}\nInjury: ${JSON.stringify(inj?.[0] ?? null)}` }], req.signal);
       await saveReport(sb, "explain", d.player, stat, today, text);

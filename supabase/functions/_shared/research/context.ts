@@ -29,7 +29,7 @@ const STAT_FROM_LINE: Record<string, StatKey> = { points: "points", rebounds: "r
 /** Builds edges for every player with a prop line on the given date: L10 median vs line. */
 export async function slateEdges(sb: any, date: string) {
   const { data: lines } = await sb.from("research_prop_lines").select("*").eq("game_date", date).limit(2000);
-  const { data: inj } = await sb.from("nba_injury_reports").select("player_name,status,injury_type").order("updated_at", { ascending: false }).limit(500);
+  const { data: inj } = await sb.from("nba_injury_reports").select("player_name,status,injury_type").eq("game_date", date).order("updated_at", { ascending: false }).limit(500);
   const injMap = new Map<string, any>((inj ?? []).map((i: any) => [i.player_name.toLowerCase(), i]));
   const byKey = new Map<string, any>();
   for (const l of lines ?? []) {
