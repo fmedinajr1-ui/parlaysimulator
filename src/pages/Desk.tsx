@@ -36,7 +36,7 @@ export default function Desk() {
         edges={edges}
       />
 
-      <main className="mx-auto max-w-[1500px] px-4 pb-16 pt-4">
+      <main className="mx-auto max-w-[1500px] px-3 pb-16 pt-3 sm:px-4 sm:pt-4">
         <EdgeCards edges={edges} onPick={setFocus} />
 
         <div className="mt-3 grid gap-3 lg:grid-cols-12">

@@ -14,7 +14,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   return (
     <div className="flex flex-col leading-none">
       <span className="desk-label">{label}</span>
-      <span className={`desk-mono text-base font-semibold ${accent ? "text-[hsl(var(--desk-amber))]" : "text-[hsl(var(--desk-text))]"}`}>
+      <span className={`desk-mono truncate text-sm font-semibold sm:text-base ${accent ? "text-[hsl(var(--desk-amber))]" : "text-[hsl(var(--desk-text))]"}`}>
         {value}
       </span>
     </div>
@@ -33,7 +33,7 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
 
   return (
     <header className="sticky top-0 z-30 border-b border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg)/0.88)] backdrop-blur">
-      <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-4 px-4 py-3">
+      <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-3 py-2.5 sm:gap-4 sm:px-4 sm:py-3">
         <div className="flex items-center gap-3">
           <div className="grid h-9 w-9 place-items-center rounded-lg border border-[hsl(var(--desk-amber)/0.5)] bg-[hsl(var(--desk-amber)/0.12)]">
             <span className="desk-mono text-sm font-bold text-[hsl(var(--desk-amber))]">PF</span>
@@ -44,13 +44,13 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-5">
-          <Stat label="Game logs" value={logs.toLocaleString()} />
+        <div className="grid w-full grid-cols-5 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-5">
+          <Stat label="Logs" value={logs.toLocaleString()} />
           <Stat label="Players" value={players.toLocaleString()} />
           <Stat label="Lines today" value={String(lines)} accent />
           <Stat label="Injuries" value={String(injuries)} />
           <Stat label="Latest" value={latest ?? "—"} />
-          <nav className="flex items-center gap-1 pl-2">
+          <nav className="col-span-5 flex items-center gap-1 overflow-x-auto sm:pl-2">
             <Link to="/" className="desk-tab" data-active="true">Desk</Link>
             <Link to="/landing" className="desk-tab">Marketing</Link>
             <Link to="/blog" className="desk-tab">Blog</Link>

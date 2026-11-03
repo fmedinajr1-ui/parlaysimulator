@@ -55,19 +55,46 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
     }
   };
 
+  const renderDetail = (player: string, ln: number | undefined, median: number) => (
+    <>
+      <div className="desk-label mb-2">Last 10 · {STAT_OPTIONS.find((s) => s.key === stat)?.label}</div>
+                          <GameLogStrip games={byPlayer.get(player) ?? []} stat={stat} line={ln ?? median} />
+                          <div className="mt-3 flex flex-wrap items-start gap-3">
+                            <button
+                              className="desk-btn"
+                              disabled={explain[player]?.busy}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                runExplain(player, ln);
+                              }}
+                            >
+                              {explain[player]?.busy ? "Thinking…" : "Explain this edge (AI)"}
+                            </button>
+                            {explain[player]?.text && (
+                              <div className="desk-panel-flat min-w-[260px] flex-1 p-3">
+                                <Prose text={explain[player]!.text!} />
+                              </div>
+                            )}
+                            {explain[player]?.error && (
+                              <p className="desk-mono text-sm text-[hsl(var(--desk-loss))]">{explain[player]!.error}</p>
+                            )}
+                          </div>
+    </>
+  );
+
   return (
-    <section className="desk-panel flex min-h-[420px] flex-col p-4">
+    <section className="desk-panel flex min-h-[420px] flex-col p-3 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="desk-label">Research terminal</div>
           <h2 className="desk-display text-base font-semibold">L5 / L10 box score splits</h2>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search player or opponent…"
-            className="desk-input h-9 w-56 px-3"
+            className="desk-input h-10 min-w-0 flex-1 px-3 sm:h-9 sm:w-56 sm:flex-none"
           />
           <input
             value={line}
@@ -75,12 +102,12 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
             type="number"
             step="0.5"
             placeholder="Prop line"
-            className="desk-input h-9 w-28 px-3"
+            className="desk-input h-10 w-24 px-3 sm:h-9 sm:w-28"
           />
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex gap-2 overflow-x-auto pb-1 sm:flex-wrap">
         {STAT_OPTIONS.map((s) => (
           <button
             key={s.key}
@@ -110,7 +137,44 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
         {err && <p className="desk-mono p-4 text-sm text-[hsl(var(--desk-loss))]">Couldn't load data: {err}</p>}
 
         {!loading && !err && (
-          <table className="w-full text-sm">
+          <ul className="desk-mono divide-y divide-[hsl(var(--desk-line))] sm:hidden">
+            {rows.map((r) => {
+              const injury = injuries.get(r.player.toLowerCase());
+              const ln = line ? Number(line) : propLines.get(`${r.player.toLowerCase()}|${stat}`);
+              const isOpen = open === r.player;
+              return (
+                <li key={r.player} className="desk-row" data-open={isOpen}>
+                  <button className="w-full px-3 py-3 text-left" onClick={() => setOpen(isOpen ? null : r.player)}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-[hsl(var(--desk-text))]">{r.player}</div>
+                        <div className="text-[11px] text-[hsl(var(--desk-muted))]">
+                          {r.lastDate} vs {r.lastOpponent ?? "?"}
+                          {injury && <span className="ml-1.5 text-[hsl(var(--desk-loss))]">· {injury}</span>}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-bold leading-none text-[hsl(var(--desk-amber))]">{fmt(r.l10.median)}</div>
+                        <div className="desk-label mt-1">L10 med</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
+                      <div><div className="desk-label">Line</div><div className={ln ? "text-[hsl(var(--desk-indigo))]" : "text-[hsl(var(--desk-muted))]"}>{ln ?? "—"}</div></div>
+                      <div><div className="desk-label">Range</div><div className="text-[hsl(var(--desk-muted))]">{fmt(r.l10.floor)}–{fmt(r.l10.ceiling)}</div></div>
+                      <div><div className="desk-label">Hit L10</div><div>{pct(r.l10.hitRate)}</div></div>
+                      <div><div className="desk-label">Trend</div><div className={r.trend === "hot" ? "text-[hsl(var(--desk-win))]" : r.trend === "cold" ? "text-[hsl(var(--desk-loss))]" : "text-[hsl(var(--desk-muted))]"}>{r.trend === "hot" ? "▲ Hot" : r.trend === "cold" ? "▼ Cold" : "— Flat"}</div></div>
+                    </div>
+                  </button>
+                  {isOpen && <div className="px-3 pb-3">{renderDetail(r.player, ln, r.l10.median)}</div>}
+                </li>
+              );
+            })}
+            {!rows.length && <li className="px-3 py-8 text-center text-[hsl(var(--desk-muted))]">No players match.</li>}
+          </ul>
+        )}
+
+        {!loading && !err && (
+          <table className="hidden w-full text-sm sm:table">
             <thead className="sticky top-0 z-10 bg-[hsl(var(--desk-panel-2))]">
               <tr>
                 {HEAD.map((h) => (
@@ -167,28 +231,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                     {open === r.player && (
                       <tr className="border-t border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-panel)/0.7)]">
                         <td colSpan={HEAD.length} className="px-3 py-3">
-                          <div className="desk-label mb-2">Last 10 · {STAT_OPTIONS.find((s) => s.key === stat)?.label}</div>
-                          <GameLogStrip games={byPlayer.get(r.player) ?? []} stat={stat} line={ln ?? r.l10.median} />
-                          <div className="mt-3 flex flex-wrap items-start gap-3">
-                            <button
-                              className="desk-btn"
-                              disabled={explain[r.player]?.busy}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                runExplain(r.player, ln);
-                              }}
-                            >
-                              {explain[r.player]?.busy ? "Thinking…" : "Explain this edge (AI)"}
-                            </button>
-                            {explain[r.player]?.text && (
-                              <div className="desk-panel-flat min-w-[260px] flex-1 p-3">
-                                <Prose text={explain[r.player]!.text!} />
-                              </div>
-                            )}
-                            {explain[r.player]?.error && (
-                              <p className="desk-mono text-sm text-[hsl(var(--desk-loss))]">{explain[r.player]!.error}</p>
-                            )}
-                          </div>
+                          {renderDetail(r.player, ln, r.l10.median)}
                         </td>
                       </tr>
                     )}

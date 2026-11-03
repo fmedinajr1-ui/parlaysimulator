@@ -14,7 +14,7 @@ const AdminLogin = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (user) navigate("/dashboard", { replace: true });
+    if (user) navigate("/", { replace: true });
   }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -26,7 +26,7 @@ const AdminLogin = () => {
     if (error) {
       setError(error.message);
     } else {
-      navigate("/dashboard", { replace: true });
+      navigate("/", { replace: true });
     }
   };
 
