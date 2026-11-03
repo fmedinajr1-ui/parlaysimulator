@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { AdminGate } from "@/components/AdminGate";
 import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -98,11 +99,11 @@ function AnimatedRoutes() {
         <RouteErrorBoundary>
           <React.Suspense fallback={<WolfLoadingOverlay />}>
             <Routes location={location}>
-              <Route path="/" element={<Desk />} />
+              <Route path="/" element={<AdminGate><Desk /></AdminGate>} />
               <Route path="/landing" element={<Home />} />
               <Route path="/legacy-landing" element={<BotLanding />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
-              <Route path="/research" element={<Research />} />
+              <Route path="/research" element={<AdminGate><Research /></AdminGate>} />
               <Route path="/auth" element={<Navigate to="/" replace />} />
               <Route path="/bot" element={<Navigate to="/" replace />} />
               <Route path="/dashboard" element={<BotDashboard />} />
