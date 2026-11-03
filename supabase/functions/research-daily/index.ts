@@ -10,7 +10,7 @@ const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
 const JOB = "research-daily";
 
 async function getJson(url: string) {
-  const r = await fetch(url);
+  const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36", Accept: "application/json" } });
   if (!r.ok) throw new Error(`${r.status} ${url.split("?")[0]}`);
   return r.json();
 }
