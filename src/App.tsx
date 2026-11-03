@@ -24,6 +24,7 @@ import { usePageView } from "@/hooks/useAnalytics";
 // Lazy load pages
 const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
 const BotLanding = React.lazy(() => import("./pages/BotLanding"));
+const Desk = React.lazy(() => import("./pages/Desk"));
 const Home = React.lazy(() => import("./pages/Home"));
 const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
 const Research = React.lazy(() => import("./pages/Research"));
@@ -97,7 +98,8 @@ function AnimatedRoutes() {
         <RouteErrorBoundary>
           <React.Suspense fallback={<WolfLoadingOverlay />}>
             <Routes location={location}>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={<Desk />} />
+              <Route path="/landing" element={<Home />} />
               <Route path="/legacy-landing" element={<BotLanding />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
               <Route path="/research" element={<Research />} />
