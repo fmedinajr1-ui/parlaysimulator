@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -104,7 +104,7 @@ export default function Research() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <>
+                <Fragment key={r.player}>
                   <tr key={r.player} className="border-t border-border hover:bg-muted/50 cursor-pointer" onClick={() => setOpen(open === r.player ? null : r.player)}>
                     <td className="px-3 py-2 font-semibold">{r.player}</td>
                     <td className="px-3 py-2 text-muted-foreground">{r.lastDate} vs {r.lastOpponent ?? "?"}</td>
@@ -139,7 +139,7 @@ export default function Research() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
               {!rows.length && (
                 <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">No players match.</td></tr>
