@@ -1,0 +1,161 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ============================================================
+   Midnight Amber — ParlayFarm Research Desk theme
+   Scoped to .desk-theme so it never leaks into the marketing site.
+   ============================================================ */
+.desk-theme {
+  --desk-bg: 222 42% 6%;          /* #090D16 */
+  --desk-panel: 217 33% 10%;      /* #111827-ish */
+  --desk-panel-2: 217 28% 14%;
+  --desk-line: 217 25% 20%;       /* #1E293B */
+  --desk-text: 210 20% 96%;
+  --desk-muted: 215 16% 70%;
+  --desk-amber: 38 92% 50%;       /* #F59E0B */
+  --desk-indigo: 239 84% 67%;     /* #6366F1 */
+  --desk-win: 152 70% 45%;
+  --desk-loss: 354 75% 55%;
+
+  /* shadcn tokens re-themed inside the desk only */
+  --background: var(--desk-bg);
+  --foreground: var(--desk-text);
+  --card: var(--desk-panel);
+  --card-foreground: var(--desk-text);
+  --popover: var(--desk-panel);
+  --popover-foreground: var(--desk-text);
+  --primary: var(--desk-amber);
+  --primary-foreground: 30 60% 8%;
+  --secondary: var(--desk-panel-2);
+  --secondary-foreground: var(--desk-text);
+  --muted: var(--desk-panel-2);
+  --muted-foreground: var(--desk-muted);
+  --accent: var(--desk-indigo);
+  --accent-foreground: var(--desk-text);
+  --destructive: var(--desk-loss);
+  --destructive-foreground: var(--desk-text);
+  --border: var(--desk-line);
+  --input: var(--desk-line);
+  --ring: var(--desk-amber);
+
+  background:
+    radial-gradient(1100px 500px at 85% -10%, hsl(var(--desk-indigo) / 0.14), transparent 70%),
+    radial-gradient(900px 420px at 5% 0%, hsl(var(--desk-amber) / 0.10), transparent 70%),
+    hsl(var(--desk-bg));
+  color: hsl(var(--desk-text));
+  font-family: 'Sora', system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.desk-theme .desk-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.desk-theme .desk-display { font-family: 'Sora', system-ui, sans-serif; letter-spacing: -0.02em; }
+
+.desk-theme .desk-panel {
+  background: linear-gradient(180deg, hsl(var(--desk-panel-2) / 0.85), hsl(var(--desk-panel) / 0.95));
+  border: 1px solid hsl(var(--desk-line));
+  border-radius: 14px;
+}
+
+.desk-theme .desk-panel-flat {
+  background: hsl(var(--desk-panel));
+  border: 1px solid hsl(var(--desk-line));
+  border-radius: 14px;
+}
+
+.desk-theme .desk-grid-bg {
+  background-image:
+    repeating-linear-gradient(0deg, hsl(var(--desk-amber) / 0.035) 0 1px, transparent 1px 64px),
+    repeating-linear-gradient(90deg, hsl(var(--desk-amber) / 0.035) 0 1px, transparent 1px 64px);
+}
+
+.desk-theme .desk-amber-glow { box-shadow: 0 0 0 1px hsl(var(--desk-amber) / 0.35), 0 12px 40px -18px hsl(var(--desk-amber) / 0.5); }
+.desk-theme .desk-indigo-glow { box-shadow: 0 0 0 1px hsl(var(--desk-indigo) / 0.35), 0 12px 40px -18px hsl(var(--desk-indigo) / 0.5); }
+
+.desk-theme .desk-label {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(215 18% 72%);
+}
+
+.desk-theme .desk-note { color: hsl(215 18% 78%); }
+
+
+.desk-theme .desk-chip {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  border: 1px solid hsl(var(--desk-line));
+  border-radius: 8px;
+  padding: 2px 8px;
+  color: hsl(var(--desk-muted));
+  background: hsl(var(--desk-panel));
+}
+
+.desk-theme .desk-tab {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  border: 1px solid hsl(var(--desk-line));
+  border-radius: 9px;
+  padding: 6px 12px;
+  color: hsl(215 18% 74%);
+  background: hsl(var(--desk-panel));
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.desk-theme .desk-tab:hover { color: hsl(var(--desk-text)); border-color: hsl(var(--desk-amber) / 0.5); }
+.desk-theme .desk-tab[data-active="true"] {
+  color: hsl(var(--desk-amber));
+  border-color: hsl(var(--desk-amber) / 0.7);
+  background: hsl(var(--desk-amber) / 0.10);
+}
+
+.desk-theme .desk-btn {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  border-radius: 9px;
+  padding: 7px 14px;
+  border: 1px solid hsl(var(--desk-line));
+  color: hsl(var(--desk-text));
+  background: hsl(var(--desk-panel-2));
+  transition: transform .12s ease, border-color .15s ease, background .15s ease;
+}
+.desk-theme .desk-btn:hover:not(:disabled) { border-color: hsl(var(--desk-amber) / 0.6); background: hsl(var(--desk-amber) / 0.08); }
+.desk-theme .desk-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.desk-theme .desk-btn-solid {
+  background: hsl(var(--desk-amber));
+  color: hsl(30 60% 8%);
+  font-weight: 700;
+  border-color: transparent;
+}
+.desk-theme .desk-btn-solid:hover:not(:disabled) { filter: brightness(1.08); background: hsl(var(--desk-amber)); }
+
+.desk-theme .desk-input {
+  background: hsl(var(--desk-panel));
+  border: 1px solid hsl(var(--desk-line));
+  border-radius: 10px;
+  color: hsl(var(--desk-text));
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 13px;
+}
+.desk-theme .desk-input::placeholder { color: hsl(215 14% 60%); }
+.desk-theme .desk-input:focus-visible { outline: none; border-color: hsl(var(--desk-amber) / 0.7); box-shadow: 0 0 0 3px hsl(var(--desk-amber) / 0.12); }
+
+.desk-theme .desk-ticker {
+  display: flex;
+  gap: 2.5rem;
+  width: max-content;
+  animation: desk-ticker-slide 38s linear infinite;
+  white-space: nowrap;
+}
+@keyframes desk-ticker-slide { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+.desk-theme .desk-row:hover { background: hsl(var(--desk-amber) / 0.05); }
+.desk-theme .desk-row[data-open="true"] { background: hsl(var(--desk-indigo) / 0.07); }
+
+.desk-theme .desk-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.desk-theme .desk-scroll::-webkit-scrollbar-thumb { background: hsl(var(--desk-line)); border-radius: 8px; }
+.desk-theme .desk-scroll::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-theme .desk-ticker { animation: none !important; }
+}

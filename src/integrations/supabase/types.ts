@@ -14712,6 +14712,99 @@ export type Database = {
         }
         Relationships: []
       }
+      research_ai_reports: {
+        Row: {
+          content: string
+          created_at: string
+          game_date: string
+          id: string
+          kind: string
+          player_name: string | null
+          stat: string | null
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          game_date: string
+          id?: string
+          kind: string
+          player_name?: string | null
+          stat?: string | null
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          game_date?: string
+          id?: string
+          kind?: string
+          player_name?: string | null
+          stat?: string | null
+        }
+        Relationships: []
+      }
+      research_job_state: {
+        Row: {
+          job: string
+          last_report: Json | null
+          last_run_at: string | null
+          locked_until: string | null
+          paused_reason: string | null
+        }
+        Insert: {
+          job: string
+          last_report?: Json | null
+          last_run_at?: string | null
+          locked_until?: string | null
+          paused_reason?: string | null
+        }
+        Update: {
+          job?: string
+          last_report?: Json | null
+          last_run_at?: string | null
+          locked_until?: string | null
+          paused_reason?: string | null
+        }
+        Relationships: []
+      }
+      research_prop_lines: {
+        Row: {
+          book: string
+          event_label: string | null
+          game_date: string
+          id: string
+          line: number
+          over_price: number | null
+          player_name: string
+          stat: string
+          under_price: number | null
+          updated_at: string
+        }
+        Insert: {
+          book: string
+          event_label?: string | null
+          game_date: string
+          id?: string
+          line: number
+          over_price?: number | null
+          player_name: string
+          stat: string
+          under_price?: number | null
+          updated_at?: string
+        }
+        Update: {
+          book?: string
+          event_label?: string | null
+          game_date?: string
+          id?: string
+          line?: number
+          over_price?: number | null
+          player_name?: string
+          stat?: string
+          under_price?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       rosters: {
         Row: {
           id: string

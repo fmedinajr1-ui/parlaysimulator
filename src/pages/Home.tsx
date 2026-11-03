@@ -30,7 +30,7 @@ export default function Home() {
       <Seo
         title="Parlay Farm - AI Sports Betting Analysis & Parlay Optimizer"
         description="Upload your parlay slip for AI analysis, track sharp money movement, and discover data-driven betting strategies. Free parlay calculator and real-time odds tracking."
-        canonical="https://parlayfarm.com/"
+        canonical="https://parlayfarm.com/landing"
         jsonLd={{
           "@context": "https://schema.org",
           "@type": "WebPage",
