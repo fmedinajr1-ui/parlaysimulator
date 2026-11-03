@@ -2,7 +2,7 @@
 // Once-a-day NBA research job: box scores (ESPN) -> injuries (ESPN) -> prop lines (The Odds API) -> AI top plays.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { etDateKey, etDateKeyDaysAgo } from "../_shared/date-et.ts";
-import { slateEdges } from "../_shared/research/context.ts";
+import { slateEdges, saveReport } from "../_shared/research/context.ts";
 import { runResearchAi, AiGatewayError, RESEARCH_INSTRUCTIONS } from "../_shared/research/ai.ts";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
         role: "user",
         content: `Today's slate (${today}). Pick the 5 best plays from these edges and give one short reason each, plus one play to avoid. Data:\n${JSON.stringify(edges)}`,
       }]);
-      await sb.from("research_ai_reports").upsert({ kind: "top_plays", player_name: null, stat: null, game_date: today, content: text, created_at: new Date().toISOString() }, { onConflict: "kind,player_name,stat,game_date", ignoreDuplicates: false });
+      await saveReport(sb, "top_plays", null, null, today, text);
       paused = null;
       return { ok: true, edges: edges.length };
     } catch (e) {
@@ -142,11 +142,6 @@ Deno.serve(async (req) => {
       throw e;
     }
   });
-
-  // upsert with expression index isn't supported by onConflict; fall back to delete+insert if needed
-  if (report.ai?.error?.includes("constraint")) {
-    report.ai = { note: "retried save" };
-  }
 
   await sb.from("research_job_state").upsert({ job: JOB, locked_until: null, paused_reason: paused, last_run_at: new Date().toISOString(), last_report: report });
   return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });

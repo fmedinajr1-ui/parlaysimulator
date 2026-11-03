@@ -60,3 +60,12 @@ export async function slateEdges(sb: any, date: string) {
   }
   return edges.sort((a, b) => Math.abs(b.edge) / Math.max(1, b.line) - Math.abs(a.edge) / Math.max(1, a.line));
 }
+
+export async function saveReport(sb: any, kind: string, player: string | null, stat: string | null, date: string, content: string) {
+  let q = sb.from("research_ai_reports").delete().eq("kind", kind).eq("game_date", date);
+  q = player ? q.eq("player_name", player) : q.is("player_name", null);
+  q = stat ? q.eq("stat", stat) : q.is("stat", null);
+  await q;
+  const { error } = await sb.from("research_ai_reports").insert({ kind, player_name: player, stat, game_date: date, content });
+  if (error) throw error;
+}
