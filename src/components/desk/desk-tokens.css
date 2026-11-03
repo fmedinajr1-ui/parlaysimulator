@@ -10,7 +10,7 @@
   --desk-panel-2: 217 28% 14%;
   --desk-line: 217 25% 20%;       /* #1E293B */
   --desk-text: 210 20% 96%;
-  --desk-muted: 215 16% 62%;
+  --desk-muted: 215 16% 70%;
   --desk-amber: 38 92% 50%;       /* #F59E0B */
   --desk-indigo: 239 84% 67%;     /* #6366F1 */
   --desk-win: 152 70% 45%;
@@ -137,7 +137,7 @@
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 13px;
 }
-.desk-theme .desk-input::placeholder { color: hsl(var(--desk-muted) / 0.7); }
+.desk-theme .desk-input::placeholder { color: hsl(215 14% 60%); }
 .desk-theme .desk-input:focus-visible { outline: none; border-color: hsl(var(--desk-amber) / 0.7); box-shadow: 0 0 0 3px hsl(var(--desk-amber) / 0.12); }
 
 .desk-theme .desk-ticker {
