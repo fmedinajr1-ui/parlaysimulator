@@ -1,5 +1,8 @@
 import { STAT_OPTIONS, type EdgePick } from "@/hooks/useResearchData";
 import { statValue, type GameLog } from "@/utils/nbaBoxScoreMath";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
 
 interface Props {
   edges: EdgePick[];
@@ -9,15 +12,22 @@ interface Props {
 const shortOf = (stat: string) => STAT_OPTIONS.find((s) => s.key === stat)?.short ?? stat.toUpperCase();
 
 export function EdgeCards({ edges, onPick }: Props) {
+  const [slip, setSlip] = useState(readSlip);
+  useEffect(() => { const f = () => setSlip(readSlip()); window.addEventListener(SLIP_EVENT, f); return () => window.removeEventListener(SLIP_EVENT, f); }, []);
+  const inSlip = new Set(slip.map(legKey));
   return (
+    <>
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {edges.map((e) => {
         const over = e.side === "over";
+        const picked = inSlip.has(legKey(e));
         return (
-          <button
+          <div
             key={`${e.player}-${e.stat}`}
+            role="button"
+            tabIndex={0}
             onClick={() => onPick(e.player)}
-            className="desk-panel desk-amber-glow group relative overflow-hidden p-4 text-left transition-transform hover:-translate-y-0.5"
+            className={`desk-panel desk-amber-glow group relative overflow-hidden p-4 text-left transition-transform hover:-translate-y-0.5 ${picked ? "ring-2 ring-[hsl(var(--desk-amber))]" : ""}`}
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -65,7 +75,13 @@ export function EdgeCards({ edges, onPick }: Props) {
                 {e.notes.map((n) => <span key={n} className="desk-chip desk-mono text-[10px]">{n}</span>)}
               </div>
             )}
-          </button>
+            <button
+              onClick={(ev) => { ev.stopPropagation(); toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight }); }}
+              className={`desk-mono mt-3 w-full rounded-md py-2 text-xs font-bold ${picked ? "bg-[hsl(var(--desk-amber))] text-[hsl(var(--desk-bg))]" : "border border-[hsl(var(--desk-amber)/0.6)] text-[hsl(var(--desk-amber))]"}`}
+            >
+              {picked ? "✓ In my slip · tap to remove" : "+ Add to my bets"}
+            </button>
+          </div>
         );
       })}
 
@@ -79,6 +95,13 @@ export function EdgeCards({ edges, onPick }: Props) {
         </div>
       )}
     </section>
+    {slip.length > 0 && (
+      <Link to="/bets" className="desk-mono fixed inset-x-3 bottom-4 z-40 mx-auto flex max-w-md items-center justify-between rounded-xl bg-[hsl(var(--desk-amber))] px-4 py-3 text-sm font-bold text-[hsl(var(--desk-bg))] shadow-lg">
+        <span>{slip.length} pick{slip.length > 1 ? "s" : ""} in slip{slip.length > 1 ? " · parlay ready" : ""}</span>
+        <span>Open my bets →</span>
+      </Link>
+    )}
+    </>
   );
 }
 
