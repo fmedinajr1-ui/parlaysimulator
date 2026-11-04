@@ -175,6 +175,11 @@ Deno.serve(async (req) => {
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
+  if (only === "grade") {
+    await step("gradeRealBets", () => gradeRealBets(sb, today));
+    await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
+    return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
+  }
   if (only === "rosters") {
     await step("rosters", () => syncRosters(sb));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
