@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { projectProp, opponentFactors, type ProjectionContext } from "./nbaProjection";
+import { projectProp, opponentFactors, type ProjectionContext, type MissingMate } from "./nbaProjection";
 import type { GameLog } from "./nbaBoxScoreMath";
 
 const ctx: ProjectionContext = { seasonStart: "2026-10-01", today: "2026-11-04", home: null, oppFactor: 1, teammatesOut: [] };
@@ -40,5 +40,30 @@ describe("projectProp", () => {
     const f = opponentFactors(logs, "points", "2026-10-01");
     expect(f.get("Soft")!).toBeGreaterThan(1);
     expect(f.get("Tough")!).toBeLessThan(1);
+  });
+});
+
+describe("teammate out by position and minutes", () => {
+  const center: MissingMate = { name: "Big Man", position: "C", stat: 10, minutes: 32 };
+  const reb = (pos: string, min = 30) =>
+    projectProp(games([6, 6, 6, 6, 6, 6, 6, 6]).map((g) => ({ ...g, rebounds: 6, minutes_played: min })), "rebounds", 5.5, -110, -110,
+      { ...ctx, position: pos, teammatesOut: [center] })!;
+  it("a big gets more of a missing center's rebounds than a guard", () => {
+    expect(reb("PF").projection).toBeGreaterThan(reb("PG").projection);
+  });
+  it("a guard gets no 'Teammate out' reason from a missing center", () => {
+    expect(reb("PG").notes).not.toContain("Teammate out");
+  });
+  it("a bench big gets a smaller bump than a starter big", () => {
+    expect(reb("C", 30).projection).toBeGreaterThan(reb("C", 14).projection);
+  });
+  it("the reason names the missing player and his minutes", () => {
+    const r = reb("C").reasons.find((x) => x.label === "Teammate out")!;
+    expect(r.why).toContain("Big Man (C, 32 min)");
+  });
+  it("a teammate who barely plays adds no reason", () => {
+    const p = projectProp(games([6, 6, 6, 6, 6, 6]).map((g) => ({ ...g, rebounds: 6 })), "rebounds", 5.5, -110, -110,
+      { ...ctx, position: "C", teammatesOut: [{ name: "Deep Bench", position: "C", stat: 1, minutes: 6 }] })!;
+    expect(p.notes).not.toContain("Teammate out");
   });
 });
