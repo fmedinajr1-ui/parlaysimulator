@@ -6,7 +6,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { PASS_KEY } from "@/components/AdminGate";
 import { betPnl, summarize, winProfit, type BetStatus, type PaperBet, type Side } from "@/utils/paperBets";
 import { legKey, parlayOdds, parlayStatus, readSlip, SLIP_EVENT, toggleLeg, writeSlip, type SlipLeg } from "@/utils/betSlip";
-import type { StatKey } from "@/utils/nbaBoxScoreMath";
+import { statValue, type StatKey } from "@/utils/nbaBoxScoreMath";
+import { hedgePlan, isDanger, liveLegProb, parlayCashProb } from "@/utils/liveHedge";
 
 const fmt = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 const fmtOdds = (o: number) => (o > 0 ? `+${o}` : String(o));
@@ -17,7 +18,7 @@ type Row = {
   book: string | null; game_date: string; placed_at: string; status: BetStatus; result_value: number | null;
   parlay_id: string | null; parlay_odds: number | null;
 };
-type Live = Record<string, { value: number; minutes: number; clock: string; final: boolean }>;
+type Live = Record<string, { value: number; minutes: number; clock: string; final: boolean; period?: number; clockSec?: number }>;
 type Ticket = { id: string; legs: Row[]; stake: number; odds: number; status: BetStatus; book: string | null; date: string; parlay: boolean };
 
 export default function MyBets() {
@@ -33,6 +34,36 @@ export default function MyBets() {
   const [bankInput, setBankInput] = useState("");
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hedgeOdds, setHedgeOdds] = useState<Record<string, string>>({});
+  const [aiNote, setAiNote] = useState<Record<string, string>>({});
+
+  // Pregame minutes and per-minute rate from the player's last 10 played games.
+  const pregame = useCallback((name: string, stat: StatKey) => {
+    const key = [...byPlayer.keys()].find((n) => n.toLowerCase() === name.toLowerCase());
+    const g = (key ? byPlayer.get(key) ?? [] : []).filter((x) => Number(x.minutes_played) > 0)
+      .sort((a, b) => b.game_date.localeCompare(a.game_date)).slice(0, 10);
+    if (!g.length) return { avgMinutes: 30, ratePerMin: 0 };
+    const mins = g.reduce((t, x) => t + Number(x.minutes_played), 0);
+    return { avgMinutes: mins / g.length, ratePerMin: g.reduce((t, x) => t + statValue(x, stat), 0) / mins };
+  }, [byPlayer]);
+
+  const legProb = useCallback((l: Row) => {
+    if (l.status === "won") return 1;
+    if (l.status === "lost") return 0;
+    if (l.status === "void" || l.status === "push") return null;
+    const lv = live[l.id];
+    const pg = pregame(l.player_name, l.stat);
+    return liveLegProb({ side: l.side, line: Number(l.line), value: lv?.value ?? 0, minutesPlayed: lv?.minutes ?? 0,
+      period: lv?.period ?? 0, clockSec: lv?.clockSec ?? 720, final: !!lv?.final, ...pg }).prob;
+  }, [live, pregame]);
+
+  const askAi = async (t: Ticket, info: unknown) => {
+    setAiNote((m) => ({ ...m, [t.id]: "Thinking…" }));
+    const { data, error } = await supabase.functions.invoke("research-ai", { body: { mode: "hedge", ticket: info } });
+    let msg = data?.text ?? data?.error;
+    if (!msg && error) { try { msg = (await (error as any).context?.json())?.error; } catch { /* ignore */ } }
+    setAiNote((m) => ({ ...m, [t.id]: msg || "AI couldn't answer right now." }));
+  };
 
   useEffect(() => { const f = () => setSlip(readSlip()); window.addEventListener(SLIP_EVENT, f); return () => window.removeEventListener(SLIP_EVENT, f); }, []);
   useEffect(() => localStorage.setItem("real_bankroll_v1", String(start)), [start]);
@@ -214,6 +245,15 @@ export default function MyBets() {
             <ul className="divide-y divide-[hsl(var(--desk-line))]">
               {tickets.map((t) => {
                 const pnl = betPnl({ stake: t.stake, odds: t.odds } as PaperBet, t.status);
+                const probs = t.legs.map((l) => legProb(l));
+                const counted = probs.filter((p): p is number => p != null);
+                const cash = t.status === "open" ? parlayCashProb(counted) : null;
+                const openLegs = t.legs.filter((l) => l.status === "open");
+                const last = openLegs.length === 1 ? openLegs[0] : null;
+                const lastP = last ? legProb(last) ?? 0 : 0;
+                const hOdds = Number(hedgeOdds[t.id] ?? "-110");
+                const plan = last ? hedgePlan(t.stake, t.odds, hOdds, lastP) : null;
+                const danger = t.legs.filter((l, i) => l.status === "open" && probs[i] != null && isDanger(probs[i]!, !!live[l.id]?.final));
                 return (
                   <li key={t.id} className="py-3 text-sm">
                     <div className="flex items-start justify-between gap-2">
@@ -228,8 +268,14 @@ export default function MyBets() {
                         </div>
                       </div>
                     </div>
+                    {cash != null && (
+                      <div className="desk-mono mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                        <span>CASH CHANCE <b className="text-[hsl(var(--desk-amber))]">{Math.round(cash * 100)}%</b></span>
+                        {danger.length > 0 && <span className="rounded bg-destructive/20 px-1.5 py-0.5 font-bold text-destructive">⚠ {danger.map((d) => d.player_name).join(", ")} in danger</span>}
+                      </div>
+                    )}
                     <ul className="mt-1 space-y-1">
-                      {t.legs.map((l) => {
+                      {t.legs.map((l, li) => {
                         const lv = live[l.id];
                         const cur = l.status !== "open" ? l.result_value : lv?.value;
                         const line = Number(l.line);
@@ -241,6 +287,7 @@ export default function MyBets() {
                               <span className="desk-mono shrink-0 text-[11px]">
                                 {cur != null ? <b>{cur}</b> : "—"}
                                 <span className="text-[hsl(var(--desk-muted))]"> · {l.status !== "open" ? l.status.toUpperCase() : lv ? lv.clock : "not started"}</span>
+                                {l.status === "open" && probs[li] != null && <span className={probs[li]! < 0.35 ? "text-destructive" : "text-[hsl(var(--desk-win))]"}> · {Math.round(probs[li]! * 100)}%</span>}
                               </span>
                             </div>
                             {cur != null && (
@@ -252,6 +299,30 @@ export default function MyBets() {
                         );
                       })}
                     </ul>
+                    {last && plan && (
+                      <div className="mt-2 space-y-1 rounded-md border border-[hsl(var(--desk-line))] p-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="desk-label">Hedge: {last.side === "over" ? "Under" : "Over"} {last.line} {statLabel(last.stat)}</span>
+                          <label className="desk-mono flex items-center gap-1 text-[11px]">odds
+                            <input value={hedgeOdds[t.id] ?? "-110"} onChange={(e) => setHedgeOdds((m) => ({ ...m, [t.id]: e.target.value }))}
+                              className="w-16 rounded border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg))] px-1 py-0.5" />
+                          </label>
+                        </div>
+                        <div className="desk-mono">
+                          Bet <b>{fmt(plan.hedgeStake)}</b> → locks <b className={plan.lockedProfit >= 0 ? "text-[hsl(var(--desk-amber))]" : "text-destructive"}>{fmt(plan.lockedProfit)}</b> either way
+                          <span className="text-[hsl(var(--desk-muted))]"> · {plan.recommended ? "hedge worth it" : plan.lockedProfit <= 0 ? "hedge loses money, ride or cut" : "leg looks good, optional"}</span>
+                        </div>
+                      </div>
+                    )}
+                    {t.status === "open" && (
+                      <div className="mt-2">
+                        <button className="desk-tab text-xs" onClick={() => askAi(t, {
+                          stake: t.stake, odds: t.odds, cash_chance: cash, hedge: plan,
+                          legs: t.legs.map((l, i) => ({ player: l.player_name, stat: l.stat, side: l.side, line: l.line, status: l.status, now: live[l.id]?.value ?? null, minutes: live[l.id]?.minutes ?? null, clock: live[l.id]?.clock ?? "not started", win_prob: probs[i], ...pregame(l.player_name, l.stat) })),
+                        })}>AI hedge note</button>
+                        {aiNote[t.id] && <p className="mt-1 whitespace-pre-wrap text-xs text-[hsl(var(--desk-muted))]">{aiNote[t.id]}</p>}
+                      </div>
+                    )}
                   </li>
                 );
               })}
