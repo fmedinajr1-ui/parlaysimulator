@@ -21,7 +21,7 @@ export function EdgeCards({ edges, onPick }: Props) {
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="desk-label">{shortOf(e.stat)} · vs {e.lastOpponent ?? "?"}</div>
+                <div className="desk-label">{shortOf(e.stat)} · {e.tonight ? `Tonight vs ${e.tonight}` : "Tonight"}</div>
                 <div className="desk-display truncate text-lg font-semibold">{e.player}</div>
               </div>
               <span
