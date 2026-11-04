@@ -5,11 +5,13 @@ import { STAT_OPTIONS, useResearchData } from "@/hooks/useResearchData";
 import { betPnl, settleBet, summarize, winProfit, type PaperBet, type Side } from "@/utils/paperBets";
 import type { StatKey } from "@/utils/nbaBoxScoreMath";
 
-const BETS_KEY = "paper_bets_v1", BANK_KEY = "paper_bankroll_v1";
 const fmt = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 const fmtOdds = (o: number) => (o > 0 ? `+${o}` : String(o));
 
-export default function PaperBets() {
+export default function PaperBets({ mode = "paper" }: { mode?: "paper" | "real" }) {
+  const real = mode === "real";
+  const BETS_KEY = real ? "real_bets_v1" : "paper_bets_v1", BANK_KEY = real ? "real_bankroll_v1" : "paper_bankroll_v1";
+  const [book, setBook] = useState(() => localStorage.getItem("real_last_book") || "FanDuel");
   const { byPlayer, propLines, lineOdds, tonight, today, logs, loading } = useResearchData();
   const [bets, setBets] = useState<PaperBet[]>(() => JSON.parse(localStorage.getItem(BETS_KEY) || "[]"));
   const [start, setStart] = useState<number>(() => Number(localStorage.getItem(BANK_KEY)) || 0);
@@ -38,11 +40,12 @@ export default function PaperBets() {
   }, [bets, byPlayer, logs]);
   const sum = summarize(start, graded);
   const stakeNum = Number(stake);
-  const canPlace = pick && stakeNum > 0 && start > 0 && stakeNum <= sum.bankroll;
+  const canPlace = pick && stakeNum > 0 && pick.odds !== 0 && Math.abs(pick.odds) >= 100 && (real || (start > 0 && stakeNum <= sum.bankroll));
 
   const place = () => {
     if (!pick || !canPlace) return;
-    setBets((b) => [{ id: crypto.randomUUID(), ...pick, stake: stakeNum, gameDate: today, placedAt: new Date().toISOString() }, ...b]);
+    setBets((b) => [{ id: crypto.randomUUID(), ...pick, stake: stakeNum, gameDate: today, ...(real ? { book } : {}), placedAt: new Date().toISOString() }, ...b]);
+    if (real) localStorage.setItem("real_last_book", book);
     setPick(null);
     setStake("");
   };
@@ -53,10 +56,13 @@ export default function PaperBets() {
       <header className="sticky top-0 z-30 border-b border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg)/0.9)] px-3 py-3 backdrop-blur sm:px-4">
         <div className="mx-auto flex max-w-[1100px] items-center justify-between gap-3 pr-14 sm:pr-0">
           <div>
-            <div className="desk-display text-lg font-bold">Paper bets</div>
-            <div className="desk-label mt-1">Pretend money · tonight's lines · settles from box scores</div>
+            <div className="desk-display text-lg font-bold">{real ? "My sportsbook" : "Paper bets"}</div>
+            <div className="desk-label mt-1">{real ? "Log bets you placed · settles from box scores" : "Pretend money · tonight's lines · settles from box scores"}</div>
           </div>
-          <Link to="/" className="desk-tab">← Desk</Link>
+          <div className="flex gap-1">
+            <Link to={real ? "/paper" : "/bets"} className="desk-tab">{real ? "Paper" : "Real bets"}</Link>
+            <Link to="/" className="desk-tab">← Desk</Link>
+          </div>
         </div>
       </header>
 
@@ -76,7 +82,7 @@ export default function PaperBets() {
           <div className="col-span-2 flex flex-wrap items-center gap-2 sm:col-span-4">
             <input
               inputMode="decimal"
-              placeholder={start ? `Starting money: ${fmt(start)}` : "Set your starting money, e.g. 500"}
+              placeholder={start ? `Starting money: ${fmt(start)}` : real ? "Your bankroll (optional), e.g. 500" : "Set your starting money, e.g. 500"}
               value={bankInput}
               onChange={(e) => setBankInput(e.target.value.replace(/[^\d.]/g, ""))}
               className="min-w-0 flex-1 rounded-md border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg))] px-3 py-2 text-sm"
@@ -85,7 +91,7 @@ export default function PaperBets() {
               {start ? "Change" : "Set"}
             </button>
             {bets.length > 0 && (
-              <button className="desk-tab" onClick={() => confirm("Clear all paper bets?") && setBets([])}>Reset bets</button>
+              <button className="desk-tab" onClick={() => confirm(real ? "Clear all logged bets?" : "Clear all paper bets?") && setBets([])}>Reset bets</button>
             )}
           </div>
         </section>
@@ -139,16 +145,30 @@ export default function PaperBets() {
                   <b>{pick.player}</b> {pick.side === "over" ? "Over" : "Under"} {pick.line} {statLabel(pick.stat)}{" "}
                   <span className="desk-mono">({fmtOdds(pick.odds)})</span>
                 </div>
+                {real && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      ["Line", String(pick.line), (v: string) => setPick({ ...pick, line: Number(v) || 0 })],
+                      ["Odds", String(pick.odds), (v: string) => setPick({ ...pick, odds: Number(v) || 0 })],
+                      ["Book", book, setBook],
+                    ].map(([l, v, on]) => (
+                      <label key={l as string} className="desk-label">{l as string}
+                        <input defaultValue={v as string} onChange={(e) => (on as (v: string) => void)(e.target.value)}
+                          className="mt-1 w-full rounded-md border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg))] px-2 py-1.5 text-sm normal-case" />
+                      </label>
+                    ))}
+                  </div>
+                )}
                 <input inputMode="decimal" placeholder="Stake $" value={stake}
                   onChange={(e) => setStake(e.target.value.replace(/[^\d.]/g, ""))}
                   className="w-full rounded-md border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg))] px-3 py-2 text-sm" />
                 <div className="desk-mono text-xs text-[hsl(var(--desk-muted))]">
                   To win {fmt(winProfit(stakeNum || 0, pick.odds))}
-                  {!start ? " · set your starting money first" : stakeNum > sum.bankroll ? " · more than your bankroll" : ""}
+                  {real ? "" : !start ? " · set your starting money first" : stakeNum > sum.bankroll ? " · more than your bankroll" : ""}
                 </div>
                 <button disabled={!canPlace} onClick={place}
                   className="w-full rounded-md bg-[hsl(var(--desk-amber))] py-2 text-sm font-bold text-[hsl(var(--desk-bg))] disabled:opacity-40">
-                  Place paper bet
+                  {real ? "Log this bet" : "Place paper bet"}
                 </button>
               </>
             )}
@@ -161,7 +181,8 @@ export default function PaperBets() {
                   <li key={bet.id} className="flex items-center justify-between gap-2 py-2 text-sm">
                     <div className="min-w-0">
                       <div className="truncate">{bet.player} {bet.side === "over" ? "O" : "U"} {bet.line} {statLabel(bet.stat)}</div>
-                      <div className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">{bet.gameDate} · {fmt(bet.stake)} at {fmtOdds(bet.odds)}</div>
+                      <div className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">{bet.gameDate} · {fmt(bet.stake)} at {fmtOdds(bet.odds)}{bet.book ? ` · ${bet.book}` : ""}
+                        {real && <button className="ml-2 underline" onClick={() => confirm("Delete this bet?") && setBets((b) => b.filter((x) => x.id !== bet.id))}>delete</button>}</div>
                     </div>
                     <div className="desk-mono shrink-0 text-right text-xs">
                       <div className="uppercase">{status}</div>

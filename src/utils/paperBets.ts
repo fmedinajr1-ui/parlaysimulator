@@ -13,6 +13,7 @@ export interface PaperBet {
   stake: number;
   gameDate: string; // ET YYYY-MM-DD
   placedAt: string;
+  book?: string;
 }
 
 /** Profit (not including stake) if an American-odds bet wins. */
