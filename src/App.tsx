@@ -16,8 +16,8 @@ import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { AnimatePresence, motion } from "framer-motion";
 import { PilotRouteGuard } from "@/components/PilotRouteGuard";
 import { EmailVerificationGuard } from "@/components/EmailVerificationGuard";
-import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
+import { RouteMemory } from "@/components/RouteMemory";
 import { useRoutePersistence } from "@/hooks/useRoutePersistence";
 import { usePageLifecycle } from "@/hooks/usePageLifecycle";
 import { usePageView } from "@/hooks/useAnalytics";
@@ -191,7 +191,7 @@ function AppContent() {
         <SafeRoutePersistence />
         <Toaster />
         <Sonner />
-        <PWAUpdatePrompt />
+        <RouteMemory />
         <AnimatedRoutes />
         <UniversalParlayBuilder />
         {isMobile && location.pathname !== '/' && location.pathname !== '/live-ai' && !location.pathname.startsWith('/spike/') && <MobileFloatingMenu />}
