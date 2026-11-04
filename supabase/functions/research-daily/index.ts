@@ -163,7 +163,8 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
   await step("rosters", () => syncRosters(sb));
-  await step("boxScores", () => syncBoxScores(sb, etDateKeyDaysAgo(1, now)));
+  // Last 3 days, so a missed run never leaves a gap in this season's games.
+  for (const n of [3, 2, 1]) await step(`boxScores_${n}d`, () => syncBoxScores(sb, etDateKeyDaysAgo(n, now)));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
 
