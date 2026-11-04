@@ -218,7 +218,7 @@ export function useResearchData() {
       if (!m.has(k) || r.book === "fanduel") m.set(k, Number(r.line));
       const [away, home] = (r.event_label ?? "").split(" @ ");
       const team = teamOf.get(name);
-      if (team && away && home) t.set(name.toLowerCase(), team === home ? away : team === away ? `@ ${home}`.slice(2) : r.event_label!);
+      if (team && away && home) t.set(name.toLowerCase(), team === home ? away : team === away ? home : r.event_label!);
     }
     return { propLines: m, tonight: t };
   }, [rawLines, resolver, roster]);
