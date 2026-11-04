@@ -51,7 +51,7 @@ export default function PaperBets() {
   return (
     <div className="desk-theme desk-grid-bg min-h-screen">
       <header className="sticky top-0 z-30 border-b border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg)/0.9)] px-3 py-3 backdrop-blur sm:px-4">
-        <div className="mx-auto flex max-w-[1100px] items-center justify-between gap-3">
+        <div className="mx-auto flex max-w-[1100px] items-center justify-between gap-3 pr-14 sm:pr-0">
           <div>
             <div className="desk-display text-lg font-bold">Paper bets</div>
             <div className="desk-label mt-1">Pretend money · tonight's lines · settles from box scores</div>
