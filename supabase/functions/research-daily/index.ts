@@ -148,13 +148,23 @@ Deno.serve(async (req) => {
   };
   const body = await req.json().catch(() => ({}));
   const only = new URL(req.url).searchParams.get("only") ?? body?.only;
+  if (only === "backfill" && body?.from && body?.to) {
+    // Fill in box scores for a date range (YYYY-MM-DD, inclusive), e.g. missed days early in the season.
+    for (let d = new Date(`${body.from}T12:00:00Z`); d <= new Date(`${body.to}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      await step(key, () => syncBoxScores(sb, key));
+    }
+    await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
+    return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
+  }
   if (only === "rosters") {
     await step("rosters", () => syncRosters(sb));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
   await step("rosters", () => syncRosters(sb));
-  await step("boxScores", () => syncBoxScores(sb, etDateKeyDaysAgo(1, now)));
+  // Last 3 days, so a missed run never leaves a gap in this season's games.
+  for (const n of [3, 2, 1]) await step(`boxScores_${n}d`, () => syncBoxScores(sb, etDateKeyDaysAgo(n, now)));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
 

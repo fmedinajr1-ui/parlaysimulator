@@ -76,6 +76,8 @@ export interface EdgePick {
   lastDate: string;
   lastOpponent: string | null;
   tonight: string | null;
+  /** How many of the last 10 games were played this season. */
+  thisSeason: number;
 }
 
 /** Players with a live sportsbook line today whose L10 median sits off that line. */
@@ -107,6 +109,7 @@ export function computeEdges(
         lastDate: s.lastDate,
         lastOpponent: s.lastOpponent,
         tonight: tonight.get(name.toLowerCase()) ?? null,
+        thisSeason: games.filter((g) => Number(g.minutes_played) > 0).slice(0, 10).filter((g) => g.game_date >= seasonStart).length,
       });
     }
   }
