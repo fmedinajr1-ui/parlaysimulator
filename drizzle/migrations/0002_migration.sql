@@ -1,0 +1,2 @@
+ALTER TABLE public.research_real_bets ADD COLUMN IF NOT EXISTS parlay_id uuid, ADD COLUMN IF NOT EXISTS parlay_odds integer;
+CREATE INDEX IF NOT EXISTS research_real_bets_parlay_idx ON public.research_real_bets(parlay_id);
