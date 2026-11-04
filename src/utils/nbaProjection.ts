@@ -10,9 +10,46 @@ export interface ProjectionContext {
   home: boolean | null;
   /** Tonight's opponent allows this stat vs league average (1 = average). */
   oppFactor: number;
-  /** Summed L10 median of this stat for teammates ruled Out tonight. */
-  teammatesOut: number;
+  /** Teammates ruled Out tonight who have played this season. */
+  teammatesOut: MissingMate[];
+  /** Player's position (ESPN abbreviation, e.g. "PG", "C"). */
+  position?: string | null;
 }
+
+export interface MissingMate {
+  name: string;
+  position: string | null;
+  /** Their L10 median of this stat. */
+  stat: number;
+  /** Their average minutes this season. */
+  minutes: number;
+}
+
+export interface Reason {
+  label: string;
+  /** Plain-English explanation with the numbers behind it. */
+  why: string;
+  /** Effect on the projection, e.g. +4 means +4%. */
+  pct: number;
+}
+
+type Group = "guard" | "wing" | "big";
+export function positionGroup(pos: string | null | undefined): Group | null {
+  const p = (pos ?? "").toUpperCase();
+  if (["PG", "SG", "G"].includes(p)) return "guard";
+  if (["SF", "F", "GF", "SF-PF"].includes(p)) return "wing";
+  if (["PF", "C", "FC", "PF-C"].includes(p)) return "big";
+  return null;
+}
+/** How much of a missing teammate's role flows to this player, by position overlap. */
+export function positionOverlap(a: string | null | undefined, b: string | null | undefined): number {
+  const ga = positionGroup(a), gb = positionGroup(b);
+  if (!ga || !gb) return 0.5;
+  if (ga === gb) return 1;
+  if (ga === "wing" || gb === "wing") return 0.6;
+  return 0.25; // guard <-> big
+}
+const STAT_WORD: Record<StatKey, string> = { points: "pts", rebounds: "reb", assists: "ast", threes_made: "3s", pra: "PRA" };
 
 export interface Projection {
   projection: number;
@@ -22,6 +59,7 @@ export interface Projection {
   odds: number;
   thisSeason: number;
   notes: string[];
+  reasons: Reason[];
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
