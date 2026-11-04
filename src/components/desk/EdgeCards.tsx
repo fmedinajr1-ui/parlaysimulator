@@ -12,7 +12,7 @@ export function EdgeCards({ edges, onPick }: Props) {
   return (
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {edges.map((e) => {
-        const over = e.median >= e.line;
+        const over = e.side === "over";
         return (
           <button
             key={`${e.player}-${e.stat}`}
@@ -41,7 +41,7 @@ export function EdgeCards({ edges, onPick }: Props) {
                 <div className="desk-mono text-2xl font-bold text-[hsl(var(--desk-text))]">{e.line}</div>
               </div>
               <div className="text-right leading-none">
-                <div className="desk-label">L10 median</div>
+                <div className="desk-label">Projection</div>
                 <div className="desk-mono text-2xl font-bold text-[hsl(var(--desk-amber))]">
                   {Math.round(e.median * 10) / 10}
                 </div>
@@ -50,17 +50,21 @@ export function EdgeCards({ edges, onPick }: Props) {
 
             <div className="mt-3 flex items-center justify-between border-t border-[hsl(var(--desk-line))] pt-2">
               <span className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">
-                {over ? "OVER" : "UNDER"} HIT {Math.round(e.hitRate * 100)}% · {e.thisSeason}/10 this season
+                WIN {Math.round(e.hitRate * 100)}% at {e.odds > 0 ? `+${e.odds}` : e.odds} · {e.thisSeason}/10 this season
               </span>
               <span
                 className={`desk-mono text-[11px] font-semibold ${
                   e.edge > 0 ? "text-[hsl(var(--desk-win))]" : "text-[hsl(var(--desk-loss))]"
                 }`}
               >
-                EDGE {e.edge > 0 ? "+" : ""}
-                {Math.round(e.edge * 10) / 10}
+                PROFIT {e.ev > 0 ? "+" : ""}{Math.round(e.ev * 100)}¢/$1
               </span>
             </div>
+            {e.notes.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {e.notes.map((n) => <span key={n} className="desk-chip desk-mono text-[10px]">{n}</span>)}
+              </div>
+            )}
           </button>
         );
       })}
