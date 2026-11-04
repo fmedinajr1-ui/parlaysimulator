@@ -8,6 +8,13 @@
       "when": 1793805881060,
       "tag": "0000_migration",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793808436783,
+      "tag": "0001_create_research_real_bets",
+      "breakpoints": true
     }
   ]
 }

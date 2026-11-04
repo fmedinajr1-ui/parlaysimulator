@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { projectProp, opponentFactors } from "@/utils/nbaProjection";
 import {
   summarizePlayer,
   type GameLog,
@@ -7,7 +8,7 @@ import {
   type StatKey,
 } from "@/utils/nbaBoxScoreMath";
 
-const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made";
+const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home";
 
 export const STAT_OPTIONS: { key: StatKey; label: string; short: string }[] = [
   { key: "points", label: "Points", short: "PTS" },
@@ -69,9 +70,16 @@ export interface EdgePick {
   player: string;
   stat: StatKey;
   line: number;
+  /** Adjusted projection (kept as `median` for older callers). */
   median: number;
   edge: number;
+  side: "over" | "under";
+  /** Chance the recommended side wins. */
   hitRate: number;
+  /** Expected profit per $1 at the posted odds. */
+  ev: number;
+  odds: number;
+  notes: string[];
   trend: PlayerSummary["trend"];
   lastDate: string;
   lastOpponent: string | null;
@@ -80,45 +88,67 @@ export interface EdgePick {
   thisSeason: number;
 }
 
-/** Players with a live sportsbook line today whose L10 median sits off that line. */
-export function computeEdges(
-  byPlayer: Map<string, GameLog[]>,
-  propLines: Map<string, number>,
-  limit = 4,
-  tonight: Map<string, string> = new Map(),
-  seasonStart = "2026-10-01",
-): EdgePick[] {
+export interface EdgeInputs {
+  byPlayer: Map<string, GameLog[]>;
+  propLines: Map<string, number>;
+  lineOdds: Map<string, { over: number | null; under: number | null }>;
+  tonight: Map<string, string>;
+  homeTonight: Map<string, boolean>;
+  injuries: Map<string, string>;
+  teamOf: Map<string, string>;
+  today: string;
+  seasonStart?: string;
+  limit?: number;
+}
+
+const SKIP_STATUS = /out|doubtful|suspend/i;
+
+/** Ranks every prop with a line tonight by expected profit; Overs and Unders compete on the same scale. */
+export function computeEdges(i: EdgeInputs): EdgePick[] {
+  const seasonStart = i.seasonStart ?? "2026-10-01";
+  const all: GameLog[] = [];
+  for (const g of i.byPlayer.values()) all.push(...g);
+  const oppCache = new Map<StatKey, Map<string, number>>();
+  const opp = (stat: StatKey) => oppCache.get(stat) ?? oppCache.set(stat, opponentFactors(all, stat, seasonStart)).get(stat)!;
+  // Teammates ruled out tonight, by team.
+  const outByTeam = new Map<string, string[]>();
+  for (const [name, status] of i.injuries) {
+    if (!/out/i.test(status)) continue;
+    const real = [...i.teamOf.keys()].find((n) => n.toLowerCase() === name);
+    const team = real && i.teamOf.get(real);
+    if (team) outByTeam.set(team, [...(outByTeam.get(team) ?? []), real]);
+  }
   const out: EdgePick[] = [];
-  for (const [name, games] of byPlayer) {
+  for (const [name, games] of i.byPlayer) {
+    const lower = name.toLowerCase();
+    if (SKIP_STATUS.test(i.injuries.get(lower) ?? "")) continue;
+    const team = i.teamOf.get(name);
     for (const { key } of STAT_OPTIONS) {
-      const line = propLines.get(`${name.toLowerCase()}|${key}`);
+      const k = `${lower}|${key}`;
+      const line = i.propLines.get(k);
       if (!line) continue;
-      if (games.filter((g) => g.game_date >= seasonStart && Number(g.minutes_played) > 0).length < 3) continue; // need 3+ games this season
-      const s = summarizePlayer(games, key, line);
-      if (!s || s.l10.games < 5) continue;
-      const edge = s.l10.median - line; // in stat units, not %
-      const over = edge > 0;
-      const sideHit = over ? s.l10.hitRate : 1 - s.l10.hitRate;
-      if (edge === 0 || sideHit < 0.7) continue; // median and hit rate must agree
+      const odds = i.lineOdds.get(k);
+      const oppName = i.tonight.get(lower);
+      const mates = (team && outByTeam.get(team)) || [];
+      const matesOut = mates.reduce((t, m) => {
+        // Only teammates who've actually played this season free up a role.
+        const s = summarizePlayer((i.byPlayer.get(m) ?? []).filter((g) => g.game_date >= seasonStart), key);
+        return t + (s?.l10.median ?? 0);
+      }, 0);
+      const p = projectProp(games, key, line, odds?.over ?? -110, odds?.under ?? -110, {
+        seasonStart, today: i.today, home: i.homeTonight.get(lower) ?? null,
+        oppFactor: (oppName && opp(key).get(oppName)) || 1, teammatesOut: matesOut,
+      });
+      if (!p || p.ev < 0.03 || p.prob < 0.55) continue;
+      const s = summarizePlayer(games, key, line)!;
       out.push({
-        player: name,
-        stat: key,
-        line,
-        median: s.l10.median,
-        edge,
-        hitRate: sideHit,
-        trend: s.trend,
-        lastDate: s.lastDate,
-        lastOpponent: s.lastOpponent,
-        tonight: tonight.get(name.toLowerCase()) ?? null,
-        thisSeason: games.filter((g) => Number(g.minutes_played) > 0).slice(0, 10).filter((g) => g.game_date >= seasonStart).length,
+        player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
+        side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, trend: s.trend,
+        lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason,
       });
     }
   }
-  // Best = highest hit rate on the recommended side, then biggest gap relative to the line.
-  return out
-    .sort((a, b) => b.hitRate - a.hitRate || Math.abs(b.edge) / Math.max(b.line, 1) - Math.abs(a.edge) / Math.max(a.line, 1))
-    .slice(0, limit);
+  return out.sort((a, b) => b.ev - a.ev).slice(0, i.limit ?? 4);
 }
 
 const norm = (n: string) => n.toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, "").replace(/[^a-z ]/g, "").trim();
@@ -220,10 +250,11 @@ export function useResearchData() {
   );
 
   // Today's lines keyed by roster name, plus tonight's opponent from the game the line belongs to.
-  const { propLines, tonight, lineOdds } = useMemo(() => {
+  const { propLines, tonight, lineOdds, homeTonight } = useMemo(() => {
     const m = new Map<string, number>();
     const best = new Map<string, number>();
     const t = new Map<string, string>();
+    const h = new Map<string, boolean>();
     const o = new Map<string, { over: number | null; under: number | null; book: string }>();
     const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
     for (const r of rawLines) {
@@ -235,9 +266,10 @@ export function useResearchData() {
       if (!best.has(k) || j < best.get(k)!) { best.set(k, j); m.set(k, Number(r.line)); o.set(k, { over: r.over_price, under: r.under_price, book: r.book }); }
       const [away, home] = (r.event_label ?? "").split(" @ ");
       const team = teamOf.get(name);
+      if (team && away && home && (team === home || team === away)) h.set(name.toLowerCase(), team === home);
       if (team && away && home) t.set(name.toLowerCase(), team === home ? away : team === away ? home : r.event_label!);
     }
-    return { propLines: m, tonight: t, lineOdds: o };
+    return { propLines: m, tonight: t, lineOdds: o, homeTonight: h };
   }, [rawLines, resolver, roster]);
 
   const byPlayer = useMemo(() => {
@@ -254,7 +286,10 @@ export function useResearchData() {
     return m;
   }, [logs, resolver]);
 
-  const edges = useMemo(() => computeEdges(byPlayer, propLines, 4, tonight), [byPlayer, propLines, tonight]);
+  const edges = useMemo(() => computeEdges({
+    byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
+    teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
+  }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
 
   return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges };
 }

@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import "@/components/desk/desk-tokens.css";
 import { STAT_OPTIONS, useResearchData } from "@/hooks/useResearchData";
+import { supabase } from "@/integrations/supabase/client";
+import { PASS_KEY } from "@/components/AdminGate";
+import type { BetStatus } from "@/utils/paperBets";
 import { betPnl, settleBet, summarize, winProfit, type PaperBet, type Side } from "@/utils/paperBets";
 import type { StatKey } from "@/utils/nbaBoxScoreMath";
 
@@ -13,14 +16,36 @@ export default function PaperBets({ mode = "paper" }: { mode?: "paper" | "real" 
   const BETS_KEY = real ? "real_bets_v1" : "paper_bets_v1", BANK_KEY = real ? "real_bankroll_v1" : "paper_bankroll_v1";
   const [book, setBook] = useState(() => localStorage.getItem("real_last_book") || "FanDuel");
   const { byPlayer, propLines, lineOdds, tonight, today, logs, loading } = useResearchData();
-  const [bets, setBets] = useState<PaperBet[]>(() => JSON.parse(localStorage.getItem(BETS_KEY) || "[]"));
+  const [bets, setBets] = useState<PaperBet[]>(() => (real ? [] : JSON.parse(localStorage.getItem(BETS_KEY) || "[]")));
   const [start, setStart] = useState<number>(() => Number(localStorage.getItem(BANK_KEY)) || 0);
   const [bankInput, setBankInput] = useState("");
   const [q, setQ] = useState("");
   const [pick, setPick] = useState<{ player: string; stat: StatKey; line: number; side: Side; odds: number } | null>(null);
   const [stake, setStake] = useState("");
 
-  useEffect(() => localStorage.setItem(BETS_KEY, JSON.stringify(bets)), [bets]);
+  const [serverStatus, setServerStatus] = useState<Map<string, BetStatus>>(new Map());
+  const [syncErr, setSyncErr] = useState("");
+  useEffect(() => { if (!real) localStorage.setItem(BETS_KEY, JSON.stringify(bets)); }, [bets, real]);
+
+  // Real bets live on the server so the 10 AM update can grade them.
+  const call = async (body: Record<string, unknown>) => {
+    const { data, error } = await supabase.functions.invoke("desk-bets", { body: { passcode: localStorage.getItem(PASS_KEY) ?? "", ...body } });
+    if (error || !data?.bets) { setSyncErr("Couldn't reach your saved bets. Try again."); return; }
+    setSyncErr("");
+    type Row = { id: string; player_name: string; stat: StatKey; side: Side; line: number; odds: number; stake: number; book: string | null; game_date: string; placed_at: string; status: BetStatus };
+    const rows = data.bets as Row[];
+    setBets(rows.map((r) => ({ id: r.id, player: r.player_name, stat: r.stat, side: r.side, line: Number(r.line), odds: r.odds, stake: Number(r.stake), book: r.book ?? undefined, gameDate: r.game_date, placedAt: r.placed_at })));
+    setServerStatus(new Map(rows.map((r) => [r.id, r.status])));
+  };
+  const toRow = (b: PaperBet) => ({ player_name: b.player, stat: b.stat, side: b.side, line: b.line, odds: b.odds, stake: b.stake, book: b.book ?? null, game_date: b.gameDate, placed_at: b.placedAt });
+  useEffect(() => {
+    if (!real) return;
+    // One-time move of bets logged on this device before they were saved online.
+    const local: PaperBet[] = JSON.parse(localStorage.getItem(BETS_KEY) || "[]");
+    if (local.length) call({ action: "add", bets: local.map(toRow) }).then(() => localStorage.removeItem(BETS_KEY));
+    else call({ action: "list" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [real]);
   useEffect(() => localStorage.setItem(BANK_KEY, String(start)), [start]);
 
   const props = useMemo(() => {
@@ -36,15 +61,17 @@ export default function PaperBets({ mode = "paper" }: { mode?: "paper" | "real" 
   }, [propLines, lineOdds, byPlayer, tonight, q]);
 
   const graded = useMemo(() => {
-    return bets.map((bet) => ({ bet, status: settleBet(bet, [...byPlayer].find(([n]) => n.toLowerCase() === bet.player.toLowerCase())?.[1] ?? []) }));
-  }, [bets, byPlayer, logs]);
+    return bets.map((bet) => ({ bet, status: serverStatus.get(bet.id) && serverStatus.get(bet.id) !== "open" ? serverStatus.get(bet.id)! : settleBet(bet, [...byPlayer].find(([n]) => n.toLowerCase() === bet.player.toLowerCase())?.[1] ?? []) }));
+  }, [bets, byPlayer, serverStatus]);
   const sum = summarize(start, graded);
   const stakeNum = Number(stake);
   const canPlace = pick && stakeNum > 0 && pick.odds !== 0 && Math.abs(pick.odds) >= 100 && (real || (start > 0 && stakeNum <= sum.bankroll));
 
   const place = () => {
     if (!pick || !canPlace) return;
-    setBets((b) => [{ id: crypto.randomUUID(), ...pick, stake: stakeNum, gameDate: today, ...(real ? { book } : {}), placedAt: new Date().toISOString() }, ...b]);
+    const nb: PaperBet = { id: crypto.randomUUID(), ...pick, stake: stakeNum, gameDate: today, ...(real ? { book } : {}), placedAt: new Date().toISOString() };
+    if (real) call({ action: "add", bets: [toRow(nb)] });
+    else setBets((b) => [nb, ...b]);
     if (real) localStorage.setItem("real_last_book", book);
     setPick(null);
     setStake("");
@@ -90,7 +117,8 @@ export default function PaperBets({ mode = "paper" }: { mode?: "paper" | "real" 
             <button className="desk-tab" data-active="true" onClick={() => { const n = Number(bankInput); if (n > 0) { setStart(n); setBankInput(""); } }}>
               {start ? "Change" : "Set"}
             </button>
-            {bets.length > 0 && (
+            {syncErr && <p className="w-full text-sm text-destructive">{syncErr}</p>}
+            {!real && bets.length > 0 && (
               <button className="desk-tab" onClick={() => confirm(real ? "Clear all logged bets?" : "Clear all paper bets?") && setBets([])}>Reset bets</button>
             )}
           </div>
@@ -182,7 +210,7 @@ export default function PaperBets({ mode = "paper" }: { mode?: "paper" | "real" 
                     <div className="min-w-0">
                       <div className="truncate">{bet.player} {bet.side === "over" ? "O" : "U"} {bet.line} {statLabel(bet.stat)}</div>
                       <div className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">{bet.gameDate} · {fmt(bet.stake)} at {fmtOdds(bet.odds)}{bet.book ? ` · ${bet.book}` : ""}
-                        {real && <button className="ml-2 underline" onClick={() => confirm("Delete this bet?") && setBets((b) => b.filter((x) => x.id !== bet.id))}>delete</button>}</div>
+                        {real && <button className="ml-2 underline" onClick={() => confirm("Delete this bet?") && call({ action: "delete", id: bet.id })}>delete</button>}</div>
                     </div>
                     <div className="desk-mono shrink-0 text-right text-xs">
                       <div className="uppercase">{status}</div>
