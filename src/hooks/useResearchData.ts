@@ -96,15 +96,17 @@ export function computeEdges(
       if (!games.some((g) => g.game_date >= seasonStart)) continue; // must have played this season
       const s = summarizePlayer(games, key, line);
       if (!s || s.l10.games < 5) continue;
-      const edge = (s.l10.median - line) / line;
-      if (Math.abs(edge) < 0.05) continue;
+      const edge = s.l10.median - line; // in stat units, not %
+      const over = edge > 0;
+      const sideHit = over ? s.l10.hitRate : 1 - s.l10.hitRate;
+      if (edge === 0 || sideHit < 0.7) continue; // median and hit rate must agree
       out.push({
         player: name,
         stat: key,
         line,
         median: s.l10.median,
         edge,
-        hitRate: s.l10.hitRate,
+        hitRate: sideHit,
         trend: s.trend,
         lastDate: s.lastDate,
         lastOpponent: s.lastOpponent,
@@ -113,7 +115,10 @@ export function computeEdges(
       });
     }
   }
-  return out.sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge)).slice(0, limit);
+  // Best = highest hit rate on the recommended side, then biggest gap relative to the line.
+  return out
+    .sort((a, b) => b.hitRate - a.hitRate || Math.abs(b.edge) / Math.max(b.line, 1) - Math.abs(a.edge) / Math.max(a.line, 1))
+    .slice(0, limit);
 }
 
 const norm = (n: string) => n.toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, "").replace(/[^a-z ]/g, "").trim();
@@ -137,7 +142,12 @@ export function rosterResolver(roster: string[]) {
   };
 }
 
-type RawLine = { player_name: string; stat: string; line: number; book: string; event_label: string | null };
+type RawLine = { player_name: string; stat: string; line: number; book: string; event_label: string | null; over_price: number | null; under_price: number | null };
+
+/** Implied probability of American odds. */
+const implied = (o: number | null) => (o == null ? 0.5 : o < 0 ? -o / (-o + 100) : 100 / (o + 100));
+/** How far a line is from a fair 50/50 main line (0 = perfectly balanced). */
+const juice = (r: RawLine) => Math.abs(implied(r.over_price) - implied(r.under_price));
 
 export function useResearchData() {
   const [logs, setLogs] = useState<GameLog[]>(memoryLogs ?? []);
@@ -177,7 +187,7 @@ export function useResearchData() {
         const [{ data: pl }, { data: inj }] = await Promise.all([
           supabase
             .from("research_prop_lines" as never)
-            .select("player_name,stat,line,book,event_label")
+            .select("player_name,stat,line,book,event_label,over_price,under_price")
             .eq("game_date", today)
             .limit(5000),
           supabase
@@ -212,13 +222,16 @@ export function useResearchData() {
   // Today's lines keyed by roster name, plus tonight's opponent from the game the line belongs to.
   const { propLines, tonight } = useMemo(() => {
     const m = new Map<string, number>();
+    const best = new Map<string, number>();
     const t = new Map<string, string>();
     const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
     for (const r of rawLines) {
       const name = resolver(r.player_name);
       if (!name) continue;
       const k = `${name.toLowerCase()}|${r.stat}`;
-      if (!m.has(k) || r.book === "fanduel") m.set(k, Number(r.line));
+      // Keep the main line (most balanced odds), not juiced alternates like 0.5 at -240.
+      const j = juice(r) - (r.book === "fanduel" ? 0.01 : 0);
+      if (!best.has(k) || j < best.get(k)!) { best.set(k, j); m.set(k, Number(r.line)); }
       const [away, home] = (r.event_label ?? "").split(" @ ");
       const team = teamOf.get(name);
       if (team && away && home) t.set(name.toLowerCase(), team === home ? away : team === away ? home : r.event_label!);

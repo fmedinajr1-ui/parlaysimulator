@@ -27,7 +27,7 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
         (e) =>
           `${e.player.toUpperCase()} · ${e.stat.toUpperCase()} · LINE ${e.line} · L10 MED ${Math.round(e.median * 10) / 10} · EDGE ${
             e.edge > 0 ? "+" : ""
-          }${Math.round(e.edge * 100)}%`,
+          }${Math.round(e.edge * 10) / 10}`,
       )
     : ["NO SPORTSBOOK LINES LOADED TODAY · ADD A WORKING ODDS KEY TO SEE LIVE EDGES"];
 

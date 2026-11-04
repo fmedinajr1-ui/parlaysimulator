@@ -50,7 +50,7 @@ export function EdgeCards({ edges, onPick }: Props) {
 
             <div className="mt-3 flex items-center justify-between border-t border-[hsl(var(--desk-line))] pt-2">
               <span className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">
-                HIT {Math.round(e.hitRate * 100)}% · {e.thisSeason}/10 this season
+                {over ? "OVER" : "UNDER"} HIT {Math.round(e.hitRate * 100)}% · {e.thisSeason}/10 this season
               </span>
               <span
                 className={`desk-mono text-[11px] font-semibold ${
@@ -58,7 +58,7 @@ export function EdgeCards({ edges, onPick }: Props) {
                 }`}
               >
                 EDGE {e.edge > 0 ? "+" : ""}
-                {Math.round(e.edge * 100)}%
+                {Math.round(e.edge * 10) / 10}
               </span>
             </div>
           </button>
