@@ -14839,6 +14839,8 @@ export type Database = {
           id: string
           line: number
           odds: number
+          parlay_id: string | null
+          parlay_odds: number | null
           placed_at: string
           player_name: string
           result_value: number | null
@@ -14854,6 +14856,8 @@ export type Database = {
           id?: string
           line: number
           odds: number
+          parlay_id?: string | null
+          parlay_odds?: number | null
           placed_at?: string
           player_name: string
           result_value?: number | null
@@ -14869,6 +14873,8 @@ export type Database = {
           id?: string
           line?: number
           odds?: number
+          parlay_id?: string | null
+          parlay_odds?: number | null
           placed_at?: string
           player_name?: string
           result_value?: number | null
