@@ -67,6 +67,15 @@ export default function Desk() {
       />
 
       <main className="mx-auto max-w-[1500px] px-3 pb-16 pt-3 sm:px-4 sm:pt-4">
+        {record && (
+          <p className="mb-2 font-mono text-xs text-muted-foreground">
+            Pick record ({MODEL_VERSION}): {record.w}-{record.l}{record.p ? `-${record.p}` : ""} ·{" "}
+            <span className={record.profit >= 0 ? "text-primary" : "text-destructive"}>
+              {record.profit >= 0 ? "+" : ""}{record.profit.toFixed(2)} units
+            </span>
+            {record.w + record.l === 0 && " · first grades land after tonight's games"}
+          </p>
+        )}
         <EdgeCards edges={edges} onPick={setFocus} />
 
         <div className="mt-3 grid gap-3 lg:grid-cols-12">
