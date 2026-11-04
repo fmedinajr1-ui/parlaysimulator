@@ -22,6 +22,11 @@ export function EdgeCards({ edges, onPick }: Props) {
       {edges.map((e) => {
         const over = e.side === "over";
         const picked = inSlip.has(legKey(e));
+        const ab = (t: string) => getTeamAbbreviation(t) || t.slice(0, 3).toUpperCase();
+        const homeTeam = e.home === true ? e.team : e.home === false ? e.tonight : null;
+        const matchup = e.team && e.tonight
+          ? `${ab(e.team)} ${e.home === false ? "@" : "vs"} ${ab(e.tonight)}${homeTeam ? ` · ${ab(homeTeam)} home` : ""}`
+          : e.tonight ?? "Tonight";
         return (
           <div
             key={`${e.player}-${e.stat}`}

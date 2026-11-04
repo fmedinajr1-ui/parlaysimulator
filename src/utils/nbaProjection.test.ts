@@ -70,10 +70,10 @@ describe("teammate out by position and minutes", () => {
 
 describe("home / road venue reasons", () => {
   // 5 home games at 20 pts, 5 road games at 10 pts -> overall 15.
-  const split = ([20, true], [10, false]).length ? [
+  const split: [number, boolean][] = [
     [20, true], [10, false], [20, true], [10, false], [20, true],
     [10, false], [20, true], [10, false], [20, true], [10, false],
-  ] as [number, boolean][] : [];
+  ];
   const venueGames = (rows: [number, boolean][], startDay = 25): GameLog[] =>
     rows.map(([p, home], i) => ({
       player_name: "A", game_date: `2026-10-${String(startDay - i).padStart(2, "0")}`, opponent: "X",
