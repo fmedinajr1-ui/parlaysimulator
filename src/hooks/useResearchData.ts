@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { projectProp, opponentFactors } from "@/utils/nbaProjection";
+import { projectProp, opponentFactors, type MissingMate, type Reason } from "@/utils/nbaProjection";
 import {
   summarizePlayer,
   type GameLog,
@@ -80,6 +80,7 @@ export interface EdgePick {
   ev: number;
   odds: number;
   notes: string[];
+  reasons: Reason[];
   trend: PlayerSummary["trend"];
   lastDate: string;
   lastOpponent: string | null;
@@ -96,6 +97,7 @@ export interface EdgeInputs {
   homeTonight: Map<string, boolean>;
   injuries: Map<string, string>;
   teamOf: Map<string, string>;
+  positionOf?: Map<string, string | null>;
   today: string;
   seasonStart?: string;
   limit?: number;
@@ -130,20 +132,25 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       const odds = i.lineOdds.get(k);
       const oppName = i.tonight.get(lower);
       const mates = (team && outByTeam.get(team)) || [];
-      const matesOut = mates.reduce((t, m) => {
-        // Only teammates who've actually played this season free up a role.
-        const s = summarizePlayer((i.byPlayer.get(m) ?? []).filter((g) => g.game_date >= seasonStart), key);
-        return t + (s?.l10.median ?? 0);
-      }, 0);
+      // Only teammates who've actually played this season free up a role.
+      const matesOut: MissingMate[] = [];
+      for (const m of mates) {
+        const g = (i.byPlayer.get(m) ?? []).filter((x) => x.game_date >= seasonStart && Number(x.minutes_played) > 0);
+        const s = summarizePlayer(g, key);
+        if (!s || !g.length) continue;
+        const minutes = g.reduce((t, x) => t + Number(x.minutes_played), 0) / g.length;
+        matesOut.push({ name: m, position: i.positionOf?.get(m) ?? null, stat: s.l10.median, minutes });
+      }
       const p = projectProp(games, key, line, odds?.over ?? -110, odds?.under ?? -110, {
         seasonStart, today: i.today, home: i.homeTonight.get(lower) ?? null,
         oppFactor: (oppName && opp(key).get(oppName)) || 1, teammatesOut: matesOut,
+        position: i.positionOf?.get(name) ?? null,
       });
       if (!p || p.ev < 0.03 || p.prob < 0.55) continue;
       const s = summarizePlayer(games, key, line)!;
       out.push({
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
-        side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, trend: s.trend,
+        side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, reasons: p.reasons, trend: s.trend,
         lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason,
       });
     }
@@ -239,9 +246,9 @@ export function useResearchData() {
     };
   }, [today]);
 
-  const [roster, setRoster] = useState<{ player_name: string; team: string }[] | null>(null);
+  const [roster, setRoster] = useState<{ player_name: string; team: string; position: string | null }[] | null>(null);
   useEffect(() => {
-    supabase.from("research_player_teams").select("player_name,team").limit(2000)
+    supabase.from("research_player_teams").select("player_name,team,position").limit(2000)
       .then(({ data }) => setRoster(data ?? []), () => setRoster(null));
   }, []);
   const resolver = useMemo(
@@ -289,6 +296,7 @@ export function useResearchData() {
   const edges = useMemo(() => computeEdges({
     byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
     teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
+    positionOf: new Map((roster ?? []).map((r) => [r.player_name, r.position])),
   }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
 
   return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges };
