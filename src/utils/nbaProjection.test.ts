@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { projectProp, opponentFactors, type ProjectionContext } from "./nbaProjection";
 import type { GameLog } from "./nbaBoxScoreMath";
 
-const ctx: ProjectionContext = { seasonStart: "2026-10-01", today: "2026-11-04", home: null, oppFactor: 1, teammatesOut: 0 };
+const ctx: ProjectionContext = { seasonStart: "2026-10-01", today: "2026-11-04", home: null, oppFactor: 1, teammatesOut: [] };
 const games = (pts: number[], opts: Partial<GameLog> = {}, startDay = 25): GameLog[] =>
   pts.map((p, i) => ({
     player_name: "A", game_date: `2026-10-${String(startDay - i).padStart(2, "0")}`, opponent: "X",

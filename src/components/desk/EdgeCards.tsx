@@ -70,10 +70,17 @@ export function EdgeCards({ edges, onPick }: Props) {
                 PROFIT {e.ev > 0 ? "+" : ""}{Math.round(e.ev * 100)}¢/$1
               </span>
             </div>
-            {e.notes.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {e.notes.map((n) => <span key={n} className="desk-chip desk-mono text-[10px]">{n}</span>)}
-              </div>
+            {e.reasons.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {e.reasons.map((r) => (
+                  <li key={r.label} className="text-[11px] leading-snug text-[hsl(var(--desk-muted))]">
+                    <span className="desk-chip desk-mono mr-1.5 text-[10px]">
+                      {r.label} {r.pct > 0 ? "+" : ""}{r.pct}%
+                    </span>
+                    {r.why}
+                  </li>
+                ))}
+              </ul>
             )}
             <button
               onClick={(ev) => { ev.stopPropagation(); toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight }); }}
