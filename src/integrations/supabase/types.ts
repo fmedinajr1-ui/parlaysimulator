@@ -14766,6 +14766,33 @@ export type Database = {
         }
         Relationships: []
       }
+      research_player_teams: {
+        Row: {
+          espn_id: string | null
+          player_name: string
+          position: string | null
+          team: string
+          team_abbr: string | null
+          updated_at: string
+        }
+        Insert: {
+          espn_id?: string | null
+          player_name: string
+          position?: string | null
+          team: string
+          team_abbr?: string | null
+          updated_at?: string
+        }
+        Update: {
+          espn_id?: string | null
+          player_name?: string
+          position?: string | null
+          team?: string
+          team_abbr?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       research_prop_lines: {
         Row: {
           book: string
