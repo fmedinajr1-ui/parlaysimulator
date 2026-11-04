@@ -1,0 +1,131 @@
+import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScoreMath";
+
+/** Rough NBA team per-game totals, used to size a missing teammate's share. */
+export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
+
+export interface ProjectionContext {
+  seasonStart: string;
+  today: string; // ET YYYY-MM-DD
+  /** Player is home tonight (null = unknown). */
+  home: boolean | null;
+  /** Tonight's opponent allows this stat vs league average (1 = average). */
+  oppFactor: number;
+  /** Summed L10 median of this stat for teammates ruled Out tonight. */
+  teammatesOut: number;
+}
+
+export interface Projection {
+  projection: number;
+  side: "over" | "under";
+  prob: number; // chance the chosen side wins
+  ev: number; // expected profit per $1 at the posted odds
+  odds: number;
+  thisSeason: number;
+  notes: string[];
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Profit per $1 staked at American odds. */
+export const unitProfit = (odds: number) => (odds > 0 ? odds / 100 : 100 / -odds);
+
+function weightedMedian(vals: { v: number; w: number }[]): number {
+  const s = [...vals].sort((a, b) => a.v - b.v);
+  const total = s.reduce((t, x) => t + x.w, 0);
+  let acc = 0;
+  for (const x of s) { acc += x.w; if (acc >= total / 2) return x.v; }
+  return s.at(-1)?.v ?? 0;
+}
+
+function dayBefore(d: string) {
+  const t = new Date(`${d}T12:00:00Z`); t.setUTCDate(t.getUTCDate() - 1);
+  return t.toISOString().slice(0, 10);
+}
+
+/**
+ * Projects a prop from the last 10 played games, with this season's games counted double,
+ * then adjusts for minutes trend, home/road, back-to-back, opponent and missing teammates.
+ * Picks whichever side (Over or Under) has the better expected profit at the posted odds.
+ */
+export function projectProp(
+  games: GameLog[], stat: StatKey, line: number, overOdds: number, underOdds: number, ctx: ProjectionContext,
+): Projection | null {
+  const played = games.filter((g) => Number(g.minutes_played) > 0 && g.game_date < ctx.today)
+    .sort((a, b) => b.game_date.localeCompare(a.game_date));
+  const l10 = played.slice(0, 10);
+  const thisSeason = l10.filter((g) => g.game_date >= ctx.seasonStart).length;
+  if (l10.length < 5 || thisSeason < 3) return null;
+
+  const notes: string[] = [];
+  const pts = l10.map((g) => ({ v: statValue(g, stat), w: g.game_date >= ctx.seasonStart ? 2 : 1 }));
+  const base = weightedMedian(pts);
+
+  // Minutes: last 3 vs last 10.
+  const mins = l10.map((g) => Number(g.minutes_played));
+  const l3m = mins.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
+  const l10m = mins.reduce((a, b) => a + b, 0) / mins.length;
+  const fMin = clamp(l10m ? l3m / l10m : 1, 0.85, 1.15);
+  if (Math.abs(fMin - 1) >= 0.05) notes.push(`Minutes ${fMin > 1 ? "up" : "down"} (${Math.round(l3m)} vs ${Math.round(l10m)})`);
+
+  // Home/road split over the last 20 games.
+  let fHome = 1;
+  const l20 = played.slice(0, 20).filter((g) => g.is_home != null);
+  const side = l20.filter((g) => g.is_home === ctx.home);
+  if (ctx.home != null && side.length >= 3 && l20.length >= 6) {
+    const avg = (a: GameLog[]) => a.reduce((t, g) => t + statValue(g, stat), 0) / a.length;
+    const all = avg(l20);
+    if (all > 0) fHome = clamp(avg(side) / all, 0.95, 1.05);
+    if (Math.abs(fHome - 1) >= 0.02) notes.push(`${ctx.home ? "Home" : "Road"} ${fHome > 1 ? "boost" : "dip"}`);
+  }
+
+  // Back-to-back.
+  const fRest = played[0]?.game_date === dayBefore(ctx.today) ? 0.96 : 1;
+  if (fRest < 1) notes.push("Back-to-back");
+
+  // Opponent, shrunk halfway toward average.
+  const fOpp = clamp(1 + (ctx.oppFactor - 1) * 0.5, 0.92, 1.08);
+  if (Math.abs(fOpp - 1) >= 0.02) notes.push(`${fOpp > 1 ? "Soft" : "Tough"} defense`);
+
+  // Teammates out free up shots/boards.
+  const fMate = clamp(1 + (ctx.teammatesOut / TEAM_TOTAL[stat]) * 0.25, 1, 1.08);
+  if (fMate > 1.005) notes.push("Teammate out");
+
+  const factor = fMin * fHome * fRest * fOpp * fMate;
+  const adj = pts.map((p) => ({ v: p.v * factor, w: p.w }));
+  const total = adj.reduce((t, x) => t + x.w, 0);
+  const wOver = adj.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0);
+  const wUnder = adj.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0);
+  // Smoothed so 10/10 never reads as a sure thing.
+  const pOver = (wOver + 1) / (total + 2);
+  const pUnder = (wUnder + 1) / (total + 2);
+  const evOver = pOver * unitProfit(overOdds) - (1 - pOver);
+  const evUnder = pUnder * unitProfit(underOdds) - (1 - pUnder);
+  const over = evOver >= evUnder;
+  return {
+    projection: r2(base * factor),
+    side: over ? "over" : "under",
+    prob: r2(over ? pOver : pUnder),
+    ev: r2(over ? evOver : evUnder),
+    odds: over ? overOdds : underOdds,
+    thisSeason,
+    notes,
+  };
+}
+
+/** Per-opponent factor: stat allowed per game this season vs the league average (needs 3+ games). */
+export function opponentFactors(logs: GameLog[], stat: StatKey, seasonStart: string): Map<string, number> {
+  const games = new Map<string, Map<string, number>>(); // opp -> date -> total
+  for (const g of logs) {
+    if (!g.opponent || g.game_date < seasonStart || !(Number(g.minutes_played) > 0)) continue;
+    const m = games.get(g.opponent) ?? new Map();
+    m.set(g.game_date, (m.get(g.game_date) ?? 0) + statValue(g, stat));
+    games.set(g.opponent, m);
+  }
+  const avgs = new Map<string, number>();
+  for (const [opp, m] of games) if (m.size >= 3) avgs.set(opp, [...m.values()].reduce((a, b) => a + b, 0) / m.size);
+  const league = percentile([...avgs.values()], 0.5);
+  const out = new Map<string, number>();
+  if (league > 0) for (const [opp, a] of avgs) out.set(opp, a / league);
+  return out;
+}
