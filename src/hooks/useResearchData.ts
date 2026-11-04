@@ -75,6 +75,7 @@ export interface EdgePick {
   trend: PlayerSummary["trend"];
   lastDate: string;
   lastOpponent: string | null;
+  tonight: string | null;
 }
 
 /** Players with a live sportsbook line today whose L10 median sits off that line. */
@@ -82,12 +83,15 @@ export function computeEdges(
   byPlayer: Map<string, GameLog[]>,
   propLines: Map<string, number>,
   limit = 4,
+  tonight: Map<string, string> = new Map(),
+  seasonStart = "2026-10-01",
 ): EdgePick[] {
   const out: EdgePick[] = [];
   for (const [name, games] of byPlayer) {
     for (const { key } of STAT_OPTIONS) {
       const line = propLines.get(`${name.toLowerCase()}|${key}`);
       if (!line) continue;
+      if (!games.some((g) => g.game_date >= seasonStart)) continue; // must have played this season
       const s = summarizePlayer(games, key, line);
       if (!s || s.l10.games < 5) continue;
       const edge = (s.l10.median - line) / line;
@@ -102,6 +106,7 @@ export function computeEdges(
         trend: s.trend,
         lastDate: s.lastDate,
         lastOpponent: s.lastOpponent,
+        tonight: tonight.get(name.toLowerCase()) ?? null,
       });
     }
   }
@@ -129,11 +134,13 @@ export function rosterResolver(roster: string[]) {
   };
 }
 
+type RawLine = { player_name: string; stat: string; line: number; book: string; event_label: string | null };
+
 export function useResearchData() {
   const [logs, setLogs] = useState<GameLog[]>(memoryLogs ?? []);
   const [loading, setLoading] = useState(!memoryLogs);
   const [err, setErr] = useState<string | null>(null);
-  const [propLines, setPropLines] = useState<Map<string, number>>(new Map());
+  const [rawLines, setRawLines] = useState<RawLine[]>([]);
   const [injuries, setInjuries] = useState<Map<string, string>>(new Map());
   const today = useMemo(etToday, []);
 
@@ -167,7 +174,7 @@ export function useResearchData() {
         const [{ data: pl }, { data: inj }] = await Promise.all([
           supabase
             .from("research_prop_lines" as never)
-            .select("player_name,stat,line,book")
+            .select("player_name,stat,line,book,event_label")
             .eq("game_date", today)
             .limit(5000),
           supabase
@@ -176,12 +183,7 @@ export function useResearchData() {
             .eq("game_date", today)
             .limit(1000),
         ]);
-        const m = new Map<string, number>();
-        for (const r of (pl ?? []) as { player_name: string; stat: string; line: number; book: string }[]) {
-          const k = `${r.player_name.toLowerCase()}|${r.stat}`;
-          if (!m.has(k) || r.book === "fanduel") m.set(k, Number(r.line));
-        }
-        if (alive) setPropLines(m);
+        if (alive) setRawLines((pl ?? []) as RawLine[]);
         if (alive)
           setInjuries(new Map((inj ?? []).map((i) => [String(i.player_name).toLowerCase(), String(i.status)])));
       } catch (e) {
@@ -194,14 +196,35 @@ export function useResearchData() {
     };
   }, [today]);
 
-  const [roster, setRoster] = useState<string[] | null>(null);
+  const [roster, setRoster] = useState<{ player_name: string; team: string }[] | null>(null);
   useEffect(() => {
-    supabase.from("research_player_teams").select("player_name").limit(2000)
-      .then(({ data }) => setRoster((data ?? []).map((r) => r.player_name)), () => setRoster(null));
+    supabase.from("research_player_teams").select("player_name,team").limit(2000)
+      .then(({ data }) => setRoster(data ?? []), () => setRoster(null));
   }, []);
+  const resolver = useMemo(
+    () => (roster?.length ? rosterResolver(roster.map((r) => r.player_name)) : (n: string) => n),
+    [roster],
+  );
+
+  // Today's lines keyed by roster name, plus tonight's opponent from the game the line belongs to.
+  const { propLines, tonight } = useMemo(() => {
+    const m = new Map<string, number>();
+    const t = new Map<string, string>();
+    const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
+    for (const r of rawLines) {
+      const name = resolver(r.player_name);
+      if (!name) continue;
+      const k = `${name.toLowerCase()}|${r.stat}`;
+      if (!m.has(k) || r.book === "fanduel") m.set(k, Number(r.line));
+      const [away, home] = (r.event_label ?? "").split(" @ ");
+      const team = teamOf.get(name);
+      if (team && away && home) t.set(name.toLowerCase(), team === home ? away : team === away ? `@ ${home}`.slice(2) : r.event_label!);
+    }
+    return { propLines: m, tonight: t };
+  }, [rawLines, resolver, roster]);
 
   const byPlayer = useMemo(() => {
-    const resolve = roster?.length ? rosterResolver(roster) : (n: string) => n;
+    const resolve = resolver;
     const m = new Map<string, GameLog[]>();
     for (const raw of logs) {
       const name = resolve(raw.player_name);
@@ -212,9 +235,9 @@ export function useResearchData() {
       m.set(g.player_name, arr);
     }
     return m;
-  }, [logs, roster]);
+  }, [logs, resolver]);
 
-  const edges = useMemo(() => computeEdges(byPlayer, propLines, 4), [byPlayer, propLines]);
+  const edges = useMemo(() => computeEdges(byPlayer, propLines, 4, tonight), [byPlayer, propLines, tonight]);
 
-  return { logs, loading, err, byPlayer, propLines, injuries, today, edges };
+  return { logs, loading, err, byPlayer, propLines, tonight, injuries, today, edges };
 }
