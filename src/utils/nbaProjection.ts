@@ -3,6 +3,9 @@ import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScore
 /** Rough NBA team per-game totals, used to size a missing teammate's share. */
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
+/** Bump whenever the projection rules change, so the pick log can compare versions. */
+export const MODEL_VERSION = "v2-pos-min";
+
 export interface ProjectionContext {
   seasonStart: string;
   today: string; // ET YYYY-MM-DD
