@@ -146,7 +146,8 @@ Deno.serve(async (req) => {
   const step = async (name: string, fn: () => Promise<any>) => {
     try { report[name] = await fn(); } catch (e) { report[name] = { error: String((e as Error).message ?? e) }; }
   };
-  const only = new URL(req.url).searchParams.get("only");
+  const body = await req.json().catch(() => ({}));
+  const only = new URL(req.url).searchParams.get("only") ?? body?.only;
   if (only === "rosters") {
     await step("rosters", () => syncRosters(sb));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
