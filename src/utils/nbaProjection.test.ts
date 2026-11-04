@@ -67,3 +67,56 @@ describe("teammate out by position and minutes", () => {
     expect(p.notes).not.toContain("Teammate out");
   });
 });
+
+describe("home / road venue reasons", () => {
+  // 5 home games at 20 pts, 5 road games at 10 pts -> overall 15.
+  const split: [number, boolean][] = [
+    [20, true], [10, false], [20, true], [10, false], [20, true],
+    [10, false], [20, true], [10, false], [20, true], [10, false],
+  ];
+  const venueGames = (rows: [number, boolean][], startDay = 25): GameLog[] =>
+    rows.map(([p, home], i) => ({
+      player_name: "A", game_date: `2026-10-${String(startDay - i).padStart(2, "0")}`, opponent: "X",
+      minutes_played: 30, points: p, rebounds: 5, assists: 5, threes_made: 1, is_home: home,
+    }));
+  const at = (home: boolean | null, rows = split) =>
+    projectProp(venueGames(rows), "points", 25.5, -110, -110, { ...ctx, home })!;
+
+  it("a player on the road with a lower road average gets 'Road dip'", () => {
+    const p = at(false);
+    expect(p.notes).toContain("Road dip");
+    expect(p.notes.some((n) => n.startsWith("Home"))).toBe(false);
+    const r = p.reasons.find((x) => x.label === "Road dip")!;
+    expect(r.pct).toBe(-5);
+    expect(r.why).toContain("on the road");
+  });
+  it("the same player at home gets 'Home boost' instead", () => {
+    const p = at(true);
+    expect(p.notes).toContain("Home boost");
+    expect(p.notes.some((n) => n.startsWith("Road"))).toBe(false);
+    const r = p.reasons.find((x) => x.label === "Home boost")!;
+    expect(r.pct).toBe(5);
+    expect(r.why).toContain("at home");
+  });
+  it("adds no venue reason when the venue is unknown", () => {
+    const p = at(null);
+    expect(p.notes.some((n) => /Home |Road /.test(n))).toBe(false);
+  });
+  it("needs 3 games at that venue before it speaks", () => {
+    const thin: [number, boolean][] = [
+      [20, true], [20, true], [20, true], [20, true], [20, true],
+      [20, true], [20, true], [20, true], [10, false], [10, false],
+    ];
+    expect(at(false, thin).notes.some((n) => /Home |Road /.test(n))).toBe(false);
+  });
+  it("never moves the projection more than 5% for venue", () => {
+    const extreme: [number, boolean][] = [
+      [30, true], [0, false], [30, true], [0, false], [30, true],
+      [0, false], [30, true], [0, false], [30, true], [0, false],
+    ];
+    for (const home of [true, false]) {
+      const r = at(home, extreme).reasons.find((x) => /Home |Road /.test(x.label))!;
+      expect(Math.abs(r.pct)).toBeLessThanOrEqual(5);
+    }
+  });
+});

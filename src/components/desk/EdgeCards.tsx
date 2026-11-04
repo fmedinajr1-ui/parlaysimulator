@@ -3,6 +3,7 @@ import { statValue, type GameLog } from "@/utils/nbaBoxScoreMath";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
+import { getTeamAbbreviation } from "@/lib/team-abbreviations";
 
 interface Props {
   edges: EdgePick[];
@@ -21,6 +22,11 @@ export function EdgeCards({ edges, onPick }: Props) {
       {edges.map((e) => {
         const over = e.side === "over";
         const picked = inSlip.has(legKey(e));
+        const ab = (t: string) => getTeamAbbreviation(t) || t.slice(0, 3).toUpperCase();
+        const homeTeam = e.home === true ? e.team : e.home === false ? e.tonight : null;
+        const matchup = e.team && e.tonight
+          ? `${ab(e.team)} ${e.home === false ? "@" : "vs"} ${ab(e.tonight)}${homeTeam ? ` · ${ab(homeTeam)} home` : ""}`
+          : e.tonight ?? "Tonight";
         return (
           <div
             key={`${e.player}-${e.stat}`}
@@ -31,8 +37,20 @@ export function EdgeCards({ edges, onPick }: Props) {
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="desk-label">{shortOf(e.stat)} · {e.tonight ? `Tonight vs ${e.tonight}` : "Tonight"}</div>
+                <div className="desk-label">{shortOf(e.stat)} · Tonight</div>
                 <div className="desk-display truncate text-lg font-semibold">{e.player}</div>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span
+                    className={`desk-mono shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                      e.home === false
+                        ? "bg-[hsl(var(--desk-indigo)/0.18)] text-[hsl(var(--desk-indigo))]"
+                        : "bg-[hsl(var(--desk-win)/0.15)] text-[hsl(var(--desk-win))]"
+                    }`}
+                  >
+                    {e.home === false ? "ROAD" : e.home === true ? "HOME" : "VENUE?"}
+                  </span>
+                  <span className="desk-mono truncate text-[11px] text-[hsl(var(--desk-muted))]">{matchup}</span>
+                </div>
               </div>
               <span
                 className={`desk-mono shrink-0 rounded-md px-2 py-1 text-[11px] font-bold ${
