@@ -52,6 +52,7 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
           <Stat label="Latest" value={latest ?? "—"} />
           <nav className="col-span-5 flex items-center gap-1 overflow-x-auto sm:pl-2">
             <Link to="/" className="desk-tab" data-active="true">Desk</Link>
+            <Link to="/bets" className="desk-tab">My bets</Link>
             <Link to="/paper" className="desk-tab">Paper bets</Link>
             <Link to="/landing" className="desk-tab">Marketing</Link>
             <Link to="/blog" className="desk-tab">Blog</Link>

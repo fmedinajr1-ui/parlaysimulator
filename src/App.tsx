@@ -105,7 +105,8 @@ function AnimatedRoutes() {
               <Route path="/legacy-landing" element={<BotLanding />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
               <Route path="/research" element={<AdminGate><Research /></AdminGate>} />
-              <Route path="/paper" element={<AdminGate><PaperBets /></AdminGate>} />
+              <Route path="/paper" element={<AdminGate><PaperBets key="paper" /></AdminGate>} />
+              <Route path="/bets" element={<AdminGate><PaperBets key="real" mode="real" /></AdminGate>} />
               <Route path="/auth" element={<Navigate to="/" replace />} />
               <Route path="/bot" element={<Navigate to="/" replace />} />
               <Route path="/dashboard" element={<BotDashboard />} />
