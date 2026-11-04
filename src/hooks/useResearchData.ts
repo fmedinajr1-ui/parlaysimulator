@@ -108,6 +108,27 @@ export function computeEdges(
   return out.sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge)).slice(0, limit);
 }
 
+const norm = (n: string) => n.toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, "").replace(/[^a-z ]/g, "").trim();
+
+/** Maps game-log names onto current roster names (e.g. "Herb Jones" -> "Herbert Jones"); null = not on a roster. */
+export function rosterResolver(roster: string[]) {
+  const exact = new Map(roster.map((r) => [norm(r), r]));
+  const memo = new Map<string, string | null>();
+  return (name: string): string | null => {
+    if (memo.has(name)) return memo.get(name)!;
+    const n = norm(name);
+    const [first, ...rest] = n.split(" ");
+    const last = rest.join(" ");
+    const hits = roster.filter((r) => {
+      const [rf, ...rr] = norm(r).split(" ");
+      return rr.join(" ") === last && first.length >= 3 && (rf.startsWith(first) || first.startsWith(rf));
+    });
+    const out = exact.get(n) ?? (hits.length === 1 ? hits[0] : null);
+    memo.set(name, out);
+    return out;
+  };
+}
+
 export function useResearchData() {
   const [logs, setLogs] = useState<GameLog[]>(memoryLogs ?? []);
   const [loading, setLoading] = useState(!memoryLogs);
@@ -173,15 +194,25 @@ export function useResearchData() {
     };
   }, [today]);
 
+  const [roster, setRoster] = useState<string[] | null>(null);
+  useEffect(() => {
+    supabase.from("research_player_teams").select("player_name").limit(2000)
+      .then(({ data }) => setRoster((data ?? []).map((r) => r.player_name)), () => setRoster(null));
+  }, []);
+
   const byPlayer = useMemo(() => {
+    const resolve = roster?.length ? rosterResolver(roster) : (n: string) => n;
     const m = new Map<string, GameLog[]>();
-    for (const g of logs) {
+    for (const raw of logs) {
+      const name = resolve(raw.player_name);
+      if (!name) continue; // not on any current roster
+      const g = name === raw.player_name ? raw : { ...raw, player_name: name };
       const arr = m.get(g.player_name) ?? [];
       arr.push(g);
       m.set(g.player_name, arr);
     }
     return m;
-  }, [logs]);
+  }, [logs, roster]);
 
   const edges = useMemo(() => computeEdges(byPlayer, propLines, 4), [byPlayer, propLines]);
 
