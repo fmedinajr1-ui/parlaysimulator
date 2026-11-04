@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { PASS_KEY } from "@/components/AdminGate";
+import { MODEL_VERSION } from "@/utils/nbaProjection";
 import "@/components/desk/desk-tokens.css";
 import { Seo } from "@/components/seo/Seo";
 import { useResearchData } from "@/hooks/useResearchData";
@@ -10,6 +13,33 @@ import { MathSlip } from "@/components/desk/MathSlip";
 export default function Desk() {
   const { logs, loading, err, byPlayer, propLines, injuries, today, edges } = useResearchData();
   const [focus, setFocus] = useState<string | null>(null);
+  const [record, setRecord] = useState<{ w: number; l: number; p: number; profit: number } | null>(null);
+
+  // Record tonight's picks (first snapshot of the day is kept) and load the graded record.
+  useEffect(() => {
+    if (loading) return;
+    const passcode = localStorage.getItem(PASS_KEY) ?? "";
+    const picks = edges.slice(0, 50).map((e, i) => ({
+      game_date: today, player_name: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds ?? null,
+      projection: e.median, win_prob: e.hitRate, ev: e.ev, opponent: e.tonight, this_season: e.thisSeason,
+      reasons: e.reasons ?? [], rank: i + 1, model_version: MODEL_VERSION,
+    }));
+    (async () => {
+      try {
+        if (picks.length) await supabase.functions.invoke("desk-bets", { body: { action: "log_picks", passcode, picks } });
+        const { data } = await supabase.functions.invoke("desk-bets", { body: { action: "pick_record", passcode } });
+        const rows = ((data?.picks ?? []) as { model_version: string; status: string; odds: number | null }[]).filter((r) => r.model_version === MODEL_VERSION);
+        let w = 0, l = 0, p = 0, profit = 0;
+        for (const r of rows) {
+          const o = r.odds ?? -110;
+          if (r.status === "won") { w++; profit += o > 0 ? o / 100 : 100 / -o; }
+          else if (r.status === "lost") { l++; profit -= 1; }
+          else if (r.status === "push") p++;
+        }
+        setRecord({ w, l, p, profit });
+      } catch { /* logging is best-effort */ }
+    })();
+  }, [loading, edges, today]);
 
   return (
     <div className="desk-theme desk-grid-bg">
@@ -37,6 +67,15 @@ export default function Desk() {
       />
 
       <main className="mx-auto max-w-[1500px] px-3 pb-16 pt-3 sm:px-4 sm:pt-4">
+        {record && (
+          <p className="mb-2 font-mono text-xs text-muted-foreground">
+            Pick record ({MODEL_VERSION}): {record.w}-{record.l}{record.p ? `-${record.p}` : ""} ·{" "}
+            <span className={record.profit >= 0 ? "text-primary" : "text-destructive"}>
+              {record.profit >= 0 ? "+" : ""}{record.profit.toFixed(2)} units
+            </span>
+            {record.w + record.l === 0 && " · first grades land after tonight's games"}
+          </p>
+        )}
         <EdgeCards edges={edges} onPick={setFocus} />
 
         <div className="mt-3 grid gap-3 lg:grid-cols-12">
