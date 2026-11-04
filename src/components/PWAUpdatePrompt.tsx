@@ -12,10 +12,11 @@ export function PWAUpdatePrompt() {
 
     // Listen for controller change (new service worker activated)
     const handleControllerChange = () => {
-      toast.info('App updated! Refreshing...', {
-        duration: 2000,
+      // Don't force a reload (it wiped the page when returning to the app); just offer one.
+      toast.info('App updated', {
+        action: { label: 'Refresh', onClick: () => window.location.reload() },
+        duration: 10000,
       });
-      setTimeout(() => window.location.reload(), 2000);
     };
 
     navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);

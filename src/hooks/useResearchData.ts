@@ -37,6 +37,34 @@ async function fetchAllLogs(): Promise<GameLog[]> {
   return out;
 }
 
+// Cache so leaving and returning (or the phone dropping the tab) shows data instantly.
+let memoryLogs: GameLog[] | null = null;
+const DB = "research-cache", STORE = "kv", KEY = "logs";
+function idb(): Promise<IDBDatabase> {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function readCache(): Promise<GameLog[] | null> {
+  try {
+    const db = await idb();
+    return await new Promise((res) => {
+      const q = db.transaction(STORE).objectStore(STORE).get(KEY);
+      q.onsuccess = () => res((q.result as GameLog[]) ?? null);
+      q.onerror = () => res(null);
+    });
+  } catch { return null; }
+}
+async function writeCache(logs: GameLog[]) {
+  try {
+    const db = await idb();
+    db.transaction(STORE, "readwrite").objectStore(STORE).put(logs, KEY);
+  } catch { /* ignore */ }
+}
+
 export interface EdgePick {
   player: string;
   stat: StatKey;
@@ -81,8 +109,8 @@ export function computeEdges(
 }
 
 export function useResearchData() {
-  const [logs, setLogs] = useState<GameLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [logs, setLogs] = useState<GameLog[]>(memoryLogs ?? []);
+  const [loading, setLoading] = useState(!memoryLogs);
   const [err, setErr] = useState<string | null>(null);
   const [propLines, setPropLines] = useState<Map<string, number>>(new Map());
   const [injuries, setInjuries] = useState<Map<string, string>>(new Map());
@@ -90,12 +118,21 @@ export function useResearchData() {
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
     setErr(null);
 
     (async () => {
       try {
+        if (!memoryLogs) {
+          const cached = await readCache();
+          if (cached?.length && alive) {
+            memoryLogs = cached;
+            setLogs(cached);
+            setLoading(false);
+          }
+        }
         const all = await fetchAllLogs();
+        memoryLogs = all;
+        writeCache(all);
         if (alive) setLogs(all);
       } catch (e) {
         if (alive) setErr(String((e as Error)?.message ?? e));
