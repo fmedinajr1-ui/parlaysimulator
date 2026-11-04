@@ -24,7 +24,7 @@ export function winProfit(stake: number, odds: number): number {
 
 /** Grades a bet against the player's box score for that date. No game yet = open; 0 minutes = void. */
 export function settleBet(bet: PaperBet, logs: GameLog[]): BetStatus {
-  const g = logs.find((l) => l.player_name === bet.player && l.game_date === bet.gameDate);
+  const g = logs.find((l) => l.player_name.toLowerCase() === bet.player.toLowerCase() && l.game_date === bet.gameDate);
   if (!g) return "open";
   if (!(Number(g.minutes_played) > 0)) return "void";
   const v = statValue(g, bet.stat);

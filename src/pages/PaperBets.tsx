@@ -25,7 +25,7 @@ export default function PaperBets() {
     const out: { player: string; stat: StatKey; line: number; over: number; under: number; opp: string | null }[] = [];
     for (const [k, line] of propLines) {
       const [lower, stat] = k.split("|");
-      const player = [...byPlayer.keys()].find((n) => n.toLowerCase() === lower) ?? lower;
+      const player = [...byPlayer.keys()].find((n) => n.toLowerCase() === lower) ?? lower.replace(/\b[a-z]/g, (c) => c.toUpperCase());
       const o = lineOdds.get(k);
       out.push({ player, stat: stat as StatKey, line, over: o?.over ?? -110, under: o?.under ?? -110, opp: tonight.get(lower) ?? null });
     }
@@ -34,7 +34,7 @@ export default function PaperBets() {
   }, [propLines, lineOdds, byPlayer, tonight, q]);
 
   const graded = useMemo(() => {
-    return bets.map((bet) => ({ bet, status: settleBet(bet, byPlayer.get(bet.player) ?? logs) }));
+    return bets.map((bet) => ({ bet, status: settleBet(bet, [...byPlayer].find(([n]) => n.toLowerCase() === bet.player.toLowerCase())?.[1] ?? []) }));
   }, [bets, byPlayer, logs]);
   const sum = summarize(start, graded);
   const stakeNum = Number(stake);
