@@ -70,6 +70,27 @@ async function syncInjuries(sb: any, today: string) {
   return { injuries: valid.length };
 }
 
+/** Current rosters from ESPN for all 30 teams — the source of truth for who plays where. */
+async function syncRosters(sb: any) {
+  const t = await getJson(`${ESPN}/teams`);
+  const teams = t.sports?.[0]?.leagues?.[0]?.teams?.map((x: any) => x.team) ?? [];
+  const rows: any[] = [];
+  for (const tm of teams) {
+    const r = await getJson(`${ESPN}/teams/${tm.id}/roster`);
+    for (const a of r.athletes ?? []) {
+      if (!a.displayName) continue;
+      rows.push({ player_name: a.displayName, team: tm.displayName, team_abbr: tm.abbreviation,
+        position: a.position?.abbreviation ?? null, espn_id: String(a.id), updated_at: new Date().toISOString() });
+    }
+  }
+  if (rows.length < 300) throw new Error(`roster scan too small (${rows.length}), not saved`);
+  const dedup = [...new Map(rows.map((r) => [r.player_name, r])).values()];
+  await sb.from("research_player_teams").delete().neq("player_name", "");
+  const { error } = await sb.from("research_player_teams").insert(dedup);
+  if (error) throw error;
+  return { teams: teams.length, players: dedup.length };
+}
+
 const MARKETS: Record<string, string> = {
   player_points: "points", player_rebounds: "rebounds", player_assists: "assists",
   player_threes: "threes_made", player_points_rebounds_assists: "pra",
@@ -81,6 +102,9 @@ async function syncLines(sb: any, today: string) {
   const evRes = await fetch(`https://api.the-odds-api.com/v4/sports/basketball_nba/events?apiKey=${key}`);
   if (!evRes.ok) return { lines: 0, skipped: `odds key rejected (${evRes.status})` };
   const events = (await evRes.json()).filter((e: any) => etDateKey(new Date(e.commence_time)) === today).slice(0, 15);
+  const { data: rost } = await sb.from("research_player_teams").select("player_name,team");
+  const teamOf = new Map((rost ?? []).map((r: any) => [r.player_name.toLowerCase(), r.team]));
+  const mismatched = new Set<string>();
   const rows: any[] = [];
   for (const e of events) {
     const r = await fetch(`https://api.the-odds-api.com/v4/sports/basketball_nba/events/${e.id}/odds?apiKey=${key}&regions=us&markets=${Object.keys(MARKETS).join(",")}&bookmakers=fanduel,draftkings&oddsFormat=american`);
@@ -96,13 +120,15 @@ async function syncLines(sb: any, today: string) {
       }
       for (const p of pairs.values()) {
         if (p.line == null) continue;
+        const tm = teamOf.get(String(p.player_name).toLowerCase());
+        if (tm && tm !== e.home_team && tm !== e.away_team) { mismatched.add(`${p.player_name} (${tm}) in ${e.away_team} @ ${e.home_team}`); continue; }
         rows.push({ ...p, game_date: today, stat: MARKETS[m.key], book: bk.key, event_label: `${e.away_team} @ ${e.home_team}`, updated_at: new Date().toISOString() });
       }
     }
   }
   const dedup = [...new Map(rows.map((r) => [`${r.player_name}|${r.stat}|${r.book}`, r])).values()];
   if (dedup.length) await sb.from("research_prop_lines").upsert(dedup, { onConflict: "player_name,game_date,stat,book" });
-  return { lines: dedup.length, events: events.length };
+  return { lines: dedup.length, events: events.length, wrongTeamSkipped: [...mismatched] };
 }
 
 Deno.serve(async (req) => {
@@ -120,6 +146,14 @@ Deno.serve(async (req) => {
   const step = async (name: string, fn: () => Promise<any>) => {
     try { report[name] = await fn(); } catch (e) { report[name] = { error: String((e as Error).message ?? e) }; }
   };
+  const body = await req.json().catch(() => ({}));
+  const only = new URL(req.url).searchParams.get("only") ?? body?.only;
+  if (only === "rosters") {
+    await step("rosters", () => syncRosters(sb));
+    await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
+    return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
+  }
+  await step("rosters", () => syncRosters(sb));
   await step("boxScores", () => syncBoxScores(sb, etDateKeyDaysAgo(1, now)));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
