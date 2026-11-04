@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { STAT_OPTIONS } from "@/hooks/useResearchData";
 import { GameLogStrip } from "@/components/desk/EdgeCards";
 import { callResearchAi, Prose } from "@/components/research/ResearchAiPanel";
@@ -23,6 +24,12 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
   const [stat, setStat] = useState<StatKey>("points");
   const [line, setLine] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  const [teams, setTeams] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    supabase.from("research_player_teams").select("player_name,team_abbr").limit(2000)
+      .then(({ data }) => setTeams(new Map((data ?? []).map((t) => [t.player_name.toLowerCase(), t.team_abbr ?? ""]))),
+        () => {});
+  }, []);
   const [explain, setExplain] = useState<Record<string, { busy?: boolean; text?: string; error?: string }>>({});
 
   useEffect(() => {
@@ -147,7 +154,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                   <button className="w-full px-3 py-3 text-left" onClick={() => setOpen(isOpen ? null : r.player)}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate font-semibold text-[hsl(var(--desk-text))]">{r.player}</div>
+                        <div className="truncate font-semibold text-[hsl(var(--desk-text))]">{r.player}{teams.get(r.player.toLowerCase()) && <span className="desk-mono ml-1.5 text-[11px] font-normal text-[hsl(var(--desk-muted))]">{teams.get(r.player.toLowerCase())}</span>}</div>
                         <div className="text-[11px] text-[hsl(var(--desk-muted))]">
                           {r.lastDate} vs {r.lastOpponent ?? "?"}
                           {injury && <span className="ml-1.5 text-[hsl(var(--desk-loss))]">· {injury}</span>}
@@ -198,6 +205,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                       <td className="px-3 py-2 font-semibold text-[hsl(var(--desk-text))]">
                         <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
                           {r.player}
+                          {teams.get(r.player.toLowerCase()) && <span className="text-[11px] font-normal text-[hsl(var(--desk-muted))]">{teams.get(r.player.toLowerCase())}</span>}
                           {injury && (
                             <span className="desk-mono whitespace-nowrap rounded bg-[hsl(var(--desk-loss)/0.15)] px-1.5 py-0.5 text-[10px] text-[hsl(var(--desk-loss))]">
                               {injury}
