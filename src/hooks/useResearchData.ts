@@ -220,10 +220,11 @@ export function useResearchData() {
   );
 
   // Today's lines keyed by roster name, plus tonight's opponent from the game the line belongs to.
-  const { propLines, tonight } = useMemo(() => {
+  const { propLines, tonight, lineOdds } = useMemo(() => {
     const m = new Map<string, number>();
     const best = new Map<string, number>();
     const t = new Map<string, string>();
+    const o = new Map<string, { over: number | null; under: number | null; book: string }>();
     const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
     for (const r of rawLines) {
       const name = resolver(r.player_name);
@@ -231,12 +232,12 @@ export function useResearchData() {
       const k = `${name.toLowerCase()}|${r.stat}`;
       // Keep the main line (most balanced odds), not juiced alternates like 0.5 at -240.
       const j = juice(r) - (r.book === "fanduel" ? 0.01 : 0);
-      if (!best.has(k) || j < best.get(k)!) { best.set(k, j); m.set(k, Number(r.line)); }
+      if (!best.has(k) || j < best.get(k)!) { best.set(k, j); m.set(k, Number(r.line)); o.set(k, { over: r.over_price, under: r.under_price, book: r.book }); }
       const [away, home] = (r.event_label ?? "").split(" @ ");
       const team = teamOf.get(name);
       if (team && away && home) t.set(name.toLowerCase(), team === home ? away : team === away ? home : r.event_label!);
     }
-    return { propLines: m, tonight: t };
+    return { propLines: m, tonight: t, lineOdds: o };
   }, [rawLines, resolver, roster]);
 
   const byPlayer = useMemo(() => {
@@ -255,5 +256,5 @@ export function useResearchData() {
 
   const edges = useMemo(() => computeEdges(byPlayer, propLines, 4, tonight), [byPlayer, propLines, tonight]);
 
-  return { logs, loading, err, byPlayer, propLines, tonight, injuries, today, edges };
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges };
 }
