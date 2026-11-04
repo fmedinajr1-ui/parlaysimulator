@@ -14766,6 +14766,72 @@ export type Database = {
         }
         Relationships: []
       }
+      research_pick_log: {
+        Row: {
+          ev: number | null
+          game_date: string
+          id: string
+          line: number
+          logged_at: string
+          model_version: string
+          odds: number | null
+          opponent: string | null
+          player_name: string
+          projection: number | null
+          rank: number | null
+          reasons: Json
+          result_value: number | null
+          settled_at: string | null
+          side: string
+          stat: string
+          status: string
+          this_season: number | null
+          win_prob: number | null
+        }
+        Insert: {
+          ev?: number | null
+          game_date: string
+          id?: string
+          line: number
+          logged_at?: string
+          model_version: string
+          odds?: number | null
+          opponent?: string | null
+          player_name: string
+          projection?: number | null
+          rank?: number | null
+          reasons?: Json
+          result_value?: number | null
+          settled_at?: string | null
+          side: string
+          stat: string
+          status?: string
+          this_season?: number | null
+          win_prob?: number | null
+        }
+        Update: {
+          ev?: number | null
+          game_date?: string
+          id?: string
+          line?: number
+          logged_at?: string
+          model_version?: string
+          odds?: number | null
+          opponent?: string | null
+          player_name?: string
+          projection?: number | null
+          rank?: number | null
+          reasons?: Json
+          result_value?: number | null
+          settled_at?: string | null
+          side?: string
+          stat?: string
+          status?: string
+          this_season?: number | null
+          win_prob?: number | null
+        }
+        Relationships: []
+      }
       research_player_teams: {
         Row: {
           espn_id: string | null
