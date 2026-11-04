@@ -146,7 +146,7 @@ export default function PaperBets({ mode = "paper" }: { mode?: "paper" | "real" 
                   <span className="desk-mono">({fmtOdds(pick.odds)})</span>
                 </div>
                 {real && (
-                  <div className="grid grid-cols-3 gap-2">
+                  <div key={`${pick.player}|${pick.stat}|${pick.side}`} className="grid grid-cols-3 gap-2">
                     {[
                       ["Line", String(pick.line), (v: string) => setPick({ ...pick, line: Number(v) || 0 })],
                       ["Odds", String(pick.odds), (v: string) => setPick({ ...pick, odds: Number(v) || 0 })],
