@@ -27,6 +27,14 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("add"), passcode: z.string(), bets: z.array(Bet).min(1).max(200) }),
   z.object({ action: z.literal("delete"), passcode: z.string(), id: z.string().uuid() }),
   z.object({ action: z.literal("live"), passcode: z.string() }),
+  z.object({ action: z.literal("log_picks"), passcode: z.string(), picks: z.array(z.object({
+    game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
+    stat: z.string().max(20), side: z.enum(["over", "under"]), line: z.number(), odds: z.number().int().nullable(),
+    projection: z.number().nullable(), win_prob: z.number().nullable(), ev: z.number().nullable(),
+    opponent: z.string().max(60).nullable(), this_season: z.number().int().nullable(),
+    reasons: z.array(z.any()).max(20), rank: z.number().int(), model_version: z.string().max(20),
+  })).max(100) }),
+  z.object({ action: z.literal("pick_record"), passcode: z.string() }),
 ]);
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -86,6 +94,16 @@ Deno.serve(async (req) => {
     return json({ error: "Wrong passcode" }, 401);
   }
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  if (b.action === "log_picks") {
+    // First snapshot of the day wins, so the record reflects the pick before tip-off.
+    const { error } = await sb.from("research_pick_log").upsert(b.picks, { onConflict: "game_date,player_name,stat,side,model_version", ignoreDuplicates: true });
+    return error ? json({ error: error.message }, 500) : json({ ok: true, logged: b.picks.length });
+  }
+  if (b.action === "pick_record") {
+    const { data, error } = await sb.from("research_pick_log").select("model_version,status,ev,odds").neq("status", "open").limit(10000);
+    if (error) return json({ error: error.message }, 500);
+    return json({ picks: data });
+  }
   if (b.action === "add") {
     const { error } = await sb.from("research_real_bets").insert(b.bets);
     if (error) return json({ error: error.message }, 500);
