@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const KEY = "desk_unlocked_v1";
+export const PASS_KEY = "desk_passcode_v1";
 
 /** Passcode gate for the private desk. The passcode is checked on the server. */
 export function AdminGate({ children }: { children: React.ReactNode }) {
-  const [unlocked, setUnlocked] = useState(() => localStorage.getItem(KEY) === "1");
+  const [unlocked, setUnlocked] = useState(() => localStorage.getItem(KEY) === "1" && !!localStorage.getItem(PASS_KEY));
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -22,6 +23,7 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
       const { data } = await supabase.functions.invoke("desk-passcode", { body: { passcode: code } });
       if (data?.ok) {
         localStorage.setItem(KEY, "1");
+        localStorage.setItem(PASS_KEY, code);
         setUnlocked(true);
       } else setError("Wrong passcode");
     } catch {
