@@ -93,7 +93,7 @@ export function computeEdges(
     for (const { key } of STAT_OPTIONS) {
       const line = propLines.get(`${name.toLowerCase()}|${key}`);
       if (!line) continue;
-      if (!games.some((g) => g.game_date >= seasonStart)) continue; // must have played this season
+      if (games.filter((g) => g.game_date >= seasonStart && Number(g.minutes_played) > 0).length < 3) continue; // need 3+ games this season
       const s = summarizePlayer(games, key, line);
       if (!s || s.l10.games < 5) continue;
       const edge = s.l10.median - line; // in stat units, not %
