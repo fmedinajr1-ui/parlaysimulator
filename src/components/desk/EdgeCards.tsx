@@ -50,7 +50,7 @@ export function EdgeCards({ edges, onPick }: Props) {
 
             <div className="mt-3 flex items-center justify-between border-t border-[hsl(var(--desk-line))] pt-2">
               <span className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">
-                HIT {Math.round(e.hitRate * 100)}%
+                HIT {Math.round(e.hitRate * 100)}% · {e.thisSeason}/10 this season
               </span>
               <span
                 className={`desk-mono text-[11px] font-semibold ${
