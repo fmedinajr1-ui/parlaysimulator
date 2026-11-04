@@ -87,6 +87,10 @@ export interface EdgePick {
   tonight: string | null;
   /** How many of the last 10 games were played this season. */
   thisSeason: number;
+  /** True = player's team is home tonight, false = he is on the road, null = venue unknown. */
+  home: boolean | null;
+  /** Player's team, full name (e.g. "Utah Jazz"). */
+  team: string | null;
 }
 
 export interface EdgeInputs {
@@ -152,6 +156,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
         side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, reasons: p.reasons, trend: s.trend,
         lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason,
+        home: i.homeTonight.get(lower) ?? null, team: team ?? null,
       });
     }
   }

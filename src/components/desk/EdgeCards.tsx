@@ -3,6 +3,7 @@ import { statValue, type GameLog } from "@/utils/nbaBoxScoreMath";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
+import { getTeamAbbreviation } from "@/lib/team-abbreviations";
 
 interface Props {
   edges: EdgePick[];
