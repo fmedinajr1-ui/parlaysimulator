@@ -113,16 +113,19 @@ const norm = (n: string) => n.toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g,
 /** Maps game-log names onto current roster names (e.g. "Herb Jones" -> "Herbert Jones"); null = not on a roster. */
 export function rosterResolver(roster: string[]) {
   const exact = new Map(roster.map((r) => [norm(r), r]));
+  const memo = new Map<string, string | null>();
   return (name: string): string | null => {
+    if (memo.has(name)) return memo.get(name)!;
     const n = norm(name);
-    if (exact.has(n)) return exact.get(n)!;
     const [first, ...rest] = n.split(" ");
     const last = rest.join(" ");
     const hits = roster.filter((r) => {
       const [rf, ...rr] = norm(r).split(" ");
       return rr.join(" ") === last && first.length >= 3 && (rf.startsWith(first) || first.startsWith(rf));
     });
-    return hits.length === 1 ? hits[0] : null;
+    const out = exact.get(n) ?? (hits.length === 1 ? hits[0] : null);
+    memo.set(name, out);
+    return out;
   };
 }
 
@@ -209,7 +212,7 @@ export function useResearchData() {
       m.set(g.player_name, arr);
     }
     return m;
-  }, [logs]);
+  }, [logs, roster]);
 
   const edges = useMemo(() => computeEdges(byPlayer, propLines, 4), [byPlayer, propLines]);
 
