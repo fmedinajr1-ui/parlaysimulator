@@ -14832,6 +14832,54 @@ export type Database = {
         }
         Relationships: []
       }
+      research_real_bets: {
+        Row: {
+          book: string | null
+          game_date: string
+          id: string
+          line: number
+          odds: number
+          placed_at: string
+          player_name: string
+          result_value: number | null
+          settled_at: string | null
+          side: string
+          stake: number
+          stat: string
+          status: string
+        }
+        Insert: {
+          book?: string | null
+          game_date: string
+          id?: string
+          line: number
+          odds: number
+          placed_at?: string
+          player_name: string
+          result_value?: number | null
+          settled_at?: string | null
+          side: string
+          stake: number
+          stat: string
+          status?: string
+        }
+        Update: {
+          book?: string | null
+          game_date?: string
+          id?: string
+          line?: number
+          odds?: number
+          placed_at?: string
+          player_name?: string
+          result_value?: number | null
+          settled_at?: string | null
+          side?: string
+          stake?: number
+          stat?: string
+          status?: string
+        }
+        Relationships: []
+      }
       rosters: {
         Row: {
           id: string
