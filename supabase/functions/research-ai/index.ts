@@ -63,6 +63,13 @@ Deno.serve(async (req) => {
       const text = await runResearchAi(`${RESEARCH_INSTRUCTIONS}\n\nData you may use:\n${context}`, history, req.signal);
       return json({ text });
     }
+    if (mode === "hedge") {
+      // Ticket numbers are computed on the desk (liveHedge.ts); the AI only explains them.
+      const ticket = JSON.stringify(body.ticket ?? {}).slice(0, 4000);
+      const text = await runResearchAi(RESEARCH_INSTRUCTIONS, [{ role: "user", content:
+        `A live bet ticket with model numbers is below. In 3-4 short bullets: which leg is the risk and why (pace, minutes, gap to line), whether to hedge now, wait, or let it ride, and the hedge size if hedging. Use only these numbers.\n${ticket}` }], req.signal);
+      return json({ text });
+    }
     return json({ error: "Unknown request." }, 400);
   } catch (e) {
     if (e instanceof AiGatewayError) {

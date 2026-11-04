@@ -62,6 +62,7 @@ async function liveUpdate(sb: any) {
           players.set(`${date}|${a.athlete.displayName.toLowerCase()}`, {
             points: n("points"), rebounds: n("rebounds"), assists: n("assists"), threes_made: tpm, minutes: n("minutes"),
             didNotPlay: !!a.didNotPlay, final: !!t?.completed, clock: t?.shortDetail ?? "",
+            period: Number(ev.status?.period) || 0, clockSec: Number(ev.status?.clock) || 0,
           });
         }
       }
@@ -72,7 +73,7 @@ async function liveUpdate(sb: any) {
     const p = players.get(`${b.game_date}|${b.player_name.toLowerCase()}`);
     if (!p) continue;
     const v = val(p, b.stat);
-    out[b.id] = { value: v, minutes: p.minutes, clock: p.clock, final: p.final };
+    out[b.id] = { value: v, minutes: p.minutes, clock: p.clock, final: p.final, period: p.period, clockSec: p.clockSec };
     if (p.final) {
       const line = Number(b.line);
       const status = p.didNotPlay || !(p.minutes > 0) ? "void" : v === line ? "push" : (b.side === "over" ? v > line : v < line) ? "won" : "lost";
