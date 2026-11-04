@@ -131,7 +131,8 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       const oppName = i.tonight.get(lower);
       const mates = (team && outByTeam.get(team)) || [];
       const matesOut = mates.reduce((t, m) => {
-        const s = summarizePlayer(i.byPlayer.get(m) ?? [], key);
+        // Only teammates who've actually played this season free up a role.
+        const s = summarizePlayer((i.byPlayer.get(m) ?? []).filter((g) => g.game_date >= seasonStart), key);
         return t + (s?.l10.median ?? 0);
       }, 0);
       const p = projectProp(games, key, line, odds?.over ?? -110, odds?.under ?? -110, {
