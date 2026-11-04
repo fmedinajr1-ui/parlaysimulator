@@ -57,7 +57,7 @@ export function usePushNotifications() {
 
   const registerServiceWorker = async () => {
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js');
+      const registration = await navigator.serviceWorker.ready; // app no longer registers a worker
       console.log('Service Worker registered:', registration);
       return registration;
     } catch (error) {
