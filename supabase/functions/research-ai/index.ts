@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
 
     if (mode === "top") {
       const edges = (await slateEdges(sb, today)).slice(0, 25);
-      if (!edges.length) return json({ text: "Today's sportsbook lines aren't loaded yet — they arrive with the daily 10 AM ET update. Check back after that." });
+      if (!edges.length) return json({ text: "Today's sportsbook lines aren't loaded yet — they arrive with the daily 8 AM ET update. Check back after that." });
       const text = await runResearchAi(RESEARCH_INSTRUCTIONS, [{ role: "user", content:
         `Today's slate (${today}). Pick the 5 best plays from these edges and give one short reason each, plus one play to avoid. Data:\n${JSON.stringify(edges)}` }], req.signal);
       await saveReport(sb, "top_plays", null, null, today, text);

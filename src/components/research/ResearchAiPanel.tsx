@@ -82,7 +82,7 @@ export function ResearchAiPanel({ today }: { today: string }) {
           <h2 className="font-bold">AI Top Plays · {today}</h2>
           <Button size="sm" variant="outline" onClick={refreshTop} disabled={busy}>{busy ? "Thinking…" : "Refresh"}</Button>
         </div>
-        {top ? <Prose text={top} /> : <p className="text-sm text-muted-foreground">No top plays yet today. They're written automatically once sportsbook lines load (daily, 10 AM ET).</p>}
+        {top ? <Prose text={top} /> : <p className="text-sm text-muted-foreground">No top plays yet today. They're written automatically once sportsbook lines load (daily, 8 AM ET).</p>}
         {topAt && <p className="text-xs text-muted-foreground mt-2">Updated {new Date(topAt).toLocaleTimeString()}</p>}
         {err && <p className="text-sm text-destructive mt-2">{err}</p>}
         <div className="text-xs text-muted-foreground mt-3 border-t border-border pt-2 space-y-0.5">
