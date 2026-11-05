@@ -102,7 +102,7 @@ export function MathSlip({ today }: { today: string }) {
             <Prose text={top} />
           ) : (
             <p className="text-sm text-[hsl(var(--desk-muted))]">
-              No top plays yet today. They're written automatically once sportsbook lines load (daily, 10 AM ET).
+              No top plays yet today. They're written automatically once sportsbook lines load (daily, 8 AM ET).
             </p>
           )}
         </div>
