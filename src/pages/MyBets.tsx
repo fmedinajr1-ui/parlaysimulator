@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { RefreshCw } from "lucide-react";
 import "@/components/desk/desk-tokens.css";
 import { STAT_OPTIONS, useResearchData } from "@/hooks/useResearchData";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,7 +9,7 @@ import { PASS_KEY } from "@/components/AdminGate";
 import { betPnl, summarize, winProfit, type BetStatus, type PaperBet, type Side } from "@/utils/paperBets";
 import { legKey, parlayOdds, parlayStatus, readSlip, SLIP_EVENT, toggleLeg, writeSlip, type SlipLeg } from "@/utils/betSlip";
 import { statValue, type StatKey } from "@/utils/nbaBoxScoreMath";
-import { hedgePlan, isDanger, liveLegProb, parlayCashProb } from "@/utils/liveHedge";
+import { hedgePlan, isDanger, liveLegProb, livePredictionAvailable, parlayCashProb } from "@/utils/liveHedge";
 
 const fmt = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 const fmtOdds = (o: number) => (o > 0 ? `+${o}` : String(o));
@@ -36,6 +38,7 @@ export default function MyBets() {
   const [busy, setBusy] = useState(false);
   const [hedgeOdds, setHedgeOdds] = useState<Record<string, string>>({});
   const [aiNote, setAiNote] = useState<Record<string, string>>({});
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   // Pregame minutes and per-minute rate from the player's last 10 played games.
   const pregame = useCallback((name: string, stat: StatKey) => {
@@ -53,6 +56,7 @@ export default function MyBets() {
     if (l.status === "void" || l.status === "push") return null;
     const lv = live[l.id];
     const pg = pregame(l.player_name, l.stat);
+    if (!livePredictionAvailable(lv, pg)) return null;
     return liveLegProb({ side: l.side, line: Number(l.line), value: lv?.value ?? 0, minutesPlayed: lv?.minutes ?? 0,
       period: lv?.period ?? 0, clockSec: lv?.clockSec ?? 720, final: !!lv?.final, ...pg }).prob;
   }, [live, pregame]);
@@ -73,7 +77,7 @@ export default function MyBets() {
     if (error || !data?.bets) { setErr("Couldn't reach your saved bets. Try again."); return false; }
     setErr("");
     setRows(data.bets as Row[]);
-    if (data.live) setLive(data.live as Live);
+    if (data.live) { setLive(data.live as Live); setUpdatedAt(new Date()); }
     return true;
   }, []);
 
@@ -83,7 +87,9 @@ export default function MyBets() {
   useEffect(() => {
     if (!hasOpen) return;
     const t = setInterval(() => { if (document.visibilityState === "visible") call({ action: "live" }); }, 60_000);
-    return () => clearInterval(t);
+    const resume = () => { if (document.visibilityState === "visible") call({ action: "live" }); };
+    document.addEventListener("visibilitychange", resume);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", resume); };
   }, [hasOpen, call]);
 
   const tickets: Ticket[] = useMemo(() => {
@@ -238,22 +244,28 @@ export default function MyBets() {
           </section>
 
           <section className="desk-panel p-3 lg:col-span-7">
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
               <div className="desk-label">My tickets ({tickets.length})</div>
-              {hasOpen && <span className="desk-mono text-[10px] text-[hsl(var(--desk-win))]">● LIVE · updates every minute</span>}
+              <div className="flex items-center gap-2">
+                {updatedAt && <span className="desk-mono text-[10px] text-[hsl(var(--desk-muted))]">Updated {updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
+                <Button variant="ghost" size="icon" aria-label="Refresh live scores" onClick={() => call({ action: "live" })}><RefreshCw /></Button>
+              </div>
             </div>
             <ul className="divide-y divide-[hsl(var(--desk-line))]">
               {tickets.map((t) => {
                 const pnl = betPnl({ stake: t.stake, odds: t.odds } as PaperBet, t.status);
                 const probs = t.legs.map((l) => legProb(l));
                 const counted = probs.filter((p): p is number => p != null);
-                const cash = t.status === "open" ? parlayCashProb(counted) : null;
+                const cash = t.status === "open" && !t.legs.some((l, i) => l.status === "open" && probs[i] == null) ? parlayCashProb(counted) : null;
                 const openLegs = t.legs.filter((l) => l.status === "open");
                 const last = openLegs.length === 1 ? openLegs[0] : null;
                 const lastP = last ? legProb(last) ?? 0 : 0;
                 const hOdds = Number(hedgeOdds[t.id] ?? "-110");
                 const plan = last ? hedgePlan(t.stake, t.odds, hOdds, lastP) : null;
-                const danger = t.legs.filter((l, i) => l.status === "open" && probs[i] != null && isDanger(probs[i]!, !!live[l.id]?.final));
+                const danger = t.legs.filter((l, i) => {
+                  const probability = probs[i];
+                  return l.status === "open" && probability != null && isDanger(probability, !!live[l.id]?.final);
+                });
                 return (
                   <li key={t.id} className="py-3 text-sm">
                     <div className="flex items-start justify-between gap-2">
@@ -287,7 +299,7 @@ export default function MyBets() {
                               <span className="desk-mono shrink-0 text-[11px]">
                                 {cur != null ? <b>{cur}</b> : "—"}
                                 <span className="text-[hsl(var(--desk-muted))]"> · {l.status !== "open" ? l.status.toUpperCase() : lv ? lv.clock : "not started"}</span>
-                                {l.status === "open" && probs[li] != null && <span className={probs[li]! < 0.35 ? "text-destructive" : "text-[hsl(var(--desk-win))]"}> · {Math.round(probs[li]! * 100)}%</span>}
+                                {l.status === "open" && <span className="text-[hsl(var(--desk-muted))]"> · {probs[li] == null ? "awaiting data" : `${Math.round(Number(probs[li]) * 100)}% est.`}</span>}
                               </span>
                             </div>
                             {cur != null && (
@@ -315,11 +327,14 @@ export default function MyBets() {
                       </div>
                     )}
                     {t.status === "open" && (
-                      <div className="mt-2">
-                        <button className="desk-tab text-xs" onClick={() => askAi(t, {
+                      <div className="mt-3 space-y-2 border-t border-[hsl(var(--desk-line))] pt-3">
+                        <div className="desk-label">Live hedge analysis</div>
+                        {openLegs.length > 1 && <p className="text-xs text-[hsl(var(--desk-muted))]">{openLegs.length} legs still open. No guaranteed hedge amount until one leg remains.</p>}
+                        {cash == null && <p className="text-xs text-[hsl(var(--desk-muted))]">Win estimates await live scores and player history.</p>}
+                        <Button variant="outline" size="sm" className="desk-tab text-xs" disabled={aiNote[t.id] === "Thinking…"} onClick={() => askAi(t, {
                           stake: t.stake, odds: t.odds, cash_chance: cash, hedge: plan,
                           legs: t.legs.map((l, i) => ({ player: l.player_name, stat: l.stat, side: l.side, line: l.line, status: l.status, now: live[l.id]?.value ?? null, minutes: live[l.id]?.minutes ?? null, clock: live[l.id]?.clock ?? "not started", win_prob: probs[i], ...pregame(l.player_name, l.stat) })),
-                        })}>AI hedge note</button>
+                        })}>AI hedge note</Button>
                         {aiNote[t.id] && <p className="mt-1 whitespace-pre-wrap text-xs text-[hsl(var(--desk-muted))]">{aiNote[t.id]}</p>}
                       </div>
                     )}

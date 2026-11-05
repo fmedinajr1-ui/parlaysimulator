@@ -14,6 +14,12 @@ export interface LiveLegInput {
   ratePerMin: number;     // pregame stat per minute (L10)
 }
 
+/** Never label a missing feed or an empty historical baseline as a live prediction. */
+export function livePredictionAvailable(live: { period?: number } | undefined, baseline: { avgMinutes: number; ratePerMin: number }): boolean {
+  return !!live && (live.period ?? 0) > 0 && Number.isFinite(baseline.avgMinutes) && baseline.avgMinutes > 0
+    && Number.isFinite(baseline.ratePerMin) && baseline.ratePerMin > 0;
+}
+
 export function gameMinutesElapsed(period: number, clockSec: number): number {
   if (period <= 0) return 0;
   const left = Math.max(0, clockSec) / 60;
