@@ -4,7 +4,7 @@ import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScore
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
 /** Bump whenever the projection rules change, so the pick log can compare versions. */
-export const MODEL_VERSION = "v4-margin";
+export const MODEL_VERSION = "v4-balanced";
 
 export interface ProjectionContext {
   seasonStart: string;
