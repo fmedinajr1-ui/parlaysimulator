@@ -120,3 +120,58 @@ describe("home / road venue reasons", () => {
     }
   });
 });
+
+describe("v3 calibration lessons from Bam's 0-assist game", () => {
+  const bamGames: GameLog[] = [
+    ["2026-11-04", 4, 41, false], ["2026-11-02", 4, 31, false],
+    ["2026-10-30", 3, 33, true], ["2026-10-28", 3, 33, false],
+    ["2026-10-26", 3, 30, true], ["2026-10-24", 4, 39, false],
+    ["2026-10-23", 3, 23, true], ["2026-10-21", 4, 31, true],
+    ["2026-10-20", 3, 29, true], ["2026-04-14", 1, 11, false],
+  ].map(([date, assists, minutes, home]) => ({
+    player_name: "Bam Adebayo", game_date: String(date), opponent: "X",
+    minutes_played: Number(minutes), points: 20, rebounds: 10,
+    assists: Number(assists), threes_made: 1, is_home: Boolean(home),
+  }));
+  const bamCtx: ProjectionContext = {
+    seasonStart: "2026-10-01", today: "2026-11-05", home: false,
+    oppFactor: 1.16, teammatesOut: [], position: "C",
+  };
+
+  it("does not turn Bam's 4-for-9 Over into a 90% recommendation", () => {
+    const p = projectProp(bamGames, "assists", 3.5, -138, 100, bamCtx)!;
+    expect(p.side).toBe("under");
+    expect(p.prob).toBeLessThan(0.6);
+    expect(p.projection).toBe(3.36);
+  });
+
+  it("uses typical minutes so one overtime game cannot add 15%", () => {
+    const p = projectProp(bamGames, "assists", 3.5, -138, 100, bamCtx)!;
+    const minutes = p.reasons.find((r) => r.label.startsWith("Minutes"))!;
+    expect(minutes.pct).toBeLessThan(15);
+    expect(minutes.why).toContain("overtime outliers");
+  });
+
+  it("does not import old road games into this season's venue boost", () => {
+    const currentHome = bamGames.slice(0, 5).map((g) => ({ ...g, is_home: true }));
+    const oldRoad = bamGames.slice(5).map((g) => ({ ...g, game_date: g.game_date.replace("2026", "2025"), is_home: false }));
+    const p = projectProp([...currentHome, ...oldRoad], "assists", 3.5, -110, -110, { ...bamCtx, oppFactor: 1 })!;
+    expect(p.notes.some((n) => n.startsWith("Road"))).toBe(false);
+  });
+
+  it("caps all combined context boosts at 12%", () => {
+    const heavyMinutes = games([10, 10, 10, 10, 10, 10, 10, 10]).map((g, i) => ({ ...g, minutes_played: i < 3 ? 40 : 30 }));
+    const p = projectProp(heavyMinutes, "points", 9.5, -110, -110, {
+      ...ctx, oppFactor: 1.5, position: "C",
+      teammatesOut: [{ name: "Star", position: "C", stat: 100, minutes: 40 }],
+    })!;
+    expect(p.projection).toBe(11.2);
+  });
+
+  it("keeps the actual weighted hit rate in the win probability", () => {
+    const actual = games([4, 4, 4, 4, 3, 3, 3, 3, 3]).map((g) => ({ ...g, assists: g.points }));
+    const p = projectProp(actual, "assists", 3.5, 1000, -1000, ctx)!;
+    expect(p.side).toBe("over");
+    expect(p.prob).toBeCloseTo(0.45, 2);
+  });
+});

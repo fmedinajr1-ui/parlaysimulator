@@ -4,7 +4,7 @@ import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScore
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
 /** Bump whenever the projection rules change, so the pick log can compare versions. */
-export const MODEL_VERSION = "v2-pos-min";
+export const MODEL_VERSION = "v3-calibrated";
 
 export interface ProjectionContext {
   seasonStart: string;
@@ -104,27 +104,27 @@ export function projectProp(
   const pts = l10.map((g) => ({ v: statValue(g, stat), w: g.game_date >= ctx.seasonStart ? 2 : 1 }));
   const base = weightedMedian(pts);
 
-  // Minutes: last 3 vs last 10.
+  // Minutes: medians prevent one overtime game from looking like a lasting role change.
   const mins = l10.map((g) => Number(g.minutes_played));
-  const l3m = mins.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
-  const l10m = mins.reduce((a, b) => a + b, 0) / mins.length;
+  const l3m = percentile(mins.slice(0, 3), 0.5);
+  const l10m = percentile(mins, 0.5);
   const fMin = clamp(l10m ? l3m / l10m : 1, 0.85, 1.15);
   if (Math.abs(fMin - 1) >= 0.05)
-    add(`Minutes ${fMin > 1 ? "up" : "down"}`, fMin, `Played ${Math.round(l3m)} min over his last 3 vs ${Math.round(l10m)} over 10, so his role is ${fMin > 1 ? "growing" : "shrinking"}.`);
+    add(`Minutes ${fMin > 1 ? "up" : "down"}`, fMin, `Typical minutes were ${Math.round(l3m)} over his last 3 vs ${Math.round(l10m)} over 10, so his role is ${fMin > 1 ? "growing" : "shrinking"}; overtime outliers have less influence.`);
 
-  // Home/road split over the last 20 games; needs 3+ games on each side, half-weighted for small samples.
+  // Venue splits use this season only, so last year's role cannot create a current boost.
   let fHome = 1;
-  const l20 = played.slice(0, 20).filter((g) => g.is_home != null);
-  const side = l20.filter((g) => g.is_home === ctx.home);
-  const other = l20.filter((g) => g.is_home !== ctx.home);
+  const venueGames = played.filter((g) => g.game_date >= ctx.seasonStart && g.is_home != null).slice(0, 20);
+  const side = venueGames.filter((g) => g.is_home === ctx.home);
+  const other = venueGames.filter((g) => g.is_home !== ctx.home);
   if (ctx.home != null && side.length >= 3 && other.length >= 3) {
     const avg = (a: GameLog[]) => a.reduce((t, g) => t + statValue(g, stat), 0) / a.length;
-    const all = avg(l20), here = avg(side);
+    const all = avg(venueGames), here = avg(side);
     const trust = Math.min(1, side.length / 8);
     if (all > 0) fHome = clamp(1 + (here / all - 1) * trust, 0.95, 1.05);
     if (Math.abs(fHome - 1) >= 0.02)
       add(`${ctx.home ? "Home" : "Road"} ${fHome > 1 ? "boost" : "dip"}`, fHome,
-        `Averages ${here.toFixed(1)} ${w} ${ctx.home ? "at home" : "on the road"} vs ${all.toFixed(1)} overall (last ${side.length} ${ctx.home ? "home" : "road"} games).`);
+        `Averages ${here.toFixed(1)} ${w} ${ctx.home ? "at home" : "on the road"} vs ${all.toFixed(1)} overall this season (${side.length} ${ctx.home ? "home" : "road"} games).`);
   }
 
   // Back-to-back: heavier hit for high-minute players.
@@ -153,14 +153,16 @@ export function projectProp(
       `${helpers.join(", ")} ${helpers.length > 1 ? "are" : "is"} out. Same-position minutes open up and he plays ${Math.round(l10m)} min${ctx.position ? ` as a ${ctx.position}` : ""}.`);
   const notes = reasons.map((r) => r.label);
 
-  const factor = fMin * fHome * fRest * fOpp * fMate;
+  // Context is uncertain: cap the combined adjustment instead of stacking boosts without limit.
+  const factor = clamp(fMin * fHome * fRest * fOpp * fMate, 0.88, 1.12);
   const adj = pts.map((p) => ({ v: p.v * factor, w: p.w }));
-  const total = adj.reduce((t, x) => t + x.w, 0);
-  const wOver = adj.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0);
-  const wUnder = adj.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0);
-  // Smoothed so 10/10 never reads as a sure thing.
-  const pOver = (wOver + 1) / (total + 2);
-  const pUnder = (wUnder + 1) / (total + 2);
+  const total = pts.reduce((t, x) => t + x.w, 0);
+  const weightOver = (rows: { v: number; w: number }[]) => rows.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0);
+  const weightUnder = (rows: { v: number; w: number }[]) => rows.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0);
+  // Blend actual hit rate with the adjusted scenario; context cannot rewrite history on its own.
+  // A four-game prior at 50% keeps small samples from producing extreme confidence.
+  const pOver = (0.5 * weightOver(pts) + 0.5 * weightOver(adj) + 2) / (total + 4);
+  const pUnder = (0.5 * weightUnder(pts) + 0.5 * weightUnder(adj) + 2) / (total + 4);
   const evOver = pOver * unitProfit(overOdds) - (1 - pOver);
   const evUnder = pUnder * unitProfit(underOdds) - (1 - pUnder);
   const over = evOver >= evUnder;
