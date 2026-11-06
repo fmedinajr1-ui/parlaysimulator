@@ -164,19 +164,25 @@ export function projectProp(
   // Context is uncertain: cap the combined adjustment instead of stacking boosts without limit.
   const factor = clamp(fMin * fHome * fRest * fOpp * fMate, 0.88, 1.12);
   const total = pts.reduce((t, x) => t + x.w, 0);
-  const proj = base * factor;
+  // v4: centre on a median/mean blend so zero-heavy stats (threes) don't project a flat 0.
+  const meanRaw = pts.reduce((t, x) => t + x.v * x.w, 0) / pts.reduce((t, x) => t + x.w, 0);
+  const proj = (0.5 * base + 0.5 * meanRaw) * factor;
   // v4: win chance comes from the projected margin vs the player's game-to-game spread,
   // after every factor is applied. Hit rate is only a small secondary check.
   const mean = pts.reduce((t, x) => t + x.v * x.w, 0) / total;
   const varr = pts.reduce((t, x) => t + x.w * (x.v - mean) ** 2, 0) / total;
-  const sd = Math.max(Math.sqrt(varr), 0.6 + 0.15 * Math.max(proj, 0));
+  const sd = Math.max(Math.sqrt(varr), 1, 0.15 * Math.max(proj, 0));
   const zOver = (proj - line) / sd;
   const pMarginOver = normCdf(zOver);
   const hitOver = (pts.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0) + 2) / (total + 4);
   const hitUnder = (pts.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0) + 2) / (total + 4);
   const hitNudge = clamp((hitOver - hitUnder) * 0.1, -0.05, 0.05);
-  const pOver = clamp(pMarginOver + hitNudge, 0.05, 0.8);
-  const pUnder = clamp(1 - pMarginOver - hitNudge, 0.05, 0.8);
+  // Blend with the sportsbook's no-vig price: the market is sharp, our context only shifts it.
+  const imp = (o: number) => 1 / (1 + unitProfit(o));
+  const mOver = imp(overOdds) / (imp(overOdds) + imp(underOdds));
+  const model = pMarginOver + hitNudge;
+  const pOver = clamp(0.6 * model + 0.4 * mOver, 0.05, 0.8);
+  const pUnder = clamp(1 - pOver, 0.05, 0.8);
   const evOver = pOver * unitProfit(overOdds) - (1 - pOver);
   const evUnder = pUnder * unitProfit(underOdds) - (1 - pUnder);
   const over = evOver >= evUnder;
