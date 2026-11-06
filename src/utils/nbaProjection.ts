@@ -104,27 +104,27 @@ export function projectProp(
   const pts = l10.map((g) => ({ v: statValue(g, stat), w: g.game_date >= ctx.seasonStart ? 2 : 1 }));
   const base = weightedMedian(pts);
 
-  // Minutes: last 3 vs last 10.
+  // Minutes: medians prevent one overtime game from looking like a lasting role change.
   const mins = l10.map((g) => Number(g.minutes_played));
-  const l3m = mins.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
-  const l10m = mins.reduce((a, b) => a + b, 0) / mins.length;
+  const l3m = percentile(mins.slice(0, 3), 0.5);
+  const l10m = percentile(mins, 0.5);
   const fMin = clamp(l10m ? l3m / l10m : 1, 0.85, 1.15);
   if (Math.abs(fMin - 1) >= 0.05)
-    add(`Minutes ${fMin > 1 ? "up" : "down"}`, fMin, `Played ${Math.round(l3m)} min over his last 3 vs ${Math.round(l10m)} over 10, so his role is ${fMin > 1 ? "growing" : "shrinking"}.`);
+    add(`Minutes ${fMin > 1 ? "up" : "down"}`, fMin, `Typical minutes were ${Math.round(l3m)} over his last 3 vs ${Math.round(l10m)} over 10, so his role is ${fMin > 1 ? "growing" : "shrinking"}; overtime outliers have less influence.`);
 
-  // Home/road split over the last 20 games; needs 3+ games on each side, half-weighted for small samples.
+  // Venue splits use this season only, so last year's role cannot create a current boost.
   let fHome = 1;
-  const l20 = played.slice(0, 20).filter((g) => g.is_home != null);
-  const side = l20.filter((g) => g.is_home === ctx.home);
-  const other = l20.filter((g) => g.is_home !== ctx.home);
+  const venueGames = played.filter((g) => g.game_date >= ctx.seasonStart && g.is_home != null).slice(0, 20);
+  const side = venueGames.filter((g) => g.is_home === ctx.home);
+  const other = venueGames.filter((g) => g.is_home !== ctx.home);
   if (ctx.home != null && side.length >= 3 && other.length >= 3) {
     const avg = (a: GameLog[]) => a.reduce((t, g) => t + statValue(g, stat), 0) / a.length;
-    const all = avg(l20), here = avg(side);
+    const all = avg(venueGames), here = avg(side);
     const trust = Math.min(1, side.length / 8);
     if (all > 0) fHome = clamp(1 + (here / all - 1) * trust, 0.95, 1.05);
     if (Math.abs(fHome - 1) >= 0.02)
       add(`${ctx.home ? "Home" : "Road"} ${fHome > 1 ? "boost" : "dip"}`, fHome,
-        `Averages ${here.toFixed(1)} ${w} ${ctx.home ? "at home" : "on the road"} vs ${all.toFixed(1)} overall (last ${side.length} ${ctx.home ? "home" : "road"} games).`);
+        `Averages ${here.toFixed(1)} ${w} ${ctx.home ? "at home" : "on the road"} vs ${all.toFixed(1)} overall this season (${side.length} ${ctx.home ? "home" : "road"} games).`);
   }
 
   // Back-to-back: heavier hit for high-minute players.
