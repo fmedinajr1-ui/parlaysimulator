@@ -163,7 +163,6 @@ export function projectProp(
 
   // Context is uncertain: cap the combined adjustment instead of stacking boosts without limit.
   const factor = clamp(fMin * fHome * fRest * fOpp * fMate, 0.88, 1.12);
-  const adj = pts.map((p) => ({ v: p.v * factor, w: p.w }));
   const total = pts.reduce((t, x) => t + x.w, 0);
   const proj = base * factor;
   // v4: win chance comes from the projected margin vs the player's game-to-game spread,

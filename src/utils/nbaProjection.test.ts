@@ -168,10 +168,37 @@ describe("v3 calibration lessons from Bam's 0-assist game", () => {
     expect(p.projection).toBe(11.2);
   });
 
-  it("keeps the actual weighted hit rate in the win probability", () => {
+  it("hit rate alone can only nudge the win chance a few points", () => {
     const actual = games([4, 4, 4, 4, 3, 3, 3, 3, 3]).map((g) => ({ ...g, assists: g.points }));
     const p = projectProp(actual, "assists", 3.5, 1000, -1000, ctx)!;
-    expect(p.side).toBe("over");
-    expect(p.prob).toBeCloseTo(0.45, 2);
+    expect(p.prob).toBeLessThan(0.4);
+  });
+});
+
+describe("v4 margin-based win chance", () => {
+  it("a 0.1 edge over the line is close to a coin flip, even with a strong hit rate", () => {
+    const p = projectProp(games([3, 3, 3, 3, 3, 3, 3, 3, 1, 1]).map((g) => ({ ...g, assists: g.points })), "assists", 2.5, 104, -125, ctx)!;
+    expect(p.prob).toBeLessThan(0.65);
+  });
+  it("a bigger projected margin gives a bigger win chance", () => {
+    const near = projectProp(games([20, 22, 18, 21, 19, 20]), "points", 19.5, -110, -110, ctx)!;
+    const far = projectProp(games([25, 27, 23, 26, 24, 25]), "points", 19.5, -110, -110, ctx)!;
+    expect(far.prob).toBeGreaterThan(near.prob);
+  });
+  it("never rates any pick above 80%", () => {
+    const p = projectProp(games([40, 40, 40, 40, 40, 40, 40, 40]), "points", 10.5, -110, -110, ctx)!;
+    expect(p.prob).toBeLessThanOrEqual(0.8);
+  });
+  it("context factors move the win chance, not just the projection", () => {
+    const base = projectProp(games([10, 11, 9, 10, 11, 9]), "points", 10.5, -110, -110, ctx)!;
+    const soft = projectProp(games([10, 11, 9, 10, 11, 9]), "points", 10.5, -110, -110, { ...ctx, oppFactor: 1.16 })!;
+    const pOver = (x: typeof base) => (x.side === "over" ? x.prob : 1 - x.prob);
+    expect(pOver(soft)).toBeGreaterThan(pOver(base));
+  });
+  it("over and under chances add up to about 100%", () => {
+    const o = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, 300, -1000, ctx)!;
+    const u = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, -1000, 300, ctx)!;
+    expect(o.side).not.toBe(u.side);
+    expect(o.prob + u.prob).toBeCloseTo(1, 1);
   });
 });
