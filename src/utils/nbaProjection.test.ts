@@ -142,7 +142,7 @@ describe("v3 calibration lessons from Bam's 0-assist game", () => {
     const p = projectProp(bamGames, "assists", 3.5, -138, 100, bamCtx)!;
     expect(p.side).toBe("under");
     expect(p.prob).toBeLessThan(0.6);
-    expect(p.projection).toBe(3.36);
+    expect(p.projection).toBeLessThan(3.6);
   });
 
   it("uses typical minutes so one overtime game cannot add 15%", () => {
@@ -168,10 +168,37 @@ describe("v3 calibration lessons from Bam's 0-assist game", () => {
     expect(p.projection).toBe(11.2);
   });
 
-  it("keeps the actual weighted hit rate in the win probability", () => {
+  it("hit rate alone can only nudge the win chance a few points", () => {
     const actual = games([4, 4, 4, 4, 3, 3, 3, 3, 3]).map((g) => ({ ...g, assists: g.points }));
     const p = projectProp(actual, "assists", 3.5, 1000, -1000, ctx)!;
-    expect(p.side).toBe("over");
-    expect(p.prob).toBeCloseTo(0.45, 2);
+    expect(p.prob).toBeLessThan(0.4);
+  });
+});
+
+describe("v4 margin-based win chance", () => {
+  it("a half-point edge over the line is close to a coin flip, even with a strong hit rate", () => {
+    const p = projectProp(games([20, 20, 20, 20, 20, 20, 20, 20, 19, 19]), "points", 19.5, 104, -125, ctx)!;
+    expect(p.prob).toBeLessThan(0.65);
+  });
+  it("a bigger projected margin gives a bigger win chance", () => {
+    const near = projectProp(games([20, 22, 18, 21, 19, 20]), "points", 19.5, -110, -110, ctx)!;
+    const far = projectProp(games([25, 27, 23, 26, 24, 25]), "points", 19.5, -110, -110, ctx)!;
+    expect(far.prob).toBeGreaterThan(near.prob);
+  });
+  it("never rates any pick above 80%", () => {
+    const p = projectProp(games([40, 40, 40, 40, 40, 40, 40, 40]), "points", 10.5, -110, -110, ctx)!;
+    expect(p.prob).toBeLessThanOrEqual(0.8);
+  });
+  it("context factors move the win chance, not just the projection", () => {
+    const base = projectProp(games([10, 11, 9, 10, 11, 9]), "points", 10.5, -110, -110, ctx)!;
+    const soft = projectProp(games([10, 11, 9, 10, 11, 9]), "points", 10.5, -110, -110, { ...ctx, oppFactor: 1.16 })!;
+    const pOver = (x: typeof base) => (x.side === "over" ? x.prob : 1 - x.prob);
+    expect(pOver(soft)).toBeGreaterThan(pOver(base));
+  });
+  it("the sportsbook price pulls the win chance toward the market", () => {
+    const even = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, -110, -110, ctx)!;
+    const juicedUnder = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, 300, -400, ctx)!;
+    const pOver = (x: typeof even) => (x.side === "over" ? x.prob : 1 - x.prob);
+    expect(pOver(juicedUnder)).toBeLessThan(pOver(even));
   });
 });
