@@ -4,7 +4,7 @@ import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScore
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
 /** Bump whenever the projection rules change, so the pick log can compare versions. */
-export const MODEL_VERSION = "v3-calibrated";
+export const MODEL_VERSION = "v4-margin";
 
 export interface ProjectionContext {
   seasonStart: string;
@@ -77,6 +77,14 @@ function weightedMedian(vals: { v: number; w: number }[]): number {
   let acc = 0;
   for (const x of s) { acc += x.w; if (acc >= total / 2) return x.v; }
   return s.at(-1)?.v ?? 0;
+}
+
+/** Standard normal CDF (Abramowitz-Stegun). */
+export function normCdf(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp(-z * z / 2);
+  const q = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return z > 0 ? 1 - q : q;
 }
 
 function dayBefore(d: string) {
@@ -157,17 +165,24 @@ export function projectProp(
   const factor = clamp(fMin * fHome * fRest * fOpp * fMate, 0.88, 1.12);
   const adj = pts.map((p) => ({ v: p.v * factor, w: p.w }));
   const total = pts.reduce((t, x) => t + x.w, 0);
-  const weightOver = (rows: { v: number; w: number }[]) => rows.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0);
-  const weightUnder = (rows: { v: number; w: number }[]) => rows.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0);
-  // Blend actual hit rate with the adjusted scenario; context cannot rewrite history on its own.
-  // A four-game prior at 50% keeps small samples from producing extreme confidence.
-  const pOver = (0.5 * weightOver(pts) + 0.5 * weightOver(adj) + 2) / (total + 4);
-  const pUnder = (0.5 * weightUnder(pts) + 0.5 * weightUnder(adj) + 2) / (total + 4);
+  const proj = base * factor;
+  // v4: win chance comes from the projected margin vs the player's game-to-game spread,
+  // after every factor is applied. Hit rate is only a small secondary check.
+  const mean = pts.reduce((t, x) => t + x.v * x.w, 0) / total;
+  const varr = pts.reduce((t, x) => t + x.w * (x.v - mean) ** 2, 0) / total;
+  const sd = Math.max(Math.sqrt(varr), 0.6 + 0.15 * Math.max(proj, 0));
+  const zOver = (proj - line) / sd;
+  const pMarginOver = normCdf(zOver);
+  const hitOver = (pts.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0) + 2) / (total + 4);
+  const hitUnder = (pts.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0) + 2) / (total + 4);
+  const hitNudge = clamp((hitOver - hitUnder) * 0.1, -0.05, 0.05);
+  const pOver = clamp(pMarginOver + hitNudge, 0.05, 0.8);
+  const pUnder = clamp(1 - pMarginOver - hitNudge, 0.05, 0.8);
   const evOver = pOver * unitProfit(overOdds) - (1 - pOver);
   const evUnder = pUnder * unitProfit(underOdds) - (1 - pUnder);
   const over = evOver >= evUnder;
   return {
-    projection: r2(base * factor),
+    projection: r2(proj),
     side: over ? "over" : "under",
     prob: r2(over ? pOver : pUnder),
     ev: r2(over ? evOver : evUnder),
