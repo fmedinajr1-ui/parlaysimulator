@@ -13,7 +13,7 @@ import { MathSlip } from "@/components/desk/MathSlip";
 export default function Desk() {
   const { logs, loading, err, byPlayer, propLines, injuries, today, edges } = useResearchData();
   const [focus, setFocus] = useState<string | null>(null);
-  const [record, setRecord] = useState<{ w: number; l: number; p: number; profit: number } | null>(null);
+  const [records, setRecords] = useState<{ v: string; w: number; l: number; p: number; open: number; profit: number }[] | null>(null);
 
   // Record tonight's picks (first snapshot of the day is kept) and load the graded record.
   useEffect(() => {
@@ -28,15 +28,19 @@ export default function Desk() {
       try {
         if (picks.length) await supabase.functions.invoke("desk-bets", { body: { action: "log_picks", passcode, picks } });
         const { data } = await supabase.functions.invoke("desk-bets", { body: { action: "pick_record", passcode } });
-        const rows = ((data?.picks ?? []) as { model_version: string; status: string; odds: number | null }[]).filter((r) => r.model_version === MODEL_VERSION);
-        let w = 0, l = 0, p = 0, profit = 0;
+        const rows = (data?.picks ?? []) as { model_version: string; status: string; odds: number | null }[];
+        const by = new Map<string, { v: string; w: number; l: number; p: number; open: number; profit: number }>();
         for (const r of rows) {
+          if (r.model_version === "v4-margin") continue; // broken first v4 snapshot, excluded
+          const s = by.get(r.model_version) ?? { v: r.model_version, w: 0, l: 0, p: 0, open: 0, profit: 0 };
           const o = r.odds ?? -110;
-          if (r.status === "won") { w++; profit += o > 0 ? o / 100 : 100 / -o; }
-          else if (r.status === "lost") { l++; profit -= 1; }
-          else if (r.status === "push") p++;
+          if (r.status === "won") { s.w++; s.profit += o > 0 ? o / 100 : 100 / -o; }
+          else if (r.status === "lost") { s.l++; s.profit -= 1; }
+          else if (r.status === "push") s.p++;
+          else if (r.status === "open") s.open++;
+          by.set(r.model_version, s);
         }
-        setRecord({ w, l, p, profit });
+        setRecords([...by.values()].sort((a, b) => a.v.localeCompare(b.v)));
       } catch { /* logging is best-effort */ }
     })();
   }, [loading, edges, today]);
@@ -67,14 +71,23 @@ export default function Desk() {
       />
 
       <main className="mx-auto max-w-[1500px] px-3 pb-16 pt-3 sm:px-4 sm:pt-4">
-        {record && (
-          <p className="mb-2 font-mono text-xs text-muted-foreground">
-            Pick record ({MODEL_VERSION}): {record.w}-{record.l}{record.p ? `-${record.p}` : ""} ·{" "}
-            <span className={record.profit >= 0 ? "text-primary" : "text-destructive"}>
-              {record.profit >= 0 ? "+" : ""}{record.profit.toFixed(2)} units
-            </span>
-            {record.w + record.l === 0 && " · first grades land after tonight's games"}
-          </p>
+        {records && records.length > 0 && (
+          <div className="mb-2 overflow-x-auto rounded-md border border-border font-mono text-xs">
+            <table className="w-full">
+              <thead className="text-muted-foreground"><tr>
+                <th className="px-2 py-1 text-left">Model</th><th className="px-2 py-1 text-right">W-L-P</th>
+                <th className="px-2 py-1 text-right">Win %</th><th className="px-2 py-1 text-right">Units</th><th className="px-2 py-1 text-right">Open</th>
+              </tr></thead>
+              <tbody>{records.map((r) => (
+                <tr key={r.v} className={r.v === MODEL_VERSION ? "text-foreground" : "text-muted-foreground"}>
+                  <td className="px-2 py-1">{r.v}{r.v === MODEL_VERSION ? " (current)" : ""}</td>
+                  <td className="px-2 py-1 text-right">{r.w}-{r.l}-{r.p}</td>
+                  <td className="px-2 py-1 text-right">{r.w + r.l ? Math.round((100 * r.w) / (r.w + r.l)) + "%" : "—"}</td>
+                  <td className={`px-2 py-1 text-right ${r.profit >= 0 ? "text-primary" : "text-destructive"}`}>{r.profit >= 0 ? "+" : ""}{r.profit.toFixed(2)}</td>
+                  <td className="px-2 py-1 text-right">{r.open}</td>
+                </tr>))}</tbody>
+            </table>
+          </div>
         )}
         <EdgeCards edges={edges} onPick={setFocus} />
 
