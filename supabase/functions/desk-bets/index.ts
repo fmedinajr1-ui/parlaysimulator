@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
     return error ? json({ error: error.message }, 500) : json({ ok: true, logged: b.picks.length });
   }
   if (b.action === "pick_record") {
-    const { data, error } = await sb.from("research_pick_log").select("model_version,status,ev,odds").neq("status", "open").limit(10000);
+    const { data, error } = await sb.from("research_pick_log").select("model_version,status,ev,odds").limit(10000);
     if (error) return json({ error: error.message }, 500);
     return json({ picks: data });
   }
