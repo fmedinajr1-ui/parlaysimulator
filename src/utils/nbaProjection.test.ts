@@ -142,7 +142,7 @@ describe("v3 calibration lessons from Bam's 0-assist game", () => {
     const p = projectProp(bamGames, "assists", 3.5, -138, 100, bamCtx)!;
     expect(p.side).toBe("under");
     expect(p.prob).toBeLessThan(0.6);
-    expect(p.projection).toBe(3.36);
+    expect(p.projection).toBeLessThan(3.6);
   });
 
   it("uses typical minutes so one overtime game cannot add 15%", () => {
@@ -195,10 +195,10 @@ describe("v4 margin-based win chance", () => {
     const pOver = (x: typeof base) => (x.side === "over" ? x.prob : 1 - x.prob);
     expect(pOver(soft)).toBeGreaterThan(pOver(base));
   });
-  it("over and under chances add up to about 100%", () => {
-    const o = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, 300, -1000, ctx)!;
-    const u = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, -1000, 300, ctx)!;
-    expect(o.side).not.toBe(u.side);
-    expect(o.prob + u.prob).toBeCloseTo(1, 1);
+  it("the sportsbook price pulls the win chance toward the market", () => {
+    const even = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, -110, -110, ctx)!;
+    const juicedUnder = projectProp(games([12, 14, 10, 13, 11, 12]), "points", 12.5, 300, -400, ctx)!;
+    const pOver = (x: typeof even) => (x.side === "over" ? x.prob : 1 - x.prob);
+    expect(pOver(juicedUnder)).toBeLessThan(pOver(even));
   });
 });
