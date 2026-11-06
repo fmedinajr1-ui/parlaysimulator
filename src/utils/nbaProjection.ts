@@ -153,14 +153,16 @@ export function projectProp(
       `${helpers.join(", ")} ${helpers.length > 1 ? "are" : "is"} out. Same-position minutes open up and he plays ${Math.round(l10m)} min${ctx.position ? ` as a ${ctx.position}` : ""}.`);
   const notes = reasons.map((r) => r.label);
 
-  const factor = fMin * fHome * fRest * fOpp * fMate;
+  // Context is uncertain: cap the combined adjustment instead of stacking boosts without limit.
+  const factor = clamp(fMin * fHome * fRest * fOpp * fMate, 0.88, 1.12);
   const adj = pts.map((p) => ({ v: p.v * factor, w: p.w }));
-  const total = adj.reduce((t, x) => t + x.w, 0);
-  const wOver = adj.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0);
-  const wUnder = adj.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0);
-  // Smoothed so 10/10 never reads as a sure thing.
-  const pOver = (wOver + 1) / (total + 2);
-  const pUnder = (wUnder + 1) / (total + 2);
+  const total = pts.reduce((t, x) => t + x.w, 0);
+  const weightOver = (rows: { v: number; w: number }[]) => rows.filter((x) => x.v > line).reduce((t, x) => t + x.w, 0);
+  const weightUnder = (rows: { v: number; w: number }[]) => rows.filter((x) => x.v < line).reduce((t, x) => t + x.w, 0);
+  // Blend actual hit rate with the adjusted scenario; context cannot rewrite history on its own.
+  // A four-game prior at 50% keeps small samples from producing extreme confidence.
+  const pOver = (0.5 * weightOver(pts) + 0.5 * weightOver(adj) + 2) / (total + 4);
+  const pUnder = (0.5 * weightUnder(pts) + 0.5 * weightUnder(adj) + 2) / (total + 4);
   const evOver = pOver * unitProfit(overOdds) - (1 - pOver);
   const evUnder = pUnder * unitProfit(underOdds) - (1 - pUnder);
   const over = evOver >= evUnder;
