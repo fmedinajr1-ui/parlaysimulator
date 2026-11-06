@@ -176,8 +176,8 @@ describe("v3 calibration lessons from Bam's 0-assist game", () => {
 });
 
 describe("v4 margin-based win chance", () => {
-  it("a 0.1 edge over the line is close to a coin flip, even with a strong hit rate", () => {
-    const p = projectProp(games([3, 3, 3, 3, 3, 3, 3, 3, 1, 1]).map((g) => ({ ...g, assists: g.points })), "assists", 2.5, 104, -125, ctx)!;
+  it("a half-point edge over the line is close to a coin flip, even with a strong hit rate", () => {
+    const p = projectProp(games([20, 20, 20, 20, 20, 20, 20, 20, 19, 19]), "points", 19.5, 104, -125, ctx)!;
     expect(p.prob).toBeLessThan(0.65);
   });
   it("a bigger projected margin gives a bigger win chance", () => {
