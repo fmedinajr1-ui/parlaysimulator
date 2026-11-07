@@ -56,7 +56,7 @@ export function MinutesComparison({ board, v5, v6, byPlayer, today }: {
       return <div key={version}><h3 className="mb-1 font-semibold">{version}</h3>
         <p className="mb-2 text-muted-foreground">Same trial dates: {won.length}–{lost.length} · {units.toFixed(2)}u · {results.filter((r) => r.status === "open").length} open</p>
         {picks.length ? picks.map((e) => <div className="flex flex-wrap justify-between gap-2 border-t border-border py-2" key={`${e.player}|${e.stat}`}>
-          <span>{e.player} · {e.side} {e.line} {e.stat.replaceAll("_", " ")}</span><span className="text-primary">Proj {e.median} · {Math.round(e.hitRate * 100)}%</span>
+          <span>{e.player} · {e.side} {e.line} {e.stat.replace(/_/g, " ")}</span><span className="text-primary">Proj {e.median} · {Math.round(e.hitRate * 100)}%</span>
         </div>) : <p className="text-muted-foreground">No qualifying picks</p>}</div>;
     })}</div>}
   </section>;
