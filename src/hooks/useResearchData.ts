@@ -9,7 +9,7 @@ import {
   type StatKey,
 } from "@/utils/nbaBoxScoreMath";
 
-const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home";
+const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home,field_goals_attempted,threes_attempted";
 
 export const STAT_OPTIONS: { key: StatKey; label: string; short: string }[] = [
   { key: "points", label: "Points", short: "PTS" },
