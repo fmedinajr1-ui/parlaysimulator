@@ -10,6 +10,8 @@ export interface GameLog {
   assists: number | null;
   threes_made: number | null;
   is_home?: boolean | null;
+  field_goals_attempted?: number | null;
+  threes_attempted?: number | null;
 }
 
 export function statValue(g: GameLog, stat: StatKey): number {

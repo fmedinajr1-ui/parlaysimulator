@@ -63,3 +63,25 @@ describe("buildGameCoverage", () => {
     expect(games).toEqual([]);
   });
 });
+
+describe("game ranking and strong picks", () => {
+  it("ranks the game with more expected profit first even with fewer picks", () => {
+    const games = buildGameCoverage([
+      row(),
+      row({ player: "Other", team: "New York Knicks", opponent: "Chicago Bulls", home: true }),
+      row({ player: "Other2", team: "New York Knicks", opponent: "Chicago Bulls", home: true }),
+    ], [
+      { player: "Road Player", stat: "points", side: "over", line: 20.5, ev: 0.3 },
+      { player: "Other", stat: "points", side: "over", line: 10.5, ev: 0.05 },
+      { player: "Other2", stat: "points", side: "over", line: 10.5, ev: 0.05 },
+    ]);
+    expect(games[0].label).toBe("Boston Celtics @ Miami Heat");
+    expect(games[0].strength).toBe(0.3);
+  });
+  it("counts a pick as strong only at 65%+ win and 8c+ profit", async () => {
+    const { isStrongPick } = await import("./gameCoverage");
+    expect(isStrongPick({ player: "a", stat: "points", side: "over", line: 1, hitRate: 0.65, ev: 0.08 })).toBe(true);
+    expect(isStrongPick({ player: "a", stat: "points", side: "over", line: 1, hitRate: 0.64, ev: 0.2 })).toBe(false);
+    expect(isStrongPick({ player: "a", stat: "points", side: "over", line: 1, hitRate: 0.8, ev: 0.07 })).toBe(false);
+  });
+});

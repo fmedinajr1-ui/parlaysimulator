@@ -11,7 +11,16 @@ export interface CoveragePick {
   stat: string;
   side: "over" | "under";
   line: number;
+  /** Optional model numbers (present for desk picks). */
+  hitRate?: number;
+  ev?: number;
+  median?: number;
+  odds?: number;
+  tonight?: string | null;
 }
+
+/** A strong pick: win chance 65%+ and at least 8 cents profit per $1. */
+export const isStrongPick = (p: CoveragePick) => (p.hitRate ?? 0) >= 0.65 && (p.ev ?? 0) >= 0.08;
 
 export interface CoveredPlayer {
   player: string;
@@ -30,6 +39,9 @@ export interface GameCoverage {
   playerCount: number;
   propCount: number;
   pickCount: number;
+  strongCount: number;
+  /** Sum of expected profit per $1 across the game's picks; used to rank games. */
+  strength: number;
 }
 
 const playerKey = (name: string) => name.trim().toLowerCase();
@@ -90,6 +102,8 @@ export function buildGameCoverage(
       playerCount: players.length,
       propCount: players.reduce((total, player) => total + player.props.length, 0),
       pickCount: players.reduce((total, player) => total + player.picks.length, 0),
+      strongCount: players.reduce((total, player) => total + player.picks.filter(isStrongPick).length, 0),
+      strength: Math.round(players.reduce((t, p) => t + p.picks.reduce((u, k) => u + Math.max(0, k.ev ?? 0), 0), 0) * 100) / 100,
     };
-  }).sort((a, b) => b.pickCount - a.pickCount || a.label.localeCompare(b.label));
+  }).sort((a, b) => b.strength - a.strength || b.pickCount - a.pickCount || a.label.localeCompare(b.label));
 }

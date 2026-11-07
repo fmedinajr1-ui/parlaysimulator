@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type Reason } from "@/utils/nbaProjection";
+import { trendContext, type TrendContext } from "@/utils/trendContext";
 import { buildGameCoverage, type GameCoveragePlayerInput } from "@/utils/gameCoverage";
 import {
   summarizePlayer,
@@ -9,7 +10,7 @@ import {
   type StatKey,
 } from "@/utils/nbaBoxScoreMath";
 
-const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home";
+const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home,field_goals_attempted,threes_attempted";
 
 export const STAT_OPTIONS: { key: StatKey; label: string; short: string }[] = [
   { key: "points", label: "Points", short: "PTS" },
@@ -327,5 +328,73 @@ export function useResearchData() {
     return buildGameCoverage(rows, allEdges);
   }, [rawLines, resolver, roster, byPlayer, allEdges]);
 
-  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, gameCoverage };
+  // Previous main line per player|stat (last 14 days) for line-movement context.
+  const [prevLines, setPrevLines] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    const since = new Date(Date.parse(today) - 14 * 86400000).toISOString().slice(0, 10);
+    (async () => {
+      try {
+        const rows: (RawLine & { game_date: string })[] = [];
+        for (let from = 0; from < 20000; from += 1000) {
+          const { data, error } = await supabase.from("research_prop_lines" as never)
+            .select("player_name,stat,line,book,event_label,over_price,under_price,game_date")
+            .gte("game_date", since).lt("game_date", today).range(from, from + 999);
+          if (error) throw error;
+          rows.push(...((data ?? []) as never[]));
+          if (!data || data.length < 1000) break;
+        }
+        const best = new Map<string, { d: string; j: number; line: number }>();
+        for (const r of rows) {
+          const k = `${r.player_name.toLowerCase()}|${r.stat}`;
+          const b = best.get(k), j = juice(r);
+          if (!b || r.game_date > b.d || (r.game_date === b.d && j < b.j)) best.set(k, { d: r.game_date, j, line: Number(r.line) });
+        }
+        setPrevLines(new Map([...best].map(([k, v]) => [k, v.line])));
+      } catch (e) { console.error("prev lines failed", e); }
+    })();
+  }, [today]);
+
+  // Teammate context: dates each player's regular teammates (24+ min this season) sat.
+  const mateContext = useMemo(() => {
+    const seasonStart = "2026-10-01";
+    const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
+    const teamDates = new Map<string, Set<string>>();
+    const played = new Map<string, Set<string>>();
+    const regulars = new Map<string, string[]>();
+    for (const [name, games] of byPlayer) {
+      const team = teamOf.get(name); if (!team) continue;
+      const g = games.filter((x) => x.game_date >= seasonStart && Number(x.minutes_played) > 0);
+      played.set(name, new Set(g.map((x) => x.game_date)));
+      const ds = teamDates.get(team) ?? new Set(); g.forEach((x) => ds.add(x.game_date)); teamDates.set(team, ds);
+      if (g.length >= 3 && g.reduce((t, x) => t + Number(x.minutes_played), 0) / g.length >= 24)
+        regulars.set(team, [...(regulars.get(team) ?? []), name]);
+    }
+    return (player: string) => {
+      const team = teamOf.get(player);
+      if (!team) return undefined;
+      const dates = new Set<string>(); const missing = new Set<string>();
+      for (const d of teamDates.get(team) ?? []) for (const m of regulars.get(team) ?? [])
+        if (m !== player && !played.get(m)?.has(d)) { dates.add(d); missing.add(m); }
+      const back = missing.size > 0 && [...missing].every((m) => !/out|doubtful/i.test(injuries.get(m.toLowerCase()) ?? ""));
+      return { dates, back };
+    };
+  }, [byPlayer, roster, injuries]);
+
+  const oppByStat = useMemo(() => {
+    const all: GameLog[] = []; for (const g of byPlayer.values()) all.push(...g);
+    const m = new Map<StatKey, Map<string, number>>();
+    for (const { key } of STAT_OPTIONS) m.set(key, opponentFactors(all, key, "2026-10-01"));
+    return m;
+  }, [byPlayer]);
+
+  const trendFor = (player: string, stat: StatKey): TrendContext => {
+    const k = `${player.toLowerCase()}|${stat}`;
+    const mc = mateContext(player);
+    return trendContext(byPlayer.get(player) ?? [], stat, {
+      oppFactor: oppByStat.get(stat), mateOutDates: mc?.dates, matesBackTonight: mc?.back, today,
+      homeTonight: homeTonight.get(player.toLowerCase()) ?? null, lineTonight: propLines.get(k), linePrev: prevLines.get(k),
+    });
+  };
+
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, gameCoverage, trendFor };
 }

@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { STAT_OPTIONS } from "@/hooks/useResearchData";
 import { GameLogStrip } from "@/components/desk/EdgeCards";
 import { callResearchAi, Prose } from "@/components/research/ResearchAiPanel";
+import type { TrendContext } from "@/utils/trendContext";
 import { summarizePlayer, type GameLog, type StatKey } from "@/utils/nbaBoxScoreMath";
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
   loading: boolean;
   err: string | null;
   focus: string | null;
+  trendFor?: (player: string, stat: StatKey) => TrendContext;
 }
 
 const fmt = (n: number) => (Math.round(n * 10) / 10).toString();
@@ -19,7 +21,32 @@ const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 const HEAD = ["Player", "Last", "Today's line", "L5 Med", "L10 Med", "Floor", "Ceiling", "Hit L5", "Hit L10", "Trend"];
 
-export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, focus }: Props) {
+const VERDICT: Record<TrendContext["verdict"], string> = { real: "Looks real", fragile: "Likely to fade", mixed: "Mixed signals", none: "" };
+
+function TrendWhy({ ctx }: { ctx: TrendContext }) {
+  if (!ctx.factors.length) return null;
+  return (
+    <div className="mb-3">
+      <div className="desk-label mb-1.5">
+        Why {ctx.trend === "flat" ? "flat" : ctx.trend}{ctx.verdict !== "none" && <> · <span className={ctx.verdict === "real" ? "text-[hsl(var(--desk-win))]" : ctx.verdict === "fragile" ? "text-[hsl(var(--desk-loss))]" : "text-[hsl(var(--desk-amber))]"}>{VERDICT[ctx.verdict]}</span></>}
+      </div>
+      <ul className="grid gap-1 sm:grid-cols-2">
+        {ctx.factors.map((f) => (
+          <li key={f.key} className="text-[11px] leading-snug text-[hsl(var(--desk-muted))]">
+            <span className={`desk-mono mr-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${f.tone === "supports" ? "bg-[hsl(var(--desk-win)/0.12)] text-[hsl(var(--desk-win))]" : f.tone === "fragile" ? "bg-[hsl(var(--desk-loss)/0.12)] text-[hsl(var(--desk-loss))]" : "bg-[hsl(var(--desk-line))] text-[hsl(var(--desk-muted))]"}`}>
+              {f.tone === "supports" ? "✓" : f.tone === "fragile" ? "!" : "·"} {f.label}
+            </span>
+            {f.why}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const verdictTag = (ctx?: TrendContext) => ctx && ctx.verdict !== "none" ? (ctx.verdict === "real" ? " ✓" : ctx.verdict === "fragile" ? " ?" : "") : "";
+
+export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, focus, trendFor }: Props) {
   const [q, setQ] = useState("");
   const [stat, setStat] = useState<StatKey>("points");
   const [line, setLine] = useState("");
@@ -64,6 +91,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
 
   const renderDetail = (player: string, ln: number | undefined, median: number) => (
     <>
+      {trendFor && <TrendWhy ctx={trendFor(player, stat)} />}
       <div className="desk-label mb-2">Last 10 · {STAT_OPTIONS.find((s) => s.key === stat)?.label}</div>
                           <GameLogStrip games={byPlayer.get(player) ?? []} stat={stat} line={ln ?? median} />
                           <div className="mt-3 flex flex-wrap items-start gap-3">
@@ -169,7 +197,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                       <div><div className="desk-label">Line</div><div className={ln ? "text-[hsl(var(--desk-indigo))]" : "text-[hsl(var(--desk-muted))]"}>{ln ?? "—"}</div></div>
                       <div><div className="desk-label">Range</div><div className="text-[hsl(var(--desk-muted))]">{fmt(r.l10.floor)}–{fmt(r.l10.ceiling)}</div></div>
                       <div><div className="desk-label">Hit L10</div><div>{pct(r.l10.hitRate)}</div></div>
-                      <div><div className="desk-label">Trend</div><div className={r.trend === "hot" ? "text-[hsl(var(--desk-win))]" : r.trend === "cold" ? "text-[hsl(var(--desk-loss))]" : "text-[hsl(var(--desk-muted))]"}>{r.trend === "hot" ? "▲ Hot" : r.trend === "cold" ? "▼ Cold" : "— Flat"}</div></div>
+                      <div><div className="desk-label">Trend</div><div className={r.trend === "hot" ? "text-[hsl(var(--desk-win))]" : r.trend === "cold" ? "text-[hsl(var(--desk-loss))]" : "text-[hsl(var(--desk-muted))]"}>{r.trend === "hot" ? "▲ Hot" : r.trend === "cold" ? "▼ Cold" : "— Flat"}{r.trend !== "flat" && verdictTag(trendFor?.(r.player, stat))}</div></div>
                     </div>
                   </button>
                   {isOpen && <div className="px-3 pb-3">{renderDetail(r.player, ln, r.l10.median)}</div>}
@@ -232,7 +260,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                               : "text-[hsl(var(--desk-muted))]"
                         }`}
                       >
-                        {r.trend === "hot" ? "▲ Hot" : r.trend === "cold" ? "▼ Cold" : "— Flat"}
+                        {r.trend === "hot" ? "▲ Hot" : r.trend === "cold" ? "▼ Cold" : "— Flat"}{r.trend !== "flat" && verdictTag(trendFor?.(r.player, stat))}
                       </td>
                     </tr>
 

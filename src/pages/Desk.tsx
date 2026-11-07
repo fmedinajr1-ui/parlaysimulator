@@ -12,7 +12,7 @@ import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
 import { MathSlip } from "@/components/desk/MathSlip";
 
 export default function Desk() {
-  const { logs, loading, err, byPlayer, propLines, injuries, today, edges, gameCoverage } = useResearchData();
+  const { logs, loading, err, byPlayer, propLines, injuries, today, edges, gameCoverage, trendFor } = useResearchData();
   const [focus, setFocus] = useState<string | null>(null);
   const [records, setRecords] = useState<{ v: string; w: number; l: number; p: number; open: number; profit: number }[] | null>(null);
 
@@ -102,6 +102,7 @@ export default function Desk() {
               loading={loading}
               err={err}
               focus={focus}
+              trendFor={trendFor}
             />
           </div>
           <div className="lg:col-span-4">
