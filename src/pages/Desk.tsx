@@ -7,11 +7,12 @@ import { Seo } from "@/components/seo/Seo";
 import { useResearchData } from "@/hooks/useResearchData";
 import { DeskTopBar } from "@/components/desk/DeskTopBar";
 import { EdgeCards } from "@/components/desk/EdgeCards";
+import { GameCoverageBoard } from "@/components/desk/GameCoverage";
 import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
 import { MathSlip } from "@/components/desk/MathSlip";
 
 export default function Desk() {
-  const { logs, loading, err, byPlayer, propLines, injuries, today, edges } = useResearchData();
+  const { logs, loading, err, byPlayer, propLines, injuries, today, edges, gameCoverage } = useResearchData();
   const [focus, setFocus] = useState<string | null>(null);
   const [records, setRecords] = useState<{ v: string; w: number; l: number; p: number; open: number; profit: number }[] | null>(null);
 
@@ -90,6 +91,7 @@ export default function Desk() {
           </div>
         )}
         <EdgeCards edges={edges} onPick={setFocus} />
+        <GameCoverageBoard games={gameCoverage} onPick={setFocus} />
 
         <div className="mt-3 grid gap-3 lg:grid-cols-12">
           <div className="lg:col-span-8">

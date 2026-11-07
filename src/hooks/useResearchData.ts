@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type Reason } from "@/utils/nbaProjection";
+import { buildGameCoverage, type GameCoveragePlayerInput } from "@/utils/gameCoverage";
 import {
   summarizePlayer,
   type GameLog,
@@ -298,11 +299,33 @@ export function useResearchData() {
     return m;
   }, [logs, resolver]);
 
-  const edges = useMemo(() => computeEdges({
+  const allEdges = useMemo(() => computeEdges({
     byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
     teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
     positionOf: new Map((roster ?? []).map((r) => [r.player_name, r.position])),
+    limit: 10000,
   }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
+  const edges = useMemo(() => allEdges.slice(0, 4), [allEdges]);
 
-  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges };
+  const gameCoverage = useMemo(() => {
+    const rows: GameCoveragePlayerInput[] = [];
+    const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
+    for (const raw of rawLines) {
+      const player = resolver(raw.player_name);
+      if (!player || !byPlayer.has(player)) continue;
+      const team = teamOf.get(player);
+      const [away, home] = (raw.event_label ?? "").split(" @ ");
+      if (!team || !away || !home || (team !== away && team !== home)) continue;
+      rows.push({
+        player,
+        team,
+        opponent: team === home ? away : home,
+        home: team === home,
+        stat: raw.stat,
+      });
+    }
+    return buildGameCoverage(rows, allEdges);
+  }, [rawLines, resolver, roster, byPlayer, allEdges]);
+
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, gameCoverage };
 }
