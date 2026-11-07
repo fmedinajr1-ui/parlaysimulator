@@ -92,7 +92,7 @@ describe("current-season venue leaders", () => {
       ["Beta", [20, 22, 24].map((points, index) => game({ player_name: "Beta", game_date: `2026-11-0${index + 1}`, points }))],
     ]);
     expect(buildSeasonVenueLeaders(players, "points", lines, "home")).toHaveLength(1);
-    const bothLines = new Map([...lines, ["beta|points", 19.5]]);
+    const bothLines = new Map<string, number>([...lines, ["beta|points", 19.5]]);
     expect(buildSeasonVenueLeaders(players, "points", bothLines, "home", { limit: 1 })).toHaveLength(1);
   });
 
@@ -103,7 +103,7 @@ describe("current-season venue leaders", () => {
       game({ game_date: "2026-11-03", points: 24, rebounds: 7, assists: 6 }),
     ]]]);
     const praLines = new Map([["alpha|pra", 29.5]]);
-    const [row] = buildSeasonVenueLeaders(players, "points", praLines, "home");
+    const [row] = buildSeasonVenueLeaders(players, "pra", praLines, "home");
     expect(row).toMatchObject({ average: 33, median: 33, hits: 3, hitRate: 1 });
   });
 });

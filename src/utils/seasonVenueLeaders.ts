@@ -1,4 +1,4 @@
-import { hitRate, percentile, statValue, type GameLog, type StatKey } from "./nbaBoxScoreMath";
+import { percentile, statValue, type GameLog, type StatKey } from "./nbaBoxScoreMath";
 
 export type Venue = "home" | "road";
 export type VenueSide = "over" | "under";
@@ -59,7 +59,7 @@ export function buildSeasonVenueLeaders(
       venue,
       games: games.length,
       hits,
-      hitRate: hitRate(values, line) * (side === "over" ? 1 : 0) + (side === "under" ? hits / values.length : 0),
+      hitRate: hits / values.length,
       line,
       median,
       average: values.reduce((total, value) => total + value, 0) / values.length,
