@@ -1,4 +1,6 @@
 import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScoreMath";
+import { projectMinutes } from "./projectedMinutes";
+import { minutesElasticity } from "./minutesValidation";
 
 /** Rough NBA team per-game totals, used to size a missing teammate's share. */
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
@@ -17,6 +19,8 @@ export interface ProjectionContext {
   teammatesOut: MissingMate[];
   /** Player's position (ESPN abbreviation, e.g. "PG", "C"). */
   position?: string | null;
+  /** Opt-in shadow model; v5 remains the default. */
+  projectedMinutesModel?: boolean;
 }
 
 export interface MissingMate {
@@ -116,8 +120,11 @@ export function projectProp(
   const mins = l10.map((g) => Number(g.minutes_played));
   const l3m = percentile(mins.slice(0, 3), 0.5);
   const l10m = percentile(mins, 0.5);
-  const fMin = clamp(l10m ? l3m / l10m : 1, 0.85, 1.15);
-  if (Math.abs(fMin - 1) >= 0.05)
+  const estimated = ctx.projectedMinutesModel ? projectMinutes(games, ctx.today, ctx.teammatesOut.reduce((n, m) => n + m.minutes, 0)) : null;
+  const elasticity: Record<StatKey, number> = { points: 0.65, rebounds: 0.75, assists: 0.5, threes_made: 0.65, pra: 0.65 };
+  const fMin = estimated ? minutesElasticity(estimated.minutes, estimated.l10, elasticity[stat]) : clamp(l10m ? l3m / l10m : 1, 0.85, 1.15);
+  if (estimated) add("Projected minutes", fMin, `${estimated.minutes} expected min vs ${estimated.l10} baseline; ${Math.round(elasticity[stat] * 100)}% of the minutes change reaches this stat, capped at 8%.`);
+  else if (Math.abs(fMin - 1) >= 0.05)
     add(`Minutes ${fMin > 1 ? "up" : "down"}`, fMin, `Typical minutes were ${Math.round(l3m)} over his last 3 vs ${Math.round(l10m)} over 10, so his role is ${fMin > 1 ? "growing" : "shrinking"}; overtime outliers have less influence.`);
 
   // Venue splits use this season only, so last year's role cannot create a current boost.
@@ -137,8 +144,9 @@ export function projectProp(
 
   // Back-to-back: heavier hit for high-minute players.
   const b2b = played[0]?.game_date === dayBefore(ctx.today);
-  const fRest = b2b ? (l10m >= 32 ? 0.95 : 0.97) : 1;
-  if (b2b) add("Back-to-back", fRest, `Played yesterday and averages ${Math.round(l10m)} min, so legs may be tired.`);
+  // v6 minutes already include the rest trim; do not count it a second time.
+  const fRest = estimated ? 1 : b2b ? (l10m >= 32 ? 0.95 : 0.97) : 1;
+  if (b2b && !estimated) add("Back-to-back", fRest, `Played yesterday and averages ${Math.round(l10m)} min, so legs may be tired.`);
 
   // Opponent, shrunk halfway toward average.
   const fOpp = clamp(1 + (ctx.oppFactor - 1) * 0.5, 0.92, 1.08);
@@ -158,7 +166,7 @@ export function projectProp(
   const fMate = clamp(1 + (freed / TEAM_TOTAL[stat]) * 0.3 * roleScale, 1, 1.08);
   if (fMate > 1.005 && helpers.length)
     add("Teammate out", fMate,
-      `${helpers.join(", ")} ${helpers.length > 1 ? "are" : "is"} out. Same-position minutes open up and he plays ${Math.round(l10m)} min${ctx.position ? ` as a ${ctx.position}` : ""}.`);
+      `${helpers.join(", ")} ${helpers.length > 1 ? "are" : "is"} out. ${estimated ? "A small usage adjustment remains separate from estimated playing time." : "Same-position minutes open up"} and he plays ${Math.round(l10m)} min${ctx.position ? ` as a ${ctx.position}` : ""}.`);
   const notes = reasons.map((r) => r.label);
 
   // Context is uncertain: cap the combined adjustment instead of stacking boosts without limit.
