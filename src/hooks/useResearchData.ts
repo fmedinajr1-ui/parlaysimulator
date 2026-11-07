@@ -396,5 +396,5 @@ export function useResearchData() {
     });
   };
 
-  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, gameCoverage, trendFor };
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, allEdges, gameCoverage, trendFor, roster };
 }
