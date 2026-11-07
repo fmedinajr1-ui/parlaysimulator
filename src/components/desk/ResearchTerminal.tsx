@@ -4,7 +4,8 @@ import { STAT_OPTIONS } from "@/hooks/useResearchData";
 import { GameLogStrip } from "@/components/desk/EdgeCards";
 import { callResearchAi, Prose } from "@/components/research/ResearchAiPanel";
 import type { TrendContext } from "@/utils/trendContext";
-import { summarizePlayer, type GameLog, type StatKey } from "@/utils/nbaBoxScoreMath";
+import { summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from "@/utils/nbaBoxScoreMath";
+import { DEFAULT_RESEARCH_FILTERS, filterResearchRows, type ResearchFilters, type ResearchSort, type ResearchTrendFilter } from "@/utils/researchFilters";
 
 interface Props {
   byPlayer: Map<string, GameLog[]>;
@@ -50,6 +51,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
   const [q, setQ] = useState("");
   const [stat, setStat] = useState<StatKey>("points");
   const [line, setLine] = useState("");
+  const [filters, setFilters] = useState<ResearchFilters>({ ...DEFAULT_RESEARCH_FILTERS });
   const [open, setOpen] = useState<string | null>(null);
   const [teams, setTeams] = useState<Map<string, string>>(new Map());
   useEffect(() => {
@@ -66,9 +68,9 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
     }
   }, [focus]);
 
-  const rows = useMemo(() => {
+  const { rows, total } = useMemo(() => {
     const term = q.trim().toLowerCase();
-    const res = [];
+    const res: PlayerSummary[] = [];
     for (const [name, games] of byPlayer) {
       if (term && !name.toLowerCase().includes(term) && !games.some((g) => g.opponent?.toLowerCase().includes(term)))
         continue;
@@ -76,8 +78,16 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
       const s = summarizePlayer(games, stat, ln);
       if (s && s.l10.games >= 3) res.push(s);
     }
-    return res.sort((a, b) => b.l10.median - a.l10.median).slice(0, 100);
-  }, [byPlayer, q, stat, line, propLines]);
+    const filtered = filterResearchRows(res, filters);
+    return { rows: filtered.slice(0, 100), total: filtered.length };
+  }, [byPlayer, q, stat, line, propLines, filters]);
+
+  const hasFilters = filters.minL5Hit > 0 || filters.minL10Hit > 0 || filters.trend !== "all" || filters.sort !== "l10Median";
+  const clearAll = () => {
+    setLine("");
+    setQ("");
+    setFilters({ ...DEFAULT_RESEARCH_FILTERS });
+  };
 
   const runExplain = async (player: string, ln?: number) => {
     setExplain((s) => ({ ...s, [player]: { busy: true } }));
@@ -154,17 +164,68 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
             {s.short}
           </button>
         ))}
-        {(line || q) && (
-          <button
-            className="desk-tab"
-            onClick={() => {
-              setLine("");
-              setQ("");
-            }}
-          >
-            Clear
+        {(line || q || hasFilters) && (
+          <button className="desk-tab" onClick={clearAll}>
+            Clear all
           </button>
         )}
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-panel)/0.55)] p-2.5 sm:grid-cols-4">
+        <label className="grid gap-1">
+          <span className="desk-label">Min L5 hit</span>
+          <select
+            aria-label="Minimum L5 hit rate"
+            className="desk-input h-10 w-full px-2 text-xs"
+            value={filters.minL5Hit}
+            onChange={(e) => setFilters((f) => ({ ...f, minL5Hit: Number(e.target.value) }))}
+          >
+            {[0, 0.5, 0.6, 0.7, 0.8, 0.9].map((value) => <option key={value} value={value}>{value ? `≥ ${value * 100}%` : "Any"}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1">
+          <span className="desk-label">Min L10 hit</span>
+          <select
+            aria-label="Minimum L10 hit rate"
+            className="desk-input h-10 w-full px-2 text-xs"
+            value={filters.minL10Hit}
+            onChange={(e) => setFilters((f) => ({ ...f, minL10Hit: Number(e.target.value) }))}
+          >
+            {[0, 0.5, 0.6, 0.7, 0.8, 0.9].map((value) => <option key={value} value={value}>{value ? `≥ ${value * 100}%` : "Any"}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1">
+          <span className="desk-label">Trend</span>
+          <select
+            aria-label="Trend filter"
+            className="desk-input h-10 w-full px-2 text-xs"
+            value={filters.trend}
+            onChange={(e) => setFilters((f) => ({ ...f, trend: e.target.value as ResearchTrendFilter }))}
+          >
+            <option value="all">All trends</option>
+            <option value="hot">Hot only</option>
+            <option value="cold">Cold only</option>
+            <option value="flat">Flat only</option>
+          </select>
+        </label>
+        <label className="grid gap-1">
+          <span className="desk-label">Sort by</span>
+          <select
+            aria-label="Sort players by"
+            className="desk-input h-10 w-full px-2 text-xs"
+            value={filters.sort}
+            onChange={(e) => setFilters((f) => ({ ...f, sort: e.target.value as ResearchSort }))}
+          >
+            <option value="l10Median">L10 median</option>
+            <option value="l5Median">L5 median</option>
+            <option value="l5Hit">L5 hit %</option>
+            <option value="l10Hit">L10 hit %</option>
+          </select>
+        </label>
+      </div>
+      <div className="mt-2 flex flex-wrap justify-between gap-1 text-[11px] text-[hsl(var(--desk-muted))]">
+        <span>{total} matching player{total === 1 ? "" : "s"}{total > 100 ? " · showing top 100" : ""}</span>
+        <span>Hit % = games strictly above the displayed line</span>
       </div>
 
       <div className="desk-scroll mt-3 flex-1 overflow-auto rounded-lg border border-[hsl(var(--desk-line))]">
