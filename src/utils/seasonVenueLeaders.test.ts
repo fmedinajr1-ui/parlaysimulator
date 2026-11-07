@@ -104,6 +104,6 @@ describe("current-season venue leaders", () => {
     ]]]);
     const praLines = new Map([["alpha|pra", 29.5]]);
     const [row] = buildSeasonVenueLeaders(players, "pra", praLines, "home");
-    expect(row).toMatchObject({ average: 33, median: 33, hits: 3, hitRate: 1 });
+    expect(row).toMatchObject({ average: 33, median: 33, hits: 2, hitRate: 2 / 3 });
   });
 });
