@@ -54,7 +54,7 @@ function TeamPlayers({ team, home, players, onPick, slip, strongOnly }: {
               </div>
               {picks.length > 0 ? (
                 <div className="mt-1.5 flex flex-wrap gap-1">
-                  {picks.map((pick) => <PickChip key={`${pick.stat}-${pick.side}-${pick.line}`} pick={pick} inSlip={slip.has(legKey(pick))} />)}
+                  {picks.map((pick) => <PickChip key={`${pick.stat}-${pick.side}-${pick.line}`} pick={pick} inSlip={slip.has(legKey({ player: pick.player, stat: pick.stat as StatKey }))} />)}
                 </div>
               ) : (
                 <div className="desk-mono mt-1 text-[9px] text-[hsl(var(--desk-muted))]">Covered · no qualifying pick</div>
