@@ -62,6 +62,8 @@ export class RouteErrorBoundary extends Component<Props, State> {
       } else {
         console.warn('[RouteErrorBoundary] Automatic recovery stopped; waiting for a manual retry');
       }
+    } else {
+      this.setState({ errorCount: RouteErrorBoundary.MAX_RETRIES });
     }
   }
 
