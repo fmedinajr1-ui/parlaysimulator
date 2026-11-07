@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import type { EdgePick } from "@/hooks/useResearchData";
 
 interface Props {
@@ -22,6 +22,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Props) {
+  const location = useLocation();
   const tickerItems = edges.length
     ? edges.map(
         (e) =>
@@ -49,7 +50,8 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
           <Stat label="Injuries" value={String(injuries)} />
           <Stat label="Latest" value={latest ?? "—"} />
           <nav className="col-span-5 flex items-center gap-1 overflow-x-auto sm:pl-2">
-            <Link to="/" className="desk-tab" data-active="true">Desk</Link>
+            <Link to="/" className="desk-tab" data-active={location.pathname === "/" ? "true" : undefined}>Desk</Link>
+            <Link to="/projections" className="desk-tab" data-active={location.pathname === "/projections" ? "true" : undefined}>Projections</Link>
             <Link to="/bets" className="desk-tab">My bets</Link>
           </nav>
         </div>
