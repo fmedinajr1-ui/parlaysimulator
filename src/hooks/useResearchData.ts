@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type Reason } from "@/utils/nbaProjection";
+import { buildGameCoverage, type GameCoveragePlayerInput } from "@/utils/gameCoverage";
 import {
   summarizePlayer,
   type GameLog,
