@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3";
+import { minutesAccuracy, MINUTES_FORECAST_VERSION } from "../_shared/research/minutesValidation.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -35,6 +36,11 @@ const Body = z.discriminatedUnion("action", [
     reasons: z.array(z.any()).max(20), rank: z.number().int(), model_version: z.string().max(20),
   })).max(100) }),
   z.object({ action: z.literal("pick_record"), passcode: z.string() }),
+  z.object({ action: z.literal("minutes_record"), passcode: z.string() }),
+  z.object({ action: z.literal("log_minutes"), passcode: z.string(), forecasts: z.array(z.object({
+    game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
+    team: z.string().min(1).max(80), projected_minutes: z.number().positive().max(48), baseline_minutes: z.number().positive().max(60),
+  })).max(600) }),
 ]);
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -95,13 +101,43 @@ Deno.serve(async (req) => {
     return json({ error: "Wrong passcode" }, 401);
   }
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  if (b.action === "minutes_record") {
+    const { data, error } = await sb.from("research_minutes_log").select("game_date,projected_minutes,actual_minutes,status")
+      .eq("forecast_version", MINUTES_FORECAST_VERSION).order("game_date", { ascending: false }).limit(10000);
+    return error ? json({ error: error.message }, 500) : json({ accuracy: minutesAccuracy(data ?? []) });
+  }
+  if (b.action === "log_minutes" || b.action === "log_picks") {
+    // Never call an after-tip snapshot pregame. Use the scoreboard, not a guessed cutoff.
+    const day = etDay(new Date());
+    const board = await getJson(`${ESPN}/scoreboard?dates=${day.replaceAll("-", "")}`).catch(() => null);
+    if (!board) return json({ error: "Cannot verify pregame status" }, 503);
+    const preTeams = new Set<string>();
+    for (const ev of board.events ?? []) {
+      if (ev.status?.type?.state !== "pre" || !(new Date(ev.date).getTime() > Date.now())) continue;
+      for (const c of ev.competitions?.[0]?.competitors ?? []) preTeams.add(c.team?.displayName);
+    }
+    if (b.action === "log_minutes") {
+      const forecasts = b.forecasts.filter((f) => f.game_date === day && preTeams.has(f.team))
+        .map((f) => ({ ...f, forecast_version: MINUTES_FORECAST_VERSION }));
+      const { error } = await sb.from("research_minutes_log").upsert(forecasts, { onConflict: "game_date,player_name,forecast_version", ignoreDuplicates: true });
+      return error ? json({ error: error.message }, 500) : json({ logged: forecasts.length });
+    }
+    const { data: roster, error: rosterError } = await sb.from("research_player_teams").select("player_name,team");
+    if (rosterError) return json({ error: rosterError.message }, 500);
+    const teams = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
+    if (b.picks.some((p) => p.model_version === "v6-projected-minutes")) {
+      const { data, error } = await sb.from("research_minutes_log").select("game_date,projected_minutes,actual_minutes,status").eq("forecast_version", MINUTES_FORECAST_VERSION).limit(10000);
+      if (error || !minutesAccuracy(data ?? []).ready) return json({ error: "Minutes accuracy is not confirmed" }, 409);
+    }
+    b.picks = b.picks.filter((p) => p.game_date === day && preTeams.has(teams.get(p.player_name) ?? ""));
+  }
   if (b.action === "log_picks") {
     // First snapshot of the day wins, so the record reflects the pick before tip-off.
     const { error } = await sb.from("research_pick_log").upsert(b.picks, { onConflict: "game_date,player_name,stat,side,model_version", ignoreDuplicates: true });
     return error ? json({ error: error.message }, 500) : json({ ok: true, logged: b.picks.length });
   }
   if (b.action === "pick_record") {
-    const { data, error } = await sb.from("research_pick_log").select("model_version,status,ev,odds").limit(10000);
+    const { data, error } = await sb.from("research_pick_log").select("game_date,player_name,stat,side,line,projection,win_prob,model_version,status,ev,odds,logged_at").limit(10000);
     if (error) return json({ error: error.message }, 500);
     return json({ picks: data });
   }

@@ -113,6 +113,7 @@ export interface EdgeInputs {
   limit?: number;
   /** Keep every projected prop (projections board), flagging which ones qualify. */
   all?: boolean;
+  projectedMinutesModel?: boolean;
 }
 
 const SKIP_STATUS = /out|doubtful|suspend/i;
@@ -157,6 +158,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         seasonStart, today: i.today, home: i.homeTonight.get(lower) ?? null,
         oppFactor: (oppName && opp(key).get(oppName)) || 1, teammatesOut: matesOut,
         position: i.positionOf?.get(name) ?? null,
+        projectedMinutesModel: i.projectedMinutesModel,
       });
       if (!p) continue;
       const qualifies = p.ev >= 0.03 && p.prob >= 0.55 && passesMarginGate(key, p.projection, line);
@@ -316,6 +318,12 @@ export function useResearchData() {
     limit: 10000,
   }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
   const edges = useMemo(() => allEdges.slice(0, 4), [allEdges]);
+  const v6Edges = useMemo(() => computeEdges({
+    byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
+    teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
+    positionOf: new Map((roster ?? []).map((r) => [r.player_name, r.position])),
+    projectedMinutesModel: true,
+  }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
   const boardEdges = useMemo(() => computeEdges({
     byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
     teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
@@ -411,5 +419,5 @@ export function useResearchData() {
     });
   };
 
-  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, allEdges, boardEdges, gameCoverage, trendFor };
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, v6Edges, allEdges, boardEdges, gameCoverage, trendFor };
 }
