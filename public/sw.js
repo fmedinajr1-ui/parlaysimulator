@@ -10,9 +10,7 @@ self.addEventListener("activate", (event) =>
       try {
         const names = await caches.keys();
         await Promise.allSettled(names.filter(isWorkboxCacheForThisRegistration).map((n) => caches.delete(n)));
-        await self.clients.claim();
-        const wins = await self.clients.matchAll({ type: "window" });
-        await Promise.allSettled(wins.map((c) => c.navigate(c.url)));
+        // Never navigate open clients: leaving and returning to the app must not refresh it.
       } finally {
         await self.registration.unregister();
       }

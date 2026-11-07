@@ -1,5 +1,6 @@
 import React, { Component, ReactNode } from 'react';
 import { WolfLoadingOverlay } from '@/components/ui/wolf-loading-overlay';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   children: ReactNode;
