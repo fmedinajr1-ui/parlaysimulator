@@ -11,9 +11,10 @@ import { GameCoverageBoard } from "@/components/desk/GameCoverage";
 import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
 import { SeasonVenueBoard } from "@/components/desk/SeasonVenueBoard";
 import { MathSlip } from "@/components/desk/MathSlip";
+import { MinutesComparison } from "@/components/desk/MinutesComparison";
 
 export default function Desk() {
-  const { logs, loading, err, byPlayer, propLines, injuries, today, edges, gameCoverage, trendFor } = useResearchData();
+  const { logs, loading, err, byPlayer, propLines, injuries, today, edges, v6Edges, boardEdges, gameCoverage, trendFor } = useResearchData();
   const [focus, setFocus] = useState<string | null>(null);
   const [records, setRecords] = useState<{ v: string; w: number; l: number; p: number; open: number; profit: number }[] | null>(null);
 
@@ -73,6 +74,7 @@ export default function Desk() {
       />
 
       <main className="mx-auto max-w-[1500px] px-3 pb-16 pt-3 sm:px-4 sm:pt-4">
+        <MinutesComparison board={boardEdges} v5={edges} v6={v6Edges} byPlayer={byPlayer} today={today} />
         {records && records.length > 0 && (
           <div className="mb-2 overflow-x-auto rounded-md border border-border font-mono text-xs">
             <table className="w-full">
