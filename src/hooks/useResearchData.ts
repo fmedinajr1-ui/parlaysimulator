@@ -93,6 +93,10 @@ export interface EdgePick {
   home: boolean | null;
   /** Player's team, full name (e.g. "Utah Jazz"). */
   team: string | null;
+  /** Passes every pick rule (EV, win %, margin gate). */
+  qualifies?: boolean;
+  /** Season minutes per game of same-team players ruled Out tonight. */
+  mateMinutesOut?: number;
 }
 
 export interface EdgeInputs {
@@ -107,6 +111,8 @@ export interface EdgeInputs {
   today: string;
   seasonStart?: string;
   limit?: number;
+  /** Keep every projected prop (projections board), flagging which ones qualify. */
+  all?: boolean;
 }
 
 const SKIP_STATUS = /out|doubtful|suspend/i;
@@ -152,13 +158,16 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         oppFactor: (oppName && opp(key).get(oppName)) || 1, teammatesOut: matesOut,
         position: i.positionOf?.get(name) ?? null,
       });
-      if (!p || p.ev < 0.03 || p.prob < 0.55 || !passesMarginGate(key, p.projection, line)) continue;
+      if (!p) continue;
+      const qualifies = p.ev >= 0.03 && p.prob >= 0.55 && passesMarginGate(key, p.projection, line);
+      if (!qualifies && !i.all) continue;
       const s = summarizePlayer(games, key, line)!;
       out.push({
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
         side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, reasons: p.reasons, trend: s.trend,
         lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason,
         home: i.homeTonight.get(lower) ?? null, team: team ?? null,
+        qualifies, mateMinutesOut: matesOut.reduce((t, m) => t + m.minutes, 0),
       });
     }
   }
@@ -307,6 +316,12 @@ export function useResearchData() {
     limit: 10000,
   }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
   const edges = useMemo(() => allEdges.slice(0, 4), [allEdges]);
+  const boardEdges = useMemo(() => computeEdges({
+    byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
+    teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
+    positionOf: new Map((roster ?? []).map((r) => [r.player_name, r.position])),
+    limit: 10000, all: true,
+  }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
 
   const gameCoverage = useMemo(() => {
     const rows: GameCoveragePlayerInput[] = [];
@@ -396,5 +411,5 @@ export function useResearchData() {
     });
   };
 
-  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, allEdges, gameCoverage, trendFor, roster };
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, allEdges, boardEdges, gameCoverage, trendFor };
 }
