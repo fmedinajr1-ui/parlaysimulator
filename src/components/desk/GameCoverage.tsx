@@ -91,7 +91,7 @@ export function GameCoverageBoard({ games, onPick }: { games: GameCoverage[]; on
           <button type="button" className="desk-tab" data-active={strongOnly} onClick={() => setStrongOnly(true)}>★ Strong only</button>
         </div>
       </div>
-      <div className="grid gap-2 lg:grid-cols-2">
+      <div className="grid items-start gap-2 lg:grid-cols-2">
         {list.map((game, index) => (
           <details key={game.id} className="desk-panel-flat overflow-hidden" open={index === 0}>
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 [&::-webkit-details-marker]:hidden">
