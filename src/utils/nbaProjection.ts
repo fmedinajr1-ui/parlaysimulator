@@ -4,7 +4,7 @@ import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScore
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
 /** Bump whenever the projection rules change, so the pick log can compare versions. */
-export const MODEL_VERSION = "v4-balanced";
+export const MODEL_VERSION = "v5-margin-gated";
 
 export interface ProjectionContext {
   seasonStart: string;
@@ -213,4 +213,13 @@ export function opponentFactors(logs: GameLog[], stat: StatKey, seasonStart: str
   const out = new Map<string, number>();
   if (league > 0) for (const [opp, a] of avgs) out.set(opp, a / league);
   return out;
+}
+
+/** Minimum absolute gap between projection and line, per stat. */
+export const MARGIN_FLOOR: Record<StatKey, number> = { points: 1.5, rebounds: 1, assists: 1, threes_made: 0.5, pra: 2.5 };
+
+/** v5: a pick needs a real disagreement with the book: 10%+ of the line AND the stat's absolute floor. */
+export function passesMarginGate(stat: StatKey, projection: number, line: number): boolean {
+  const gap = Math.abs(projection - line);
+  return gap >= MARGIN_FLOOR[stat] && line > 0 && gap / line >= 0.1;
 }

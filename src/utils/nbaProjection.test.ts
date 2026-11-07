@@ -202,3 +202,12 @@ describe("v4 margin-based win chance", () => {
     expect(pOver(juicedUnder)).toBeLessThan(pOver(even));
   });
 });
+
+import { passesMarginGate } from "./nbaProjection";
+describe("v5 margin gate", () => {
+  it("drops Kuzma 2.6 vs 2.5 assists", () => expect(passesMarginGate("assists", 2.6, 2.5)).toBe(false));
+  it("drops points gap under 1.5 (18.9 vs 18.5)", () => expect(passesMarginGate("points", 18.9, 18.5)).toBe(false));
+  it("keeps rebounds 6.4 vs 4.5", () => expect(passesMarginGate("rebounds", 6.4, 4.5)).toBe(true));
+  it("needs 10% even when floor is met (points 26.5 vs 25.0)", () => expect(passesMarginGate("points", 26.5, 25)).toBe(false));
+  it("works for unders: PRA 12.5 vs 15.5", () => expect(passesMarginGate("pra", 12.5, 15.5)).toBe(true));
+});
