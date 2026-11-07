@@ -150,7 +150,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         oppFactor: (oppName && opp(key).get(oppName)) || 1, teammatesOut: matesOut,
         position: i.positionOf?.get(name) ?? null,
       });
-      if (!p || p.ev < 0.03 || p.prob < 0.55) continue;
+      if (!p || p.ev < 0.03 || p.prob < 0.55 || !passesMarginGate(key, p.projection, line)) continue;
       const s = summarizePlayer(games, key, line)!;
       out.push({
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
