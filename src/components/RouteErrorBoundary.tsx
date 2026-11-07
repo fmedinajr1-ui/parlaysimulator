@@ -60,12 +60,14 @@ export class RouteErrorBoundary extends Component<Props, State> {
           }));
         }, 500);
       } else {
-        // Too many retries, force a full page reload as last resort
-        console.warn('[RouteErrorBoundary] Max retries exceeded, forcing page reload');
-        window.location.reload();
+        console.warn('[RouteErrorBoundary] Automatic recovery stopped; waiting for a manual retry');
       }
     }
   }
+
+  private retry = () => {
+    this.setState({ hasError: false, errorCount: 0 });
+  };
 
   componentWillUnmount() {
     if (this.retryTimeoutId) {
