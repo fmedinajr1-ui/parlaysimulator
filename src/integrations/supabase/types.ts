@@ -14766,6 +14766,48 @@ export type Database = {
         }
         Relationships: []
       }
+      research_minutes_log: {
+        Row: {
+          actual_minutes: number | null
+          baseline_minutes: number
+          forecast_version: string
+          game_date: string
+          id: string
+          logged_at: string
+          player_name: string
+          projected_minutes: number
+          settled_at: string | null
+          status: string
+          team: string
+        }
+        Insert: {
+          actual_minutes?: number | null
+          baseline_minutes: number
+          forecast_version?: string
+          game_date: string
+          id?: string
+          logged_at?: string
+          player_name: string
+          projected_minutes: number
+          settled_at?: string | null
+          status?: string
+          team: string
+        }
+        Update: {
+          actual_minutes?: number | null
+          baseline_minutes?: number
+          forecast_version?: string
+          game_date?: string
+          id?: string
+          logged_at?: string
+          player_name?: string
+          projected_minutes?: number
+          settled_at?: string | null
+          status?: string
+          team?: string
+        }
+        Relationships: []
+      }
       research_pick_log: {
         Row: {
           ev: number | null
