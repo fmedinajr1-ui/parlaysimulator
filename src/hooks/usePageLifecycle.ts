@@ -77,18 +77,12 @@ export function usePageLifecycle() {
       });
     };
 
-    // Handle beforeunload as last resort
-    const handleBeforeUnload = () => {
-      if (shouldSkipRouteSave()) return;
-      saveCurrentRoute();
-    };
-
-    // Add all event listeners
+    // Do not listen for beforeunload: it can disqualify the page from the
+    // browser's back/forward cache and turn a mobile resume into a full load.
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pagehide', handlePageHide);
     window.addEventListener('pageshow', handlePageShow);
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    
+
     // These are Chrome-specific but safe to add
     document.addEventListener('freeze', handleFreeze);
     document.addEventListener('resume', handleResume);
@@ -97,7 +91,6 @@ export function usePageLifecycle() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
       window.removeEventListener('pageshow', handlePageShow);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('freeze', handleFreeze);
       document.removeEventListener('resume', handleResume);
     };

@@ -1,5 +1,6 @@
 import React, { Component, ReactNode } from 'react';
 import { WolfLoadingOverlay } from '@/components/ui/wolf-loading-overlay';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   children: ReactNode;
@@ -59,12 +60,16 @@ export class RouteErrorBoundary extends Component<Props, State> {
           }));
         }, 500);
       } else {
-        // Too many retries, force a full page reload as last resort
-        console.warn('[RouteErrorBoundary] Max retries exceeded, forcing page reload');
-        window.location.reload();
+        console.warn('[RouteErrorBoundary] Automatic recovery stopped; waiting for a manual retry');
       }
+    } else {
+      this.setState({ errorCount: RouteErrorBoundary.MAX_RETRIES });
     }
   }
+
+  private retry = () => {
+    this.setState({ hasError: false, errorCount: 0 });
+  };
 
   componentWillUnmount() {
     if (this.retryTimeoutId) {
@@ -73,8 +78,19 @@ export class RouteErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    if (this.state.hasError) {
+    if (this.state.hasError && this.state.errorCount < RouteErrorBoundary.MAX_RETRIES) {
       return <WolfLoadingOverlay />;
+    }
+    if (this.state.hasError) {
+      return (
+        <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+          <div className="w-full max-w-sm space-y-3 text-center">
+            <h1 className="text-lg font-semibold">This page didn’t resume correctly</h1>
+            <p className="text-sm text-muted-foreground">Your bets and saved data are still here. Try the page again without reloading the app.</p>
+            <Button type="button" onClick={this.retry}>Try again</Button>
+          </div>
+        </main>
+      );
     }
 
     return this.props.children;
