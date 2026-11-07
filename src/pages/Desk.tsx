@@ -9,6 +9,7 @@ import { DeskTopBar } from "@/components/desk/DeskTopBar";
 import { EdgeCards } from "@/components/desk/EdgeCards";
 import { GameCoverageBoard } from "@/components/desk/GameCoverage";
 import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
+import { SeasonVenueBoard } from "@/components/desk/SeasonVenueBoard";
 import { MathSlip } from "@/components/desk/MathSlip";
 
 export default function Desk() {
@@ -92,6 +93,9 @@ export default function Desk() {
         )}
         <EdgeCards edges={edges} onPick={setFocus} />
         <GameCoverageBoard games={gameCoverage} onPick={setFocus} />
+        <div className="mt-3">
+          <SeasonVenueBoard byPlayer={byPlayer} propLines={propLines} onPick={setFocus} />
+        </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-12">
           <div className="lg:col-span-8">
