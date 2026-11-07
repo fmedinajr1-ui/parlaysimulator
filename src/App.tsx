@@ -69,6 +69,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5,
+      refetchOnWindowFocus: false,
       gcTime: 1000 * 60 * 30,
     },
   },
@@ -166,7 +167,7 @@ function SafeRoutePersistence() {
 
 function AppContent() {
   const [isMobile, setIsMobile] = React.useState(false);
-  const [isReady, setIsReady] = React.useState(false);
+  const [isReady, setIsReady] = React.useState(true);
   const location = useLocation();
   
   React.useEffect(() => {
