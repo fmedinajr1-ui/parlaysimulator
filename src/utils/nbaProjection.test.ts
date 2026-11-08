@@ -175,6 +175,29 @@ describe("v3 calibration lessons from Bam's 0-assist game", () => {
   });
 });
 
+describe("v5 days-rest adjustments", () => {
+  const dated = (lastGame: string): GameLog[] => games([20, 20, 20, 20, 20, 20]).map((g, i) => ({ ...g, game_date: i === 0 ? lastGame : g.game_date }));
+  const projection = (lastGame: string, projectedMinutesModel = false) => projectProp(
+    dated(lastGame), "points", 18.5, -110, -110, { ...ctx, today: "2026-11-07", projectedMinutesModel },
+  )!;
+
+  it("keeps one day off neutral", () => {
+    const p = projection("2026-11-05");
+    expect(p.projection).toBe(20);
+    expect(p.reasons.some((r) => /rest/i.test(r.label))).toBe(false);
+  });
+  it("adds exactly 1% after two days off", () => expect(projection("2026-11-04").projection).toBe(20.2));
+  it("adds exactly 2% after three days off", () => expect(projection("2026-11-03").projection).toBe(20.4));
+  it("explains extended rest with the last game and days off", () => {
+    const reason = projection("2026-11-03").reasons.find((r) => r.label === "Well rested")!;
+    expect(reason.why).toContain("2026-11-03");
+    expect(reason.why).toContain("3 full days off");
+  });
+  it("applies extended rest once in the v6 minutes model", () => {
+    expect(projection("2026-11-03", true).projection).toBe(20.4);
+  });
+});
+
 describe("v4 margin-based win chance", () => {
   it("a half-point edge over the line is close to a coin flip, even with a strong hit rate", () => {
     const p = projectProp(games([20, 20, 20, 20, 20, 20, 20, 20, 19, 19]), "points", 19.5, 104, -125, ctx)!;

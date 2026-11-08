@@ -7,7 +7,7 @@ const logs = (minutes: number[], start = 5): GameLog[] => minutes.map((minutes_p
   assists: 5, rebounds: 5, threes_made: 2, opponent: "X",
 }));
 describe("v6 shadow model integration", () => {
-  it("keeps the active version v5", () => expect(MODEL_VERSION).toBe("v5-margin-gated"));
+  it("keeps the active version in the v5 family", () => expect(MODEL_VERSION).toBe("v5-rest-aware"));
   it("matches v5 on stable minutes", () => {
     const g = logs(Array(10).fill(30));
     expect(projectProp(g, "points", 18.5, -110, -110, { ...ctx, projectedMinutesModel: true })?.projection)
