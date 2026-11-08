@@ -21,7 +21,7 @@ export async function gradeMinutes(sb: any, today: string, fetchJson: (url: stri
     let missingConfirmed = expired;
     if (!game && !expired && row.team) {
       try {
-        if (!boards.has(row.game_date)) boards.set(row.game_date, await fetchJson(`${ESPN}/scoreboard?dates=${row.game_date.replaceAll("-", "")}`));
+        if (!boards.has(row.game_date)) boards.set(row.game_date, await fetchJson(`${ESPN}/scoreboard?dates=${row.game_date.replace(/-/g, "")}`));
         const board = boards.get(row.game_date);
         const final = (board?.events ?? []).find((event: any) => event.status?.type?.completed &&
           (event.competitions?.[0]?.competitors ?? []).some((c: any) => c.team?.displayName === row.team));

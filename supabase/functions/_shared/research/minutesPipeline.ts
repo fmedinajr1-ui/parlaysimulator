@@ -61,7 +61,7 @@ async function getJson(url: string) {
 
 /** Runs inside research-daily; no additional schedule or paid API call. */
 export async function snapshotMinutes(sb: any, today: string, fetchJson: (url: string) => Promise<any> = getJson) {
-  const board = await fetchJson(`${ESPN}/scoreboard?dates=${today.replaceAll("-", "")}`);
+  const board = await fetchJson(`${ESPN}/scoreboard?dates=${today.replace(/-/g, "")}`);
   const preTeams = new Set<string>();
   for (const event of board.events ?? []) {
     if (event.status?.type?.state !== "pre" || !(new Date(event.date).getTime() > Date.now())) continue;
