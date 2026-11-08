@@ -206,6 +206,12 @@ Deno.serve(async (req) => {
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
+  if (only === "minutes") {
+    await step("gradeMinutes", () => gradeMinutes(sb, today));
+    await step("minutesForecasts", () => snapshotMinutes(sb, today));
+    await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
+    return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
+  }
   if (only === "rosters") {
     await step("rosters", () => syncRosters(sb));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
@@ -219,6 +225,7 @@ Deno.serve(async (req) => {
   await step("gradeMinutes", () => gradeMinutes(sb, today));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
+  await step("minutesForecasts", () => snapshotMinutes(sb, today));
 
   let paused = st?.paused_reason ?? null;
   // Paused by AI credits/policy: one probe per daily run only.
