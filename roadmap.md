@@ -4,7 +4,8 @@
 - [x] Gate v6 on three completed slates averaging no more than two minutes of absolute error.
 - [x] Prepare dampened v6 and same-slate side-by-side v5 picks/results without changing historical records.
 - [x] Validate rules, private access, and mobile presentation.
-- [ ] Enable v6 comparison once prospective accuracy meets the gate (blocked by future completed slates).
+- [ ] Automate pregame forecasts and same-slate v5/v6 logging so v6 activates when the three-slate accuracy gate passes.
+- [ ] Verify paired mobile comparison; final activation remains blocked until three completed slates average ≤2 minutes of error.
 
 # Rest awareness
 
