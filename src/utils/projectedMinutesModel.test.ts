@@ -16,7 +16,8 @@ describe("v6 shadow model integration", () => {
   it("dampens surges instead of applying v5's full trend", () => {
     const g = logs([40, 40, 40, 30, 30, 30, 30, 30, 30, 30]);
     expect(projectProp(g, "points", 18.5, -110, -110, { ...ctx, projectedMinutesModel: true })?.projection).toBe(22.03);
-    expect(projectProp(g, "points", 18.5, -110, -110, ctx)?.projection).toBe(22.85);
+    // v5 is already at its combined +12% context cap, so extended rest cannot stack higher.
+    expect(projectProp(g, "points", 18.5, -110, -110, ctx)?.projection).toBe(22.4);
   });
   it("applies rest only once through dampened minutes", () => {
     const g = logs(Array(10).fill(34)); g[0].game_date = "2026-11-06";
