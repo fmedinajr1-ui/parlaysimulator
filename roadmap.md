@@ -11,3 +11,7 @@
 - [x] Add one tested days-rest calculation and conservative projection adjustment.
 - [x] Show rest badges on picks, projections, game coverage, season leaders and research.
 - [x] Verify rest is not counted twice in the v6 minutes model and check mobile layout.
+
+# Submitted result learning
+- [ ] Record the three unique November 6–7 screenshot entries once, including pregame L5/L10 snapshots and actual results.
+- [ ] Verify the saved records against the screenshots and summarize lessons without changing the projection model yet.
