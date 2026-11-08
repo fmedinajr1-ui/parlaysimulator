@@ -36,6 +36,13 @@
       "when": 1794089178868,
       "tag": "0004_research_minutes_validation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794150605512,
+      "tag": "0005_record_submitted_result_learning",
+      "breakpoints": true
     }
   ]
 }

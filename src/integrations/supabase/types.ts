@@ -14994,6 +14994,128 @@ export type Database = {
         }
         Relationships: []
       }
+      research_result_entries: {
+        Row: {
+          created_at: string
+          entry_key: string
+          entry_type: string
+          game_date: string
+          id: string
+          notes: string | null
+          pick_count: number
+          platform: string
+          potential_payout: number
+          source: string
+          stake_amount: number | null
+          stake_kind: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          entry_key: string
+          entry_type: string
+          game_date: string
+          id?: string
+          notes?: string | null
+          pick_count: number
+          platform?: string
+          potential_payout: number
+          source?: string
+          stake_amount?: number | null
+          stake_kind: string
+          status: string
+        }
+        Update: {
+          created_at?: string
+          entry_key?: string
+          entry_type?: string
+          game_date?: string
+          id?: string
+          notes?: string | null
+          pick_count?: number
+          platform?: string
+          potential_payout?: number
+          source?: string
+          stake_amount?: number | null
+          stake_kind?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      research_result_legs: {
+        Row: {
+          actual_value: number | null
+          created_at: string
+          entry_id: string
+          game_date: string
+          id: string
+          l10_avg: number | null
+          l10_games: number
+          l10_hit_rate: number | null
+          l10_median: number | null
+          l5_avg: number | null
+          l5_games: number
+          l5_hit_rate: number | null
+          l5_median: number | null
+          line: number
+          player_name: string
+          pregame_values: Json
+          side: string
+          stat: string
+          status: string
+        }
+        Insert: {
+          actual_value?: number | null
+          created_at?: string
+          entry_id: string
+          game_date: string
+          id?: string
+          l10_avg?: number | null
+          l10_games: number
+          l10_hit_rate?: number | null
+          l10_median?: number | null
+          l5_avg?: number | null
+          l5_games: number
+          l5_hit_rate?: number | null
+          l5_median?: number | null
+          line: number
+          player_name: string
+          pregame_values?: Json
+          side: string
+          stat: string
+          status: string
+        }
+        Update: {
+          actual_value?: number | null
+          created_at?: string
+          entry_id?: string
+          game_date?: string
+          id?: string
+          l10_avg?: number | null
+          l10_games?: number
+          l10_hit_rate?: number | null
+          l10_median?: number | null
+          l5_avg?: number | null
+          l5_games?: number
+          l5_hit_rate?: number | null
+          l5_median?: number | null
+          line?: number
+          player_name?: string
+          pregame_values?: Json
+          side?: string
+          stat?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "research_result_legs_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "research_result_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rosters: {
         Row: {
           id: string
