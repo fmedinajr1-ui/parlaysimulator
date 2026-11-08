@@ -1,9 +1,12 @@
+import type { RestProfile } from "./restProfile";
+
 export interface GameCoveragePlayerInput {
   player: string;
   team: string;
   opponent: string | null;
   home: boolean | null;
   stat: string;
+  rest?: RestProfile;
 }
 
 export interface CoveragePick {
@@ -28,6 +31,7 @@ export interface CoveredPlayer {
   home: boolean;
   props: string[];
   picks: CoveragePick[];
+  rest?: RestProfile;
 }
 
 export interface GameCoverage {
@@ -57,7 +61,7 @@ export function buildGameCoverage(
   const games = new Map<string, {
     away: string;
     home: string;
-    players: Map<string, { player: string; team: string; home: boolean; props: Set<string> }>;
+    players: Map<string, { player: string; team: string; home: boolean; props: Set<string>; rest?: RestProfile }>;
   }>();
 
   for (const row of rows) {
@@ -72,6 +76,7 @@ export function buildGameCoverage(
       team: row.team,
       home: row.home,
       props: new Set<string>(),
+      rest: row.rest,
     };
     player.props.add(row.stat);
     game.players.set(key, player);
@@ -91,6 +96,7 @@ export function buildGameCoverage(
       home: player.home,
       props: [...player.props].sort(),
       picks: picksByPlayer.get(playerKey(player.player)) ?? [],
+      rest: player.rest,
     })).sort((a, b) => b.picks.length - a.picks.length || a.player.localeCompare(b.player));
 
     return {
