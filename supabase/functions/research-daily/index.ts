@@ -5,6 +5,7 @@ import { etDateKey, etDateKeyDaysAgo } from "../_shared/date-et.ts";
 import { slateEdges, saveReport } from "../_shared/research/context.ts";
 import { runResearchAi, AiGatewayError, RESEARCH_INSTRUCTIONS } from "../_shared/research/ai.ts";
 import { gradeMinutes } from "../_shared/research/gradeMinutes.ts";
+import { snapshotMinutes } from "../_shared/research/minutesPipeline.ts";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -205,6 +206,12 @@ Deno.serve(async (req) => {
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
+  if (only === "minutes") {
+    await step("gradeMinutes", () => gradeMinutes(sb, today));
+    await step("minutesForecasts", () => snapshotMinutes(sb, today));
+    await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
+    return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
+  }
   if (only === "rosters") {
     await step("rosters", () => syncRosters(sb));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
@@ -218,6 +225,7 @@ Deno.serve(async (req) => {
   await step("gradeMinutes", () => gradeMinutes(sb, today));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
+  await step("minutesForecasts", () => snapshotMinutes(sb, today));
 
   let paused = st?.paused_reason ?? null;
   // Paused by AI credits/policy: one probe per daily run only.
