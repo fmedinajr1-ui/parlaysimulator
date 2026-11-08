@@ -93,10 +93,11 @@ export default function Desk() {
             </table>
           </div>
         )}
+        <p className="desk-note mb-2 text-[10px]">Rest formula: B2B −5% for 32+ minute players (otherwise −3%) · 1 day off neutral · 2 days +1% · 3+ days +2%.</p>
         <EdgeCards edges={edges} onPick={setFocus} />
         <GameCoverageBoard games={gameCoverage} onPick={setFocus} />
         <div className="mt-3">
-          <SeasonVenueBoard byPlayer={byPlayer} propLines={propLines} onPick={setFocus} />
+          <SeasonVenueBoard byPlayer={byPlayer} propLines={propLines} today={today} onPick={setFocus} />
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-12">
@@ -108,6 +109,7 @@ export default function Desk() {
               loading={loading}
               err={err}
               focus={focus}
+              today={today}
               trendFor={trendFor}
             />
           </div>

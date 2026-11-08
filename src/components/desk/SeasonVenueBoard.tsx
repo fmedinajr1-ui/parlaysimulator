@@ -3,21 +3,26 @@ import { supabase } from "@/integrations/supabase/client";
 import { STAT_OPTIONS } from "@/hooks/useResearchData";
 import type { GameLog, StatKey } from "@/utils/nbaBoxScoreMath";
 import { buildSeasonVenueLeaders, type SeasonVenueRow, type Venue, type VenueSide } from "@/utils/seasonVenueLeaders";
+import { restProfile } from "@/utils/restProfile";
+import { RestBadge } from "@/components/desk/RestBadge";
 
 interface Props {
   byPlayer: Map<string, GameLog[]>;
   propLines: Map<string, number>;
+  today: string;
   onPick: (player: string) => void;
 }
 
 const fmt = (value: number) => (Math.round(value * 10) / 10).toString();
 const pct = (value: number) => `${Math.round(value * 100)}%`;
 
-function VenueLeaders({ venue, rows, side, teams, onPick }: {
+function VenueLeaders({ venue, rows, side, teams, byPlayer, today, onPick }: {
   venue: Venue;
   rows: SeasonVenueRow[];
   side: VenueSide;
   teams: Map<string, string>;
+  byPlayer: Map<string, GameLog[]>;
+  today: string;
   onPick: (player: string) => void;
 }) {
   const label = venue === "home" ? "Home" : "Road";
@@ -47,6 +52,7 @@ function VenueLeaders({ venue, rows, side, teams, onPick }: {
                     <span className="desk-mono text-[10px] text-[hsl(var(--desk-muted))]">{index + 1}.</span>
                     <span className="truncate text-xs font-semibold text-[hsl(var(--desk-text))]">{row.player}</span>
                     {teams.get(row.player.toLowerCase()) && <span className="desk-mono text-[10px] text-[hsl(var(--desk-muted))]">{teams.get(row.player.toLowerCase())}</span>}
+                    <RestBadge rest={restProfile(byPlayer.get(row.player) ?? [], today)} />
                   </span>
                   <span className="desk-mono mt-1 block text-[10px] text-[hsl(var(--desk-muted))]">
                     Line {row.line} · Med {fmt(row.median)} · Avg {fmt(row.average)}
@@ -69,7 +75,7 @@ function VenueLeaders({ venue, rows, side, teams, onPick }: {
   );
 }
 
-export function SeasonVenueBoard({ byPlayer, propLines, onPick }: Props) {
+export function SeasonVenueBoard({ byPlayer, propLines, today, onPick }: Props) {
   const [stat, setStat] = useState<StatKey>("points");
   const [side, setSide] = useState<VenueSide>("over");
   const [teams, setTeams] = useState<Map<string, string>>(new Map());
@@ -120,8 +126,8 @@ export function SeasonVenueBoard({ byPlayer, propLines, onPick }: Props) {
       </div>
 
       <div className="mt-2 grid gap-2 md:grid-cols-2">
-        <VenueLeaders venue="home" rows={home} side={side} teams={teams} onPick={onPick} />
-        <VenueLeaders venue="road" rows={road} side={side} teams={teams} onPick={onPick} />
+        <VenueLeaders venue="home" rows={home} side={side} teams={teams} byPlayer={byPlayer} today={today} onPick={onPick} />
+        <VenueLeaders venue="road" rows={road} side={side} teams={teams} byPlayer={byPlayer} today={today} onPick={onPick} />
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-[hsl(var(--desk-muted))]">
         Hit % counts games strictly {side === "over" ? "above" : "below"} tonight's line; pushes do not count as hits. Ties favor more games, then a stronger venue median.

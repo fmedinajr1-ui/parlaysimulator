@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
 import { getTeamAbbreviation } from "@/lib/team-abbreviations";
+import { RestBadge } from "@/components/desk/RestBadge";
 
 interface Props {
   edges: EdgePick[];
@@ -51,6 +52,7 @@ export function EdgeCards({ edges, onPick }: Props) {
                   </span>
                   <span className="desk-mono truncate text-[11px] text-[hsl(var(--desk-muted))]">{matchup}</span>
                 </div>
+                <div className="mt-1.5"><RestBadge rest={e.rest} /></div>
               </div>
               <span
                 className={`desk-mono shrink-0 rounded-md px-2 py-1 text-[11px] font-bold ${

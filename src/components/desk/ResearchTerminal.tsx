@@ -6,6 +6,8 @@ import { callResearchAi, Prose } from "@/components/research/ResearchAiPanel";
 import type { TrendContext } from "@/utils/trendContext";
 import { summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from "@/utils/nbaBoxScoreMath";
 import { DEFAULT_RESEARCH_FILTERS, filterResearchRows, type ResearchFilters, type ResearchSort, type ResearchTrendFilter } from "@/utils/researchFilters";
+import { restProfile } from "@/utils/restProfile";
+import { RestBadge } from "@/components/desk/RestBadge";
 
 interface Props {
   byPlayer: Map<string, GameLog[]>;
@@ -14,6 +16,7 @@ interface Props {
   loading: boolean;
   err: string | null;
   focus: string | null;
+  today: string;
   trendFor?: (player: string, stat: StatKey) => TrendContext;
 }
 
@@ -47,7 +50,7 @@ function TrendWhy({ ctx }: { ctx: TrendContext }) {
 
 const verdictTag = (ctx?: TrendContext) => ctx && ctx.verdict !== "none" ? (ctx.verdict === "real" ? " ✓" : ctx.verdict === "fragile" ? " ?" : "") : "";
 
-export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, focus, trendFor }: Props) {
+export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, focus, today, trendFor }: Props) {
   const [q, setQ] = useState("");
   const [stat, setStat] = useState<StatKey>("points");
   const [line, setLine] = useState("");
@@ -244,7 +247,8 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate font-semibold text-[hsl(var(--desk-text))]">{r.player}{teams.get(r.player.toLowerCase()) && <span className="desk-mono ml-1.5 text-[11px] font-normal text-[hsl(var(--desk-muted))]">{teams.get(r.player.toLowerCase())}</span>}</div>
-                        <div className="text-[11px] text-[hsl(var(--desk-muted))]">
+                        <div className="mt-1"><RestBadge rest={restProfile(byPlayer.get(r.player) ?? [], today)} /></div>
+                        <div className="mt-1 text-[11px] text-[hsl(var(--desk-muted))]">
                           {r.lastDate} vs {r.lastOpponent ?? "?"}
                           {injury && <span className="ml-1.5 text-[hsl(var(--desk-loss))]">· {injury}</span>}
                         </div>
@@ -295,6 +299,7 @@ export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, 
                         <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
                           {r.player}
                           {teams.get(r.player.toLowerCase()) && <span className="text-[11px] font-normal text-[hsl(var(--desk-muted))]">{teams.get(r.player.toLowerCase())}</span>}
+                          <RestBadge rest={restProfile(byPlayer.get(r.player) ?? [], today)} />
                           {injury && (
                             <span className="desk-mono whitespace-nowrap rounded bg-[hsl(var(--desk-loss)/0.15)] px-1.5 py-0.5 text-[10px] text-[hsl(var(--desk-loss))]">
                               {injury}

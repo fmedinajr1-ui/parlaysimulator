@@ -4,6 +4,7 @@ import { STAT_OPTIONS } from "@/hooks/useResearchData";
 import { isStrongPick, type CoveragePick, type CoveredPlayer, type GameCoverage } from "@/utils/gameCoverage";
 import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
 import type { StatKey } from "@/utils/nbaBoxScoreMath";
+import { RestBadge } from "@/components/desk/RestBadge";
 
 const ab = (team: string) => getTeamAbbreviation(team) || team.slice(0, 3).toUpperCase();
 const shortOf = (stat: string) => STAT_OPTIONS.find((option) => option.key === stat)?.short ?? stat.toUpperCase();
@@ -48,8 +49,11 @@ function TeamPlayers({ team, home, players, onPick, slip, strongOnly }: {
                 <button type="button" onClick={() => onPick(player.player)} className="min-w-0 truncate text-left text-xs font-medium text-[hsl(var(--desk-text))] hover:text-[hsl(var(--desk-amber))]">
                   {player.player}
                 </button>
-                <span className="desk-mono shrink-0 text-[9px] text-[hsl(var(--desk-muted))]" title={player.props.map(shortOf).join(", ")}>
-                  {player.props.length} line{player.props.length === 1 ? "" : "s"}
+                <span className="flex shrink-0 items-center gap-1">
+                  {player.rest && <RestBadge rest={player.rest} />}
+                  <span className="desk-mono text-[9px] text-[hsl(var(--desk-muted))]" title={player.props.map(shortOf).join(", ")}>
+                    {player.props.length} line{player.props.length === 1 ? "" : "s"}
+                  </span>
                 </span>
               </div>
               {picks.length > 0 ? (

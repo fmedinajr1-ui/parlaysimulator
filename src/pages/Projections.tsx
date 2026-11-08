@@ -5,6 +5,7 @@ import { STAT_OPTIONS, useResearchData, type EdgePick } from "@/hooks/useResearc
 import { projectMinutes } from "@/utils/projectedMinutes";
 import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
 import type { StatKey } from "@/utils/nbaBoxScoreMath";
+import { RestBadge } from "@/components/desk/RestBadge";
 
 type Sort = "gap" | "win" | "ev" | "minutes";
 const short = (s: StatKey) => STAT_OPTIONS.find((o) => o.key === s)?.short ?? s;
@@ -50,6 +51,9 @@ export default function Projections() {
           Every player with a line tonight: our projected total, projected minutes, and how far the sportsbook line sits from it.
           <b> PICK</b> = passes every model rule. Minutes are an estimate to explain the projection.
         </p>
+        <p className="desk-note mt-1 text-[11px]">
+          Rest formula: back-to-back −5% for 32+ minute players (otherwise −3%), 1 day off neutral, 2 days off +1%, 3+ days off +2%.
+        </p>
 
         <div className="desk-panel-flat mt-3 flex flex-col gap-2 p-3">
           <input className="desk-input w-full" placeholder="Search player or team" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -89,7 +93,8 @@ export default function Projections() {
                       {e.team ?? "—"} · {e.home == null ? "" : e.home ? "HOME" : "ROAD"} vs {e.tonight ?? "?"}
                     </div>
                   </button>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    <RestBadge rest={e.rest} />
                     {e.qualifies && <span className="desk-chip">PICK</span>}
                     <span className="desk-chip">{short(e.stat)}</span>
                   </div>
