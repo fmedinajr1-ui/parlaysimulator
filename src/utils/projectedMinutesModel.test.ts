@@ -7,7 +7,7 @@ const logs = (minutes: number[], start = 5): GameLog[] => minutes.map((minutes_p
   assists: 5, rebounds: 5, threes_made: 2, opponent: "X",
 }));
 describe("v6 shadow model integration", () => {
-  it("keeps the active version v5", () => expect(MODEL_VERSION).toBe("v5-margin-gated"));
+  it("keeps the active version in the v5 family", () => expect(MODEL_VERSION).toBe("v5-rest-aware"));
   it("matches v5 on stable minutes", () => {
     const g = logs(Array(10).fill(30));
     expect(projectProp(g, "points", 18.5, -110, -110, { ...ctx, projectedMinutesModel: true })?.projection)
@@ -15,7 +15,8 @@ describe("v6 shadow model integration", () => {
   });
   it("dampens surges instead of applying v5's full trend", () => {
     const g = logs([40, 40, 40, 30, 30, 30, 30, 30, 30, 30]);
-    expect(projectProp(g, "points", 18.5, -110, -110, { ...ctx, projectedMinutesModel: true })?.projection).toBe(21.6);
+    expect(projectProp(g, "points", 18.5, -110, -110, { ...ctx, projectedMinutesModel: true })?.projection).toBe(22.03);
+    // v5 is already at its combined +12% context cap, so extended rest cannot stack higher.
     expect(projectProp(g, "points", 18.5, -110, -110, ctx)?.projection).toBe(22.4);
   });
   it("applies rest only once through dampened minutes", () => {

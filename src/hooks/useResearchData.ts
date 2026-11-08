@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type Reason } from "@/utils/nbaProjection";
 import { trendContext, type TrendContext } from "@/utils/trendContext";
 import { buildGameCoverage, type GameCoveragePlayerInput } from "@/utils/gameCoverage";
+import { restProfile, type RestProfile } from "@/utils/restProfile";
 import {
   summarizePlayer,
   type GameLog,
@@ -97,6 +98,8 @@ export interface EdgePick {
   qualifies?: boolean;
   /** Season minutes per game of same-team players ruled Out tonight. */
   mateMinutesOut?: number;
+  /** Days off and the rest adjustment used tonight. */
+  rest: RestProfile;
 }
 
 export interface EdgeInputs {
@@ -170,6 +173,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason,
         home: i.homeTonight.get(lower) ?? null, team: team ?? null,
         qualifies, mateMinutesOut: matesOut.reduce((t, m) => t + m.minutes, 0),
+        rest: restProfile(games, i.today),
       });
     }
   }
@@ -346,6 +350,7 @@ export function useResearchData() {
         opponent: team === home ? away : home,
         home: team === home,
         stat: raw.stat,
+        rest: restProfile(byPlayer.get(player) ?? [], today),
       });
     }
     return buildGameCoverage(rows, allEdges);
