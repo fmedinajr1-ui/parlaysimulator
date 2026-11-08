@@ -8,6 +8,6 @@
 
 # Rest awareness
 
-- [ ] Add one tested days-rest calculation and conservative projection adjustment.
-- [ ] Show rest badges on picks, projections, game coverage, season leaders and research.
-- [ ] Verify rest is not counted twice in the v6 minutes model and check mobile layout.
+- [x] Add one tested days-rest calculation and conservative projection adjustment.
+- [x] Show rest badges on picks, projections, game coverage, season leaders and research.
+- [x] Verify rest is not counted twice in the v6 minutes model and check mobile layout.
