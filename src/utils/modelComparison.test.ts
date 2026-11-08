@@ -7,7 +7,7 @@ const result = (version: string, status: string, game_date = "2026-11-10", odds:
 describe("side-by-side model comparison", () => {
   it("pairs the same player and stat", () => expect(pairModelPicks([pick("A", 0.1)], [pick("A", 0.2)])).toHaveLength(1));
   it("keeps a v5-only pick", () => expect(pairModelPicks([pick("A", 0.1)], [])[0].v5?.player).toBe("A"));
-  it("keeps a v6-only pick", () => expect(pairModelPicks([], [pick("B", 0.1)]))[0].v6?.player).toBe("B"));
+  it("keeps a v6-only pick", () => expect(pairModelPicks([], [pick("B", 0.1)])[0].v6?.player).toBe("B"));
   it("sorts by the better expected profit", () => expect(pairModelPicks([pick("A", 0.1), pick("B", 0.2)], [])[0].player).toBe("B"));
   it("does not merge different stats", () => {
     const rebounds = { ...pick("A", 0.1), stat: "rebounds" as const };

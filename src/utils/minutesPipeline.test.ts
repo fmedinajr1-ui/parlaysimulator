@@ -5,7 +5,7 @@ const logs = (name: string, minutes: number[], start = 7): ForecastInput["logs"]
   player_name: name, game_date: `2026-11-${String(start - i).padStart(2, "0")}`, minutes_played,
 }));
 const input = (overrides: Partial<ForecastInput> = {}): ForecastInput => ({
-  today: "2026-11-08",
+  today: "2026-11-09",
   preTeams: new Set(["Orlando Magic"]),
   lines: [{ player_name: "Player A" }],
   roster: [{ player_name: "Player A", team: "Orlando Magic" }, { player_name: "Mate B", team: "Orlando Magic" }],
@@ -36,7 +36,7 @@ describe("automatic pregame minutes snapshots", () => {
     expect(buildMinutesForecasts(input({ logs: logs("Player A", [30, 30]) }))).toEqual([]);
   });
   it("excludes DNPs and same-day results from the baseline", () => {
-    const history = [...logs("Player A", [30, 30, 30]), { player_name: "Player A", game_date: "2026-11-08", minutes_played: 48 }, { player_name: "Player A", game_date: "2026-11-06", minutes_played: 0 }];
+    const history = [...logs("Player A", [30, 30, 30]), { player_name: "Player A", game_date: "2026-11-09", minutes_played: 48 }, { player_name: "Player A", game_date: "2026-11-06", minutes_played: 0 }];
     expect(buildMinutesForecasts(input({ logs: history }))[0].projected_minutes).toBe(30);
   });
 });
