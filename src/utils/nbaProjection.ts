@@ -1,12 +1,13 @@
 import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScoreMath";
 import { projectMinutes } from "./projectedMinutes";
 import { minutesElasticity } from "./minutesValidation";
+import { restProfile } from "./restProfile";
 
 /** Rough NBA team per-game totals, used to size a missing teammate's share. */
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
 /** Bump whenever the projection rules change, so the pick log can compare versions. */
-export const MODEL_VERSION = "v5-margin-gated";
+export const MODEL_VERSION = "v5-rest-aware";
 
 export interface ProjectionContext {
   seasonStart: string;
@@ -91,14 +92,9 @@ export function normCdf(z: number): number {
   return z > 0 ? 1 - q : q;
 }
 
-function dayBefore(d: string) {
-  const t = new Date(`${d}T12:00:00Z`); t.setUTCDate(t.getUTCDate() - 1);
-  return t.toISOString().slice(0, 10);
-}
-
 /**
  * Projects a prop from the last 10 played games, with this season's games counted double,
- * then adjusts for minutes trend, home/road, back-to-back, opponent and missing teammates.
+ * then adjusts for minutes trend, home/road, days rest, opponent and missing teammates.
  * Picks whichever side (Over or Under) has the better expected profit at the posted odds.
  */
 export function projectProp(
@@ -142,11 +138,14 @@ export function projectProp(
         `Averages ${here.toFixed(1)} ${w} ${ctx.home ? "at home" : "on the road"} vs ${all.toFixed(1)} overall this season (${side.length} ${ctx.home ? "home" : "road"} games).`);
   }
 
-  // Back-to-back: heavier hit for high-minute players.
-  const b2b = played[0]?.game_date === dayBefore(ctx.today);
-  // v6 minutes already include the rest trim; do not count it a second time.
-  const fRest = estimated ? 1 : b2b ? (l10m >= 32 ? 0.95 : 0.97) : 1;
-  if (b2b && !estimated) add("Back-to-back", fRest, `Played yesterday and averages ${Math.round(l10m)} min, so legs may be tired.`);
+  // Rest: B2B fatigue, neutral normal rest, and small boosts after 2+ full days off.
+  const rest = restProfile(played, ctx.today);
+  // v6 minutes already include the B2B trim; only extended rest is applied here.
+  const fRest = estimated && rest.b2b ? 1 : rest.factor;
+  if (!estimated && rest.b2b)
+    add("Back-to-back", fRest, `Played yesterday and averages ${Math.round(l10m)} min; ${rest.daysRest} full days off gives a ${Math.round((1 - fRest) * 100)}% fatigue trim.`);
+  else if (rest.daysRest != null && rest.daysRest >= 2)
+    add(rest.daysRest >= 3 ? "Well rested" : "Rested", fRest, `Last played ${rest.lastGameDate}, so he has ${rest.daysRest} full days off; the model adds only ${Math.round((fRest - 1) * 100)}%.`);
 
   // Opponent, shrunk halfway toward average.
   const fOpp = clamp(1 + (ctx.oppFactor - 1) * 0.5, 0.92, 1.08);

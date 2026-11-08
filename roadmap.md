@@ -5,3 +5,9 @@
 - [x] Prepare dampened v6 and same-slate side-by-side v5 picks/results without changing historical records.
 - [x] Validate rules, private access, and mobile presentation.
 - [ ] Enable v6 comparison once prospective accuracy meets the gate (blocked by future completed slates).
+
+# Rest awareness
+
+- [ ] Add one tested days-rest calculation and conservative projection adjustment.
+- [ ] Show rest badges on picks, projections, game coverage, season leaders and research.
+- [ ] Verify rest is not counted twice in the v6 minutes model and check mobile layout.
