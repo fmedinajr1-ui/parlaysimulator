@@ -222,19 +222,6 @@ Deno.serve(async (req) => {
   if (b.action === "log_bot_picks") {
     return json({ ok: true, ...await syncBotFromShelf(sb, day) });
   }
-  if (false && b.action === "log_bot_picks") {
-    // Verify every simulated position against a current sportsbook line and price.
-    const { data: lines, error: lineError } = await sb.from("research_prop_lines")
-      .select("player_name,stat,line,over_price,under_price").eq("game_date", day).limit(10000);
-    if (lineError) return json({ error: lineError.message }, 500);
-    b.picks = b.picks.filter((p) => (lines ?? []).some((l: any) =>
-      l.player_name.toLowerCase() === p.player_name.toLowerCase() && l.stat === p.stat && Number(l.line) === p.line
-      && Number(p.side === "over" ? l.over_price : l.under_price) === p.odds));
-    const { error } = await sb.from("research_bot_picks").upsert(b.picks, {
-      onConflict: "game_date,player_name,stat,side,strategy_version", ignoreDuplicates: true,
-    });
-    return error ? json({ error: error.message }, 500) : json({ ok: true, logged: b.picks.length });
-  }
   if (b.action === "log_picks") {
     // First snapshot of the day wins, so the record reflects the pick before tip-off.
     const { error } = await sb.from("research_pick_log").upsert(b.picks, { onConflict: "game_date,player_name,stat,side,model_version", ignoreDuplicates: true });
