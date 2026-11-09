@@ -1,5 +1,10 @@
 # Minutes model rollout
 
+# Bot synchronization and midnight update
+- [ ] Synchronize research and Oversight records and refresh signals.
+- [ ] Move the single daily update to midnight Eastern and verify the scheduled invocation.
+- [ ] Test shared-record rules and private desk results.
+
 - [x] Save pregame minutes forecasts and grade them in the existing daily update.
 - [x] Gate v6 on three completed slates averaging no more than two minutes of absolute error.
 - [x] Prepare dampened v6 and same-slate side-by-side v5 picks/results without changing historical records.
