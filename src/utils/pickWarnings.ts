@@ -8,7 +8,7 @@ export interface WarnInput { side: "over" | "under"; hitRate: number; hitsL10: n
 export function pickWarnings(p: WarnInput): string[] {
   const out: string[] = [];
   const actual = p.gamesL10 ? p.hitsL10 / p.gamesL10 : 0;
-  if (p.gamesL10 && p.hitRate - actual >= 0.1)
+  if (p.gamesL10 && p.hitRate - actual >= 0.1 - 1e-9)
     out.push(`Model says ${Math.round(p.hitRate * 100)}% but this side only hit ${p.hitsL10} of his last ${p.gamesL10} (${Math.round(actual * 100)}%).`);
   if (p.trend === "cold" && p.side === "over") out.push("He's cold right now (last 5 below his last 10) and this is an Over.");
   if (p.trend === "hot" && p.side === "under") out.push("He's hot right now (last 5 above his last 10) and this is an Under.");
