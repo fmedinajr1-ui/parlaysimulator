@@ -142,11 +142,8 @@ async function gradeRealBets(sb: any, today: string) {
     const { data: g } = await sb.from("nba_player_game_logs").select("minutes_played,points,rebounds,assists,threes_made")
       .ilike("player_name", b.player_name).eq("game_date", b.game_date).maybeSingle();
     if (!g) { waiting++; continue; }
-    const v = b.stat === "pra" ? (Number(g.points) || 0) + (Number(g.rebounds) || 0) + (Number(g.assists) || 0) : Number(g[b.stat]) || 0;
-    const line = Number(b.line);
-    const status = !(Number(g.minutes_played) > 0) ? "void" : v === line ? "push"
-      : (b.side === "over" ? v > line : v < line) ? "won" : "lost";
-    await sb.from("research_real_bets").update({ status, result_value: v, settled_at: new Date().toISOString() }).eq("id", b.id);
+    const { status, result_value } = gradeResearchPick(b, g);
+    await sb.from("research_real_bets").update({ status, result_value, settled_at: new Date().toISOString() }).eq("id", b.id);
     graded++;
   }
   return { graded, waiting };
@@ -165,10 +162,29 @@ async function gradePickLog(sb: any, today: string) {
       else waiting++;
       continue;
     }
-    const v = b.stat === "pra" ? (Number(g.points) || 0) + (Number(g.rebounds) || 0) + (Number(g.assists) || 0) : Number(g[b.stat]) || 0;
-    const line = Number(b.line);
-    const status = !(Number(g.minutes_played) > 0) ? "void" : v === line ? "push" : (b.side === "over" ? v > line : v < line) ? "won" : "lost";
-    await sb.from("research_pick_log").update({ status, result_value: v, settled_at: new Date().toISOString() }).eq("id", b.id);
+    const { status, result_value } = gradeResearchPick(b, g);
+    await sb.from("research_pick_log").update({ status, result_value, settled_at: new Date().toISOString() }).eq("id", b.id);
+    graded++;
+  }
+  return { graded, waiting };
+}
+
+/** Grades the separate Oversight Bot ledger with the same box-score rules. */
+async function gradeBotPicks(sb: any, today: string) {
+  const { data: open } = await sb.from("research_bot_picks").select("*").eq("status", "open").lt("game_date", today).limit(2000);
+  let graded = 0, waiting = 0;
+  for (const b of open ?? []) {
+    const { data: g } = await sb.from("nba_player_game_logs").select("minutes_played,points,rebounds,assists,threes_made")
+      .ilike("player_name", b.player_name).eq("game_date", b.game_date).maybeSingle();
+    if (!g) {
+      if (b.game_date < etDateKeyDaysAgo(3, new Date())) {
+        await sb.from("research_bot_picks").update({ status: "void", settled_at: new Date().toISOString() }).eq("id", b.id);
+        graded++;
+      } else waiting++;
+      continue;
+    }
+    const { status, result_value } = gradeResearchPick(b, g);
+    await sb.from("research_bot_picks").update({ status, result_value, settled_at: new Date().toISOString() }).eq("id", b.id);
     graded++;
   }
   return { graded, waiting };
@@ -203,6 +219,7 @@ Deno.serve(async (req) => {
   if (only === "grade") {
     await step("gradeRealBets", () => gradeRealBets(sb, today));
     await step("gradePickLog", () => gradePickLog(sb, today));
+    await step("gradeBotPicks", () => gradeBotPicks(sb, today));
     await step("gradeMinutes", () => gradeMinutes(sb, today));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
