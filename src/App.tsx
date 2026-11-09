@@ -103,6 +103,7 @@ function AnimatedRoutes() {
           <React.Suspense fallback={<WolfLoadingOverlay />}>
             <Routes location={location}>
               <Route path="/" element={<AdminGate><Desk /></AdminGate>} />
+              <Route path="/index" element={<Navigate to="/" replace />} />
               <Route path="/landing" element={<Home />} />
               <Route path="/legacy-landing" element={<BotLanding />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
