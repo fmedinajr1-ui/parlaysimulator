@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
-
 /* ============================================================
    Midnight Amber — ParlayFarm Research Desk theme
    Scoped to .desk-theme so it never leaks into the marketing site.
@@ -47,18 +45,18 @@
 }
 
 .desk-theme .desk-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
-.desk-theme .desk-display { font-family: 'Sora', system-ui, sans-serif; letter-spacing: -0.02em; }
+.desk-theme .desk-display { font-family: 'Sora', system-ui, sans-serif; letter-spacing: 0; }
 
 .desk-theme .desk-panel {
   background: linear-gradient(180deg, hsl(var(--desk-panel-2) / 0.85), hsl(var(--desk-panel) / 0.95));
   border: 1px solid hsl(var(--desk-line));
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .desk-theme .desk-panel-flat {
   background: hsl(var(--desk-panel));
   border: 1px solid hsl(var(--desk-line));
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .desk-theme .desk-grid-bg {
