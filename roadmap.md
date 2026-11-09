@@ -34,6 +34,7 @@
 - [x] Refresh 1,258 box scores and run minutes-only trial; no games remain pregame, so no new prospective snapshots were created. Phone cards and paired preview verified.
 
 # Skeptical shelf accuracy
-- [ ] Save every pregame skeptical shelf play with original win chance, actual last-10 hit record, line and warnings; keep separate from bot targets.
-- [ ] Grade the complete shelf in the daily update and show its saved accuracy and individual results.
-- [ ] Verify snapshot protection, accuracy rules and private phone flow.
+- [x] Save every pregame skeptical shelf play when the desk opens with original win chance, server-verified actual last-10 hit record, line and warnings; keep separate from bot targets.
+- [x] Grade the complete shelf in the daily update and show its saved accuracy and individual results.
+- [x] Verify snapshot protection and accuracy rules (32 tests); private phone/desktop flow submits all 47 plays, safely rejects after-tip snapshots, displays empty records, and has no overflow or runtime errors.
+- [ ] Verify a successful prospective snapshot and its eventual graded UI result on the next pregame slate (blocked: all tonight's games already started).
