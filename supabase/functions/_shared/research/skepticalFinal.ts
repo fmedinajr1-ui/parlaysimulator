@@ -19,7 +19,8 @@ export function skepticalFinal(pick: {player_name: string; stat: string; side: s
     const game = {minutes_played:minutes,points:num("points"),rebounds:num("rebounds"),assists:num("assists"),threes_made:threes == null ? null : Number(String(threes).split("-")[0])};
     const needed = pick.stat === "pra" ? [game.points,game.rebounds,game.assists] : [game[pick.stat as keyof typeof game]];
     if (minutes == null || needed.some(v=>v == null || !Number.isFinite(v))) return null;
-    return gradeResearchPick(pick,game);
+    if (pick.side !== "over" && pick.side !== "under") return null;
+    return gradeResearchPick({ ...pick, side: pick.side },game);
   }
   return null;
 }
