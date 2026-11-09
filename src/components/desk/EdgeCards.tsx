@@ -1,3 +1,4 @@
+import { pickWarnings } from "@/utils/pickWarnings";
 import { STAT_OPTIONS, type EdgePick } from "@/hooks/useResearchData";
 import { statValue, type GameLog } from "@/utils/nbaBoxScoreMath";
 import { useEffect, useState } from "react";
@@ -80,7 +81,7 @@ export function EdgeCards({ edges, onPick }: Props) {
 
             <div className="mt-3 flex items-center justify-between border-t border-[hsl(var(--desk-line))] pt-2">
               <span className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">
-                WIN {Math.round(e.hitRate * 100)}% at {e.odds > 0 ? `+${e.odds}` : e.odds} · {e.thisSeason}/10 this season
+                WIN {Math.round(e.hitRate * 100)}% at {e.odds > 0 ? `+${e.odds}` : e.odds} · hit {e.hitsL10}/{e.gamesL10} last {e.gamesL10}
               </span>
               <span
                 className={`desk-mono text-[11px] font-semibold ${
@@ -90,6 +91,15 @@ export function EdgeCards({ edges, onPick }: Props) {
                 PROFIT {e.ev > 0 ? "+" : ""}{Math.round(e.ev * 100)}¢/$1
               </span>
             </div>
+            {(() => {
+              const w = pickWarnings(e);
+              return w.length > 0 && (
+                <div className="mt-2 rounded-md border border-[hsl(var(--desk-loss)/0.5)] bg-[hsl(var(--desk-loss)/0.1)] p-2 text-[11px] leading-snug text-[hsl(var(--desk-loss))]">
+                  <div className="desk-mono font-bold">⚠ DATA DISAGREES — CAUTION</div>
+                  {w.map((x) => <div key={x}>• {x}</div>)}
+                </div>
+              );
+            })()}
             {e.reasons.length > 0 && (
               <ul className="mt-2 space-y-1.5">
                 {e.reasons.map((r) => (

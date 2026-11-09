@@ -90,6 +90,8 @@ export interface EdgePick {
   tonight: string | null;
   /** How many of the last 10 games were played this season. */
   thisSeason: number;
+  hitsL10: number;
+  gamesL10: number;
   /** True = player's team is home tonight, false = he is on the road, null = venue unknown. */
   home: boolean | null;
   /** Player's team, full name (e.g. "Utah Jazz"). */
@@ -170,7 +172,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       out.push({
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
         side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, reasons: p.reasons, trend: s.trend,
-        lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason,
+        lastDate: s.lastDate, lastOpponent: s.lastOpponent, tonight: oppName ?? null, thisSeason: p.thisSeason, hitsL10: p.hitsL10, gamesL10: p.gamesL10,
         home: i.homeTonight.get(lower) ?? null, team: team ?? null,
         qualifies, mateMinutesOut: matesOut.reduce((t, m) => t + m.minutes, 0),
         rest: restProfile(games, i.today),
