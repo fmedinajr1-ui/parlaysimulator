@@ -66,6 +66,9 @@ export interface Projection {
   ev: number; // expected profit per $1 at the posted odds
   odds: number;
   thisSeason: number;
+  /** Raw last-10 games where the chosen side actually won (display only). */
+  hitsL10: number;
+  gamesL10: number;
   notes: string[];
   reasons: Reason[];
 }
@@ -200,6 +203,8 @@ export function projectProp(
     ev: r2(over ? evOver : evUnder),
     odds: over ? overOdds : underOdds,
     thisSeason,
+    hitsL10: l10.filter((g) => (over ? statValue(g, stat) > line : statValue(g, stat) < line)).length,
+    gamesL10: l10.length,
     notes,
     reasons,
   };
