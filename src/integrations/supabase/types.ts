@@ -15194,6 +15194,81 @@ export type Database = {
           },
         ]
       }
+      research_skeptical_picks: {
+        Row: {
+          event_label: string
+          game_date: string
+          games_l10: number
+          history_l10: Json
+          hits_l10: number
+          id: string
+          line: number
+          logged_at: string
+          model_version: string
+          odds: number | null
+          player_name: string
+          projection: number
+          rank: number
+          result_value: number | null
+          settled_at: string | null
+          side: string
+          starts_at: string
+          stat: string
+          status: string
+          trend: string
+          warnings: Json
+          win_prob: number
+        }
+        Insert: {
+          event_label: string
+          game_date: string
+          games_l10: number
+          history_l10: Json
+          hits_l10: number
+          id?: string
+          line: number
+          logged_at?: string
+          model_version: string
+          odds?: number | null
+          player_name: string
+          projection: number
+          rank: number
+          result_value?: number | null
+          settled_at?: string | null
+          side: string
+          starts_at: string
+          stat: string
+          status?: string
+          trend: string
+          warnings: Json
+          win_prob: number
+        }
+        Update: {
+          event_label?: string
+          game_date?: string
+          games_l10?: number
+          history_l10?: Json
+          hits_l10?: number
+          id?: string
+          line?: number
+          logged_at?: string
+          model_version?: string
+          odds?: number | null
+          player_name?: string
+          projection?: number
+          rank?: number
+          result_value?: number | null
+          settled_at?: string | null
+          side?: string
+          starts_at?: string
+          stat?: string
+          status?: string
+          trend?: string
+          warnings?: Json
+          win_prob?: number
+        }
+        Relationships: []
+      }
       rosters: {
         Row: {
           id: string
