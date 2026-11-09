@@ -2,6 +2,7 @@ import {useMemo,useState} from "react";
 import {Bot,FlaskConical} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import {researchAccuracy,researchLabel,type ResearchPick} from "@/utils/accuracyResearch";
+import {CalibrationExperiment} from "./CalibrationExperiment";
 const pct=(n:number|null)=>n==null ? "—" : `${(100*n).toFixed(1)}%`;
 export function AccuracyResearchBot({picks,kind}:{picks:ResearchPick[];kind:"pregame"|"review"}) {
  const [ran,setRan]=useState(false);
@@ -11,6 +12,7 @@ export function AccuracyResearchBot({picks,kind}:{picks:ResearchPick[];kind:"pre
   {ran && <>
    <p role="status" className="mt-3 text-sm">{report.n} decided props · {report.slates} slate{report.slates===1 ? "" : "s"} · {report.playerGames} player-games · {report.excluded} excluded</p>
    <p className="mt-2 text-xs text-muted-foreground">{report.retrospective ? "After-game exploratory research. Captured probabilities are not verified pregame forecasts; these results cannot validate new weights." : "Pregame evidence only. Validate candidate weights on later, unseen slates before changing picks."} Multiple props from the same player share risk.</p>
+   <CalibrationExperiment picks={picks} kind={kind} />
    <div className="my-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
     {[["Win rate",pct(report.actual)],[report.retrospective ? "Captured chance" : "Average forecast",pct(report.predicted)],[report.retrospective ? "Captured gap" : "Forecast gap",report.actual!=null && report.predicted!=null ? `${((report.predicted-report.actual)*100).toFixed(1)} points` : "—"],[report.retrospective ? "Calibration status" : "Forecast error",report.retrospective ? "Unverified" : report.brier?.toFixed(3) ?? "—"]].map(([label,value])=><div key={label}><div className="desk-label">{label}</div><p className="mt-1 font-mono text-lg">{value}</p></div>)}
    </div>
