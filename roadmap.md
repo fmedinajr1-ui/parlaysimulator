@@ -39,6 +39,7 @@
 - [x] Refresh 1,258 box scores and run minutes-only trial; no games remain pregame, so no new prospective snapshots were created. Phone cards and paired preview verified.
 
 # Skeptical shelf accuracy
+- [ ] Add a button-driven win-chance/L10 calibration experiment with baseline comparisons, confidence-cutoff accuracy and explicit in-sample limits; do not alter saved picks or live weights.
 - [x] Add a button-driven accuracy research bot comparing wins/losses, warning groups and probability reliability, with evidence-only explanations and calibration proposals that never change picks automatically; 12 new tests and private phone/desktop flow verified across all 46 decided props and 19 wins.
 - [x] Capture all 47 current November 8 skeptical shelf plays as explicitly retrospective records, check seven ESPN final box scores, and display separately from pregame accuracy (19 won, 27 lost, 1 unverified; 41.3%).
 - [ ] Resolve Norman Powell Under 2.5 assists: no matching athlete entry in any November 8 final ESPN box score, so result remains unverified rather than inferred void.
