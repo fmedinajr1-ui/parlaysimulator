@@ -1,0 +1,1 @@
+export { skepticalAccuracy, type SkepticalResult } from "../../supabase/functions/_shared/research/skeptical";

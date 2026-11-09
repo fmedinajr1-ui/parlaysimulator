@@ -32,3 +32,9 @@
 - [x] Add shot attempts, opponent assists/rebounds allowed and plus-minus to projection cards.
 - [x] Version and test the expanded v6 shadow model without changing v5 or the minutes accuracy gate (74 tests passed).
 - [x] Refresh 1,258 box scores and run minutes-only trial; no games remain pregame, so no new prospective snapshots were created. Phone cards and paired preview verified.
+
+# Skeptical shelf accuracy
+- [x] Save every pregame skeptical shelf play when the desk opens with original win chance, server-verified actual last-10 hit record, line and warnings; keep separate from bot targets.
+- [x] Grade the complete shelf in the daily update and show its saved accuracy and individual results.
+- [x] Verify snapshot protection and accuracy rules (32 tests); private phone/desktop flow submits all 47 plays, safely rejects after-tip snapshots, displays empty records, and has no overflow or runtime errors.
+- [ ] Verify a successful prospective snapshot and its eventual graded UI result on the next pregame slate (blocked: all tonight's games already started).

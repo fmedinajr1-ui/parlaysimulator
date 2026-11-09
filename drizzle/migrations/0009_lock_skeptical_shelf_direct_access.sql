@@ -1,0 +1,2 @@
+REVOKE ALL ON TABLE public.research_skeptical_picks FROM anon, authenticated;
+COMMENT ON TABLE public.research_skeptical_picks IS 'Immutable full-shelf pregame snapshots, private desk-bets access only; never retrospective reconstructed accuracy.';

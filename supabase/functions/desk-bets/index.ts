@@ -2,6 +2,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3";
 import { minutesAccuracy, MINUTES_FORECAST_VERSION, V6_MODEL_VERSION } from "../_shared/research/minutesValidation.ts";
+import { skepticalHistory, verifiedSkepticalMarket } from "../_shared/research/skeptical.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -37,6 +38,15 @@ const Body = z.discriminatedUnion("action", [
   })).max(100) }),
   z.object({ action: z.literal("pick_record"), passcode: z.string() }),
   z.object({ action: z.literal("bot_record"), passcode: z.string() }),
+  z.object({ action: z.literal("skeptical_record"), passcode: z.string(), model_version: z.string().max(30) }),
+  z.object({ action: z.literal("log_skeptical_picks"), passcode: z.string(), picks: z.array(z.object({
+    game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
+    stat: z.enum(["points", "rebounds", "assists", "threes_made", "pra"]), side: z.enum(["over", "under"]),
+    line: z.number().min(0).max(200), odds: z.number().int().nullable(), projection: z.number().min(0),
+    win_prob: z.number().min(0).max(1), hits_l10: z.number().int().min(0).max(10), games_l10: z.number().int().min(1).max(10),
+    warnings: z.array(z.string().max(300)).min(1).max(5), trend: z.enum(["hot", "cold", "flat"]),
+    model_version: z.string().min(1).max(30), rank: z.number().int().positive(),
+  })).max(1000) }),
   z.object({ action: z.literal("log_bot_picks"), passcode: z.string(), picks: z.array(z.object({
     game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
     stat: z.string().max(20), side: z.enum(["over", "under"]), line: z.number(), odds: z.number().int().refine((o) => Math.abs(o) >= 100),
@@ -111,6 +121,43 @@ Deno.serve(async (req) => {
     return json({ error: "Wrong passcode" }, 401);
   }
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const day = etDay(new Date());
+  if (b.action === "skeptical_record") {
+    const { data, error } = await sb.from("research_skeptical_picks").select("*")
+      .eq("model_version", b.model_version).order("game_date", { ascending: false }).order("rank").limit(10000);
+    return error ? json({ error: error.message }, 500) : json({ picks: data });
+  }
+  if (b.action === "log_skeptical_picks") {
+    const board = await getJson(`${ESPN}/scoreboard?dates=${day.replaceAll("-", "")}`).catch(() => null);
+    if (!board) return json({ error: "Cannot verify pregame status" }, 503);
+    const [{ data: roster, error: rosterError }, { data: lines, error: lineError }] = await Promise.all([
+      sb.from("research_player_teams").select("player_name,team"),
+      sb.from("research_prop_lines").select("player_name,stat,line,event_label,over_price,under_price").eq("game_date", day).limit(10000),
+    ]);
+    if (rosterError || lineError) return json({ error: "Cannot verify current roster or lines" }, 500);
+    const teams = new Map<string, string>((roster ?? []).map((r: any) => [r.player_name.toLowerCase(), r.team]));
+    const rows = [], rejected = [];
+    for (const p of b.picks) {
+      const market = verifiedSkepticalMarket(p, day, teams.get(p.player_name.toLowerCase()), board.events ?? [], lines ?? [], Date.now());
+      if (!market) { rejected.push({ player_name: p.player_name, stat: p.stat, reason: "Game started or market unverified" }); continue; }
+      const { data: history, error } = await sb.from("nba_player_game_logs")
+        .select("player_name,game_date,minutes_played,points,rebounds,assists,threes_made,opponent")
+        .ilike("player_name", p.player_name).lt("game_date", day).gt("minutes_played", 0)
+        .order("game_date", { ascending: false }).limit(10);
+      if (error) return json({ error: error.message }, 500);
+      const actual = skepticalHistory(history ?? [], day, p.stat, p.side, p.line);
+      if (!actual.games_l10 || actual.hits_l10 !== p.hits_l10 || actual.games_l10 !== p.games_l10) {
+        rejected.push({ player_name: p.player_name, stat: p.stat, reason: "Last-10 data does not match the shelf" }); continue;
+      }
+      rows.push({ ...p, ...market, ...actual });
+    }
+    if (!rows.length) return json({ saved: 0, rejected });
+    // Immutable first pregame snapshot, including the exact line used for its L10 record.
+    const { data, error } = await sb.from("research_skeptical_picks").upsert(rows, {
+      onConflict: "game_date,player_name,stat,side,model_version", ignoreDuplicates: true,
+    }).select("id");
+    return error ? json({ error: error.message }, 500) : json({ saved: data?.length ?? 0, rejected });
+  }
   if (b.action === "minutes_record") {
     const { data, error } = await sb.from("research_minutes_log").select("game_date,projected_minutes,actual_minutes,status")
       .eq("forecast_version", MINUTES_FORECAST_VERSION).order("game_date", { ascending: false }).limit(10000);
@@ -118,7 +165,6 @@ Deno.serve(async (req) => {
   }
   if (b.action === "log_minutes" || b.action === "log_picks" || b.action === "log_bot_picks") {
     // Never call an after-tip snapshot pregame. Use the scoreboard, not a guessed cutoff.
-    const day = etDay(new Date());
     const board = await getJson(`${ESPN}/scoreboard?dates=${day.replaceAll("-", "")}`).catch(() => null);
     if (!board) return json({ error: "Cannot verify pregame status" }, 503);
     const preTeams = new Set<string>();
