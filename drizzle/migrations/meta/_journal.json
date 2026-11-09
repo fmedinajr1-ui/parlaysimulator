@@ -43,6 +43,13 @@
       "when": 1794150605512,
       "tag": "0005_record_submitted_result_learning",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794194032603,
+      "tag": "0006_add_oversight_bot_strategy_ledger",
+      "breakpoints": true
     }
   ]
 }

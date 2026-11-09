@@ -12,6 +12,8 @@ import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
 import { SeasonVenueBoard } from "@/components/desk/SeasonVenueBoard";
 import { MinutesComparison } from "@/components/desk/MinutesComparison";
 import { reviewDeskPicks } from "@/utils/deskReview";
+import { BOT_STRATEGY_VERSION, buildBotStrategy } from "@/utils/botStrategy";
+import { BotStrategyPanel } from "@/components/desk/BotStrategyPanel";
 import { Button } from "@/components/ui/button";
 import { Bot, CheckCheck, ShieldAlert, LayoutGrid, Users, Search, ChartNoAxesCombined, ChevronDown } from "lucide-react";
 
@@ -22,6 +24,7 @@ export default function Desk() {
   const [flaggedOpen, setFlaggedOpen] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const audit = useMemo(() => reviewDeskPicks(allEdges), [allEdges]);
+  const botPositions = useMemo(() => buildBotStrategy(audit.flagged), [audit.flagged]);
   const reviewPlayer = (player: string) => { setFocus(player); setView("research"); };
   const [records, setRecords] = useState<{ v: string; w: number; l: number; p: number; open: number; profit: number }[] | null>(null);
 
@@ -37,6 +40,12 @@ export default function Desk() {
     (async () => {
       try {
         if (picks.length) await supabase.functions.invoke("desk-bets", { body: { action: "log_picks", passcode, picks } });
+        const botPicks = botPositions.map(({ pick: e, warnings, riskScore, stakeUnits, rank }) => ({
+          game_date: today, player_name: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds,
+          projection: e.median, win_prob: e.hitRate, ev: e.ev, opponent: e.tonight, model_version: MODEL_VERSION,
+          strategy_version: BOT_STRATEGY_VERSION, rank, warning_count: warnings.length, warnings, risk_score: riskScore, stake_units: stakeUnits,
+        }));
+        if (botPicks.length) await supabase.functions.invoke("desk-bets", { body: { action: "log_bot_picks", passcode, picks: botPicks } });
         const { data } = await supabase.functions.invoke("desk-bets", { body: { action: "pick_record", passcode } });
         const rows = (data?.picks ?? []) as { model_version: string; status: string; odds: number | null }[];
         const by = new Map<string, { v: string; w: number; l: number; p: number; open: number; profit: number }>();
@@ -53,7 +62,7 @@ export default function Desk() {
         setRecords([...by.values()].sort((a, b) => a.v.localeCompare(b.v)));
       } catch { /* logging is best-effort */ }
     })();
-  }, [loading, edges, today]);
+  }, [loading, edges, botPositions, today]);
 
   return (
     <div className="desk-theme desk-grid-bg">
@@ -111,6 +120,7 @@ export default function Desk() {
           </section>
         </>}
         {view === "results" && <>
+        <BotStrategyPanel positions={botPositions} today={today} />
         <MinutesComparison board={boardEdges} v5={edges} v6={v6Edges} byPlayer={byPlayer} today={today} />
         {records && records.length > 0 && (
           <div className="mb-2 overflow-x-auto rounded-md border border-border font-mono text-xs">

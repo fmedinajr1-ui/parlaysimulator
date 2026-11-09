@@ -14742,6 +14742,81 @@ export type Database = {
         }
         Relationships: []
       }
+      research_bot_picks: {
+        Row: {
+          ev: number | null
+          game_date: string
+          id: string
+          line: number
+          logged_at: string
+          model_version: string
+          odds: number
+          opponent: string | null
+          player_name: string
+          projection: number | null
+          rank: number
+          result_value: number | null
+          risk_score: number
+          settled_at: string | null
+          side: string
+          stake_units: number
+          stat: string
+          status: string
+          strategy_version: string
+          warning_count: number
+          warnings: Json
+          win_prob: number | null
+        }
+        Insert: {
+          ev?: number | null
+          game_date: string
+          id?: string
+          line: number
+          logged_at?: string
+          model_version: string
+          odds: number
+          opponent?: string | null
+          player_name: string
+          projection?: number | null
+          rank: number
+          result_value?: number | null
+          risk_score: number
+          settled_at?: string | null
+          side: string
+          stake_units: number
+          stat: string
+          status?: string
+          strategy_version: string
+          warning_count: number
+          warnings?: Json
+          win_prob?: number | null
+        }
+        Update: {
+          ev?: number | null
+          game_date?: string
+          id?: string
+          line?: number
+          logged_at?: string
+          model_version?: string
+          odds?: number
+          opponent?: string | null
+          player_name?: string
+          projection?: number | null
+          rank?: number
+          result_value?: number | null
+          risk_score?: number
+          settled_at?: string | null
+          side?: string
+          stake_units?: number
+          stat?: string
+          status?: string
+          strategy_version?: string
+          warning_count?: number
+          warnings?: Json
+          win_prob?: number | null
+        }
+        Relationships: []
+      }
       research_job_state: {
         Row: {
           job: string
