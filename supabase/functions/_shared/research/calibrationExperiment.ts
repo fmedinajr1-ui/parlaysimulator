@@ -72,7 +72,8 @@ export function runCalibrationExperiment(
   const totalWeight = rawWin + rawL10;
   const winChanceWeight = totalWeight > 0 ? rawWin / totalWeight : 1;
   const l10Weight = totalWeight > 0 ? rawL10 / totalWeight : 0;
-  const cutoff = Number.isFinite(options.cutoff) ? Math.min(1, Math.max(0, Number(options.cutoff))) : 0.6;
+  const cutoff = typeof options.cutoff === "number" && Number.isFinite(options.cutoff)
+    ? Math.min(1, Math.max(0, options.cutoff)) : 0.6;
   const blendedProbability = (pick: ResearchPick) =>
     winChanceWeight * pick.win_prob + l10Weight * (pick.hits_l10 / pick.games_l10);
   const baseline = metrics(rows, pick => pick.win_prob, cutoff);

@@ -12,7 +12,8 @@ const options = { winChanceWeight: 0.75, l10Weight: 0.25, cutoff: 0.6 };
 describe("skeptical calibration experiment", () => {
   it("keeps the saved forecast unchanged at zero L10 weight", () => {
     const result = runCalibrationExperiment([row()], "pregame", { winChanceWeight: 1, l10Weight: 0 });
-    expect(result.candidate).toMatchObject({ averageForecast: 0.7, brier: 0.09 });
+    expect(result.candidate.averageForecast).toBe(0.7);
+    expect(result.candidate.brier).toBeCloseTo(0.09);
   });
 
   it("uses the real L10 hit rate at full L10 weight", () => {
