@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -28,7 +29,7 @@ describe("RouteMemory scroll restore", () => {
 
   it("waits until the page is tall enough, then scrolls exactly once", () => {
     setHeight(900);
-    render(<MemoryRouter initialEntries={["/"]}><RouteMemory /></MemoryRouter>);
+    render(<StrictMode><MemoryRouter initialEntries={["/"]}><RouteMemory /></MemoryRouter></StrictMode>);
     vi.advanceTimersByTime(1500);
     expect(scrollTo).not.toHaveBeenCalled();
     setHeight(2500);
