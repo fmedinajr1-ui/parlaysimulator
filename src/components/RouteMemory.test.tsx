@@ -11,7 +11,14 @@ describe("RouteMemory scroll restore", () => {
   let scrollTo: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     vi.useFakeTimers();
-    localStorage.clear(); sessionStorage.clear();
+    const mem = new Map<string, string>();
+    Object.defineProperty(window, "localStorage", { configurable: true, writable: true, value: {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+      removeItem: (k: string) => void mem.delete(k),
+      clear: () => mem.clear(),
+    } });
+    sessionStorage.clear();
     localStorage.setItem("last_scroll_v1", JSON.stringify({ path: "/", y: 1200 }));
     scrollTo = vi.fn();
     window.scrollTo = scrollTo as unknown as typeof window.scrollTo;
@@ -24,7 +31,6 @@ describe("RouteMemory scroll restore", () => {
     render(<MemoryRouter initialEntries={["/"]}><RouteMemory /></MemoryRouter>);
     vi.advanceTimersByTime(1500);
     expect(scrollTo).not.toHaveBeenCalled();
-    console.log("DBG", document.documentElement.scrollHeight, window.innerHeight, typeof performance.getEntriesByType);
     setHeight(2500);
     vi.advanceTimersByTime(1500);
     expect(scrollTo).toHaveBeenCalledTimes(1);
