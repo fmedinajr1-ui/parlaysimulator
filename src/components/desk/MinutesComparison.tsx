@@ -79,6 +79,6 @@ export function MinutesComparison({ board, v5, v6, byPlayer, today }: {
         <span className="break-words">{row.player}<br /><span className="text-muted-foreground">{row.stat.replace(/_/g, " ")}</span></span>
         <span>{cell(row.v5, MODEL_VERSION)}</span><span>{cell(row.v6, V6_MODEL_VERSION)}</span>
       </div>) : <p className="mt-2 text-muted-foreground">No qualifying picks on either model</p>}
-    </div>}
+    </div>
   </section>;
 }
