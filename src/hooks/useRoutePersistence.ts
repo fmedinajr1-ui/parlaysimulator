@@ -37,6 +37,12 @@ export function useRoutePersistence() {
       if (!stored) return;
 
       const persisted: PersistedRoute = JSON.parse(stored);
+      // The desk's RouteMemory owns these routes and delayed scroll restoration.
+      // Never let two independent restorers navigate the desk on the same mount.
+      if (["/", "/bets", "/research", "/projections", "/index"].includes(window.location.pathname) &&
+          ["/", "/bets", "/research", "/projections"].includes(persisted.pathname)) return;
+      if (performance.getEntriesByType?.("navigation").some((entry) =>
+        (entry as PerformanceNavigationTiming).type === "reload")) return;
       const currentPath = window.location.pathname + window.location.search;
       const storedPath = persisted.pathname + persisted.search;
 

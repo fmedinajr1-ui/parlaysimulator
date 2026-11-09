@@ -5,6 +5,7 @@ import { MODEL_VERSION } from "@/utils/nbaProjection";
 import "@/components/desk/desk-tokens.css";
 import { Seo } from "@/components/seo/Seo";
 import { useResearchData } from "@/hooks/useResearchData";
+import { useRememberedDeskState } from "@/hooks/useRememberedDeskState";
 import { DeskTopBar } from "@/components/desk/DeskTopBar";
 import { EdgeCards } from "@/components/desk/EdgeCards";
 import { GameCoverageBoard } from "@/components/desk/GameCoverage";
@@ -19,10 +20,11 @@ import { Bot, CheckCheck, ShieldAlert, LayoutGrid, Users, Search, ChartNoAxesCom
 
 export default function Desk() {
   const { logs, loading, err, byPlayer, propLines, injuries, today, edges, allEdges, v6Edges, boardEdges, gameCoverage, trendFor } = useResearchData();
-  const [focus, setFocus] = useState<string | null>(null);
-  const [view, setView] = useState<"picks" | "games" | "research" | "results">("picks");
-  const [flaggedOpen, setFlaggedOpen] = useState(false);
-  const [reviewed, setReviewed] = useState(false);
+  const [focus, setFocus] = useRememberedDeskState<string | null>("focus", null);
+  const [savedView, setView] = useRememberedDeskState<"picks" | "games" | "research" | "results">("view", "picks");
+  const view = ["picks", "games", "research", "results"].includes(savedView) ? savedView : "picks";
+  const [flaggedOpen, setFlaggedOpen] = useRememberedDeskState("skeptical-open", false);
+  const [reviewed, setReviewed] = useRememberedDeskState("reviewed", false);
   const audit = useMemo(() => reviewDeskPicks(allEdges), [allEdges]);
   const botPositions = useMemo(() => buildBotStrategy(audit.flagged), [audit.flagged]);
   const reviewPlayer = (player: string) => { setFocus(player); setView("research"); };

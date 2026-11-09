@@ -8,6 +8,7 @@ import { summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from 
 import { DEFAULT_RESEARCH_FILTERS, filterResearchRows, type ResearchFilters, type ResearchSort, type ResearchTrendFilter } from "@/utils/researchFilters";
 import { restProfile } from "@/utils/restProfile";
 import { RestBadge } from "@/components/desk/RestBadge";
+import { useRememberedDeskState } from "@/hooks/useRememberedDeskState";
 
 interface Props {
   byPlayer: Map<string, GameLog[]>;
@@ -51,11 +52,12 @@ function TrendWhy({ ctx }: { ctx: TrendContext }) {
 const verdictTag = (ctx?: TrendContext) => ctx && ctx.verdict !== "none" ? (ctx.verdict === "real" ? " ✓" : ctx.verdict === "fragile" ? " ?" : "") : "";
 
 export function ResearchTerminal({ byPlayer, propLines, injuries, loading, err, focus, today, trendFor }: Props) {
-  const [q, setQ] = useState("");
-  const [stat, setStat] = useState<StatKey>("points");
-  const [line, setLine] = useState("");
-  const [filters, setFilters] = useState<ResearchFilters>({ ...DEFAULT_RESEARCH_FILTERS });
-  const [open, setOpen] = useState<string | null>(null);
+  const [q, setQ] = useRememberedDeskState("research-search", "");
+  const [savedStat, setStat] = useRememberedDeskState<StatKey>("research-stat", "points");
+  const stat = STAT_OPTIONS.some((option) => option.key === savedStat) ? savedStat : "points";
+  const [line, setLine] = useRememberedDeskState("research-line", "");
+  const [filters, setFilters] = useRememberedDeskState<ResearchFilters>("research-filters", { ...DEFAULT_RESEARCH_FILTERS });
+  const [open, setOpen] = useRememberedDeskState<string | null>("research-open", null);
   const [teams, setTeams] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     supabase.from("research_player_teams").select("player_name,team_abbr").limit(2000)

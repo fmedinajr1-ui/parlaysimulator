@@ -16,3 +16,4 @@
 - Keep v5 as the default model; v6 is an accuracy-gated shadow comparison using stat elasticity in place of the old minutes trend and rest multipliers, preventing duplicate rest adjustments and preserving historical model records.
 - Desk pick cards show the raw last-10 hit record for the chosen side and a caution box from `src/utils/pickWarnings.ts` when the model, hit record, or hot/cold trend disagree; display only, so recommendations never look more certain than the data.
 - Desk review placement uses the pure `deskReview` audit over the full qualifying pool and existing `pickWarnings`; keep model probabilities and unfiltered historical pick logging unchanged to avoid disguising model accuracy.
+- Persist small desk UI selections with `useRememberedDeskState`; RouteMemory alone restores desk routes so mobile process recovery does not reset views or trigger competing navigation.
