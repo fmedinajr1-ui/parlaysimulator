@@ -6,6 +6,7 @@ import { slateEdges, saveReport } from "../_shared/research/context.ts";
 import { runResearchAi, AiGatewayError, RESEARCH_INSTRUCTIONS } from "../_shared/research/ai.ts";
 import { gradeMinutes } from "../_shared/research/gradeMinutes.ts";
 import { snapshotMinutes } from "../_shared/research/minutesPipeline.ts";
+import { gradeResearchPick } from "../_shared/research/grading.ts";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";

@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
       .eq("forecast_version", MINUTES_FORECAST_VERSION).order("game_date", { ascending: false }).limit(10000);
     return error ? json({ error: error.message }, 500) : json({ accuracy: minutesAccuracy(data ?? []) });
   }
-  if (b.action === "log_minutes" || b.action === "log_picks") {
+  if (b.action === "log_minutes" || b.action === "log_picks" || b.action === "log_bot_picks") {
     // Never call an after-tip snapshot pregame. Use the scoreboard, not a guessed cutoff.
     const day = etDay(new Date());
     const board = await getJson(`${ESPN}/scoreboard?dates=${day.replaceAll("-", "")}`).catch(() => null);
@@ -141,6 +141,19 @@ Deno.serve(async (req) => {
     }
     b.picks = b.picks.filter((p) => p.game_date === day && preTeams.has(teams.get(p.player_name) ?? ""));
   }
+  if (b.action === "log_bot_picks") {
+    // Verify every simulated position against a current sportsbook line and price.
+    const { data: lines, error: lineError } = await sb.from("research_prop_lines")
+      .select("player_name,stat,line,over_price,under_price").eq("game_date", day).limit(10000);
+    if (lineError) return json({ error: lineError.message }, 500);
+    b.picks = b.picks.filter((p) => (lines ?? []).some((l: any) =>
+      l.player_name.toLowerCase() === p.player_name.toLowerCase() && l.stat === p.stat && Number(l.line) === p.line
+      && Number(p.side === "over" ? l.over_price : l.under_price) === p.odds));
+    const { error } = await sb.from("research_bot_picks").upsert(b.picks, {
+      onConflict: "game_date,player_name,stat,side,strategy_version", ignoreDuplicates: true,
+    });
+    return error ? json({ error: error.message }, 500) : json({ ok: true, logged: b.picks.length });
+  }
   if (b.action === "log_picks") {
     // First snapshot of the day wins, so the record reflects the pick before tip-off.
     const { error } = await sb.from("research_pick_log").upsert(b.picks, { onConflict: "game_date,player_name,stat,side,model_version", ignoreDuplicates: true });
@@ -148,6 +161,11 @@ Deno.serve(async (req) => {
   }
   if (b.action === "pick_record") {
     const { data, error } = await sb.from("research_pick_log").select("game_date,player_name,stat,side,line,projection,win_prob,model_version,status,ev,odds,logged_at").limit(10000);
+    if (error) return json({ error: error.message }, 500);
+    return json({ picks: data });
+  }
+  if (b.action === "bot_record") {
+    const { data, error } = await sb.from("research_bot_picks").select("*").order("game_date", { ascending: false }).limit(10000);
     if (error) return json({ error: error.message }, 500);
     return json({ picks: data });
   }
