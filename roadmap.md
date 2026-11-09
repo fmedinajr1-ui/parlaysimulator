@@ -23,3 +23,7 @@
 - [x] Add button-driven review and separate skeptical picks using the existing disagreement rules.
 - [x] Preserve projections and historical records; verify review and slip interactions on phone and desktop.
 - [x] Add a deterministic skeptical-pick strategy with risk-sized simulated stakes and a separately graded bot profit record.
+
+# Mobile return stability
+- [ ] Preserve desk view, research filters and expanded details after a phone discards the page.
+- [ ] Prevent competing desk route restoration and verify background/return behavior.
