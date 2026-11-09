@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runCalibrationExperiment } from "./calibrationExperiment";
+import { runCalibrationExperiment, winProfit } from "./calibrationExperiment";
 import type { ResearchPick } from "./accuracyResearch";
 
 const row = (overrides: Partial<ResearchPick> = {}): ResearchPick => ({
@@ -100,5 +100,31 @@ describe("skeptical calibration experiment", () => {
   it("returns null metrics rather than fabricated zeroes when empty", () => {
     const result = runCalibrationExperiment([], "pregame", options);
     expect(result.candidate).toMatchObject({ actual: null, brier: null, calibrationGap: null, qualifiedAccuracy: null });
+  });
+});
+
+describe("calibration bankroll backtest", () => {
+  const base = { stat: "points", side: "over", line: 10, warnings: [], result_value: 12, model_version: "v5", hits_l10: 5, games_l10: 10 };
+  const rows = [
+    { ...base, id: "a", game_date: "2026-11-01", player_name: "A", win_prob: 0.7, status: "won", odds: -110 },
+    { ...base, id: "b", game_date: "2026-11-01", player_name: "B", win_prob: 0.7, status: "lost", odds: 150 },
+    { ...base, id: "c", game_date: "2026-11-02", player_name: "C", win_prob: 0.7, status: "won", odds: 200 },
+    { ...base, id: "d", game_date: "2026-11-02", player_name: "D", win_prob: 0.7, status: "won", odds: null },
+    { ...base, id: "e", game_date: "2026-11-02", player_name: "E", win_prob: 0.5, status: "won", odds: 100 },
+  ];
+  const run = (o = {}) => runCalibrationExperiment(rows as never, "pregame", { winChanceWeight: 1, l10Weight: 0, cutoff: 0.6, stake: 10, startingBankroll: 1000, ...o });
+  it("pays -110 wins at 100/110 of stake", () => expect(winProfit(11, -110)).toBeCloseTo(10));
+  it("pays +200 wins at double stake", () => expect(winProfit(10, 200)).toBe(20));
+  it("only bets picks clearing the cutoff and skips missing odds", () => {
+    const b = run().bankroll.baseline;
+    expect(b.bets).toBe(3); expect(b.skippedNoOdds).toBe(1);
+  });
+  it("computes profit, ROI and ending bankroll", () => {
+    const b = run().bankroll.baseline;
+    expect(b.profit).toBeCloseTo(100 / 11 - 10 + 20); expect(b.endingBankroll).toBeCloseTo(1000 + b.profit); expect(b.roi).toBeCloseTo(b.profit / 30);
+  });
+  it("experiment weights change which picks are bet", () => {
+    const r = run({ winChanceWeight: 0, l10Weight: 1 });
+    expect(r.bankroll.candidate.bets).toBe(0); expect(r.bankroll.profitChange).toBeCloseTo(-r.bankroll.baseline.profit);
   });
 });
