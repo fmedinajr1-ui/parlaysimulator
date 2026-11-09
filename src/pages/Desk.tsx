@@ -10,7 +10,6 @@ import { EdgeCards } from "@/components/desk/EdgeCards";
 import { GameCoverageBoard } from "@/components/desk/GameCoverage";
 import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
 import { SeasonVenueBoard } from "@/components/desk/SeasonVenueBoard";
-import { MathSlip } from "@/components/desk/MathSlip";
 import { MinutesComparison } from "@/components/desk/MinutesComparison";
 import { reviewDeskPicks } from "@/utils/deskReview";
 import { Button } from "@/components/ui/button";
@@ -110,7 +109,6 @@ export default function Desk() {
             <Button variant="ghost" className="h-auto w-full justify-between whitespace-normal rounded-md py-3 text-left" aria-expanded={flaggedOpen} onClick={() => setFlaggedOpen(!flaggedOpen)}><span className="flex items-center gap-2"><ShieldAlert className="text-destructive" />Skeptical plays · {audit.flagged.length}</span><ChevronDown className={flaggedOpen ? "rotate-180" : ""} /></Button>
             {flaggedOpen && <div className="pt-3"><EdgeCards edges={audit.flagged} onPick={reviewPlayer} skeptical showSlip={false} /></div>}
           </section>
-          <div className="mt-5"><MathSlip today={today} /></div>
         </>}
         {view === "results" && <>
         <MinutesComparison board={boardEdges} v5={edges} v6={v6Edges} byPlayer={byPlayer} today={today} />
