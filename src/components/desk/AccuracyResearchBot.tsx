@@ -2,6 +2,7 @@ import {useMemo,useState} from "react";
 import {Bot,FlaskConical} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import {researchAccuracy,researchLabel,type ResearchPick} from "@/utils/accuracyResearch";
+import {CalibrationExperiment} from "./CalibrationExperiment";
 const pct=(n:number|null)=>n==null ? "—" : `${(100*n).toFixed(1)}%`;
 export function AccuracyResearchBot({picks,kind}:{picks:ResearchPick[];kind:"pregame"|"review"}) {
  const [ran,setRan]=useState(false);
