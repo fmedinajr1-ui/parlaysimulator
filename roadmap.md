@@ -1,5 +1,10 @@
 # Minutes model rollout
 
+# Bot synchronization and midnight update
+- [x] Synchronize research and Oversight records and refresh signals; scheduled snapshots and targets use shared deterministic desk math and verified immutable shelf rows.
+- [x] Move the single daily update to midnight Eastern with daylight-saving handling; run November 9 catch-up (108 lines, 9 pregame skeptical records, 3 matching simulated bot targets). AI Top Plays remains paused for insufficient credits.
+- [x] Test shared-record rules and private desk results (123 focused tests passed; unlocked phone/desktop research and shared refresh verified).
+
 - [x] Save pregame minutes forecasts and grade them in the existing daily update.
 - [x] Gate v6 on three completed slates averaging no more than two minutes of absolute error.
 - [x] Prepare dampened v6 and same-slate side-by-side v5 picks/results without changing historical records.
@@ -40,4 +45,5 @@
 - [x] Save every pregame skeptical shelf play when the desk opens with original win chance, server-verified actual last-10 hit record, line and warnings; keep separate from bot targets.
 - [x] Grade the complete shelf in the daily update and show its saved accuracy and individual results.
 - [x] Verify snapshot protection and accuracy rules (32 tests); private phone/desktop flow submits all 47 plays, safely rejects after-tip snapshots, displays empty records, and has no overflow or runtime errors.
-- [ ] Verify a successful prospective snapshot and its eventual graded UI result on the next pregame slate (blocked: all tonight's games already started).
+- [x] Verify successful prospective snapshots on November 9: all 9 saved before tip, and all 3 bot targets match their saved shelf probability and line.
+- [ ] Verify November 9 prospective results after final box scores arrive (blocked by future games).
