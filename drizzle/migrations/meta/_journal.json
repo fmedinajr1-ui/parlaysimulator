@@ -71,6 +71,13 @@
       "when": 1794198476954,
       "tag": "0009_lock_skeptical_shelf_direct_access",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794198935555,
+      "tag": "0010_skeptical_retrospective_review",
+      "breakpoints": true
     }
   ]
 }
