@@ -64,6 +64,13 @@
       "when": 1794198328827,
       "tag": "0008_record_complete_skeptical_shelf",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794198476954,
+      "tag": "0009_lock_skeptical_shelf_direct_access",
+      "breakpoints": true
     }
   ]
 }
