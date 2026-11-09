@@ -22,4 +22,4 @@
 - [x] Reorganize the private desk into simple Picks, Games, Research and Results views.
 - [x] Add button-driven review and separate skeptical picks using the existing disagreement rules.
 - [x] Preserve projections and historical records; verify review and slip interactions on phone and desktop.
-- [ ] Add a deterministic skeptical-pick strategy with risk-sized simulated stakes and a separately graded bot profit record.
+- [x] Add a deterministic skeptical-pick strategy with risk-sized simulated stakes and a separately graded bot profit record.
