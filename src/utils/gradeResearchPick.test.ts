@@ -9,7 +9,7 @@ describe("shared research grading", () => {
   });
 
   it("grades an Under loss", () => {
-    expect(gradeResearchPick({ stat: "rebounds", side: "under", line: 8.5 }, game)).toEqual({ status: "lost", result_value: 8 });
+    expect(gradeResearchPick({ stat: "rebounds", side: "under", line: 7.5 }, game)).toEqual({ status: "lost", result_value: 8 });
   });
 
   it("grades an exact-line result as a push", () => {

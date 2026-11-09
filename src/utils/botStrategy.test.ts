@@ -32,13 +32,13 @@ describe("Oversight Bot strategy", () => {
   });
 
   it("sizes one disagreement at 0.75 units", () => {
-    const result = buildBotStrategy([pick({ trend: "flat" })]);
+    const result = buildBotStrategy([pick({ trend: "flat", hitRate: 0.6 })]);
     expect(result[0].stakeUnits).toBe(0.75);
-    expect(result[0].riskScore).toBe(70);
+    expect(result[0].riskScore).toBe(55);
   });
 
   it("cuts stake for an additional warning", () => {
-    const result = buildBotStrategy([pick()]);
+    const result = buildBotStrategy([pick({ hitRate: 0.6 })]);
     expect(result[0].warnings).toHaveLength(2);
     expect(result[0].stakeUnits).toBe(0.55);
   });
@@ -49,13 +49,13 @@ describe("Oversight Bot strategy", () => {
   });
 
   it("cuts stake for long plus-money odds", () => {
-    const result = buildBotStrategy([pick({ trend: "flat", odds: 200 })]);
+    const result = buildBotStrategy([pick({ trend: "flat", hitRate: 0.6, odds: 200 })]);
     expect(result[0].stakeUnits).toBe(0.6);
-    expect(result[0].riskScore).toBe(80);
+    expect(result[0].riskScore).toBe(65);
   });
 
   it("keeps total daily risk at or below 1.5 units", () => {
-    const result = buildBotStrategy(["A", "B", "C"].map((player) => pick({ player, trend: "flat" })));
+    const result = buildBotStrategy(["A", "B", "C"].map((player) => pick({ player, trend: "flat", hitRate: 0.6 })));
     expect(result.reduce((sum, p) => sum + p.stakeUnits, 0)).toBeLessThanOrEqual(BOT_DAILY_CAP);
     expect(result.every((p) => p.stakeUnits >= 0.1)).toBe(true);
   });
