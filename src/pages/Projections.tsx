@@ -103,7 +103,7 @@ export default function Projections() {
                   </button>
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                     <RestBadge rest={e.rest} />
-                    {e.qualifies && <span className="desk-chip">PICK</span>}
+                    {e.qualifies && <span className="desk-chip">{trial ? "TRIAL" : "PICK"}</span>}
                     <span className="desk-chip">{short(e.stat)}</span>
                   </div>
                 </div>

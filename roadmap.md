@@ -29,6 +29,6 @@
 - [x] Prevent competing desk route restoration and verify background/return behavior (17 tests; unlocked phone leave/return and recreated-page checks).
 
 # Expanded v6 trial
-- [ ] Add shot attempts, opponent assists/rebounds allowed and plus-minus to projection cards.
-- [ ] Version and test the expanded v6 shadow model without changing v5 or the minutes accuracy gate.
-- [ ] Refresh available statistics and run the minutes trial; verify saved results and phone layout.
+- [x] Add shot attempts, opponent assists/rebounds allowed and plus-minus to projection cards.
+- [x] Version and test the expanded v6 shadow model without changing v5 or the minutes accuracy gate (74 tests passed).
+- [x] Refresh 1,258 box scores and run minutes-only trial; no games remain pregame, so no new prospective snapshots were created. Phone cards and paired preview verified.
