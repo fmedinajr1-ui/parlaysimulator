@@ -15269,6 +15269,81 @@ export type Database = {
         }
         Relationships: []
       }
+      research_skeptical_reviews: {
+        Row: {
+          event_id: string | null
+          event_label: string | null
+          game_date: string
+          games_l10: number
+          hits_l10: number
+          id: string
+          line: number
+          logged_at: string
+          model_version: string
+          odds: number | null
+          player_name: string
+          projection: number
+          rank: number
+          record_kind: string
+          result_source: string
+          result_value: number | null
+          side: string
+          stat: string
+          status: string
+          trend: string
+          warnings: Json
+          win_prob: number
+        }
+        Insert: {
+          event_id?: string | null
+          event_label?: string | null
+          game_date: string
+          games_l10: number
+          hits_l10: number
+          id?: string
+          line: number
+          logged_at?: string
+          model_version: string
+          odds?: number | null
+          player_name: string
+          projection: number
+          rank: number
+          record_kind?: string
+          result_source: string
+          result_value?: number | null
+          side: string
+          stat: string
+          status: string
+          trend: string
+          warnings: Json
+          win_prob: number
+        }
+        Update: {
+          event_id?: string | null
+          event_label?: string | null
+          game_date?: string
+          games_l10?: number
+          hits_l10?: number
+          id?: string
+          line?: number
+          logged_at?: string
+          model_version?: string
+          odds?: number | null
+          player_name?: string
+          projection?: number
+          rank?: number
+          record_kind?: string
+          result_source?: string
+          result_value?: number | null
+          side?: string
+          stat?: string
+          status?: string
+          trend?: string
+          warnings?: Json
+          win_prob?: number
+        }
+        Relationships: []
+      }
       rosters: {
         Row: {
           id: string

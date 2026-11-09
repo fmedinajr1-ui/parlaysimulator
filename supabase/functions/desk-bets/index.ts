@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3";
 import { minutesAccuracy, MINUTES_FORECAST_VERSION, V6_MODEL_VERSION } from "../_shared/research/minutesValidation.ts";
 import { skepticalHistory, verifiedSkepticalMarket } from "../_shared/research/skeptical.ts";
+import { skepticalFinal } from "../_shared/research/skepticalFinal.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +40,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pick_record"), passcode: z.string() }),
   z.object({ action: z.literal("bot_record"), passcode: z.string() }),
   z.object({ action: z.literal("skeptical_record"), passcode: z.string(), model_version: z.string().max(30) }),
+  z.object({ action: z.literal("log_skeptical_review"), passcode: z.string(), picks: z.array(z.unknown()).min(1).max(1000) }),
   z.object({ action: z.literal("log_skeptical_picks"), passcode: z.string(), picks: z.array(z.object({
     game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
     stat: z.enum(["points", "rebounds", "assists", "threes_made", "pra"]), side: z.enum(["over", "under"]),
@@ -125,7 +127,36 @@ Deno.serve(async (req) => {
   if (b.action === "skeptical_record") {
     const { data, error } = await sb.from("research_skeptical_picks").select("*")
       .eq("model_version", b.model_version).order("game_date", { ascending: false }).order("rank").limit(10000);
-    return error ? json({ error: error.message }, 500) : json({ picks: data });
+    const { data: reviews, error: reviewError } = await sb.from("research_skeptical_reviews").select("*")
+      .eq("model_version", b.model_version).order("game_date", { ascending: false }).order("rank").limit(10000);
+    return error || reviewError ? json({ error: error?.message ?? reviewError?.message }, 500) : json({ picks: data, reviews });
+  }
+  if (b.action === "log_skeptical_review") {
+    const validated = Body.safeParse({ ...b, action: "log_skeptical_picks" });
+    if (!validated.success || validated.data.action !== "log_skeptical_picks") return json({ error: "Invalid shelf review" }, 400);
+    const rows = [], unmatched = [];
+    for (const date of [...new Set(validated.data.picks.map(p => p.game_date))]) {
+      const board = await getJson(`${ESPN}/scoreboard?dates=${date.replaceAll("-", "")}`);
+      const summaries = await Promise.all((board.events ?? []).filter((e: any) => e.status?.type?.completed)
+        .map(async (e: any) => ({ event: e, summary: await getJson(`${ESPN}/summary?event=${e.id}`) })));
+      for (const pick of validated.data.picks.filter(p=>p.game_date===date)) {
+        let found = false;
+        for (const {event, summary} of summaries) {
+          const result = skepticalFinal(pick, summary);
+          if (!result) continue;
+          rows.push({...pick,...result,event_id:event.id,event_label:event.name,result_source:`ESPN final box score ${event.id}`});
+          found = true; break;
+        }
+        if (!found) {
+          unmatched.push(pick.player_name);
+          rows.push({...pick,status:"open",result_value:null,result_source:"No matching final ESPN athlete row; result unverified"});
+        }
+      }
+    }
+    const {data,error} = await sb.from("research_skeptical_reviews").upsert(rows, {
+      onConflict:"game_date,player_name,stat,side,model_version",ignoreDuplicates:true,
+    }).select("id,status");
+    return error ? json({error:error.message},500) : json({saved:data?.length ?? 0,unmatched});
   }
   if (b.action === "log_skeptical_picks") {
     const board = await getJson(`${ESPN}/scoreboard?dates=${day.replaceAll("-", "")}`).catch(() => null);
