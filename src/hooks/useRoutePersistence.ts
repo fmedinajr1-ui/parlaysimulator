@@ -40,7 +40,11 @@ export function useRoutePersistence() {
       // The desk's RouteMemory owns these routes and delayed scroll restoration.
       // Never let two independent restorers navigate the desk on the same mount.
       // Opening the desk must never be redirected to another page (e.g. /landing).
-      if (["/", "/bets", "/research", "/projections", "/index"].includes(window.location.pathname)) return;
+      if (["/", "/bets", "/research", "/projections", "/index"].includes(window.location.pathname)) {
+        sessionStorage.removeItem(ROUTE_STORAGE_KEY);
+        sessionStorage.removeItem(SCROLL_STORAGE_KEY);
+        return;
+      }
       if (performance.getEntriesByType?.("navigation").some((entry) =>
         (entry as PerformanceNavigationTiming).type === "reload")) return;
       const currentPath = window.location.pathname + window.location.search;

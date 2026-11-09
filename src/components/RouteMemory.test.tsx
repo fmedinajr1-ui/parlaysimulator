@@ -24,6 +24,7 @@ describe("RouteMemory scroll restore", () => {
     render(<MemoryRouter initialEntries={["/"]}><RouteMemory /></MemoryRouter>);
     vi.advanceTimersByTime(1500);
     expect(scrollTo).not.toHaveBeenCalled();
+    console.log("DBG", document.documentElement.scrollHeight, window.innerHeight, typeof performance.getEntriesByType);
     setHeight(2500);
     vi.advanceTimersByTime(1500);
     expect(scrollTo).toHaveBeenCalledTimes(1);
