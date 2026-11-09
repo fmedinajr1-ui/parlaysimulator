@@ -240,6 +240,7 @@ Deno.serve(async (req) => {
   for (const n of [3, 2, 1]) await step(`boxScores_${n}d`, () => syncBoxScores(sb, etDateKeyDaysAgo(n, now)));
   await step("gradeRealBets", () => gradeRealBets(sb, today));
   await step("gradePickLog", () => gradePickLog(sb, today));
+  await step("gradeBotPicks", () => gradeBotPicks(sb, today));
   await step("gradeMinutes", () => gradeMinutes(sb, today));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
