@@ -34,6 +34,7 @@
 - [x] Refresh 1,258 box scores and run minutes-only trial; no games remain pregame, so no new prospective snapshots were created. Phone cards and paired preview verified.
 
 # Skeptical shelf accuracy
+- [ ] Capture all 47 current November 8 skeptical shelf plays as explicitly retrospective records, check ESPN final box scores, and display separately from pregame accuracy.
 - [x] Save every pregame skeptical shelf play when the desk opens with original win chance, server-verified actual last-10 hit record, line and warnings; keep separate from bot targets.
 - [x] Grade the complete shelf in the daily update and show its saved accuracy and individual results.
 - [x] Verify snapshot protection and accuracy rules (32 tests); private phone/desktop flow submits all 47 plays, safely rejects after-tip snapshots, displays empty records, and has no overflow or runtime errors.
