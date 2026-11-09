@@ -7,6 +7,7 @@ import { runResearchAi, AiGatewayError, RESEARCH_INSTRUCTIONS } from "../_shared
 import { gradeMinutes } from "../_shared/research/gradeMinutes.ts";
 import { snapshotMinutes } from "../_shared/research/minutesPipeline.ts";
 import { gradeResearchPick } from "../_shared/research/grading.ts";
+import { gradeSkepticalPicks } from "../_shared/research/gradeSkeptical.ts";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -221,6 +222,7 @@ Deno.serve(async (req) => {
     await step("gradeRealBets", () => gradeRealBets(sb, today));
     await step("gradePickLog", () => gradePickLog(sb, today));
     await step("gradeBotPicks", () => gradeBotPicks(sb, today));
+    await step("gradeSkepticalPicks", () => gradeSkepticalPicks(sb, today));
     await step("gradeMinutes", () => gradeMinutes(sb, today));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
@@ -242,6 +244,7 @@ Deno.serve(async (req) => {
   await step("gradeRealBets", () => gradeRealBets(sb, today));
   await step("gradePickLog", () => gradePickLog(sb, today));
   await step("gradeBotPicks", () => gradeBotPicks(sb, today));
+  await step("gradeSkepticalPicks", () => gradeSkepticalPicks(sb, today));
   await step("gradeMinutes", () => gradeMinutes(sb, today));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
