@@ -6,13 +6,16 @@ import { projectMinutes } from "@/utils/projectedMinutes";
 import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
 import type { StatKey } from "@/utils/nbaBoxScoreMath";
 import { RestBadge } from "@/components/desk/RestBadge";
+import { Button } from "@/components/ui/button";
+import { V6_MODEL_VERSION } from "@/utils/minutesValidation";
 
 type Sort = "gap" | "win" | "ev" | "minutes";
 const short = (s: StatKey) => STAT_OPTIONS.find((o) => o.key === s)?.short ?? s;
 const fmtOdds = (o: number) => (o > 0 ? `+${o}` : String(o));
 
 export default function Projections() {
-  const { logs, byPlayer, propLines, injuries, today, edges, boardEdges, loading } = useResearchData();
+  const { logs, byPlayer, propLines, injuries, today, edges, boardEdges, v6BoardEdges, loading } = useResearchData();
+  const [trial, setTrial] = useState(false);
   const [stat, setStat] = useState<StatKey | "all">("all");
   const [sort, setSort] = useState<Sort>("gap");
   const [onlyPicks, setOnlyPicks] = useState(false);
@@ -32,7 +35,7 @@ export default function Projections() {
       return mins.get(e.player) ?? null;
     };
     const needle = q.trim().toLowerCase();
-    const list = boardEdges
+    const list = (trial ? v6BoardEdges : boardEdges)
       .filter((e) => (stat === "all" || e.stat === stat) && (!onlyPicks || e.qualifies))
       .filter((e) => !needle || e.player.toLowerCase().includes(needle) || (e.team ?? "").toLowerCase().includes(needle) || (e.tonight ?? "").toLowerCase().includes(needle))
       .map((e) => ({ e, m: minFor(e), gapPct: e.line ? (e.median - e.line) / e.line : 0 }));
@@ -40,13 +43,18 @@ export default function Projections() {
       gap: (r) => Math.abs(r.gapPct), win: (r) => r.e.hitRate, ev: (r) => r.e.ev, minutes: (r) => r.m?.minutes ?? 0,
     };
     return list.sort((a, b) => key[sort](b) - key[sort](a));
-  }, [boardEdges, byPlayer, today, stat, sort, onlyPicks, q]);
+  }, [boardEdges, v6BoardEdges, trial, byPlayer, today, stat, sort, onlyPicks, q]);
 
   return (
     <div className="desk-theme desk-grid-bg min-h-screen">
       <DeskTopBar logs={logs.length} players={byPlayer.size} lines={propLines.size} injuries={injuries.size} latest={logs[0]?.game_date ?? null} edges={edges} />
       <main className="mx-auto max-w-[1100px] px-3 pb-16 pt-4 sm:px-4">
         <h1 className="desk-display text-xl font-bold">Projections vs tonight's lines</h1>
+        <div className="mt-3 flex gap-2" aria-label="Projection model">
+          <Button variant={trial ? "ghost" : "secondary"} onClick={() => setTrial(false)}>V5 active</Button>
+          <Button variant={trial ? "secondary" : "ghost"} onClick={() => setTrial(true)}>V6 trial preview</Button>
+        </div>
+        {trial && <p className="mt-2 text-xs text-muted-foreground">{V6_MODEL_VERSION} · Experimental, not active recommendations · Minutes accuracy gate still applies.</p>}
         <p className="desk-note mt-1 text-sm">
           Every player with a line tonight: our projected total, projected minutes, and how far the sportsbook line sits from it.
           <b> PICK</b> = passes every model rule. Minutes are an estimate to explain the projection.
@@ -111,10 +119,16 @@ export default function Projections() {
                   <span className="desk-mono text-xs">
                     Lean <b>{e.side.toUpperCase()}</b> {fmtOdds(e.odds)} · win {Math.round(e.hitRate * 100)}% · {e.ev >= 0 ? "+" : ""}{Math.round(e.ev * 100)}¢/$1
                   </span>
-                  <button className="desk-btn shrink-0 text-xs" onClick={() => toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight })}>
+                  <button disabled={trial} className="desk-btn shrink-0 text-xs" onClick={() => toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight })}>
                     {inSlip ? "✓ In slip" : "+ Slip"}
                   </button>
                 </div>
+
+                {e.production && <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-border pt-2 text-xs">
+                  <div><dt className="text-muted-foreground">Shot attempts · L5 / L10</dt><dd>{e.production.fgaL5?.toFixed(1) ?? "—"} / {e.production.fgaL10?.toFixed(1) ?? "—"}</dd></div>
+                  <div><dt className="text-muted-foreground">Plus-minus · L10 available</dt><dd>{e.production.plusMinus?.toFixed(1) ?? "—"} · {e.production.plusMinusGames} games</dd></div>
+                  {([ ["Assists allowed", e.production.assistsAllowed], ["Rebounds allowed", e.production.reboundsAllowed] ] as const).map(([label, a]) => <div key={label}><dt className="text-muted-foreground">{label} · opponent/game</dt><dd>{a ? `${a.average.toFixed(1)} vs ${a.league.toFixed(1)} league · ${a.games} games` : "Not enough complete games"}</dd></div>)}
+                </dl>}
 
                 {open === id && (
                   <div className="mt-2 border-t border-[hsl(var(--desk-line))] pt-2 text-xs">

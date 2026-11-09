@@ -1,4 +1,4 @@
-export const V6_MODEL_VERSION = "v6-projected-minutes";
+export const V6_MODEL_VERSION = "v6-minutes-context";
 export const MINUTES_FORECAST_VERSION = "minutes-v1";
 
 export interface MinutesRecord {

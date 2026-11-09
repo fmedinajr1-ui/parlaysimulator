@@ -44,6 +44,7 @@ async function syncBoxScores(sb: any, date: string) {
           threes_made: tpm, threes_attempted: tpa, blocks: v("blocks"), steals: v("steals"), turnovers: v("turnovers"),
           field_goals_made: fgm, field_goals_attempted: fga, free_throws_made: ftm, free_throws_attempted: fta,
           offensive_rebounds: v("offensiveRebounds"), defensive_rebounds: v("defensiveRebounds"),
+          plus_minus: idx("plusMinus") >= 0 && a.stats[idx("plusMinus")] != null && String(a.stats[idx("plusMinus")]).trim() !== "" && Number.isFinite(Number(a.stats[idx("plusMinus")])) ? Number(a.stats[idx("plusMinus")]) : null,
           is_home: me?.homeAway === "home", is_starter: !!a.starter,
         });
       }

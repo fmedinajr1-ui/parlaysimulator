@@ -2,6 +2,7 @@ import { statValue, percentile, type GameLog, type StatKey } from "./nbaBoxScore
 import { projectMinutes } from "./projectedMinutes";
 import { minutesElasticity } from "./minutesValidation";
 import { restProfile } from "./restProfile";
+import type { ProductionContext } from "./projectionContext";
 
 /** Rough NBA team per-game totals, used to size a missing teammate's share. */
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
@@ -22,6 +23,7 @@ export interface ProjectionContext {
   position?: string | null;
   /** Opt-in shadow model; v5 remains the default. */
   projectedMinutesModel?: boolean;
+  production?: ProductionContext;
 }
 
 export interface MissingMate {
@@ -151,10 +153,13 @@ export function projectProp(
     add(rest.daysRest >= 3 ? "Well rested" : "Rested", fRest, `Last played ${rest.lastGameDate}, so he has ${rest.daysRest} full days off; the model adds only ${Math.round((fRest - 1) * 100)}%.`);
 
   // Opponent, shrunk halfway toward average.
-  const fOpp = clamp(1 + (ctx.oppFactor - 1) * 0.5, 0.92, 1.08);
+  // v6 replaces, never stacks, the existing opponent factor with complete-box-score allowances.
+  const allowed = ctx.projectedMinutesModel ? (stat === "assists" ? ctx.production?.assistsAllowed : stat === "rebounds" ? ctx.production?.reboundsAllowed : null) : null;
+  const opponentFactor = allowed?.factor ?? ctx.oppFactor;
+  const fOpp = clamp(1 + (opponentFactor - 1) * 0.5, 0.92, 1.08);
   if (Math.abs(fOpp - 1) >= 0.02)
     add(`${fOpp > 1 ? "Soft" : "Tough"} defense`, fOpp,
-      `Tonight's opponent allows ${Math.abs(Math.round((ctx.oppFactor - 1) * 100))}% ${fOpp > 1 ? "more" : "fewer"} ${w} than the league average this season.`);
+      allowed ? `Opponent allows ${allowed.average.toFixed(1)} ${stat} per game vs ${allowed.league.toFixed(1)} league average (${allowed.games} complete games); adjustment is shrunk by half.` : `Tonight's opponent allows ${Math.abs(Math.round((ctx.oppFactor - 1) * 100))}% ${fOpp > 1 ? "more" : "fewer"} ${w} than the league average this season.`);
 
   // Teammates out: only the share that fits this player's position, scaled by how many minutes he plays.
   let freed = 0;
@@ -169,10 +174,16 @@ export function projectProp(
   if (fMate > 1.005 && helpers.length)
     add("Teammate out", fMate,
       `${helpers.join(", ")} ${helpers.length > 1 ? "are" : "is"} out. ${estimated ? "A small usage adjustment remains separate from estimated playing time." : "Same-position minutes open up"} and he plays ${Math.round(l10m)} min${ctx.position ? ` as a ${ctx.position}` : ""}.`);
+  const fShots = ctx.projectedMinutesModel && stat === "points" ? ctx.production?.shotFactor ?? 1 : 1;
+  if (ctx.projectedMinutesModel && ctx.production) {
+    const p = ctx.production;
+    add("Field goal attempts", fShots, p.fgaL5 == null || p.fgaL10 == null ? "Shot attempts unavailable; no adjustment." : `${p.fgaL5.toFixed(1)} attempts over L5 vs ${p.fgaL10.toFixed(1)} over L10; points use a 35% dampened per-minute change capped at 5%, avoiding duplicate minutes adjustments. Other props are context only.`);
+    add("Plus-minus context", 1, p.plusMinus == null ? "Plus-minus unavailable; no adjustment." : `L10 available-game average ${p.plusMinus > 0 ? "+" : ""}${p.plusMinus.toFixed(1)} across ${p.plusMinusGames} games. Team performance while on court, not individual production; no boost or penalty.`);
+  }
   const notes = reasons.map((r) => r.label);
 
   // Context is uncertain: cap the combined adjustment instead of stacking boosts without limit.
-  const factor = clamp(fMin * fHome * fRest * fOpp * fMate, 0.88, 1.12);
+  const factor = clamp(fMin * fHome * fRest * fOpp * fMate * fShots, 0.88, 1.12);
   const total = pts.reduce((t, x) => t + x.w, 0);
   // v4: centre on a median/mean blend so zero-heavy stats (threes) don't project a flat 0.
   const meanRaw = pts.reduce((t, x) => t + x.v * x.w, 0) / pts.reduce((t, x) => t + x.w, 0);

@@ -17,3 +17,4 @@
 - Desk pick cards show the raw last-10 hit record for the chosen side and a caution box from `src/utils/pickWarnings.ts` when the model, hit record, or hot/cold trend disagree; display only, so recommendations never look more certain than the data.
 - Desk review placement uses the pure `deskReview` audit over the full qualifying pool and existing `pickWarnings`; keep model probabilities and unfiltered historical pick logging unchanged to avoid disguising model accuracy.
 - Persist small desk UI selections with `useRememberedDeskState`; RouteMemory alone restores desk routes so mobile process recovery does not reset views or trigger competing navigation.
+- Expanded v6 uses `projectionContext` for pregame shot-rate and complete team-game allowances; plus-minus is context only, v5 remains unchanged, and distinct v6 version tags preserve previous trial records.

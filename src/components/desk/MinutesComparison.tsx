@@ -68,7 +68,8 @@ export function MinutesComparison({ board, v5, v6, byPlayer, today }: {
     <h2 className="mb-2 text-sm font-semibold">Minutes accuracy · automatic v6 trial</h2>
     <p className="text-muted-foreground">{error ?? (accuracy ? `${accuracy.slates}/3 completed slates · ${accuracy.samples} players · average error ${accuracy.mae == null ? "—" : accuracy.mae.toFixed(2) + " min"} · ${accuracy.pending} awaiting results` : "Checking saved forecasts…")}</p>
     <p className="mt-1 text-muted-foreground">{accuracy?.ready ? "Accuracy passed · v6 shadow picks active; v5 remains unchanged" : "V5 active · v6 unlocks automatically at 3 slates averaging ≤2 min error"}</p>
-    {accuracy?.ready && <div className="mt-3">
+    <p className="mt-1 text-muted-foreground">{V6_MODEL_VERSION} · Shot-volume adjustment for points; complete-game assists/rebounds allowances replace the old defense factor; plus-minus is context only.</p>
+    <div className="mt-3">
       <div className="mb-3 grid gap-2 sm:grid-cols-2">{[{ version: MODEL_VERSION, label: "V5" }, { version: V6_MODEL_VERSION, label: "V6" }].map(({ version, label }) => {
         const result = summarizeModelResults(saved, version, sharedDates);
         return <p className="border border-border p-2 text-muted-foreground" key={version}><span className="font-semibold text-foreground">{label} same-slate results</span><br />{result.w}–{result.l}–{result.p} · {result.units >= 0 ? "+" : ""}{result.units.toFixed(2)}u · {result.open} open</p>;
