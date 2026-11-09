@@ -1,7 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3";
-import { minutesAccuracy, MINUTES_FORECAST_VERSION } from "../_shared/research/minutesValidation.ts";
+import { minutesAccuracy, MINUTES_FORECAST_VERSION, V6_MODEL_VERSION } from "../_shared/research/minutesValidation.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
     const { data: roster, error: rosterError } = await sb.from("research_player_teams").select("player_name,team");
     if (rosterError) return json({ error: rosterError.message }, 500);
     const teams = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
-    if (b.picks.some((p) => p.model_version === "v6-projected-minutes")) {
+    if (b.picks.some((p) => p.model_version === "v6-projected-minutes" || p.model_version === V6_MODEL_VERSION)) {
       const { data, error } = await sb.from("research_minutes_log").select("game_date,projected_minutes,actual_minutes,status").eq("forecast_version", MINUTES_FORECAST_VERSION).limit(10000);
       if (error || !minutesAccuracy(data ?? []).ready) return json({ error: "Minutes accuracy is not confirmed" }, 409);
     }

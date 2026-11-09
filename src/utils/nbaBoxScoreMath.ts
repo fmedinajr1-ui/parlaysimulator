@@ -12,6 +12,7 @@ export interface GameLog {
   is_home?: boolean | null;
   field_goals_attempted?: number | null;
   threes_attempted?: number | null;
+  plus_minus?: number | null;
 }
 
 export function statValue(g: GameLog, stat: StatKey): number {

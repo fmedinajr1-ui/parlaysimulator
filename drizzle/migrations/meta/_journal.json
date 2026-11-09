@@ -50,6 +50,13 @@
       "when": 1794194032603,
       "tag": "0006_add_oversight_bot_strategy_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794196076388,
+      "tag": "0007_nba_plus_minus_context",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@ import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type 
 import { trendContext, type TrendContext } from "@/utils/trendContext";
 import { buildGameCoverage, type GameCoveragePlayerInput } from "@/utils/gameCoverage";
 import { restProfile, type RestProfile } from "@/utils/restProfile";
+import { opponentAllowances, productionContext, type ProductionContext } from "@/utils/projectionContext";
 import {
   summarizePlayer,
   type GameLog,
@@ -11,7 +12,7 @@ import {
   type StatKey,
 } from "@/utils/nbaBoxScoreMath";
 
-const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home,field_goals_attempted,threes_attempted";
+const COLS = "player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home,field_goals_attempted,threes_attempted,plus_minus";
 
 export const STAT_OPTIONS: { key: StatKey; label: string; short: string }[] = [
   { key: "points", label: "Points", short: "PTS" },
@@ -102,6 +103,7 @@ export interface EdgePick {
   mateMinutesOut?: number;
   /** Days off and the rest adjustment used tonight. */
   rest: RestProfile;
+  production?: ProductionContext;
 }
 
 export interface EdgeInputs {
@@ -128,6 +130,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
   const seasonStart = i.seasonStart ?? "2026-10-01";
   const all: GameLog[] = [];
   for (const g of i.byPlayer.values()) all.push(...g);
+  const allowances = opponentAllowances(all, i.today, seasonStart);
   const oppCache = new Map<StatKey, Map<string, number>>();
   const opp = (stat: StatKey) => oppCache.get(stat) ?? oppCache.set(stat, opponentFactors(all, stat, seasonStart)).get(stat)!;
   // Teammates ruled out tonight, by team.
@@ -149,6 +152,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       if (!line) continue;
       const odds = i.lineOdds.get(k);
       const oppName = i.tonight.get(lower);
+      const production = productionContext(games, i.today, oppName ? allowances.get(oppName) : undefined);
       const mates = (team && outByTeam.get(team)) || [];
       // Only teammates who've actually played this season free up a role.
       const matesOut: MissingMate[] = [];
@@ -164,6 +168,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         oppFactor: (oppName && opp(key).get(oppName)) || 1, teammatesOut: matesOut,
         position: i.positionOf?.get(name) ?? null,
         projectedMinutesModel: i.projectedMinutesModel,
+        production,
       });
       if (!p) continue;
       const qualifies = p.ev >= 0.03 && p.prob >= 0.55 && passesMarginGate(key, p.projection, line);
@@ -176,6 +181,7 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         home: i.homeTonight.get(lower) ?? null, team: team ?? null,
         qualifies, mateMinutesOut: matesOut.reduce((t, m) => t + m.minutes, 0),
         rest: restProfile(games, i.today),
+        production,
       });
     }
   }
@@ -337,6 +343,13 @@ export function useResearchData() {
     limit: 10000, all: true,
   }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
 
+  const v6BoardEdges = useMemo(() => computeEdges({
+    byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today,
+    teamOf: new Map((roster ?? []).map((r) => [r.player_name, r.team])),
+    positionOf: new Map((roster ?? []).map((r) => [r.player_name, r.position])),
+    limit: 10000, all: true, projectedMinutesModel: true,
+  }), [byPlayer, propLines, lineOdds, tonight, homeTonight, injuries, today, roster]);
+
   const gameCoverage = useMemo(() => {
     const rows: GameCoveragePlayerInput[] = [];
     const teamOf = new Map((roster ?? []).map((r) => [r.player_name, r.team]));
@@ -426,5 +439,5 @@ export function useResearchData() {
     });
   };
 
-  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, v6Edges, allEdges, boardEdges, gameCoverage, trendFor };
+  return { logs, loading, err, byPlayer, propLines, lineOdds, tonight, injuries, today, edges, v6Edges, v6BoardEdges, allEdges, boardEdges, gameCoverage, trendFor };
 }

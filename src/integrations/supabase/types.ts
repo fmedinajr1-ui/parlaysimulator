@@ -10551,6 +10551,7 @@ export type Database = {
           offensive_rebounds: number | null
           opponent: string
           player_name: string
+          plus_minus: number | null
           points: number | null
           rebounds: number | null
           steals: number | null
@@ -10578,6 +10579,7 @@ export type Database = {
           offensive_rebounds?: number | null
           opponent: string
           player_name: string
+          plus_minus?: number | null
           points?: number | null
           rebounds?: number | null
           steals?: number | null
@@ -10605,6 +10607,7 @@ export type Database = {
           offensive_rebounds?: number | null
           opponent?: string
           player_name?: string
+          plus_minus?: number | null
           points?: number | null
           rebounds?: number | null
           steals?: number | null

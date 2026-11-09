@@ -1,0 +1,2 @@
+ALTER TABLE public.nba_player_game_logs ADD COLUMN IF NOT EXISTS plus_minus numeric;
+COMMENT ON COLUMN public.nba_player_game_logs.plus_minus IS 'ESPN on-court team point differential; null when unavailable, context only (not an individual production multiplier).';
