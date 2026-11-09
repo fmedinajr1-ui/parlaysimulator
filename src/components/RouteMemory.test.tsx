@@ -46,10 +46,10 @@ describe("RouteMemory scroll restore", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("gives up after about 6 seconds if the page never gets tall enough", () => {
+  it("gives up after about 12 seconds if the page never gets tall enough", () => {
     setHeight(900);
     render(<MemoryRouter initialEntries={["/"]}><RouteMemory /></MemoryRouter>);
-    vi.advanceTimersByTime(7000);
+    vi.advanceTimersByTime(13000);
     setHeight(2500);
     vi.advanceTimersByTime(3000);
     expect(scrollTo).not.toHaveBeenCalled();

@@ -44,7 +44,7 @@ export function RouteMemory() {
             if (maxY >= s.y - 5) {
               window.scrollTo(0, s.y);
               stop();
-            } else if (++tries > 40) stop();
+            } else if (++tries > 80) stop();
           }, 150);
           stopRestore = stop;
         } else scrollPending.current = false;
