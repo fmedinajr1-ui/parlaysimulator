@@ -154,8 +154,8 @@ export default function Desk() {
           </section>
         </>}
         {view === "results" && <>
-        <SkepticalAccuracyPanel today={today} revision={shelfRevision} />
-        <BotStrategyPanel positions={botPositions} today={today} />
+        <SkepticalAccuracyPanel today={today} revision={shelfRevision} onRefresh={() => setShelfRevision(r => r + 1)} />
+        <BotStrategyPanel positions={botPositions} today={today} revision={shelfRevision} />
         <MinutesComparison board={boardEdges} v5={edges} v6={v6Edges} byPlayer={byPlayer} today={today} />
         {records && records.length > 0 && (
           <div className="mb-2 overflow-x-auto rounded-md border border-border font-mono text-xs">
@@ -199,7 +199,7 @@ export default function Desk() {
 
         <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--desk-line))] pt-4">
           <p className="desk-mono text-[11px] text-[hsl(var(--desk-muted))]">
-            Review flags are cautions, not guarantees · Daily update 8 AM ET
+            Review flags are cautions, not guarantees · Daily update midnight ET
           </p>
           <div className="flex flex-wrap gap-2">
             <a href="/grade" className="desk-tab">Grade a slip</a>

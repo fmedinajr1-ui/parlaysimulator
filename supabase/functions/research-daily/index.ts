@@ -8,6 +8,8 @@ import { gradeMinutes } from "../_shared/research/gradeMinutes.ts";
 import { snapshotMinutes } from "../_shared/research/minutesPipeline.ts";
 import { gradeResearchPick } from "../_shared/research/grading.ts";
 import { gradeSkepticalPicks } from "../_shared/research/gradeSkeptical.ts";
+import { snapshotDeskBots } from "../_shared/research/deskSnapshot.ts";
+import { botResearchReport } from "../_shared/research/botSync.ts";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -250,9 +252,16 @@ Deno.serve(async (req) => {
   await step("lines", () => syncLines(sb, today));
   await step("minutesForecasts", () => snapshotMinutes(sb, today));
 
+  await step("deskBots", async () => {
+    const board = await getJson(`${ESPN}/scoreboard?dates=${today.replaceAll("-", "")}`);
+    return snapshotDeskBots(sb, today, board.events ?? []);
+  });
+  await step("accuracyResearch", () => botResearchReport(sb));
+
   let paused = st?.paused_reason ?? null;
   // Paused by AI credits/policy: one probe per daily run only.
   await step("ai", async () => {
+    if (paused) return { skipped: paused };
     const edges = (await slateEdges(sb, today)).slice(0, 25);
     if (!edges.length) return { skipped: "no prop lines for today" };
     try {

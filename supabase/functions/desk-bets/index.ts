@@ -4,6 +4,7 @@ import { z } from "npm:zod@3";
 import { minutesAccuracy, MINUTES_FORECAST_VERSION, V6_MODEL_VERSION } from "../_shared/research/minutesValidation.ts";
 import { skepticalHistory, verifiedSkepticalMarket } from "../_shared/research/skeptical.ts";
 import { skepticalFinal } from "../_shared/research/skepticalFinal.ts";
+import { syncBotFromShelf } from "../_shared/research/botSync.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -182,12 +183,12 @@ Deno.serve(async (req) => {
       }
       rows.push({ ...p, ...market, ...actual });
     }
-    if (!rows.length) return json({ saved: 0, rejected });
+    if (!rows.length) return json({ saved: 0, rejected, bot: await syncBotFromShelf(sb, day) });
     // Immutable first pregame snapshot, including the exact line used for its L10 record.
     const { data, error } = await sb.from("research_skeptical_picks").upsert(rows, {
       onConflict: "game_date,player_name,stat,side,model_version", ignoreDuplicates: true,
     }).select("id");
-    return error ? json({ error: error.message }, 500) : json({ saved: data?.length ?? 0, rejected });
+    return error ? json({ error: error.message }, 500) : json({ saved: data?.length ?? 0, rejected, bot: await syncBotFromShelf(sb, day) });
   }
   if (b.action === "minutes_record") {
     const { data, error } = await sb.from("research_minutes_log").select("game_date,projected_minutes,actual_minutes,status")
@@ -219,6 +220,9 @@ Deno.serve(async (req) => {
     b.picks = b.picks.filter((p) => p.game_date === day && preTeams.has(teams.get(p.player_name) ?? ""));
   }
   if (b.action === "log_bot_picks") {
+    return json({ ok: true, ...await syncBotFromShelf(sb, day) });
+  }
+  if (false && b.action === "log_bot_picks") {
     // Verify every simulated position against a current sportsbook line and price.
     const { data: lines, error: lineError } = await sb.from("research_prop_lines")
       .select("player_name,stat,line,over_price,under_price").eq("game_date", day).limit(10000);

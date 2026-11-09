@@ -11,11 +11,12 @@ interface SavedBotPick extends BotResult {
   side: "over" | "under";
   line: number;
   result_value: number | null;
+  projection: number; win_prob: number; risk_score: number; rank: number; warnings: string[]; model_version: string;
 }
 
 const units = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}u`;
 
-export function BotStrategyPanel({ positions, today }: { positions: BotPosition[]; today: string }) {
+export function BotStrategyPanel({ positions, today, revision }: { positions: BotPosition[]; today: string; revision: number }) {
   const [saved, setSaved] = useState<SavedBotPick[]>([]);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -24,12 +25,12 @@ export function BotStrategyPanel({ positions, today }: { positions: BotPosition[
       try {
         const passcode = localStorage.getItem(PASS_KEY) ?? "";
         const { data, error: requestError } = await supabase.functions.invoke("desk-bets", { body: { action: "bot_record", passcode } });
-        if (requestError) throw requestError;
+        if (requestError || data?.error) throw requestError ?? new Error(data.error);
         if (alive) { setSaved(data?.picks ?? []); setError(false); }
       } catch { if (alive) setError(true); }
     })();
     return () => { alive = false; };
-  }, [today]);
+  }, [today, revision]);
   const summary = useMemo(() => summarizeBotProfit(saved), [saved]);
 
   return <section aria-label="Oversight Bot strategy and profit" className="desk-panel-flat mb-4 p-3 sm:p-4">
@@ -58,7 +59,7 @@ export function BotStrategyPanel({ positions, today }: { positions: BotPosition[
       <h3 className="text-xs font-semibold">Tonight’s bot targets · {today}</h3>
       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Top 3 skeptical plays by warning-adjusted expected profit. Base 0.75u; less for extra warnings, a 20-point model/hit-rate gap, or +150 odds. Daily cap 1.50u.</p>
       <div className="mt-2 space-y-2">
-        {positions.map(({ pick, warnings, riskScore, stakeUnits, rank }) => {
+        {saved.filter(r => r.game_date === today).sort((a,b) => a.rank-b.rank).map(r => ({pick:{player:r.player_name,stat:r.stat,side:r.side,line:Number(r.line),odds:r.odds},warnings:r.warnings,riskScore:r.risk_score,stakeUnits:Number(r.stake_units),rank:r.rank})).map(({ pick, warnings, riskScore, stakeUnits, rank }) => {
           const result = saved.find((r) => r.game_date === today && r.player_name === pick.player && r.stat === pick.stat && r.side === pick.side && Number(r.line) === pick.line);
           return <div className="border border-border bg-card p-3" key={`${pick.player}|${pick.stat}`}>
             <div className="flex items-start justify-between gap-3">
@@ -79,7 +80,7 @@ export function BotStrategyPanel({ positions, today }: { positions: BotPosition[
             </div>
           </div>;
         })}
-        {!positions.length && <p className="py-2 text-xs text-muted-foreground">No skeptical targets with verified odds tonight.</p>}
+        {!saved.some(r => r.game_date === today) && <p className="py-2 text-xs text-muted-foreground">No saved pregame bot targets tonight. Targets require the verified skeptical shelf and current odds.</p>}
       </div>
       {error && <p role="alert" className="mt-2 text-xs text-destructive">Saved bot results are temporarily unavailable.</p>}
     </div>

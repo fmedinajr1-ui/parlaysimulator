@@ -11,7 +11,7 @@ interface SavedPick extends SkepticalResult {
   id: string; line: number; win_prob: number; hits_l10: number; games_l10: number;
   result_value: number | null; logged_at: string; warnings: string[];
 }
-export function SkepticalAccuracyPanel({ today, revision }: { today: string; revision: number }) {
+export function SkepticalAccuracyPanel({ today, revision, onRefresh }: { today: string; revision: number; onRefresh: () => void }) {
   const [rows, setRows] = useState<SavedPick[]>([]);
   const [reviews, setReviews] = useState<SavedPick[]>([]);
   const [kind, setKind] = useState<"pregame" | "review">("pregame");
@@ -41,7 +41,7 @@ export function SkepticalAccuracyPanel({ today, revision }: { today: string; rev
   return <section aria-label="Complete skeptical shelf accuracy" className="mb-5 border-y border-border py-4">
     <div className="flex items-center justify-between gap-2">
       <h2 className="flex items-center gap-2 font-semibold"><ShieldAlert size={18} className="text-destructive" />Skeptical shelf accuracy</h2>
-      <Button variant="ghost" size="icon" title="Refresh saved skeptical results" aria-label="Refresh skeptical results" disabled={busy} onClick={() => setRefresh(r => r + 1)}><RefreshCw size={16} /></Button>
+      <Button variant="ghost" size="icon" title="Refresh saved skeptical results" aria-label="Refresh skeptical results" disabled={busy} onClick={onRefresh}><RefreshCw size={16} /></Button>
     </div>
     <div className="my-3 flex flex-wrap items-center justify-between gap-2">
       <span className="text-xs text-muted-foreground">{MODEL_VERSION} · Full shelf · {kind === "pregame" ? "Pregame records only" : "After-game review"}</span>
