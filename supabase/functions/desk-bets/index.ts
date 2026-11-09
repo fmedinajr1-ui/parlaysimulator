@@ -36,6 +36,16 @@ const Body = z.discriminatedUnion("action", [
     reasons: z.array(z.any()).max(20), rank: z.number().int(), model_version: z.string().max(20),
   })).max(100) }),
   z.object({ action: z.literal("pick_record"), passcode: z.string() }),
+  z.object({ action: z.literal("bot_record"), passcode: z.string() }),
+  z.object({ action: z.literal("log_bot_picks"), passcode: z.string(), picks: z.array(z.object({
+    game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
+    stat: z.string().max(20), side: z.enum(["over", "under"]), line: z.number(), odds: z.number().int().refine((o) => Math.abs(o) >= 100),
+    projection: z.number().nullable(), win_prob: z.number().nullable(), ev: z.number().nullable(),
+    opponent: z.string().max(60).nullable(), model_version: z.string().max(30), strategy_version: z.string().max(30),
+    rank: z.number().int().min(1).max(3), warning_count: z.number().int().min(1).max(5),
+    warnings: z.array(z.string().max(300)).min(1).max(5), risk_score: z.number().int().min(0).max(100),
+    stake_units: z.number().positive().max(1.5),
+  })).max(3) }),
   z.object({ action: z.literal("minutes_record"), passcode: z.string() }),
   z.object({ action: z.literal("log_minutes"), passcode: z.string(), forecasts: z.array(z.object({
     game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
