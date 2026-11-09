@@ -4,6 +4,32 @@ export interface CalibrationOptions {
   winChanceWeight: number;
   l10Weight: number;
   cutoff?: number;
+  /** Hypothetical dollars per qualifying pick (paper backtest only). */
+  stake?: number;
+  startingBankroll?: number;
+}
+
+export interface BankrollMetrics {
+  bets: number; skippedNoOdds: number; staked: number; profit: number; endingBankroll: number; roi: number | null;
+}
+
+/** American odds payout profit for a winning stake. */
+export function winProfit(stake: number, odds: number): number {
+  return odds > 0 ? stake * odds / 100 : stake * 100 / Math.abs(odds);
+}
+
+function bankroll(rows: ResearchPick[], probability: (p: ResearchPick) => number, cutoff: number, stake: number, start: number): BankrollMetrics {
+  let bets = 0, skipped = 0, profit = 0;
+  const ordered = [...rows].sort((a, b) => a.game_date.localeCompare(b.game_date));
+  for (const pick of ordered) {
+    if (probability(pick) < cutoff) continue;
+    const odds = pick.odds;
+    if (typeof odds !== "number" || !Number.isFinite(odds) || Math.abs(odds) < 100) { skipped++; continue; }
+    bets++;
+    profit += pick.status === "won" ? winProfit(stake, odds) : -stake;
+  }
+  const staked = bets * stake;
+  return { bets, skippedNoOdds: skipped, staked, profit, endingBankroll: start + profit, roi: staked ? profit / staked : null };
 }
 
 export interface CalibrationMetrics {
@@ -76,6 +102,10 @@ export function runCalibrationExperiment(
     ? Math.min(1, Math.max(0, options.cutoff)) : 0.6;
   const blendedProbability = (pick: ResearchPick) =>
     winChanceWeight * pick.win_prob + l10Weight * (pick.hits_l10 / pick.games_l10);
+  const stake = Number.isFinite(options.stake) && (options.stake as number) > 0 ? options.stake as number : 10;
+  const start = Number.isFinite(options.startingBankroll) && (options.startingBankroll as number) >= 0 ? options.startingBankroll as number : 1000;
+  const baselineBankroll = bankroll(rows, pick => pick.win_prob, cutoff, stake, start);
+  const candidateBankroll = bankroll(rows, blendedProbability, cutoff, stake, start);
   const baseline = metrics(rows, pick => pick.win_prob, cutoff);
   const candidate = metrics(rows, blendedProbability, cutoff);
   const difference = (candidateValue: number | null, baselineValue: number | null) =>
@@ -89,6 +119,9 @@ export function runCalibrationExperiment(
     slates: new Set(rows.map(row => row.game_date)).size,
     weights: { winChance: winChanceWeight, l10: l10Weight },
     cutoff,
+    stake,
+    startingBankroll: start,
+    bankroll: { baseline: baselineBankroll, candidate: candidateBankroll, profitChange: candidateBankroll.profit - baselineBankroll.profit },
     baseline,
     candidate,
     delta: {
