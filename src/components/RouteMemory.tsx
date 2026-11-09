@@ -33,11 +33,11 @@ export function RouteMemory() {
           // Restore once the page is tall enough, and never fight the reader:
           // any touch, wheel or key press cancels the restore immediately.
           let tries = 0;
-          const stop = () => {
+          const detach = () => {
             clearInterval(timer);
-            scrollPending.current = false;
             USER_EVENTS.forEach((ev) => window.removeEventListener(ev, stop));
           };
+          const stop = () => { detach(); scrollPending.current = false; };
           USER_EVENTS.forEach((ev) => window.addEventListener(ev, stop, { passive: true, once: true }));
           timer = setInterval(() => {
             const maxY = document.documentElement.scrollHeight - window.innerHeight;
@@ -46,7 +46,7 @@ export function RouteMemory() {
               stop();
             } else if (++tries > 80) stop();
           }, 150);
-          stopRestore = stop;
+          stopRestore = detach;
         } else scrollPending.current = false;
       }
       if (REMEMBER.includes(loc.pathname)) localStorage.setItem(KEY, loc.pathname);
