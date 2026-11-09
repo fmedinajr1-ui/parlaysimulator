@@ -17,3 +17,8 @@
 # Submitted result learning
 - [x] Record the three unique November 6–7 screenshot entries once, including pregame L5/L10 snapshots and actual results.
 - [x] Verify the saved records against the screenshots and summarize lessons without changing the projection model yet.
+
+# Bot desk
+- [x] Reorganize the private desk into simple Picks, Games, Research and Results views.
+- [x] Add button-driven review and separate skeptical picks using the existing disagreement rules.
+- [x] Preserve projections and historical records; verify review and slip interactions on phone and desktop.
