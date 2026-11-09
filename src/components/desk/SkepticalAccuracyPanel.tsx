@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PASS_KEY } from "@/components/AdminGate";
 import { MODEL_VERSION } from "@/utils/nbaProjection";
 import { skepticalAccuracy, type SkepticalResult } from "@/utils/skepticalAccuracy";
+import { AccuracyResearchBot } from "./AccuracyResearchBot";
 
 interface SavedPick extends SkepticalResult {
   id: string; line: number; win_prob: number; hits_l10: number; games_l10: number;
@@ -59,6 +60,7 @@ export function SkepticalAccuracyPanel({ today, revision }: { today: string; rev
       <div><div className="desk-label">Accuracy</div><p className="mt-1 text-xl">{summary.accuracy == null ? "—" : `${(summary.accuracy * 100).toFixed(1)}%`}</p></div>
     </div>
     <p className="mt-2 text-xs text-muted-foreground">{summary.open} pending · {summary.push} push · {summary.voided} void. Accuracy excludes pending, pushes and voids.</p>
+    <AccuracyResearchBot picks={filtered} kind={kind} />
     {error && <p role="alert" className="mt-3 text-sm text-destructive">Skeptical records could not be loaded. Try refresh.</p>}
     {!busy && !error && !active.length && <p className="mt-3 text-sm text-muted-foreground">{kind === "pregame" ? "No pregame shelf snapshots yet. Earlier unsaved shelves cannot be counted as recorded accuracy." : "No after-game reviews saved yet."}</p>}
     {busy && <p role="status" className="mt-3 text-xs text-muted-foreground">Loading saved shelf…</p>}
