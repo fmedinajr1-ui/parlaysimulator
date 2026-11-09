@@ -5,6 +5,7 @@ import { runCalibrationExperiment, type CalibrationMetrics } from "@/utils/calib
 import type { ResearchPick } from "@/utils/accuracyResearch";
 
 const pct = (value: number | null) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+const money = (value: number) => `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const score = (value: number | null) => value == null ? "—" : value.toFixed(3);
 
 function MetricRow({ label, metrics }: { label: string; metrics: CalibrationMetrics }) {
@@ -23,7 +24,9 @@ export function CalibrationExperiment({ picks, kind }: { picks: ResearchPick[]; 
   const [winWeight, setWinWeight] = useState(75);
   const [l10Weight, setL10Weight] = useState(25);
   const [cutoff, setCutoff] = useState(60);
-  const [submitted, setSubmitted] = useState<{ winChanceWeight: number; l10Weight: number; cutoff: number } | null>(null);
+  const [stake, setStake] = useState(10);
+  const [startBank, setStartBank] = useState(1000);
+  const [submitted, setSubmitted] = useState<{ winChanceWeight: number; l10Weight: number; cutoff: number; stake: number; startingBankroll: number } | null>(null);
   const result = useMemo(() => submitted ? runCalibrationExperiment(picks, kind, submitted) : null, [picks, kind, submitted]);
   const invalidWeights = winWeight + l10Weight <= 0;
 
@@ -46,8 +49,16 @@ export function CalibrationExperiment({ picks, kind }: { picks: ResearchPick[]; 
         <input aria-label="Confidence cutoff" className="mt-2 w-full accent-primary" type="range" min="50" max="90" step="5" value={cutoff} onChange={event => setCutoff(Number(event.target.value))} />
       </label>
     </div>
+    <div className="mt-4 grid grid-cols-2 gap-3 sm:max-w-sm">
+      <label className="text-xs">Starting bankroll ($)
+        <input aria-label="Starting bankroll" className="mt-1 w-full rounded border border-border bg-background p-2 font-mono" type="number" min="0" step="50" value={startBank} onChange={e => setStartBank(Math.max(0, Number(e.target.value) || 0))} />
+      </label>
+      <label className="text-xs">Stake per pick ($)
+        <input aria-label="Stake per pick" className="mt-1 w-full rounded border border-border bg-background p-2 font-mono" type="number" min="1" step="1" value={stake} onChange={e => setStake(Math.max(1, Number(e.target.value) || 1))} />
+      </label>
+    </div>
     <div className="mt-3 flex flex-wrap items-center gap-3">
-      <Button size="sm" variant="outline" disabled={!picks.length || invalidWeights} onClick={() => setSubmitted({ winChanceWeight: winWeight, l10Weight, cutoff: cutoff / 100 })}>Run experiment</Button>
+      <Button size="sm" variant="outline" disabled={!picks.length || invalidWeights} onClick={() => setSubmitted({ winChanceWeight: winWeight, l10Weight, cutoff: cutoff / 100, stake, startingBankroll: startBank })}>Run experiment</Button>
       {invalidWeights && <p className="text-xs text-destructive">Give at least one input a weight above zero.</p>}
     </div>
     {result && <div className="mt-4">
@@ -66,6 +77,24 @@ export function CalibrationExperiment({ picks, kind }: { picks: ResearchPick[]; 
         <p className="bg-secondary p-3">Brier error: <strong>{result.delta.brier == null ? "—" : `${result.delta.brier > 0 ? "+" : ""}${result.delta.brier.toFixed(3)}`}</strong> versus saved chance. Lower is better.</p>
         <p className="bg-secondary p-3">Cutoff accuracy: <strong>{pct(result.baseline.qualifiedAccuracy)} → {pct(result.candidate.qualifiedAccuracy)}</strong> · {result.baseline.qualified} → {result.candidate.qualified} picks.</p>
       </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[520px] text-xs">
+          <thead className="text-muted-foreground"><tr>
+            <th className="py-2 pr-3 text-left">Bankroll (${result.stake}/pick)</th><th className="p-2 text-right">Bets</th><th className="p-2 text-right">Staked</th>
+            <th className="p-2 text-right">Profit</th><th className="p-2 text-right">ROI</th><th className="p-2 text-right">Ending</th>
+          </tr></thead>
+          <tbody>{([["Saved win chance", result.bankroll.baseline], ["Experiment", result.bankroll.candidate]] as const).map(([label, b]) =>
+            <tr key={label} className="border-t border-border">
+              <th scope="row" className="py-2 pr-3 text-left font-medium">{label}</th>
+              <td className="p-2 text-right font-mono">{b.bets}</td>
+              <td className="p-2 text-right font-mono">{money(b.staked)}</td>
+              <td className={`p-2 text-right font-mono ${b.profit >= 0 ? "text-primary" : "text-destructive"}`}>{b.profit >= 0 ? "+" : "−"}{money(Math.abs(b.profit))}</td>
+              <td className="p-2 text-right font-mono">{pct(b.roi)}</td>
+              <td className="p-2 text-right font-mono">{money(b.endingBankroll)}</td>
+            </tr>)}</tbody>
+        </table>
+      </div>
+      <p className="mt-2 bg-secondary p-3 text-xs">Bankroll change vs saved chance: <strong>{result.bankroll.profitChange >= 0 ? "+" : "−"}{money(Math.abs(result.bankroll.profitChange))}</strong>, starting from {money(result.startingBankroll)}.{result.bankroll.candidate.skippedNoOdds + result.bankroll.baseline.skippedNoOdds > 0 ? ` Picks without saved odds are skipped.` : ""} Paper backtest only — no real money moves.</p>
       <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Overall historical wins do not change; only probability fit and the group clearing the cutoff change. This is an in-sample comparison, not proof of future accuracy. {result.retrospective ? "After-game captures are exploratory and cannot validate pregame calibration." : "Confirm any candidate on later unseen pregame slates before applying it."}</p>
     </div>}
   </section>;
