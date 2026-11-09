@@ -15,6 +15,8 @@ import { MinutesComparison } from "@/components/desk/MinutesComparison";
 import { reviewDeskPicks } from "@/utils/deskReview";
 import { BOT_STRATEGY_VERSION, buildBotStrategy } from "@/utils/botStrategy";
 import { BotStrategyPanel } from "@/components/desk/BotStrategyPanel";
+import { SkepticalAccuracyPanel } from "@/components/desk/SkepticalAccuracyPanel";
+import { pickWarnings } from "@/utils/pickWarnings";
 import { Button } from "@/components/ui/button";
 import { Bot, CheckCheck, ShieldAlert, LayoutGrid, Users, Search, ChartNoAxesCombined, ChevronDown } from "lucide-react";
 
@@ -29,6 +31,33 @@ export default function Desk() {
   const botPositions = useMemo(() => buildBotStrategy(audit.flagged), [audit.flagged]);
   const reviewPlayer = (player: string) => { setFocus(player); setView("research"); };
   const [records, setRecords] = useState<{ v: string; w: number; l: number; p: number; open: number; profit: number }[] | null>(null);
+  const [shelfRevision, setShelfRevision] = useState(0);
+  const [shelfSave, setShelfSave] = useState<{ busy: boolean; error: boolean; rejected: number } | null>(null);
+
+  useEffect(() => {
+    if (loading || !audit.flagged.length) return;
+    let alive = true;
+    const picks = audit.flagged.map((e, i) => ({
+      game_date: today, player_name: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds ?? null,
+      projection: e.median, win_prob: e.hitRate, hits_l10: e.hitsL10, games_l10: e.gamesL10,
+      warnings: pickWarnings(e), trend: e.trend, model_version: MODEL_VERSION, rank: i + 1,
+    }));
+    setShelfSave({ busy: true, error: false, rejected: 0 });
+    (async () => {
+      try {
+        let rejected = 0;
+        for (let i = 0; i < picks.length; i += 100) {
+          const { data, error } = await supabase.functions.invoke("desk-bets", {
+            body: { action: "log_skeptical_picks", passcode: localStorage.getItem(PASS_KEY) ?? "", picks: picks.slice(i, i + 100) },
+          });
+          if (error || data?.error) throw error ?? new Error(data.error);
+          rejected += data?.rejected?.length ?? 0;
+        }
+        if (alive) { setShelfSave({ busy: false, error: false, rejected }); setShelfRevision(r => r + 1); }
+      } catch { if (alive) setShelfSave({ busy: false, error: true, rejected: 0 }); }
+    })();
+    return () => { alive = false; };
+  }, [loading, audit.flagged, today]);
 
   // Record tonight's picks (first snapshot of the day is kept) and load the graded record.
   useEffect(() => {
@@ -118,10 +147,14 @@ export default function Desk() {
           {loading ? <p className="py-6 text-sm text-muted-foreground">Reviewing tonight’s props…</p> : <EdgeCards edges={audit.clear.slice(0, 4)} onPick={reviewPlayer} />}
           <section className="mt-5 border-y border-border py-3">
             <Button variant="ghost" className="h-auto w-full justify-between whitespace-normal rounded-md py-3 text-left" aria-expanded={flaggedOpen} onClick={() => setFlaggedOpen(!flaggedOpen)}><span className="flex items-center gap-2"><ShieldAlert className="text-destructive" />Skeptical plays · {audit.flagged.length}</span><ChevronDown className={flaggedOpen ? "rotate-180" : ""} /></Button>
+            {shelfSave && <p role={shelfSave.error ? "alert" : "status"} className={`px-3 text-xs ${shelfSave.error ? "text-destructive" : "text-muted-foreground"}`}>
+              {shelfSave.busy ? "Saving pregame skeptical shelf…" : shelfSave.error ? "Skeptical shelf could not be saved. No accuracy record was confirmed." : shelfSave.rejected ? `${shelfSave.rejected} not recorded: game started or data could not be verified. Saved pregame records are preserved.` : "Pregame skeptical shelf recorded · Original snapshots preserved"}
+            </p>}
             {flaggedOpen && <div className="pt-3"><EdgeCards edges={audit.flagged} onPick={reviewPlayer} skeptical showSlip={false} /></div>}
           </section>
         </>}
         {view === "results" && <>
+        <SkepticalAccuracyPanel today={today} revision={shelfRevision} />
         <BotStrategyPanel positions={botPositions} today={today} />
         <MinutesComparison board={boardEdges} v5={edges} v6={v6Edges} byPlayer={byPlayer} today={today} />
         {records && records.length > 0 && (
