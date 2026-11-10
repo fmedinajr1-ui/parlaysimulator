@@ -133,3 +133,26 @@ export function runCalibrationExperiment(
     },
   };
 }
+
+export interface SlateTrendRow { game_date: string; bets: number; won: number; lost: number; open: number; staked: number; profit: number; cumulative: number }
+
+/** Per-slate profit for one fixed blend; open picks are counted but never scored. */
+export function slateProfitTrend(input: ResearchPick[], options: CalibrationOptions): SlateTrendRow[] {
+  const total = Math.max(0, options.winChanceWeight) + Math.max(0, options.l10Weight);
+  const w = total > 0 ? Math.max(0, options.winChanceWeight) / total : 1;
+  const cutoff = options.cutoff ?? 0.6;
+  const stake = options.stake && options.stake > 0 ? options.stake : 10;
+  const unique = [...new Map(input.map(r => [`${r.game_date}|${r.player_name}|${r.stat}|${r.side}|${r.model_version}`, r])).values()];
+  const byDate = new Map<string, SlateTrendRow>();
+  for (const p of unique) {
+    if (!(p.games_l10 > 0) || typeof p.odds !== "number" || Math.abs(p.odds) < 100) continue;
+    if (w * p.win_prob + (1 - w) * (p.hits_l10 / p.games_l10) < cutoff) continue;
+    const row = byDate.get(p.game_date) ?? { game_date: p.game_date, bets: 0, won: 0, lost: 0, open: 0, staked: 0, profit: 0, cumulative: 0 };
+    if (p.status === "won") { row.won++; row.bets++; row.staked += stake; row.profit += winProfit(stake, p.odds); }
+    else if (p.status === "lost") { row.lost++; row.bets++; row.staked += stake; row.profit -= stake; }
+    else if (p.status === "open") row.open++;
+    byDate.set(p.game_date, row);
+  }
+  let run = 0;
+  return [...byDate.values()].sort((a, b) => a.game_date.localeCompare(b.game_date)).map(r => ({ ...r, cumulative: (run += r.profit) }));
+}
